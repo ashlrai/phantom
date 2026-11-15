@@ -52,6 +52,7 @@ afterEach(() => {
 
 describe('completions offer every dispatched verb', () => {
   const expected: Record<string, string[]> = {
+    app: ['update', 'status', 'steer', '--text', 'restart', '--json'],
     mirror: ['release'],
     devin: ['seat'],
     inbox: ['submit'],

@@ -367,3 +367,5 @@ canonical release guide for required hosted qualification and publication.
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
 - [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+
+- [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

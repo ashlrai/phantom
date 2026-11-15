@@ -161,3 +161,5 @@ Small-Mac oMLX lanes: see docs/OMLX-SMALL-MACS.md. Enable with ~/.ashlr/local-la
 Tier-1 import diagnosis: npx tsx scripts/tier1-why.ts <file> [--json]
 Prints a shortest runtime import chain from a Tier-1 root, or unreachable.
 Guide: docs/TIER1-WHY.md. The ordinary test/tier1-apps-boundary.test.ts guards fleet apps isolation. Do not regenerate the protected snapshot.
+
+- [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

@@ -387,3 +387,5 @@ Security 606e84d2 must pin new loopback-client changes before merge.
 ## Typed routing decisions
 
 `phm route decide --input request.json --json` validates a closed set from local model, slot and admission snapshots. Local fast, one schema retry, existing Jev escalation and deterministic fallback share a 450 ms service budget. Advisory only; dispatcher observations append `metrics/route.explain.jsonl` without changing launches. See [typed routing](docs/ROUTING.md) for the request schema and a copy-paste offline example.
+
+App restart: `phm app restart --json` currently exits 1 with a held result and performs no restart. See [ownership audit and acceptance work](docs/APP-RESTART.md). Do not infer session survival from an app relaunch.
