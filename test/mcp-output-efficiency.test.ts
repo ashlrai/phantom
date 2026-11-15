@@ -44,8 +44,14 @@ const OLD_NATIVE_NAMES = [
 ] as const;
 
 const ADDED_NATIVE_NAMES = [
+  'intent_import',
+  'intent_add',
+  'intent_update',
+  'intent_list',
+  'intent_get',
   'intent_link',
   'intent_ship',
+  'intent_stale',
   'phantom_agent_bus_read',
   'phantom_agent_bus_status',
   'phantom_agent_bus_post',
@@ -136,7 +142,7 @@ describe('native MCP tool inventory', () => {
     const tools = listNativeTools();
     const names = tools.map(tool => tool.name);
     const classified = classifyNativeNames(names);
-    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(89);
+    expect(new Set([...OLD_NATIVE_NAMES, ...ADDED_NATIVE_NAMES]).size).toBe(95);
     expect(new Set(names).size).toBe(names.length);
     expect(classified.old).toEqual([...OLD_NATIVE_NAMES]);
     expect(classified.added).toEqual([...ADDED_NATIVE_NAMES]);
@@ -201,11 +207,23 @@ describe('native MCP tool inventory', () => {
     const intentTools = addedTools.filter(tool => tool.name === 'intent_link' || tool.name === 'intent_ship');
     const intentBytes = intentTools.reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(intentBytes).toBeLessThanOrEqual(1119);
-    const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
+    // Recovered tools receive exact object-plus-comma allowances; historical caps stay fixed.
+    const recoveredIntentBudgets: Record<string, number> = {
+      intent_import: 317, intent_add: 491, intent_update: 481,
+      intent_list: 328, intent_get: 247, intent_stale: 228,
+    };
+    const recoveredIntentTools = addedTools.filter(tool => Object.hasOwn(recoveredIntentBudgets, tool.name));
+    let recoveredIntentBytes = 0;
+    for (const tool of recoveredIntentTools) {
+      const bytes = Buffer.byteLength(JSON.stringify(tool)) + 1;
+      expect(bytes, tool.name).toBeLessThanOrEqual(recoveredIntentBudgets[tool.name]!);
+      recoveredIntentBytes += bytes;
+    }
+    const addedBytes = addedTools.filter(tool => tool !== verbs && tool !== doctor && tool !== roster && tool !== spend && tool !== needs && tool !== needsWait && tool !== accessRequest && tool !== watch && !intentTools.includes(tool) && !recoveredIntentTools.includes(tool) && !visibility.includes(tool) && !leaderTools.includes(tool) && !desktop.includes(tool) && !observeTools.includes(tool) && !ownerComms.includes(tool) && !agentComms.includes(tool)).reduce((sum, tool) => sum + Buffer.byteLength(JSON.stringify(tool)) + 1, 0);
     expect(addedBytes).toBeLessThanOrEqual(9884);
     // 24,205 + 9,884 preserves the historical headroom. Later tool groups are
     // measured on their own caps above.
-    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes);
+    expect(responseBytes(tools)).toBeLessThan(33400 + 689 + doctorBytes + rosterBytes + visibilityBytes + spendBytes + leaderBytes + desktopBytes + observeBytes + ownerCommsBytes + agentCommsBytes + needsBytes + needsWaitBytes + accessRequestBytes + watchBytes + verbsBytes + intentBytes + recoveredIntentBytes);
   });
 });
 
