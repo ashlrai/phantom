@@ -43,7 +43,10 @@ export const DISK_THRESHOLDS = Object.freeze({
 });
 /** Typed values older than this are treated as unknown. */
 export const TYPED_MAX_AGE_MS = 24 * 60 * 60_000;
-export const QUOTA_FLOOR_AT_PCT = 90;
+// Mason 2026-11-05 22:02 ET (MASON-INBOX): no automatic usage reserve — a lane floors only at actual exhaustion.
+export const QUOTA_FLOOR_AT_PCT = 100;
+/** Fraction of the typed ACU allowance spent before a Devin lane drops to floor; 1 means only when fully spent. */
+export const DEVIN_FLOOR_AT_BURN = 1;
 export const DEVIN_STEP_DOWN = Object.freeze({ window: 10, maxNonPr: 3, step: 2, floor: 6 });
 
 /** One source of truth for byte thresholds: the "compact" block in budget-overrides.json (l1_free_gb, l2_free_gb),
@@ -102,7 +105,7 @@ function paceTarget(input: LaneInput, nowMs: number): { t: number; reason: strin
     case 'quota-window': {
       if (!fresh(input.quota, nowMs)) return null;
       const used = Math.max(0, Math.min(100, input.quota.value.usedPercent));
-      if (used >= QUOTA_FLOOR_AT_PCT) return { t: l.floor, reason: `quota ${used}% used` };
+      if (used >= QUOTA_FLOOR_AT_PCT) return { t: l.floor, reason: `quota exhausted (${used}% used)` };
       return { t: l.floor + ((l.ceiling - l.floor) * (100 - used)) / 100, reason: `quota ${used}% used` };
     }
     case 'devin': {
@@ -110,7 +113,7 @@ function paceTarget(input: LaneInput, nowMs: number): { t: number; reason: strin
       const d = input.devin.value;
       if (d.allowanceAcus <= 0) return null;
       const burn = d.usedAcus / d.allowanceAcus;   // fraction of allowance spent
-      if (burn >= 0.98) return { t: l.floor, reason: 'acu allowance at stop line' };
+      if (burn >= DEVIN_FLOOR_AT_BURN) return { t: l.floor, reason: 'acu allowance exhausted' };
       // Ahead of pace: shrink; behind pace: grow, scaled by how far.
       const ratio = d.periodFraction > 0 ? burn / d.periodFraction : 0;
       return { t: ratio > 1 ? l.target - Math.ceil((ratio - 1) * 4) : l.target + (ratio < 0.9 ? 2 : 0), reason: 'acu pace' };
