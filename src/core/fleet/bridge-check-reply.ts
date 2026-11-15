@@ -25,8 +25,11 @@ export function formatBridgeCheckReply(check: FleetBridgeCheck, _now: Date): str
   const fleetState = check.runtime['lastFleetStateRead'];
   const age = fleetState !== null && typeof fleetState === 'object'
     ? (fleetState as Record<string, unknown>)['ageSeconds'] : undefined;
+  const identity = (['host', 'stateRoot'] as const)
+    .filter(key => typeof check.runtime[key] === 'string' && (check.runtime[key] as string).trim() !== '')
+    .map(key => ` · ${key} ${text(check.runtime[key]).slice(0, 64)}`).join('');
   const details = [
-    `Runtime: ${text(check.runtime.status).slice(0, 32)}${age === undefined ? '' : ` · fleet-state age ${ageText(age)}`}`,
+    `Runtime: ${text(check.runtime.status).slice(0, 32)}${age === undefined ? '' : ` · fleet-state age ${ageText(age)}`}${identity}`,
     `Claims: ${check.claims.live === null ? 'unknown' : `${numericText(check.claims.live)} live, newest ${ageText(check.claims.newestAgeSec)}`}`,
     `Peers: ${text(check.peers.status).slice(0, 32)}`,
     FOOTER,
