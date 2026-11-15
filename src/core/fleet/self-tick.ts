@@ -1,27 +1,28 @@
 /**
  * self-tick.ts — one locked pass of Phantom's self-management, runnable by an
- * agent or a host timer with no desktop app open. Fourteen one-shot stages run
+ * agent or a host timer with no desktop app open. Fifteen one-shot stages run
  * together, including same-channel inbox acknowledgements, the once-per-channel
  * leader-live notice, merged-order notices and the Needs-you triage.
  * runSelfTick is the single pass, each step injected as a seam in fixed order:
  *
- *   1. reset-release  — first, so a lane it frees counts as a free slot for
+ *   1. claude-quota — refresh the weekly reading before reset detection.
+ *   2. reset-release  — so a lane it frees counts as a free slot for
  *      the planner step's decision in the same pass.
- *   2. lane-autohold  — places the bounded burning-lane holds.
- *   3. stray-stop    — recover slots left behind by finished jobs.
- *   4. meter-incident — deduped flat-meter notices.
- *   5. planner-tick   — the autorun decision over the post-release picture.
- *   6. inbox-acks     — send pending same-channel acknowledgements.
- *   7. owner-live     — answer each newly-live owner channel once with
+ *   3. lane-autohold  — places the bounded burning-lane holds.
+ *   4. stray-stop    — recover slots left behind by finished jobs.
+ *   5. meter-incident — deduped flat-meter notices.
+ *   6. planner-tick   — the autorun decision over the post-release picture.
+ *   7. inbox-acks     — send pending same-channel acknowledgements.
+ *   8. owner-live     — answer each newly-live owner channel once with
  *      'Leader is live here, reply to talk to me.'
- *   8. order-notices  — tell Mason when a merged job served one of his orders.
- *   9. board-notify   — post once-only work-board changes into source threads.
- *  10. recheck-record — append the read-only fleet recheck verdict to the
+ *   9. order-notices  — tell Mason when a merged job served one of his orders.
+ *  10. board-notify   — post once-only work-board changes into source threads.
+ *  11. recheck-record — append the read-only fleet recheck verdict to the
  *      retained recheck log.
- *  11. needs-triage   — auto-resolve Needs-you items outside the four hard limits.
- *  12. waste-incident — raise high-waste incidents.
- *  13. teammate-overdue — notice the owner thread about unanswered teammate texts and Slack requests.
- *  14. landed-sweep   — close DIRTY PRs whose work already landed on master.
+ *  12. needs-triage   — auto-resolve Needs-you items outside the four hard limits.
+ *  13. waste-incident — raise high-waste incidents.
+ *  14. teammate-overdue — notice the owner thread about unanswered teammate texts and Slack requests.
+ *  15. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
@@ -41,9 +42,10 @@ import {
 import { noticeOverdueSlackRequests, noticeOverdueTeammateTexts } from '../comms/teammate-overdue.js';
 import { writeSelfTickLast } from './self-tick-last.js';
 
-export type SelfTickStepName = 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'owner-live' | 'order-notices' | 'board-notify' | 'recheck-record' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
-/** Fixed execution order — release first so the planner sees freed slots; landed-sweep last. */
+export type SelfTickStepName = 'claude-quota' | 'reset-release' | 'lane-autohold' | 'planner-tick' | 'inbox-acks' | 'owner-live' | 'order-notices' | 'board-notify' | 'recheck-record' | 'needs-triage' | 'teammate-overdue' | 'landed-sweep' | 'stray-stop' | 'meter-incident' | 'waste-incident';
+/** Fixed execution order — quota first, then release so the planner sees freed slots; landed-sweep last. */
 export const SELF_TICK_STEP_ORDER: readonly SelfTickStepName[] = [
+  'claude-quota',
   'reset-release',
   'lane-autohold',
   'stray-stop',

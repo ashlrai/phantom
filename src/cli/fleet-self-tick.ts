@@ -1,7 +1,8 @@
 /**
  * `ashlr fleet self-tick` — one locked pass of Phantom's self-management for
- * a host timer or an agent with no desktop app open. It calls the fourteen
- * one-shot stages in the fixed order reset-release → lane-autohold
+ * a host timer or an agent with no desktop app open. It refreshes Claude quota
+ * at most every 30 minutes, then calls the fourteen existing one-shot stages
+ * in the fixed order reset-release → lane-autohold
  * → stray-stop → meter-incident → planner-tick → inbox-acks → owner-live → order-notices → board-notify → recheck-record → needs-triage → waste-incident → teammate-overdue → landed-sweep, each with --json (plus --apply and --runs-dir when given),
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
@@ -21,6 +22,7 @@ import { cmdFleetNeedsTriage } from './fleet-needs-triage.js';
 import { cmdFleetWasteIncident } from './fleet-waste-incident.js';
 import type { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
 import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
+import { refreshClaudeQuota, type ClaudeQuotaProbe } from '../core/fleet/claude-quota-reading.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
@@ -33,7 +35,8 @@ import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
-One locked pass of Phantom's self-management: reset-release first (a lane it
+One locked pass of Phantom's self-management: claude-quota first (a bounded
+refresh, at most every 30 minutes), then reset-release (a lane it
 frees counts as a free slot for the planner step), then lane-autohold, then
 stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then owner-live
@@ -71,6 +74,10 @@ interface Dependencies {
   acquireLock?: RunSelfTickOptions['acquireLock'];
   /** planner-tick spawn seam; tests fake it, never a shell. */
   spawn?: SpawnLike;
+  /** claude-quota probe seam; tests fake it, never a real claude spawn. */
+  claudeProbe?: ClaudeQuotaProbe;
+  /** claude-quota command-finder seam; tests pin it, never a real PATH scan. */
+  claudeFindCommand?: () => string | null;
   /** Home override for tests; the runs-dir fallback and the log cap use it. */
   home?: string;
   /** Inbox acknowledgement senders for tests; production defaults are unchanged. */
@@ -88,6 +95,9 @@ interface Dependencies {
   recheckRecord?: () => Promise<number>;
 }
 
+/** The claude-quota step re-probes at most this often; fresher readings skip. */
+const CLAUDE_QUOTA_MIN_AGE_MS = 30 * 60_000;
+
 /** The escaped, home-scrubbed spelling of one value for human output. */
 const safe = (value: unknown): string => JSON.stringify(sanitizePublicJson(value))
   .replace(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
@@ -97,6 +107,13 @@ function summary(step: string, report: unknown): string {
   if (typeof report !== 'object' || report === null) return '';
   const row = report as Record<string, unknown>;
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
+  if (step === 'claude-quota') {
+    if (row['state'] === 'skipped-fresh') return 'skipped-fresh';
+    const weeklyPct = row['weeklyPct'];
+    if (typeof weeklyPct === 'number') return `weekly=${weeklyPct}%`;
+    const reason = row['reason'];
+    return typeof reason === 'string' ? reason : '';
+  }
   if (step === 'reset-release') {
     return `released=${count(row['released'])} planned=${count(row['planned'])}`;
   }
@@ -166,7 +183,7 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   // --last is a read-only report of the last recorded pass: nothing runs,
   // no lock is taken, so --apply has no meaning beside it.
   if (last && apply) return invalid();
-  // One root for the lock and all fourteen steps: the verbs' own fallbacks
+  // One root for the lock and all fifteen steps: the verbs' own fallbacks
   // (ASHLR_RUNS_DIR, ~/.ashlr-runs) resolve here once, so the lock domain
   // and the released slots can never drift to different dirs.
   const home = deps.home ?? homedir();
@@ -203,6 +220,30 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     return { exitCode, output: captured.join('\n') };
   };
   const defaults: SelfTickSteps = {
+    // A fresh weekly reading lands in metrics/claude-quota.json at most every
+    // 30 minutes; a 'skipped-fresh' pass spawns no probe at all. Exit 0
+    // whenever a reading was produced — claude absent is not a failure; exit
+    // 1 only when refreshClaudeQuota throws (a failed write).
+    'claude-quota': async (argv) => {
+      try {
+        const { state, reading } = await refreshClaudeQuota({
+          root, write: argv.includes('--apply'), minAgeMs: CLAUDE_QUOTA_MIN_AGE_MS,
+          now: () => new Date(now()),
+          ...(deps.claudeProbe === undefined ? {} : { probe: deps.claudeProbe }),
+          ...(deps.claudeFindCommand === undefined ? {} : { findCommand: deps.claudeFindCommand }),
+        });
+        const weekly = reading.windows.find((w) => w.id === 'seven_day');
+        return {
+          exitCode: 0,
+          output: JSON.stringify({
+            state, fresh: reading.fresh, weeklyPct: weekly?.usedPct ?? null,
+            observedAt: reading.observedAt, reason: reading.reason,
+          }),
+        };
+      } catch {
+        return { exitCode: 1, output: '' };
+      }
+    },
     'reset-release': bind(cmdFleetResetRelease, { now }),
     'lane-autohold': bind(cmdFleetLaneAutohold, { now: () => new Date(now()) }),
     'stray-stop': async (argv) => {

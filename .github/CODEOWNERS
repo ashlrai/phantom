@@ -459,6 +459,7 @@
 /test/fleet-self-loop-record-02soma2.test.ts @masonwyatt23
 /test/fleet-self-loop-record-live-02somc2.test.ts @masonwyatt23
 /test/fleet-self-loop-sleep-budget-02solg2.test.ts @masonwyatt23
+/test/fleet-self-loop-stop-file-02sold2.test.ts @masonwyatt23
 /test/fleet-self-loop-stream-02solc1.test.ts @masonwyatt23
 /test/fleet-ship-gap-31.test.ts @masonwyatt23
 /test/fleet-ship-gap-stage.test.ts @masonwyatt23
