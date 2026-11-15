@@ -14,6 +14,7 @@ import { defaultPoolReachDeps, readPoolReach } from '../core/fleet/pool-reach.js
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
 import { projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
 import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
@@ -58,6 +59,7 @@ import { JOB_OVERLAP_MIN_IDS } from '../core/fleet/job-overlap.js';
 import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs } from './fleet-job-overlap.js';
 import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch, type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
 import { DEFAULT_FLEET_INTENT_LIMIT, MAX_FLEET_INTENT_LIMIT, parseFleetIntentReadArgs, readFleetIntent, type FleetIntentReadArgs } from './fleet-intent-read.js';
+import { DEFAULT_FLEET_ORCHESTRATION_LIMIT, MAX_FLEET_ORCHESTRATION_LIMIT, parseFleetOrchestrationReadArgs, readFleetOrchestration, type FleetOrchestrationReadArgs } from './fleet-orchestration-read.js';
 import { INTENT_STATUSES } from '../core/intent/schema.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
@@ -239,6 +241,26 @@ async function readFleetSlackReplies(
   }
 }
 
+/** Read the desktop claim-notice evidence without exposing reader failures. */
+async function readFleetClaimNotices(
+  read: () => Promise<unknown> = () => readClaimNoticeView(),
+): Promise<unknown> {
+  const timeout = Symbol('claim-notices-timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(timeout), 5_000);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error === timeout ? 'claim-notices-timeout' : 'claim-notices-unavailable' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export interface FleetReaders {
   stagingScanner?: StagingScanner;
   stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
@@ -260,6 +282,7 @@ export interface FleetReaders {
   reviewPick?: (args: FleetReviewPickArgs) => Promise<unknown>;
   orderState?: (args: FleetOrderStateArgs) => Promise<unknown>;
   slackReplies?: () => Promise<unknown>;
+  claimNotices?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
@@ -298,6 +321,7 @@ export interface FleetReaders {
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
+  orchestrationRead?: (input: FleetOrchestrationReadArgs) => Promise<unknown>;
   intentRead?: (input: FleetIntentReadArgs) => Promise<unknown>;
   recheck?: () => Promise<unknown>;
   recheckHistory?: (input: FleetRecheckHistoryArgs) => Promise<unknown>;
@@ -477,6 +501,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_claim_notices',
+      description: 'Read the same Slack claim-notice evidence as the desktop view: bound threads, sent notices and pending ASSIGNED / RELEASED / BLOCKED / VERIFIED notices. A `sent` row means a durable bus note was written, not that Slack delivered it; pending rows are a dry-run plan. Authority none: never sends, ledgers or writes. The read is bounded to 5 seconds; a throw or timeout returns { status: "unknown", reason } without thrown text. Takes no arguments; any argument is refused.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_slack_replies',
       description: 'Read the Slack reply binding: which ingested Slack requests have a same-thread `sent` receipt (answered) and which do not (unanswered), with state, oldestUnansweredAt, uncertainSends, rejected, futureDated, a capped unansweredSample (channelId, threadTs, messageTs, at) and asOf, from the same replies section as the Slack bridge status. Lets an agent tell RECEIVED from answered. Evidence only; it grants no send, dispatch or merge authority, and an `attempted` send is never counted as an answer. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented answered or unanswered count. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -633,6 +663,20 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_INTENT_LIMIT, default: DEFAULT_FLEET_INTENT_LIMIT, description: 'list only: maximum rows returned.' },
         },
         required: ['action'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_orchestration_read',
+      description: 'Read the leader orchestration journal: specialist assignment receipts newest assignedAt first, with global status counts and every unresolved reserved receipt. Optional exact status/job filters and limit (default 25, max 100) apply to receipts; total counts matching rows before the limit. Missing state reports source:missing; corrupt or invalid state is a tool error. Authority is none. No caller path, root, environment or command; never writes, locks or sends.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['reserved', 'admitted', 'complete'] },
+          job: { type: 'string', maxLength: 64 },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_ORCHESTRATION_LIMIT, default: DEFAULT_FLEET_ORCHESTRATION_LIMIT },
+        },
         additionalProperties: false,
       },
       annotations,
@@ -948,7 +992,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_slack_replies' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -996,6 +1040,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    const orchestrationRead = name === 'fleet_orchestration_read' ? parseFleetOrchestrationReadArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
     const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
@@ -1006,6 +1051,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     if (name === 'fleet_review_pick' ? reviewPick === null :
         name === 'fleet_order_state' ? orderState === null :
         name === 'fleet_work_board' ? workBoard === null :
+        name === 'fleet_orchestration_read' ? orchestrationRead === null :
         name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
         name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
@@ -1077,6 +1123,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_pool_reach' ? await readFleetPoolReach(readers.poolReach)
         : name === 'fleet_review_pick' ? await (readers.reviewPick ?? readFleetReviewPick)(reviewPick as FleetReviewPickArgs)
         : name === 'fleet_order_state' ? await (readers.orderState ?? readFleetOrderState)(orderState as FleetOrderStateArgs)
+        : name === 'fleet_claim_notices' ? await readFleetClaimNotices(readers.claimNotices)
         : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
@@ -1118,6 +1165,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
+        : name === 'fleet_orchestration_read' ? await (readers.orchestrationRead ?? readFleetOrchestration)(orchestrationRead as FleetOrchestrationReadArgs)
         : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : name === 'fleet_work_board' ? await (readers.workBoard ?? readFleetWorkBoard)(workBoard as FleetWorkBoardArgs)

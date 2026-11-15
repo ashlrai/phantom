@@ -6,12 +6,25 @@ to a pill, or expand it to fullscreen. The window stays above other windows;
 summoning it does not explicitly activate the app or move keyboard focus. Closing
 it hides it while its current turn continues. Position and chat size survive
 restart; a disconnected monitor sends the window back to a visible display.
+The conversation you were last using reopens after a restart, and an unsent
+draft is kept until you send or clear it.
 
 The implementation uses Phantom's shipping **Tauri** desktop shell. There is no
 Electron runtime in this repository, and this feature introduces neither a
 second desktop framework nor a runtime dependency. The standalone web route is
 `/verse/owner-assist/`; browser use keeps the chat and mode controls but cannot
 float above other applications.
+
+## Companion surface
+
+The same `/verse/owner-assist/` route is the companion surface: any browser
+that can reach the loopback sidecar — another window, a second monitor's
+browser, or a phone on an owner-managed tunnel — gets the same conversations,
+memory, receipts and approvals, because all state lives server-side under
+`~/.ashlr`. The sidecar itself stays loopback-only; remote reach is the
+owner's tunnel to configure, never something this surface opens. There is no
+separate mobile app and no reduced-permission "guest" mode — the same read
+session and mutation-token rules apply wherever the page runs.
 
 ## Work on a project
 
@@ -39,11 +52,18 @@ personal turn, including while filesystem and seat checks are in progress.
 
 ## Models and identity
 
-**Auto** prefers a local model for Quick and Build / iterate tasks and an existing
-API/subscription seat for Hard / architecture tasks. **Local only** never falls
-back to a paid provider. A specific seat/model choice is checked again at send
-time and is refused if unavailable. Existing account capacity and policy checks
-still apply; personal concurrency does not reserve provider quota.
+**Auto** sends non-trivial work — Build / iterate and Hard / architecture — to
+the best available frontier (API/subscription) seat, and Quick tasks to a local
+seat. When the preferred class has no usable seat, Auto honestly falls back to
+the other class and says so. **Local only** never falls back to a paid
+provider, and **API / subscription** never falls back to a local seat. A
+specific seat/model choice is checked again at send time and is refused if
+unavailable. Existing account capacity and policy checks still apply; personal
+concurrency does not reserve provider quota.
+
+Each conversation names its model and why it was chosen — the transcript header
+records the preference, task difficulty, the class that answered, and whether
+the pick was a fallback. The record is kept per conversation across restarts.
 
 The model list includes the workbench's configured tool-capable local runtime
 (including its llama.cpp route) and available Claude/Codex seats. Owner Assist
@@ -68,12 +88,14 @@ token handoff.
 ## Hand off to the fleet
 
 Choose **Hand off to fleet**, enter acceptance criteria, and explicitly submit the
-message. The installed drop intake currently supports **ashlrai/phantom only**;
-other repositories are refused rather than placed into a dispatch-neutral queue.
-The existing writer publishes one `RQ-PHX-OWNER…` prompt with a valid tier and
-`codex-personal` as the routing hint. The normal fleet router chooses capacity.
-Intake size, protected-content and queue-depth checks apply. Owner Assist never
-edits `ready.tsv`, installs dispatchers, or starts a fleet worker itself.
+message. When a conversation is open the handoff is linked to it, so receipts
+name the discussion they came from. The installed drop intake currently supports
+**ashlrai/phantom only**; other repositories are refused rather than placed into
+a dispatch-neutral queue. The existing writer publishes one `RQ-PHX-OWNER…`
+prompt with a valid tier and `codex-personal` as the routing hint. The normal
+fleet router chooses capacity. Intake size, protected-content and queue-depth
+checks apply. Owner Assist never edits `ready.tsv`, installs dispatchers, or
+starts a fleet worker itself.
 
 The widget polls owned receipts and existing fleet evidence. SUBMITTED means
 the drop was written, QUEUED means ingestion was observed, and a PR link appears
@@ -94,6 +116,7 @@ still share physical CPU/GPU resources and provider account quotas.
 | --- | --- |
 | `owner-assist.json` | Callsign, preference, optional oMLX port |
 | `owner-assist.sessions/` | Isolated Verse sessions and process registry |
+| `owner-assist.state.json` | Last-used conversation and per-session routing records |
 | `owner-assist.memory/memory.md` | Persistent assistant memory |
 | `owner-assist.handoffs/` | Private submission receipts; not a scheduler |
 | `owner-assist.window.json` | Native chat geometry |

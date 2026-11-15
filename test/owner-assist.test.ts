@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
@@ -70,12 +71,32 @@ describe('Owner Assist runtime boundaries', () => {
     expect(await discoverOwnerOmlx(8000, vi.fn(async () => new Response('x'.repeat(131073))) as typeof fetch)).toEqual([]);
     expect(await discoverOwnerOmlx(8000, vi.fn(async () => new Response('', { status: 401 })) as typeof fetch)).toEqual([]);
   });
-  it('routes fast work locally, hard work to API, and honors explicit local choice', () => {
-    expect(routeOwnerTurn(discovery, turn, prefs).launch.seat.engine).toBe('local');
+  it('routes trivial work locally, non-trivial work to the best API seat, and honors explicit choices', () => {
+    expect(routeOwnerTurn(discovery, turn, prefs).launch.seat.engine).toBe('claude');
+    expect(routeOwnerTurn(discovery, { ...turn, tier: 'fast' }, prefs).launch.seat.engine).toBe('local');
     expect(routeOwnerTurn(discovery, { ...turn, tier: 'frontier' }, prefs).launch.seat.engine).toBe('claude');
     expect(routeOwnerTurn(discovery, { ...turn, preference: 'local', tier: 'frontier' }, prefs).launch.seat.engine).toBe('local');
+    expect(routeOwnerTurn(discovery, { ...turn, preference: 'api', tier: 'fast' }, prefs).launch.seat.engine).toBe('claude');
+    expect(routeOwnerTurn(discovery, { ...turn, seatId: 'local' }, prefs).launch.seat.engine).toBe('local');
     expect(() => routeOwnerTurn({ ...discovery, seats: [seats[1]!] }, { ...turn, preference: 'local' }, prefs)).toThrow('No available seat');
+    expect(() => routeOwnerTurn({ ...discovery, seats: [seats[0]!] }, { ...turn, preference: 'api' }, prefs)).toThrow('No available seat');
     expect(() => routeOwnerTurn(discovery, { ...turn, seatId: 'missing' }, prefs)).toThrow('No available seat');
+  });
+  it('explains which model answered and flags honest auto fallback across classes', () => {
+    const routed = routeOwnerTurn(discovery, turn, prefs);
+    expect(routed.routing).toMatchObject({ preference: 'auto', tier: 'work', class: 'api', seatId: 'claude',
+      model: 'claude-sonnet-4-6', fellBack: false });
+    expect(routed.routing.reason).toContain('API seat');
+    const noApi = { ...discovery, seats: [seats[0]!] };
+    const fellBack = routeOwnerTurn(noApi, turn, prefs);
+    expect(fellBack.routing).toMatchObject({ class: 'local', fellBack: true });
+    expect(fellBack.routing.reason).toContain('no API seat');
+    const noLocal = { ...discovery, seats: [seats[1]!] };
+    const quick = routeOwnerTurn(noLocal, { ...turn, tier: 'fast' }, prefs);
+    expect(quick.routing).toMatchObject({ class: 'api', fellBack: true });
+    expect(quick.routing.reason).toContain('no local seat');
+    expect(routeOwnerTurn(discovery, { ...turn, seatId: 'local' }, prefs).routing)
+      .toMatchObject({ class: 'local', fellBack: false, reason: expect.stringContaining('You chose') });
   });
   it('keeps owner concurrency independent and admits only one turn including during async discovery', async () => {
     let release!: () => void;
@@ -93,12 +114,31 @@ describe('Owner Assist runtime boundaries', () => {
     expect(engine.createSession).toHaveBeenCalledTimes(1);
   });
   it('hands conversation context across model changes and grants shared memory', async () => {
-    const first = await service.send(request(), cfg, 'http://127.0.0.1:7777');
+    const first = await service.send({ ...request(), preference: 'local' }, cfg, 'http://127.0.0.1:7777');
     service.cancel(first.session.id);
     const next = await service.send({ ...request(), sessionId: first.session.id, preference: 'api' }, cfg, 'http://127.0.0.1:7777');
     expect(next.session.id).not.toBe(first.session.id);
     expect(engine.sendTurn).toHaveBeenLastCalledWith(next.session.id, expect.stringContaining('Previous decision'));
     expect(engine.createSession).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ memory: expect.objectContaining({ writable: true }) }));
+  });
+  it('answers turns with their routing record and resumes the last conversation after a restart', async () => {
+    const first = await service.send(request(), cfg, 'http://127.0.0.1:7777');
+    expect(first.routing).toMatchObject({ class: 'api', seatId: 'claude', model: 'claude-sonnet-4-6', fellBack: false });
+    service.cancel(first.session.id);
+    const snapshot = await service.snapshot(cfg);
+    expect(snapshot.resumeSessionId).toBe(first.session.id);
+    expect(snapshot.routing[first.session.id]).toMatchObject({ model: 'claude-sonnet-4-6', reason: expect.stringContaining('API seat') });
+    expect((await stat(join(temp, 'state', 'owner-assist.state.json'))).mode & 0o777).toBe(0o600);
+    const restarted = new OwnerAssistService(join(temp, 'state'), { engine: () => engine, discover });
+    const again = await restarted.snapshot(cfg);
+    expect(again.resumeSessionId).toBe(first.session.id);
+    expect(again.routing[first.session.id]?.reason).toContain('API seat');
+    sessions.length = 0;
+    expect((await restarted.snapshot(cfg)).resumeSessionId).toBeUndefined();
+    await writeFile(join(temp, 'state', 'owner-assist.state.json'), '{broken');
+    await expect(restarted.snapshot(cfg)).rejects.toThrow();
+    expect(await readFile(join(temp, 'state', 'owner-assist.state.json'), 'utf8')).toBe('{broken');
+    restarted.close();
   });
   it('refuses unknown sessions, protected roots, symlink escapes, KILL and unknown input keys', async () => {
     await expect(service.send({ ...request(), sessionId: randomUUID() }, cfg, 'http://127.0.0.1:7777')).rejects.toMatchObject({ code: 'VERSE_SESSION_NOT_FOUND' });
@@ -139,6 +179,35 @@ describe('Owner Assist runtime boundaries', () => {
     await rm(join(temp, 'runs', `${receipt.fleetJobId}.publish`));
     expect(await service.handoff(task)).toMatchObject({ status: 'UNOBSERVED' });
     await expect(stat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('stays fleet-isolated: owner-assist modules reach fleet state only through the sanctioned drop/projection readers', async () => {
+    const src = join(dirname(fileURLToPath(import.meta.url)), '../src/core');
+    // Fleet reach for the service modules is exactly the drop writer and the
+    // two read-only evidence projections; the HTTP module has no fleet reach.
+    const allowed = /^node:|^zod$|^\.\/|^\.\.\/types\.js$|^\.\.\/util\/|^\.\.\/verse\/|^\.\.\/queue\/(store|schema)\.js$|^\.\.\/fleet\/(drop-job-writer|drop-job-fate|runs-parked-queue)\.js$/;
+    const apiAllowed = /^zod$|^\.\.\/web\/api\.js$|^\.\.\/owner-assist\/service\.js$|^\.\//;
+    const files = (await readdir(join(src, 'owner-assist'))).filter(f => f.endsWith('.ts')).map(f => join(src, 'owner-assist', f));
+    files.push(join(src, 'verse', 'owner-assist-api.ts'));
+    for (const file of files) {
+      const rules = file.endsWith('owner-assist-api.ts') ? apiAllowed : allowed;
+      const specifiers = [...(await readFile(file, 'utf8')).matchAll(/from '([^']+)'/g)].map(m => m[1]!);
+      for (const specifier of specifiers) expect(rules.test(specifier), `${file} must not import ${specifier}`).toBe(true);
+    }
+    expect(files.length).toBeGreaterThan(3);
+  });
+  it('links a handoff to its conversation, keeps it on retries, and refuses unknown or moved sessions', async () => {
+    const sent = await service.send(request(), cfg, 'http://127.0.0.1:7777');
+    service.cancel(sent.session.id);
+    const task = { id: `RQ-OWNER-${randomUUID()}`, repo: 'ashlrai/phantom', scope: 'Fix the widget', acceptance: 'Tests pass',
+      tier: 'work' as const, sessionId: sent.session.id };
+    const receipt = await service.handoff(task);
+    expect(receipt).toMatchObject({ status: 'SUBMITTED', sessionId: sent.session.id, sourceTitle: sent.session.title });
+    expect(receipt.submittedAt).toBeTypeOf('string');
+    expect((await service.handoffs())[0]).toMatchObject({ sessionId: sent.session.id, sourceTitle: sent.session.title, submittedAt: receipt.submittedAt });
+    const second = await service.send({ ...request(), preference: 'local' }, cfg, 'http://127.0.0.1:7777');
+    await expect(service.handoff({ ...task, sessionId: second.session.id })).rejects.toThrow('different task');
+    await expect(service.handoff({ ...task, id: `RQ-OWNER-${randomUUID()}`, sessionId: randomUUID() })).rejects.toMatchObject({ code: 'VERSE_SESSION_NOT_FOUND' });
+    await expect(service.handoff({ ...task, id: `RQ-OWNER-${randomUUID()}`, sessionId: 'not-a-uuid' })).rejects.toThrow();
   });
   it('projects only recorded completion and refuses handoff while KILL is engaged', async () => {
     const task = { id: `RQ-OWNER-${randomUUID()}`, repo: 'ashlrai/phantom', scope: 'Fix the widget', acceptance: 'Tests pass', tier: 'work' };
