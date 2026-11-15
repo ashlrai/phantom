@@ -2,9 +2,8 @@
  * Per-request Slack trace (RQ-PHX-SLACKTRACEVERB339): for every ingested
  * journal entry that carries the ids a reply can bind to, join the durable
  * ingress receipt (journal `bus` outcome) with the send-store evidence and
- * report one outcome -- ANSWERED by a same-thread `sent` receipt, UNCERTAIN
- * when a timestamped `attempted` send could follow the request, BUS-FAILED when the
- * bus append failed, else UNANSWERED. Message text, author ids and paths are
+ * report one outcome -- BUS-FAILED when the bus append failed, ANSWERED by a same-thread `sent` receipt, UNCERTAIN
+ * when a timestamped `attempted` send could follow the request, else UNANSWERED. Message text, author ids and paths are
  * never read or repeated; the output is ids and timestamps only.
  */
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
@@ -24,7 +23,7 @@ export interface SlackTraceRow {
   /** Local bus append outcome recorded at ingress; `unknown` when the row carries none. */
   ingress: SlackTraceIngress;
   outcome: SlackTraceOutcome;
-  /** Same-thread `sent` receipt ts when outcome is `answered`. */
+  /** Bound same-thread `sent` receipt ts; on bus failure this does not prove execution. */
   replyTs?: string;
 }
 
@@ -126,10 +125,12 @@ export function traceSlackRequests(input: {
     const rank = rankByIndex.get(i);
     const row: SlackTraceRow = { ...req, ingress, outcome: 'unanswered' };
     if (rank !== undefined && replies !== undefined && rank < replies.length) {
-      row.outcome = 'answered';
       row.replyTs = replies[rank]!;
-    } else if (ingress === 'failed') {
+    }
+    if (ingress === 'failed') {
       row.outcome = 'bus-failed';
+    } else if (row.replyTs !== undefined) {
+      row.outcome = 'answered';
     } else if (hasAttempt(req)) {
       row.outcome = 'uncertain';
     }
