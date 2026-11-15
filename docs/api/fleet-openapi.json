@@ -64,6 +64,37 @@
     "/api/verse/fleet/ci-runs": {
       "get": { "operationId": "getFleetCiRuns", "summary": "Read recent CI run facts.", "parameters": [{ "name": "hours", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 168 }, "description": "Lookback window in hours; defaults to 24." }], "responses": { "200": { "description": "CI run facts and availability" }, "default": { "description": "Request rejected or service unavailable" } } }
     },
+    "/api/verse/fleet/cos/ask": {
+      "post": {
+        "operationId": "askFleetCos", "tags": ["fleet"],
+        "summary": "Queue a chief-of-staff task; intake sends nothing.",
+        "description": "The paired-phone gateway stamps mobile attribution. The body cannot choose a channel. Approval remains desktop-only.",
+        "x-phantom-step-up": false,
+        "security": [{ "mutationToken": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Nonblank task text; the remote gateway caps it at 4000 characters." } } } } } },
+        "responses": {
+          "201": { "description": "Task queued: { v: 1, id, ack, status: queued, duplicate: false }." },
+          "200": { "description": "Duplicate task: the same id and duplicate: true." },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/verse/fleet/cos/list": {
+      "get": {
+        "operationId": "listFleetCosTasks", "tags": ["fleet"],
+        "summary": "List chief-of-staff task summaries without draft text or sender identities.",
+        "parameters": [{ "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 }, "description": "Optional single digits-only value; no other query parameters are admitted." }],
+        "responses": { "200": { "description": "{ v: 1, tasks } — see src/core/verse/fleet-cos-api.ts." }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/verse/fleet/cos/status": {
+      "get": {
+        "operationId": "getFleetCosStatus", "tags": ["fleet"],
+        "summary": "Read a chief-of-staff task's state and draft without sender or thread identities.",
+        "parameters": [{ "name": "id", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^cos-[a-f0-9]{32}$" }, "description": "Exactly one chief-of-staff job id; no other query parameters are admitted." }],
+        "responses": { "200": { "description": "{ v: 1, id, jobStatus, channel, draft, delivery, needsYou } — see src/core/verse/fleet-cos-api.ts." }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/verse/fleet/live/drop-jobs": {
       "get": { "operationId": "listFleetDropJobs", "summary": "List queued fleet drop jobs.", "responses": { "200": { "description": "Drop jobs" }, "default": { "description": "Request rejected or service unavailable" } } },
       "post": { "operationId": "createFleetDropJob", "summary": "Submit a fleet drop job.", "x-phantom-step-up": true, "security": [{ "mutationToken": [] }],
