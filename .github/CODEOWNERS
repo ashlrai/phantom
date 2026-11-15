@@ -348,6 +348,7 @@
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
+/test/desktop-operator-screenshot-mcp.test.ts @masonwyatt23
 /test/desktop-operator.test.ts @masonwyatt23
 /test/desktop-qualified-update.test.ts @masonwyatt23
 /test/desktop-update-cli.test.ts @masonwyatt23
@@ -457,6 +458,7 @@
 /test/fleet-self-loop-02soly1.test.ts @masonwyatt23
 /test/fleet-self-loop-await-live-02some2.test.ts @masonwyatt23
 /test/fleet-self-loop-await-record-02somd2.test.ts @masonwyatt23
+/test/fleet-self-loop-bus-progress-02solj1.test.ts @masonwyatt23
 /test/fleet-self-loop-busy-backoff-02soll2.test.ts @masonwyatt23
 /test/fleet-self-loop-failure-backoff-02solh2.test.ts @masonwyatt23
 /test/fleet-self-loop-max-ticks-02soly2.test.ts @masonwyatt23
@@ -473,6 +475,7 @@
 /test/fleet-superseded-read.test.ts @masonwyatt23
 /test/fleet-write-budget-cli.test.ts @masonwyatt23
 /test/fleet/merge-confidence.test.ts @masonwyatt23
+/test/friction-planner.test.ts @masonwyatt23
 /test/ft-promotion-policy.test.ts @masonwyatt23
 /test/gate.test.ts @masonwyatt23
 /test/gateway-anthropic-client.test.ts @masonwyatt23
