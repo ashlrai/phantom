@@ -70,7 +70,15 @@ export const CLAIM_EXECUTION_SCHEMA = 'fleet.claim-execution.v1';
 export const PROCESS_SNAPSHOT_MAX_AGE_MS = 60_000;
 const UNKNOWN = 'UNKNOWN';
 const MAX_ROWS = 50;
-const JOB_ID_RE = /\bRQ-[A-Z0-9][A-Z0-9-]{2,80}\b/;
+const JOB_ID_RE = /^RQ-[A-Z0-9][A-Z0-9-]{2,80}$/;
+/**
+ * A maximal run of job-token characters. `-` is token-internal, so `\b` cannot
+ * delimit it: an overlength token would match a shorter prefix ending at an
+ * internal hyphen. The run is matched whole, then JOB_ID_RE validates the
+ * supported shape and length; the lookahead keeps a run glued to a longer
+ * word (letters, digits, `_` or `-`) from counting as a token.
+ */
+const JOB_ID_RUN_RE = /\bRQ-[A-Z0-9][A-Z0-9-]*(?![A-Za-z0-9_-])/g;
 const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REPO_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
@@ -158,9 +166,15 @@ const repository = (value: unknown): string[] | null => {
 interface ClaimLike { id: unknown; agent: unknown; repo: unknown; task: unknown; claimedAt: unknown; expiresAt: unknown }
 const claimLike = (v: unknown): v is ClaimLike => v !== null && typeof v === 'object';
 
-/** The first `RQ-…` token in claim.id, then claim.task; null when neither names one. */
+/** The first whole supported `RQ-…` token in claim.id, then claim.task; null when neither names one. */
 function jobIdOf(claim: { id: unknown; task: unknown }): string | null {
-  return JOB_ID_RE.exec(text(claim.id))?.[0] ?? JOB_ID_RE.exec(text(claim.task))?.[0] ?? null;
+  for (const source of [claim.id, claim.task]) {
+    for (const match of text(source).matchAll(JOB_ID_RUN_RE)) {
+      const token = match[0].replace(/-+$/, '');
+      if (JOB_ID_RE.test(token)) return token;
+    }
+  }
+  return null;
 }
 
 const ageOf = (worker: LiveWorker): number =>
