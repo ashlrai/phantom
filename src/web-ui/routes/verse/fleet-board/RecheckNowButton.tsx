@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { ApiError, apiPost } from '../../../data/client.js';
 import { useMutationHold, useRefetch } from '../../../data/hooks.js';
 import { Button } from '../../../components/primitives/Button.js';
+import { recheckReplyQuery } from './recheck-reply-model.js';
 import { recheckHistoryQuery } from './recheck-history-model.js';
 import { describeRecheckNow, type RecheckNowResult } from './recheck-now-model.js';
 import { recheckVerdictQuery } from './recheck-verdict-query.js';
@@ -25,6 +26,7 @@ export function RecheckNowButton() {
   const { token, touch } = useMutationHold();
   const refetchHistory = useRefetch(recheckHistoryQuery);
   const refetchVerdict = useRefetch(recheckVerdictQuery);
+  const refetchReply = useRefetch(recheckReplyQuery);
   const [busy, setBusy] = useState(false);
   const [line, setLine] = useState('');
 
@@ -42,7 +44,7 @@ export function RecheckNowButton() {
         : { ok: false, status: 0, reason: 'the server could not be reached' };
     } finally { setBusy(false); }
     setLine(describeRecheckNow(result));
-    if (result.ok) { touch(); refetchHistory(); refetchVerdict(); }
+    if (result.ok) { touch(); refetchHistory(); refetchVerdict(); refetchReply(); }
   }
 
   return (

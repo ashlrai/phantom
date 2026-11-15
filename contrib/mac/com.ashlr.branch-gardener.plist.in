@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.ashlr.branch-gardener</string>
+  <key>ProgramArguments</key><array>
+    <string>__PYTHON__</string><string>__GARDENER__</string>
+    <string>--config</string><string>__CONFIG__</string>
+    <string>--apply</string><string>--json</string>
+  </array>
+  <key>StartInterval</key><integer>21600</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>__RUNS__/logs/branch-gardener.out.log</string>
+  <key>StandardErrorPath</key><string>__RUNS__/logs/branch-gardener.err.log</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__PATH__</string>
+  </dict>
+</dict></plist>

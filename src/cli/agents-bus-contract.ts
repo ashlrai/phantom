@@ -26,12 +26,12 @@ export async function runAgentsCli(
   err: (text: string) => void = console.error,
 ): Promise<number> {
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
-  if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
     return 2;
   }
+  if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
   let root: string | undefined;
   const rest: string[] = [];
   for (let i = 0; i < args.length; i += 1) {

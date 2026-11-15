@@ -20,8 +20,8 @@ export async function cmdCiMetrics(args: string[], deps: { gh?: (args: string[])
     const existing = await loadExistingMetrics();
     const merged: Record<string, CiMetricEntry> = { ...(existing?.repos || {}) };
     for (const [repo, entry] of Object.entries(repos)) {
-      if (merged[repo] && entry.lastRedRunId === merged[repo].lastRedRunId) {
-        // Same state as before, keep the old computed value.
+      if (entry.daily_ttg_s === null && merged[repo] && entry.lastRedRunId === merged[repo].lastRedRunId) {
+        // Reuse a known pair only when this read has no fresh measurement.
         entry.daily_ttg_s = merged[repo].daily_ttg_s;
         entry.lastGreenRunId = merged[repo].lastGreenRunId;
       }
