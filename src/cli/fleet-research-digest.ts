@@ -10,17 +10,15 @@
  * 0 ok, 1 unreadable input or apply failure, 2 bad usage.
  * See docs/RESEARCH-LOOP.md.
  */
-import { constants } from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { planResearchDigest, RESEARCH_DIGEST_DEFAULTS } from '../core/research/proposals.js';
 import { restockReposRoot } from '../core/portfolio/restock-lint.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
+import { readResearchFile as readBounded, researchQueueTransaction } from '../core/research/queue.js';
 import { sanitizeCommandLine } from '../core/verse/shell-integration.js';
 
 const MAX_BYTES = 1024 * 1024;
-const LOCK_TIMEOUT_MS = 5_000;
+
 const USAGE = `Usage: phm fleet research-digest --file <digest.md> [--queue <queue.md>] [--shipped <ids.txt>]
        [--repos-root <dir>] [--pools <csv>] [--limit N] [--min-score X]
        [--approve <id,...>] [--apply] [--json]
@@ -65,63 +63,6 @@ function parseArgs(args: string[]): Flags | 'help' | 'usage' {
   return flags;
 }
 
-/** Bounded read of a queue/evidence file; throws on any unsafe shape. */
-async function readBounded(path: string): Promise<string> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error('Invalid file');
-    const buffer = Buffer.alloc(MAX_BYTES + 1);
-    let length = 0;
-    while (length < buffer.length) {
-      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
-      if (bytesRead === 0) break;
-      length += bytesRead;
-    }
-    if (length > MAX_BYTES) throw new Error('File too large');
-    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, length));
-  } finally { await file.close(); }
-}
-
-/**
- * Append `lines` under an exclusive `<queue>.research-digest.lock`; the lock
- * is never stolen and the rewrite is atomic (temp file, fsync, rename).
- */
-async function appendQueueLines(queuePath: string, lines: readonly string[]): Promise<void> {
-  const lockPath = `${queuePath}.research-digest.lock`;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  let lock;
-  for (;;) {
-    try { lock = await open(lockPath, 'wx', 0o600); break; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (Date.now() >= deadline) throw new Error('queue lock busy');
-      await new Promise(r => setTimeout(r, 10));
-    }
-  }
-  const token = randomUUID();
-  try {
-    await lock.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), token }));
-    const current = await readBounded(queuePath).catch(() => '');
-    const temp = `${queuePath}.${randomUUID()}.tmp`;
-    const out = await open(temp, 'wx', 0o600);
-    try {
-      const text = (current && !current.endsWith('\n') ? `${current}\n` : current) + lines.map(l => `${l.replace('):', `, enq=${Math.floor(Date.now() / 1000)}):`)}\n`).join('');
-      await out.writeFile(text, 'utf8');
-      await out.sync();
-      await out.close();
-      await rename(temp, queuePath);
-    } finally {
-      await out.close().catch(() => undefined);
-      await unlink(temp).catch(() => undefined);
-    }
-  } finally {
-    await lock.close().catch(() => undefined);
-    const held = await open(lockPath, 'r').then(f => f.readFile('utf8').finally(() => f.close())).catch(() => undefined);
-    if (held?.includes(token)) await unlink(lockPath).catch(() => undefined);
-  }
-}
-
 export async function cmdFleetResearchDigest(args: string[], opts: { now?: () => Date } = {}): Promise<number> {
   const parsed = parseArgs(args);
   if (parsed === 'help') { console.log(USAGE); return 0; }
@@ -154,8 +95,8 @@ export async function cmdFleetResearchDigest(args: string[], opts: { now?: () =>
   const approved = parsed.approve?.split(',').map(id => id.trim()).filter(Boolean);
   const now = (opts.now ?? (() => new Date()))();
 
-  const plan = planResearchDigest(read.text, {
-    queue: queueText,
+  const makePlan = (queue: string | undefined) => planResearchDigest(read.text, {
+    queue,
     shipped,
     digestLabel: basename(digestPath),
     limit: parsed.limit,
@@ -164,14 +105,15 @@ export async function cmdFleetResearchDigest(args: string[], opts: { now?: () =>
     lint: { reposRoot: parsed.reposRoot ?? restockReposRoot(), pools: parsed.pools ? new Set(parsed.pools.split(',').map(p => p.trim()).filter(Boolean)) : undefined },
   });
 
+  let plan = makePlan(queueText);
   let queued: string[] = [];
   if (parsed.apply) {
-    const selected = plan.proposals.filter(p => approved === undefined || approved.includes(p.id));
     try {
-      if (selected.length) {
-        await appendQueueLines(queuePath!, selected.map(p => p.ready));
-        queued = selected.map(p => p.id);
-      }
+      queued = await researchQueueTransaction(queuePath!, async queue => {
+        plan = makePlan(queue);
+        const selected = plan.proposals.filter(p => approved === undefined || approved.includes(p.id));
+        return { lines: selected.map(p => p.ready.replace('):', `, enq=${Math.floor(now.getTime() / 1000)}):`)), result: selected.map(p => p.id) };
+      });
     } catch { return fail('queue write failed'); }
   }
 
