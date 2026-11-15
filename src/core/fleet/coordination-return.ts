@@ -1,5 +1,6 @@
 /** Return receipts are evidence only; the lease fences the release, not the sender label. */
-import { postFleetMessage, readFleetBoard, releaseFleetClaim, type FleetCoordinationOptions, type FleetMessage } from './coordination.js';
+import { concludeFleetClaim, postFleetMessage, readFleetBoard, type FleetCoordinationOptions, type FleetMessage } from './coordination.js';
+import { scrubSecrets } from '../util/scrub.js';
 
 export interface FleetClaimReturnInput {
   id: string; agent: string; lease: string; ttlMs?: number;
@@ -7,6 +8,8 @@ export interface FleetClaimReturnInput {
 }
 export interface FleetClaimReturnResult {
   ok: boolean;
+  // 'released-unposted' still means the durable intent exists but the receipt
+  // publish failed; a lease-verified retry reposts it instead of losing it.
   outcome: 'returned' | 'already-returned' | 'invalid-input' | 'unavailable' | 'not-owner' | 'not-found' | 'released-unposted';
   claimId: string;
   message?: FleetMessage;
@@ -45,16 +48,32 @@ export function returnFleetClaim(input: FleetClaimReturnInput, options: FleetCoo
     || !Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > 7 * DAY || result === null) return fail('invalid-input');
   const board = readFleetBoard(options);
   if (board.state === 'unknown') return fail('unavailable');
+  const scrubbed = (message: FleetMessage): FleetMessage => ({ ...message, id: scrubSecrets(message.id),
+    from: scrubSecrets(message.from), to: scrubSecrets(message.to), body: scrubSecrets(message.body) });
+  const done = (concluded: Exclude<ReturnType<typeof concludeFleetClaim>, { ok: false }>): FleetClaimReturnResult =>
+    concluded.value.outcome === 'existing'
+      ? { ok: true, outcome: 'already-returned', claimId, message: scrubbed(concluded.value.message) }
+      : { ok: true, outcome: 'returned', claimId, message: scrubbed(concluded.value.message) };
   const claim = board.claims.find(c => c.id === claimId);
   if (!claim) {
-    const message = board.messages.find(m => m.id === id);
-    return message ? { ok: true, outcome: 'already-returned', claimId, message } : fail('not-found');
+    const posted = board.messages.find(m => m.id === id);
+    if (posted) return { ok: true, outcome: 'already-returned', claimId, message: posted };
+    // No live claim and no posted receipt: a durable 'return' intent may let the owner repost.
+    const concluded = concludeFleetClaim({ id: claimId, agent: input.agent, lease: input.lease }, options);
+    if (!concluded.ok) return fail(concluded.error === 'duplicate' ? 'unavailable' : concluded.error);
+    return done(concluded);
   }
   const body = fold(`RESULT ${input.blocked !== undefined ? 'BLOCKED' : 'VERIFIED'} ${claim.repo} claim ${claimId} task "${claim.task}": ${result}`);
   if (body.length > 4000) return fail('invalid-input');
-  const released = releaseFleetClaim({ id: claimId, agent: input.agent, lease: input.lease }, options);
-  if (!released.ok) return fail(released.error === 'duplicate' ? 'unavailable' : released.error);
+  const concluded = concludeFleetClaim({ id: claimId, agent: input.agent, lease: input.lease,
+    message: { id, from: input.agent, to: 'all', body, ttlMs } }, options);
+  if (!concluded.ok) return fail(concluded.error === 'duplicate' ? 'unavailable' : concluded.error);
+  if (concluded.value.outcome !== 'intended') return done(concluded);
   const posted = postFleetMessage({ from: input.agent, to: 'all', id, body, ttlMs }, options);
-  return posted.ok ? { ok: true, outcome: 'returned', claimId, message: posted.value }
-    : { ok: false, outcome: 'released-unposted', claimId, id, body };
+  if (posted.ok) return { ok: true, outcome: 'returned', claimId, message: posted.value };
+  if (posted.error === 'duplicate') {
+    const existing = readFleetBoard(options).messages.find(m => m.id === id);
+    if (existing) return { ok: true, outcome: 'already-returned', claimId, message: existing };
+  }
+  return { ok: false, outcome: 'released-unposted', claimId, id, body };
 }
