@@ -118,10 +118,10 @@ describe('RESULT receipt expiry across ledger reconnects', () => {
     expect(drained.view).toMatchObject({ state: 'known', returns: [], unparsed: 0, asOf: new Date(8_000).toISOString() });
     expectNoLeaseMaterial(JSON.stringify(drained.view), [claimA.lease, claimB.lease]);
 
-    // Durable history is claim/release/post per return; the file itself never
+    // Durable history is claim/return/post per return; the file itself never
     // changed across every reconnect and holds no lease material.
     const events = ledgerEvents(options.path);
-    expect(events.map(event => event['kind'])).toEqual(['claim', 'release', 'post', 'claim', 'release', 'post']);
+    expect(events.map(event => event['kind'])).toEqual(['claim', 'return', 'post', 'claim', 'return', 'post']);
     expect(events[2]).toMatchObject({ kind: 'post', message: { id: `return-${claimA.claim.id}`, at: 1_000, expiresAt: 3_000 } });
     expect(events[5]).toMatchObject({ kind: 'post', message: { id: `return-${claimB.claim.id}`, at: 2_000, expiresAt: 8_000 } });
     const raw = readFileSync(options.path, 'utf8');
