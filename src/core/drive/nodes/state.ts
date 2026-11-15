@@ -15,6 +15,8 @@ export interface NodeRecord extends NodeSession {
   /** Maximum concurrent claims; zero holds admission. Missing preserves legacy routing. */
   slots?: number;
   auth?: NodeAuth;
+  /** Optional numeric host observation; legacy records have no telemetry. */
+  hostStats?: HostStats;
 }
 
 export interface NodesState {
@@ -92,4 +94,27 @@ export function parseState(value: unknown): NodesState {
 export interface NodesStore {
   /** Synchronous, serializable, durable on success; throw without resetting on failure. */
   transaction<T>(fn: (state: NodesState) => T): T;
+}
+
+export interface HostStats {
+  sampledAtMs: number;
+  uptimeSeconds: number;
+  load: Array<number | null>;
+  ramTotal: number;
+  ramUsed: number;
+  diskFree: number | null;
+  cores: Array<{ total: number; idle: number }>;
+}
+const number = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/** Closed numeric schema prevents remote beats carrying arbitrary text or credential fields. */
+export function isHostStats(v: unknown): v is HostStats {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const s = v as HostStats;
+  return Object.keys(s).sort().join() === 'cores,diskFree,load,ramTotal,ramUsed,sampledAtMs,uptimeSeconds' &&
+    number(s.sampledAtMs) && s.sampledAtMs <= 8.64e15 && number(s.uptimeSeconds) && number(s.ramTotal) &&
+    number(s.ramUsed) && s.ramUsed <= s.ramTotal && (s.diskFree === null || number(s.diskFree)) &&
+    Array.isArray(s.load) && s.load.length === 3 && s.load.every(v => v === null || number(v)) &&
+    Array.isArray(s.cores) && s.cores.length <= 4096 && s.cores.every(c => c &&
+      Object.keys(c).sort().join() === 'idle,total' && number(c.total) && number(c.idle) && c.idle <= c.total);
 }

@@ -340,6 +340,9 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/merge-graph') {
     return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/compute') {
+    return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
+  }
   // Per-session operator guidance (RQ-PHX-RECUTDESKOLDC203, recut of #5253).
   //   GET  /api/verse/fleet/control/guidance        → aggregate ack state
   //   GET  /api/verse/fleet/control/guidance/<job>  → one session's file
