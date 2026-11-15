@@ -29,6 +29,8 @@ not automatically the host's state.
 | MCP tool | Returns |
 | --- | --- |
 | `fleet_work_board` | The same bus work board; optional `limit` and exact `thread` filter. |
+| `fleet_coordination_claims` | Read-only fresh host advisory coordination claims, newest first. Reading a claim never creates one. |
+| `fleet_claim_execution` | Read-only sanitized evidence of which live advisory claims have started executing. Grants no claim authority. |
 | `fleet_runtime_identity` | Sanitized host/platform, installed versus source version, drift, fleet-state freshness and reasons. |
 | `fleet_review_pick` | Read-only unowned review task route, also available as `ashlr fleet review-pick`: repository, PR/head and current owner; unavailable ownership evidence withholds the pick. Grants no claim. |
 | `fleet_order_state` | Inbox order classifications and missing evidence; optional `sinceHours` from 1–720. |
@@ -36,6 +38,8 @@ not automatically the host's state.
 | `fleet_pool_reach` | Whether configured primary/backup SSH aliases match online tailnet peers, with role and reasons. |
 | `fleet_channel_health` | Slack/iMessage channel health, proof and `asOf`; unavailable reads remain unknown. |
 | `fleet_recheck` | Runtime, claims, channel health and work board joined into VERIFIED / UNKNOWN / BLOCKED sections and missing reasons. |
+| `fleet_bridge_check` | One READY or BLOCKED verdict on whether the live runtime, the claims ledger and the peer ledger all read cleanly; `missing[]` names what did not. Reachability only. |
+| `fleet_peer_ledger` | Peer bus budget metadata: sends left per pair, row capacity and origins near the hop cap. Optional exact pair lookup; grants no send authority. |
 | `fleet_slack_replies` | Same-thread sent-receipt evidence, answered/unanswered counts, uncertainty and a bounded unanswered sample; attempted sends do not count as answers. |
 
 On the host, these CLI reads are also supported (use `--json`):
@@ -45,6 +49,8 @@ On the host, these CLI reads are also supported (use `--json`):
 | `ashlr fleet work-board` | The bus work board and availability indicators. |
 | `ashlr fleet order-state` | Inbox order classifications from order-trace and live evidence. |
 | `ashlr fleet runtime-identity` | Sanitized runtime identity and version/freshness evidence. |
+| `ashlr fleet bridge-check` | The same READY or BLOCKED reachability verdict (`--json`); exits 0 when READY, 3 when BLOCKED. |
+| `ashlr fleet peer-ledger` | Peer bus rate-limit, capacity and hop budget (`--json`, or `--from-agent` with `--target` for one exact pair). |
 | `ashlr fleet tailnet-peers` | Sanitized tailnet peer evidence. |
 | `ashlr fleet pool-reach` | Primary/backup alias-to-peer reachability evidence. |
 | `ashlr fleet coordination board` | The separate local advisory coordination ledger: claims, messages, proposals and expired-claim count. |
