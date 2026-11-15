@@ -11,6 +11,8 @@ import {
   type AgentNetworkConfig, type SlackBridgeConfig,
 } from './slack-network.js';
 import { readSlackJournal, type SlackJournalRead } from './slack-journal.js';
+import { readSlackSendReceipts } from './slack-send-receipts.js';
+import { bindSlackReplies, type InboundRequest } from './slack-reply-binding.js';
 import {
   evaluateSlackAudience, slackAudienceRecipients, slackSendDecision,
   SLACK_AUDIENCE_GATES, SLACK_MEMBER_CAP,
@@ -29,6 +31,20 @@ export interface SlackBridgeStatus {
   teamIdentities: { slack: number; total: number };
   comms: { confirmedByMason: boolean };
   journal: { state: SlackJournalRead['state']; ingested: number; ignored: number; lastAt: string | null };
+  /**
+   * Ingested requests bound to same-thread `sent` receipts. An `attempted`
+   * send is never an answer; `uncertainSends` counts attempts never confirmed.
+   */
+  replies: {
+    state: 'ok' | 'missing' | 'degraded';
+    answered: number;
+    unanswered: number;
+    oldestUnansweredAt: string | null;
+    uncertainSends: number;
+    rejected: number;
+    futureDated: number;
+    unansweredSample: { channelId: string; threadTs: string; messageTs: string; at: string }[];
+  };
   ready: boolean;
   /** Offline configuration does not establish a connected bot or receive route. */
   transport: { health: 'unknown'; observedAt: null; probeCommand: string };
@@ -40,6 +56,8 @@ export interface SlackBridgeStatusOptions {
   configPath?: string;
   commsPath?: string;
   runsDir?: string;
+  /** Slack transport state root holding messages.json (tests). */
+  stateRoot?: string;
   home?: string;
   now?: () => Date;
 }
@@ -68,10 +86,18 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const journal = readSlackJournal({ ...(options.runsDir ? { runsDir: options.runsDir } : {}), limit: 4096 });
   let ingested = 0;
   let ignored = 0;
+  const requests: InboundRequest[] = [];
   for (const entry of journal.entries) {
-    if (entry.decision === 'ingested') ingested++;
-    else ignored++;
+    if (entry.decision === 'ingested') {
+      ingested++;
+      if (entry.channelId && entry.messageTs && entry.threadTs) {
+        requests.push({ at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs });
+      }
+    } else ignored++;
   }
+  const sends = readSlackSendReceipts(options.stateRoot ? { stateRoot: options.stateRoot } : {});
+  const binding = bindSlackReplies({ requests, receipts: sends.receipts, now: now() });
+  const unansweredByAge = [...binding.unanswered].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const confirmedByMason = loadCommsConfirmation({ ...(options.commsPath ? { path: options.commsPath } : {}), ...(options.home ? { home: options.home } : {}) });
   const slackIds = slackIdentityCount(config);
   const ready = config.state === 'ok' && bridge !== undefined &&
@@ -97,6 +123,19 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
     journal: {
       state: journal.state, ingested, ignored,
       lastAt: journal.entries[0]?.at ?? null,
+    },
+    replies: {
+      state: journal.state === 'degraded' || sends.state === 'degraded' ? 'degraded'
+        : journal.state === 'missing' && sends.state === 'missing' ? 'missing' : 'ok',
+      answered: binding.answered.length,
+      unanswered: binding.unanswered.length,
+      oldestUnansweredAt: unansweredByAge[0]?.at ?? null,
+      uncertainSends: sends.receipts.filter((r) => r.state === 'attempted').length,
+      rejected: binding.rejected,
+      futureDated: binding.futureDated,
+      unansweredSample: unansweredByAge.slice(0, 5).map((r) => ({
+        channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
+      })),
     },
     ready,
     transport: { health: 'unknown', observedAt: null, probeCommand: 'phm channels slack probe --json' },

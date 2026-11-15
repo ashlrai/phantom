@@ -75,7 +75,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
-  graph: ['nodes', 'edges', 'status', '--json', '--help'],
+  graph: ['nodes', 'edges', 'status', '--fleet', '--seats', '--json', '--help'],
   sweep: ['report'],
   check: ['--base', '--json', '--help'],
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],

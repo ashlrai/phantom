@@ -45,6 +45,7 @@ function statusFixture(overrides: Partial<SlackBridgeStatus> = {}): SlackBridgeS
     teamIdentities: { slack: 2, total: 2 },
     comms: { confirmedByMason: true },
     journal: { state: 'ok', ingested: 3, ignored: 1, lastAt: '2026-11-13T18:28:00.000Z' },
+    replies: { state: 'ok', answered: 3, unanswered: 0, oldestUnansweredAt: null, uncertainSends: 0, rejected: 0, futureDated: 0, unansweredSample: [] },
     ready: true,
     transport: { health: 'unknown', observedAt: null, probeCommand: PROBE },
     next: `mapping is ready; run ${PROBE} for authenticated identity`,
@@ -61,6 +62,7 @@ const missingConfig = (): SlackBridgeStatus => statusFixture({
   teamIdentities: { slack: 0, total: 0 },
   comms: { confirmedByMason: false },
   journal: { state: 'missing', ingested: 0, ignored: 0, lastAt: null },
+  replies: { state: 'missing', answered: 0, unanswered: 0, oldestUnansweredAt: null, uncertainSends: 0, rejected: 0, futureDated: 0, unansweredSample: [] },
   ready: false,
   next: 'create ~/.ashlr/agent-network.toml -- see docs/AGENT-NETWORK.md (Slack bridge)',
 });

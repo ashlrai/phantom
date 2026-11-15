@@ -110,6 +110,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
 | Choose where drive workers and remote pools run | [Drive node options](https://github.com/ashlrai/phantom/blob/master/docs/NODES.md) |
 | Understand macOS CLI launch holds and memory recovery thresholds | [Host headroom](https://github.com/ashlrai/phantom/blob/master/docs/HOST-HEADROOM.md) |
+| Inspect declared agents, engine/accounts, models and MCP relationships | [graph.v1 registry — source guide](https://github.com/ashlrai/phantom/blob/master/docs/GRAPH-V1.md) |
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
