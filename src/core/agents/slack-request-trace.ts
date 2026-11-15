@@ -3,7 +3,7 @@
  * journal entry that carries the ids a reply can bind to, join the durable
  * ingress receipt (journal `bus` outcome) with the send-store evidence and
  * report one outcome -- ANSWERED by a same-thread `sent` receipt, UNCERTAIN
- * when only an `attempted` send exists in that thread, BUS-FAILED when the
+ * when a timestamped `attempted` send could follow the request, BUS-FAILED when the
  * bus append failed, else UNANSWERED. Message text, author ids and paths are
  * never read or repeated; the output is ids and timestamps only.
  */
@@ -101,9 +101,23 @@ export function traceSlackRequests(input: {
     indexes.sort((a, b) => compareText(pending[a]!.req.at, pending[b]!.req.at));
     indexes.forEach((i, rank) => rankByIndex.set(i, rank));
   }
-  const attempted = new Set(
-    receipts.filter((r) => r.state === 'attempted' && r.thread !== undefined).map((r) => `${r.channel}:${r.thread}`),
-  );
+  // An attempt has no request identity. Even with a timestamp, it only
+  // establishes thread-level ambiguity, not a one-to-one association.
+  // The transport normally writes attempts without ts; those cannot prove timing.
+  const attempted = receipts.filter((r) => r && r.state === 'attempted' &&
+    isSlackChannelId(r.channel) && isSlackTs(r.thread) && isSlackTs(r.ts));
+  const hasAttempt = (req: InboundRequest): boolean => {
+    if (!eligible(req)) return false;
+    const receivedMs = BigInt(Date.parse(req.at));
+    return attempted.some((r) => {
+      if (r.channel !== req.channelId || r.thread !== req.threadTs || !r.ts) return false;
+      const [seconds, fraction] = r.ts.split('.') as [string, string];
+      // Compare decimal seconds exactly, including sub-millisecond precision.
+      const scale = 10n ** BigInt(fraction.length);
+      const attempt = BigInt(seconds) * scale + BigInt(fraction);
+      return attempt * 1000n >= receivedMs * scale && attempt * 1000n <= BigInt(nowMs) * scale;
+    });
+  };
   const counts = { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
   const rows: SlackTraceRow[] = pending.map((p, i) => {
     const { req, ingress } = p;
@@ -116,7 +130,7 @@ export function traceSlackRequests(input: {
       row.replyTs = replies[rank]!;
     } else if (ingress === 'failed') {
       row.outcome = 'bus-failed';
-    } else if (attempted.has(`${req.channelId}:${req.threadTs}`)) {
+    } else if (hasAttempt(req)) {
       row.outcome = 'uncertain';
     }
     counts.total++;
