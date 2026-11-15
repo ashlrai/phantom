@@ -104,7 +104,8 @@ phm fleet research-digest --file <digest> --shipped landed.txt --repos-root ~/Pr
 ```
 
 `--apply` requires `--queue`; it re-reads and re-lints the target file at write
-time, holds an exclusive `<queue>.lock` (5 s, never stolen), and appends only
+time, holds an exclusive `<queue>.research-digest.lock` (busy locks are refused,
+never stolen; shared with [ideation](IDEATION.md)), and appends only
 proposals that pass parse, dedup and lint — plus the `--approve` id list when
 given. Writes are atomic (temp file, fsync, rename). A rejected proposal is
 never appended; it stays in `drops` with reasons.
