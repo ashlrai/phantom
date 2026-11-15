@@ -9,7 +9,7 @@
  * The capped tail source can scroll releases out between polls — the stream
  * may have gaps; not durable exactly-once.
  */
-import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
+import { abortableSleep, isAwaitMs, wireAwaitCancel } from '../util/await-support.js';
 import { readResetReleases, type ResetReleaseRecord } from './usage-reset-release.js';
 
 /** Finite caps keep an unattended follow bounded: 24 h overall, 1 h between reads. */
@@ -90,10 +90,7 @@ export async function followResetReleases(options: ResetFollowOptions,
   let reads = 0, emitted = 0, lastError: string | null = null;
   const fail = (why: string): void => { outcome = 'failed'; lastError = why; };
   const controller = new AbortController();
-  const abort = (): void => controller.abort();
-  process.on('SIGINT', abort); process.on('SIGTERM', abort);
-  signal?.addEventListener('abort', abort, { once: true });
-  if (signal?.aborted) abort();
+  const detach = wireAwaitCancel(controller, signal);
   const deadline = now() + timeoutMs;
   let inFlight = false;
   let wake!: (reason: 'deadline' | 'cancelled') => void;
@@ -163,9 +160,7 @@ export async function followResetReleases(options: ResetFollowOptions,
   } finally {
     clearTimeout(timer);
     controller.signal.removeEventListener('abort', onAbort);
-    controller.abort(); // dispose an owned abortable sleep if it is still pending
-    process.off('SIGINT', abort); process.off('SIGTERM', abort);
-    signal?.removeEventListener('abort', abort);
+    detach(); // also disposes an owned abortable sleep if it is still pending
   }
   return { outcome, reads, emitted, lastError, ...(inFlight ? { inFlight: true } : {}) };
 }
