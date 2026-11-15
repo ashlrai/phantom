@@ -116,12 +116,34 @@ describe('readAdmission and phm pool admission', () => {
     expect(r.daemon.tickAgeSeconds).toBe(60);
     expect(r.installLock.holder).toBeNull();
   });
+  it('exposes lane pacing through the JSON CLI', async () => {
+    await writeFile(join(queue, 'budget-overrides.json'), JSON.stringify({ devin: { weekly_used_pct: 69, reset_at: new Date(NOW + 86400_000).toISOString() } }));
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdPool(['admission', '--json'], probes())).toBe(0);
+    const report = JSON.parse(String(output.mock.calls[0]?.[0]));
+    expect(report.lanes.devin.routine).toMatchObject({ admit: true, used_fraction: .69, reason: 'reset pacing: admit' });
+    expect(report.lanes.devin.critical.limit).toBe(.95);
+  });
   it('legacy probes bound the cap by the adaptive controller state, not ncpu', async () => {
     await writeFile(join(queue, 'slots.json'), JSON.stringify({ devin: lane(30, { ceiling: 32 }) }));
     await writeFile(join(queue, 'concurrency.json'), JSON.stringify({ schema: 'dispatchd.concurrency.v1', cap: 24 }));
     expect(await readAdmission(probes())).toMatchObject({ cap: 24, adaptiveCap: 24, hardCap: null, ncpu: 18 });
     await writeFile(join(queue, 'concurrency.json'), JSON.stringify({ schema: 'other', cap: 24 }));
     expect(await readAdmission(probes())).toMatchObject({ cap: 18, adaptiveCap: null });
+  });
+  it('keeps live load protection and stale-snapshot diagnostics alongside lane pacing', async () => {
+    await writeFile(join(queue, 'LOADGATE_OFF'), '');
+    await writeFile(join(queue, 'budget-overrides.json'), JSON.stringify({ devin: { weekly_used_pct: 69 } }));
+    await writeFile(join(queue, 'admission.json'), JSON.stringify({
+      schema: 'dispatchd.admission.v2', admit: true, ts: '2026-11-02T09:00:00Z',
+    }));
+    const report = await readAdmission(probes({ load1: () => 500 }));
+    expect(report).toMatchObject({
+      admit: false, disabled: false,
+      staleSnapshot: { ts: '2026-11-02T09:00:00Z', ageSeconds: 10800 },
+      lanes: { devin: { routine: { admit: false }, critical: { admit: true } } },
+    });
+    expect(report.reason).toMatch(/loadavg 500\.0 >/);
   });
   it('maps the v2 adaptive cap and an absent operator hard_cap', async () => {
     await writeFile(join(queue, 'admission.json'), JSON.stringify({ schema: 'dispatchd.admission.v2', admit: true,
