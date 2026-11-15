@@ -41,6 +41,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market
+from session_handoff import handoff_advice
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -515,6 +516,11 @@ def ab_scan(lane, alive_):
             ev("USAGE_LIMIT_SEEN %s %s %s: worktree path refused (containment), no hold" % (lane, j, pid)); continue
         if osrc == "helper_unavailable":
             ev("USAGE_LIMIT_SEEN %s %s %s: helper_unavailable, no hold" % (lane, j, pid)); metric({"event": "autobackoff_skip", "lane": lane, "job": j, "pattern": pid, "src": "helper_unavailable"}); continue
+        # Preserve an advisory packet pointer even when partial work prevents a lane hold.
+        # No replay, worktree cleanup, routing or live launcher behavior changes here.
+        if (failed or not work) and osrc != "outcome_unreadable":
+            advice = handoff_advice(j, lane, "rate-limit")
+            if advice: metric(advice)
         if work if lane == "codex-cmp" else (work and not failed):   # cmp: work never holds; others: failed or EMPTY only
             ev("USAGE_LIMIT_SEEN %s %s %s: run produced work, no hold" % (lane, j, pid)); continue
         ln = re.sub(r"^\[[0-9T:.\-]+Z?\]\s*", "", m.group(0))[:600]   # log timestamp prefix dropped
@@ -1795,6 +1801,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if len(launched) >= GATE["claim_limit"] or sum(running.values()) >= GCAP:
             decision["chosen_lane"] = None; decision["reason_codes"].append("global_admission")
         market_metric(decision)
+        if view.get(f[2], {}).get("quota") == 0:
+            advice = handoff_advice(j, f[2], "quota-exhausted", decision["chosen_lane"])
+            if advice: market_metric(advice)
         if decision["chosen_lane"] is None:
             rest.append(line); seen.add(j); continue
         lane = decision["chosen_lane"]
