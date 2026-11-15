@@ -42,10 +42,13 @@ async function read() {
 }
 
 describe('fleet peer ledger MCP tool (395)', () => {
-  it('lists a closed no-argument schema with read-only annotations', async () => {
+  it('lists a closed pair-selector schema with read-only annotations', async () => {
     const { tools } = await client.listTools();
     const tool = tools.find(t => t.name === name);
-    expect(tool?.inputSchema).toEqual({ type: 'object', properties: {}, additionalProperties: false });
+    expect(tool?.inputSchema).toEqual({ type: 'object', properties: {
+      fromAgent: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+      target: { type: 'string', pattern: '^[a-zA-Z0-9_.:/#-]{1,128}$' },
+    }, additionalProperties: false });
     expect(tool?.description).toBe(NOTE);
     expect(tool?.annotations?.readOnlyHint).toBe(true);
     expect(tool?.annotations).toEqual(tools.find(t => t.name === 'fleet_coordination_returns')?.annotations);
