@@ -12,7 +12,7 @@ const board = (count = 2): FleetBoard => ({
   schema: 'fleet.coordination.v1', state: 'known', expiredClaims: 0, messages: [], proposals: [],
   claims: ['RQ-FAKE-ONE', 'RQ-FAKE-TWO'].slice(0, count).map(id => ({
     id, repo: 'fake/repo', task: 'fake task', agent: 'fake-agent',
-    claimedAt: NOW - 1_000, expiresAt: NOW + 1_000,
+    claimedAt: NOW - 1_000, expiresAt: NOW + 60_000,
   })),
 });
 const processSnapshot = (): workers.LiveWorkersSnapshot => ({
@@ -40,17 +40,19 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 
 describe('one board per runtime snapshot', () => {
-  it.each(['omitted', 'production'] as const)('uses one board and clock with %s execution, fresh per request', async mode => {
+  it.each(['omitted', 'production'] as const)('uses one board with %s execution and a join clock sampled after the worker read, fresh per request', async mode => {
     const readBoard = vi.fn(() => board(readBoard.mock.calls.length === 1 ? 2 : 1));
     if (mode === 'production') vi.mocked(defaults.board).mockImplementation(readBoard);
     const options = mode === 'production'
       ? { ...deps(defaults.board), execution: defaults.execution } : deps(readBoard);
-    const clock = vi.fn().mockReturnValueOnce(NOW).mockReturnValue(NOW + 120_000);
+    // The board keeps the entry instant; the join's observation clock is
+    // sampled again after the worker read, five elapsed seconds later.
+    const clock = vi.fn().mockReturnValueOnce(NOW).mockReturnValue(NOW + 5_000);
     options.now = clock;
     const first = await readRuntimeSnapshot(options);
     expect(readBoard).toHaveBeenCalledExactlyOnceWith({ now: NOW });
-    expect(clock).toHaveBeenCalledTimes(1);
-    expect(first.asOf).toBe(new Date(NOW).toISOString());
+    expect(clock).toHaveBeenCalledTimes(2);
+    expect(first.asOf).toBe(new Date(NOW + 5_000).toISOString());
     expect(first.coordination.activeClaims).toBe(2);
     expect(first.execution).toEqual({ state: 'known', running: 1, claimedNoWorker: 1, unknown: 0 });
     const next = await readRuntimeSnapshot({ ...options, now: () => NOW });
