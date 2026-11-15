@@ -287,6 +287,7 @@ canonical release guide for required hosted qualification and publication.
 - [Harness digest contribution format](https://github.com/ashlrai/phantom/blob/master/docs/HARNESS-DIGEST-FORMAT.md)
 - [Historical release and operator reference](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-HISTORICAL.md)
 - [Hosting channel input](https://github.com/ashlrai/phantom/blob/master/docs/CHANNEL-HOST.md)
+- [Living docs sync (`scripts/living-docs-sync.mjs`)](https://github.com/ashlrai/phantom/blob/master/docs/LIVING-DOCS.md): plan or regenerate selected generated docs — CLI docs, llms.txt index, code map, changelog block — and reports a PR-ready plan.
 - [Living End-State portfolio shadow](https://github.com/ashlrai/phantom/blob/master/docs/LIVING-END-STATE.md)
 - [Local inference with Phantom](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-INFERENCE.md)
 - [Local proactive-agent coordination](PROACTIVE-COORDINATION.md)
