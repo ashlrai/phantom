@@ -126,6 +126,9 @@ provider transcripts. The runner must not publish, resolve copied credentials or
 perform unfenced external effects. It must pass the claim token to any effect sink
 that accepts effects; a preflight lease check alone cannot fence external effects.
 No runner executable is installed by this change.
+The [reference runner](NODES.md#reference-runner-security-review-before-installation)
+provides `phm node run-once` for the fixed `shell-check` and `omlx-chat` packs;
+its operator-owned wrapper requires Security review before installation.
 
 Workers target a three-second renewal and pressure-check interval; bounded
 synchronous telemetry probes and SSH operations can delay a check. They hold on local `~/.ashlr-runs/PAUSE` or `KILL`,
