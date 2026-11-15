@@ -108,7 +108,7 @@ function tickFixture(): TickFixture {
   const steps: Partial<SelfTickSteps> = {
     'reset-release': ok, 'lane-autohold': ok, 'stray-stop': ok, 'meter-incident': ok,
     'planner-tick': ok, 'inbox-acks': ok, 'order-notices': orderNotices,
-    'needs-triage': ok, 'waste-incident': ok, 'teammate-overdue': ok, 'landed-sweep': ok,
+    'needs-triage': ok, 'waste-incident': ok, 'teammate-overdue': ok, 'landed-sweep': ok, 'cos-work': ok,
   };
   return { home, runsDir, output: [], steps, orderNotices };
 }

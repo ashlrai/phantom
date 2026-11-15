@@ -66,6 +66,6 @@ describe('fleet_order_state owner', () => {
 
   it('a trace read that throws reports unavailable with no orders, body unchanged', async () => {
     const body = await call({ read: async () => { throw new Error('boom /Users/example/secret'); }, live: async () => liveSnap() });
-    expect(body).toEqual({ v: 1, asOf: NOW.toISOString(), sources: 'unavailable', live: 'unavailable', orders: [] });
+    expect(body).toEqual({ v: 1, asOf: NOW.toISOString(), sources: 'unavailable', live: 'unavailable', lanes: 'unavailable', orders: [] });
   });
 });

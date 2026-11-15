@@ -58,6 +58,8 @@ describe('joined runtime snapshot HTTP route', () => {
         lastFleetStateRead: { mtime: 'UNKNOWN', ageSeconds: 'UNKNOWN' },
         coordination: { state: 'known', activeClaims: 2, newestReturnAgeSeconds: 'UNKNOWN',
           reason: 'no readable retained return at or before asOf' },
+        execution: { state: 'UNKNOWN', running: 0, claimedNoWorker: 0, unknown: 0,
+          reason: 'execution: ledger unavailable' },
         asOf: NOW.toISOString(), reasons: ['lastFleetStateRead: state missing, unreadable or scan limit exceeded'],
       },
     });

@@ -1,8 +1,9 @@
 # Connector profile
 
 `phm connectors` manages `~/.phantom/connectors/profile.toml`. This is declarative
-metadata, the only connector state suitable for plaintext sync. Profile operations never resolve credentials or grant scopes. The run surface
-is currently denied pending the separate Security review described below.
+metadata, the only connector state suitable for plaintext sync. Profile operations never resolve credentials or grant scopes. Connectors start
+through [`phm connectors exec`](#launch-with-credentials); the older `run` surface
+stays denied pending the separate Security review described below.
 Empty tools/lanes select no consumers; selectors are explicit names, not wildcards.
 
 ```sh
@@ -74,6 +75,72 @@ add `{ok:true,connector}`, remove `{ok:true,removed}`, and import
 `{imported:[id],skipped:[{source,reason}]}`. Plain output is readable JSON;
 `phm connectors --help` prints usage.
 
+
+## Launch with credentials
+
+```sh
+phm connectors add github --kind cli --command gh --tool claude --lane work --credential GH_TOKEN=GITHUB_ACCESS --json
+phm connectors exec github --tool claude --lane work -- gh repo list --json name
+phm connectors config --client claude --lane work --json
+```
+
+`exec` starts a `cli` or `mcp-stdio` connector. The tool and lane must both be
+listed on the connector (empty lists deny), and the first word after `--` must
+be the profile `command` exactly; profile `args` follow it, then your extra
+arguments. Extra arguments pass the same credential-argument and secret-shape
+refusal as the profile.
+
+Phantom never holds a credential value. A connector without credentials starts
+directly, with Phantom-internal variables removed. A connector with credentials
+starts as `phantom --quiet exec -- phm connectors exec-session <id> ...`:
+Phantom Secrets resolves vault entries for the project in the working directory
+(or `--project <dir>`, which must hold `.phantom.toml`) and keeps real values in
+its loopback proxy. Its child receives only session tokens. The `exec-session`
+step re-reads the profile, sets each binding to the session token issued for its
+vault name, removes every other session token, and starts the command. A vault
+name Phantom did not serve stops the launch. `exec-session` refuses to run
+outside `phantom exec`, and it only remaps tokens already in its environment.
+
+Credential `name` values used with exec must be the keys Phantom Secrets protects
+in that project (`phantom list`), for example `GITHUB_ACCESS`. Bindings may differ.
+Check a key with `phantom why <KEY>`; a key without a proxy route reaches the
+child as a token no provider accepts.
+
+What this guarantees: argv at every level (visible in `ps`) contains ids,
+selectors and executables only; nothing is written to disk or logged by Phantom;
+real values stay inside the `phantom exec` process. Session tokens in the child
+environment end with the session. On success `exec` writes nothing to stdout, so
+an MCP stdio server's protocol stream is untouched. The exit status is the
+child's (128 + signal number when it was killed); a refusal exits 2 with
+`{ok:false,error}` under `--json`. `phantom` must be installed for connectors
+with credentials.
+
+### Client configs
+
+`phm connectors config --client claude|cursor|codex --lane <lane> [--project <dir>] [--json]`
+prints MCP entries for every `mcp-stdio` and `mcp-http` connector that lists the
+client as a tool and the lane. Stdio servers launch through the wrapper, so the
+entry holds no token, env or header:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "phm",
+      "args": ["connectors", "exec", "github", "--tool", "claude", "--lane", "work", "--", "github-mcp-server"]
+    }
+  }
+}
+```
+
+Codex output is TOML under `mcp_servers`. Credential-free HTTP endpoints are
+emitted as `url` entries. HTTP connectors with credentials are skipped and
+reported (exit 1): header injection is not provided in this version. Every
+snippet is checked against the secret-shape gate before it is printed. The
+command writes nothing; paste the snippet into the client yourself. For Codex,
+use a lane `CODEX_HOME` under `~/.ashlr-runs`, never `~/.codex`. JSON output is
+`{client, lane, format, servers, skipped, config}`; plain output is the snippet,
+with skipped entries on stderr.
 
 ## Run a CLI connector
 
@@ -158,8 +225,8 @@ The existing `phm wire claude|cursor|codex --json` commands register the gateway
 with clients. Use `phm connectors import --json` to import supported client
 metadata; profile entries are not automatically installed in a client or gateway.
 Native tools are invoked through the gateway and retain its authorization checks.
-Connector CLI execution remains denied pending Security review; plugin and MCP
-entries need their respective hosts. This registry does not create permissions.
+CLI connectors start with `phm connectors exec`; MCP entries need a client
+(`phm connectors config` prints one) and plugin entries need their host. This registry does not create permissions.
 
 ### Lane view and shared tool registry
 

@@ -1,3 +1,4 @@
+import { peerEnvelopeSummary } from '../fleet-bus/peer-envelope.js';
 import { narrowBusFeedPage } from './agent-bus-feed-query.js';
 import { ciIncidentItem } from './ci-incident-items.js';
 import { sortNewestFirst, type FeedItem } from './fleet-events-model.js';
@@ -13,7 +14,8 @@ export function busFeedItems(page: unknown): FeedItem[] {
   if (!data) return [];
   return data.messages.map(({ envelope }) => {
     const body = record(envelope.body);
-    const excerpt = typeof body.text === 'string' ? body.text : typeof body.kind === 'string' ? body.kind
+    const summary = peerEnvelopeSummary(envelope.body);
+    const excerpt = summary ? `${summary.label} — ${summary.text}` : typeof body.text === 'string' ? body.text : typeof body.kind === 'string' ? body.kind
       : (JSON.stringify(envelope.body) ?? '').slice(0, 120);
     // Prefer the interjection's event time, then an optional page timestamp. The
     // receipt time is transport metadata, not the time the agent said it.
