@@ -363,6 +363,7 @@
 /test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/doctor-dedupe.test.ts @masonwyatt23
+/test/doctor-merge-path-cli.test.ts @masonwyatt23
 /test/drive-pool-routing.test.ts @masonwyatt23
 /test/drive-sim/policy.ts @masonwyatt23
 /test/elite-self-land-315.test.ts @masonwyatt23
@@ -1002,6 +1003,8 @@
 /test/merge-identity-owner-preservation-297s.test.ts @masonwyatt23
 /test/merge-identity-recut.test.ts @masonwyatt23
 /test/merge-identity-registry.test.ts @masonwyatt23
+/test/merge-path-readonly.test.ts @masonwyatt23
+/test/merge-path.test.ts @masonwyatt23
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-plan-owner-preservation-304s.test.ts @masonwyatt23
 /test/merge-plan-preservation-167.test.ts @masonwyatt23
