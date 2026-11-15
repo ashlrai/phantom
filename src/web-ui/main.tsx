@@ -17,6 +17,7 @@ syncConsoleLayout();
 // and that throttle, not the download, was most of the gap between the
 // loading line and the shell on a cold /verse load (3.29.16 measurements).
 function loadApp(): Promise<ComponentType> {
+  if (/^\/verse\/owner-assist\/?$/.test(window.location.pathname)) return import('./routes/owner-assist/OwnerAssistApp.js').then((module) => module.OwnerAssistApp);
   if (isResourceConsolePath()) return import('./app/ResourcePoolConsoleApp.js').then((module) => module.ResourcePoolConsoleApp);
   if (isUniverseConsolePath()) return import('./app/UniverseConsoleApp.js').then((module) => module.UniverseConsoleApp);
   if (isVerseMobilePath() || autoSelectVerseMobile()) return import('./app/VerseMobileApp.js').then((module) => module.PhantomMobileApp);
