@@ -128,7 +128,10 @@ export async function takeReview(options: ReviewTakeOptions): Promise<ReviewTake
     pick_reason: pick.reason, reason: pick.reason,
   };
   if (picked === null) {
-    return { ...report, outcome: pick.source.prs === 'unavailable' || pick.source.unavailable.length > 0 ? 'unavailable' : 'none' };
+    const unavailable = pick.source.prs === 'unavailable' || pick.source.unavailable.length > 0;
+    // Keep an unambiguous holder on refusal; multiple skipped PRs have no single owner.
+    const owner = !unavailable && pick.skipped.length === 1 ? pick.skipped[0]!.owner : null;
+    return { ...report, outcome: unavailable ? 'unavailable' : 'none', owner };
   }
   if (options.ttlSeconds !== undefined
     && (!Number.isSafeInteger(options.ttlSeconds) || options.ttlSeconds < 1 || options.ttlSeconds > 86400)) {
