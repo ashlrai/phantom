@@ -73,6 +73,25 @@ it('two different request ids yield two lines even for the same text', async () 
   expect(inboxLines()).toHaveLength(2);
 });
 
+it('serializes concurrent retries and persists the first ack before responding', async () => {
+  const handler = api({ runsDir, now: () => NOW });
+  const requestId = 'req-83ccc0000001';
+  const body = buildInterjectBody('Order: hold lane claude', requestId);
+  const [first, retry] = await Promise.all([
+    call(handler, INTERJECT_POST_PATH, 'POST', body),
+    call(handler, INTERJECT_POST_PATH, 'POST', body),
+  ]);
+  expect(first.status).toBe(201);
+  expect(retry).toEqual(first);
+  const ledger = JSON.parse(readFileSync(join(runsDir, 'channel-receipts', 'interject-requests.json'), 'utf8'));
+  expect(ledger).toEqual([[requestId, first.status, first.body]]);
+  // Different text rules out content-window dedupe masking a missing request ack.
+  const restarted = api({ runsDir, now: () => NOW });
+  expect(await call(restarted, INTERJECT_POST_PATH, 'POST', buildInterjectBody('changed retry text', requestId))).toEqual(first);
+  expect(inboxLines()).toHaveLength(1);
+  expect(busMessages()).toHaveLength(1);
+});
+
 it('a request with no id keeps todays behavior: a line per distinct message', async () => {
   const handler = api({ runsDir, now: () => NOW });
   await call(handler, INTERJECT_POST_PATH, 'POST', buildInterjectBody('first order'));
