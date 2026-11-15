@@ -22,9 +22,9 @@ beforeEach(() => {
 });
 afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
-it('orders inbox-acks after planner-tick and before order-notices and landed-sweep', () => {
+it('orders inbox-acks after planner-tick and before owner-live, order-notices and landed-sweep', () => {
   expect(SELF_TICK_STEP_ORDER).toEqual([
-    'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+    'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
   ]);
 });
 

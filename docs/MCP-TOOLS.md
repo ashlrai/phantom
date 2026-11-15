@@ -150,6 +150,7 @@ or control apps.
 | --- | --- |
 | `intent_link` | Record caller-supplied merged pull evidence on matching directives. Supplied claims are not verified. |
 | `intent_ship` | Record caller-supplied release evidence on matching directives. Supplied claims are not verified. |
+| `intent_stale` | Preview stale intents or refresh local tracking without closing or dispatching work. |
 
 ## `phantom-fleet` — Isolated Fleet Server (`phm mcp fleet`)
 

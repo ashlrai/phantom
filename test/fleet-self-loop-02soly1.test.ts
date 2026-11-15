@@ -63,6 +63,7 @@ const recordingSteps = () => {
     'meter-incident': stub('meter-incident'),
     'planner-tick': stub('planner-tick'),
     'inbox-acks': stub('inbox-acks'),
+    'owner-live': stub('owner-live'),
     'waste-incident': stub('waste-incident'),
     'order-notices': stub('order-notices'),
     'needs-triage': stub('needs-triage'),
@@ -282,9 +283,9 @@ describe('fleet self-loop', () => {
       { steps: rec.steps, now: clock.now, sleep: clock.sleep });
     expect(code).toBe(0);
     expect(rec.order).toEqual([
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
-      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
+      'reset-release', 'lane-autohold', 'stray-stop', 'meter-incident', 'planner-tick', 'inbox-acks', 'owner-live', 'order-notices', 'needs-triage', 'waste-incident', 'teammate-overdue', 'landed-sweep',
     ]);
     for (const [index, argv] of rec.argvs.entries()) {
       const flag = rec.order[index] === 'inbox-acks' ? '--flush' : '--apply';
@@ -295,7 +296,7 @@ describe('fleet self-loop', () => {
     expect(outLines.length).toBe(1);
     expect(summary).toMatchObject({ ticks: 3, failures: 0, busy: 0, termination: 'duration' });
     expect(summary!.lastReport).toMatchObject({ mode: 'apply', state: 'ran' });
-    expect(summary!.lastReport!['steps']).toHaveLength(11);
+    expect(summary!.lastReport!['steps']).toHaveLength(12);
   });
 
   it('dry-run is the default: no --apply is forwarded and nothing is applied', async () => {

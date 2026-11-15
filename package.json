@@ -52,6 +52,7 @@
     "docs/SIGNALS.md",
     "docs/FLEET-API.md",
     "docs/model-registry.json",
+    "docs/CLI-AGENT-READINESS.md",
     "docs/PHANTOM-BRAND.md",
     "docs/COMPANIONS.md",
     "docs/CONNECTORS.md",

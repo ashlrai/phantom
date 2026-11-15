@@ -41,6 +41,8 @@ export function scheduleAutomationsTick(opts: AutomationsSchedulerOptions = {}):
   if (automationsSchedulerRefusal(opts.env ?? process.env) !== null) return null;
   const log = opts.log ?? ((message: string) => { console.warn(`[ashlr] ${message}`); });
   const tick = opts.tick ?? (async () => {
+    const { rebalanceSavedRoutines } = await import('./routines.js');
+    await rebalanceSavedRoutines().catch(() => undefined); // Missing evidence must not stop automation dispatch.
     await runAutomationsTick(opts.deps ?? {});
     await refreshAutomationsNeedsYou();
   });

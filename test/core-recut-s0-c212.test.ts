@@ -134,12 +134,16 @@ describe('conflicting-head recut queue', () => {
   it('reads old persisted merge receipts (no timing, no conflict kind) and queue rows unchanged', () => {
     const legacy = { ...merge, status: 'queued' };
     const done = { ...merge, prUrl: PR2, status: 'done' };
-    // Seed through the public API, then rewrite state to the exact pre-recut shape.
+    // Seed through the public API, then rewrite state to the exact pre-timing shape.
     const first = enqueueRouterFollowup(merge);
     enqueueRouterFollowup({ ...merge, prUrl: PR2 });
     completeRouterJob(enqueueRouterFollowup({ ...merge, prUrl: PR2 }).jobId);
     const state = JSON.parse(load('state.json'));
-    expect(state.receipts).toEqual([legacy, done]);
+    expect(state.receipts).toEqual([
+      { ...legacy, enqueuedAt: expect.any(String), completedAt: null },
+      { ...done, enqueuedAt: expect.any(String), completedAt: expect.any(String) },
+    ]);
+    save('state.json', JSON.stringify({ ...state, receipts: [legacy, done] }));
     expect(readRouterQueue().map((j) => j.jobId)).toEqual([first.jobId]);
     expect(JSON.parse(rowJson()[1]!)).toMatchObject({ mergeSha: MERGE_SHA });
     // A recut for a third PR coexists with the legacy receipts.
