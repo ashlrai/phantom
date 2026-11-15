@@ -63,6 +63,10 @@
  * ['orders: reader failed']. It is evidence only: it never changes a state,
  * overall, missing[], the pick or any claim field, and grants nothing.
  *
+ * Top-level peers reports read-only peer bus budgets under the same reader
+ * bound. Reader failure yields unavailable evidence; it never changes a
+ * section, overall, missing[], or a task pick.
+ *
  * Top-level owners joins the three bridge surfaces' advisory claims under
  * one reader bound. It shares the claims snapshot and verdict clock; a failed
  * or stalled read yields null and never changes any state or missing reason.
@@ -87,6 +91,8 @@ import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
 import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import type { LiveJobIds } from './order-work-state.js';
+import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
+import { summarizePeers, type RecheckPeers } from './recheck-peers-line.js';
 import { summarizeOrders, type RecheckOrders } from './recheck-orders-line.js';
 import { readSurfaceOwner, type SurfaceOwnerDeps } from './surface-owner.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
@@ -228,6 +234,8 @@ export interface FleetRecheck {
   pool?: PoolReach | null;
   /** Mason's last-24h inbox orders by work state; evidence only, never changes a state or the pick. */
   orders?: RecheckOrders | null;
+  /** Peer bus budgets; evidence only, never changes a verdict or task pick. */
+  peers?: RecheckPeers | null;
   /** Advisory ownership evidence only; landed history never establishes an owner. */
   owners?: FleetRecheckOwners | null;
   sections: {
@@ -327,6 +335,7 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
     readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
     readPool: () => readPoolReach(defaultPoolReachDeps()),
     readOrders: () => readOrderTrace(),
+    readPeers: () => readPeerLedger(),
     readOwners: () => readOwnersSnapshot({ now: () => now().getTime() }),
     readLaneTargets: () => readLaneTargets(),
   };
@@ -345,6 +354,7 @@ export type FleetRecheckDeps = {
   readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
   readPool?: () => Promise<PoolReach> | PoolReach;
   readOrders?: () => Promise<OrderTraceV1> | OrderTraceV1;
+  readPeers?: () => PeerLedgerReport;
   readOwners?: () => Promise<FleetRecheckOwners | null> | FleetRecheckOwners | null;
   readLaneTargets?: () => Promise<LaneTargetsV1> | LaneTargetsV1;
 };
@@ -897,7 +907,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   }
 
   // All readers share the same 5 s bound; ownership reuses the claims read.
-  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets, owners] = await Promise.all([
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets, owners, peers] = await Promise.all([
     attempt(d.readRuntimeIdentity),
     claimsRead,
     attempt(d.readChannelHealth),
@@ -909,6 +919,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     attempt(d.readOrders),
     attempt(d.readLaneTargets),
     attempt(d.readOwners),
+    attempt(d.readPeers),
   ]);
 
   // Orders evidence uses healthy snapshots only; anything else is "no evidence".
@@ -941,6 +952,10 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     pool: poolEvidence(pool, asOf),
     orders: ordersEvidence(orders, asOf, asOf, liveJobs, lanes),
     owners: owners.ok ? owners.value : null,
+    peers: peers.ok ? summarizePeers(peers.value) : {
+      asOf, status: 'unavailable', liveRows: 0, capacity: 0, rateLimited: 0,
+      tightest: null, nearCap: 0, reasons: ['peers: reader failed'],
+    },
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };

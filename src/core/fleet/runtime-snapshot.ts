@@ -65,7 +65,10 @@ export interface RuntimeSnapshot {
   reasons: string[];
 }
 
-/** One read-only snapshot; failures never expose raw exceptions or store contents. */
+/** One read-only snapshot; failures never expose raw exceptions or store contents.
+ * `asOf` is a settled execution report's own join instant (sampled after the
+ * worker read), else the completion clock, else entry — every reported age and
+ * claim count is evaluated at `asOf`, so an expired claim is never RUNNING. */
 export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<RuntimeSnapshot> {
   const now = deps.now();
   const reasons: string[] = [];
@@ -89,18 +92,16 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     stateRoot = rel === '' ? '~' : rel !== '..' && !rel.startsWith(`..${sep}`) && !resolve(root).startsWith(`${sep}${sep}`)
       ? `~/${rel.split(sep).join('/')}` : '[path outside home]';
   }
-  const age = (ms: number): number | typeof UNKNOWN => Number.isFinite(ms) && ms <= now ? Math.floor((now - ms) / 1000) : UNKNOWN;
-  const lastFleetStateRead: { mtime: string; ageSeconds: number | string } = { mtime: UNKNOWN, ageSeconds: UNKNOWN };
+  // Scan and board capture happen at the entry instant `now`; the observation
+  // instant settles after the worker read — keep raw instants, evaluate at asOf.
+  let stateReadMs: number | null = null;
   if (root === null) {
     reasons.push('lastFleetStateRead: state root unresolved');
   } else {
     try {
       const state = await readFleetRunsDirState({ runsDir: root, now: () => now });
       if (!state.runsDirPresent) throw new Error('state root unavailable');
-      const ms = await newestMtime(root);
-      lastFleetStateRead.mtime = new Date(ms).toISOString();
-      lastFleetStateRead.ageSeconds = age(ms);
-      if (lastFleetStateRead.ageSeconds === UNKNOWN) reasons.push('lastFleetStateRead: future mtime; clock skew');
+      stateReadMs = await newestMtime(root);
     } catch { reasons.push('lastFleetStateRead: state missing, unreadable or scan limit exceeded'); }
   }
   const coordination: { state: string; activeClaims: number | string; newestReturnAgeSeconds: number | string; reason?: string } = {
@@ -110,16 +111,11 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
   try {
     board = deps.board({ now });
     if (board.state !== 'known') throw new Error('unreadable ledger');
-    const returns = projectCoordinationReturns(board, now);
-    coordination.state = 'known';
-    coordination.activeClaims = board.claims.length;
-    const newest = returns.returns[0];
-    if (newest) coordination.newestReturnAgeSeconds = age(Date.parse(newest.at));
-    if (coordination.newestReturnAgeSeconds === UNKNOWN) coordination.reason = 'no readable retained return at or before asOf';
   } catch { coordination.reason = 'coordination ledger: missing or unreadable'; }
   let execution: NonNullable<RuntimeSnapshot['execution']> = {
     state: 'UNKNOWN', running: 0, claimedNoWorker: 0, unknown: 0,
   };
+  let evidence: ClaimExecutionReport | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const deadline = new Promise<null>(resolve => {
@@ -131,14 +127,17 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     // defaults.execution paired with a different board, a supported legacy seam.
     const useCapturedBoard = deps.execution === undefined ||
       (deps.execution === defaultExecution && deps.board === defaults.board);
+    // The join clock is the live injected clock, sampled inside the read after
+    // the worker snapshot — a frozen entry instant predates a fresh generatedAt
+    // and fails the join's own future-stamp check.
     const readExecution = useCapturedBoard ? () => defaults.execution({
       board: () => {
         if (board === null) throw new Error('unavailable captured board');
         return board;
       },
-      now: () => now,
+      now: deps.now,
     }) : deps.execution!;
-    const evidence = await Promise.race([readExecution(), deadline]);
+    evidence = await Promise.race([readExecution(), deadline]);
     if (evidence === null) execution.reason = 'execution: read deadline exceeded';
     else {
       const reason = evidence.ledger !== 'known' ? 'execution: ledger unavailable'
@@ -148,13 +147,36 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     }
   } catch { execution.reason = 'execution: read failed'; }
   finally { if (timer !== undefined) clearTimeout(timer); }
+  // Settle the advertised instant: a settled report's join instant; without
+  // evidence the completion clock; a broken clock keeps the entry instant.
+  const bounded = (ms: number): boolean => Number.isFinite(ms) && ms >= 0 && ms <= 8_640_000_000_000_000;
+  const evidenceInstant = evidence === null ? Number.NaN : Date.parse(evidence.asOf);
+  let asOfMs = bounded(evidenceInstant) ? evidenceInstant : now;
+  if (!bounded(evidenceInstant)) { try { const t = deps.now(); if (bounded(t)) asOfMs = t; } catch { /* keep the entry instant */ } }
+  const age = (ms: number): number | typeof UNKNOWN =>
+    Number.isFinite(ms) && ms <= asOfMs ? Math.floor((asOfMs - ms) / 1000) : UNKNOWN;
+  const lastFleetStateRead: { mtime: string; ageSeconds: number | string } = { mtime: UNKNOWN, ageSeconds: UNKNOWN };
+  if (stateReadMs !== null) {
+    lastFleetStateRead.mtime = new Date(stateReadMs).toISOString();
+    lastFleetStateRead.ageSeconds = age(stateReadMs);
+    if (lastFleetStateRead.ageSeconds === UNKNOWN) reasons.push('lastFleetStateRead: future mtime; clock skew');
+  }
+  // The captured board was read at entry; liveness is re-evaluated at asOf, so a
+  // claim expiring mid-read is dead at the advertised instant — never RUNNING.
+  if (board !== null && board.state === 'known') {
+    coordination.state = 'known';
+    coordination.activeClaims = board.claims.filter(claim => claim.expiresAt > asOfMs).length;
+    const newest = projectCoordinationReturns(board, asOfMs).returns[0];
+    if (newest) coordination.newestReturnAgeSeconds = age(Date.parse(newest.at));
+    if (coordination.newestReturnAgeSeconds === UNKNOWN) coordination.reason = 'no readable retained return at or before asOf';
+  }
   const installedVersion = readLabel('installedVersion', deps.installedVersion);
   const sourceVersion = readLabel('sourceVersion', deps.sourceVersion);
   const report = {
     host: readLabel('host', deps.host), tailnetName: readLabel('tailnetName', deps.tailnet),
     installedVersion, ...(sourceVersion !== installedVersion ? { sourceVersion } : {}),
     pid: deps.pid(), uptimeSeconds: deps.uptime(), platform: readLabel('platform', deps.platform), arch: readLabel('arch', deps.arch),
-    stateRoot, lastFleetStateRead, coordination, execution, asOf: new Date(now).toISOString(), reasons,
+    stateRoot, lastFleetStateRead, coordination, execution, asOf: new Date(asOfMs).toISOString(), reasons,
   };
   return report;
 }

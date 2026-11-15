@@ -13,6 +13,9 @@ export interface StatusDigestLane { lane: string; running: number; target: numbe
 /** Durable bus work-claim counts at `asOfMs` (completion is a claim state, not verified work). */
 export interface StatusDigestWorkClaims { live: number; completed: number; expired: number; owners: number; asOfMs: number }
 
+/** Compact peer-bus health from the read-only peer ledger; only surfaced when it says something. */
+export interface StatusDigestPeers { status: 'ok' | 'empty' | 'unavailable'; rateLimited: number; tightest: string | null; nearCap: number; reason?: string }
+
 export interface StatusDigestInput {
   installedVersion: Fact<string>;
   /** Newest published release that carries the desktop asset. */
@@ -27,6 +30,8 @@ export interface StatusDigestInput {
   topP0: Fact<{ text: string; ageMs: number | null } | null>;
   /** Bus work claims; value null means no claims table exists yet. Absent field keeps the five original lines. */
   workClaims?: Fact<StatusDigestWorkClaims | null>;
+  /** Peer bus health; null/undefined, empty and ok-with-headroom render nothing. */
+  peers?: StatusDigestPeers | null;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -68,6 +73,19 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.workClaims !== undefined) {
     lines.push(`Claims: ${show(input.workClaims, claims => claims === null ? 'none recorded (no claims table)'
       : `${claims.live} live (${claims.owners} owner${claims.owners === 1 ? '' : 's'}) · ${claims.completed} completed · ${claims.expired} expired · as of ${claimsClock.format(new Date(claims.asOfMs))} ET, source bus claims`)}`);
+  }
+  const peers = input.peers;
+  if (peers) {
+    if (peers.status === 'unavailable') {
+      lines.push(`Peers: ${unknown(peers.reason ?? '')}`);
+    } else if (peers.rateLimited > 0 || peers.nearCap > 0) {
+      const parts: string[] = [];
+      if (peers.rateLimited > 0) {
+        parts.push(`${peers.rateLimited} pair${peers.rateLimited === 1 ? '' : 's'} rate-limited${peers.tightest ? ` (${peers.tightest})` : ''}`);
+      }
+      if (peers.nearCap > 0) parts.push(`${peers.nearCap} conversation${peers.nearCap === 1 ? '' : 's'} near hop cap`);
+      lines.push(`Peers: ${parts.join(' · ')}`);
+    }
   }
   return lines;
 }

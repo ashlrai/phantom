@@ -4,6 +4,9 @@
  */
 import type { FleetBoard } from './coordination.js';
 
+/** A receipt's qualification against the caller's observation clock at asOf. */
+type Temporal = 'current' | 'expired' | 'future' | 'invalid';
+
 interface Row {
   claimId: string;
   repo: string;
@@ -15,10 +18,37 @@ interface Row {
   from: string;
   at: string;
   expiresAt: string;
+  /**
+   * Temporal qualification of this receipt: current inside [at, expiresAt),
+   * expired at or after expiry, future when the receipt post-dates the
+   * observation, invalid on an unrenderable clock or non-positive lifetime.
+   * Non-enumerable by design — the row's enumerable key set is a reviewed
+   * evidence-only contract — so readers use row.temporal in memory and
+   * serialized output emits it through toJSON.
+   */
+  readonly temporal: Temporal;
+  /** Emits the enumerable fields plus temporal for JSON.stringify. */
+  toJSON(): Record<string, unknown>;
 }
 
 function iso(ms: number): string {
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : 'unknown';
+  const time = new Date(ms).getTime();
+  return Number.isFinite(time) ? new Date(time).toISOString() : 'unknown';
+}
+
+/** Total clock check: NaN, infinities and finite values outside Date's range all fail. */
+const renderable = (ms: number): boolean => Number.isFinite(new Date(ms).getTime());
+
+/** Qualify a receipt's [at, expiresAt) window against the caller's observation clock. */
+function temporalOf(at: number, expiresAt: number, observedAt: number): Temporal {
+  if (!renderable(at) || !renderable(expiresAt) || !renderable(observedAt) || expiresAt <= at)
+    return 'invalid';
+  if (at > observedAt) return 'future';
+  return observedAt >= expiresAt ? 'expired' : 'current';
+}
+
+function rowToJSON(this: Row): Record<string, unknown> {
+  return { ...this, temporal: this.temporal };
 }
 
 // The task is quoted but unescaped by the writer, so consume through its final delimiter.
@@ -45,12 +75,19 @@ export function projectCoordinationReturns(board: FleetBoard | null, nowMs: numb
       unparsed++;
       continue;
     }
-    rows.push({ at: message.at, row: {
+    const row = {
       claimId: match[3]!, repo: match[2]!, result: match[1] as Row['result'],
       evidenceKind: kind as Row['evidenceKind'], pr, head: match[8] ?? null,
       evidence: match[5]!.slice(0, 300), from: message.from,
       at: iso(message.at), expiresAt: iso(message.expiresAt),
-    } });
+    } as Row;
+    // temporal and toJSON stay off the enumerable surface; a retained board
+    // re-projected at a later clock still qualifies the receipt honestly.
+    Object.defineProperties(row, {
+      temporal: { value: temporalOf(message.at, message.expiresAt, nowMs) },
+      toJSON: { value: rowToJSON },
+    });
+    rows.push({ at: message.at, row });
   }
   return { ...base, state: 'known' as const,
     returns: rows.sort((a, b) => b.at - a.at).slice(0, 50).map(entry => entry.row), unparsed };
