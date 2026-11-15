@@ -80,8 +80,10 @@ export async function cmdFleetOrderState(
         const { c, blocker } = classify(o);
         return {
           at: o.at, source: o.source, key: o.key,
+          ...(o.alsoChannels ? { alsoChannels: o.alsoChannels } : {}),
           state: c.state, asOf: c.asOf, evidenceSource: c.source,
           missing: c.missing, blocker, pr: mostAdvancedJob(o)?.url ?? null,
+          ...(o.alsoChannels ? { alsoChannels: o.alsoChannels } : {}),
         };
       }),
     }));
