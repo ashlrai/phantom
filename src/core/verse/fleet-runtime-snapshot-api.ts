@@ -1,6 +1,7 @@
 /** Read-only joined runtime evidence under the existing identity prefix. */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
+import { PROCESS_SNAPSHOT_MAX_AGE_MS } from '../fleet/claim-execution-evidence.js';
 import { defaults, readRuntimeSnapshot, type FleetRuntimeDeps, type RuntimeSnapshot } from '../fleet/runtime-snapshot.js';
 
 export const VERSE_FLEET_RUNTIME_SNAPSHOT_PATH = '/api/verse/fleet/runtime-identity/snapshot';
@@ -10,6 +11,7 @@ export const VERSE_FLEET_RUNTIME_SNAPSHOT_PATH = '/api/verse/fleet/runtime-ident
 export const FLEET_RUNTIME_SNAPSHOT_READ_DEADLINE_MS = 5_000;
 const READER_FAILED_REASON = 'runtime snapshot: reader failed; all fields unknown';
 const READ_DEADLINE_REASON = 'runtime snapshot: read deadline exceeded; all fields unknown';
+const STALE_SNAPSHOT_REASON = 'runtime snapshot: missing, invalid or stale asOf; all fields unknown';
 
 // The reader's numeric process fields become UNKNOWN when the whole read fails.
 type UnknownRuntimeSnapshot = Omit<RuntimeSnapshot, 'pid' | 'uptimeSeconds'> & {
@@ -54,7 +56,6 @@ export function createFleetRuntimeSnapshotApi(deps: {
       sendJson(res, 405, { error: 'method not allowed' });
       return true;
     }
-    const generatedAt = now().toISOString();
     const runtimeDeps = deps.runtimeDeps ?? defaults;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let outcome: SnapshotReadOutcome;
@@ -74,8 +75,15 @@ export function createFleetRuntimeSnapshotApi(deps: {
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+    // Qualify the reader's observation against completion, never request entry.
+    const observedAt = now();
+    const generatedAt = observedAt.toISOString();
+    const asOf: unknown = outcome.kind === 'snapshot' ? outcome.snapshot?.asOf : undefined;
+    const asOfMs = typeof asOf === 'string' ? Date.parse(asOf) : Number.NaN;
+    const ageMs = observedAt.getTime() - asOfMs;
     const snapshot: FleetRuntimeSnapshotResponse['snapshot'] = outcome.kind === 'snapshot'
-      ? outcome.snapshot
+      ? Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= PROCESS_SNAPSHOT_MAX_AGE_MS
+        ? outcome.snapshot : unknownSnapshot(STALE_SNAPSHOT_REASON)
       : unknownSnapshot(outcome.kind === 'timeout' ? READ_DEADLINE_REASON : READER_FAILED_REASON);
     const response: FleetRuntimeSnapshotResponse = { v: 1, authority: 'none', generatedAt, snapshot };
     sendJson(res, 200, response);
