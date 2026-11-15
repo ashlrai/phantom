@@ -1,10 +1,14 @@
 /** Desktop surface for who has claimed what: a read-only view of the advisory
  * coordination ledger (fleet.coordination.v1). Returns claims only; message
  * bodies, proposals and lease material never leave this module. The route
- * takes no query, path or root input. */
+ * takes no query, path or root input. POST /claim and /return sub-paths
+ * chain to fleet-coordination-mutate-api.ts (advisory claim/return). */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { readFleetBoard, type FleetBoard } from '../fleet/coordination.js';
+import {
+  VERSE_FLEET_COORDINATION_CLAIM_PATH, VERSE_FLEET_COORDINATION_RETURN_PATH, handleFleetCoordinationMutateApi,
+} from './fleet-coordination-mutate-api.js';
 
 export const VERSE_FLEET_COORDINATION_CLAIMS_PATH = '/api/verse/fleet/coordination-claims';
 
@@ -16,6 +20,8 @@ export interface FleetCoordinationClaimsApiDeps {
   read?: () => FleetBoard;
   /** Clock seam for tests; stamps generatedAt and expiresInSeconds. */
   now?: () => Date;
+  /** Sub-path module for /claim and /return. Default: handleFleetCoordinationMutateApi. */
+  mutate?: ApiModule;
 }
 
 export interface FleetClaimView {
@@ -30,7 +36,11 @@ function iso(ms: number): string {
 export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsApiDeps = {}): ApiModule {
   const read = deps.read ?? (() => readFleetBoard());
   const now = deps.now ?? (() => new Date());
-  return async (_ctx, _req, res, path, method) => {
+  const mutate = deps.mutate ?? handleFleetCoordinationMutateApi;
+  return async (ctx, req, res, path, method) => {
+    if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH || path === VERSE_FLEET_COORDINATION_RETURN_PATH) {
+      return mutate(ctx, req, res, path, method);
+    }
     if (path !== VERSE_FLEET_COORDINATION_CLAIMS_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' });

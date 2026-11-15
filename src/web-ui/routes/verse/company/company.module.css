@@ -1,0 +1,24 @@
+.company { display: grid; gap: var(--space-4); padding: var(--space-4); min-width: 0; color: var(--text-primary); }
+.heading, .panel > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.heading h2 { margin: var(--space-1) 0; font-size: var(--text-lg-size); }
+.eyebrow, .company small, .company dt { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.heading nav { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.panel { min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.panel h3, .card h4 { margin: 0; font-size: var(--text-sm-size); }
+.panel p, .panel li { font-size: var(--text-sm-size); overflow-wrap: anywhere; }
+.panel ul { padding-left: var(--space-4); }
+.panel li + li { margin-top: var(--space-2); }
+.company button { font: inherit; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); cursor: pointer; overflow-wrap: anywhere; }
+.company button:hover { background: var(--bg-hover); }
+.company button:focus-visible, .company a:focus-visible, .company summary:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+.company a { color: var(--text-link, var(--text-primary)); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-3); }
+.roster { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-3); }
+.card { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-3); }
+.card dd { margin: var(--space-1) 0 var(--space-2); overflow-wrap: anywhere; font-size: var(--text-sm-size); }
+.card meter { width: 100%; }
+.metrics { display: flex; flex-wrap: wrap; gap: var(--space-4); font-variant-numeric: tabular-nums; }
+.metrics dd { margin: var(--space-1) 0; font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+.panel .verdict { font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+.verdict[data-health='attention'], .company [role='alert'] { color: var(--status-danger-fg); }
+.presence { font-weight: var(--font-weight-medium); }

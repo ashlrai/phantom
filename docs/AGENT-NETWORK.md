@@ -165,6 +165,34 @@ claims, `/api/verse/agent-bus`, the desktop Durable bus tab and A2A schemas keep
 providing coordination. Their local claims do not become multi-host execution
 leases. The already shipped node router is reused for execution fencing instead.
 
+## Company desktop view
+
+Open **Company overview** from the Fleet hub, choose **Company** in the pane
+menu, or open `/verse/?pane=company`. The read-only view combines the recorded
+mission/leader verdict, READY queue depth and departures per hour, live and
+recent sessions, PR merges, lane quota windows, enrolled nodes (including muse)
+and their heartbeats, and observed agent/channel assignments. Job buttons open
+the existing worker log; PR links open the recorded GitHub pull request.
+
+The view reuses the shared queries for `/api/fleet/sessions`, `/api/fleet/lanes`,
+`/api/nodes`, `/api/queue/stats?window=3600`, `/api/verse/fleet/runs`,
+`/api/verse/fleet/runs/mission`, `/api/verse/fleet/comms-status`,
+`/api/verse/fleet/work-board?limit=20`, and `/api/verse/agent-bus/status`.
+Panels refresh every 15 seconds only while visible. Each has its own loading,
+empty, retry and stale-reading state; recordings older than two minutes are
+marked stale. Finished includes failed jobs in the source's trailing hour;
+truncated session counts are lower bounds, and missing evidence stays unknown.
+Quota `used_frac` is derived from observed remaining percent; reset-pending
+readings are unknown rather than fresh quota.
+
+Specialist callsigns and per-agent memory freshness are not exposed in this
+checkout, so the roster falls back to lanes. The chief-of-staff brief remains
+pending; the existing mission is shown separately. Channel assignments show
+recorded owners and channel references, not proven Slack membership or current
+reachability. Unread counts and channel-creation proposals stay unknown because
+the existing JSON endpoints do not expose them. Unexpired bus messages are
+labelled separately. Company adds no backend route, writes, sends, or grants.
+
 ## Slack bridge
 
 The Slack bridge joins explicitly mapped team channels and direct conversations to the existing Agent Bus over
