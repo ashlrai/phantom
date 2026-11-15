@@ -522,3 +522,19 @@ measurements are null and source failures are explicit. No parameters or writes
 are accepted. Node beats may carry the closed numeric `HostStats` schema defined
 in `src/core/drive/nodes/state.ts`; legacy beats remain valid. This telemetry
 never changes routing authority. See [machine telemetry](docs/MACHINE-TELEMETRY.md#unified-fleet-compute-map).
+
+## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
+
+`src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
+`liveOverride`, `setLiveOverride`, `clearLiveOverride`, `readConfigAudit`,
+`classifyKey`, `validateOverride`, `RESTART_REQUIRED`, `MUTABLE_KEY_PATTERNS`,
+`PINNED_DEFAULTS`, `DynConfigError` and the types `ResolvedConfig`, `LiveEntry`,
+`LiveConfigFile`, `AuditEntry`, `ConfigAuditReport`. `src/cli/fleet-config.ts`
+exports `cmdFleetConfig(args: string[]): Promise<number>`.
+
+Precedence (low to high): pinned defaults < slots.json < budget-overrides.json <
+`queue/live-config.json` < one-shot CLI. Writes are lock + temp + rename; the audit
+line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
+who/when/why. Restart-required keys (security pins, paid-model blocks, credential
+paths, GATES files) are refused by the writer and ignored by the resolver. See
+[docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
