@@ -12,6 +12,7 @@ import {
   type RuntimeIdentityDeps,
 } from '../fleet/runtime-identity.js';
 import { handleFleetHostReachApi } from './fleet-host-reach-api.js';
+import { handleFleetRuntimeSnapshotApi, VERSE_FLEET_RUNTIME_SNAPSHOT_PATH } from './fleet-runtime-snapshot-api.js';
 
 export const VERSE_FLEET_RUNTIME_IDENTITY_PATH = '/api/verse/fleet/runtime-identity';
 
@@ -22,6 +23,8 @@ export interface FleetRuntimeIdentityApiDeps {
   now?: () => Date;
   /** Sub-path handler seam for tests. Default: the host-reach module. */
   hostReach?: ApiModule;
+  /** Joined snapshot sub-path handler seam for tests. */
+  snapshot?: ApiModule;
 }
 
 /** Every field "unknown" plus a reason; never carries the thrown message. */
@@ -38,7 +41,9 @@ function unknownIdentity(asOf: string): RuntimeIdentity {
 export function createFleetRuntimeIdentityApi(deps: FleetRuntimeIdentityApiDeps = {}): ApiModule {
   const now = deps.now ?? (() => new Date());
   const hostReach = deps.hostReach ?? handleFleetHostReachApi;
+  const snapshot = deps.snapshot ?? handleFleetRuntimeSnapshotApi;
   return async (ctx, req, res, path, method) => {
+    if (path === VERSE_FLEET_RUNTIME_SNAPSHOT_PATH) return snapshot(ctx, req, res, path, method);
     // Sub-paths (tailnet-peers, pool-reach) ride this family's existing prefix.
     if (path.startsWith(`${VERSE_FLEET_RUNTIME_IDENTITY_PATH}/`)) return hostReach(ctx, req, res, path, method);
     if (path !== VERSE_FLEET_RUNTIME_IDENTITY_PATH) return false;
