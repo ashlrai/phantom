@@ -9,6 +9,7 @@ import { isAbsolute } from 'node:path';
 import { type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { postBusReply, replyResult, type ReplyDependencies, type ReplyResult } from '../core/fleet/bus-reply-post.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { workResultBody } from '../core/comms/work-result-body.js';
 
 const usage = `ashlr fleet work-result --request-id <id> --reply-id <id> (--pr <n> --head <sha> | --tests <text> | --artifact <text> | --blocked <dependency>) [--root <absolute-path>] [--json]
 Posts exactly one result form as a bus reply body: verified {pr,head}, verified {tests}, verified {artifact} or blocked {dependency}.
@@ -16,27 +17,6 @@ A result receipt is evidence, not authority: it does not complete or release a c
 --root selects the local store. Retries require the same explicit reply ID. Missing or expired requests are refused.`;
 
 const FLAG = /^(--request-id|--reply-id|--pr|--head|--tests|--artifact|--blocked|--root)(?:=(.*))?$/;
-
-/** Exactly one result form, shaped the way the work board's evidence reader
- * accepts it; anything it would silently ignore is refused before posting. */
-function resultBody(values: Record<string, string>): Record<string, unknown> | null {
-  const pr = values['--pr'], head = values['--head'], tests = values['--tests'],
-    artifact = values['--artifact'], blocked = values['--blocked'];
-  const forms = (pr !== undefined || head !== undefined ? 1 : 0)
-    + (tests !== undefined ? 1 : 0) + (artifact !== undefined ? 1 : 0)
-    + (blocked !== undefined ? 1 : 0);
-  if (forms !== 1) return null;
-  if (pr !== undefined || head !== undefined) {
-    if (pr === undefined || head === undefined || !/^[0-9]+$/.test(pr) || head.trim() === '') return null;
-    const n = Number(pr);
-    return Number.isSafeInteger(n) && n > 0 ? { verified: { pr: n, head } } : null;
-  }
-  if (tests !== undefined) return tests.trim() === '' ? null : { verified: { tests } };
-  if (artifact !== undefined) return artifact.trim() === '' ? null : { verified: { artifact } };
-  const dependency = blocked!.trim();
-  return dependency === '' || dependency.length > 200 || dependency.toLowerCase() === 'unknown'
-    ? null : { blocked: { dependency } };
-}
 
 /** Convention loader entry; root/clock/output injection is programmatic only. */
 export async function cmdFleetWorkResult(args: string[], options: BusInboxOptions = {},
@@ -65,7 +45,8 @@ export async function cmdFleetWorkResult(args: string[], options: BusInboxOption
   if (!requestId || !replyId || (root !== undefined && (!isAbsolute(root) || root.includes('\0')))) {
     return emit(replyResult('invalid-input'));
   }
-  const body = resultBody(values);
+  const body = workResultBody({ pr: values['--pr'], head: values['--head'], tests: values['--tests'],
+    artifact: values['--artifact'], blocked: values['--blocked'] });
   if (!body) return emit(replyResult('invalid-input'));
   return emit(postBusReply(requestId, replyId, body, root === undefined ? options : { ...options, root }, deps));
 }

@@ -17,8 +17,11 @@ export async function cmdFleetChannelHealth(args: string[], deps: ChannelHealthD
   else {
     console.log(`channel health as of ${report.asOf}`);
     for (const c of report.channels) {
+      const ingress = c.proof.durableIngress;
       console.log(`${c.channel}: ${c.state} configured=${c.configured} process=${c.processAlive} host=${c.runtimeHost ?? '-'} ` +
-        `lastInbound=${c.lastInboundAt ?? '-'} lastReply=${c.lastReplyAt ?? '-'} unanswered=${c.unansweredCount}`);
+        `lastInbound=${c.lastInboundAt ?? '-'} lastReply=${c.lastReplyAt ?? '-'} unanswered=${c.unansweredCount}` +
+        ` coverage=${c.proof.requestCoverage}` +
+        (ingress ? ` ingress=posted:${ingress.posted},dup:${ingress.duplicate},failed:${ingress.failed},unverified:${ingress.unverified}` : ''));
       for (const m of c.missing) console.log(`  missing: ${m}`);
     }
   }

@@ -1,7 +1,10 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { assertRepo, defaultGh, type Gh } from './autopilot/github.js';
 
 export interface CockpitPr { number: number; title: string; body: string; mergeable: string; checks: string | null; autoMerge: boolean }
 export interface CockpitRepo { repo: string; observedAt: string; prs: CockpitPr[] }
+export interface CockpitCache { version: 1; snapshots: CockpitRepo[] }
 const QUERY = `query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){pullRequests(first:100,after:$cursor,states:OPEN,orderBy:{field:CREATED_AT,direction:ASC}){pageInfo{hasNextPage endCursor} nodes{number title body mergeable autoMergeRequest{enabledAt} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}} rateLimit{remaining resetAt}}`;
 
 /** One query per page, bounded; no individual PR/check requests. */
@@ -37,4 +40,19 @@ export function summarize(snapshot: CockpitRepo) {
     green: snapshot.prs.filter(p => p.checks === 'SUCCESS').length, autoMerge: snapshot.prs.filter(p => p.autoMerge).length,
     unknownMergeable: snapshot.prs.filter(p => p.mergeable !== 'MERGEABLE' && p.mergeable !== 'CONFLICTING').length,
     unknownChecks: snapshot.prs.filter(p => p.checks === null).length, held: snapshot.prs.filter(p => (HOLDS[snapshot.repo.toLowerCase()] ?? []).includes(p.number)).map(p => p.number), edges: edges.map(e => ({ ...e, originalHeld: (HOLDS[snapshot.repo.toLowerCase()] ?? []).includes(e.original) })) };
+}
+
+export async function readCache(path: string): Promise<CockpitCache> {
+  try {
+    const value: unknown = JSON.parse(await readFile(path, 'utf8'));
+    if (value && typeof value === 'object' && (value as CockpitCache).version === 1 && Array.isArray((value as CockpitCache).snapshots)) {
+      const snapshots = (value as CockpitCache).snapshots.filter(s => s && typeof s.repo === 'string' && typeof s.observedAt === 'string' && Array.isArray(s.prs) && s.prs.every(p => p && Number.isSafeInteger(p.number) && typeof p.title === 'string' && typeof p.body === 'string'));
+      return { version: 1, snapshots };
+    }
+  } catch { /* unavailable cache */ }
+  return { version: 1, snapshots: [] };
+}
+export async function writeCache(path: string, cache: CockpitCache): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFile(path, JSON.stringify(cache), { mode: 0o600 });
 }

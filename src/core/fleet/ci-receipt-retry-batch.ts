@@ -4,7 +4,7 @@
  * version-1 batch report — names every target that still needs work.
  *
  * The whole document is validated before any network touch: duplicate
- * malformed fields, unknown keys, or an out-of-range retry
+ * identities, malformed fields, unknown keys, or an out-of-range retry
  * list are all rejected while nothing has touched the network.
  *
  * Failed and not-started entries (in their original order) are collected
@@ -65,7 +65,6 @@ function extractTargets(
   | { ok: false; reason: string } {
   const targets: CiReceiptAwaitBatchTarget[] = [];
   const all: CiReceiptAwaitBatchTarget[] = [];
-  const seen = new Set<string>();
   for (const raw of entries) {
     if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== 'artifactName,attempt,outcome,prior,reason,repo,run') {
       return { ok: false, reason: 'target_invalid' };
@@ -74,23 +73,19 @@ function extractTargets(
       || (raw.prior !== null && !isRecord(raw.prior))
       || (raw.reason !== null && typeof raw.reason !== 'string')) return { ok: false, reason: 'target_invalid' };
     const target = { repo: raw.repo, run: raw.run, attempt: raw.attempt, artifactName: raw.artifactName };
-    const parsed = parseCiReceiptAwaitBatchInput(JSON.stringify({ version: 1, targets: [target] }));
-    if (!parsed.ok) return { ok: false, reason: 'target_invalid' };
-    const valid = parsed.targets[0]!;
-    all.push(valid);
-    const key = JSON.stringify([valid.repo.toLowerCase(), valid.run, valid.attempt, valid.artifactName]);
-    if (raw.outcome !== 'bound' && !seen.has(key)) {
-      seen.add(key);
-      targets.push(valid);
-    }
+    all.push(target as CiReceiptAwaitBatchTarget);
+    if (raw.outcome !== 'bound') targets.push(target as CiReceiptAwaitBatchTarget);
   }
   if (all.length > CI_RECEIPT_RETRY_MAX_RETRIES) return { ok: false, reason: 'retry_target_count' };
+  if (all.length && !parseCiReceiptAwaitBatchInput(JSON.stringify({ version: 1, targets: all })).ok) {
+    return { ok: false, reason: 'target_invalid' };
+  }
   return { ok: true, targets };
 }
 
 /**
  * Parse a previous batch report, extract failed and not-started targets
- * (preserving original-order semantics), deduplicate by identity.
+ * (preserving original-order semantics), rejecting duplicate identities.
  */
 export function parseCiReceiptRetryBatchInput(text: string): CiReceiptRetryParse {
   let doc: unknown;
@@ -104,11 +99,13 @@ export function parseCiReceiptRetryBatchInput(text: string): CiReceiptRetryParse
     || !keys.includes('notStarted') || !keys.includes('timedOut') || !keys.includes('aborted')) {
     return { ok: false, reason: 'unknown_or_missing_fields' };
   }
-  const extraKeys = keys.filter(k => !['version', 'total', 'bound', 'failed', 'notStarted', 'timedOut', 'aborted', 'entries'].includes(k));
+  const extraKeys = keys.filter(k =>
+    !['version', 'total', 'bound', 'failed', 'notStarted', 'timedOut', 'aborted', 'entries'].includes(k));
   // Optional fields: emittedAt (ISO-8601) and note (any string).
   for (const ek of extraKeys) {
     if (ek === 'emittedAt') {
-      if (typeof doc.emittedAt !== 'string' || !ISO_DATE.test(doc.emittedAt)) {
+      const emittedAt = doc.emittedAt;
+      if (typeof emittedAt !== 'string' || !ISO_DATE.test(emittedAt)) {
         return { ok: false, reason: 'unknown_or_missing_fields' };
       }
     } else if (ek === 'note') {
