@@ -5,8 +5,8 @@ const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--json]';
 
 /**
  * Read-only per-request trace: ingress receipt to same-thread reply outcome.
- * Exit 0 only when every traced request is answered and neither source is
- * degraded; ids and timestamps only, never text, author ids or paths.
+ * Exit 0 requires both sources ok and at least one request, all answered;
+ * ids and timestamps only, never text, author ids or paths.
  */
 export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTraceOptions = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -36,11 +36,12 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
     console.log(JSON.stringify(trace));
   } else {
     console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends})`);
+    if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
         `${row.outcome.toUpperCase()}${row.replyTs !== undefined ? ` reply=${row.replyTs}` : ''}`);
     }
   }
-  const clean = trace.sources.journal !== 'degraded' && trace.sources.sends !== 'degraded';
-  return clean && trace.rows.every((row) => row.outcome === 'answered') ? 0 : 1;
+  const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
+  return clean && trace.rows.length > 0 && trace.rows.every((row) => row.outcome === 'answered') ? 0 : 1;
 }
