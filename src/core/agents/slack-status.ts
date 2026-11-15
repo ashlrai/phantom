@@ -125,7 +125,8 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const journal = readSlackJournal({ ...(options.runsDir ? { runsDir: options.runsDir } : {}), limit: 4096 });
   let ingested = 0;
   let ignored = 0;
-  const requests = slackInboundRequests(journal.entries);
+  const requests = slackInboundRequests(journal.entries.filter((entry) => entry.bus !== 'failed'));
+  const failedRequests = slackInboundRequests(journal.entries.filter((entry) => entry.bus === 'failed'));
   const reasonRows = new Map<string, { count: number; lastAt: string }>();
   for (const entry of journal.entries) {
     if (entry.decision === 'ingested') {
@@ -147,7 +148,9 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const ignoredReasons = sortedReasons.slice(0, IGNORED_REASONS_MAX_ROWS);
   const sends = readSlackSendReceipts(options.stateRoot ? { stateRoot: options.stateRoot } : {});
   const binding = bindSlackReplies({ requests, receipts: sends.receipts, now: now() });
-  const unansweredByAge = [...binding.unanswered].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  // Failed bus appends remain unresolved and cannot consume sent evidence.
+  const failed = bindSlackReplies({ requests: failedRequests, receipts: [], now: now() });
+  const unansweredByAge = [...binding.unanswered, ...failed.unanswered].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const confirmedByMason = loadCommsConfirmation({ ...(options.commsPath ? { path: options.commsPath } : {}), ...(options.home ? { home: options.home } : {}) });
   const slackIds = slackIdentityCount(config);
   const ready = config.state === 'ok' && bridge !== undefined &&
@@ -180,11 +183,11 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
       state: journal.state === 'degraded' || sends.state === 'degraded' ? 'degraded'
         : journal.state === 'missing' && sends.state === 'missing' ? 'missing' : 'ok',
       answered: binding.answered.length,
-      unanswered: binding.unanswered.length,
+      unanswered: unansweredByAge.length,
       oldestUnansweredAt: unansweredByAge[0]?.at ?? null,
       uncertainSends: sends.receipts.filter((r) => r.state === 'attempted').length,
-      rejected: binding.rejected,
-      futureDated: binding.futureDated,
+      rejected: binding.rejected + failed.rejected,
+      futureDated: binding.futureDated + failed.futureDated,
       unansweredSample: unansweredByAge.slice(0, 5).map((r) => ({
         channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
       })),
