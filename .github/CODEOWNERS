@@ -292,6 +292,7 @@
 /test/autonomy-contracts-310b.test.ts @masonwyatt23
 /test/autopilot.test.ts @masonwyatt23
 /test/backpressure-310b.test.ts @masonwyatt23
+/test/bridge-reply-section-provenance-419s.test.ts @masonwyatt23
 /test/build-sea-worker.test.ts @masonwyatt23
 /test/bus-loop-active-control-01sole2.test.ts @masonwyatt23
 /test/bus-mirror-dispatch.test.ts @masonwyatt23
@@ -983,6 +984,7 @@
 /test/maintainer-pr-verification.test.ts @masonwyatt23
 /test/maintainer-verify-cli.test.ts @masonwyatt23
 /test/manager-scope.test.ts @masonwyatt23
+/test/mcp-bridge-provenance-420s.test.ts @masonwyatt23
 /test/mcp-context-pack-31y1.test.ts @masonwyatt23
 /test/mcp-firm-resources.test.ts @masonwyatt23
 /test/mcp-fleet-doctor.test.ts @masonwyatt23
@@ -1097,6 +1099,7 @@
 /test/recut-comms-61.test.ts @masonwyatt23
 /test/recut-core-c409.test.ts @masonwyatt23
 /test/recut-core-c411.test.ts @masonwyatt23
+/test/recut-core-c422.test.ts @masonwyatt23
 /test/recut-core-o1-s140.test.ts @masonwyatt23
 /test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
