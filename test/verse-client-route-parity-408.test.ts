@@ -23,8 +23,6 @@ const FAMILIES_FILE = join(SERVER_ROOT, 'verse', 'workbench-types.ts');
  * moment a fix lands (or the call site disappears), so this map only shrinks.
  */
 const KNOWN_UNSERVED = new Map<string, string>([
-  ['/api/verse/fleet/runtime-identity/peer-ledger', 'RQ-PHX-PEERCARDPATH408C'],
-  ['/api/verse/fleet/coordination-claims/returns', 'RQ-PHX-RETURNSROUTE408C'],
 ]);
 
 /** '/api/verse/fleet/...' at the start of any quote style; `${}` filtered after. */
