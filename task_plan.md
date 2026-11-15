@@ -115,3 +115,36 @@ Complete: 54 distinct tests and 3 CLI smoke checks passed; typecheck, changed-fi
 Verification findings: initial 11 hermetic tests passed. Dependencies repaired via npm run install:worktree; full checks restarted. verify-changed initially failed due shallow history. Upstream fetch refused a shared shallow.lock held by another process; no lock removed.
 
 A final merge-time enrichment edit introduced one extra parenthesis; fixture tests and CLI smoke caught the parse error. Corrected and rerunning checks.
+
+
+---
+
+# Task Plan: Unified fleet visualization
+
+## Goal
+Deliver live compute and agent observability in the existing Fleet surface, with honest unknown/stale data, 2D/3D navigation and shared session details; leave changes uncommitted.
+
+## Phases
+- [x] Inspect agent instructions and CLI discovery.
+- [x] Trace existing telemetry, sessions and fleet UI contracts.
+- [x] Implement bounded read-only projection and visualization.
+- [x] Run checks, regression tests and record walkthrough in BRIDGE_NOTES.md.
+
+## Decisions
+- Reuse existing Fleet surface and sources; add no rendering dependency.
+
+## Errors
+- Global npm install failed EPERM; retrying with isolated /tmp prefix.
+- wire status reports unavailable client configurations; do not change auth/config.
+
+## Status
+Implementation and focused verification complete; repository-wide qualification blocked by existing failures. See BRIDGE_NOTES.md.
+
+- Isolated CLI install succeeded. GitHub PR search could not read gh config (EPERM).
+- verify-changed ran once and failed selecting files: HEAD has no merge-base with origin/master; use the supported gate --base HEAD for this uncommitted worktree.
+
+Final verification notes: full lint has 13 untouched-file errors; archived HEAD reproduces first-paint budget failures. Slow remaining gate phases interrupted after known failures (130). A loaded map-only run timed out twice; rerun isolated without changing test timeouts. Browser harness URL typo corrected, then actual loopback refused EPERM. Baseline archive initially lacked core imports; complete archive built and reproduced budget failures.
+
+Map interaction coverage was split into focused telemetry and navigation cases, preserving assertions and keeping the 5s timeout. All five map cases passed. Final combined serial batch follows a parallel timeout in the existing Company overview case.
+
+Final result: 49 focused backend + 14 serial pool + 107 serial UI tests pass. Backend/web typecheck, changed-file ESLint, docs and web build pass. Full gate remains unqualified due to baseline failures; all changes left uncommitted.
