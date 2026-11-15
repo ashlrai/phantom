@@ -78,7 +78,7 @@ export const VERSE_MOBILE_SW_PATH = '/verse/m/sw.js';
  * NO `/app/m/sw.js`: the phone service worker's scope stays `/verse/m/`
  * (existing installs depend on it), so the alias page is simply uncontrolled.
  */
-const CONSOLE_SHELL_PATHS: ReadonlySet<string> = new Set(['/verse', '/verse/', '/app', '/app/']);
+const CONSOLE_SHELL_PATHS: ReadonlySet<string> = new Set(['/verse', '/verse/', '/app', '/app/', '/verse/owner-assist', '/verse/owner-assist/']);
 const PHONE_SHELL_PATHS: ReadonlySet<string> = new Set(['/verse/m', '/verse/m/', '/app/m', '/app/m/']);
 const PHONE_ASSET_ALIAS_PREFIX = '/next/app-m/';
 const PHONE_ASSET_PREFIX = '/next/verse-m/';

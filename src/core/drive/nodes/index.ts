@@ -46,6 +46,8 @@ export interface JobView {
   requires: string[];
   pack?: string;
   secrets: string[];
+  /** Accepted completion's executor identity; no result body or fencing token. */
+  completedBy?: string;
 }
 
 export interface NodeView {
@@ -227,7 +229,8 @@ export class DriveNodes implements QueueV1 {
 
   private jobView(job: NonNullable<NodesState['jobs'][number]>): JobView {
     return { id: job.id, owner: job.owner!, state: job.state, requires: [...(job.requires ?? [])],
-      ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])] };
+      ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])],
+      ...(job.state === 'completed' && job.claim ? { completedBy: job.claim.nodeId } : {}) };
   }
 
   /** The only read surface for a node or its operator: everything is filtered to the caller's

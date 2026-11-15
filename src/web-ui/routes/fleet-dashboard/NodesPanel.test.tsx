@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { NodesPanel } from './NodesPanel.js';
+import badgeStyles from '../../components/primitives/StatusBadge.module.css';
 import { evictAll } from '../../data/cache.js';
 
 const SNAP = {
@@ -25,7 +26,25 @@ describe('NodesPanel', () => {
     expect(screen.getByText('30s ago')).toBeInTheDocument();
     expect(screen.getByText('gh, os:darwin')).toBeInTheDocument();
     expect(screen.getByText('no heartbeat')).toBeInTheDocument();
+    expect(screen.getByText('ready')).toHaveClass(badgeStyles.success!);
+    expect(screen.getByText('down')).toHaveClass(badgeStyles.danger!);
     expect(screen.getByRole('alert')).toHaveTextContent('inventory contains a secret-shaped value');
+  });
+
+  it('surfaces an empty inventory error with a recovery command', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...SNAP, nodes: [], leaderId: null }), { status: 200 })));
+    render(<NodesPanel />);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(SNAP.error));
+    expect(screen.getByRole('alert')).toHaveTextContent('phm fleet nodes');
+    expect(screen.getByText('No live leader lease')).toBeInTheDocument();
+  });
+
+  it('says how to add a node when the inventory is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...SNAP, nodes: [], leaderId: null, error: null }), { status: 200 })));
+    render(<NodesPanel />);
+    await waitFor(() => expect(screen.getByText(/No nodes have joined/)).toBeInTheDocument());
+    expect(screen.getByText('phm node join')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('says how to recover when the endpoint fails', async () => {
