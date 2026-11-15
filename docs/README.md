@@ -57,7 +57,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Review agent-native CI, risk selection and post-merge metrics | [CI rightsizing proposal](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CI-RIGHTSIZING.md) |
-| Measure fleet outcomes and review weekly policy suggestions | [Fleet outcome metrics](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) |
+| Measure fleet outcomes and review weekly policy suggestions | [Fleet outcome metrics](https://github.com/ashlrai/phantom/blob/master/docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) |
 | Explain empty jobs | [Empty jobs](https://github.com/ashlrai/phantom/blob/master/docs/EMPTY-JOBS.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
@@ -82,7 +82,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Generate daily frontier direction and track ideation outcomes | [Standing ideation loop](https://github.com/ashlrai/phantom/blob/master/docs/IDEATION.md) |
 | Turn research digests into scored, gated job proposals | [Research loop](https://github.com/ashlrai/phantom/blob/master/docs/RESEARCH-LOOP.md) |
-| Turn feedback into bounded fix jobs and read the morning review queue | [Feedback pipeline contract](contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md) |
+| Turn feedback into bounded fix jobs and read the morning review queue | [Feedback pipeline contract](https://github.com/ashlrai/phantom/blob/master/docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
@@ -113,7 +113,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
-| Route a bounded read-only slice to the 8 GB muse node | [Muse light routing](nodes/MUSE.md) |
+| Route a bounded read-only slice to the 8 GB muse node | [Muse light routing](https://github.com/ashlrai/phantom/blob/master/docs/nodes/MUSE.md) |
 | Serve a measured local model on 8/16 GB Macs as `omlx` pool lanes | [oMLX on the small Macs](https://github.com/ashlrai/phantom/blob/master/docs/OMLX-SMALL-MACS.md) |
 | Explore the proposed path from personal nodes to shared compute | [Node scale path](https://github.com/ashlrai/phantom/blob/master/docs/architecture/scale-path.md) |
 | See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
@@ -366,7 +366,7 @@ canonical release guide for required hosted qualification and publication.
 - [Tier-1 import diagnosis](https://github.com/ashlrai/phantom/blob/master/docs/TIER1-WHY.md): shortest runtime chains and the fleet apps boundary.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
-- [Session handoff](SESSION-HANDOFF.md): model-independent checkpoints, claim-coordinated resume and advisory quota failover.
+- [Session handoff](https://github.com/ashlrai/phantom/blob/master/docs/SESSION-HANDOFF.md): model-independent checkpoints, claim-coordinated resume and advisory quota failover.
 - [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers, claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
 
