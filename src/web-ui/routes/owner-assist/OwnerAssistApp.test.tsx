@@ -6,19 +6,52 @@ import { agentToolsApi } from '../verse/agent-tools/agent-tools-client.js';
 import type { OwnerAssistSnapshot, OwnerAssistDetail } from '../../../core/owner-assist/types.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
-function fixture(running = false) {
+const otherId = '22222222-2222-4222-8222-222222222222';
+function fixture(running = false, extras: Partial<OwnerAssistSnapshot> = {}) {
   const session = { id, title: 'Weyv', projectPath: '/projects/weyv', model: 'qwen-32b', engine: 'local', status: running ? 'running' : 'idle' } as OwnerAssistDetail['session'];
   const detail: OwnerAssistDetail = { session, events: [{ seq: 1, type: 'assistant-message', turnId: 't', at: 'now', text: 'I can work on this project.' }], pending: [] };
-  const snapshot: OwnerAssistSnapshot = { scope: 'owner', concurrency: 1, preferences: { callsign: 'Scout', preference: 'local' }, memory: 'Prefer small diffs', sessions: [session], seats: [] };
+  const snapshot: OwnerAssistSnapshot = { scope: 'owner', concurrency: 1, preferences: { callsign: 'Scout', preference: 'local' }, memory: 'Prefer small diffs',
+    sessions: [session], seats: [], routing: {}, ...extras };
   const api = {
-    snapshot: vi.fn(async () => snapshot), detail: vi.fn(async () => detail), send: vi.fn(async () => ({ session, turnId: 't' })),
+    snapshot: vi.fn(async () => snapshot), detail: vi.fn(async () => detail),
+    send: vi.fn(async () => ({ session, turnId: 't', routing: { preference: 'auto' as const, tier: 'work' as const, class: 'local' as const,
+      seatId: 'local', seatLabel: 'local', model: 'qwen-32b', fellBack: false, reason: 'Quick task on a local seat.', at: 'now' } })),
     cancel: vi.fn(async () => ({})), configure: vi.fn(async () => ({})), remember: vi.fn(async () => ({})),
     handoff: vi.fn(async (job) => ({ ...job, fleetJobId: 'RQ-PHX-OWNER1', status: 'SUBMITTED' })), handoffs: vi.fn(async () => []),
   } as typeof ownerAssistApi;
   return { api, detail, snapshot };
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); delete window.__ASHLR_OWNER_WINDOW__; });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); localStorage.clear(); delete window.__ASHLR_OWNER_WINDOW__; });
 describe('Owner Assist surface', () => {
+  it('resumes the persisted conversation and shows which model answered and why', async () => {
+    const session = { id, title: 'Weyv', projectPath: '/projects/weyv', model: 'qwen-32b', engine: 'local', status: 'idle' } as OwnerAssistDetail['session'];
+    const older = { ...session, id: otherId, title: 'Earlier', projectPath: '/projects/other' };
+    const { api } = fixture(false, { sessions: [older, session], resumeSessionId: id,
+      routing: { [id]: { preference: 'auto', tier: 'work', class: 'api', seatId: 'claude', seatLabel: 'Claude', model: 'qwen-32b', fellBack: false, reason: 'Non-trivial task on the best available API seat.', at: 'now' } } });
+    render(<OwnerAssistPanel api={api} />);
+    await screen.findByText(/Non-trivial task on the best available API seat/);
+    expect(screen.getByLabelText('Project folder')).toHaveValue('/projects/weyv');
+  });
+  it('keeps the unsent draft across a remount and clears it on send', async () => {
+    const { api } = fixture();
+    const first = render(<OwnerAssistPanel api={api} />);
+    await screen.findByText('I can work on this project.');
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'unfinished thought' } });
+    first.unmount();
+    render(<OwnerAssistPanel api={api} />);
+    await screen.findByText('I can work on this project.');
+    expect(screen.getByLabelText('Message')).toHaveValue('unfinished thought');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''));
+  });
+  it('links the fleet handoff to the current conversation', async () => {
+    const { api } = fixture(); render(<OwnerAssistPanel api={api} />); await screen.findByText('Scout');
+    fireEvent.click(screen.getByRole('button', { name: 'Hand off to fleet' }));
+    fireEvent.change(screen.getByLabelText('Acceptance criteria'), { target: { value: 'Tests pass' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Fix widget' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Enqueue fleet task' }));
+    await waitFor(() => expect(api.handoff).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id })));
+  });
   it('restores owner identity and project, sends model preference without fleet mutation', async () => {
     const { api } = fixture(); render(<OwnerAssistPanel api={api} />);
     await screen.findByText('Scout'); await screen.findByText('I can work on this project.');

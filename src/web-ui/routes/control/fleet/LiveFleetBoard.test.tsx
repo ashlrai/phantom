@@ -63,3 +63,11 @@ describe('LiveFleetBoard', () => {
     expect(fetcher.mock.calls.filter(([url]) => url.includes('/lanes')).length).toBeGreaterThanOrEqual(2);
   });
 });
+
+it('does not turn missing completion fields into zero counts', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('verified-completion') ? { sourceState: 'degraded' } : respond(url)))));
+  render(<LiveFleetBoard />);
+  expect(await screen.findByText(/unknown verified · unknown failed · unknown pending of unknown claims/)).toBeInTheDocument();
+  expect(screen.getByText(/False completions unknown · duplicates unknown · unauthorized unknown/)).toBeInTheDocument();
+  expect(screen.queryByText('No completion claims in window.')).not.toBeInTheDocument();
+});
