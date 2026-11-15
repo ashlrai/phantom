@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { evictAll } from '../../data/cache.js';
 import { installFetch, json } from './context/context-fixtures.test-support.js';
 import { resetVerseUi } from './verse-ui-store.js';
