@@ -12,6 +12,8 @@
 # usage_source and a usage_missing reason when nothing was recorded.
 import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+try: import action_classes   # RQ-SWE5-ACTION-CLASSES: sibling module, installed next to this file
+except Exception: action_classes = None
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 # A kernel-held claim serializes the complete tick, including liveness sampling and
@@ -81,6 +83,25 @@ TIERS = {"frontier", "work", "mid", "fast"}
 # empty) in the last 10 devin completions steps the target down 2, never below 6; the approved
 # spike bar sits well over the 5% baseline (2 of 40).
 DEVIN_STEP = {"window": 10, "max_non_pr": 3, "step": 2, "floor": 6}
+# ---- action-class registry (RQ-SWE5-ACTION-CLASSES): the single gate catalog every
+# launch and publish resolves against (installed sibling action-classes.json;
+# ACTION_CLASSES_JSON overrides it, e.g. in tests). Missing or malformed -> None ->
+# every launch and publish resolves unlisted/forbidden and fails closed.
+try:
+    ACREG = action_classes.load() if action_classes is not None else None
+except Exception:
+    ACREG = None
+def ac_class(j):   # the publish-phase class this job ends in ("unlisted" when unresolvable)
+    return action_classes.classify_job(ACREG, j) if action_classes is not None else "unlisted"
+def ac_launch_ok(j):
+    # A launch is a write-worktree action that ends in the job's publish class; both must be listed and allowed.
+    return (action_classes is not None and action_classes.may_run(ACREG, "write-worktree")
+            and action_classes.may_run(ACREG, ac_class(j)))
+def ac_publish_ok(j):
+    return action_classes is not None and action_classes.may_publish(ACREG, ac_class(j))
+def ac_gate(j):
+    if action_classes is None: return "forbidden"
+    return action_classes.resolve(ACREG, ac_class(j)).get("gate", "forbidden")
 # ---- RQ-TICK-BUDGET (Masbot 18:10 Oct 27): ticks grew to ~10 min. subprocess.run(timeout=) kills only the direct
 # child and leaves grandchildren (git fetch under precheck.sh, git under git-safe) running and piling up. _run kills
 # the whole process group and logs any call over 5 s as SLOW. TICK_BUDGET_S caps the optional per-tick work.
@@ -1146,6 +1167,14 @@ def reap_worktrees():
             continue
         if os.path.exists(R + "/PUBLISH_HOLD"): continue   # Actions backlog: keep finished worktrees local, publish later
         if os.path.exists(R + "/PUBLISH_LANDONLY") and _bucket(j) > 3 and not _landonly_ok(j) and not os.path.exists(R + "/g1-pass/" + j + ".pass"): continue   # merge-rate first; only priority buckets, G1-passed and listed jobs publish
+        # Resolve the publish gate inside the current reap phase, before any publisher starts.
+        if not ac_publish_ok(j):
+            mk = RUN + "/" + j + ".acdenied"
+            if not os.path.exists(mk):
+                open(mk, "w").close()
+                ev("ACTION_CLASS_HELD %s class=%s gate=%s (publish refused; worktree kept)" % (j, ac_class(j), ac_gate(j)))
+            kept.append(j)
+            continue
         # reap-one.sh owns publish.sh and must wait through auto-merge enablement.
         # Wait for its complete handoff before starting the next publisher;
         # concurrent children can reorder merge-queue entry regardless of spawn order.
@@ -1692,7 +1721,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
-                and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
+                and ac_launch_ok(m) and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
                 and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
                 and batch_attempts(m) < batcher.MAX_ATTEMPTS)
@@ -1730,6 +1759,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             ev("SKIP_DONE %s already finished empty" % j); seen.add(j); continue
         if os.path.exists(RUN + "/" + j + ".batched"):   # a running batch owns it and re-queues it unless done
             ev("SKIP_BATCHED %s owned by %s" % (j, rd(RUN + "/" + j + ".batched").strip())); seen.add(j); continue
+        # RQ-SWE5-ACTION-CLASSES: launch is a write-worktree action ending in the job's
+        # publish class; an unlisted or denied class stays queued (fail closed, retried each tick).
+        if not ac_launch_ok(j):
+            mk = RUN + "/" + j + ".acdenied"
+            if not os.path.exists(mk): open(mk, "w").close(); ev("ACTION_CLASS_DENIED %s launch refused (class=%s gate=%s)" % (j, ac_class(j), ac_gate(j)))
+            rest.append(line); seen.add(j); continue
         if disk_reuse_only and not _kind(j, REUSE_KINDS):
             mk = RUN + "/" + j + ".diskguard"
             if not os.path.exists(mk): open(mk, "w").close(); ev("DISKGUARD defer %s %dG" % (j, disk_free_gb))
@@ -1847,7 +1882,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
         if j in keep:
             keep.discard(j); open(Q + "/keep.txt", "w").write("\n".join(sorted(keep)) + "\n")
-        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".bundled-in"):
+        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".bundled-in", ".acdenied"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
@@ -1895,7 +1930,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
         mj = jload(R + "/models.json", {}); model = mj.get(fam + "." + tier) or mj.get(fam)
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap,
-                "batch_size": len(batch[0]) if batch else None})
+                "action_class": ac_class(j), "batch_size": len(batch[0]) if batch else None})
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
 else:
     rest = lines
@@ -2247,7 +2282,9 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                       "trouble_cap": CONC.get("trouble_cap"), "settled_6h": concurrency.settled(CONC, NOW),
                       "last_adjustment": (CONC["history"] or [None])[-1]},
       "batching": {"enabled": BATCHING, "launched_this_tick": batches,
-                   "size_target": {l: batcher.size_for(batch_tuning, l) for l in batcher.BATCH_LANES}}}
+                   "size_target": {l: batcher.size_for(batch_tuning, l) for l in batcher.BATCH_LANES}},
+      "action_classes": {"loaded": ACREG is not None,
+                         "schema": ACREG.get("schema") if isinstance(ACREG, dict) else None}}
 # budget per lane: overrides file (Grok Bot writes Mason's readings) + log-derived token burn
 ov = _BUDGET_OV; budget = {}
 mets = JOBS_RAW

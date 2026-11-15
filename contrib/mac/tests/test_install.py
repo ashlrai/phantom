@@ -14,7 +14,7 @@ MAC = Path(__file__).resolve().parents[1]
 INSTALL = MAC / 'install.sh'
 FILES = ('process_snapshot.py', 'work_market.py', 'dispatchd.py', 'fleet_controller.py', 'concurrency.py', 'batcher.py', 'batch_sessions.py', 'batch-launch.sh',
          'batch-sessions.json', 'local_job.py', 'restock.py', 'launch_precheck.py', 'install-gate.py',
-         'launch-gate.sh', 'judge_gate.py')
+         'launch-gate.sh', 'judge_gate.py', 'action_classes.py', 'action-classes.json')
 
 
 def sha(p):

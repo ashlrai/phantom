@@ -6,6 +6,13 @@ R=~/.ashlr-runs; OUT=$R/$J.publish; exec >"$OUT" 2>&1; set -o pipefail
 IM=0; IU=0; IMLOCK=""
 case "${2:-}" in "") ;; --integrated-merge) IM=1;; --integrated-upstream-original157|--integrated-upstream-feature) IM=1; IU=1;; *) echo "RESULT ABORT unknown-mode"; exit 1;; esac
 [ "$#" -le 2 ] || { echo "RESULT ABORT extra-arguments"; exit 1; }
+# ACTION-CLASS REGISTRY (RQ-SWE5-ACTION-CLASSES): a default-mode run is the `publish`
+# action class, an integrated mode is `merge`. The shared registry (installed sibling
+# $R/bin/action-classes.json via action_classes.py) must list the class with a
+# publishable gate; unlisted or non-publishable classes fail closed before any mutation.
+ACMODE=publish; [ "$IM" = 1 ] && ACMODE=merge
+ACGATE=$(/usr/bin/python3 -I -B "$R/bin/action_classes.py" check "$ACMODE" 2>/dev/null) || { echo "RESULT ABORT action-class-$ACMODE-not-publishable"; exit 1; }
+echo "ACTION_CLASS $ACMODE $ACGATE"
 # RQ-SEC-RUNLOG-SCRUB: scrub this run log on exit; install/test logs are piped through scrub.pl
 SCRUB="perl $R/bin/scrub.pl"; trap '[ -z "$IMLOCK" ] || rmdir "$IMLOCK" 2>/dev/null; $SCRUB < "$OUT" > "$OUT.s" && mv "$OUT.s" "$OUT"' EXIT
 read BASE BR WT POOL < $R/$J.base
