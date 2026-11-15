@@ -59,6 +59,20 @@ is `phm fleet xreview`.
    Missing, pending, stale, failing or unreadable checks produce a logged hold
    reason. API errors fail closed without logging response bodies.
 
+   Audit on 2026-11-15: Phantom's `master` branch metadata and active
+   [default-branch ruleset 24051754](https://github.com/ashlrai/phantom/rules/24051754)
+   require exactly **`Merge Gate`**, pinned to GitHub Actions App **15368**.
+   `Quick typecheck` is non-required and explicitly advisory inside Merge Gate
+   on PR, merge-group and master-push events. Cross-review now also holds any
+   observed failed check on the exact head, including non-required checks;
+   `checkStatus: wait` distinguishes pending work from `hold` for failed or
+   missing evidence, and `checkDetail` names failures in CLI/JSON and the
+   journal. Skipped/neutral non-required jobs are allowed; required jobs still
+   need success. This is a cross-review guard: GitHub can still merge a red
+   non-required check when auto-merge is armed outside this path (including
+   the direct publisher and other fleet entry points). Later check changes
+   and merge-group failures also require server-side protection.
+
    Otherwise the action is `re-review` (the head moved, the diff changed, or
    there is no review), `escalate`, `reject` or `hold`. Only an
    `enable-auto-merge` decision carries `matchHeadCommit`.
@@ -138,5 +152,5 @@ untrusted:
 `$ASHLR_HOME/fleet/cross-review.jsonl` (mode 0600) is both the review store
 and the audit log. It holds structured fields only: repo, PR number and URL,
 SHAs, the diff's sha256, pools, families, verdict, reason codes, decision
-codes and protected-path rule ids. It never holds diff text, job text, model
+codes, bounded scrubbed check diagnostics and protected-path rule ids. It never holds diff text, job text, model
 output, env values or file paths.

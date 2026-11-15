@@ -18,6 +18,7 @@ export interface ComputeNode {
 export interface FleetCompute {
   schema: 'fleet.compute.v1'; generatedAt: string; localNodeId: string; truncated: boolean;
   nodes: ComputeNode[]; sources: Record<string, 'loaded' | 'unavailable' | 'invalid'>;
+  operations?: { publishes24h: number | null; admission: { admit: boolean | null; gateReason: string | null; warnings: string[] | null; observedAt: string | null } };
   dispatcherAt: string | null;
   lanes: Record<string, { hardCap: number | null; quotaOk: boolean | null }>;
 }
@@ -88,6 +89,15 @@ export async function readFleetCompute(options: {
     lanes[lane] = { hardCap: count(obj(row).hard_cap), quotaOk: typeof obj(row).quota_ok === 'boolean' ? obj(row).quota_ok as boolean : null };
   }
   const tick = obj(status).last_tick;
+  const admission = obj(obj(status).admission);
+  const stamp = admission.ts;
+  const operations: NonNullable<FleetCompute['operations']> = {
+    publishes24h: count(obj(status).publishes_24h),
+    admission: { admit: typeof admission.admit === 'boolean' ? admission.admit : null,
+      gateReason: typeof admission.gate_reason === 'string' ? clean(admission.gate_reason) : null,
+      warnings: Array.isArray(admission.warnings) ? admission.warnings.filter((v): v is string => typeof v === 'string').slice(0, 32).map(clean) : null,
+      observedAt: typeof stamp === 'string' && Number.isFinite(Date.parse(stamp)) ? stamp : null },
+  };
   return { schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
-    nodes: [...nodes.values()], sources, dispatcherAt: typeof tick === 'string' && Number.isFinite(Date.parse(tick)) ? tick : null, lanes };
+    nodes: [...nodes.values()], sources, operations, dispatcherAt: typeof tick === 'string' && Number.isFinite(Date.parse(tick)) ? tick : null, lanes };
 }
