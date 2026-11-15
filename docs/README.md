@@ -130,6 +130,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Save evidence-linked agent checkpoints and compare context retention offline | [Agent checkpoints (source)](https://github.com/ashlrai/phantom/blob/master/docs/CHECKPOINTS.md) |
 | Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](https://github.com/ashlrai/phantom/blob/master/docs/PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
+| Send an operator message or prepare a node hand-off | [Steer the leaders](https://github.com/ashlrai/phantom/blob/master/docs/APP-STEER.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |

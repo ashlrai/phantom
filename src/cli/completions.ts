@@ -84,7 +84,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
-  app: ['update', 'status', '--json', '--help'],
+  app: ['update', 'status', 'steer', '--text', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
