@@ -43,6 +43,23 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns a real child process.
+  'test/channel-health-slack-binding-338.test.ts', // Spawns a real child process.
+  'test/comms-confirm-http-original-264s.test.ts', // Spawns a real child process.
+  'test/email-outbox-crash-batch-103.test.ts', // Spawns a real child process.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns a real child process.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Spawns a real child process.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local network server.
+  'test/imessage-teammate-dispatch.test.ts', // Spawns a real child process.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real local network server.
+  'test/recut-n1r4200s92.test.ts', // Binds a real local network server.
+  'test/recut-top-a59.test.ts', // Binds a real local network server.
+  'test/repo-tracked-artifacts.test.ts', // Spawns a real child process.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real local network server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real local network server.
+  'test/ui-settings.test.ts', // Binds a real local network server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real local network server.
+  'test/work-trace-restart-proof-319s.test.ts', // Spawns a real child process.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
@@ -64,6 +81,7 @@ export const REAL_IO_TEST_FILES = [
   'test/ecosystem-changelog-generator.test.ts', // Runs the generator in a real Node child process.
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
   'test/company-context-store.test.ts', // concurrent context writer processes
+  'test/queue-autounpark.test.ts', // Runs real Python/gh fixtures and contends on a real flock.
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.

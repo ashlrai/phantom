@@ -464,3 +464,5 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
 
 - [oMLX dispatcher lane](../contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
+
+- [Mac queue parking](QUEUE.md#parking): `phm queue parked --json` and `phm queue unpark --dry-run --json`; read-only dependency evidence and next-pass promotion preview. Restock and its shared helper require Security re-pin before live install.

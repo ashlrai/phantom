@@ -6,6 +6,8 @@ import { estimateQueueStats } from '../core/queue/stats.js';
 const HELP = `Usage: phm queue stuck [--json]
        phm queue stats [--json] [--window <seconds>]
        phm queue yield [--since 24h] [--json]
+       phm queue parked [--json]
+       phm queue unpark --dry-run [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
        phm queue add|claim|done|block|replay|list|import|export [options]
@@ -108,6 +110,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
       return 0;
     } catch { console.error('Queue unavailable.'); return 1; }
   }
+  if (args[0] === 'parked' || args[0] === 'unpark') return (await import('./queue-parked.js')).cmdQueueParked(args);
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);
   console.error(HELP);
