@@ -228,7 +228,7 @@ export function readClaimNoticeSent(sentPath: string): Set<string> | null {
 
 /** claimId+repo → thread bindings, last row wins per pair so a corrected
  * binding supersedes rather than colliding. Invalid rows are skipped;
- * an absent or unreadable file binds nothing (the planner then drops every
+ * an absent, unreadable, or over-budget file binds nothing (the planner drops every
  * notice instead of guessing a thread). */
 export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBinding[] {
   const read = readPrivateFileCapped(bindingsPath, BINDINGS_MAX_BYTES);
@@ -248,7 +248,7 @@ export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBindin
         ...(row.head !== undefined ? { head: row.head as string } : {}),
       };
       bindings.set(JSON.stringify([binding.claimId, binding.repo]), binding);
-      if (bindings.size > SNAPSHOT_MAX_ROWS) return [...bindings.values()];
+      if (bindings.size > SNAPSHOT_MAX_ROWS) return [];
     } catch { /* skip a torn line */ }
   }
   return [...bindings.values()];
