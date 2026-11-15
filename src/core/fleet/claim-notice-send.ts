@@ -215,19 +215,24 @@ export function appendClaimNoticeSent(sentPath: string, dedupeKey: string, at: n
  * may hide earlier deliveries, so a partial set must never masquerade as
  * complete). A missing ledger is an empty set; the file itself is never
  * repaired, truncated or deleted here — recovery stays with its owner. */
-export function readClaimNoticeSent(sentPath: string): Set<string> | null {
+export function readClaimNoticeSentRows(sentPath: string): Array<{ key: string; at: number }> | null {
   const read = readPrivateFileCapped(sentPath, LEDGER_MAX_BYTES);
-  if (read === null) return new Set();
+  if (read === null) return [];
   if (read.truncated) return null;
-  const sent = new Set<string>();
+  const rows: Array<{ key: string; at: number }> = [];
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     let row: unknown;
     try { row = JSON.parse(line); } catch { return null; }
     if (!record(row) || row.v !== 1 || !safeInt(row.at) || !bounded(row.key, 4096)) return null;
-    sent.add(row.key);
+    rows.push({ key: row.key, at: row.at });
   }
-  return sent;
+  return rows;
+}
+
+export function readClaimNoticeSent(sentPath: string): Set<string> | null {
+  const rows = readClaimNoticeSentRows(sentPath);
+  return rows === null ? null : new Set(rows.map(row => row.key));
 }
 
 /** claimId+repo → thread bindings, last row wins per pair so a corrected
