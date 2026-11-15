@@ -21,7 +21,7 @@ CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 wh
 CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
 GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
-# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
+# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlr-landing live there too but
 # are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
 GS_REPOS = {"phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-plugin", "ashlr-stack"}
 BOLD_MIN = 0.30   # keep READY at >=30% bet=bold lines: counted before each restock; under the floor bold picks first
