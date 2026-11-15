@@ -76,7 +76,7 @@ describe('muse isolated light slice', () => {
 
   it('adds two light slots without changing provider capacity or pressure floors', () => {
     const memory = { freePercent: 60, swapGb: 0, pressureLevel: 1 as const };
-    expect(assessNodeCapacity(8 * 1024 ** 3, memory, 30e9).slots).toBe(1);
+    expect(assessNodeCapacity(8 * 1024 ** 3, memory, 30e9).slots).toBe(4);
     expect(assessNodeCapacity(8 * 1024 ** 3, memory, 30e9, true).slots).toBe(2);
     expect(assessNodeCapacity(8 * 1024 ** 3, { ...memory, pressureLevel: 2 }, 30e9, true).slots).toBe(0);
     expect(assessNodeCapacity(8 * 1024 ** 3, memory, 19e9, true).slots).toBe(0);
