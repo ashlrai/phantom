@@ -10,6 +10,15 @@ from launch_precheck import (precheck, park, parked as precheck_parked, park_key
                              attempt_identity, empty_reason, read_attempts, with_prompt)
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
+# Separate fixed read-only slice: never copy a ready.tsv job into the node queue.
+# Opt-in and Security re-pin required before live adoption. Keep dry runs read-only.
+if os.path.isfile(Q + "/muse-light.enabled") and "--dry-run" not in sys.argv:
+    try:
+        with open(Q + "/muse-light.lock", "a") as node_lock:
+            fcntl.flock(node_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            subprocess.run(["phm", "node", "light", "restock", "--apply", "--json"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired): pass  # unavailable node path never blocks lane restock
 gate = queue_gate.read_gate(Q)
 print("QUEUE_GATE allow=%s depth=%s target=%s src=restock" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
 if not gate["allow"]: sys.exit(0)
