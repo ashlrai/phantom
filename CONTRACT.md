@@ -512,3 +512,13 @@ markdown job outcomes and renders bounded, scrubbed context for future prompts.
 The live session roster stays separate. Storage, exported functions, failure
 behavior and verification are pinned in
 [the specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md).
+
+## Fleet compute observation (`fleet.compute.v1`)
+
+`GET /api/verse/fleet/control/compute` serves the read-only projection in
+`src/core/fleet/compute-view.ts`: local OS readings, registered node heartbeat
+observations, fenced job placement and dispatcher lane hard caps. All missing
+measurements are null and source failures are explicit. No parameters or writes
+are accepted. Node beats may carry the closed numeric `HostStats` schema defined
+in `src/core/drive/nodes/state.ts`; legacy beats remain valid. This telemetry
+never changes routing authority. See [machine telemetry](docs/MACHINE-TELEMETRY.md#unified-fleet-compute-map).
