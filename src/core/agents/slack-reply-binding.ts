@@ -79,7 +79,7 @@ export function bindSlackReplies(input: {
       validRequests.push({ channelId: row.channelId, threadTs: row.threadTs, messageTs: row.messageTs, at: row.at });
     }
   }
-  const threads = new Map<string, { replies: string[] }>();
+  const physical = new Map<string, { channel: string; thread?: string; ts: string; conflicted: boolean }>();
   for (const row of receipts) {
     // Attempted receipts legitimately have no ts, but malformed evidence is still rejected.
     if (!record(row) || (row.state !== 'attempted' && row.state !== 'sent') || !isSlackChannelId(row.channel) ||
@@ -92,23 +92,31 @@ export function bindSlackReplies(input: {
       result.rejected++;
     } else if (cutoffMs < 0 || compareTs(row.ts, cutoff) > 0) {
       result.futureDated++;
-    } else if (row.thread !== undefined) {
-      const key = `${row.channel}:${row.thread}`;
-      const thread = threads.get(key) ?? { replies: [] };
-      thread.replies.push(row.ts);
-      threads.set(key, thread);
+    } else {
+      // Sent evidence identifies a physical message by channel + canonical ts.
+      // Conflicting thread associations (including top-level) prove no answer;
+      // attempts never establish or override this evidence. This is reconciliation
+      // of supplied receipts, not independent proof of live Slack delivery.
+      const key = `${row.channel}:${canonicalTs(row.ts)}`;
+      const kept = physical.get(key);
+      if (kept) {
+        if (kept.thread !== row.thread) kept.conflicted = true;
+        if (compareText(row.ts, kept.ts) < 0) kept.ts = row.ts;
+      } else {
+        physical.set(key, { channel: row.channel, thread: row.thread, ts: row.ts, conflicted: false });
+      }
     }
   }
+  const threads = new Map<string, { replies: string[] }>();
+  for (const reply of physical.values()) {
+    if (reply.conflicted || reply.thread === undefined) continue;
+    const key = `${reply.channel}:${reply.thread}`;
+    const thread = threads.get(key) ?? { replies: [] };
+    thread.replies.push(reply.ts);
+    threads.set(key, thread);
+  }
   for (const thread of threads.values()) {
-    // One physical reply proves at most one answer per thread: collapse replayed
-    // receipts and decimal-equivalent spellings to a single evidence entry.
-    const unique = new Map<string, string>();
-    for (const ts of thread.replies) {
-      const id = canonicalTs(ts);
-      const kept = unique.get(id);
-      if (kept === undefined || compareText(ts, kept) < 0) unique.set(id, ts);
-    }
-    thread.replies = [...unique.values()].sort((a, b) => compareTs(a, b) || compareText(a, b));
+    thread.replies.sort((a, b) => compareTs(a, b) || compareText(a, b));
   }
   for (const request of validRequests.sort(compareRequests)) {
     const thread = threads.get(`${request.channelId}:${request.threadTs}`);
