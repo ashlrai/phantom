@@ -84,3 +84,12 @@ Route a bounded, explicitly light fleet slice through owner-scoped node leases, 
 
 ## Status
 Implementation and runbook complete; 86 backend tests, 51 Python tests and 10 authority tests pass. Full typecheck, docs, changed-file lint and final verify-changed gate pass. Full-repository lint was interrupted after roughly 15 minutes without output; live muse completions remain unobserved. Changes are uncommitted; no live adoption performed.
+
+# Chief-of-staff planner — complete
+
+- [x] Inspect Phantom tools, state producers and fleet contracts.
+- [x] Implement bounded advisory core, injected CLI and schema documentation.
+- [x] Pass 26 new tests, CLI integration, typechecks and changed-file gate.
+- [x] Record full lint and existing boundary failures in BRIDGE_NOTES.md.
+- Global install and initial worktree install failed; isolated install and dependency retry succeeded.
+- Host queue/config access denied; no bypass. No commit, push or publication.
