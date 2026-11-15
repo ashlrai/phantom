@@ -50,14 +50,13 @@ function deps(items: WorkBoardItem[], over: Partial<FleetRecheckDeps> = {}): Fle
 
 describe('fleet recheck task.lastVerified clock bound', () => {
   it('accepts only finite asOf at or before nowMs', async () => {
-    const now = new Date('2026-11-13T13:13:00.000Z');
     const laterAsOf = new Date('2026-11-13T13:15:00.000Z');
     const itemWithFutureAsOf = item({ asOf: laterAsOf.toISOString() });
-    
+
     // Future asOf should not displace older legitimate completion
     const withFuture = await readFleetRecheck(deps([itemWithFutureAsOf, item({ id: 'older-done', asOf: '2026-11-13T13:02:00.000Z' })]));
     expect(withFuture.sections.task.lastVerified?.id).toBe('older-done');
-    
+
     // Future-only rows should produce null lastVerified
     const onlyFuture = await readFleetRecheck(deps([itemWithFutureAsOf]));
     expect(onlyFuture.sections.task.lastVerified).toBeNull();
@@ -65,14 +64,14 @@ describe('fleet recheck task.lastVerified clock bound', () => {
 
   it('returns null when asOf is not finite', async () => {
     const malformedAsOf = item({ asOf: 'not-a-date' });
-    
+
     const withMalformed = await readFleetRecheck(deps([malformedAsOf]));
     expect(withMalformed.sections.task.lastVerified).toBeNull();
   });
 
   it('returns null when nowMs is not finite', async () => {
     const asOf = item({ asOf: '2026-11-13T13:05:00.000Z' });
-    
+
     const withInvalidNow = await readFleetRecheck(deps([asOf], {
       now: () => new Date('not-a-date'),
     }));
@@ -81,30 +80,36 @@ describe('fleet recheck task.lastVerified clock bound', () => {
 
   it('keeps historical valid completions eligible (no freshness TTL)', async () => {
     const asOf = item({ id: 'historic-done', asOf: '2026-11-13T12:00:00.000Z' });
-    
+
     const historic = await readFleetRecheck(deps([asOf]));
     expect(historic.sections.task.lastVerified?.id).toBe('historic-done');
   });
 
   it('preserves existing task state/pick/missing semantics', async () => {
-    const verifiedItem = item({ 
-      id: 'verified-done', 
+    const verifiedItem = item({
+      id: 'verified-done',
       asOf: '2026-11-13T13:05:00.000Z',
       state: 'VERIFIED',
       owner: 'agent-alpha',
       claimReceipt: 'bus-claim:fake-done-1:1:1700000000000',
     });
-    
-    const runningItem = item({ 
-      id: 'running-item', 
+
+    const runningItem = item({
+      id: 'running-item',
       state: 'RUNNING',
       asOf: '2026-11-13T13:10:00.000Z',
       owner: 'agent-bravo',
-      claimReceipt: 'bus-claim:fake-run-1:1:1700000000000',
+      claimReceipt: 'bus-claim:running-item:1:1700000000000',
     });
-    
-    const result = await readFleetRecheck(deps([verifiedItem, runningItem]));
-    
+
+    const result = await readFleetRecheck(deps([verifiedItem, runningItem], {
+      listCoordination: () => ({ source: 'available', claims: [{
+        origin: 'message', key: 'queue:running-item', owner: 'agent-bravo',
+        sourceId: 'running-item:1:1700000000000', leaseUntil: NOW.getTime() + 600_000,
+        live: true, repo: null, branch: null, path: null, started: null,
+      }] }),
+    }));
+
     // Verify task state and pick is unaffected by clock bound violations
     expect(result.sections.task.state).toBe('VERIFIED');
     expect(result.sections.task.task?.id).toBe('running-item');

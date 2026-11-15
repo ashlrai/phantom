@@ -1115,6 +1115,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
+  { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
+  { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
+  { cmd: 'ideas [--json]', desc: 'Read the fleet ideas report without dispatching work.', topic: 'observability' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },

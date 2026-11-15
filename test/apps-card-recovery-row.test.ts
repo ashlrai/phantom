@@ -28,6 +28,9 @@ it('route returns the newest retained outcome per app and rejects writes', async
   const send = vi.fn();
   vi.doMock('../src/core/web/api.js', () => ({ sendJson: send }));
   try {
+    // Production installs these providers at server bootstrap, outside Tier-1.
+    const { installFleetAppsRecoveryProviders } = await import('../src/core/fleet/app-recovery-install.js');
+    await installFleetAppsRecoveryProviders();
     const { handleFleetAppsRecoveryApi } = await import('../src/core/verse/fleet-apps-recovery-api.js');
     const call = (method: string) => handleFleetAppsRecoveryApi({} as never, {} as never, {} as never, '/api/verse/fleet/apps/recovery', method);
     expect(await call('GET')).toBe(true);

@@ -66,6 +66,11 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'available', claims: [{
+      origin: 'message', key: 'queue:fake-request-1', owner: 'fake-owner-agent',
+      sourceId: 'fake-request-1:1:1700000000000', leaseUntil: NOW_MS + 600_000,
+      live: true, repo: null, branch: null, path: null, started: null,
+    }] }),
     ...over,
   };
 }

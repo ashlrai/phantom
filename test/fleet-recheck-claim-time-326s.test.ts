@@ -2,8 +2,9 @@
  * coordination claims live at the captured verdict timestamp: a claim must
  * have finite, ordered timestamps with claimedAt <= now < expiresAt. Future,
  * expired and malformed rows never verify ownership, never count toward
- * `active` and never appear in `top`; the claims section and the task↔ledger
- * join share one captured now and one settled ledger read. Every reader is
+ * `active` and never appear in `top`; the claims section and task verdict
+ * share one captured now and one settled ledger read. Owner equality never
+ * proves task identity: without a claim-store binding the task stays UNKNOWN. Every reader is
  * faked here: nothing touches the real home, ledger, bus or network. Fixtures
  * are plainly fake; no message bodies, leases or env values appear. */
 import { describe, expect, it, vi } from 'vitest';
@@ -71,6 +72,7 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'missing', claims: [] }),
     ...over,
   };
 }
@@ -86,10 +88,10 @@ describe('fleet recheck claim verdict-time filtering', () => {
     expect(recheck.sections.claims.state).toBe('VERIFIED');
     expect(recheck.sections.claims.active).toBe(0);
     expect(recheck.sections.claims.top).toEqual([]);
-    expect(recheck.sections.task.state).toBe('BLOCKED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
-    expect(recheck.sections.task.missing).toContain('task: owner agent-alpha holds no live coordination claim');
-    expect(recheck.overall.state).toBe('BLOCKED');
+    expect(recheck.sections.task.missing).toContain('task: no coordination-claim field associates a claim with board item fake-request-1; owner match is not task identity');
+    expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
   it('treats claimedAt exactly at the verdict now as live', async () => {
@@ -99,9 +101,10 @@ describe('fleet recheck claim verdict-time filtering', () => {
     };
     const recheck = await readFleetRecheck(deps({ readFleetBoard: () => board }));
     expect(recheck.sections.claims).toMatchObject({ state: 'VERIFIED', active: 1 });
-    expect(recheck.sections.task.state).toBe('VERIFIED');
-    expect(recheck.sections.task.task?.ledgerClaim?.id).toBe('fake-claim-1');
-    expect(recheck.overall.state).toBe('VERIFIED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
+    expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
+    expect(recheck.sections.task.task).not.toHaveProperty('coordinationClaim');
+    expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
   it('treats expiresAt exactly at the verdict now as not live', async () => {
@@ -111,9 +114,9 @@ describe('fleet recheck claim verdict-time filtering', () => {
     };
     const recheck = await readFleetRecheck(deps({ readFleetBoard: () => board }));
     expect(recheck.sections.claims).toMatchObject({ state: 'VERIFIED', active: 0, top: [] });
-    expect(recheck.sections.task.state).toBe('BLOCKED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
-    expect(recheck.overall.state).toBe('BLOCKED');
+    expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
   it('keeps expired rows out of the active count and the top listing', async () => {
@@ -132,7 +135,7 @@ describe('fleet recheck claim verdict-time filtering', () => {
     expect(JSON.stringify(recheck.sections.claims.top)).not.toContain('fake-claim-expired');
   });
 
-  it('selects the genuinely live owner claim among expired, future and live rows', async () => {
+  it('counts live ledger claims without treating owner equality as task identity', async () => {
     const board: FleetBoard = {
       ...healthyBoard,
       claims: [
@@ -144,12 +147,11 @@ describe('fleet recheck claim verdict-time filtering', () => {
     };
     const recheck = await readFleetRecheck(deps({ readFleetBoard: () => board }));
     expect(recheck.sections.claims.active).toBe(2);
-    expect(recheck.sections.task.state).toBe('VERIFIED');
-    expect(recheck.sections.task.task?.ledgerClaim).toEqual({
-      id: 'fake-claim-live', repo: 'ashlrai/phantom',
-      expiresAt: new Date(NOW_MS + 3_600_000).toISOString(),
-    });
-    expect(recheck.overall.state).toBe('VERIFIED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
+    expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
+    expect(recheck.sections.task.task).not.toHaveProperty('coordinationClaim');
+    expect(recheck.sections.claims.top.map(claim => claim.agent)).toEqual(['agent-beta', 'agent-alpha']);
+    expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
   it('claims malformed timing (expiresAt <= claimedAt, non-finite) cannot verify ownership', async () => {
@@ -164,9 +166,9 @@ describe('fleet recheck claim verdict-time filtering', () => {
       }));
       expect(recheck.sections.claims.active).toBe(0);
       expect(recheck.sections.claims.top).toEqual([]);
-      expect(recheck.sections.task.state).toBe('BLOCKED');
+      expect(recheck.sections.task.state).toBe('UNKNOWN');
       expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
-      expect(recheck.overall.state).toBe('BLOCKED');
+      expect(recheck.overall.state).toBe('UNKNOWN');
     }
   });
 
@@ -177,7 +179,7 @@ describe('fleet recheck claim verdict-time filtering', () => {
     expect(now).toHaveBeenCalledTimes(1);
     expect(readFleetBoard).toHaveBeenCalledTimes(1);
     expect(recheck.sections.claims.active).toBe(1);
-    expect(recheck.sections.task.state).toBe('VERIFIED');
+    expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.claims.asOf).toBe(ISO);
     expect(recheck.sections.task.asOf).toBe(recheck.sections.claims.asOf);
   });

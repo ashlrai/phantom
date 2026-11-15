@@ -71,6 +71,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'worklog', 'library',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'constitution', 'wb', 'caps',
+  // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
+  'pages', 'ideas',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -94,7 +96,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   world: ['get', '--json', '--refresh', '--help'],
   chain: ['verify', '--json', '--help'],
   incident: ['report', 'receipts', '--json', '--help'],
-  apps: ['list', 'open', 'quit', 'focus', 'status', '--json', '--help'],
+  apps: ['list', 'open', 'quit', 'focus', 'status', 'request', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
@@ -169,6 +171,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   completions: ['zsh', 'bash'],
   plugins: ['init', 'list', 'info', 'enable', 'disable'],
   skills: ['list', 'audit'],
+  pages: ['publish', 'list', '--json', '--help'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
   'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],

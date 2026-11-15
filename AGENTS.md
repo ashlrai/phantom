@@ -111,6 +111,11 @@ worktrees and reports pass@1/pass@k/pass^k per lane/model. `scores` and
 lane routing; nothing routes, reserves or merges. See
 [EVAL-PASSK](docs/EVAL-PASSK.md).
 
+Report pages: `phm pages publish <file.md|file.json> --json` renders a report
+into the loopback console at `/pages/<slug>`; `phm pages list --json` lists
+published pages. Store is `~/.ashlr/pages`; nothing leaves the machine. See
+[report pages](docs/PAGES.md).
+
 ## Publish subscription capacity
 
 Copy-paste: `phm capacity publish --json`. Run on each node with its own local auth;

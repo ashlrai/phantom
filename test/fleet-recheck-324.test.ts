@@ -69,15 +69,24 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'missing', claims: [] }),
     ...over,
   };
+}
+
+function verifiedDeps(): FleetRecheckDeps {
+  return deps({ listCoordination: () => ({ source: 'available', claims: [{
+    origin: 'message', key: 'queue:fake-request-1', owner: 'fake-owner-agent',
+    sourceId: 'fake-request-1:1:1700000000000', leaseUntil: NOW_MS + 600_000,
+    live: true, repo: null, branch: null, path: null, started: null,
+  }] }) });
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('readFleetRecheck', () => {
   it('verifies all four sections when every reader is healthy', async () => {
-    const recheck = await readFleetRecheck(deps());
+    const recheck = await readFleetRecheck(verifiedDeps());
     expect(recheck.schema).toBe('fleet.recheck.v1');
     expect(recheck.asOf).toBe(ISO);
     expect(recheck.sections.runtime).toMatchObject({
@@ -273,7 +282,7 @@ describe('cmdFleetRecheck', () => {
 
   it('prints the verdict object with --json and exits 0 when verified', async () => {
     const { out } = capture();
-    expect(await cmdFleetRecheck(['--json'], deps())).toBe(0);
+    expect(await cmdFleetRecheck(['--json'], verifiedDeps())).toBe(0);
     const parsed = JSON.parse(out.join('\n'));
     expect(parsed.schema).toBe('fleet.recheck.v1');
     expect(parsed.overall.state).toBe('VERIFIED');
@@ -282,7 +291,7 @@ describe('cmdFleetRecheck', () => {
 
   it('prints exactly five RUNTIME|CLAIMS|BRIDGE|TASK|OVERALL lines in text mode', async () => {
     const { out } = capture();
-    expect(await cmdFleetRecheck([], deps())).toBe(0);
+    expect(await cmdFleetRecheck([], verifiedDeps())).toBe(0);
     expect(out).toHaveLength(5);
     for (const [i, label] of ['RUNTIME', 'CLAIMS', 'BRIDGE', 'TASK', 'OVERALL'].entries()) {
       expect(out[i]).toMatch(new RegExp(`^${label} VERIFIED as-of=`));
