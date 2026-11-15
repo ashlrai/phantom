@@ -128,6 +128,7 @@ describe('native MCP tool surface lock', () => {
       'desktop_windows:read',
       'intent_add:append',
       'intent_get:read',
+      'intent_import:append',
       'intent_link:append',
       'intent_list:read',
       'intent_ship:append',

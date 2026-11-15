@@ -24,6 +24,18 @@ describe('queue report', () => {
     expect(report).toEqual(queueReportFromText(text));
     expect(queueReportFromText(JSON.stringify([{station:'x', arrivedAt:'2026-10-26T01:00:00+01:00', startedAt:'2026-10-26T01:00:00+01:00', completedAt:'2026-10-26T02:00:00+01:00'}])).stations[0]?.W).toBe(1);
   });
+  it('validates calendar dates without rejecting leap days or timezone offsets', () => {
+    const visit = { station: 'x', arrivedAt: '2024-02-29T23:00:00-02:00', startedAt: '2024-02-29T23:00:00-02:00', completedAt: '2024-03-01T00:00:00-02:00' };
+    expect(queueReportFromText(JSON.stringify([visit])).window?.hours).toBe(1);
+    for (const invalid of ['2026-02-29T00:00:00Z', '2024-02-30T00:00:00+01:00', '1900-02-29T00:00:00Z', '2026-04-31T00:00:00Z']) {
+      for (const field of ['arrivedAt', 'startedAt', 'completedAt']) {
+        expect(() => queueReportFromText(JSON.stringify([{ ...visit, [field]: invalid }]))).toThrow(`${field}: expected an ISO timestamp`);
+      }
+      for (const field of ['start', 'end']) {
+        expect(() => queueReportFromText(JSON.stringify({ start: visit.arrivedAt, end: visit.completedAt, events: [], [field]: invalid }))).toThrow(`${field}: expected an ISO timestamp`);
+      }
+    }
+  });
   it('breaks utilization ties by station name and serializes unknown metrics', () => {
     const visit = { arrivedAt: '2026-10-26T00:00:00Z', startedAt: '2026-10-26T00:00:00Z', completedAt: '2026-10-26T01:00:00Z' };
     expect(queueReportFromText(JSON.stringify([{ ...visit, station: 'z' }, { ...visit, station: 'a' }])).bottleneck).toBe('a');

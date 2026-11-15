@@ -9,6 +9,7 @@
  * yields 'timed-out', abort 'interrupted' — each with the last observation.
  * Never spawns, loads services, takes locks, writes or triggers a tick.
  */
+import { abortableSleep, boundedAwait } from '../util/await-support.js';
 import { readSelfTickLast, type SelfTickLastView } from './self-tick-last.js';
 
 export const SELF_TICK_AWAIT_MAX_TIMEOUT_MS = 3_600_000,
@@ -62,37 +63,16 @@ const observe = (view: SelfTickLastView | null, afterMs: number, atNow: number):
     failedSteps: capNames(view.failedSteps), newerThanAfter: atMs > afterMs, futureDated: atMs > atNow };
 };
 
-/** Bound a seam by the deadline and interruption, observing late rejection safely. */
-function bounded<T>(pending: Promise<T>, signal: AbortSignal, remaining: number): Promise<T | undefined> {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', stop); };
-    const stop = () => { cleanup(); resolve(undefined); };
-    const timer = setTimeout(stop, Math.max(0, remaining));
-    pending.then(
-      (value) => { cleanup(); resolve(value); },
-      (error) => { cleanup(); reject(error); },
-    );
-    signal.addEventListener('abort', stop, { once: true });
-    if (signal.aborted) stop();
-  });
-}
-
-function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };
-    const timer = setTimeout(finish, ms);
-    signal.addEventListener('abort', finish, { once: true });
-    if (signal.aborted) finish();
-  });
-}
-
 export async function awaitSelfTick(options: SelfTickAwaitOptions): Promise<SelfTickAwaitReport> {
   const now = options.now ?? Date.now;
   const read = options.read ?? ((dir: string, at: number) => readSelfTickLast(dir, at));
-  const sleep = options.sleep ?? defaultSleep;
+  const sleep = options.sleep ?? abortableSleep;
   const signal = options.signal ?? new AbortController().signal;
   const started = now();
   const deadline = started + options.timeoutMs;
+  // The deadline bound runs on the real sleep (the read's raw-setTimeout
+  // equivalent), never the injected seam a test can make instant.
+  const bound = { cancel: signal, deadlineMs: deadline, now };
   let polls = 0, outcome: SelfTickAwaitOutcome | undefined,
     lastObservation: SelfTickAwaitObservation | null = null;
 
@@ -103,14 +83,10 @@ export async function awaitSelfTick(options: SelfTickAwaitOptions): Promise<Self
     if (signal.aborted) { outcome = 'interrupted'; break; }
     polls += 1;
     let stopped = false;
-    try {
-      // .then routes a sync-throwing seam into the same 'unreadable' path.
-      const view = await bounded(Promise.resolve().then(() => read(options.runsDir, now())), signal, deadline - now());
-      if (view === undefined) stopped = true;
-      else lastObservation = observe(view, options.afterMs, now());
-    } catch {
-      lastObservation = { state: 'unreadable' };
-    }
+    const view = await boundedAwait(async () => read(options.runsDir, now()), bound);
+    if (view.kind === 'value') lastObservation = observe(view.value, options.afterMs, now());
+    else if (view.kind === 'failed') lastObservation = { state: 'unreadable' };
+    else stopped = true;
     if (now() >= deadline) { outcome = 'timed-out'; break; }
     if (stopped || signal.aborted) { outcome = signal.aborted ? 'interrupted' : 'timed-out'; break; }
     const seen = lastObservation;
@@ -122,8 +98,9 @@ export async function awaitSelfTick(options: SelfTickAwaitOptions): Promise<Self
     const remaining = deadline - now();
     if (remaining <= 0) { outcome = 'timed-out'; break; }
     // The sleep is capped to the deadline so a slow interval never overshoots it.
-    const slept = await bounded(sleep(Math.min(options.intervalMs, remaining), signal).then(() => true), signal, remaining);
-    if (slept === undefined) { outcome = signal.aborted ? 'interrupted' : 'timed-out'; break; }
+    const slept = await boundedAwait(async () => { await sleep(Math.min(options.intervalMs, remaining), signal); return true; }, bound);
+    if (slept.kind === 'failed') throw slept.error;
+    if (slept.kind !== 'value') { outcome = signal.aborted ? 'interrupted' : 'timed-out'; break; }
   }
 
   return {

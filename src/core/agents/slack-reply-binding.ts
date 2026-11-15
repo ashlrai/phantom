@@ -36,6 +36,14 @@ function compareTs(a: string, b: string): number {
     compareText(aFraction.padEnd(width, '0'), bFraction.padEnd(width, '0'));
 }
 
+/** Canonical decimal identity for a validated ts: insignificant zeros removed. */
+function canonicalTs(ts: string): string {
+  const dot = ts.indexOf('.');
+  const whole = ts.slice(0, dot).replace(/^0+(?=\d)/, '') || '0';
+  const frac = ts.slice(dot + 1).replace(/0+$/, '') || '0';
+  return `${whole}.${frac}`;
+}
+
 function compareRequests(a: InboundRequest, b: InboundRequest): number {
   return compareText(a.channelId, b.channelId) || compareTs(a.threadTs, b.threadTs) ||
     compareText(a.threadTs, b.threadTs) || compareTs(a.messageTs, b.messageTs) ||
@@ -92,7 +100,15 @@ export function bindSlackReplies(input: {
     }
   }
   for (const thread of threads.values()) {
-    thread.replies.sort((a, b) => compareTs(a, b) || compareText(a, b));
+    // One physical reply proves at most one answer per thread: collapse replayed
+    // receipts and decimal-equivalent spellings to a single evidence entry.
+    const unique = new Map<string, string>();
+    for (const ts of thread.replies) {
+      const id = canonicalTs(ts);
+      const kept = unique.get(id);
+      if (kept === undefined || compareText(ts, kept) < 0) unique.set(id, ts);
+    }
+    thread.replies = [...unique.values()].sort((a, b) => compareTs(a, b) || compareText(a, b));
   }
   for (const request of validRequests.sort(compareRequests)) {
     const thread = threads.get(`${request.channelId}:${request.threadTs}`);

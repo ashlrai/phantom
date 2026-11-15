@@ -17,7 +17,7 @@ let store: QueueStore;
 const previousHome = process.env.ASHLR_HOME;
 
 const job = (id: string): QueueJob => ({
-  id, status: 'READY', priority: 'P1', pool: 'claude', tier: 'T2', repo: 'phantom',
+  id, status: 'READY', priority: 'P1', pool: 'claude', tier: 'work', repo: 'phantom',
   scope: 'Write the session doc', acceptance: 'Doc exists', deps: [], claims: [],
 });
 const create = (jobId = 'J1') => createAgentSession({ agentId: 'helper', agentVersion: 2, environmentId: 'local', jobId, queueDir }, { dir });
@@ -84,7 +84,7 @@ describe('agent sessions core', () => {
     await store.finish('J1', 'worker', { prUrl: 'https://example.invalid/pr/1' });
     expect(await code(resumeAgentSession(id, {}, { dir }))).toBe('invalid');
     const { session, job } = await resumeAgentSession(id, { scope: 'Address review comments' }, { dir });
-    expect(job).toMatchObject({ id: `${id}.t2`, status: 'READY', pool: 'claude', repo: 'phantom', scope: 'Address review comments', acceptance: 'Doc exists' });
+    expect(job).toMatchObject({ id: `${id}.t2`, status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom', scope: 'Address review comments', acceptance: 'Doc exists' });
     expect(session.status).toBe('running');
     expect(session.turns.map(t => [t.turn, t.jobId, t.source])).toEqual([[1, 'J1', 'create'], [2, `${id}.t2`, 'resume']]);
     expect((await store.read()).jobs.map(j => j.id)).toEqual(['J1', `${id}.t2`]);

@@ -23,7 +23,7 @@ async function run(root: string, extra: string[], deps: FleetAppsChangesDeps) {
   let output = '';
   const write = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { output += String(chunk); return true; });
   try {
-    const code = await cmdFleetAppsChanges(['--duration-ms', '30000', '--interval-ms', '10000', '--root', root, '--app', app, '--jsonl', ...extra], deps);
+    const code = await cmdFleetAppsChanges(['--duration-ms', '2000', '--interval-ms', '100', '--root', root, '--app', app, '--jsonl', ...extra], deps);
     return { code, events: output.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>) };
   } finally { write.mockRestore(); }
 }
@@ -35,7 +35,11 @@ describe('passive apps-changes bus', () => {
         const deps = fake();
         const result = await run(root, ['--bus'], deps);
         expect(result.code).toBe(0);
-        expect(result.events.at(-1)).toMatchObject({ outcome: 'complete', samples: 3, transitions: 2, published: 4, failed: 0 });
+        // The sample loop is bounded by the real wall clock, so the exact count
+        // varies; extra samples emit nothing once the state stops changing.
+        const last = result.events.at(-1) as { samples?: number };
+        expect(last).toMatchObject({ outcome: 'complete', transitions: 2, published: 4, failed: 0 });
+        expect(last.samples).toBeGreaterThanOrEqual(3);
         expect(deps.runChild.mock.calls.every(([argv]) => argv[1] === 'apps-status')).toBe(true);
       }
       const page = listBusInboxAfter(0, 50, { root });
@@ -61,7 +65,9 @@ describe('passive apps-changes bus', () => {
       expect(listBusInboxAfter(0, 50, { root })).toMatchObject({ status: 'ok', messages: [] });
       const result = await run(root, ['--bus'], { ...fake(), createBusPublisher: path => createAppsChangesPublisher(path, () => { throw new Error('private'); }) });
       expect(result.code).toBe(0);
-      expect(result.events.at(-1)).toMatchObject({ outcome: 'complete', samples: 3, transitions: 2, published: 0, failed: 4 });
+      const last = result.events.at(-1) as { samples?: number };
+      expect(last).toMatchObject({ outcome: 'complete', transitions: 2, published: 0, failed: 4 });
+      expect(last.samples).toBeGreaterThanOrEqual(3);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

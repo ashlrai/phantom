@@ -12,6 +12,8 @@ import { join } from 'node:path';
 
 import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { estimateRun, estimateSwarm, renderEstimate } from '../src/core/observability/estimate.js';
+// Collect the persistence module before timing fixture I/O and estimation.
+import { listRuns } from '../src/core/run/orchestrator.js';
 
 let fx: H1Fixture;
 
@@ -46,6 +48,21 @@ function seedRun(id: string, goal: string, tokens: number, opts?: { steps?: numb
 }
 
 describe('estimateRun', () => {
+  it.each([
+    { maxTokens: undefined, median: 10_000, expected: 0.066 },
+    { maxTokens: 5_000, median: 5_000, expected: 0.033 },
+  ])('prices the historical token split with a $maxTokens token cap', async ({ maxTokens, median, expected }) => {
+    seedRun('reference', 'cloud reference estimate', 10_000);
+    expect(listRuns().map((run) => run.id)).toEqual(['reference']);
+    const est = await estimateRun('cloud reference estimate', { maxTokens }, makeCfg());
+    expect(est.sampleSize).toBe(1);
+    expect(est.tokens.median).toBe(median);
+    expect(est.budgetClamped).toBe(maxTokens !== undefined);
+    expect(est.estCostUsd.median).toBe(0);
+    // The fixture is 70% input and 30% output; cloud reference is $3/$15 per million.
+    expect(est.wouldBeCloudUsd).toBeCloseTo(expected, 12);
+  });
+
   it('returns a zeroed low-confidence estimate on empty history (never throws)', async () => {
     const est = await estimateRun('anything at all', {}, makeCfg());
     expect(est.sampleSize).toBe(0);
@@ -92,6 +109,24 @@ describe('estimateRun', () => {
 });
 
 describe('estimateSwarm', () => {
+  it('prices a completed swarm using its historical input/output split', async () => {
+    const dir = join(fx.ashlrDir, 'swarms');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'reference.json'), JSON.stringify({
+      id: 'reference', goal: 'cloud reference swarm', specId: null, project: null,
+      createdAt: '2026-07-13T12:00:00.000Z', updatedAt: '2026-07-13T12:01:00.000Z',
+      budget: { maxTokens: 50_000, maxSteps: 40, allowCloud: false },
+      usage: { tokensIn: 2_000, tokensOut: 8_000, steps: 1, estCostUsd: 0 },
+      parallel: 1, status: 'done',
+      plan: { specId: null, goal: 'cloud reference swarm', tasks: [] }, tasks: [],
+    }));
+    const est = await estimateSwarm('cloud reference swarm', {}, makeCfg());
+    expect(est.sampleSize).toBe(1);
+    expect(est.tokens.median).toBe(10_000);
+    expect(est.wouldBeCloudUsd).toBeCloseTo(0.126, 12);
+    expect(est.estCostUsd.median).toBe(0);
+  });
+
   it('returns zeroed estimate with no swarm history', async () => {
     const est = await estimateSwarm('build the thing', {}, makeCfg());
     expect(est.kind).toBe('swarm');

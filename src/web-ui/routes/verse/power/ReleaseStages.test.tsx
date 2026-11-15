@@ -23,6 +23,17 @@ describe('ReleaseStages', () => {
     expect(screen.getByText(/Missing: latest.json, manifest.json/u)).toBeTruthy();
     expect(mocks.get).toHaveBeenCalledWith('/api/verse/release/stages', expect.anything());
   });
+  it('links the newest tag to its release notes and refuses a malformed tag', async () => {
+    const { unmount } = render(<ReleaseStages installedVersion="3.29.15" />);
+    const link = await screen.findByRole('link', { name: /What shipped in v3.30.8/u });
+    expect(link.getAttribute('href')).toBe('https://github.com/ashlrai/phantom/releases/tag/v3.30.8');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    unmount();
+    mocks.get.mockResolvedValue({ ...response, tag: 'v3.30.8/../../evil' });
+    render(<ReleaseStages installedVersion="3.29.15" />);
+    expect(await screen.findByText(/published/u)).toBeTruthy();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
   it('shows a plain error line when the read fails', async () => {
     mocks.get.mockRejectedValue(new Error('offline'));
     render(<ReleaseStages installedVersion="3.29.15" />);
