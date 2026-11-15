@@ -90,8 +90,9 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
       if (result.status === 'posted') appendNeedsMasonLine(paths.runsDir, `Agentnet loop/hop cap: ${origin}; inspect the agent bus.`);
       return { status: 'escalated', reason: 'loop-or-hop-cap', origin };
     }
-    // Channel sends debit every enrolled recipient pair as well as the channel.
-    const targets = recipient ? [recipient.callsign] : [target, ...peers.filter(p => p.callsign !== sender.callsign && audience.members.some(m => m.id === p.userId)).map(p => p.callsign)];
+    // Channel sends debit every currently eligible recipient pair as well as the channel.
+    const targets = recipient ? [recipient.callsign] : [target, ...peers.filter(p => p.callsign !== sender.callsign &&
+      p.expiresAt > now && p.teamId === sender.teamId && audience.members.some(m => m.id === p.userId)).map(p => p.callsign)];
     if (targets.some(t => live.filter(r => r.fromAgent === sender.callsign && r.target === t && now - r.at < PEER_WINDOW_MS).length >= PEER_PAIR_LIMIT)) return { status: 'refused', reason: 'pair-rate-limit' };
     if (live.length + targets.length > 1024) return { status: 'refused', reason: 'peer-store-full' };
     const threadId = parent?.threadId ?? request.threadId ?? origin;
