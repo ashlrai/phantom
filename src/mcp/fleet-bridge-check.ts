@@ -52,20 +52,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Small future-clock allowance for a claim timestamp, matching the 5 s
+ * future-skew bound other local evidence readers use. A claimedAt beyond it is
+ * contradictory evidence — never a fresh zero-age live claim. */
+const CLAIM_MAX_FUTURE_SKEW_MS = 5_000;
+
 /** A claim row in the shape projectCoordinationClaims emits: the producer's
- * string identity and timestamp fields plus the expiresInSeconds count, with
- * claimedAt a parseable timestamp because this summary turns it into
- * newestAgeSec. One malformed row makes the whole list unreadable — the check
- * never reports a smaller live count filtered out of bad evidence. */
-function isProducerClaimRow(value: unknown): value is Record<string, unknown> {
+ * string identity and timestamp fields plus the expiresInSeconds count. Both
+ * timestamps must parse, expiry must fall after the claim (the ledger's own
+ * ordering invariant) and claimedAt cannot sit materially in the future;
+ * expiresInSeconds is the producer's rounded remaining TTL, never negative for
+ * a live row. One malformed or temporally impossible row makes the whole list
+ * unreadable — the check never reports a smaller live count filtered out of
+ * bad evidence. */
+function isProducerClaimRow(value: unknown, nowMs: number): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
   for (const key of ['id', 'repo', 'task', 'agent', 'expiresAt'] as const) {
     if (typeof value[key] !== 'string') return false;
   }
   const claimedAt = value['claimedAt'];
   const expiresInSeconds = value['expiresInSeconds'];
-  return typeof claimedAt === 'string' && Number.isFinite(Date.parse(claimedAt))
-    && typeof expiresInSeconds === 'number' && Number.isFinite(expiresInSeconds);
+  if (typeof claimedAt !== 'string' || typeof expiresInSeconds !== 'number'
+    || !Number.isFinite(expiresInSeconds) || expiresInSeconds < 0) return false;
+  const claimedAtMs = Date.parse(claimedAt);
+  const expiresAtMs = Date.parse(value['expiresAt'] as string);
+  return Number.isFinite(claimedAtMs) && Number.isFinite(expiresAtMs)
+    && expiresAtMs > claimedAtMs
+    && claimedAtMs <= nowMs + CLAIM_MAX_FUTURE_SKEW_MS;
 }
 
 /** Terminal statuses the producers use for evidence that was actually read.
@@ -190,7 +203,7 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     // producer-shaped rows; a missing, non-array or partly malformed list is
     // unreadable evidence — never an empty ledger or a filtered live count.
     const rawClaims = projection['claims'];
-    const list = Array.isArray(rawClaims) && rawClaims.every(isProducerClaimRow)
+    const list = Array.isArray(rawClaims) && rawClaims.every(row => isProducerClaimRow(row, nowMs))
       ? (rawClaims as Record<string, unknown>[])
       : null;
     const base = {
