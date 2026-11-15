@@ -66,6 +66,10 @@ export interface MergeBatchPr {
   createdAt: string | null;
   updatedAt: string | null;
   files: string[];
+  /** False when the wire list was absent, capped or contained invalid paths. */
+  filesComplete?: boolean;
+  /** Explicit merged-replacement evidence carried by a PR hygiene report. */
+  supersededBy?: number;
 }
 
 /** Snapshot shapes the parser accepts — all forms a `gh pr list` page already takes. */
@@ -114,6 +118,12 @@ function fileList(value: unknown): string[] {
   return out;
 }
 
+function filesComplete(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0 && value.length < MAX_FILES_PER_PR
+    && value.every(file => normalizeRepoPath(typeof file === 'string' ? file
+      : isRecord(file) ? file['path'] as string : '') !== null);
+}
+
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const repoName = (value: unknown): string | null =>
   typeof value === 'string' && REPO_RE.test(value) ? value : null;
@@ -130,7 +140,8 @@ function ghRowToPr(row: unknown): MergeBatchPr | null {
   const pr: PrHygieneOpenPr | null = parsePrHygieneOpenPr(row);
   if (pr === null) return null;
   const headSha = isRecord(row) ? sha(row['headRefOid'] ?? row['headSha']) : null;
-  return { ...pr, headSha };
+  return { ...pr, headSha, filesComplete: isRecord(row) && filesComplete(row['files'])
+    && fileList(row['files']).length === pr.files.length };
 }
 
 /**
@@ -157,6 +168,11 @@ function itemToPr(row: unknown): MergeBatchPr | null {
     createdAt: iso(row['createdAt']),
     updatedAt: iso(row['updatedAt']),
     files: fileList(row['files']),
+    filesComplete: filesComplete(row['files']),
+    ...(Array.isArray(row['flags']) && row['flags'].includes('superseded')
+      && isRecord(row['supersededBy']) && Number.isSafeInteger(row['supersededBy']['number'])
+      && (row['supersededBy']['number'] as number) > 0 && row['supersededBy']['number'] !== number
+      ? { supersededBy: row['supersededBy']['number'] as number } : {}),
   };
 }
 

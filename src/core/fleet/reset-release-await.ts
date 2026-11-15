@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { abortableSleep, isAwaitMs } from './needs-mason-answer-await.js';
+import { abortableSleep, boundedAwait, isAwaitMs, wireAwaitCancel } from '../util/await-support.js';
 import { parseResetAwaitWatermarkMs } from './reset-evidence-await.js';
 import { readResetReleases, type ResetReleaseRecord } from './usage-reset-release.js';
 import { scrubPrivateText } from '../util/scrub.js';
@@ -54,32 +54,13 @@ export async function awaitResetRelease(options: { lane: string; timeoutMs: numb
   }
   const deadline = now() + timeoutMs;
   const controller = new AbortController();
-  const cancel = (): void => controller.abort();
-  process.on('SIGINT', cancel); process.on('SIGTERM', cancel);
-  signal?.addEventListener('abort', cancel, { once: true });
-  if (signal?.aborted) cancel();
+  const detach = wireAwaitCancel(controller, signal);
   // Race each operation against both cancellation and the remaining deadline.
   // Promise.race attaches rejection handlers even to a reader that finishes late.
-  const bounded = async <T>(operation: () => Promise<T>, limit: number): Promise<
-    { kind: 'value'; value: T } | { kind: 'deadline' | 'cancelled' | 'failed' }> => {
-    const timer = new AbortController();
-    let onAbort: () => void = () => {};
-    const cancelled = new Promise<{ kind: 'cancelled' }>(resolve => {
-      onAbort = () => resolve({ kind: 'cancelled' });
-      controller.signal.addEventListener('abort', onAbort, { once: true });
-      if (controller.signal.aborted) onAbort();
-    });
-    try {
-      return await Promise.race([
-        Promise.resolve().then(operation).then(value => ({ kind: 'value' as const, value }), () => ({ kind: 'failed' as const })),
-        sleep(limit, timer.signal).then(() => ({ kind: 'deadline' as const }), () => ({ kind: 'failed' as const })),
-        cancelled,
-      ]);
-    } finally { timer.abort(); controller.signal.removeEventListener('abort', onAbort); }
-  };
+  const bound = { cancel: controller.signal, deadlineMs: deadline, now, sleep };
   try {
     while (!controller.signal.aborted && now() < deadline) {
-      const read = await bounded(() => (deps.read ?? readResetReleases)(runsDir, 200), deadline - now());
+      const read = await boundedAwait(() => (deps.read ?? readResetReleases)(runsDir, 200), bound);
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (now() >= deadline || read.kind === 'deadline') break;
       if (read.kind !== 'value') { result.outcome = read.kind; break; }
@@ -95,16 +76,13 @@ export async function awaitResetRelease(options: { lane: string; timeoutMs: numb
         result.release = { timestamp: new Date(Date.parse(match.at)).toISOString(), state: match.state };
         break;
       }
-      const wait = await bounded(() => sleep(Math.min(pollMs, deadline - now()), controller.signal), deadline - now());
+      const wait = await boundedAwait(() => sleep(Math.min(pollMs, deadline - now()), controller.signal), bound);
       if (controller.signal.aborted) { result.outcome = 'cancelled'; break; }
       if (wait.kind === 'failed') { result.outcome = 'failed'; break; }
       if (wait.kind === 'deadline' || now() >= deadline) break;
     }
     if (controller.signal.aborted) result.outcome = 'cancelled';
   } catch { result.outcome = 'failed'; }
-  finally {
-    controller.abort(); process.off('SIGINT', cancel); process.off('SIGTERM', cancel);
-    signal?.removeEventListener('abort', cancel);
-  }
+  finally { detach(); }
   return result;
 }
