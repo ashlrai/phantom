@@ -11,6 +11,7 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
+import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
 import type { Fact, StatusDigestInput, StatusDigestPeers, StatusDigestWorkClaims } from './status-digest.js';
 
 export interface StatusDigestSources {
@@ -25,6 +26,8 @@ export interface StatusDigestSources {
   workClaims?: (nowMs: number) => BusWorkClaimsInspection;
   /** Read-only peer bus ledger; a throw becomes an unknown Peers line. */
   peers?: (nowMs: number) => PeerLedgerReport;
+  /** Read-only node runner results on this computer; a throw becomes an unknown Node runs line. */
+  nodeRuns?: (nowMs: number) => NodeResultsSummary;
 }
 
 const HOUR = 3_600_000;
@@ -46,7 +49,15 @@ const defaults: StatusDigestSources = {
   inbox: runsDir => readInboxEntries({ runsDir, limit: 200 }),
   workClaims: () => inspectBusWorkClaims(),
   peers: nowMs => readPeerLedger({ now: () => nowMs }),
+  nodeRuns: nowMs => readNodeResults({ nowMs }),
 };
+
+function gatherNodeRuns(read: ((nowMs: number) => NodeResultsSummary) | undefined, nowMs: number): NodeResultsSummary | undefined {
+  if (read === undefined) return undefined;
+  try { return read(nowMs); } catch {
+    return { v: 1, authority: 'none', status: 'unavailable', asOf: new Date(nowMs).toISOString(), windowMs: 0, inWindow: 0, newest: null, unreadable: 0, truncated: false, reason: 'reader-failed' };
+  }
+}
 
 /** Maps the peer ledger to the digest shape; tightest is the first pair with no budget left (the ledger sorts by remaining). */
 export function summarizePeerLedger(report: PeerLedgerReport): StatusDigestPeers {
@@ -139,5 +150,5 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   }
 
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs) };
 }
