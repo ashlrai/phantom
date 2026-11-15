@@ -5,7 +5,14 @@ import { STALE_AFTER_SECONDS } from '../core/fleet/runtime-identity.js';
 import { readFleetPeerLedger } from './fleet-peer-ledger.js';
 import { readFleetRuntime } from './fleet-runtime.js';
 
-export const NOTE = 'One-call verdict on whether a cloud agent can reach the live Phantom runtime on this computer: READY only when the runtime snapshot, the coordination claims ledger and the peer ledger all read cleanly — the same evidence as fleet_runtime, fleet_coordination_claims and fleet_peer_ledger joined into one answer. BLOCKED names each missing part in missing[]; a reader that fails marks only its own section unavailable, so the call itself never throws, and explicitly unknown, malformed or negative-age producer evidence is treated the same way — an age alone never makes unknown runtime or peer state healthy. runtime carries the snapshot fields with fleet-state freshness checked against the same 15-minute staleness bound as runtime-identity; claims carries the live count and the newest claim age; peers carries the sanitized peer-bus budget. Evidence only; it grants no dispatch, claim, send or merge authority and a READY is reachability, not work. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.';
+export const NOTE = 'One-call verdict on whether a cloud agent can reach the live Phantom runtime on this computer: READY only when the runtime snapshot, the coordination claims ledger and the peer ledger all read cleanly — the same evidence as fleet_runtime, fleet_coordination_claims and fleet_peer_ledger joined into one answer. BLOCKED names each missing part in missing[]; each reader has a finite deadline and a reader that fails or stalls marks only its own section unavailable, so the call itself never throws, and explicitly unknown, malformed or negative-age producer evidence is treated the same way — an age alone never makes unknown runtime or peer state healthy. runtime carries the snapshot fields with fleet-state freshness checked against the same 15-minute staleness bound as runtime-identity; claims carries the live count and the newest claim age; peers carries the sanitized peer-bus budget. Evidence only; it grants no dispatch, claim, send or merge authority and a READY is reachability, not work. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.';
+
+// Shared per-reader deadline, comfortably inside the 8 s HTTP envelope
+// (BRIDGE_CHECK_TIMEOUT_MS in core/verse/fleet-bridge-check-api.ts) so direct
+// MCP/CLI callers also finish in finite time when one evidence reader stalls.
+// Same bound as the claim-execution read deadline. The race stops waiting for
+// a stalled read; it does not cancel the underlying I/O.
+export const BRIDGE_CHECK_READER_DEADLINE_MS = 5_000;
 
 /** The tool takes no arguments; anything else is rejected before a read. */
 export function parseFleetBridgeCheckArgs(args: Record<string, unknown> | undefined): Record<string, never> | null {
@@ -21,6 +28,8 @@ export interface FleetBridgeCheckDeps {
   peers?: () => unknown;
   /** Verdict clock. */
   now?: () => number;
+  /** Per-reader deadline in ms; defaults to BRIDGE_CHECK_READER_DEADLINE_MS. */
+  deadlineMs?: number;
 }
 
 interface SectionBase {
@@ -48,12 +57,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * unknown evidence and can never earn a READY on its own. */
 const READABLE_STATUSES: ReadonlySet<string> = new Set(['ok', 'empty']);
 
-/** One read behind its own boundary; a throw or rejection is a missing part, never a thrown verdict. */
-async function attempt<T>(read: () => T | Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+type AttemptResult<T> = { ok: true; value: T } | { ok: false; timedOut: boolean };
+
+/** One read behind its own finite deadline; a throw, rejection or stall is a
+ * missing part, never a thrown verdict. Handlers stay attached after the
+ * deadline wins, so a late rejection is consumed and can never surface as an
+ * unhandled rejection; the deadline does not cancel the underlying read. */
+async function attempt<T>(read: () => T | Promise<T>, deadlineMs: number): Promise<AttemptResult<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return { ok: true, value: await read() };
-  } catch {
-    return { ok: false };
+    const outcome = await Promise.race([
+      Promise.resolve().then(read).then(
+        (value): { kind: 'ok'; value: T } => ({ kind: 'ok', value }),
+        (): { kind: 'failed' } => ({ kind: 'failed' }),
+      ),
+      new Promise<{ kind: 'timeout' }>(resolve => {
+        timer = setTimeout(() => resolve({ kind: 'timeout' }), deadlineMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (outcome.kind === 'timeout') return { ok: false, timedOut: true };
+    return outcome.kind === 'ok' ? { ok: true, value: outcome.value } : { ok: false, timedOut: false };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -81,10 +107,11 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     return projectCoordinationClaims(board, nowMs);
   });
 
+  const deadlineMs = deps.deadlineMs ?? BRIDGE_CHECK_READER_DEADLINE_MS;
   const [runtime, claims, peers] = await Promise.all([
-    attempt(deps.runtime ?? (() => readFleetRuntime())),
-    attempt(readClaims),
-    attempt(deps.peers ?? (() => readFleetPeerLedger({}))),
+    attempt(deps.runtime ?? (() => readFleetRuntime()), deadlineMs),
+    attempt(readClaims, deadlineMs),
+    attempt(deps.peers ?? (() => readFleetPeerLedger({})), deadlineMs),
   ]);
 
   let runtimeSection: FleetBridgeCheck['runtime'];
@@ -133,7 +160,9 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
       if (runtimeSection['reason'] === undefined) runtimeSection['reason'] = 'runtime-status-unreadable';
     }
   } else {
-    runtimeSection = { status: 'unavailable', reason: 'runtime-reader-failed', source: 'fleet-runtime', asOf };
+    runtimeSection = { status: 'unavailable',
+      reason: !runtime.ok && runtime.timedOut ? 'runtime-reader-timeout' : 'runtime-reader-failed',
+      source: 'fleet-runtime', asOf };
     missing.push('runtime');
   }
 
@@ -157,7 +186,8 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
     if (state !== 'known') missing.push('claims');
   } else {
     claimsSection = { status: 'unavailable', state: 'unknown', live: null, newestAgeSec: null,
-      reason: 'claims-reader-failed', source: 'coordination-ledger', asOf };
+      reason: !claims.ok && claims.timedOut ? 'claims-reader-timeout' : 'claims-reader-failed',
+      source: 'coordination-ledger', asOf };
     missing.push('claims');
   }
 
@@ -182,7 +212,9 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
       if (malformed && peersSection['reason'] === undefined) peersSection['reason'] = 'peer-status-unreadable';
     }
   } else {
-    peersSection = { status: 'unavailable', reason: 'peers-reader-failed', source: 'peer-ledger', asOf };
+    peersSection = { status: 'unavailable',
+      reason: !peers.ok && peers.timedOut ? 'peers-reader-timeout' : 'peers-reader-failed',
+      source: 'peer-ledger', asOf };
     missing.push('peers');
   }
 
