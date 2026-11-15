@@ -78,11 +78,15 @@ export async function cmdFleetOrderState(
       v: 1, generatedAt: trace.generatedAt, sources: trace.sources, live: liveState, lanes: lanesState,
       orders: orders.map((o) => {
         const { c, blocker } = classify(o);
-        return {
+        const orderJson = {
           at: o.at, source: o.source, key: o.key,
           state: c.state, asOf: c.asOf, evidenceSource: c.source,
           missing: c.missing, blocker, pr: mostAdvancedJob(o)?.url ?? null,
         };
+        if (o.alsoChannels) {
+          orderJson.alsoChannels = o.alsoChannels;
+        }
+        return orderJson;
       }),
     }));
     return 0;
