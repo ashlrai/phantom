@@ -63,6 +63,12 @@ export const NAV_GROUPS: NavGroup[] = [
           'Chronological, filterable, scrubable record of runs, merges, judge verdicts, and daemon ticks — with live streaming into any in-progress run.',
         implemented: true,
       },
+      {
+        path: '/pages',
+        label: 'Pages',
+        description: 'Published report pages (phm pages publish) rendered in this console.',
+        implemented: true,
+      },
     ],
   },
   {

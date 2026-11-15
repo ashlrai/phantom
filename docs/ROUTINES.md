@@ -102,7 +102,8 @@ Grok resources additionally require `grokbot: { "budgetFile": "/absolute/snapsho
 "secretsProject": "/absolute/secrets/project", "dayCap": 10, "weekCap": 50 }`.
 Bot submission uses its existing quota admission and Phantom Secrets child proxy;
 missing commissioning refuses execution. Replies are polled for at most two minutes. Local uses only
-`http://127.0.0.1:8000/v1`, without a key or environment URL override. Engine
+`http://127.0.0.1:8000/v1`, without a key or environment URL override, and local
+inference requests refuse redirects so traffic cannot leave loopback. Engine
 admission, sandbox, proposal and merge controls remain in force. This command
 does not enable engines or authorize merges.
 

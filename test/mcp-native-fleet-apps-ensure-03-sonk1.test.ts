@@ -11,6 +11,8 @@ const result = (app: string, outcome: string, running = false, launched = false)
 const payload = (value: Awaited<ReturnType<typeof callNativeTool>>) => JSON.parse(value.content[0]!.text);
 afterEach(() => vi.restoreAllMocks());
 
+registerFleetNativeTools();
+
 describe('native fleet apps ensure', () => {
   it('advertises a closed mutation schema and rejects invalid input before recovery', async () => {
     const schema = listNativeTools().find(tool => tool.name === name)!.inputSchema;

@@ -55,6 +55,8 @@
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
  *   console [--port N] [--no-open]  Phantom console (serve with dispatch on) at /app/. `verse` is the same command.
  *   verse [--port N] [--no-open]  Alias of `console`; opens /verse/.
+ *   pages publish <file> [opts]  Publish a Markdown/JSON report into the local dashboard (/pages/<slug>).
+ *   pages list [--json]          List published report pages.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
@@ -446,6 +448,14 @@ const loadDashboardCmd = lazyCmd(
   () => import('./dashboard.js' as unknown as string),
   (m) => m.cmdDashboard as Cmd,
   'dashboard command requires src/cli/dashboard.ts (M211 module not yet built).',
+);
+
+// ─── COS report pages command loader ────────────────────────────────
+
+const loadPagesCmd = lazyCmd(
+  () => import('./pages.js' as unknown as string),
+  (m) => m.cmdPages as Cmd,
+  'pages command requires src/cli/pages.ts.',
 );
 
 // ─── M14 command loader ────────────────────────────────────────────
@@ -2184,6 +2194,14 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pr': {
+        if (rest[0] === '--help' || rest[0] === '-h' || rest[0] === 'help' || rest.length === 0) { console.log('Usage: phm pr cockpit --repo owner/name [--json]'); process.exitCode = 0; break; }
+        if (rest[0] !== 'cockpit') { console.error('Usage: phm pr cockpit --repo owner/name [--json]'); process.exitCode = 2; break; }
+        const { cmdPrCockpit } = await import('./pr-cockpit.js');
+        process.exitCode = await cmdPrCockpit(rest.slice(1));
+        break;
+      }
+
       case 'autopilot': {
         const { cmdAutopilot } = await import('./autopilot.js');
         process.exitCode = await cmdAutopilot(rest);
@@ -2238,7 +2256,11 @@ async function main(): Promise<void> {
         break;
       }
       case 'org': {
-        const { cmdOrg } = await import('./org.js');
+        // Tenancy `org list|add` (orgs grouping teams) shares the verb with
+        // the team-org `org show|join|plan`; the subcommands are disjoint.
+        const { cmdOrg } = rest[0] === 'list' || rest[0] === 'add'
+          ? await import('./tenancy.js')
+          : await import('./org.js');
         process.exitCode = await cmdOrg(rest);
         break;
       }
@@ -2250,6 +2272,12 @@ async function main(): Promise<void> {
       case 'team': {
         const { cmdTeam } = await import('./team.js');
         process.exitCode = await cmdTeam(rest);
+        break;
+      }
+
+      case 'whoami': {
+        const { cmdWhoami } = await import('./tenancy.js');
+        process.exitCode = await cmdWhoami(rest);
         break;
       }
 
@@ -2352,6 +2380,11 @@ async function main(): Promise<void> {
 
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
+      case 'job': {
+        process.exitCode = await (await import('./job.js')).cmdJob(rest);
         break;
       }
 
@@ -2516,6 +2549,14 @@ async function main(): Promise<void> {
         // opens browser. `--stop` / `--status` subcommands also supported.
         const cmdDashboard = await loadDashboardCmd();
         process.exitCode = await cmdDashboard(rest);
+        break;
+      }
+
+      case 'pages': {
+        // COS report pages: publish a .md/.json report into the loopback
+        // dashboard at /pages/<slug>, or list published pages.
+        const cmdPages = await loadPagesCmd();
+        process.exitCode = await cmdPages(rest);
         break;
       }
 
@@ -3169,17 +3210,17 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'routines': {
+        const { runRoutinesCli } = await import('./routines.js');
+        process.exitCode = await runRoutinesCli(rest);
+        break;
+      }
+
       case 'automations': {
         // 3.15: standing triggers → lane tasks (src/cli/automations.ts). `fire`
         // goes through the lanes' own gates; `fire --dry-run` writes nothing.
         const cmdAutomations = await loadAutomationsCmd();
         process.exitCode = await cmdAutomations(rest);
-        break;
-      }
-
-      case 'routines': {
-        const { runRoutinesCli } = await import('./routines.js');
-        process.exitCode = await runRoutinesCli(rest);
         break;
       }
 

@@ -91,9 +91,9 @@ describe('handoff reconnect cannot steal or fabricate a return', () => {
     expect(after.messages).toEqual([expect.objectContaining({ id: `return-${claimId}`, from: AGENT_B, to: 'all' })]);
     expect(projectCoordinationReturns(after, options.now).returns).toHaveLength(1);
 
-    // Durable events: claim, handoff, release, post — no receipt from the stale context.
+    // Durable events: claim, handoff, return, post — no receipt from the stale context.
     const events = ledgerEvents(options.path);
-    expect(events.map(event => event['kind'])).toEqual(['claim', 'handoff', 'release', 'post']);
+    expect(events.map(event => event['kind'])).toEqual(['claim', 'handoff', 'return', 'post']);
     expect(events[1]).toMatchObject({ kind: 'handoff', claim: { id: claimId, agent: AGENT_B } });
     const raw = readFileSync(options.path, 'utf8');
     expect(raw).not.toContain(leaseA);
@@ -137,7 +137,7 @@ describe('handoff reconnect cannot steal or fabricate a return', () => {
     expectNoLeaseMaterial(JSON.stringify(projectCoordinationReturns(reopened, options.now)), [leaseA, toB.lease, leaseC]);
 
     const events = ledgerEvents(options.path);
-    expect(events.map(event => event['kind'])).toEqual(['claim', 'handoff', 'handoff', 'release', 'post']);
+    expect(events.map(event => event['kind'])).toEqual(['claim', 'handoff', 'handoff', 'return', 'post']);
     const raw = readFileSync(options.path, 'utf8');
     for (const lease of [leaseA, toB.lease, leaseC]) expect(raw).not.toContain(lease);
   });

@@ -57,6 +57,7 @@ export const REAL_IO_TEST_FILES = [
   'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
   'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
   'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/coordination-return-durable-retry-378s.test.ts', // Spawns a tsx child racing a concurrent owner return on the coordination lock.
   'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
@@ -107,6 +108,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp/fleet-path-history-04-spm1.test.ts', // Creates real git history for MCP path lookup.
   'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
   'test/mcp/fleet-job-patch-04-sqb1.test.ts', // Creates real git history for MCP job patch reads.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates and advances real git history for snapshot replay.
   'test/mcp/fleet-path-history-pinned-04-sps2.test.ts', // Creates real git history and moves refs during pinned MCP path history reads.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.

@@ -1,3 +1,4 @@
+import { APP_CONTROL_SCHEMA, appConnection, appFetch, appReadings, parseAppRequest } from '../web/app-control.js';
 /**
  * core/verse/verse-mcp-stdio.ts — `ashlr verse-mcp-stdio`: a stdio MCP server
  * that relays, line for line, to Verse's MCP endpoint (verse-mcp.ts) for the
@@ -135,11 +136,31 @@ async function relay(io: VerseMcpStdioIo, raw: string): Promise<void> {
     return;
   }
   const messages = Array.isArray(message) ? message : [message];
+  // Explicit app authority is separate from a chat's tool grant. Never reuse its bearer token.
+  const appFile = io.env['PHM_APP_CONNECTION_FILE'];
+  if (appFile && isRecord(message) && isRecord(message['params']) &&
+      message['method'] === 'tools/call' && message['params']['name'] === 'phm_app_control') {
+    try {
+      const request = parseAppRequest(message['params']['arguments']);
+      const result = await appFetch(await appConnection(appFile), '/api/app/v1/control', request);
+      io.write(JSON.stringify({ jsonrpc: '2.0', id: message['id'], result: { content: [{ type: 'text', text: JSON.stringify(appReadings(result)) }] } }));
+    } catch {
+      io.write(JSON.stringify({ jsonrpc: '2.0', id: message['id'], result: { isError: true, content: [{ type: 'text', text: 'App control refused.' }] } }));
+    }
+    return;
+  }
+  const addAppTool = (answer: Record<string, unknown>): Record<string, unknown> => {
+    if (appFile && isRecord(message) && message['method'] === 'tools/list' && isRecord(answer['result']) && Array.isArray(answer['result']['tools'])) {
+      answer['result']['tools'].push({ name: 'phm_app_control', description: 'App v1 pause, resume or preferences. CLI twin: phm app steer or prefs --json.', inputSchema: APP_CONTROL_SCHEMA });
+    }
+    return answer;
+  };
+
   const credential = await resolveVerseMcpCredential(io);
   const offline = (): void => {
     for (const m of messages) {
       const answer = isRecord(m) ? offlineAnswer(m) : null;
-      if (answer) io.write(JSON.stringify(answer));
+      if (answer) io.write(JSON.stringify(addAppTool(answer)));
     }
   };
   if (!credential) return offline();
@@ -166,7 +187,7 @@ async function relay(io: VerseMcpStdioIo, raw: string): Promise<void> {
   } catch {
     return offline();
   }
-  for (const answer of Array.isArray(body) ? body : [body]) io.write(JSON.stringify(answer));
+  for (const answer of Array.isArray(body) ? body : [body]) io.write(JSON.stringify(isRecord(answer) ? addAppTool(answer) : answer));
 }
 
 function defaultIo(): VerseMcpStdioIo {

@@ -15,6 +15,8 @@ const name = 'phantom_fleet_apps_changes';
 const stamp = '2026-11-01T00:00:00.000Z';
 const snapshot = (running: boolean | null) => JSON.stringify({ v: 1, available: true, generatedAt: stamp, apps: FLEET_APPS.map(app => ({ app, running, checkedAt: stamp })) });
 
+registerFleetNativeTools();
+
 describe('native fleet app changes', () => {
   it('registers a closed read-only schema and rejects malformed arguments before observing', async () => {
     expect(nativeToolSafety(name)).toBe('read');

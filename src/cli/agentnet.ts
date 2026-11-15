@@ -4,7 +4,7 @@ const usage = 'phm agentnet peers list|read|send <to|#channel-id> <task|review|h
 export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, session: PeerSession = {
   lane: process.env.PHM_AGENTNET_LANE ?? '', sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: process.env.PHM_AGENTNET_SESSION_TOKEN ?? '',
 }): Promise<number> {
-  if (!args.length || args.includes('--help')) { console.log(usage); return 0; }
+  if (!args.length || args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
   const positional: string[] = []; let after: number | undefined; let apply = false, replyTo: string | undefined, threadId: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;

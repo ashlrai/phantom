@@ -74,6 +74,13 @@ export interface TaskArmObservation {
   };
 }
 
+/** Measured outcomes and spend for a task arm. */
+export interface TaskArmObservation {
+  mergedPrs?: number;
+  tokens?: number;
+  pace?: { windowStartMs: number; spentTokens: number };
+}
+
 /** Independent funding-category and headroom weights. lambdaLatency remains
  * readable for old harness configurations but unqualified aggregate latency
  * cannot affect the operational rank. These weights authorize no spending. */

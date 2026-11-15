@@ -47,6 +47,10 @@ export function LiveStatusSection() {
     {result.status === 'error' && <p role="alert">Live status unavailable. Retry with Refresh. Previous readings may be stale.</p>}
     {!data ? <p role="status">Loading live status…</p> : <>
       <p>{data.state} · {data.reason} · Updated <time dateTime={data.generatedAt}>{new Date(data.generatedAt).toLocaleString()}</time></p>
+      <h2>Fleet health</h2>
+      {!data.doctor ? <p>Unknown</p> : data.doctor.level === 'ok' ? <p>All checks ok</p> : <ul>{[...(data.doctor.checks ?? [])]
+        .sort((a, b) => ({ red: 0, warn: 1, ok: 2 }[a.level] - { red: 0, warn: 1, ok: 2 }[b.level]))
+        .map(check => <li key={check.name} style={check.level === 'red' ? { color: '#b3261e' } : undefined}>{`${check.level} ${check.name}: ${check.reason}`}</li>)}</ul>}
       {data.summary && <p>Running: {data.summary.building ?? 'unknown'} · Queued: {data.summary.queued ?? 'unknown'} · Parked: {data.summary.parked ?? 'unknown'}</p>}
       <h2>Lanes</h2>
       {!data.lanes ? <p>Lane readings unavailable</p> : <ul>{data.lanes.map(row => <li key={row.lane}>{row.lane}: {row.busy} busy / {row.slots} slots{row.capReason ? ` · ${row.capReason}` : ''}</li>)}{!data.lanes.length && <li>None recorded</li>}</ul>}

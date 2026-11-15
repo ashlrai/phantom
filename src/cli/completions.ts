@@ -23,7 +23,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
+  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'whoami', 'sandbox', 'audit',
   'enroll', 'backlog', 'inbox', 'ideas', 'claim', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
   'health', 'goals', 'prs', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
   'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'release', 'preflight',
@@ -43,7 +43,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'devin',
   'openai-agents',
   'agents',
-  'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'pool',
+  'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'job', 'pool',
   // 3.15 automations.
   'automations', 'routines',
   // 3.15 Jev decision layer.
@@ -69,6 +69,10 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
   'worklog', 'library',
+  // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
+  'pages',
+  // Read-only GitHub PR cockpit snapshot (RQ-PR-COCKPIT).
+  'pr',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
   'constitution', 'wb', 'caps',
 ];
@@ -84,7 +88,12 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
-  app: ['update', 'status', 'steer', '--text', '--json', '--help'],
+  app: ['update', 'status', 'resources', 'budgets', 'state', 'steer', 'prefs', '--text', '--json', '--help'],
+  job: ['cost', '--help'],
+  pages: ['publish', 'list', '--json', '--help'],
+  whoami: ['--json', '--help'],
+  org: ['list', 'add', 'show', 'join', 'plan', '--team', '--json', '--help'],
+  pr: ['cockpit', '--repo', '--json', '--offline', '--refresh', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
@@ -103,7 +112,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
-  queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'list', 'import', 'export', '--help'],
+  queue: ['stats', 'report', 'add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export', 'spawn', 'promote', 'serve', '--help'],
   land: ['auto', '--repo', '--apply', '--json', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'help'],
@@ -120,7 +129,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   wire: ['claude', 'codex', 'cursor', 'gemini', 'all', 'status'],
   notify: ['test', 'session'],
   telemetry: ['status', 'test'],
-  node: ['bootstrap', 'join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'list', 'status', 'leave', 'pool', 'watch', 'worker', 'rpc', 'lanes'],
+  node: ['bootstrap', 'join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'list', 'status', 'leave', 'pool', 'watch', 'worker', 'run-once', 'rpc', 'lanes'],
   sandbox: ['list', 'diff', 'cleanup', 'gc'],
   enroll: ['add', 'remove', 'list', 'kill'],
   backlog: ['refresh', 'plan', 'lint'],
@@ -136,7 +145,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'drive',
+    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive',
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],

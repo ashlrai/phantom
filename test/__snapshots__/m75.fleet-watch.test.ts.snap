@@ -10,6 +10,7 @@ exports[`cmdFleetWatch JSON mode > returns exit code 0 and emits valid JSON 1`] 
   "fleetFields": [
     "schema",
     "memory",
+    "metrics",
     "generatedAt",
     "budgets",
     "buildIdentity",

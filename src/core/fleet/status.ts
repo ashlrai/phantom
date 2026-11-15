@@ -1515,14 +1515,14 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
-  /** Additive dashboard feed; optional for legacy snapshots. */
-  metrics?: FleetMetrics;
   /** Advisory per-pool observations, independent of dispatch authority. */
   budgets?: PoolBudgetSnapshot;
   /** Additive fleet.v1 contract marker; absent in legacy snapshots. */
   schema?: 'fleet.v1';
   /** Local memory admission observations; absent in legacy snapshots. */
   memory?: FleetMemoryStatus;
+  /** Additive dashboard feed; optional for legacy snapshots. */
+  metrics?: FleetMetrics;
   /** ISO timestamp this snapshot was generated. */
   generatedAt: string;
   /** Canonical build-produced identity. Optional for legacy serialized snapshots. */
@@ -3280,9 +3280,9 @@ export async function buildFleetStatus(
   }
 
   const status: FleetStatus = {
-    metrics: readFleetMetrics(options.readMetrics),
     schema: 'fleet.v1',
     memory: await readFleetMemory(options.memoryPaths),
+    metrics: readFleetMetrics(options.readMetrics),
     generatedAt,
     budgets: await readPoolBudgets(undefined, new Date(generatedAt)),
     buildIdentity: readBuildIdentity(),
