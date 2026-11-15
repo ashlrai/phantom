@@ -360,6 +360,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'reset-watch': () => import('./fleet-reset-watch.js'),
   'resources': () => import('./fleet-resources.js'),
   'restock': () => import('./fleet-restock.js'),
+  'returns-check': () => import('./fleet-returns-check.js'),
   'review-pick': () => import('./fleet-review-pick.js'),
   'review-take': () => import('./fleet-review-take.js'),
   'route-moves': () => import('./fleet-route-moves.js'),
