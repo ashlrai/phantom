@@ -73,6 +73,14 @@ The underlying sources refresh every 15 seconds while visible; unavailable
 sources are reported and activity may be incomplete or stale. Neither view
 starts work or establishes that an outcome was shipped.
 
+Company opens with org member counts, members with recorded lane opt-ins, distinct
+contributed lanes, fleet jobs running and merges today (Eastern Time). The org
+summary reads the same declaration and join records as `phm org show`, and exposes
+counts only. Declared capacity without a positive opt-in contributes no lanes;
+unreadable records leave contributions unknown. Fleet totals remain shared
+aggregates, separate from member activity and private account usage. Sources
+refresh every 15 seconds while visible; missing org metadata stays unknown.
+
 ## Unified engineering surface audit (RQ-DESKTOP-UNIFIED-1)
 
 Phantom desktop is the operator surface. Agents use the same typed projections
