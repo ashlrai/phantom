@@ -1009,6 +1009,7 @@
 /test/merge-backlog-read.test.ts @masonwyatt23
 /test/merge-cockpit-exact-206s.test.ts @masonwyatt23
 /test/merge-cockpit-owner-qualification-302s.test.ts @masonwyatt23
+/test/merge-cockpit-recovery-132.test.ts @masonwyatt23
 /test/merge-cockpit.test.ts @masonwyatt23
 /test/merge-gate-latency.test.ts @masonwyatt23
 /test/merge-gates-310b.test.ts @masonwyatt23
@@ -1092,6 +1093,7 @@
 /test/receipt-key.test.ts @masonwyatt23
 /test/receipt-later-hooks.test.ts @masonwyatt23
 /test/recut-comms-61.test.ts @masonwyatt23
+/test/recut-core-c409.test.ts @masonwyatt23
 /test/recut-core-o1-s140.test.ts @masonwyatt23
 /test/recut-loop-attempts.test.ts @masonwyatt23
 /test/recut-loop-landed-03.test.ts @masonwyatt23
