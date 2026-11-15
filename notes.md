@@ -41,3 +41,9 @@ No drive command, driver daemon, metrics command, restock implementation or publ
 - Shared pnpm package links were incomplete; dependency repair overlapped preliminary verification. Final runs must use the restored stable dependency tree.
 - Isolated npm ci restored 403 packages. The bounded documentation recipe passed with 84,770,816-byte peak RSS on this host; this is not muse execution evidence.
 - Final validation: 86 backend + 51 Python + 10 authority tests pass, along with full typecheck, docs and the final changed-file gate. Full-repository lint was interrupted without output; focused lint and both guards passed. Baseline archive was removed; all repository changes remain uncommitted.
+
+# Chief-of-staff findings
+
+Convention registry exposes the CLI; dispatcher wire formats come from repository producers.
+New core is unreachable from Tier-1 roots. Existing apps boundary chain is unchanged at HEAD.
+See BRIDGE_NOTES.md and docs/contracts/CONTRACT-FLEET-CHIEF-OF-STAFF-V1.md for evidence and limits.
