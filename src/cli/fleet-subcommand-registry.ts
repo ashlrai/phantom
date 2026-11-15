@@ -37,6 +37,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'board': () => import('./fleet-board.js'),
   'board-notify': () => import('./fleet-board-notify.js'),
   'brains': () => import('./fleet-brains.js'),
+  'bridge-check': () => import('./fleet-bridge-check.js'),
   'bridge-install': () => import('./fleet-bridge-install.js'),
   'brief': () => import('./fleet-brief.js'),
   'brief-send': () => import('./fleet-brief-send.js'),
