@@ -8,6 +8,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } fr
 import { ashlrHome } from '../core/cloud/store.js';
 import { listWorkBoard, WORK_BOARD_DEFAULT_LIMIT, WORK_BOARD_MAX_LIMIT } from '../core/comms/work-board.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
+import { buildSlackBridgeStatus } from '../core/agents/slack-status.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
@@ -127,6 +128,7 @@ async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
 
 /** Same bound as the verse comms-status API uses for the bridge health read. */
 const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
+const SLACK_REPLIES_TIMEOUT_MS = 5_000;
 
 /** Runtime identity: host, installed version and fleet-state freshness, sanitized by the reader. */
 async function readFleetRuntimeIdentity() {
@@ -167,6 +169,34 @@ async function readFleetChannelHealth(
   }
 }
 
+/** Slack reply binding: the `replies` section of the offline bridge status plus its `at`. */
+async function readSlackRepliesEvidence() {
+  const status = buildSlackBridgeStatus();
+  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample } = status.replies;
+  return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample };
+}
+
+/** Bounded Slack-replies read. A throw or timeout is reported as status
+ * 'unknown' with a short code — never an invented answered/unanswered count. */
+async function readFleetSlackReplies(
+  read: () => Promise<unknown> = readSlackRepliesEvidence,
+  timeoutMs = SLACK_REPLIES_TIMEOUT_MS,
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error instanceof Error && error.message === 'timeout' ? 'slack-replies-timeout' : 'slack-replies-unavailable' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export interface FleetReaders {
   stagingScanner?: StagingScanner;
   stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
@@ -178,6 +208,7 @@ export interface FleetReaders {
   workBoard?: (input: FleetWorkBoardArgs) => Promise<unknown>;
   runtimeIdentity?: () => Promise<unknown>;
   channelHealth?: () => Promise<unknown>;
+  slackReplies?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
@@ -321,6 +352,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     {
       name: 'fleet_channel_health',
       description: 'Read Slack and iMessage bridge channel health (LIVE / DEGRADED / BLOCKED / UNKNOWN per channel with proof and asOf) — the same readChannelHealth report as `ashlr fleet channel-health`. Evidence only; it grants no send, dispatch or merge authority. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented healthy report. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_slack_replies',
+      description: 'Read the Slack reply binding: which ingested Slack requests have a same-thread `sent` receipt (answered) and which do not (unanswered), with state, oldestUnansweredAt, uncertainSends, rejected, futureDated, a capped unansweredSample (channelId, threadTs, messageTs, at) and asOf, from the same replies section as the Slack bridge status. Lets an agent tell RECEIVED from answered. Evidence only; it grants no send, dispatch or merge authority, and an `attempted` send is never counted as an answer. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented answered or unanswered count. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
@@ -784,7 +821,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_runtime_identity' && name !== 'fleet_channel_health' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_runtime_identity' && name !== 'fleet_channel_health' && name !== 'fleet_slack_replies' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -888,6 +925,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_runtime_identity' ? await (readers.runtimeIdentity ?? readFleetRuntimeIdentity)()
         : name === 'fleet_channel_health' ? await readFleetChannelHealth(readers.channelHealth)
+        : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
         : name === 'fleet_recheck' ? await (readers.recheck ?? (() => readFleetRecheckTool()))()

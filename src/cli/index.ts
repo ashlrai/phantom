@@ -519,6 +519,12 @@ const loadNodeCmd = lazyCmd(
   'node command requires src/cli/node.ts.',
 );
 
+const loadNodesCmd = lazyCmd(
+  () => import('./nodes.js'),
+  (m) => m['cmdNodes'] as Cmd,
+  'nodes command requires src/cli/nodes.ts.',
+);
+
 const loadSandboxCmd = lazyCmd(
   () => import('./sandbox.js'),
   (m) => m.cmdSandbox as Cmd,
@@ -2601,6 +2607,12 @@ async function main(): Promise<void> {
       case 'node': {
         const cmdNode = await loadNodeCmd();
         process.exitCode = await cmdNode(rest);
+        break;
+      }
+
+      case 'nodes': {
+        const cmdNodes = await loadNodesCmd();
+        process.exitCode = await cmdNodes(rest);
         break;
       }
 

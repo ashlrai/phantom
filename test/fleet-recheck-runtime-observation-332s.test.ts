@@ -73,7 +73,10 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
   return {
     now: () => NOW, homeDir: () => HOME, listWorkBoard: () => healthyWork,
     readRuntimeIdentity: () => fakeRuntime(), readFleetBoard: () => healthyBoard,
-    readChannelHealth: () => healthyChannels, ...over,
+    readChannelHealth: () => healthyChannels,
+    listCoordination: () => ({ source: 'unavailable', claims: [] }),
+    listLiveWorkers: () => { throw new Error('absent'); },
+    ...over,
   };
 }
 
