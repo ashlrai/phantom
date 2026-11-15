@@ -921,3 +921,31 @@ a regression test and deliver a small draft PR, or report no-change when the
 signal is insufficient. Existing cloud budgets, backlog deduplication, and PR
 review gates apply. Unset the variable to disable intake; already queued items
 remain in the backlog.
+
+## Fleet dashboard metrics feed
+
+`phm fleet status --json` includes an additive `metrics` object with schema
+`fleet-metrics.v1`. Existing status fields are unchanged. `formatFleetMetrics`
+in `src/core/fleet/metrics-feed.ts` renders the same rollups, retirement
+candidates, impact scoreboard, production and exploration shares, and per-pool
+budget projections for text surfaces.
+
+The local RQ-METRICS-ROUTER-FEED and RQ-BUDGET-LEDGER seam lives in
+`src/core/fleet/metrics-feed.ts`. Its reader currently returns unavailable until
+those upstream modules are integrated. Consumers must check `sourceState`:
+unknown rollups and shares are `null`, and unavailable rankings and pools are
+empty arrays. A healthy empty work window has zero counts and null shares.
+`observedAt` and `windowHours` describe the measurement, not the CLI read time.
+
+Each input work row represents one unique PR. Shares count all work in the
+window; impact rankings count merged work only. Scores are supplied by the
+upstream feed, never inferred from diff size. Retirement candidates have zero
+realized impact and are advisory only, ranked by work count. Rankings contain
+at most ten entries with deterministic ties. No routing or retirement is applied.
+
+Each pool carries its own unit and reset time. Remaining capacity is clamped at
+zero; burn per hour is used capacity divided by observed hours. Exhaustion
+projects that average forward from the observation time and is compared with
+reset. Zero burn has no exhaustion date; missing observation duration gives
+unknown burn. Expired reset windows and invalid or duplicate evidence degrade
+the metrics slice. Projections are observations and grant no spending authority.

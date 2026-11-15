@@ -49,6 +49,7 @@ export async function resumeFleet(): Promise<void> {
 
 function invalidateProposalViews(id: string): void {
   invalidate('inbox');
+  invalidate('pending-approvals');
   invalidate('dashboard-snapshot');
   invalidate(`proposal-detail-${id}`);
   invalidatePrefix('inbox-list:');

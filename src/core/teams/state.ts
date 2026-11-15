@@ -16,7 +16,7 @@ export interface Member { id: string; kind: TeamActor['kind']; role: TeamRole; p
 export interface Claim { id: string; target: ClaimTarget; holder: string; reason: string; acquiredAt: string; expiresAt: string }
 export type HandoffState = 'awaiting-approval' | 'open' | 'accepted' | 'completed' | 'declined';
 export interface Handoff { id: string; from: string; to: string | null; title: string; detail: string; action: ConsequentialAction | null; contextRefs: string[]; state: HandoffState; approvalId: string | null; assignee: string | null; result: string | null; updatedAt: string }
-export interface Approval { id: string; handoffId: string | null; action: ConsequentialAction | null; access: AccessRequestAction | null; note: string | null; requestedBy: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
+export interface Approval { id: string; handoffId: string | null; action: ConsequentialAction | null; access: AccessRequestAction | null; note: string | null; requestedBy: string; requestedAt: string; state: 'pending' | 'approved' | 'denied'; decidedBy: string | null }
 export interface TeamState { team: string; repos: string[]; members: Member[]; claims: Claim[]; handoffs: Handoff[]; approvals: Approval[]; messages: { id: string; from: string; channel: string; text: string; ts: string }[]; eventCount: number }
 
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
@@ -90,14 +90,14 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       }
       case 'approval.requested': {
         const h = handoffs.get(str(p.handoffId));
-        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, access: null, note: null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
+        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, access: null, note: null, requestedBy: ev.actor.id, requestedAt: ev.ts, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
         break;
       }
       case 'access.requested': {
         // An agent-filed workspace mutation parked as a pending approval; the
         // human decision and the mutation it unlocks are separate later events.
         const access = parseAccessRequestAction(p.request);
-        if (access) approvals.set(ev.id, { id: ev.id, handoffId: null, action: null, access, note: str(p.note) || null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null });
+        if (access) approvals.set(ev.id, { id: ev.id, handoffId: null, action: null, access, note: str(p.note) || null, requestedBy: ev.actor.id, requestedAt: ev.ts, state: 'pending', decidedBy: null });
         break;
       }
       case 'approval.decided': {
