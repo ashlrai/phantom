@@ -459,3 +459,14 @@ apply uses existing drop admission, and digest reports twelve-hour observations.
 No merge, publish, send or scheduler authority is added. The full limits,
 dedupe, protected-scope and failure contract is in the
 [feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
+
+## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
+
+`src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
+feature domains, lane/model preferences, relative memory paths, current-job
+metadata and outcome statistics. `src/core/fleet/specialist-memory.ts` appends
+markdown job outcomes and renders bounded, scrubbed context for future prompts.
+`src/cli/fleet-roster.ts` exposes `phm fleet roster list|show|assign|note --json`.
+The live session roster stays separate. Storage, exported functions, failure
+behavior and verification are pinned in
+[the specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md).
