@@ -74,3 +74,16 @@ RQ-FLEET-VIZ-1 verification findings:
 - Untouched HEAD web build reproduced the exact first-paint budget failures: chat 435.1 KiB/354, phone 253.4 KiB/250. The new pane remains lazy.
 - Loopback HTTP walkthrough refused by host EPERM; stopped browser verification. DOM interaction walkthrough is the available evidence.
 - Serial pool rerun: 14/14 passed; parallel timeout did not reproduce.
+
+---
+
+# Orchestration findings
+
+- Chief-of-staff reads bounded dispatcher snapshots in src/cli/fleet-chief-of-staff.ts and produces recommendations only.
+- Roster assign establishes identity/domain; setSpecialistCurrentJob records job metadata, not a claim or dispatch. Memory rendering marks history as untrusted context.
+- sendPeerMessage authenticates host-enrolled sessions, checks audience/approval/kill/pause and has hop/rate limits. Reuse it without alternative transports.
+- buildOutcomeMetrics and suggestOutcomePolicy are pure; weekly feedback must retain suggestOnly and missing evidence.
+- postOwnerNotice records proactive brief text in the existing desktop owner thread, with kill/pause and idempotency checks, without requiring an inbound reply.
+- No supplied live claim or open PR covers RQ-ORCH-LOOP-1.
+
+Final evidence: 84 focused tests pass; gate orchestration 9/9 pass. Full gate fails on unchanged files and denied loopback connections. See BRIDGE_NOTES.md for exact counts and commands.
