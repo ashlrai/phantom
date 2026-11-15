@@ -52,6 +52,13 @@ export function releaseStageRows(response: ReleaseStagesView, _installedVersion:
   return rows;
 }
 
+const RELEASE_TAG = /^v\d+\.\d+\.\d+$/u;
+
+/** GitHub release page for a published tag, or null when the tag is not a plain `vX.Y.Z` (never interpolate unchecked text into a URL). */
+export function releaseNotesUrl(tag: string | null): string | null {
+  return tag && RELEASE_TAG.test(tag) ? `https://github.com/ashlrai/phantom/releases/tag/${tag}` : null;
+}
+
 function core(version: string): number[] | null {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/u.exec(version);
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
