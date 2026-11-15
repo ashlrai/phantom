@@ -53,6 +53,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Your task | Canonical guide |
 |-----------|-----------------|
 | Run tests for changed files | [Test changed files](https://github.com/ashlrai/phantom/blob/master/docs/TEST-CHANGED.md) |
+| Use organization, personal, Phantom hero, and social artwork | [Brand media kit](https://github.com/ashlrai/phantom/blob/master/docs/brand/README.md) |
 | Review the proposed risk-based CI path and savings model | [Frictionless merge path](https://github.com/ashlrai/phantom/blob/master/docs/ci/FRICTIONLESS-PATH.md) |
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
