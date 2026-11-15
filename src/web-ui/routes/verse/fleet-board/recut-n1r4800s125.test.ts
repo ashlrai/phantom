@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { fleetBoardPath, fleetBoardResponse, readFleetBoard } from '../../../../core/fleet/leader-journal.js';
+import { fleetBoardPath, fleetBoardResponse, readFleetBoard } from '../../../../core/fleet/fleet-board-read.js';
 
 it('reads a recorded board and preserves missing and corrupt states', async () => {
   const runsDir = await mkdtemp(join(tmpdir(), 'fleet-board-recut-'));
