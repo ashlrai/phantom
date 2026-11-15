@@ -6,9 +6,11 @@
  * contract (see order-work-state.ts), never the orders' text.
  *
  * summarizeOrders is pure: no I/O, no clock reads — the caller passes
- * `nowIso` and the already-read order trace. The classification stays cheap:
- * no live-worker or queue arguments, so RUNNING is only reported when the
- * trace's own evidence reaches it. formatOrdersLine is pure too; every
+ * `nowIso`, the already-read order trace and, optionally, the healthy
+ * live-worker snapshot (RUNNING) and lane targets (BLOCKED) that
+ * `ashlr fleet order-state` uses too. Without them the classification falls
+ * back to the trace alone, and one reason per missing input says so.
+ * formatOrdersLine is pure too; every
  * interpolated string goes through the caller's scrub, so the reply's
  * redaction rules (IPs, home paths, banned verbs) apply here as well.
  *
@@ -20,8 +22,9 @@
  */
 import { parseOrderAt } from '../../cli/fleet-orders.js';
 import type { WorkItemState } from '../comms/work-item-state.js';
-import { classifyOrder } from './order-work-state.js';
+import { classifyOrder, type LiveJobIds } from './order-work-state.js';
 import type { OrderTraceV1 } from './order-trace.js';
+import type { LaneTargetsV1 } from './runs-lane-targets.js';
 
 /** The reporting contract's look-back for "recent" inbox orders, in ms. */
 const WINDOW_MS = 24 * 3_600_000;
@@ -46,8 +49,14 @@ export interface RecheckOrders {
 
 /** Count the trace's last-24h orders by work state. An order whose `at`
  * cannot be parsed as Eastern wall time, or that is older than the window,
- * is skipped; every other order is classified from the trace alone. */
-export function summarizeOrders(trace: OrderTraceV1, nowIso: string): RecheckOrders {
+ * is skipped; every other order is classified from the trace plus whichever
+ * of `live` / `lanes` the caller supplies (callers pass healthy ones only). */
+export function summarizeOrders(
+  trace: OrderTraceV1,
+  nowIso: string,
+  live?: LiveJobIds,
+  lanes?: LaneTargetsV1,
+): RecheckOrders {
   const generatedAt = typeof trace?.generatedAt === 'string' ? trace.generatedAt : nowIso;
   const nowMs = Date.parse(nowIso);
   const cutoff = nowMs - WINDOW_MS;
@@ -56,13 +65,17 @@ export function summarizeOrders(trace: OrderTraceV1, nowIso: string): RecheckOrd
   for (const order of trace?.orders ?? []) {
     const at = parseOrderAt(order.at);
     if (at === null || !Number.isFinite(nowMs) || at < cutoff) continue;
-    const { state } = classifyOrder(order, generatedAt, nowIso);
+    const { state } = classifyOrder(order, generatedAt, nowIso, live, lanes);
     counts[state] = (counts[state] ?? 0) + 1;
     total += 1;
   }
   const reasons: string[] = [];
   for (const [source, state] of Object.entries(trace?.sources ?? {})) {
     if (state !== 'healthy') reasons.push(`orders: ${source} ${state}`);
+  }
+  if (total > 0) {
+    if (live === undefined) reasons.push('orders: live workers unavailable, RUNNING not checked');
+    if (lanes === undefined) reasons.push('orders: lane holds unavailable, BLOCKED not checked');
   }
   return { asOf: generatedAt, windowHours: 24, counts, total, reasons };
 }

@@ -81,6 +81,8 @@ import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
 import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
 import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
+import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
+import type { LiveJobIds } from './order-work-state.js';
 import { summarizeOrders, type RecheckOrders } from './recheck-orders-line.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
@@ -273,6 +275,7 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
     readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
     readPool: () => readPoolReach(defaultPoolReachDeps()),
     readOrders: () => readOrderTrace(),
+    readLaneTargets: () => readLaneTargets(),
   };
 }
 
@@ -289,6 +292,7 @@ export type FleetRecheckDeps = {
   readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
   readPool?: () => Promise<PoolReach> | PoolReach;
   readOrders?: () => Promise<OrderTraceV1> | OrderTraceV1;
+  readLaneTargets?: () => Promise<LaneTargetsV1> | LaneTargetsV1;
 };
 
 type ReaderResult<T> = { ok: true; value: T } | { ok: false };
@@ -753,13 +757,19 @@ function poolEvidence(r: ReaderResult<PoolReach>, asOf: string): PoolReach {
   return v !== null && typeof v === 'object' && Array.isArray(v.hosts) && Array.isArray(v.reasons) ? v : failed;
 }
 
-function ordersEvidence(r: ReaderResult<OrderTraceV1>, asOf: string, nowIso: string): RecheckOrders {
+function ordersEvidence(
+  r: ReaderResult<OrderTraceV1>,
+  asOf: string,
+  nowIso: string,
+  live?: LiveJobIds,
+  lanes?: LaneTargetsV1,
+): RecheckOrders {
   const failed: RecheckOrders = { asOf, windowHours: 24, counts: {}, total: 0, reasons: ['orders: reader failed'] };
   if (!r.ok) return failed;
   const v = r.value;
   if (v === null || typeof v !== 'object' || !Array.isArray(v.orders)) return failed;
   try {
-    return summarizeOrders(v, nowIso);
+    return summarizeOrders(v, nowIso, live, lanes);
   } catch {
     return failed;
   }
@@ -792,8 +802,8 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     d.readOrders = () => readOrderTrace({ now: () => nowMs });
   }
 
-  // All nine readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders] = await Promise.all([
+  // All ten readers run concurrently, each inside its own 5 s bound.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets] = await Promise.all([
     attempt(d.readRuntimeIdentity),
     attempt(d.readFleetBoard),
     attempt(d.readChannelHealth),
@@ -803,7 +813,20 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     attempt(d.readTailnetPeers),
     attempt(d.readPool),
     attempt(d.readOrders),
+    attempt(d.readLaneTargets),
   ]);
+
+  // Orders evidence uses healthy snapshots only; anything else is "no evidence".
+  const liveJobs: LiveJobIds | undefined =
+    live.ok && live.value !== null && typeof live.value === 'object'
+      && live.value.sourceState === 'healthy' && Array.isArray(live.value.workers)
+      ? { jobIds: new Set(live.value.workers.map(w => w.job)), at: typeof live.value.generatedAt === 'string' ? live.value.generatedAt : asOf }
+      : undefined;
+  const lanes: LaneTargetsV1 | undefined =
+    laneTargets.ok && laneTargets.value !== null && typeof laneTargets.value === 'object'
+      && laneTargets.value.sourceState === 'healthy' && Array.isArray(laneTargets.value.lanes)
+      ? laneTargets.value
+      : undefined;
 
   const sections = {
     runtime: runtimeSection(runtime, asOf, nowMs),
@@ -821,7 +844,7 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     asOf,
     tailnet: tailnetEvidence(tailnet, asOf, home),
     pool: poolEvidence(pool, asOf),
-    orders: ordersEvidence(orders, asOf, asOf),
+    orders: ordersEvidence(orders, asOf, asOf, liveJobs, lanes),
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };

@@ -86,7 +86,7 @@ const PS_LIVE = [
 interface OrderStateJson {
   v: number;
   generatedAt: string;
-  sources: Record<'inbox' | 'prompts' | 'publishes', string>;
+  sources: Record<'inbox' | 'prompts' | 'publishes' | 'queue', string>;
   live: string;
   orders: Array<{
     at: string; source: string; key: string;
@@ -140,14 +140,14 @@ describe('fleet order-state disk recovery', () => {
       {
         const j = json();
         expect(j.generatedAt).toBe(NOW_ISO);
-        expect(j.sources).toEqual({ inbox: 'missing', prompts: 'missing', publishes: 'missing' });
+        expect(j.sources).toEqual({ inbox: 'missing', prompts: 'missing', publishes: 'missing', queue: 'missing' });
         expect(j.live).toBe('unavailable');
         expect(j.orders).toEqual([]);
       }
       log.mockClear();
       expect(await run([])).toBe(0);
       expect(log.mock.calls.map((c) => c[0])).toEqual([
-        'warning: order sources not healthy: inbox=missing prompts=missing publishes=missing',
+        'warning: order sources not healthy: inbox=missing prompts=missing publishes=missing queue=missing',
         'warning: live workers unavailable; RUNNING not checked',
       ]);
       log.mockClear();
@@ -161,7 +161,7 @@ describe('fleet order-state disk recovery', () => {
       expect(await run()).toBe(0);
       {
         const j = json();
-        expect(j.sources).toEqual({ inbox: 'healthy', prompts: 'missing', publishes: 'missing' });
+        expect(j.sources).toEqual({ inbox: 'healthy', prompts: 'missing', publishes: 'missing', queue: 'missing' });
         expect(j.live).toBe('unavailable');
         const orders = byKey(j);
         expect(j.orders).toHaveLength(2);
@@ -197,7 +197,7 @@ describe('fleet order-state disk recovery', () => {
       expect(await run()).toBe(0);
       {
         const j = json();
-        expect(j.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'healthy' });
+        expect(j.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'healthy', queue: 'missing' });
         expect(j.live).toBe('healthy');
         const orders = byKey(j);
         const a = orders.get(ORDER_A_KEY)!;
@@ -280,7 +280,7 @@ describe('fleet order-state disk recovery', () => {
       expect(await run()).toBe(0);
       {
         const j = json();
-        expect(j.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'healthy' });
+        expect(j.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'healthy', queue: 'missing' });
         const orders = byKey(j);
         const a = orders.get(ORDER_A_KEY)!;
         expect(a.state).toBe('RECEIVED');

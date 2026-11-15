@@ -8,11 +8,19 @@
  *   when the caller passes a live-worker snapshot (`live`): a launched or
  *   published job whose id has a live worker gets `runningEvidence` stamped
  *   at the snapshot's time;
- * - the trace carries no dependency edge, so `blocker` is never set and
- *   BLOCKED stays unreachable. */
+ * - the trace carries no dependency edge, so BLOCKED is reachable only when
+ *   the caller passes healthy lane targets (`lanes`, from slots.json): an
+ *   unverified order whose every job is still queued on a held lane gets a
+ *   `blocker` naming those lanes (heldLaneBlocker in order-lane-blocker.ts);
+ * - the only other dependency evidence is a job-ended-empty outcome row in
+ *   metrics/jobs.jsonl: an order whose every job is launched and ended empty
+ *   (none queued, published or merged) is BLOCKED on those jobs
+ *   (endedEmptyBlocker). Nothing here proves a relaunch is not coming. */
 import { parseOrderAt } from '../../cli/fleet-orders.js';
 import { classifyWorkItem, type WorkItemClassification, type WorkItemEvidence } from '../comms/work-item-state.js';
+import { endedEmptyBlocker, heldLaneBlocker } from './order-lane-blocker.js';
 import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
+import type { LaneTargetsV1 } from './runs-lane-targets.js';
 
 export type TraceOrder = OrderTraceV1['orders'][number];
 
@@ -58,8 +66,11 @@ export function pullRequest(url: string | null): { url: string; pr: number } | n
  * the live snapshot names proves RUNNING, and its own lane + id supply the
  * owner and claim receipt — a sibling's owner is never borrowed for another
  * job's running evidence. Without live proof the most advanced job keeps
- * naming the claim, exactly as before. */
-export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?: LiveJobIds): WorkItemEvidence {
+ * naming the claim, exactly as before.
+ *
+ * An unverified order also carries a held-lane `blocker` when the caller's
+ * `lanes` show every one of its jobs queued on a held lane. */
+export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?: LiveJobIds, lanes?: LaneTargetsV1): WorkItemEvidence {
   const evidence: WorkItemEvidence = { id: order.key };
   const received = parseOrderAt(order.at);
   if (received !== null) evidence.receivedAt = new Date(received).toISOString();
@@ -72,6 +83,8 @@ export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?
     evidence.verified = { pr: pull.pr, artifact: pull.url, source: 'order-trace', at: traceGeneratedAt };
     return evidence;
   }
+  const blocker = heldLaneBlocker(order, lanes) ?? endedEmptyBlocker(order, traceGeneratedAt);
+  if (blocker !== undefined) evidence.blocker = blocker;
   let running: OrderTraceJob | undefined;
   for (const job of order.jobs) {
     if (job.state !== 'launched' && job.state !== 'published') continue;
@@ -92,6 +105,6 @@ export function orderEvidence(order: TraceOrder, traceGeneratedAt: string, live?
   return evidence;
 }
 
-export function classifyOrder(order: TraceOrder, generatedAt: string, nowIso: string, live?: LiveJobIds): WorkItemClassification {
-  return classifyWorkItem(orderEvidence(order, generatedAt, live), nowIso);
+export function classifyOrder(order: TraceOrder, generatedAt: string, nowIso: string, live?: LiveJobIds, lanes?: LaneTargetsV1): WorkItemClassification {
+  return classifyWorkItem(orderEvidence(order, generatedAt, live, lanes), nowIso);
 }

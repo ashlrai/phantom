@@ -44,7 +44,7 @@ it('bounded prompt scan stays partial, then a complete scan recovers the omitted
 
     // 1. Newest-first scan of one body: only RQ-FAKE-NEWER is read, so only its order is associated.
     let trace = await readOrderTrace({ runsDir: root, now: () => 0, maxBodies: 1 });
-    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'degraded', publishes: 'missing' });
+    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'degraded', publishes: 'missing', queue: 'missing' });
     expect(membership(trace)).toEqual({ '11-10 09:15': [], '11-11 14:30': ['RQ-FAKE-NEWER'] });
     expect(trace.orders.find(o => o.key === '11-11 14:30')?.jobs).toEqual([
       { id: 'RQ-FAKE-NEWER', lane: null, state: 'queued', url: null },
@@ -52,17 +52,17 @@ it('bounded prompt scan stays partial, then a complete scan recovers the omitted
 
     // 2. Raising the bound covers both prompts: healthy coverage and both associations, including the omitted one.
     trace = await readOrderTrace({ runsDir: root, now: () => 0, maxBodies: 2 });
-    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing' });
+    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing', queue: 'missing' });
     expect(membership(trace)).toEqual({ '11-10 09:15': ['RQ-FAKE-OLDER'], '11-11 14:30': ['RQ-FAKE-NEWER'] });
 
     // 3. Zero bound: nothing is scanned, so no association may survive from the earlier cached reads.
     trace = await readOrderTrace({ runsDir: root, now: () => 0, maxBodies: 0 });
-    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'degraded', publishes: 'missing' });
+    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'degraded', publishes: 'missing', queue: 'missing' });
     expect(membership(trace)).toEqual({ '11-10 09:15': [], '11-11 14:30': [] });
 
     // 4. A later complete scan (default bound) recovers both associations with healthy coverage.
     trace = await readOrderTrace({ runsDir: root, now: () => 0 });
-    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing' });
+    expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing', queue: 'missing' });
     expect(membership(trace)).toEqual({ '11-10 09:15': ['RQ-FAKE-OLDER'], '11-11 14:30': ['RQ-FAKE-NEWER'] });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -90,11 +90,11 @@ it('identical job basenames with different citations never leak evidence between
     expect(membership(traceA)).toEqual({ '11-10 09:15': [], '11-11 14:30': ['RQ-FAKE-NEWER'] });
 
     let traceB = await readOrderTrace({ runsDir: rootB, now: () => 0 });
-    expect(traceB.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing' });
+    expect(traceB.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing', queue: 'missing' });
     expect(membership(traceB)).toEqual({ '11-12 08:05': ['RQ-FAKE-NEWER'] });
 
     traceA = await readOrderTrace({ runsDir: rootA, now: () => 0 });
-    expect(traceA.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing' });
+    expect(traceA.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'missing', queue: 'missing' });
     expect(membership(traceA)).toEqual({ '11-10 09:15': ['RQ-FAKE-OLDER'], '11-11 14:30': ['RQ-FAKE-NEWER'] });
     expect(traceA.orders.some(o => o.key === '11-12 08:05')).toBe(false);
 
