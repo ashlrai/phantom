@@ -57,6 +57,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
 | Review agent-native CI, risk selection and post-merge metrics | [CI rightsizing proposal](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CI-RIGHTSIZING.md) |
+| Measure fleet outcomes and review weekly policy suggestions | [Fleet outcome metrics](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) |
 | Explain empty jobs | [Empty jobs](https://github.com/ashlrai/phantom/blob/master/docs/EMPTY-JOBS.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
@@ -353,7 +354,7 @@ canonical release guide for required hosted qualification and publication.
 
 - [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
 
-- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import|exec|config --json`; metadata and Phantom Secrets references, phantom-injected launch and token-free client configs.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 - [Done contract](https://github.com/ashlrai/phantom/blob/master/docs/DONE-CONTRACT.md): the layered `done-contract.v1` file schema, floor checks, frozen acceptance criteria, verify commands, and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).
