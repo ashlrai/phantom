@@ -18,7 +18,7 @@ import { isReviewAsk } from '../fleet/review-ask.js';
 import { readReviewPick } from '../fleet/review-pick.js';
 import { formatReviewPickReply } from '../fleet/review-pick-reply.js';
 import { isOwnersAsk } from '../fleet/owners-ask.js';
-import { isPeersAsk } from '../fleet/peers-ask.js';
+import { isPeersAsk, parsePeersAsk } from '../fleet/peers-ask.js';
 import { readPeerLedger } from '../agentnet/peer-ledger.js';
 import { formatPeerLedgerReply } from '../fleet/peer-ledger-reply.js';
 import { formatSurfaceOwnersReply } from '../fleet/surface-owners-reply.js';
@@ -198,6 +198,17 @@ export async function composeOwnerOwnersReply(now: Date, deps: OwnerStatusDeps =
   } catch { return OWNER_OWNERS_FALLBACK; }
 }
 
+/** The peers answer: the aggregate ledger, or one exact pair when the ask named
+ * both callsigns. The selector comes only from the validated ask text — never
+ * from the sender or thread — and a reader failure stays "unknown", never a
+ * quota claim. */
+function peersLedgerReply(text: string): Promise<string> {
+  return Promise.resolve().then(() => {
+    const ask = parsePeersAsk(text);
+    return formatPeerLedgerReply(ask?.kind === 'pair' ? readPeerLedger({ pair: ask.pair }) : readPeerLedger());
+  }).catch(() => 'Peers unknown: peer ledger reader failed');
+}
+
 const defaultBoard = (now: Date): WorkBoardResult => listWorkBoard({ root: join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 20 });
 
 /** A failed board read never touches the digest: it only becomes the "unknown" line. */
@@ -267,8 +278,7 @@ export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: stri
           : text !== undefined && isOwnersAsk(text)
             ? composeOwnerOwnersReply(now, deps)
             : text !== undefined && isPeersAsk(text)
-              ? Promise.resolve().then(() => formatPeerLedgerReply(readPeerLedger()))
-                .catch(() => 'Peers unknown: peer ledger reader failed')
+              ? peersLedgerReply(text)
               : composeSlackStatusReply(runsDir, now, deps),
     fallback: OWNER_STATUS_FALLBACK,
   };
