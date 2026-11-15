@@ -12,6 +12,8 @@ const sources: StatusDigestSources = {
   // The sixth claims line postdates this suite's five-line counts; the
   // undefined override keeps both assertions exactly as written.
   workClaims: undefined,
+  // Node runs line postdates these counts too; this suite stays on the original lines.
+  nodeRuns: undefined,
 };
 const now = () => new Date('2026-11-11T12:00:00Z');
 
