@@ -14,6 +14,7 @@ import { defaultHostMergeDeps, readPr, readRequiredChecks, readHeadChecks } from
 import { killSwitchOn } from '../sandbox/policy.js';
 import { runReviewerProcess, type ReviewerRunOptions } from './cross-review-process.js';
 import { producerModelFamily } from './reviewer-independence.js';
+import { scrubSecrets } from '../util/scrub.js';
 import {
   buildCrossReviewPrompt,
   CROSS_REVIEW_SCHEMA_VERSION,
@@ -119,9 +120,13 @@ function readInputs(request: CrossReviewRequest): Inputs {
   };
 }
 
-/** Read only exact-SHA CI evidence; never log API bodies or credential errors. */
-async function observeRequiredChecks(repo: string, pr: number, headSha: string): Promise<NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>> {
-  const result = (code: NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>['code']) => ({ headSha, code });
+/** Read all exact-SHA CI evidence; required checks alone cannot prove the head green. */
+async function observeHeadChecks(repo: string, pr: number, headSha: string): Promise<NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>> {
+  const result = (
+    code: NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>['code'],
+    status: 'ready' | 'wait' | 'hold' = code === null ? 'ready' : 'hold',
+    detail?: string,
+  ) => ({ headSha, code, status, ...(detail ? { detail: scrubSecrets(detail).replace(/[\p{C}\s]+/gu, ' ').slice(0, 400) } : {}) });
   try {
     const deps = defaultHostMergeDeps();
     const before = await readPr(repo, pr, deps);
@@ -132,14 +137,42 @@ async function observeRequiredChecks(repo: string, pr: number, headSha: string):
     if (required.required.length === 0) return result('checks-missing');
     const checks = await readHeadChecks(repo, headSha, deps);
     if (typeof checks === 'string') return result('checks-unreadable');
+    if (!Array.isArray(checks.runs) || !Array.isArray(checks.statuses)) return result('checks-unreadable');
+    const label = (name: string, appId: string | null) => `${scrubSecrets(name).replace(/[\p{C}\s]+/gu, ' ').slice(0, 160)} (${required.required.some(
+      (r) => r.context === name && (r.appId === null || r.appId === appId),
+    ) ? 'required' : 'non-required'})`;
+    // Failures win over pending checks and over later successes. Do not let a
+    // green required gate hide a failed advisory run or a different App's run.
+    const failed = checks.runs.filter((r) => ['failure', 'timed_out', 'action_required', 'startup_failure'].includes(r.conclusion ?? ''));
+    const failedStatuses = checks.statuses.filter((s) => ['failure', 'error'].includes(s.state));
+    if (failed.length || failedStatuses.length) return result('checks-not-successful', 'hold', `held: ${[
+      ...failed.map((r) => `${label(r.name, r.appId)}: ${r.conclusion}`),
+      ...failedStatuses.map((s) => `${label(s.context, null)}: ${s.state}`),
+    ].slice(0, 5).join(', ')}`);
+    let requiredNotSuccessful = false;
     for (const check of required.required) {
       const runs = checks.runs.filter((r) => r.name === check.context && (check.appId === null || r.appId === check.appId));
       const latest = runs.reduce<(typeof runs)[number] | undefined>((a, b) => !a || b.id > a.id ? b : a, undefined);
       const statuses = check.appId === null ? checks.statuses.filter((s) => s.context === check.context) : [];
       if (!latest && statuses.length === 0) return result('checks-missing');
       if ((latest && (latest.status !== 'completed' || latest.conclusion !== 'success')) ||
-        statuses.some((s) => s.state !== 'success')) return result('checks-not-successful');
+        statuses.some((s) => s.state !== 'success')) requiredNotSuccessful = true;
     }
+    if (checks.runs.some((r) => !r.name || !Number.isSafeInteger(r.id) || r.id < 1 ||
+      !['queued', 'in_progress', 'waiting', 'requested', 'pending', 'completed'].includes(r.status) ||
+      (r.status === 'completed' && !['success', 'neutral', 'skipped', 'cancelled', 'stale'].includes(r.conclusion ?? ''))) ||
+      checks.statuses.some((s) => !s.context || !['success', 'pending', 'expected'].includes(s.state))) {
+      return result('checks-unreadable', 'hold', 'held: incomplete or inconclusive check data');
+    }
+    if (checks.runs.some((r) => ['cancelled', 'stale'].includes(r.conclusion ?? ''))) {
+      return result('checks-not-successful', 'hold', 'held: cancelled or stale checks do not prove success');
+    }
+    const pending = [
+      ...checks.runs.filter((r) => r.status !== 'completed').map((r) => label(r.name, r.appId)),
+      ...checks.statuses.filter((s) => s.state !== 'success').map((s) => label(s.context, null)),
+    ];
+    if (pending.length) return result('checks-not-successful', 'wait', `waiting: ${pending.slice(0, 5).join(', ')}`);
+    if (requiredNotSuccessful) return result('checks-not-successful');
     const after = await readPr(repo, pr, deps);
     if (typeof after === 'string') return result('checks-unreadable');
     if (after.headSha !== headSha || after.baseRef !== before.baseRef || after.state !== 'open') return result('checks-stale');
@@ -152,7 +185,7 @@ async function observeRequiredChecks(repo: string, pr: number, headSha: string):
 async function decideWithChecks(input: Parameters<typeof decideCrossReview>[0], pauseFile = crossReviewPauseFile()): Promise<CrossReviewDecision> {
   const initial = decideCrossReview(input);
   if (initial.codes[0] !== 'checks-unreadable') return initial;
-  const checks = await observeRequiredChecks(input.request.repo, input.request.pr, input.currentHeadSha);
+  const checks = await observeHeadChecks(input.request.repo, input.request.pr, input.currentHeadSha);
   // Recheck stop states after the asynchronous GitHub reads.
   return decideCrossReview({ ...input, checks, killSwitch: killSwitchOn(), paused: input.paused || existsSync(pauseFile) });
 }
