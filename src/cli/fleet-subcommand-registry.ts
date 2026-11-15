@@ -294,6 +294,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'path-batch': () => import('./fleet-path-batch.js'),
   'path-cochanges': () => import('./fleet-path-cochanges.js'),
   'path-history': () => import('./fleet-path-history.js'),
+  'peer-ledger': () => import('./fleet-peer-ledger.js'),
   'planner': () => import('./fleet-planner.js'),
   'planner-brief': () => import('./fleet-planner-brief.js'),
   'planner-cycle': () => import('./fleet-planner-cycle.js'),
