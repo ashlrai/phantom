@@ -1,3 +1,4 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as batch from '../src/cli/fleet-apps-recovery-batch.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
-import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 
 registerFleetNativeTools();
 

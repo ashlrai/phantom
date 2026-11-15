@@ -74,6 +74,8 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   },
   { usage: 'phm check [--base <ref>] [--json]', description: 'In the Phantom repository, run incremental typechecks, cached lint and affected tests concurrently. Development feedback only; run the gate for release checks.', safety: 'append', jsonShape: '{ok, mode, base, durationMs, steps}' },
   { usage: 'phm tune prepare <reviewed-samples.jsonl> <new-output-directory> <scrub.pl> | evaluate <paired-report.json>', description: 'Prepare scrub-gated local-model datasets or assess paired evaluation evidence; never train or activate a lane.', safety: 'append', jsonShape: 'Dataset counts/hashed task IDs or paired evaluation decision' },
+  { usage: 'phm app <status|resources|budgets|state|prefs> --json', description: 'Read existing app projections through a private loopback connection file. Usage stays numeric or unknown.', safety: 'read', jsonShape: 'app.control.v1 result' },
+  { usage: 'phm app steer pause|resume --json; phm app prefs <update-json> --json', description: 'Write existing app controls through dispatch and mutation-token guards. PHM_APP_CONNECTION_FILE required.', safety: 'append', jsonShape: 'app.control.v1 result; exit 1 refused' },
   {
     usage: 'phm connectors list|show <id> [--json]',
     description: 'Read validated connector metadata from ~/.phantom/connectors/profile.toml. Credential names only; never resolves secrets. Exit 0 success, 2 invalid profile/usage.',
@@ -204,6 +206,18 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     description: 'Read local job snapshots into deterministic lane and tier metrics and advisory priors. No network, writes or operational steering.',
     safety: 'read',
     jsonShape: 'MetricsFeed (schemaVersion 1); unknown measurements are null; refused input exits 2',
+  },
+  {
+    usage: 'phm whoami [--json]',
+    description: 'Your person, teams, orgs and owner scopes from this machine\'s own local auth; no token read. Exit 0 identity, 1 identity error with fix, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'Principal {schemaVersion:1, person, actor, teams:[{id,role}], orgs, scopes} | {error, fix}',
+  },
+  {
+    usage: 'phm org list|add <org> [--team <team>] [--json]',
+    description: 'List orgs you belong to, or create/extend one with you as a member (idempotent, $ASHLR_HOME/tenancy/orgs.json). Exit 0, 1 tenancy error with fix, 2 bad usage.',
+    safety: 'append',
+    jsonShape: 'list {schemaVersion:1, person, orgs:[{id,members,teams}]}; add {schemaVersion:1, action, org} | {error, fix}',
   },
   {
     usage: 'phm node bootstrap --dry-run [--json]',
@@ -674,13 +688,18 @@ export function agentDocsText(): string {
   lines.push('App recovery observation tools: phantom_fleet_apps_history,');
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
-  lines.push('These read retained local evidence only; they never query or launch apps.');
+  lines.push('phantom_fleet_apps_watch supervises explicit managed apps under a shared');
+  lines.push('deadline. These read retained local evidence only; they never query or');
+  lines.push('launch apps.');
   lines.push('Website tools: ashlr_website_status reads publication mode, phase and holds;');
   lines.push('ashlr_website_publish requests the exact normally merged website revision with');
   lines.push('profile=phantom-public-web and expectedMerge=<40-hex SHA>. The commissioned host');
   lines.push('checks signed scope, source, build and live aliases before publishing. A request');
   lines.push('is not a deployment receipt; inspect status and production evidence. These tools');
   lines.push('do not create credentials or commission publishing. Inbox approval stays human-only.');
+  lines.push('Intent ledger tools: intent_add, intent_update, intent_list, intent_get,');
+  lines.push('intent_link, intent_ship, intent_stale, intent_import. They manage local');
+  lines.push('directives only; recommendations never dispatch or complete work.');
   lines.push('');
   return lines.join('\n');
 }
@@ -1066,6 +1085,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
+  { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail; --team lists workspace actions (read-only).', topic: 'observability' },
@@ -1102,9 +1122,12 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
+  { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
 
   { cmd: 'worktrees prune [--dry-run | --apply] [--json]', desc: 'Preview or remove clean, inactive worktrees for finished jobs.', topic: 'safety' },
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
+  { cmd: 'whoami [--json]',             desc: 'Who am I: person, teams, orgs and owner scopes from local auth (no tokens).', topic: 'safety' },
+  { cmd: 'org list|add <org> [--team <team>] [--json]', desc: 'List your orgs or add one grouping teams; nodes, jobs, forum and packs are owner-scoped.', topic: 'safety' },
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
   { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
@@ -1137,6 +1160,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
+  { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
+  { cmd: 'pr cockpit --repo <owner/name> [--json] [--offline] [--refresh]', desc: 'Read-only GitHub PR cockpit snapshot across repos, cached five minutes; --offline reads the latest cache.', topic: 'observability' },
+  { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },

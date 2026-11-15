@@ -108,6 +108,7 @@ export const REAL_IO_TEST_FILES = [
   'test/mcp/fleet-path-history-04-spm1.test.ts', // Creates real git history for MCP path lookup.
   'test/mcp/fleet-path-history-snapshot-04-spt2.test.ts', // Creates real git history and moves refs during MCP reads.
   'test/mcp/fleet-job-patch-04-sqb1.test.ts', // Creates real git history for MCP job patch reads.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates and advances real git history for snapshot replay.
   'test/mcp/fleet-path-history-pinned-04-sps2.test.ts', // Creates real git history and moves refs during pinned MCP path history reads.
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.

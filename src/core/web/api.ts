@@ -19,6 +19,9 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *   GET /api/pulse?window=7d   -> buildRollup(window, cfg)
  *   GET /api/genome[?q=...]    -> recall(q, cfg) | loadGenome(cfg)
  *   GET /api/inbox             -> listProposals({status:'pending'}) (read-only; M23)
+ *   GET /api/approvals         -> pending consent requests across proposals,
+ *                                 email drafts and team approvals — value-blind
+ *                                 metadata + per-source quality (read-only)
  *   GET /api/autonomy/evidence -> list autonomy evidence packs (metadata only)
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
@@ -123,6 +126,7 @@ import { handleGrowthApi, isGrowthPath } from '../verse/growth-api.js';
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
 import { handleWbApi, isWbApiPath } from './wb-read-api.js';
+import { APP_ACTIONS, parseAppRequest } from './app-control.js';
 
 // ---------------------------------------------------------------------------
 // SSE registry — shared across all open SSE connections so server.ts can
@@ -1325,7 +1329,7 @@ export async function handleApi(
     mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
   },
 ): Promise<boolean> {
-  const path = reqPath(req);
+  let path = reqPath(req);
 
   // Only handle /api/* paths.
   if (!path.startsWith('/api/') && path !== '/api') {
@@ -1340,6 +1344,23 @@ export async function handleApi(
       const { readUsageSpend } = await import('../usage/spend.js');
       sendJson(res, 200, await readUsageSpend());
       return true;
+    }
+    if (path === '/api/app/v1/control') {
+      if (method !== 'POST' || !ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let action;
+      try { action = parseAppRequest(JSON.parse(await readBody(req))); }
+      catch { sendJson(res, 400, { error: 'invalid app.control.v1 request' }); return true; }
+      path = APP_ACTIONS[action.action];
+      if (action.action === 'prefs') {
+        // Feed the validated update through the existing preference handler and guards.
+        const { Readable } = await import('node:stream');
+        const forwarded = Readable.from([JSON.stringify(action.update)]) as IncomingMessage;
+        forwarded.headers = req.headers; forwarded.method = 'POST'; forwarded.url = path;
+        return handleVerseApi({ cfg, token: ctx.token, allowDispatch: ctx.allowDispatch, readSession: ctx.readSession,
+          usageResourcesApi: ctx.usageResourcesApi,
+          ...(ctx.readProjections ? { readProjections: ctx.readProjections } : {}) }, forwarded, res, path, method);
+      }
     }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
@@ -1713,6 +1734,19 @@ export async function handleApi(
         truncated: matched.length > shown.length,
         filters: { status: effectiveStatus, since: sinceParam ?? null, limit: limit ?? null },
       });
+      return true;
+    }
+
+    // ── GET /api/approvals — pending consent requests, value-blind (read-only) ──
+    // One bounded list across the durable approval stores (inbox proposals,
+    // outbound email drafts, team consequential-action approvals). Every row
+    // carries a `decide` descriptor naming the only safe path that exists —
+    // web consent decision, terminal phm command, or review-only deep link —
+    // and per-source quality so the UI never claims an all-clear it cannot
+    // prove. See src/core/web/pending-approvals.ts for the contract.
+    if (path === '/api/approvals' && method === 'GET') {
+      const { readPendingApprovals } = await import('./pending-approvals.js');
+      sendJson(res, 200, await readPendingApprovals({ allowDispatch: ctx.allowDispatch }));
       return true;
     }
 
@@ -2129,6 +2163,18 @@ export async function handleApi(
         return true;
       }
       sendJson(res, 200, await getFleetJobActivity(id));
+      return true;
+    }
+
+    if (path === '/api/fleet/job/cost' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobCost } = await import('../fleet/runs-job-cost.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobCost(id));
       return true;
     }
 

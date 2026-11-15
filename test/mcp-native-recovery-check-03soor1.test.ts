@@ -1,6 +1,6 @@
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callNativeTool, listNativeTools } from '../src/core/mcp-native.js';
-import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import * as recoveryInvocations from '../src/core/fleet/apps-recovery-invocations.js';
 import * as recoveryVerdict from '../src/core/fleet/apps-recovery-verdict.js';
 
