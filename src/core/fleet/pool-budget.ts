@@ -114,13 +114,17 @@ function bucketView(readings: BudgetReading[], now: number, capacity: boolean): 
   }
   return view;
 }
+/** Nov 5, 2026 Mason order: unknown stays unknown; Claude is held until fresh allowance. */
+export function claudePoolMode(bucket: BudgetBucketView | undefined): 'metered' | 'held' {
+  return bucket?.state === 'observed' && bucket.remaining !== null && bucket.remaining > 0 ? 'metered' : 'held';
+}
 export function projectPoolBudgets(readings: readonly BudgetReading[], now = new Date(), sourceState: PoolBudgetSnapshot['sourceState'] = 'healthy'): PoolBudgetSnapshot {
   const clean = readings.map(validateBudgetReading);
   const pools = {} as Record<BudgetPool, PoolBudgetView>;
   for (const pool of BUDGET_POOLS) {
     const buckets: PoolBudgetView['buckets'] = {};
     for (const bucket of BUCKETS[pool]) buckets[bucket] = bucketView(clean.filter(r => r.pool === pool && r.bucket === bucket), now.getTime(), pool === 'local-omlx');
-    pools[pool] = { mode: pool === 'claude' ? 'held' : pool === 'local-omlx' ? 'capacity-only' : 'metered',
+    pools[pool] = { mode: pool === 'claude' ? claudePoolMode(buckets.weeklyPct) : pool === 'local-omlx' ? 'capacity-only' : 'metered',
       remainingWeeklyPct: buckets.weeklyPct?.remaining ?? null, remainingCredits: buckets.credits?.remaining ?? null, buckets };
   }
   return { schema: 'fleet.budgets.v1', timestamp: now.toISOString(), sourceState, pools };
