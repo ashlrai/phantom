@@ -18,6 +18,9 @@ import { isReviewAsk } from '../fleet/review-ask.js';
 import { readReviewPick } from '../fleet/review-pick.js';
 import { formatReviewPickReply } from '../fleet/review-pick-reply.js';
 import { isOwnersAsk } from '../fleet/owners-ask.js';
+import { isPeersAsk } from '../fleet/peers-ask.js';
+import { readPeerLedger } from '../agentnet/peer-ledger.js';
+import { formatPeerLedgerReply } from '../fleet/peer-ledger-reply.js';
 import { formatSurfaceOwnersReply } from '../fleet/surface-owners-reply.js';
 import { SURFACES, readSurfaceOwner, type SurfaceOwnerReport } from '../fleet/surface-owner.js';
 import { gitSurfaceLog } from '../fleet/surface-owner-git-log.js';
@@ -254,7 +257,7 @@ async function composeSlackStatusReply(runsDir: string, now: Date, deps: OwnerSt
  * every other gated ask with the status digest. */
 export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date, text?: string) => Promise<string>; readonly fallback: string } {
   return {
-    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text) || isOwnersAsk(text),
+    ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text) || isOwnersAsk(text) || isPeersAsk(text),
     compose: (runsDir, now, text) => text !== undefined && isRecheckAsk(text)
       ? composeOwnerRecheckReply(now, deps)
       : text !== undefined && isOrdersAsk(text)
@@ -263,7 +266,10 @@ export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: stri
           ? composeOwnerReviewReply(now, deps)
           : text !== undefined && isOwnersAsk(text)
             ? composeOwnerOwnersReply(now, deps)
-            : composeSlackStatusReply(runsDir, now, deps),
+            : text !== undefined && isPeersAsk(text)
+              ? Promise.resolve().then(() => formatPeerLedgerReply(readPeerLedger()))
+                .catch(() => 'Peers unknown: peer ledger reader failed')
+              : composeSlackStatusReply(runsDir, now, deps),
     fallback: OWNER_STATUS_FALLBACK,
   };
 }
