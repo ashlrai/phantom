@@ -52,6 +52,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Small future-clock allowance for a claim timestamp, matching the 5 s
+ * future-skew bound other local evidence readers use. A claimedAt beyond it is
+ * contradictory evidence — never a fresh zero-age live claim. */
+const CLAIM_MAX_FUTURE_SKEW_MS = 5_000;
+
+/** A claim row in the shape projectCoordinationClaims emits: the producer's
+ * string identity and timestamp fields plus the expiresInSeconds count. Both
+ * timestamps must parse, expiry must fall after the claim (the ledger's own
+ * ordering invariant) and claimedAt cannot sit materially in the future;
+ * expiresInSeconds is the producer's rounded remaining TTL, never negative for
+ * a live row. One malformed or temporally impossible row makes the whole list
+ * unreadable — the check never reports a smaller live count filtered out of
+ * bad evidence. */
+function isProducerClaimRow(value: unknown, nowMs: number): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  for (const key of ['id', 'repo', 'task', 'agent', 'expiresAt'] as const) {
+    if (typeof value[key] !== 'string') return false;
+  }
+  const claimedAt = value['claimedAt'];
+  const expiresInSeconds = value['expiresInSeconds'];
+  if (typeof claimedAt !== 'string' || typeof expiresInSeconds !== 'number'
+    || !Number.isFinite(expiresInSeconds) || expiresInSeconds < 0) return false;
+  const claimedAtMs = Date.parse(claimedAt);
+  const expiresAtMs = Date.parse(value['expiresAt'] as string);
+  return Number.isFinite(claimedAtMs) && Number.isFinite(expiresAtMs)
+    && expiresAtMs > claimedAtMs
+    && claimedAtMs <= nowMs + CLAIM_MAX_FUTURE_SKEW_MS;
+}
+
 /** Terminal statuses the producers use for evidence that was actually read.
  * Anything else — 'unavailable', 'unknown', or an unrecognized string — is
  * unknown evidence and can never earn a READY on its own. */
@@ -170,20 +199,36 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
   if (claims.ok && isRecord(claims.value)) {
     const projection = claims.value;
     const state = typeof projection['state'] === 'string' ? projection['state'] : 'unknown';
-    const list = Array.isArray(projection['claims']) ? projection['claims'].filter(isRecord) : [];
-    const newest = Math.max(...list.map(claim => Date.parse(typeof claim['claimedAt'] === 'string' ? claim['claimedAt'] : '')), Number.NEGATIVE_INFINITY);
-    claimsSection = {
-      status: state === 'known' ? 'ok' : 'unavailable',
-      state,
-      live: state === 'known' ? list.length : null,
-      newestAgeSec: state === 'known' && Number.isFinite(newest)
-        ? Math.max(0, Math.floor((nowMs - newest) / 1000))
-        : null,
+    // A 'known' projection earns trust only from an actual claims array of
+    // producer-shaped rows; a missing, non-array or partly malformed list is
+    // unreadable evidence — never an empty ledger or a filtered live count.
+    const rawClaims = projection['claims'];
+    const list = Array.isArray(rawClaims) && rawClaims.every(row => isProducerClaimRow(row, nowMs))
+      ? (rawClaims as Record<string, unknown>[])
+      : null;
+    const base = {
       source: typeof projection['source'] === 'string' ? projection['source'] : 'coordination-ledger',
       asOf: typeof projection['asOf'] === 'string' ? projection['asOf'] : asOf,
-      ...(typeof projection['reason'] === 'string' ? { reason: projection['reason'] } : {}),
     };
-    if (state !== 'known') missing.push('claims');
+    if (state !== 'known' || list === null) {
+      claimsSection = {
+        ...base, status: 'unavailable', state: state === 'known' ? 'unknown' : state,
+        live: null, newestAgeSec: null,
+        ...(state === 'known' ? { reason: 'claims-list-unreadable' }
+          : typeof projection['reason'] === 'string' ? { reason: projection['reason'] } : {}),
+      };
+      missing.push('claims');
+    } else {
+      const newest = list.length === 0 ? Number.NEGATIVE_INFINITY
+        : Math.max(...list.map(claim => Date.parse(claim['claimedAt'] as string)));
+      claimsSection = {
+        ...base, status: 'ok', state, live: list.length,
+        newestAgeSec: Number.isFinite(newest)
+          ? Math.max(0, Math.floor((nowMs - newest) / 1000))
+          : null,
+        ...(typeof projection['reason'] === 'string' ? { reason: projection['reason'] } : {}),
+      };
+    }
   } else {
     claimsSection = { status: 'unavailable', state: 'unknown', live: null, newestAgeSec: null,
       reason: !claims.ok && claims.timedOut ? 'claims-reader-timeout' : 'claims-reader-failed',
