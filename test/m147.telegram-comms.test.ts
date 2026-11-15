@@ -25,7 +25,7 @@ import { pairedTelegram } from './helpers/operator-pair.js';
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -613,6 +613,35 @@ describe('Telegram actual-attempt pacing and known throttles', () => {
     expect((await sendTelegramMessage('new identity', undefined, cfg)).ok).toBe(true);
     expect(_httpCalls[2]!.path).toBe('/botfake-replacement-bot/sendMessage');
     expect((_httpCalls[2]!.body as Record<string, unknown>)['chat_id']).toBe('replacement-private-chat');
+  });
+
+  it.each(['KILL', 'pause'] as const)('rechecks %s after pacing for queued sends, retries, fallbacks and chunks', async (gate) => {
+    for (const mode of ['queued', 'retry', 'fallback', 'chunk']) {
+      const calls = recordingTransport(() => mode === 'retry'
+        ? { ok: false, error_code: 429, parameters: { retry_after: 2 } }
+        : mode === 'fallback' ? { ok: false, error_code: 400, description: "can't parse entities" }
+          : { ok: true, result: { message_id: 91 } });
+      let wake!: () => void;
+      let started!: () => void;
+      const sleeping = new Promise<void>((resolve) => { started = resolve; });
+      _sendNow = 0;
+      setTelegramSendClockForTests({ now: () => _sendNow, sleep: () => {
+        started(); return new Promise<void>((resolve) => { wake = resolve; });
+      } });
+      if (mode === 'queued') expect((await sendTelegramMessage('first', undefined, cfgTelegram())).ok).toBe(true);
+      const waiting = sendTelegramMessage(mode === 'chunk' ? 'x'.repeat(5000) : '<b>queued</b>', { html: true }, cfgTelegram());
+      await sleeping;
+      const gatePath = join(_tmpHome, '.ashlr', ...(gate === 'KILL' ? ['KILL'] : ['comms', 'pause.json']));
+      mkdirSync(join(_tmpHome, '.ashlr', 'comms'), { recursive: true });
+      writeFileSync(gatePath, gate === 'KILL' ? 'stop' : JSON.stringify({ paused: true }));
+      _sendNow = 3000;
+      wake();
+      expect(await waiting).toEqual(mode === 'chunk'
+        ? { ok: true, partial: true, messageId: 91, messageIds: [91], blocked: true }
+        : { ok: false, blocked: true });
+      expect(calls).toHaveLength(1);
+      rmSync(gatePath);
+    }
   });
 
   it('releases its owned lane after a pacing failure instead of wedging later sends', async () => {

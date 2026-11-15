@@ -49,7 +49,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { killSwitchOn, unenroll } from '../core/sandbox/policy.js';
-import { enterIsolatedAuthorityHome, realHome } from '../core/util/real-home.js';
+import { enterIsolatedAuthorityHome, isolatedAuthorityHomeActive, realHome } from '../core/util/real-home.js';
 import { sweepRepoSandboxes } from '../core/sandbox/worktree.js';
 
 export interface DemoDisposeResult {
@@ -106,6 +106,10 @@ export interface MakeDemoContextOptions {
  *   loudly rather than risk touching the real ~/.ashlr.
  */
 export function makeDemoContext(opts?: MakeDemoContextOptions): DemoContext {
+  // Reject nesting before allocating a home or changing the outer context's env.
+  if (isolatedAuthorityHomeActive()) {
+    throw new Error('ashlr demo: an isolated authority home is already active');
+  }
   const keep = opts?.keep === true;
 
   // 1. Snapshot the prior HOME + re-entrancy env so dispose() can restore them

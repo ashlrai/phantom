@@ -92,6 +92,8 @@ vi.mock('../src/core/providers.js', async (importActual) => {
 import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import { readSource, stripComments, containsToken } from './helpers/h4-static.js';
 import { cmdDemo } from '../src/cli/demo.js';
+import { makeDemoContext } from '../src/cli/demo-sandbox.js';
+import { realHome } from '../src/core/util/real-home.js';
 import * as policy from '../src/core/sandbox/policy.js';
 import * as backlog from '../src/core/portfolio/backlog.js';
 import * as inboxStore from '../src/core/inbox/store.js';
@@ -131,6 +133,25 @@ afterEach(() => {
 });
 
 describe('h8 demo-safety — `ashlr demo` can never touch the real portfolio', () => {
+  it('rejects a nested context without changing the outer home, authority or recursion guards', () => {
+    const outer = makeDemoContext();
+    try {
+      process.env.ASHLR_IN_DAEMON = 'outer-daemon';
+      process.env.ASHLR_IN_SWARM = 'outer-swarm';
+      const homesBefore = readdirSync(tmpdir()).filter(name => name.startsWith(`ashlr-h8-demo-home-${process.pid}-`)).sort();
+      expect(() => makeDemoContext()).toThrow(/already active/);
+      expect(process.env.HOME).toBe(outer.home);
+      expect(realHome()).toBe(outer.home);
+      expect(process.env.ASHLR_IN_DAEMON).toBe('outer-daemon');
+      expect(process.env.ASHLR_IN_SWARM).toBe('outer-swarm');
+      expect(readdirSync(tmpdir()).filter(name => name.startsWith(`ashlr-h8-demo-home-${process.pid}-`)).sort()).toEqual(homesBefore);
+    } finally {
+      outer.dispose();
+    }
+    expect(process.env.HOME).toBe(fx!.home);
+    expect(realHome()).toBe(fx!.home);
+  });
+
   // (a) DEMO-DISPOSABLE-ONLY — the real enrollment.json is byte-identical.
   it('NEVER enrolls or touches the REAL portfolio — real enrollment.json stays byte-identical across a full demo run', async () => {
     const before = snapshotRealEnrollment();

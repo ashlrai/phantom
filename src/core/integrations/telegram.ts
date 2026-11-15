@@ -74,7 +74,7 @@ export interface TelegramSendOpts {
 
 export interface TelegramSendResult {
   ok: boolean;
-  /** Refused before any request because KILL or comms pause is on (or unreadable). */
+  /** Refused an unsent attempt because KILL or comms pause is on (or unreadable). */
   blocked?: true;
   /** Validated Bot API error metadata; descriptions/credential-bearing URLs stay internal. */
   errorCode?: number;
@@ -297,6 +297,7 @@ function apiUrl(cfg: AshlrConfig, method: string): string {
  */
 export type TelegramTransport = (method: string, body: Record<string, unknown>) => Promise<unknown>;
 let _transport: TelegramTransport | null = null;
+const SEND_BLOCKED = Symbol('Telegram send blocked');
 export function setTelegramTransportForTests(t: TelegramTransport | null): void {
   _transport = t;
 }
@@ -309,7 +310,7 @@ async function callApi(cfg: AshlrConfig, method: string, body: Record<string, un
       return null;
     }
   }
-  return postJson(apiUrl(cfg, method), body, resolveToken(cfg));
+  return postJson(apiUrl(cfg, method), body, resolveToken(cfg), method === 'sendMessage');
 }
 
 /** Explicit operator action only; ordinary sends/startup never update this profile. */
@@ -449,11 +450,13 @@ async function postJson(
   url: string,
   body: unknown,
   _token: string | undefined,
+  guardSend = false,
 ): Promise<unknown> {
   const payload = JSON.stringify(body);
   return new Promise<unknown>((resolve) => {
     // Dynamic import to allow test mocks to intercept
     import('node:https').then(({ request }) => {
+      if (guardSend && outsideSendBlock() !== null) { resolve(SEND_BLOCKED); return; }
       const parsed = new URL(url);
       const options = {
         hostname: parsed.hostname,
@@ -552,6 +555,7 @@ function buildKeyboard(opts: TelegramSendOpts | undefined): Record<string, strin
 
 interface ParsedSendResponse {
   ok: boolean;
+  blocked?: true;
   messageId?: number;
   description?: string;
   errorCode?: number;
@@ -565,6 +569,7 @@ function positiveSafeInteger(value: unknown): value is number {
 }
 
 function parseSendResponse(resp: unknown): ParsedSendResponse {
+  if (resp === SEND_BLOCKED) return { ok: false, blocked: true };
   if (!resp || typeof resp !== 'object' || Array.isArray(resp)) return { ok: false };
   const r = resp as Record<string, unknown>;
   if (r['ok'] === true) {
@@ -670,6 +675,8 @@ async function pacedSend(cfg: AshlrConfig, body: Record<string, unknown>, shortR
       if (wait === 0) break;
       await sendClock.sleep(wait);
     }
+    // Queue, pacing and retry waits never preserve earlier send authority.
+    if (outsideSendBlock() !== null) return { ok: false, blocked: true };
     lane.lastAttemptAt = sendNow();
     const response = parseSendResponse(await callApi(cfg, 'sendMessage', body));
     if (response.providerThrottle && response.retryAfterSeconds !== undefined) {
@@ -688,8 +695,9 @@ async function pacedSend(cfg: AshlrConfig, body: Record<string, unknown>, shortR
   }
 }
 
-function sendErrorMetadata(response: ParsedSendResponse): Pick<TelegramSendResult, 'errorCode' | 'retryAfterSeconds'> {
+function sendErrorMetadata(response: ParsedSendResponse): Pick<TelegramSendResult, 'blocked' | 'errorCode' | 'retryAfterSeconds'> {
   return {
+    ...(response.blocked ? { blocked: true as const } : {}),
     ...(response.errorCode !== undefined ? { errorCode: response.errorCode } : {}),
     ...(response.retryAfterSeconds !== undefined ? { retryAfterSeconds: response.retryAfterSeconds } : {}),
   };
