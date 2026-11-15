@@ -122,8 +122,16 @@ export class QueueStore {
       return current;
     });
   }
-  async claim(id: string, owner: string): Promise<QueueJob> {
+  async claim(id: string, owner: string, intake?: { job: QueueJob; guard: () => void }): Promise<QueueJob> {
     return this.mutate(doc => {
+      intake?.guard();
+      // Intake and READY -> CLAIMED share the existing exclusive queue lock.
+      // A failed guard/claim writes neither an unclaimed job nor a reservation.
+      if (intake) {
+        if (doc.jobs.some(job => job.id === id)) throw new Error('Claim intake already exists');
+        if (intake.job.id !== id || intake.job.status !== 'READY' || intake.job.claims.length) throw new Error('Invalid claim intake');
+        doc.jobs.push(structuredClone(intake.job));
+      }
       const job = this.find(doc, id);
       if (job.status !== 'READY') throw new Error(`Job is not READY: ${id}`);
       const pending = job.deps.filter(dep => doc.jobs.find(j => j.id === dep)?.status !== 'DONE');

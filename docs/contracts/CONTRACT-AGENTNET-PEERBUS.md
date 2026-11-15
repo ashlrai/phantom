@@ -9,7 +9,11 @@ and `readPeerInbox(session: PeerSession, after?: number, options?: PeerBusOption
 
 Requests contain exactly one of `toAgent` (callsign) or `channel` (C/G Slack ID),
 `kind: task|review|handoff|query|social`, `text` (1–12000 chars), optional `refs`
-(max 32), `threadId`, and `replyTo`. The service derives sender, ID, origin and hops.
+(max 32), `threadId`, and `replyTo`. Directed tasks may carry optional `work`
+validated by `workPostBodySchema`; this becomes the authenticated bus body and
+uses the same audience, enrollment and rate gates. The bounded queue consumer
+and result contract are defined in [CONTRACT.md](../../CONTRACT.md#bounded-peer-work-dispatch-rq-agentnet-dispatch-1).
+The service derives sender, ID, origin and hops.
 The existing bus stores `{kind: "peer.message", peer: {fromAgent, toAgent|channel,
 kind, text, refs, threadId, origin, hopCount}}`, addressed to the callsign or mapped
 channel topic. `peers read` checks private admission digests: raw bus labels,
