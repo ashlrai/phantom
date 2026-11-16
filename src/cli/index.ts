@@ -2206,6 +2206,7 @@ async function main(): Promise<void> {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
             ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
+            ['phm metrics prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL] [--json]', 'Read bridge PR publication evidence'],
           ]);
           process.exitCode = 0;
           break;
@@ -2352,6 +2353,11 @@ async function main(): Promise<void> {
 
       case 'select': {
         process.exitCode = await (await import('./select.js')).cmdSelect(rest);
+        break;
+      }
+
+      case 'job': {
+        process.exitCode = await (await import('./job.js')).cmdJob(rest);
         break;
       }
 

@@ -178,8 +178,8 @@ available; actual expected savings remain unmeasured.
 | `ecosystem-stats.yml` | Daily / manual data publication | 10 |
 | `attest-ci-build.yml` | Half-hour / manual attestation | 15 |
 | `auto-tag.yml` | Selected push / CI completion / half-hour / manual | 15 |
-| `release-please.yml` | Master push / half-hour / manual | 10 + conditional 10 |
-| `release-train.yml` | Hourly / workflow completion / manual, variable-gated | 20 |
+| `release-please.yml` | Master push / five-minute / manual | 10 + conditional 10 |
+| `release-train.yml` | Five-minute / workflow completion / manual, variable-gated | 20 |
 | `publish-canonical-npm.yml` | Manual | 60 |
 | `finalize-github-release.yml` | Manual | 28 |
 | `publish-phantom-registry.yml` | Manual, legacy identity condition | 10 |

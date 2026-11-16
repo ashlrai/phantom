@@ -10,7 +10,7 @@
  * Read-only; touches no real config.
  */
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -290,6 +290,7 @@ describe('M30 CI workflow', () => {
       .map(([name, job]) => [name, (job as { permissions: unknown }).permissions]);
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
+      ['release-suites', { contents: 'read' }],
     ]);
     // Release-gate dispatches share one group per tag so a second train queues
     // behind the first (#4592); every other run keeps its PR or run_id group.
@@ -431,7 +432,7 @@ describe('M30 CI workflow', () => {
     expect(receipt.name).toBe('Master full qualification');
     expect(receipt.permissions).toBeUndefined();
     expect(receipt.needs.slice().sort()).toEqual(Object.keys(jobs).filter(id =>
-      !['master-full', 'fixup-queue'].includes(id)).sort());
+      !['master-full', 'fixup-queue', 'release-suites'].includes(id)).sort());
     expect(runs('master-full', 'schedule', 'refs/heads/master')).toBe(true);
     expect(runs('master-full', 'schedule', 'refs/heads/master', '0,30 * * * *')).toBe(false);
     for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
@@ -439,26 +440,104 @@ describe('M30 CI workflow', () => {
     }
   });
 
-  it('requires exact scheduled full evidence before auto-tag can mint write authority', () => {
+
+  function evaluateAutoTagRequiredChecks(
+    required: string[],
+    checkRuns: Array<[name: string, status: string, conclusion: string]>,
+  ): { status: number; stdout: string; stderr: string } {
+    const yamlText = readFileSync(resolve(repoRoot, '.github/workflows/auto-tag.yml'), 'utf8');
+    const start = yamlText.indexOf('          evaluate() {');
+    const end = yamlText.indexOf('\n          }\n', start);
+    if (start < 0 || end < 0) {
+      throw new Error('evaluate() not found in auto-tag.yml');
+    }
+    const evaluateFn = yamlText.slice(start, end + '\n          }'.length);
+    const dir = mkdtempSync(resolve(tmpdir(), 'auto-tag-required-checks-'));
+    try {
+      const tsv = checkRuns.map(([name, status, conclusion]) => `${name}\t${status}\t${conclusion}`).join('\n');
+      const ghPath = resolve(dir, 'gh');
+      writeFileSync(ghPath, `#!/bin/bash\ncat <<'EOF'\n${tsv}\nEOF\n`);
+      chmodSync(ghPath, 0o755);
+      const requiredLit = required.map((name) => `'${name.replaceAll("'", "'\\''")}'`).join(' ');
+      const script = `set -euo pipefail
+REPO=ashlrai/phantom
+SHA=0123456789abcdef0123456789abcdef01234567
+ACTIONS_APP_ID=15368
+SKIP_OK=""
+required=$(printf '%s\\n' ${requiredLit})
+${evaluateFn}
+evaluate
+if [ "$bad" = 1 ]; then exit 1; fi
+if [ "$pending" = 0 ]; then echo green=true; exit 0; fi
+echo pending=true; exit 2
+`;
+      const result = spawnSync('/bin/bash', ['-c', script], {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
+      });
+      return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('treats skipped Merge Gate and secret scans as red even when a same-sha success exists', () => {
+    const allowed = [
+      'Check generated files',
+      'Check authority drift (hermetic)',
+      'Quick typecheck',
+    ];
+    for (const name of allowed) {
+      const result = evaluateAutoTagRequiredChecks([name], [
+        [name, 'completed', 'skipped'],
+        [name, 'completed', 'success'],
+      ]);
+      expect(result.status, `${name} stdout=${result.stdout} stderr=${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain('skipped on another event, green run present:');
+      expect(result.stdout).not.toContain('::error::not green:');
+    }
+    for (const name of ['Merge Gate', 'Secret-shape scan', 'Secret scan (diff)']) {
+      const result = evaluateAutoTagRequiredChecks([name], [
+        [name, 'completed', 'skipped'],
+        [name, 'completed', 'success'],
+      ]);
+      expect(result.status, `${name} stdout=${result.stdout} stderr=${result.stderr}`).toBe(1);
+      expect(result.stdout).toContain(`::error::not green: ${name} (skipped)`);
+    }
+  });
+
+  it('requires the release gate (scheduled full by default) before auto-tag can mint write authority', () => {
     const workflow = parse(readFileSync(resolve(repoRoot, '.github/workflows/auto-tag.yml'), 'utf8'));
     expect(workflow.on.workflow_run).toEqual({ workflows: ['CI'], types: ['completed'], branches: ['master'] });
     const condition = workflow.jobs.tag.if.replaceAll('github.event_name', 'event')
+      .replaceAll('github.event.workflow_run.head_repository.full_name', 'repo')
+      .replaceAll('github.event.workflow_run.head_branch', 'branch')
       .replaceAll('github.event.workflow_run.conclusion', 'conclusion')
       .replaceAll('github.event.workflow_run.event', 'source').replaceAll('github.ref', 'ref');
-    for (const conclusion of ['success', 'failure', 'cancelled']) {
-      expect(runInNewContext(condition, { event: 'workflow_run', source: 'schedule', conclusion, ref: '' })).toBe(conclusion === 'success');
+    expect(workflow.jobs.tag.if).toContain("github.event.workflow_run.head_repository.full_name == 'ashlrai/phantom'");
+    expect(workflow.jobs.tag.if).toContain("github.event.workflow_run.head_branch == 'master'");
+    const allowedRun = { repo: 'ashlrai/phantom', branch: 'master', ref: '' };
+    for (const source of ['schedule', 'workflow_dispatch', 'push']) {
+      for (const conclusion of ['success', 'failure', 'cancelled']) {
+        expect(runInNewContext(condition, { event: 'workflow_run', source, conclusion, ...allowedRun })).toBe(conclusion === 'success');
+      }
     }
+    expect(runInNewContext(condition, { event: 'workflow_run', source: 'pull_request', conclusion: 'success', ...allowedRun })).toBe(false);
+    expect(runInNewContext(condition, { event: 'workflow_run', source: 'push', conclusion: 'success', repo: 'other/fork', branch: 'master', ref: '' })).toBe(false);
+    expect(runInNewContext(condition, { event: 'workflow_run', source: 'push', conclusion: 'success', repo: 'ashlrai/phantom', branch: 'feature', ref: '' })).toBe(false);
     // Push-sourced workflow_run holds quietly (no own scheduled full yet);
     // schedule-sourced workflow_run stays fail-closed.
     const trigger = workflow.jobs.tag.env.TRIGGER.replace(/^\$\{\{|\}\}$/g, '')
       .replaceAll('github.event_name', 'event').replaceAll('github.event.workflow_run.event', 'source');
     expect(runInNewContext(trigger, { event: 'workflow_run', source: 'push' })).toBe('push');
     expect(runInNewContext(trigger, { event: 'workflow_run', source: 'schedule' })).toBe('workflow_run');
+    expect(runInNewContext(trigger, { event: 'workflow_run', source: 'workflow_dispatch' })).toBe('push');
     expect(runInNewContext(trigger, { event: 'push', source: undefined })).toBe('push');
     expect(runInNewContext(trigger, { event: 'schedule', source: undefined })).toBe('schedule');
     const steps = workflow.jobs.tag.steps;
     const proof = steps.findIndex((step: { id?: string }) => step.id === 'full');
-    expect(steps[proof].run).toBe('node .github/scripts/ci-master-full.mjs require');
+    expect(steps[proof].run).toBe('node .github/scripts/ci-release-gate.mjs require');
+    expect(steps[proof].env.RELEASE_GATE_MODE).toBe('${{ vars.RELEASE_GATE_MODE }}');
     expect(proof).toBeGreaterThan(steps.findIndex((step: { name?: string }) => step.name === 'Checkout candidate revision'));
     for (const step of steps.filter((step: { uses?: string; id?: string; name?: string }) =>
       step.id === 'app' || step.id === 'tag' || step.name?.startsWith('Dispatch release-gate'))) {
@@ -1013,8 +1092,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(28);
-    expect(new Set(names).size).toBe(28);
+    expect(names).toHaveLength(29);
+    expect(new Set(names).size).toBe(29);
+    expect(names).toContain('Release suites (build + signing path)');
     expect(names).toContain('Check generated files');
     expect(names).toContain('Check authority drift (hermetic)');
     expect(names).toContain('Fast gate (typecheck + affected tests)');

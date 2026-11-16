@@ -48,6 +48,7 @@ import type { AshlrConfig } from '../core/types.js';
 import type { AuditEntry } from '../core/types.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../core/fleet/lane-console.js';
 import type { UsageMotionAuditView, UsageMotionClassification, UsageMotionLaneView } from '../core/fleet/usage-motion-audit.js';
+import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 import type { FleetStatus } from '../core/fleet/status.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
@@ -113,6 +114,7 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
     lines.push(`Memory: PAUSE ${memory.pause.state}${memory.pause.reason ? ` (${memory.pause.reason})` : ''}`);

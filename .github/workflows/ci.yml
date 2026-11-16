@@ -1596,6 +1596,9 @@ jobs:
       # Lockfile-keyed, never commit-keyed: an exact hit restores and skips the
       # post-job save, so runs stop re-uploading and evicting each other's
       # entries. A Cargo.lock change falls back to the toolchain prefix.
+      # Node modules are restored by setup-node (cache: npm) above. This
+      # entry keeps the Rust toolchain and Electron download caches warm so a
+      # tag build does not refetch them. The key changed with the path list.
       - name: Cache native compiler inputs
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1603,9 +1606,16 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/db/
+            ~/.rustup/toolchains/
+            ~/.cache/electron/
+            ~/.cache/electron-builder/
+            ~/Library/Caches/electron/
+            ~/Library/Caches/electron-builder/
             ${{ steps.tree.outputs.root }}/desktop/src-tauri/target/
-          key: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
-          restore-keys: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
+          key: release-native-v3-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-native-v3-${{ runner.os }}-${{ runner.arch }}-1.97.1-
+            release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
       - name: Install pinned build tools
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         timeout-minutes: 5
@@ -1681,3 +1691,34 @@ jobs:
       - name: Finish bounded release smoke phase
         if: steps.eligible.outputs.ready == 'true'
         run: node .github/scripts/release-smoke-phase.mjs finish
+
+  release-suites:
+    # RELEASE-GATE-SPLIT-1: release-relevant suites on the exact release-prep
+    # SHA. Runs only beside a Desktop release smoke that actually smoked
+    # (ready == 'true'); otherwise it is skipped and Auto-tag holds. Not in
+    # Merge Gate needs, so merge-queue required checks are unchanged. Hermetic:
+    # no secrets, no signing identity, no notarization; the signing-path tests
+    # exercise fail-closed verification code only. Auto-tag reads this check
+    # by name when RELEASE_GATE_MODE == 'split'. The suite list lives in
+    # .github/scripts/ci-release-suites.mjs.
+    name: Release suites (build + signing path)
+    needs: [secret-shape, classify, release-build]
+    if: needs.classify.outputs.release_gate == 'true' && needs.release-build.outputs.ready == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact release candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build, release contracts, signing path, release scripts
+        run: node .github/scripts/ci-release-suites.mjs
