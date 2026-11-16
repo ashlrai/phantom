@@ -76,7 +76,7 @@ export const DESKTOP_APP_PROFILES: Readonly<Record<DesktopAppId, DesktopAppProfi
     composer: /ask|message|task|follow.?up|prompt|codex/i, send: /^(send|submit|run)$/i, stop: /^(stop|interrupt|cancel)/i, approval: /^(approve|allow|deny|reject)/i,
   },
   devin: {
-    id: 'devin', names: ['Devin'], bundleIds: ['ai.cognition.devin', 'com.cognition.devin'],
+    id: 'devin', names: ['Devin'], bundleIds: ['ai.cognition.devin', 'com.cognition.devin', 'com.exafunction.windsurf'],
     composer: /task|message|describe|ask|prompt|devin/i, send: /^(send|submit|start|create)/i, stop: /^(stop|pause|cancel)/i, approval: null,
   },
 };

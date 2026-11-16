@@ -158,6 +158,7 @@ describe('subscribeShellCommands', () => {
     const off = subscribeShellCommands((c) => seen.push(c));
 
     dispatch('open-needs-you');
+    dispatch('open-fleet');
     dispatch('new-chat');
     dispatch('focus-composer');
     dispatch('open-session:vs_01J9-abc.def');
@@ -165,6 +166,7 @@ describe('subscribeShellCommands', () => {
 
     expect(seen).toEqual([
       { kind: 'command', name: 'open-needs-you', commandId: 'needs-you.open' },
+      { kind: 'command', name: 'open-fleet', commandId: 'surface.fleet' },
       { kind: 'command', name: 'new-chat', commandId: 'chat.new' },
       { kind: 'command', name: 'focus-composer', commandId: 'app.summon' },
       { kind: 'open-session', sessionId: 'vs_01J9-abc.def' },
