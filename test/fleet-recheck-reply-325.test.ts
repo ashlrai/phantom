@@ -130,15 +130,17 @@ describe('formatRecheckReply', () => {
   it('names the owner and claim and ends with the evidence-only line when all sections verify', async () => {
     const reply = formatRecheckReply(await readFleetRecheck(deps()));
     const lines = reply.split('\n');
-    expect(lines).toHaveLength(8);
+    expect(lines).toHaveLength(10);
     expect(lines[0]).toBe(`Phantom recheck VERIFIED · as of ${ISO} · source fleet-recheck`);
     expect(lines[1]).toBe('Runtime: fake-host · 1.2.3 · fleet state 60s (VERIFIED)');
     expect(lines[2]).toMatch(/^Computers: /);
     expect(lines[3]).toMatch(/^Pool: /);
     expect(lines[4]).toBe('Claims: 1 live, top: fake-lane-agent/ashlrai/phantom (VERIFIED)');
     expect(lines[5]).toBe('Bridge: slack LIVE, imessage LIVE (VERIFIED)');
-    expect(lines[6]).toBe('Task: fake-request-1 RUNNING · owner fake-owner-agent · claim bus-claim:fake-request-1:1:1700000000000 (VERIFIED)');
-    expect(lines[7]).toBe('Evidence only; this reply grants no dispatch.');
+    expect(lines[6]).toBe('Owners: slack-bridge UNKNOWN (no live claim) · imessage-bridge UNKNOWN (no live claim) · dot-handoff UNKNOWN (no live claim)');
+    expect(lines[7]).toBe('Task: fake-request-1 RUNNING · owner fake-owner-agent · claim bus-claim:fake-request-1:1:1700000000000 (VERIFIED)');
+    expect(lines[8]).toBe('Peers: none in 24h');
+    expect(lines[9]).toBe('Evidence only; this reply grants no dispatch.');
   });
 
   it('names the exact missing bridge and ends with BLOCKED on: when slack is down', async () => {
