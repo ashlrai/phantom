@@ -56,6 +56,29 @@ test('a shallow commit inside the range is unshallowed or the range fails', (t) 
   assert.equal(result.unshallowed || !shallowInRange(clone, base, head).length, true);
 });
 
+test('a short candidate history deepens before the base ref window is fetched', () => {
+  const calls = [];
+  let connected = false;
+  const dir = mkdtempSync(join(tmpdir(), 'ci-range-short-'));
+  const git = (cwd, args) => {
+    calls.push(args.join(' '));
+    if (args[0] === 'merge-base') {
+      if (!connected) throw new Error('not yet');
+      return 'a'.repeat(40);
+    }
+    if (args.includes('--deepen=20')) { connected = true; return ''; }
+    if (args[0] === 'rev-parse' && args.includes('--git-path')) return join(cwd, 'missing-shallow');
+    if (args[0] === 'rev-list') return '';
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const settled = ensureRange({ cwd: dir, base: 'b'.repeat(40), head: 'c'.repeat(40), baseRef: 'master', git });
+  assert.equal(settled.unshallowed, false);
+  assert.equal(settled.deepened, 20);
+  assert.ok(calls.some((call) => call.includes('--deepen=20')));
+  assert.equal(calls.some((call) => call.includes('--depth=100')), false);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('push and merge-group bases are exact and an all-zero before is refused', () => {
   const before = 'b'.repeat(40);
   const pr = 'c'.repeat(40);

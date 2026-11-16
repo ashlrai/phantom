@@ -102,26 +102,34 @@ function settle(cwd, base, head, git, deepened) {
 export function ensureRange({ cwd = process.cwd(), base = '', head, baseRef = '', git = runGit }) {
   if (!usableSha(head)) throw new Error('head must be an exact commit SHA');
   const wantBase = usableSha(base);
-  if (wantBase && mergeBase(cwd, base, head, git)) return settle(cwd, base, head, git, 0);
-  if (!wantBase && parentExists(cwd, head, git)) return { deepened: 0, unshallowed: false };
+  const ready = () => (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git));
+  if (ready()) return settle(cwd, base, head, git, 0);
+  let deepened = 0;
+  const deepen = (step) => {
+    git(cwd, ['fetch', '--no-tags', '--filter=blob:none', `--deepen=${step}`, 'origin']);
+    deepened += step;
+  };
+  // A pull request is usually a short stack on the already checked-out
+  // candidate. Deepen that stack before downloading the base ref window.
+  for (const step of [20, 40]) {
+    try { deepen(step); } catch { /* the wider fetch below still has to run */ }
+    if (ready()) return settle(cwd, base, head, git, deepened);
+  }
   const stripped = String(baseRef).replace(/^refs\/heads\//, '');
   const ref = stripped && !stripped.includes('..') && !stripped.startsWith('-') && !stripped.includes(' ') ? stripped : '';
-  let deepened = 0;
   const fetchBase = () => {
     if (ref) git(cwd, ['fetch', '--no-tags', '--filter=blob:none', '--depth=100', 'origin', ref]);
     else if (wantBase) git(cwd, ['fetch', '--no-tags', '--filter=blob:none', '--depth=100', 'origin', base]);
   };
   try { fetchBase(); } catch { /* a later deepen or unshallow still has to find the range */ }
   for (const step of [50, 100, 200]) {
-    if (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git)) return settle(cwd, base, head, git, deepened);
+    if (ready()) return settle(cwd, base, head, git, deepened);
     git(cwd, ['fetch', '--no-tags', '--filter=blob:none', `--deepen=${step}`, 'origin']);
     deepened += step;
   }
-  if (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git)) return settle(cwd, base, head, git, deepened);
+  if (ready()) return settle(cwd, base, head, git, deepened);
   git(cwd, ['fetch', '--no-tags', '--filter=blob:none', '--unshallow', 'origin']);
-  if (wantBase ? !mergeBase(cwd, base, head, git) : !parentExists(cwd, head, git)) {
-    throw new Error('commit range unavailable after unshallow');
-  }
+  if (!ready()) throw new Error('commit range unavailable after unshallow');
   return settle(cwd, base, head, git, deepened);
 }
 

@@ -221,11 +221,16 @@ jobs:
           RECEIPT_HASH: ${{ steps.inputs.outputs.web }}
         run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
       - name: Materialize the full tree
-        if: github.event_name == 'push' || steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || steps.inputs.outputs.lint_count != '0'
+        if: github.event_name == 'push' || steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true'
         run: |
           if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
             git sparse-checkout disable
           fi
+      - name: Materialize lint inputs
+        if: github.event_name != 'push' && steps.backend_reuse.outputs.reuse == 'true' && steps.web_reuse.outputs.reuse == 'true' && steps.inputs.outputs.lint_count != '0'
+        run: |
+          mapfile -t files < "$RUNNER_TEMP/lint-files.txt"
+          git sparse-checkout add --no-cone -- "${files[@]}"
       - name: Set up Node.js 22
         if: github.event_name == 'push' || steps.history.outputs.equal != 'true' && (steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || steps.inputs.outputs.lint_count != '0') || steps.mcp_selection.outputs.mcp_output == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -388,10 +393,9 @@ jobs:
         with:
           filter: blob:none
           fetch-depth: 1
-          sparse-checkout: |
-            docs
-            scripts
-            .github
+          # Hashing uses tree ids, so a receipt hit never checks out docs.
+          # A miss materializes docs and scripts in the next step.
+          sparse-checkout: .github
           sparse-checkout-cone-mode: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -408,6 +412,12 @@ jobs:
         env:
           RECEIPT_HASH: ${{ steps.clean_hash.outputs.hash }}
         run: node .github/scripts/ci-green-reuse.mjs announce --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
+      - name: Materialize generated-file inputs
+        if: steps.clean_reuse.outputs.reuse != 'true'
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
       - name: Set up Node.js 22
         if: steps.clean_reuse.outputs.reuse != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -537,6 +547,7 @@ jobs:
             tsconfig.json
             src/web-ui/tsconfig.json
             eslint.config.js
+            test/config
           sparse-checkout-cone-mode: false
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           persist-credentials: false

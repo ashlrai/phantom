@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import {
   classifyPaths, plan, changedPaths, selectRelated, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
@@ -141,6 +142,56 @@ test('an explicit cap can keep more than the fast-gate maximum', (t) => {
   assert.equal(wide.tests.length, 30);
   assert.ok(capped.capped > 0);
   assert.equal(wide.capped, 0);
+});
+
+function fastGateSparsePatterns() {
+  const yml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../workflows/ci.yml'), 'utf8');
+  const start = yml.indexOf('\n  fast-gate:\n');
+  assert.ok(start > 0, 'fast-gate job');
+  const rest = yml.slice(start + 1);
+  const next = rest.slice(1).search(/\n  [a-z0-9-]+:\n/);
+  const job = next < 0 ? rest : rest.slice(0, next + 1);
+  const marker = 'sparse-checkout: |';
+  const at = job.indexOf(marker);
+  assert.ok(at > 0, 'fast-gate sparse-checkout');
+  const patterns = [];
+  for (const line of job.slice(at + marker.length).split('\n').slice(1)) {
+    if (line.trim() === '') continue;
+    if (line.search(/\S/) < 12) break;
+    patterns.push(line.trim());
+  }
+  return patterns;
+}
+
+function coveredBySparse(file, patterns) {
+  return patterns.some((pattern) => file === pattern || file.startsWith(`${pattern}/`));
+}
+
+function relativeSpecifiers(text) {
+  return [...text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)['"](\.[^'"]+)['"]/g)].map((match) => match[1]);
+}
+
+test('a warm sparse checkout covers every import of ci-fast-select', () => {
+  // The select step runs while the fast-gate sparse checkout is still on.
+  // A restored dependency graph does not expand it, so every relative import
+  // has to be inside that list or the step cannot load the module.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const patterns = fastGateSparsePatterns();
+  const missing = [];
+  const seen = new Set();
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    if (!coveredBySparse(file, patterns)) missing.push(file);
+    const text = readFileSync(join(repoRoot, file), 'utf8');
+    for (const spec of relativeSpecifiers(text)) {
+      const next = normalize(join(dirname(file), spec)).replaceAll('\\', '/');
+      walk(next);
+    }
+  };
+  walk('.github/scripts/ci-fast-select.mjs');
+  assert.deepEqual(missing, []);
+  assert.ok(patterns.includes('test/config'));
 });
 
 test('merge group attribution maps a failing test to the PR whose commit touched its source', (t) => {
