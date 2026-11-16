@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global process, console */
+/* global Buffer, process, console */
 // Content-hash reuse for the fast CI jobs.
 //
 // A prior green result is reused only when a receipt names this job and the

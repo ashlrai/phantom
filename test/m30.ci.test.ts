@@ -605,42 +605,38 @@ describe('M30 CI workflow', () => {
     ));
     for (const event of ['pull_request', 'merge_group']) expect(proofIf(event), event).toBe(true);
     for (const event of ['push', 'schedule', 'workflow_dispatch', 'workflow_call']) expect(proofIf(event), event).toBe(false);
-    // Ordering: proof runs after Node setup and before any dependency install.
+    // The proof stays ahead of dependency install. Node setup follows it so a
+    // green receipt can skip setup; checkout and compiler-state saves stay off
+    // the history flag.
     const names = quick.steps.map((entry) => entry.name);
-    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
+    expect(names.indexOf(proof.name!)).toBeGreaterThan(-1);
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
-    // Compiler and drift steps require the trusted proof; the selected MCP
-    // contract still needs dependencies even for a source-identical candidate.
+    expect(step('Checkout').if).toBeUndefined();
+    expect(step('Save protected-branch compiler state').if ?? '').not.toContain('steps.history');
+    expect(step('Publish current-master compiler pointer').if ?? '').not.toContain('steps.history');
+    const runs = (condition: string, equal: string | undefined, mcpOutput = 'false', reuse = 'false'): boolean => Boolean(runInNewContext(
+      `(${condition
+        .replace(/github\.event_name/g, JSON.stringify('pull_request'))
+        .replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? ''))
+        .replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))
+        .replace(/steps\.backend_reuse\.outputs\.reuse/g, JSON.stringify(reuse))
+        .replace(/steps\.web_reuse\.outputs\.reuse/g, JSON.stringify(reuse))
+        .replace(/steps\.inputs\.outputs\.lint_count/g, JSON.stringify('0'))})`,
+    ));
     const expensive = ['Hash protected-branch compiler inputs', 'Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check'];
     for (const name of expensive) {
-      expect(step(name).if, name).toBe(name === 'Install dependencies'
-        ? "steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'"
-        : "steps.history.outputs.equal != 'true'");
-    }
-    // Execute the actual workflow predicate: skip only when the flag is the
-    // exact string 'true'; every fallback shape (false, unset, empty) runs.
-    const runs = (condition: string, equal: string | undefined, mcpOutput = 'false'): boolean => Boolean(runInNewContext(
-      `(${condition.replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? '')).replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))})`,
-    ));
-    for (const name of expensive) {
       const condition = step(name).if!;
+      expect(condition, name).toContain('steps.history.outputs.equal');
       expect(runs(condition, 'true'), `${name} skips on proven equality`).toBe(false);
       for (const fallback of ['false', undefined, '']) {
         expect(runs(condition, fallback), `${name} runs on ${String(fallback)}`).toBe(true);
       }
+      expect(runs(condition, 'false', 'false', 'true'), `${name} may skip when both receipts are green`).toBe(false);
     }
     expect(runs(step('Install dependencies').if!, 'true', 'true')).toBe(true);
-    // A tampered or unknown flag spelling must never satisfy the skip either.
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
     }
-    // Only these four steps may key off the proof output: checkout, setup
-    // and protected-branch cache saving must never join the exemption.
-    const gated = quick.steps
-      .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
-      .map((entry) => entry.name)
-      .sort();
-    expect(gated).toEqual([...expensive].sort());
   });
 
   it('runs a read-only generated-files check as its own required job on every fast-path event', () => {

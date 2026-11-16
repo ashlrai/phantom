@@ -1,3 +1,4 @@
+/* global Buffer, process */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
