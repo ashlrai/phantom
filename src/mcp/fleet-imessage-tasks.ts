@@ -82,7 +82,7 @@ export interface FleetImessageTasksReport {
   jobId: string | null;
   /** Selector outcome on a healthy read; null when unfiltered or unavailable. */
   matched: boolean | null;
-  /** 'ok' once the shared collector ran; 'unavailable' when it could not. */
+  /** 'ok' only for a healthy collector report; otherwise 'unavailable'. */
   sourceState: FleetImessageSourceState;
   /** Filesystem presence of teammate-tasks.json at the server-owned root. */
   ledgerState: FleetImessageLedgerState;
@@ -199,7 +199,7 @@ export async function readFleetImessageTasks(
   let tasks: ListedTask[];
   try {
     const collected = (deps.listTasks ?? listTeammateTasks)({ runsDir });
-    if (!collected || !Array.isArray(collected.tasks)) throw new Error('invalid collector report');
+    if (!collected || collected.state !== 'healthy' || !Array.isArray(collected.tasks)) throw new Error('invalid collector report');
     tasks = collected.tasks;
   } catch {
     return { ...base, sourceState: 'unavailable', ledgerState, queueState, matched: null, tasks: null };
