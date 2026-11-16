@@ -165,7 +165,7 @@ describe('fleet_imessage_tasks over MCP', () => {
     expect(typeof out.generatedAt).toBe('string');
     expect(out.tasks).toHaveLength(4);
     const ALLOWED_KEYS = [
-      'jobId', 'peer', 'resource', 'state', 'claimKey', 'createdAt', 'attemptedAt',
+      'jobId', 'peer', 'resource', 'state', 'claimKey', 'queueBinding', 'queueClaim', 'createdAt', 'attemptedAt',
       'deadline', 'transportReceipt', 'result',
     ];
     for (const row of out.tasks) {

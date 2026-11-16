@@ -27,6 +27,15 @@ const TS_B = 'T0FAKEDT/C0FAKEDT/1700000000.000325';
 const AT = '2026-11-13T22:30:00.000Z';
 const AT2 = '2026-11-13T22:45:00.000Z';
 
+// The ledger set also carries internal provenance markers (legacy vs delta-backed
+// proof). Public keys and markers are asserted separately.
+const PROVENANCE_TAG = 'board-notify-provenance';
+const isProvenance = (key: string): boolean => key.startsWith(`["${PROVENANCE_TAG}"`);
+const provenance = (itemId: string, state: string, kind: 'legacy' | 'modern'): string =>
+  JSON.stringify([PROVENANCE_TAG, itemId, state, kind]);
+const publicKeys = (keys: Set<string>): Set<string> => new Set([...keys].filter(k => !isProvenance(k)));
+const provenanceKeys = (keys: Set<string>): Set<string> => new Set([...keys].filter(isProvenance));
+
 const snap = (over: Partial<BoardSnapshotItem>): BoardSnapshotItem => ({
   id: 'req-delta-1', state: 'RECEIVED', asOf: AT, source: 'receivedAt',
   owner: null, claimReceipt: null, channel: 'slack', channelRef: TS_A,
@@ -129,7 +138,8 @@ describe('durable delta ledger', () => {
   it('reads legacy rows conservatively and records delta digests once-only', async () => {
     const ledgerPath = boardNotifyLedgerPath(dir);
     appendBoardNotifyLedger(ledgerPath, { v: 1, at: AT, itemId: 'req-legacy', state: 'BLOCKED', channel: 'slack', thread: TS_A, receipt: 'r-1' });
-    expect(readBoardNotifySent(ledgerPath)).toEqual(new Set([boardNotifyLedgerKey('req-legacy', 'BLOCKED')]));
+    expect(publicKeys(readBoardNotifySent(ledgerPath))).toEqual(new Set([boardNotifyLedgerKey('req-legacy', 'BLOCKED')]));
+    expect(provenanceKeys(readBoardNotifySent(ledgerPath))).toEqual(new Set([provenance('req-legacy', 'BLOCKED', 'legacy')]));
 
     const notice = (delta: string): BoardNotice => ({
       itemId: 'req-delta-1', state: 'BLOCKED', asOf: AT, delta, detail: 'dep', source: 'bus-reply:r',
@@ -142,7 +152,7 @@ describe('durable delta ledger', () => {
     const slack = vi.fn().mockResolvedValue({ status: 'sent' as const, receipt: 'fake-ts' });
     await sendNotifications([n1, n2], { senders: { slack }, ledgerPath });
     const sent = readBoardNotifySent(ledgerPath)!;
-    expect(sent).toEqual(new Set([
+    expect(publicKeys(sent)).toEqual(new Set([
       boardNotifyLedgerKey('req-legacy', 'BLOCKED'),
       boardNotifyLedgerKey('req-delta-1', 'BLOCKED'),
       boardNotifyLedgerKey('req-delta-1', 'BLOCKED', n1.delta),
@@ -248,10 +258,12 @@ describe('cmdFleetBoardNotify meaningful deltas', { timeout: 60_000 }, () => {
     const [retryA, retryB] = flaky.mock.calls.map(c => c[0] as BoardNotice);
     expect(retryB.delta).toBe(retryA.delta);
     expect(retryB.text).toBe(retryA.text);
-    expect(readBoardNotifySent(boardNotifyLedgerPath(dir))!).toEqual(new Set([
+    const sent = readBoardNotifySent(boardNotifyLedgerPath(dir))!;
+    expect(publicKeys(sent)).toEqual(new Set([
       boardNotifyLedgerKey('slack-delta-2', 'BLOCKED'),
       boardNotifyLedgerKey('slack-delta-2', 'BLOCKED', retryA.delta),
     ]));
+    expect(provenanceKeys(sent)).toEqual(new Set([provenance('slack-delta-2', 'BLOCKED', 'modern')]));
   });
 
   it('gives each meaningful delta a distinct deterministic bus reply id', async () => {

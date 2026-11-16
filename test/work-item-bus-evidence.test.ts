@@ -121,13 +121,13 @@ describe('cmdFleetWorkTrace', { timeout: 60_000 }, () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     expect(await cmdFleetWorkTrace(['--id', ID, '--root', root])).toBe(0);
     const line = String(log.mock.calls.at(-1)![0]);
-    expect(line).toBe(`${ID} RUNNING as-of=${iso(now)} source=bus-work-claims lease-until ${iso(now + 600_000)} `
-      + 'missing=none inbox=found claims=available');
+    expect(line).toMatch(new RegExp(`^${ID} RUNNING as-of=${iso(now)} source=bus-work-claims lease-until ${iso(now + 600_000)} `
+      + 'missing=none inbox=found claims=available owner=fake-owner claimReceipt=bus-claim:\\S+$'));
     expect(line).not.toMatch(/[a-f0-9]{64}/);
     expect(await cmdFleetWorkTrace(['--id', ID, '--root', root, '--json'])).toBe(0);
     const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
     expect(parsed).toMatchObject({ id: ID, state: 'RUNNING', asOf: iso(now), missing: [],
-      inbox: 'found', claims: 'available' });
+      inbox: 'found', claims: 'available', owner: 'fake-owner' });
     expect(String(log.mock.calls.at(-1)![0])).not.toMatch(/[a-f0-9]{64}/);
   });
 
@@ -136,7 +136,7 @@ describe('cmdFleetWorkTrace', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkTrace(['--id', 'RQ-NOPE', '--root', root, '--json'])).toBe(0);
     expect(JSON.parse(String(log.mock.calls.at(-1)![0]))).toEqual({ id: 'RQ-NOPE', state: 'RECEIVED',
       asOf: 'unknown', source: 'unknown', missing: ['named owner', 'durable claim receipt'],
-      inbox: 'missing', claims: 'missing' });
+      inbox: 'missing', claims: 'missing', owner: null, claimReceipt: null });
   });
 
   it('exits 2 on bad args and prints nothing', async () => {

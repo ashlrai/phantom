@@ -21,7 +21,6 @@ import { cmdFleetNeedsTriage } from './fleet-needs-triage.js';
 import { cmdFleetWasteIncident } from './fleet-waste-incident.js';
 import type { readWasteRiskInputs } from '../core/resources/waste-risk-read.js';
 import { cmdFleetLandedSweep } from './fleet-landed-sweep.js';
-import { cmdFleetCosWork } from './fleet-cos-work.js';
 import { QueueStore } from '../core/queue/store.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
@@ -295,6 +294,10 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'waste-incident': bind(cmdFleetWasteIncident, { now, read: deps.wasteRead }),
     'landed-sweep': bind(cmdFleetLandedSweep, { now }),
     'cos-work': async (argv) => {
+      // Loaded on demand through a non-literal specifier: cos-work reaches the apps
+      // glance readers, which must stay outside the Tier-1 authority closure
+      // (test/tier1-apps-boundary.test.ts). Same pattern as verse-api's lazy API modules.
+      const { cmdFleetCosWork } = (await import('./fleet-cos-work.js' as string)) as typeof import('./fleet-cos-work.js');
       const result = await bind(cmdFleetCosWork, { now, spawn: deps.spawn, timeoutMs: 180_000 })(argv);
       if (result.exitCode === 1) {
         const report = JSON.parse(result.output) as { outcome?: string; id?: string; attemptId?: string };
