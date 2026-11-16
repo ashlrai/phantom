@@ -22,7 +22,7 @@ import { existsSync } from 'node:fs';
 import { isSlackTs, loadAgentNetworkConfig } from '../agents/slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
 import { parseNoticeThreadRef } from '../../cli/fleet-claim-notices.js';
-import { readFleetBoard } from './coordination.js';
+import { readFleetBoard, type FleetBoard } from './coordination.js';
 import { claimNoticeDir, claimNoticeFileDeps, claimNoticePaths, readClaimNoticeSentRows,
   readClaimThreadBindings, runClaimNoticePass, type ClaimNoticeSendDeps } from './claim-notice-send.js';
 
@@ -31,6 +31,9 @@ export const CLAIM_NOTICE_VIEW_TEXT = 300;
 /** Slack `ts` is written when the API call lands; a ledger row and its
  * receipt differ by queueing and clock skew, not intent. */
 export const CLAIM_NOTICE_RECEIPT_SKEW_MS = 120_000;
+
+/** Cap on agent/repo/claimId strings copied into the view (labels are untrusted). */
+export const CLAIM_NOTICE_UNBOUND_TEXT = 128;
 
 export type ClaimNoticeDeliveryWord = 'slack-sent' | 'no-slack-receipt' | 'unknown';
 
@@ -50,6 +53,11 @@ export interface ClaimNoticeView {
   /** Counts over the listed `sent.recent` rows plus the send-store state they were read under. */
   delivery: ClaimNoticeDeliverySummary;
   pending: Array<{ state: string; threadKey: string; text: string }>;
+  /** Live claims with no binding: runClaimNoticePass drops every notice for them.
+   * 'unknown' whenever the board could not be read as known; never an empty-list guess.
+   * Task text is deliberately not carried. */
+  unbound: { state: 'known' | 'unknown'; total: number;
+    rows: Array<{ claimId: string; repo: string; agent: string; claimedAt: number }> };
   slackConfigured: boolean | 'unknown';
 }
 
@@ -106,7 +114,8 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
       : cfg.state === 'missing' ? false : 'unknown';
   } catch { /* stays unknown */ }
   const empty = (source: 'missing' | 'unreadable'): ClaimNoticeView =>
-    ({ ...base, source, bindings: 0, sent: { total: 0, recent: [] }, delivery: summary([]), pending: [], slackConfigured });
+    ({ ...base, source, bindings: 0, sent: { total: 0, recent: [] }, delivery: summary([]), pending: [],
+      unbound: { state: 'unknown', total: 0, rows: [] }, slackConfigured });
   if (!existsSync(root)) return empty('missing');
 
   const paths = claimNoticePaths(root);
@@ -140,12 +149,31 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     }
   }
 
+  // One board read, shared by the unbound list and the dry run below.
+  let boardRead: { board: FleetBoard } | { error: unknown };
+  try { boardRead = { board: (opts.readBoard ?? (() => readFleetBoard({ now: now() })))() }; }
+  catch (error) { boardRead = { error }; }
+  const readBoardOnce = (): FleetBoard => {
+    if ('error' in boardRead) throw boardRead.error;
+    return boardRead.board;
+  };
+  let unbound: ClaimNoticeView['unbound'] = { state: 'unknown', total: 0, rows: [] };
+  if ('board' in boardRead && boardRead.board.state === 'known') {
+    const bound = new Set(bindings.map(b => JSON.stringify([b.repo, b.claimId])));
+    const live = boardRead.board.claims
+      .filter(c => c.expiresAt > collectedAtMs && !bound.has(JSON.stringify([c.repo, c.id])))
+      .sort((a, b) => b.claimedAt - a.claimedAt);
+    const cap = (v: string) => v.slice(0, CLAIM_NOTICE_UNBOUND_TEXT);
+    unbound = { state: 'known', total: live.length, rows: live.slice(0, CLAIM_NOTICE_VIEW_ROWS)
+      .map(c => ({ claimId: cap(c.id), repo: cap(c.repo), agent: cap(c.agent), claimedAt: c.claimedAt })) };
+  }
+
   const files = claimNoticeFileDeps(root);
   let pending: ClaimNoticeView['pending'] = [];
   try {
     const pass = await runClaimNoticePass({
       ...files,
-      readBoard: opts.readBoard ?? (() => readFleetBoard({ now: now() })),
+      readBoard: readBoardOnce,
       writePrevSnapshot: () => { throw new Error('claim-notice view is read-only'); },
       appendSentLedger: () => { throw new Error('claim-notice view is read-only'); },
       send: neverSend, now, dryRun: true,
@@ -155,5 +183,5 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
   } catch { /* pending stays empty; the sent half is still honest */ }
 
   return { ...base, source: 'ok', bindings: bindings.length,
-    sent: { total: rows.length, recent }, delivery: summary(recent), pending, slackConfigured };
+    sent: { total: rows.length, recent }, delivery: summary(recent), pending, unbound, slackConfigured };
 }
