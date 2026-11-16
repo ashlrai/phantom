@@ -31,6 +31,7 @@ not automatically the host's state.
 | `fleet_work_board` | The same bus work board; optional `limit` and exact `thread` filter. |
 | `fleet_coordination_claims` | Read-only fresh host advisory coordination claims, newest first. Reading a claim never creates one. |
 | `fleet_claim_execution` | Read-only sanitized evidence of which live advisory claims have started executing. Grants no claim authority. |
+| `fleet_claim_notices` | Read-only Slack claim-notice evidence: bound threads, sent bus notes and a dry-run plan of pending notices. Authority none: it never sends, ledgers or writes. |
 | `fleet_runtime_identity` | Sanitized host/platform, installed versus source version, drift, fleet-state freshness and reasons. |
 | `fleet_review_pick` | Read-only unowned review task route, also available as `ashlr fleet review-pick`: repository, PR/head and current owner; unavailable ownership evidence withholds the pick. Grants no claim. |
 | `fleet_order_state` | Inbox order classifications and missing evidence; optional `sinceHours` from 1–720. |
