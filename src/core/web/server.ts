@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js';
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
+import { handleBotTemplates } from '../../api/bot-templates.js';
 import { handleMergeLatencyApi } from '../verse/merge-latency-api.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
@@ -205,6 +206,7 @@ export async function startServer(
       readProjections: readProjections ?? undefined,
       usageResourcesApi: handleUsageResourcesApi,
       mergeLatencyApi: handleMergeLatencyApi,
+      botsApi: handleBotTemplates,
     })
       .then((handled) => {
         // A mutation can partially succeed and still return 409/500 (for

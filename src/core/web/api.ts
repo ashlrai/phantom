@@ -47,7 +47,6 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  */
 
 import { handleTeamInvites } from '../../api/team-invites.js';
-import { handleBotTemplates } from '../../api/bot-templates.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
@@ -1327,6 +1326,10 @@ export async function handleApi(
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
     mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
+    // Injected by server.ts (outside the Tier-1 closure) so the bot-template
+    // route stack stays out of the authority import closure; type-only import
+    // is erased and grows nothing.
+    botsApi?: typeof import('../../api/bot-templates.js').handleBotTemplates;
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1340,7 +1343,7 @@ export async function handleApi(
 
   try {
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
-    if (path.startsWith('/api/bots') && await handleBotTemplates(req, res, ctx)) return true;
+    if (path.startsWith('/api/bots') && ctx.botsApi !== undefined && await ctx.botsApi(req, res, ctx)) return true;
     if (path === '/api/usage/spend' && method === 'GET') {
       const { readUsageSpend } = await import('../usage/spend.js');
       sendJson(res, 200, await readUsageSpend());

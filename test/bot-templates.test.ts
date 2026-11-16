@@ -9,6 +9,7 @@ import { readAgentProfile } from '../src/core/agents/agent-profile.js';
 import { readAutomations } from '../src/core/automations/store.js';
 import { assertMetadata } from '../src/core/connectors/profile.js';
 import { handleApi } from '../src/core/web/api.js';
+import { handleBotTemplates } from '../src/api/bot-templates.js';
 import { defaultConfig } from '../src/core/config.js';
 
 let n = 0;
@@ -99,7 +100,7 @@ async function call(method: string, url: string, body?: unknown, opts: { token?:
   req.headers = { 'x-ashlr-token': opts.token ?? 'test-mutation', 'content-type': 'application/json' };
   let status = 0; let result = '';
   const res = { setHeader: vi.fn(), writeHead: (c: number) => { status = c; }, end: (t: string) => { result = t; } } as unknown as ServerResponse;
-  await handleApi(req, res, defaultConfig(), { token: 'test-mutation', allowDispatch: opts.allowDispatch ?? true });
+  await handleApi(req, res, defaultConfig(), { token: 'test-mutation', allowDispatch: opts.allowDispatch ?? true, botsApi: handleBotTemplates });
   return { status, body: JSON.parse(result) as Record<string, any> };
 }
 
