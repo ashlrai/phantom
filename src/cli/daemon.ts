@@ -197,7 +197,7 @@ const DAEMON_USAGE: Record<DaemonSubcommand, string> = {
   'resolve-state':
     'Usage: ashlr daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256> [--json]\n' +
     '   or: ashlr daemon resolve-state --execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256> --confirm <plan-sha256> [--json]',
-  install: 'Usage: ashlr daemon install [--no-autostart] (temporarily unavailable)',
+  install: 'Usage: ashlr daemon install [--no-autostart]\n  macOS: authorized resident start with operator confirmation; --no-autostart temporarily unavailable.',
   uninstall: 'Usage: ashlr daemon uninstall',
   'service-status': 'Usage: ashlr daemon service-status [--json]',
 };
@@ -1481,6 +1481,14 @@ async function cmdDaemonInstall(autostart: boolean): Promise<number> {
   const tty = process.stdout.isTTY === true;
   const col = makeColors(tty);
 
+  if (autostart && process.platform === 'darwin') {
+    const { currentOperatorContext, operatorContextRefusal } = await import('../core/authority/resident.js');
+    if (!operatorContextRefusal(currentOperatorContext())) {
+      const { runAuthorityCli } = await import('./authority.js');
+      return runAuthorityCli(['resident', 'start']);
+    }
+  }
+
   try {
     assertResidentServiceInstallAuthorized();
   } catch (error) {
@@ -1491,64 +1499,8 @@ async function cmdDaemonInstall(autostart: boolean): Promise<number> {
       + '. No config or service state was inspected or changed. '
       + 'Existing services support status and uninstall only.',
     );
-    return 1;
   }
-
-  const svcMod = await importServiceManager();
-  if (!svcMod) {
-    console.error(col.red('error: ') + 'daemon service manager not available (M93 module not built).');
-    return 1;
-  }
-
-  const daemonServiceInstallOptions = await importServiceConfig();
-  if (!daemonServiceInstallOptions) {
-    console.error(col.red('error: ') + 'daemon service config not available (M93 module not built).');
-    return 1;
-  }
-
-  // Pull budget/interval/parallel from config for the service args.
-  const loadConfig = await importConfig();
-  let cfg: AshlrConfig | null = null;
-  if (loadConfig) {
-    try {
-      cfg = loadConfig();
-    } catch {
-      // proceed with defaults
-    }
-  }
-  const opts: ServiceInstallOptions = daemonServiceInstallOptions(cfg, { autostart });
-
-  try {
-    await svcMod.install(opts);
-  } catch (e) {
-    console.error(col.red('error: ') + 'Service installation failed: ' + (e instanceof Error ? e.message : String(e)));
-    return 1;
-  }
-
-  const status = autostart ? await svcMod.ensureRunning(opts) : svcMod.serviceStatus(opts);
-  console.log('');
-  console.log(col.green('  ✓ daemon service installed') + col.dim(` [${status.platformSpec}]`));
-  if (status.serviceFilePath) {
-    console.log(col.dim(`  service file: ${status.serviceFilePath}`));
-  }
-  if (autostart) {
-    const activity = serviceActivity(status);
-    console.log(col.dim('  auto-start on login: enabled'));
-    console.log(col.dim(
-      `  service state: ${
-        activity === 'running'
-          ? 'running'
-          : activity === 'scheduler-active-unverified'
-            ? 'scheduler active; daemon liveness unverified'
-            : activity === 'unknown'
-              ? 'runtime unknown'
-              : 'installed but stopped'
-      }`,
-    ));
-  }
-  console.log(col.dim('  Use `ashlr daemon service-status` to verify the OS service state.'));
-  console.log('');
-  return 0;
+  return 1;
 }
 
 // ---------------------------------------------------------------------------

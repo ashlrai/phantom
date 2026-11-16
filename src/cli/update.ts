@@ -40,6 +40,7 @@ import { serviceStatus } from '../core/daemon/service.js';
 import { assertResidentServiceInstallAuthorized } from '../core/daemon/service-install-authority.js';
 import { queryServeService } from './dashboard.js';
 import { desktopUpdateProfileForPackage, type DesktopUpdateProfile } from '../core/desktop/update-manifest.js';
+import { applyCliReleaseUpdate, isReleaseDirectory, latestCliRelease, newerCliVersion, publishedNpmVersion } from '../core/cli-release-update.js';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers (non-TTY safe)
@@ -312,7 +313,7 @@ interface ParsedUpdateArgs {
   /** M33: skip the interactive gate on the npm-channel install. */
   yes: boolean;
   /** M33: explicit channel override ('git' | 'npm'); default auto-detect. */
-  channel?: 'git' | 'npm';
+  channel?: 'git' | 'npm' | 'release';
   usageError?: string;
 }
 
@@ -329,8 +330,8 @@ function parseUpdateArgs(args: string[]): ParsedUpdateArgs {
       result.yes = true;
     } else if (arg === '--channel') {
       const val = args[++i];
-      if (val !== 'git' && val !== 'npm') {
-        result.usageError = `--channel must be git or npm; got: ${val ?? '(missing)'}`;
+      if (val !== 'git' && val !== 'npm' && val !== 'release') {
+        result.usageError = `--channel must be git, npm or release; got: ${val ?? '(missing)'}`;
         return result;
       }
       result.channel = val;
@@ -354,8 +355,9 @@ function parseUpdateArgs(args: string[]): ParsedUpdateArgs {
  * (global or local `npm install @ashlr/hub`); 'git' for a repo checkout.
  * Exported for tests.
  */
-export function detectChannel(moduleUrl: string = import.meta.url): 'git' | 'npm' {
+export function detectChannel(moduleUrl: string = import.meta.url): 'git' | 'npm' | 'release' {
   const here = fileURLToPath(moduleUrl);
+  if (isReleaseDirectory(resolve(dirname(here), '..', '..'), homedir())) return 'release';
   return here.includes(`${sep}node_modules${sep}`) ? 'npm' : 'git';
 }
 
@@ -386,6 +388,39 @@ function refuseNpmIdentity(jsonMode: boolean): number {
   return 1;
 }
 
+async function runReleaseChannel(parsed: ParsedUpdateArgs, root: string): Promise<number> {
+  try {
+    if (!isReleaseDirectory(root, homedir())) throw new Error('release channel requires an installed releases/<revision> directory');
+    const identity = readNpmUpdateIdentity(root);
+    const release = await latestCliRelease(identity.profile.packageName);
+    if (!identity.version) throw new Error('installed package version unavailable');
+    const available = newerCliVersion(release.version, identity.version);
+    let destination: string | null = null;
+    if (available && parsed.yes && !parsed.check) {
+      destination = await applyCliReleaseUpdate({ home: homedir(), root, release, packageName: identity.profile.packageName,
+        assertServicesAbsent: () => {
+          const daemon = serviceStatus(), serve = queryServeService();
+          if (daemon.running || serve.running || daemon.registrationState !== 'absent' || serve.registrationState !== 'absent') {
+            throw new Error('services must remain stopped and unregistered during the release swap');
+          }
+          const fresh = readNpmUpdateIdentity(root);
+          if (fresh.profile.name !== identity.profile.name || fresh.version !== identity.version) throw new Error('installed package identity changed');
+        } });
+    }
+    const message = destination ? `updated to ${release.version}; previous release retained at ${root}`
+      : available ? `update available: ${identity.version} -> ${release.version}; run phm update --yes` : 'up to date';
+    if (parsed.json) console.log(JSON.stringify({ channel: 'release', updated: destination !== null, upToDate: !available,
+      versionLocal: identity.version, versionLatest: release.version, destination, previous: root, message }));
+    else out(message, false);
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'release update failed';
+    if (parsed.json) console.log(JSON.stringify({ channel: 'release', updated: false, error: message }));
+    else out(`release update failed: ${message}`, false);
+    return 1;
+  }
+}
+
 /**
  * npm-channel update: check the registry for a newer version (bounded network
  * call, degrades offline to "unknown"); the actual install runs ONLY with
@@ -396,24 +431,15 @@ async function runNpmChannel(parsed: ParsedUpdateArgs, repoRoot: string, identit
   const localVersion = identity.version;
   const packageName = identity.profile.packageName;
 
-  // `npm view` is a network call — explicit, bounded, read-only.
-  let latest: string | null = null;
-  try {
-    const res = spawnSync('npm', ['view', packageName, 'version'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    latest = res.status === 0 ? res.stdout.trim() || null : null;
-  } catch {
-    latest = null;
-  }
+  const latest = await publishedNpmVersion(packageName);
 
-  const upToDate = latest !== null && localVersion !== null && latest === localVersion;
+  const upToDate = latest !== null && localVersion !== null
+    && (latest === localVersion || /^\d+\.\d+\.\d+$/.test(localVersion) && !newerCliVersion(latest, localVersion));
 
   // Flat status message (avoid a nested ternary for the three states).
   let message: string;
   if (latest === null) {
-    message = 'registry unreachable — could not check for updates';
+    message = 'public registry metadata unavailable; could not check for updates';
   } else if (upToDate) {
     message = 'up to date';
   } else {
@@ -492,7 +518,7 @@ function printHelp(): void {
   console.log('');
   console.log('  ' + bold('Usage:'));
   console.log('');
-  console.log(`    phm update ${cyan('[--check]')} ${cyan('[--json]')} ${cyan('[--channel git|npm]')} ${cyan('[--yes]')}`);
+  console.log(`    phm update ${cyan('[--check]')} ${cyan('[--json]')} ${cyan('[--channel git|npm|release]')} ${cyan('[--yes]')}`);
   console.log('    phm update why [--json]  Explain desktop update feed status without installing.');
   console.log('    Compatible alias: ashlr update');
   console.log('');
@@ -553,6 +579,7 @@ export async function cmdUpdate(args: string[]): Promise<number> {
 
   // ── M33: channel routing — npm installs update via the registry, not git ──
   const channel = parsed.channel ?? detectChannel();
+  if (channel === 'release' && (parsed.check || !parsed.yes)) return runReleaseChannel(parsed, repoRoot);
   let npmIdentity: NpmUpdateIdentity | undefined;
   if (channel === 'npm') {
     try { npmIdentity = readNpmUpdateIdentity(repoRoot); }
@@ -586,7 +613,9 @@ export async function cmdUpdate(args: string[]): Promise<number> {
           + `because ${reason}. No code was replaced. Existing services support status and uninstall only; `
           + 'compiled daemon and conductor trust roots are empty, so non-dry daemon/conductor execution '
           + 'is dormant. Use owner-invoked `ashlr run`/`ashlr swarm`, or '
-          + '`ashlr daemon start --once --dry-run` for observation.';
+          + '`ashlr daemon start --once --dry-run` for observation. '
+          + 'On macOS, the operator can restore the daemon using `phm daemon install`, '
+          + 'which preserves the standing grant and confirmation requirements of `phm authority resident start`.';
         out(`  ${red('✗')}  ${bold('Update blocked by resident service restriction')}`, jsonMode);
         out(`  ${dim(message)}`, jsonMode);
         out('', jsonMode);
@@ -610,6 +639,7 @@ export async function cmdUpdate(args: string[]): Promise<number> {
   if (channel === 'npm') {
     return runNpmChannel(parsed, repoRoot, npmIdentity!);
   }
+  if (channel === 'release') return runReleaseChannel(parsed, repoRoot);
 
   out('', jsonMode);
   out(bold('  phm update') + gray(`  —  ${repoRoot}`), jsonMode);

@@ -125,6 +125,23 @@ combined tool surface: [one connection for every agent](COMPANIONS.md#one-connec
   `git pull --ff-only && npm ci && npm run build && ./install.sh`.
 - npm install: `phm update` checks the registry, prints
   `npm install -g @ashlr/phantom@latest`, and `--yes` runs it.
+- Release directory (`~/.local/share/ashlr/releases/<revision>`): `phm update
+  --check` reads the latest public GitHub release; `phm update --yes` downloads
+  its CLI tarball and verifies GitHub's published SHA256 asset checksum and the
+  package's embedded version and revision. It stages and smoke-tests the CLI,
+  then atomically replaces `current` or the direct `phm` and `ashlr` symlinks.
+  Direct aliases are replaced individually and restored together if the swap
+  fails. The previous release remains available for rollback, and a successful
+  update appends one JSON line to `~/.ashlr-runs/installs.log`.
+- Mutating updates still require daemon and serve registrations to be absent.
+  `phm daemon install` on macOS now delegates to `phm authority resident start`
+  in an operator terminal, preserving its signed grant, build verification and
+  confirmation requirements. After an update, use it to restore the daemon;
+  a changed authority surface still requires grant reapproval. Autonomous
+  install attempts, non-macOS installs and `--no-autostart` remain refused.
+- The npm version probe reads public registry metadata without local npm
+  credentials or a credential subprocess. Actual npm installation retains the
+  existing Secrets transport.
 - A running console picks up the new build on next start; re-open `phm verse`.
 
 ## Uninstall

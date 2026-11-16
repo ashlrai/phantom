@@ -3,6 +3,7 @@
 // hermetic signing-path tests (verification code only: no identity, no
 // notarization, no secrets) and the release workflow script tests.
 import { spawnSync } from 'node:child_process';
+import console from 'node:console';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

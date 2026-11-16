@@ -43,6 +43,12 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/auto-tag-gate-split.test.ts', // Executes the CI selector in a real Node child.
+  'test/channel-health-slack-binding-338.test.ts', // Runs real child-process Slack binding probes.
+  'test/m30.ci.test.ts', // Executes CI validation scripts in real child processes.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real Git history for MCP snapshot reads.
+  'test/no-stray-source-artifacts-373.test.ts', // Reads tracked source paths through real Git.
+  'test/verify-changed-master-overlay.test.ts', // Creates real Git repositories and overlays master.
   'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration

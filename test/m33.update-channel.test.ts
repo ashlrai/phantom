@@ -9,8 +9,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { pathToFileURL } from 'node:url';
 import { sep } from 'node:path';
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), read: vi.fn(), service: vi.fn(), dashboard: vi.fn(), authorize: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), read: vi.fn(), service: vi.fn(), dashboard: vi.fn(), authorize: vi.fn(), fetch: vi.fn() }));
 vi.mock('node:child_process', async () => ({ ...await vi.importActual<typeof import('node:child_process')>('node:child_process'), spawnSync: mocks.spawn }));
+vi.mock('../src/core/integrations/secrets.js', () => ({ credentialSpawnSync: mocks.spawn, credentialExecFileSync: vi.fn() }));
 vi.mock('node:fs', async () => ({ ...await vi.importActual<typeof import('node:fs')>('node:fs'), readFileSync: mocks.read }));
 vi.mock('../src/core/daemon/service.js', () => ({ serviceStatus: mocks.service }));
 vi.mock('../src/cli/dashboard.js', () => ({ queryServeService: mocks.dashboard }));
@@ -31,14 +32,15 @@ beforeEach(() => {
   mocks.service.mockReturnValue({ running: false, registrationState: 'absent' });
   mocks.dashboard.mockReturnValue({ running: false, registrationState: 'absent' });
   mocks.authorize.mockImplementation(() => { throw new Error('service mutation refused'); });
+  vi.stubGlobal('fetch', mocks.fetch);
+  mocks.fetch.mockImplementation(async () => new Response(JSON.stringify({ version: '3.25.4' })));
   mocks.spawn.mockImplementation((command: string, args: string[]) => {
-    if (command === 'npm' && args[0] === 'view') return { status: 0, stdout: '3.25.4\n' };
     if (command === 'npm' && args[0] === 'install') return { status: 0, stdout: '' };
     throw new Error('unexpected subprocess');
   });
 });
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('detectChannel', () => {
   it('reports git for a repo checkout path', () => {
@@ -109,9 +111,8 @@ describe('npm channel command fidelity', () => {
   it.each(['@ashlr/hub', '@ashlr/phantom'])('checks only the running %s package', async name => {
     mocks.read.mockReturnValue(JSON.stringify({ name, version: '3.25.3' }));
     expect(await cmdUpdate(['--channel', 'npm', '--check', '--json', '--yes'])).toBe(0);
-    expect(mocks.spawn.mock.calls).toHaveLength(1);
-    expect(mocks.spawn.mock.calls[0]?.slice(0, 2)).toEqual(['npm', ['view', name, 'version']]);
-    expect(mocks.spawn.mock.calls[0]?.[2]).toMatchObject({ timeout: 10_000 });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledWith(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`, expect.objectContaining({ credentials: 'omit', redirect: 'error' }));
     expect(JSON.parse(output)).toMatchObject({ updated: false, versionLocal: '3.25.3', versionLatest: '3.25.4' });
     expect(mocks.service).not.toHaveBeenCalled();
   });
@@ -121,31 +122,39 @@ describe('npm channel command fidelity', () => {
     expect(await cmdUpdate(['--channel', 'npm'])).toBe(0);
     expect(output).toContain(`npm install -g ${name}@latest`);
     expect(output).toContain('phm update --yes');
-    expect(mocks.spawn.mock.calls).toHaveLength(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it.each(['@ashlr/hub', '@ashlr/phantom'])('installs only %s with explicit confirmation and a fresh identity', async name => {
     mocks.read.mockReturnValue(JSON.stringify({ name, version: '3.25.3' }));
     expect(await cmdUpdate(['--channel', 'npm', '--yes'])).toBe(0);
     expect(mocks.spawn.mock.calls.map(call => call.slice(0, 2))).toEqual([
-      ['npm', ['view', name, 'version']], ['npm', ['install', '-g', `${name}@latest`]],
+      ['npm', ['install', '-g', `${name}@latest`]],
     ]);
-    expect(mocks.spawn.mock.calls[1]?.[2]).toMatchObject({ timeout: 300_000, stdio: 'inherit' });
+    expect(mocks.spawn.mock.calls[0]?.[2]).toMatchObject({ timeout: 300_000, stdio: 'inherit' });
     expect(mocks.read).toHaveBeenCalledTimes(2);
   });
 
   it.each(['@ashlr/hub', '@ashlr/phantom'])('keeps %s up-to-date checks read-only', async name => {
     mocks.read.mockReturnValue(JSON.stringify({ name, version: '3.25.4' }));
     expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(0);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
     expect(JSON.parse(output)).toMatchObject({ upToDate: true, updated: false });
   });
 
   it('keeps an offline registry unknown and never installs', async () => {
-    mocks.spawn.mockReturnValue({ status: 1, stdout: '' });
+    mocks.fetch.mockResolvedValue(new Response('', { status: 503 }));
     expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(0);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
     expect(JSON.parse(output)).toMatchObject({ versionLatest: null, upToDate: null, updated: false });
+  });
+
+  it('does not downgrade a locally newer package to the older registry latest', async () => {
+    mocks.read.mockReturnValue(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.35' }));
+    mocks.fetch.mockImplementation(async () => new Response('{"version":"3.30.33"}'));
+    expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({ updated: false, upToDate: true });
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it.each(['not JSON', 'null', '[]', '{}', '{"name":"@other/phantom"}'])('refuses invalid own metadata before any effect %#', async raw => {
@@ -171,7 +180,7 @@ describe('npm channel command fidelity', () => {
   ])('refuses metadata drift after checking but before installing %#', async changed => {
     mocks.read.mockReturnValueOnce(JSON.stringify({ name: '@ashlr/hub', version: '3.25.3' })).mockReturnValueOnce(JSON.stringify(changed));
     expect(await cmdUpdate(['--channel', 'npm', '--yes'])).toBe(1);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
     expect(output).toContain('package identity is unsupported, inconsistent or changed');
   });
 
