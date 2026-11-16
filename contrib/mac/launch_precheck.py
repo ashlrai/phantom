@@ -136,7 +136,7 @@ def empty_streaks(jobs_path):
             row = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or row.get("launched") is False:
             continue
         job = row.get("job") or row.get("job_id") or row.get("jobId")
         if not isinstance(job, str) or not job:

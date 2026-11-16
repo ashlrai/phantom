@@ -610,6 +610,16 @@ Run `phm queue batches` to see one plain summary of batch sessions, or
 `batches` to inspect a fixture or another local runs directory.
 This is read-only. The same report backs both forms.
 
+`emptyPrefixes` reports the top five job-ID prefixes by empty `finish` rows in
+the last 24 hours, with counts and a total. Retries count separately; filler
+counters and trailing incident hashes are removed while lane names remain.
+No-op outcomes before launch do not inflate this count. Missing, unreadable or
+oversized (over 16 MiB) metrics have `evidence: "unknown"` and `total: null`;
+malformed or unmeasured rows give partial counts and `malformedLines`.
+Restock records `DONE-NOOP` before admission for explicit merged/recently closed
+PR targets and exact filler requests with merge evidence. Unknown evidence
+keeps work eligible. Host-only generators still require their own prechecks.
+
 The dispatcher already groups related READY lines in one repository into bounded
 sessions. `batch-sessions.json` sets `max_lines` (up to 10); every line retains its
 own lease, worktree, subagent, tests and PR through the normal guarded publisher.
