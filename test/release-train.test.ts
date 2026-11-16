@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -166,6 +166,159 @@ describe('release train', () => {
     expect(pendingPlan.state.stopped).toBe(false);
     expect(pendingPlan.state.steps.build?.reason).toBe('candidate-ci-pending');
     expect(pendingPlan.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
+  });
+
+  it('stops redispatching release CI when the master push CI for the tag SHA concluded red', () => {
+    // v3.30.34: the advisory Quick typecheck failed on the push run, so Merge Gate
+    // is green but release-build reuses only a green exact-source push run and
+    // every dispatched CI run ends with no ashlr-build artifact.
+    const redPush = buildTrain(observation({ pushCiRed: true }));
+    expect(redPush.exitCode).toBe(0);
+    expect(redPush.state.steps.build).toEqual({ status: 'pending', reason: 'candidate-push-ci-red' });
+    expect(redPush.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
+    // An existing build still advances to attest.
+    const built = buildTrain(observation({ pushCiRed: true, build: { runId: 5, attempt: 1, artifactId: 9, completedAt: null } }));
+    expect(built.state.steps.build?.status).toBe('complete');
+  });
+
+  describe('fix forward past a candidate whose push CI is red', () => {
+    const fixture = JSON.parse(readFileSync(join(__dirname, 'fixtures/release-train/v3.30.34-push-ci-red.json'), 'utf8')) as {
+      stuckPlan: { version: string; tag: string; sha: string; next: string; build: { status: string; reason: string } };
+      observation: TrainObservation;
+    };
+    const stuck = fixture.observation;
+    const dispatchPath = 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches';
+    const successorPr = { number: 9, nodeId: 'PR_kwDO_next', version: '3.30.35', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN' as const, queued: false };
+
+    it('reproduces the stuck v3.30.34 plan when master gate evidence is absent', () => {
+      const { masterCi: _masterCi, ...withoutGate } = stuck;
+      const plan = buildTrain(withoutGate);
+      expect(plan.state).toMatchObject({
+        version: fixture.stuckPlan.version, tag: fixture.stuckPlan.tag, sha: fixture.stuckPlan.sha, next: fixture.stuckPlan.next,
+      });
+      expect(plan.state.steps.build).toEqual(fixture.stuckPlan.build);
+      expect(plan.state.advance).toBeUndefined();
+    });
+
+    it('skips v3.30.34 in the plan only and plans 3.30.35 from green master', () => {
+      const plan = buildTrain(stuck);
+      expect(plan.exitCode).toBe(0);
+      expect(plan.state).toMatchObject({
+        stopped: false, reason: 'fix-forward-from-master', version: '3.30.35', tag: 'v3.30.35', sha: stuck.masterSha, next: 'release-pr',
+        advance: { action: 'advance-from-master', version: '3.30.35', sha: stuck.masterSha, reason: 'candidate-push-ci-red' },
+        superseded: ['v3.30.34'],
+      });
+      expect(plan.state.skippedTags).toEqual([{
+        tag: 'v3.30.34',
+        reason: `candidate-push-ci-red: tag=v3.30.34 sha=${fixture.stuckPlan.sha} superseded_by=v3.30.35 master=${stuck.masterSha}`,
+      }]);
+      // No Release PR is open yet, so the only write asks the Release PR workflow to cut one.
+      expect(plan.writes).toEqual([{ method: 'POST', path: dispatchPath, body: { ref: 'master', inputs: {} } }]);
+      // The dead draft and tag are never written: no PATCH, no DELETE, no tag ref, no CI redispatch.
+      const serialized = JSON.stringify(plan.writes);
+      expect(plan.writes.some((write) => write.method === 'PATCH')).toBe(false);
+      expect(serialized).not.toMatch(/DELETE|git\/refs|releases\/34|ci\.yml|admin|bypass|sign|notar/);
+      expect(plan.state.steps['release-pr']).toEqual({ status: 'pending', reason: 'release-pr-dispatched' });
+      for (const step of ['merge', 'tag', 'build', 'attest', 'npm', 'feed', 'docs', 'finalize']) {
+        expect(plan.state.steps[step]?.status).toBe('pending');
+      }
+      expect(plan.state.steps.sign).toEqual({ status: 'pending', reason: 'mac-release-autorun' });
+      expect(plan.state.steps.notarize).toEqual({ status: 'pending', reason: 'mac-release-autorun' });
+      // Release PR completion must still not recurse into another dispatch.
+      expect(allowReleasePrDispatch(dispatchPath, 'false')).toBe(false);
+      expect(markWritesApplied(plan.state).next).toBe('release-pr');
+    });
+
+    it('enqueues a green 3.30.35 release PR and waits on one that is not ready', () => {
+      const ready = buildTrain({ ...stuck, openReleasePr: successorPr, pullChecks: { pending: 0, failing: 0 } });
+      expect(ready.writes).toEqual([enqueueReleasePullRequest('PR_kwDO_next')]);
+      expect(ready.state.steps['release-pr']?.reason).toBe('release-pr-enqueued');
+      const checking = buildTrain({ ...stuck, openReleasePr: successorPr, pullChecks: { pending: 2, failing: 0 } });
+      expect(checking.writes).toEqual([]);
+      expect(checking.state).toMatchObject({ version: '3.30.35', next: 'release-pr', steps: { 'release-pr': { reason: 'release-pr-checks-pending' } } });
+      const queued = buildTrain({ ...stuck, openReleasePr: { ...successorPr, queued: true }, pullChecks: { pending: 0, failing: 0 } });
+      expect(queued.writes).toEqual([]);
+      expect(queued.state.steps['release-pr']?.reason).toBe('release-pr-queued');
+      const early = buildTrain({ ...stuck, lastTaggedAt: '2026-11-16T06:29:00.000Z' });
+      expect(early.writes).toEqual([]);
+      expect(early.state.steps['release-pr']?.reason).toBe('release-cadence-wait');
+    });
+
+    it('keeps earlier skipped tags ahead of the fix-forward entry', () => {
+      const plan = buildTrain({ ...stuck, skippedTags: [{ tag: 'v3.30.29', reason: 'release_message_mismatch' }] });
+      expect(plan.state.skippedTags?.map((item) => item.tag)).toEqual(['v3.30.29', 'v3.30.34']);
+      expect(plan.state.skippedTags?.[1]?.reason).toContain('candidate-push-ci-red: tag=v3.30.34');
+    });
+
+    it.each([
+      ['master gate pending', { masterCi: 'pending' as const }],
+      ['master gate red', { masterCi: 'red' as const }],
+      ['master gate unknown', { masterCi: 'unknown' as const }],
+      ['push CI not red', { pushCiRed: false }],
+      ['a build already exists', { build: { runId: 5, attempt: 1, artifactId: 9, completedAt: null } }],
+      ['a build is still running', { buildPending: true }],
+      ['master is the candidate', { masterSha: '8060b4bd00000000000000000000000000000000', head: { ...stuck.head!, ancestry: 'identical' as const } }],
+      ['master already carries a newer release commit', { masterVersion: '3.30.35' }],
+      ['npm already has the candidate', { npmPublished: true }],
+    ])('does not fix forward when %s', (_label, overrides: Partial<TrainObservation>) => {
+      const plan = buildTrain({ ...stuck, ...overrides });
+      expect(plan.state.advance).toBeUndefined();
+      expect(plan.state.tag).not.toBe('v3.30.35');
+      expect(plan.writes.some((write) => write.path === dispatchPath)).toBe(false);
+    });
+
+    it('does not fix forward past a published candidate', () => {
+      const releases = stuck.releases.map((row) => row.tag_name === 'v3.30.34' ? { ...row, draft: false } : row);
+      expect(buildTrain({ ...stuck, releases }).state.advance).toBeUndefined();
+    });
+
+    it('reads the master fast gate only for a stuck candidate and carries it into the plan', async () => {
+      const candidate = fixture.stuckPlan.sha;
+      const master = stuck.masterSha;
+      const pkg = (version: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version })).toString('base64') });
+      const repo = { full_name: 'ashlrai/phantom' };
+      const pushRun = (conclusion: string) => ({
+        id: 43807308941, run_attempt: 1, head_sha: candidate, event: 'push', head_branch: 'master', path: '.github/workflows/ci.yml',
+        status: 'completed', conclusion, repository: repo, head_repository: repo,
+      });
+      const reads: string[] = [];
+      const observe = (conclusion: string, masterGate: 'success' | 'failure') => observeTrain(async (path) => {
+        reads.push(path);
+        const data: Record<string, unknown> = {
+          'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+          'repos/ashlrai/phantom/commits/master': { sha: master },
+          [`repos/ashlrai/phantom/contents/package.json?ref=${master}`]: pkg('3.30.34'),
+          'repos/ashlrai/phantom/git/ref/tags/v3.30.34': { ref: 'refs/tags/v3.30.34', object: { type: 'commit', sha: candidate } },
+          [`repos/ashlrai/phantom/commits/${candidate}`]: { commit: { message: stuck.head!.message, committer: { date: '2026-11-16T02:00:00.000Z' } } },
+          [`repos/ashlrai/phantom/compare/${candidate}...${master}`]: { status: 'ahead', ahead_by: 4 },
+          'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.34', commit: { sha: candidate } }],
+          'repos/ashlrai/phantom/releases?per_page=100&page=1': [{ id: 34, tag_name: 'v3.30.34', draft: true, name: 'Phantom 3.30.34', body: 'notes', created_at: '2026-11-16T02:05:00Z', assets: [] }],
+          'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+          [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${candidate}&per_page=20`]: { total_count: 1, workflow_runs: [pushRun(conclusion)] },
+          ...greenCi(candidate),
+          [`repos/ashlrai/phantom/commits/${master}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
+            total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: masterGate, app: { id: 15368 } }],
+          },
+        };
+        if (Object.hasOwn(data, path)) return data[path];
+        if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+        if (path.startsWith('registry/')) return null;
+        throw new Error(`unexpected ${path}`);
+      }, '2026-11-16T06:30:00.000Z', 5, { fleet: 'inactive', autorun: 'inactive' });
+
+      const red = await observe('failure', 'success');
+      expect(red).toMatchObject({ pushCiRed: true, candidateCi: 'green', masterCi: 'green' });
+      expect(buildTrain(red).state).toMatchObject({ version: '3.30.35', sha: master, superseded: ['v3.30.34'] });
+      const gateRed = await observe('failure', 'failure');
+      expect(gateRed.masterCi).toBe('red');
+      expect(buildTrain(gateRed).state).toMatchObject({ version: '3.30.34', next: 'build' });
+
+      reads.length = 0;
+      const green = await observe('success', 'success');
+      expect(green.pushCiRed).toBe(false);
+      expect(green.masterCi).toBeUndefined();
+      expect(reads.some((path) => path.startsWith(`repos/ashlrai/phantom/commits/${master}/check-runs`))).toBe(false);
+    });
   });
 
   it('does not recursively dispatch Release PR from its own completion', () => {
