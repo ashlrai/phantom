@@ -190,6 +190,10 @@ install target or software metadata before release verification. This legacy
 `verse.ashlr.ai` site is separate from the `phm.dev` website in
 `ashlrai/phantom-secrets/apps/web`.
 
+## Current front-door images
+
+`assets/phantom-fleet-demo.png` and `assets/phantom-bus-demo.png` replace the historical images on the landing page. They are 2880 × 2000 browser captures of the current source, with synthetic demo data and an in-image label. See [capture provenance](../docs/images/CAPTURES.md) for the revision and boundaries. Historical versioned files remain available to existing links.
+
 ## Historical release 3.24.3 operations and copy
 
 At this source snapshot, public downloads were 3.24.2 and the software metadata
@@ -326,7 +330,7 @@ snippets; metadata does not prove indexing or ranking. Primary guidance:
 [software apps](https://developers.google.com/search/docs/appearance/structured-data/software-app),
 [sitemaps](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap).
 
-## Current workbench images
+## Historical 3.24.3 workbench images
 
 The two `work-*-3.24.3-demo.jpg` assets are unedited 1280 × 720 captures of the
 actual compiled browser UI from clean source

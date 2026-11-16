@@ -43,16 +43,24 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
+  'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
+  'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
+  'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
+  'test/agentnet-peer-bus.test.ts', // Real private ledgers and OS lock/ACL probes across 8 hops; measured 21s under fleet load.
+  'test/fleet-orchestrate.test.ts', // Real roster, authenticated peer and owner-thread ledgers across repeated cycles.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
   'test/routines.test.ts', // Real CLI adapter subprocesses and private ledger files.
   'test/episodic-memory.test.ts', // Real Git revisions and persistent JSONL acceptance fixtures.
   'test/agent-checkpoints.test.ts', // Restarts a real Node process and observes fresh Git state.
+  'test/session-handoff.test.ts', // Real Git worktrees, private durable journals and Agent Bus claim locks across turns.
   'test/bus-cli.test.ts', // Real CLI subprocesses and concurrent durable mailbox sends in disposable homes.
   'test/agent-tools-registry.test.ts', // Spawns a real child to read the tool registry.
   'test/constitution-recutnonphxold60.test.ts', // Spawns the CLI through tsx to prove `constitution` dispatches.
   'test/phantom-discovery.test.ts', // Compiles the generated client with a real tsc child.
   'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
+  'test/coordination-return-durable-retry-378s.test.ts', // Spawns a tsx child racing a concurrent owner return on the coordination lock.
   'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
@@ -65,6 +73,7 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-standby-python-contract-02somp1.test.ts', // Runs the Python lease helper in a real child process.
   'test/company-context-store.test.ts', // concurrent context writer processes
   'test/fleet-wt-reap-apply.test.ts', // real Git worktree removal
+  'test/fleet-wt-census.test.ts', // real temp git repo + worktrees for the live probe checks
   'test/check-publish.test.ts', // Real temporary Git repositories and preflight subprocesses.
   'test/fleet-resource-session-writer.test.ts', // Runs the actual Python session tick against real private files and reads its output.
   'test/desktop-artifact-installer.test.ts', // Real private files/Git/signature/attestation proofs; hosted signature refusal took 6.803s, with no elapsed-performance assertion.
@@ -107,6 +116,23 @@ export const REAL_IO_TEST_FILES = [
   'test/verify-change.test.ts',
   'test/remote-reassign-e2e.test.ts', // Binds a real loopback HTTP server for remote reassignment.
   'test/connector-profile.test.ts', // Runs the pinned Perl secret-shape gate against generated profile TOML.
+  'test/connector-exec.test.ts', // Spawns connector children, a fake phantom and the CLI entry; runs the Perl secret-shape gate.
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real child processes.
+  'test/comms-confirm-http-original-264s.test.ts', // Spawns real child processes.
+  'test/email-outbox-crash-batch-103.test.ts', // Spawns real child processes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real child processes.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Spawns real child processes.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local network server.
+  'test/imessage-teammate-dispatch.test.ts', // Spawns real child processes.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real local network server.
+  'test/recut-n1r4200s92.test.ts', // Spawns real child processes.
+  'test/recut-top-a59.test.ts', // Binds a real local network server.
+  'test/repo-tracked-artifacts.test.ts', // Spawns real child processes.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real local network server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real local network server.
+  'test/ui-settings.test.ts', // Binds a real local network server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real local network server.
+  'test/work-trace-restart-proof-319s.test.ts', // Spawns real child processes.
   'test/docs-fleet-health.test.ts', // Executes documented health commands through the real CLI.
   'test/changelog-current-version-01.test.ts', // Runs the changelog extractor in a real child process.
   'test/docs-agent-parity.test.ts', // Runs docs build and link checks in real child processes.

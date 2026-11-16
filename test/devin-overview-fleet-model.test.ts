@@ -1,7 +1,7 @@
 /**
  * devin-overview-fleet-model.test.ts — the overview's `fleetModel` field
  * (RQ-PHX-DEVINFLEETMODEL89): the model the fleet's Devin lane resolves to
- * and whether it came from `devin.fleetModel`, the reporting-only pricing evidence
+ * and whether it came from `devin.fleetModel`, pricing evidence taken
  * at a fixed clock, and models.json's `devin*`
  * keys with `-lightning` flagged paid. The lane-model read is the real
  * fleet/lane-models.ts snapshot over a temp dir; a missing or unreadable
@@ -30,6 +30,7 @@ function deps(extra: Partial<DevinServiceDeps> = {}): DevinServiceDeps {
   return {
     config: () => ({ enabled: true }),
     cliProbe: async () => ({ state: 'missing' }),
+    keyStore: { platform: 'linux' },
     laneModels: NO_LANES,
     ...extra,
   };
@@ -50,13 +51,13 @@ describe('devinOverview fleetModel', () => {
   it('a -lightning config resolves to swe-2-flash-max; pricing follows the evidence boundary', async () => {
     const config = () => ({ enabled: true, fleet: true, fleetModel: 'swe-2-max-lightning' });
     const before = await devinOverview(deps({ config, now: () => new Date(BEFORE) }));
-    // Model IDs cannot prove free pricing; before the boundary it stays unknown.
+    // swe-2-flash-max is not on the free list; pre-boundary it stays unknown — never claimed free.
     expect(before.fleetModel).toMatchObject({ configured: 'swe-2-flash-max', source: 'config', pricing: 'unknown' });
     const after = await devinOverview(deps({ config, now: () => new Date(AFTER) }));
     expect(after.fleetModel).toMatchObject({ configured: 'swe-2-flash-max', source: 'config', pricing: 'not-free' });
   });
 
-  it('model IDs never claim free pricing, even before the evidence boundary', async () => {
+  it('historically promotional model IDs never prove free pricing', async () => {
     const config = () => ({ enabled: true, fleet: true, fleetModel: 'swe-2-medium' });
     expect((await devinOverview(deps({ config, now: () => new Date(BEFORE) }))).fleetModel?.pricing).toBe('unknown');
     expect((await devinOverview(deps({ config, now: () => new Date(AFTER) }))).fleetModel?.pricing).toBe('not-free');

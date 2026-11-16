@@ -82,7 +82,9 @@ export interface WtAuditFs {
   real(path: string): Promise<string | null>;
 }
 
-const defaultFs: WtAuditFs = {
+/** The real filesystem behind the audit; exported so sibling readers (the
+ * census) share one injectable fs contract instead of forking it. */
+export const defaultFs: WtAuditFs = {
   async dirs(path) {
     try {
       return (await readdir(path, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name);

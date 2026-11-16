@@ -159,10 +159,7 @@ export function devinFleetModelEvidence(raw: unknown): DevinFleetModelInfo | nul
   return raw as unknown as DevinFleetModelInfo;
 }
 
-/**
- * Fleet model and pricing evidence, plus one warning per paid models.json key: a `-lightning`
- * id is a paid model a fleet run redirects to swe-2-flash-max. Pure.
- */
+/** Display the server's pricing evidence and the resolver's paid-model fallback. */
 export function devinFleetModelLines(fleetModel: DevinFleetModelInfo): { row: string; warnings: string[] } {
   const pricing = fleetModel.pricing === 'not-free' ? 'not free' : 'pricing unknown';
   return {

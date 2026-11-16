@@ -515,6 +515,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'comms-teammate-reply': async () => {
     try { return (await import('./comms-teammate-reply-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-teammate-reply-api.js'); }
   },
+  'fleet-merge-latency': async () => {
+    try { return (await import('./merge-latency-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'merge-latency-api.js'); }
+  },
   'agent-roster': async () => {
     try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
   },
@@ -695,6 +698,8 @@ export interface VerseApiContext {
   readSession?: { id: string; expiresAt: number };
   /** Fixed read-only worker shared by this server; never a caller-selected module. */
   readProjections?: import('../web/read-projections.js').ReadProjectionReader;
+  /** Trusted seam for the peer-ledger route; defaults to its Verse module. */
+  fleetPeerLedgerApi?: ApiModule;
 }
 
 // ---------------------------------------------------------------------------
@@ -2091,6 +2096,17 @@ export async function handleVerseApi(
       sendJson(res, 200, readBuildIdentity());
       return true;
     }
+    if (path === `${VERSE_API_PREFIX}/fleet/peer-ledger`) {
+      if (method !== 'GET') {
+        if (!ctx.allowDispatch) {
+          sendJson(res, 404, { error: `not found: ${method} ${path}` });
+          return true;
+        }
+        if (!passesMutationGate(req, res, ctx.token)) return true;
+      }
+      const api = ctx.fleetPeerLedgerApi ?? (await import('./fleet-peer-ledger-api.js')).handleFleetPeerLedgerApi;
+      return api(ctx, req, res, path, method);
+    }
     if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
       if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
       return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
@@ -2120,6 +2136,9 @@ export async function handleVerseApi(
       // Read-only release notes; unknown children 404 here rather than evaluating the mounted modules.
       if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
       return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
+    }
+    if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
+      return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);
     }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {

@@ -60,13 +60,9 @@ function resolveLocal(from: string, specifier: string): string | null {
   return null;
 }
 
-export function computeClosure(): { roots: string[]; closure: string[] } {
-  const roots = listSource(join(ROOT, 'src'))
-    .map((file) => relative(ROOT, file).split('\\').join('/'))
-    .filter((path) => isTier1ClosureRoot(path))
-    .sort();
+export function reachableClosure(entries: readonly string[]): string[] {
   const seen = new Set<string>();
-  const stack = roots.map((path) => join(ROOT, path));
+  const stack = entries.map((path) => join(ROOT, path));
   while (stack.length > 0) {
     const file = stack.pop()!;
     const rel = relative(ROOT, file).split('\\').join('/');
@@ -77,7 +73,15 @@ export function computeClosure(): { roots: string[]; closure: string[] } {
       if (target) stack.push(target);
     }
   }
-  return { roots, closure: [...seen].sort() };
+  return [...seen].sort();
+}
+
+export function computeClosure(): { roots: string[]; closure: string[] } {
+  const roots = listSource(join(ROOT, 'src'))
+    .map((file) => relative(ROOT, file).split('\\').join('/'))
+    .filter((path) => isTier1ClosureRoot(path))
+    .sort();
+  return { roots, closure: reachableClosure(roots) };
 }
 
 

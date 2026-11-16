@@ -64,6 +64,15 @@ caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
 then `phm node beat --probe-auth`). A `lease-lost` error means stop work on
 that job and pull again.
 
+## Version drift
+
+A worker advertises its build as a `phm-<version>` capability when it joins (a cap,
+so a primary on an older build still accepts the join). `phm node self-update
+--owner <scope> --json` compares every node against this machine's version (or
+`--target x.y.z`) and prints a plan. It is plan only: it never updates or
+restarts a node. A node showing `unreported` predates this or has not rejoined.
+Update primary and backup first, then workers.
+
 ## Limits
 
 State is a private local directory (`~/.ashlr/nodes`, or `$ASHLR_HOME/nodes`)

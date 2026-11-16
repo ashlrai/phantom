@@ -278,8 +278,8 @@ export function DevinResource({ facts = null, bases }: DevinResourceProps = {}) 
       ) : null}
       {fleetModelLines ? (
         // The model a fleet run launches with (devin.fleetModel else the
-        // compiled default) and its pricing evidence; a paid models.json key
-        // gets its own warning line.
+        // compiled default) and the server's pricing evidence; a paid
+        // models.json key gets its own warning line.
         <>
           <p className={styles.subtle} data-devin-fleet-model={fleetModel?.pricing ?? 'unknown'}>{fleetModelLines.row}</p>
           {fleetModelLines.warnings.map(warning => (

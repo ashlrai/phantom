@@ -56,6 +56,8 @@ import { readFailureReason } from '../../data/client.js';
 import { refetchQuery } from '../../data/cache.js';
 import { draftAfterSend, fleetSendLanding, postFleetInterjection } from './composer/fleet-interject.js';
 import { runBusCommand } from './composer/bus-post-command.js';
+import { InterjectReceipt } from './InterjectReceipt.js';
+import type { InterjectSend } from './interject-receipt.js';
 import { parseJobCommand, runJobCommand } from './composer/job-drop-command.js';
 import { runPlanCommand } from './composer/planner-run-command.js';
 import { decidePlannerWake, getLastPlannerWakeAt, wakePlannerForOrder } from './composer/planner-wake.js';
@@ -256,6 +258,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
   const [listening, setListening] = useState(false);
   const [sentHere, setSentHere] = useState(false);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+  const [interjectSend, setInterjectSend] = useState<InterjectSend | null>(null);
   const [fleetStatus, setFleetStatus] = useState<{ text: string; error: boolean; openInbox?: boolean } | null>(null);
   const laneConfirmation = useRef<LaneConfirmation | null>(null);
   useEffect(() => {
@@ -848,8 +851,12 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
       }
       setSending(true);
       setFleetStatus(null);
+      const sentAtMs = Date.now();
+      setInterjectSend({ phase: 'sending', text: fleet.text, sentAtMs });
       try {
         const ack = await postFleetInterjection(fleet.text);
+        if (ack.reply === undefined) setInterjectSend({ phase: 'sent', text: fleet.text, sentAtMs, ...(ack.outcome === 'duplicate' ? { duplicate: true } : {}) });
+        else setInterjectSend(null);
         setDraft((current) => draftAfterSend(ack.outcome, current, text));
         const landing = fleetSendLanding(ack);
         const wake = ack.reply === undefined && decidePlannerWake({ outcome: ack.outcome, lastWakeAtMs: getLastPlannerWakeAt(), nowMs: Date.now() }) === 'wake';
@@ -866,6 +873,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
         }
         await refetchQuery(opsRunsQuery.key, () => opsRunsQuery.fetch(), true);
       } catch (error) {
+        setInterjectSend(current => current?.phase === 'sending' ? { phase: 'failed', text: fleet.text, sentAtMs } : current);
         setFleetStatus({ text: readFailureReason(error), error: true });
       } finally {
         setSending(false);
@@ -1238,6 +1246,7 @@ export function Composer({ sessionId = null, seats, seat, engine, running, disab
           }}>Open inbox</button></> : null}
         </p>
       ) : null}
+      {interjectSend ? <InterjectReceipt send={interjectSend} /> : null}
       <p id={helpId} className={`${styles.help} ${showHint || tooLong || listening || running || disabled || historyAt !== -1 || showHandoffHelp || note || controls.error || controls.loading || controls.pending || controls.unsupported || followUps.error ? '' : styles.helpQuiet}`}>
         {tooLong ? <span role="alert" className={styles.helpError}>Message is over 64 KB — trim it before sending.</span>
           : followUps.error ? <span role="alert" className={styles.helpError}>{followUps.error}</span>

@@ -1,9 +1,4 @@
-/**
- * DevinResource.fleetmodel.test.tsx — the fleet-model row on the Devin card
- * (RQ-PHX-DEVINFLEETMODEL89): "Fleet model: <id> · not free / pricing unknown",
- * one warning per paid models.json key, and nothing new on an older server that
- * omits the field.
- */
+/** The fleet-model row preserves current pricing evidence without making free claims. */
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
@@ -58,8 +53,11 @@ afterEach(() => {
 const mount = () => render(<ul><DevinResource /></ul>);
 
 describe('DevinResource fleet model', () => {
-  it.each(['promo', 'pricing'])('rejects unsupported %s free claims without changing the recorded cost estimate', async (field) => {
-    overview['fleetModel'] = { configured: 'swe-2-flash-max', source: 'config', [field]: 'free', laneModels: [] };
+  it.each([
+    { configured: 'swe-2-flash-max', source: 'config', promo: 'free', laneModels: [] },
+    { configured: 'swe-2-flash-max', source: 'config', pricing: 'free', laneModels: [] },
+  ])('rejects unsupported free evidence without changing the dollar estimate: %j', async (invalid) => {
+    overview['fleetModel'] = invalid;
     mount();
     expect(await screen.findByText(/about \$4\.5 for recorded usage/)).toBeTruthy();
     expect(screen.queryByText(/^Fleet model:/)).toBeNull();
