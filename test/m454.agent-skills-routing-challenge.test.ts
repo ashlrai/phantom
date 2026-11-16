@@ -580,6 +580,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/SIGNALS.md', // PR #3076
       'docs/FLEET-API.md', // PR #2899
       'docs/model-registry.json', // reviewed shipped model metadata
+      'docs/CLI-AGENT-READINESS.md', // reviewed shipped agent-readiness guide
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
       'docs/CONNECTORS.md', // PR #3290
@@ -590,6 +591,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/SELF-HOSTING.md',
       'docs/AUTOMATIC-OUTCOMES.md',
       'docs/VERSE.md',
+      'docs/lanes.md', // reviewed shipped lane guide
       'docs/PROACTIVE-COORDINATION.md',
       'docs/PROACTIVE-COORDINATION-BACKLOG.md',
       'docs/AUTONOMY-SETUP.md',
@@ -630,9 +632,10 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/contracts/CONTRACT-M568.md',
       'docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md',
       'docs/MACHINE-TELEMETRY.md',
+      'docs/REPO-OWNERS.md', // reviewed shipped owner index
     ]);
     // Explicit review of newly shipped members preserves challenge isolation.
-    for (const file of ['docs/model-registry.json', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {
+    for (const file of ['docs/model-registry.json', 'docs/CLI-AGENT-READINESS.md', 'docs/lanes.md', 'docs/REPO-OWNERS.md', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {
       const source = readFileSync(join(REPO_ROOT, file), 'utf8');
       for (const canary of consumerCanaries) expect(source).not.toContain(canary);
     }
