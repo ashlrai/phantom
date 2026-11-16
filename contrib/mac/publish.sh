@@ -168,6 +168,26 @@ MB=""; [ "$IM" = 1 ] || { MB=$(git merge-base "$BASE" HEAD 2>/dev/null) && [[ "$
 [ "$IM" = 1 ] || { [ "$(git rev-parse HEAD)" = "$BASE" ] || git reset --soft "$BASE"; }
 NOTES=""; [ -f BRIDGE_NOTES.md ] && { NOTES=$(cat BRIDGE_NOTES.md); mv BRIDGE_NOTES.md $R/$J.notes.md; }
 GD=$(git status --porcelain -uall -- $PD | cut -c4-); [ -n "$GD" ] && { echo "NOTE PROTECTED_DRIFT reverted: $(echo $GD)"; for d in $PD; do git checkout "$BASE" -- $d 2>/dev/null; git clean -fdq -- $d; done; echo "$GD" | grep -q "^\.github/workflows" && { echo "RESULT ABORT workflow-drift"; exit 1; }; }
+# >>> ARM_CI_GATE (RQ-ARM-CI-GATE-1): never arm auto-merge on a head whose CI already failed.
+# A published bridge PR is one commit, so a failed Secret scan (diff) stays inside base..head and no later push clears it; arming such a
+# PR only produces an armed-but-red PR the fleet keeps re-cutting. Wait (bounded) for Secret scan (diff) to finish, then refuse to arm if any
+# completed non-advisory check on the head failed. Pending, unreadable or missing checks do NOT block arming: GitHub's required checks and
+# the merge queue still gate the merge, so this only removes arming that cannot succeed. Never weakens or bypasses any check.
+arm_ci_gate(){
+  local sha="$1" waited=0 max="${ARM_GATE_WAIT:-150}" step="${ARM_GATE_POLL:-10}" out scan bad
+  ARM_GATE_WHY=""
+  while :; do
+    out=$(perl -e 'alarm shift; exec @ARGV' 30 gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null) || return 0
+    scan=$(printf '%s\n' "$out" | awk -F'\t' '$1=="Secret scan (diff)" && $2=="completed"{print $3}')
+    [ -n "$scan" ] && break
+    [ "$waited" -ge "$max" ] && break
+    sleep "$step"; waited=$((waited+step))
+  done
+  bad=$(printf '%s\n' "$out" | awk -F'\t' '$2=="completed" && ($3=="failure" || $3=="timed_out" || $3=="action_required") && tolower($1) !~ /advisory/{printf "%s%s", (n++?", ":""), $1}')
+  [ -z "$bad" ] && return 0
+  ARM_GATE_WHY="$bad"; return 1
+}
+# <<< ARM_CI_GATE
 # >>> SCOPED_STAGE
 # Stage ONLY the job's change set, never ambient worktree state. Change set = paths whose worktree content differs from the
 # job's fork point $MB (tracked edits/deletions, committed or not) + untracked, non-ignored files that are not scratch-shaped
@@ -294,7 +314,9 @@ if [ -n "${PUBLISH_JUDGE_CMD:-}" ] && [ -z "$SENS" ] && [ -z "$G1T" ]; then
 fi
 if [ $JUDGE_OK = 0 ]; then echo "NOTE AUTO_MERGE skipped judge (leader review)"
 elif [ -z "$SENS" ] && [ -z "$G1T" ]; then
-  if ME=$(gh pr merge "$URL" --repo $REPO --auto 2>&1 >/dev/null); then echo "AUTO_MERGE on"
+  HEADSHA=$(gh pr view "$URL" --repo $REPO --json headRefOid -q .headRefOid 2>/dev/null || true); [ -n "$HEADSHA" ] || HEADSHA="${IMSHA:-$SHA}"
+  if ! arm_ci_gate "$HEADSHA"; then echo "NOTE AUTO_MERGE skipped ci-red ($ARM_GATE_WHY); leader review"
+  elif ME=$(gh pr merge "$URL" --repo $REPO --auto 2>&1 >/dev/null); then echo "AUTO_MERGE on"
   elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
   else echo "NOTE AUTO_MERGE skipped-or-failed"; fi
 else echo "NOTE AUTO_MERGE skipped sensitive"; fi
