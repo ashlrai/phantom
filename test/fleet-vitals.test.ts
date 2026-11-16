@@ -101,4 +101,5 @@ it('rejects bad arguments and prints text with disk lines first', async () => {
   expect(lines[0]).toMatch(/^Disk growth: /);
   expect(lines.some(l => l.startsWith('Launch queue: unknown'))).toBe(true);
   expect(lines.some(l => l.startsWith('Launch cost: unknown (source missing)'))).toBe(true);
+  expect(lines).toContain('Next launch window: unknown');
 });
