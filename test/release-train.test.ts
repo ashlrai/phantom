@@ -8,7 +8,7 @@ import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isMissingTagRef, isReleasePleaseCommit,
-  successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation,
+  successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation, finalizeRetryDecision,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
@@ -663,6 +663,63 @@ describe('release train', () => {
     })).toString('base64');
     expect(publishRunFromAttestation({ attestations: [{ bundle: { dsseEnvelope: { payload } } }] })).toEqual({ runId: 44, attempt: 1 });
     expect(publishRunFromAttestation({ attestations: [] })).toBeNull();
+    const split = Buffer.from(JSON.stringify({
+      predicate: {
+        buildDefinition: {
+          externalParameters: { workflow: { path: '.github/workflows/publish-canonical-npm.yml' } },
+          internalParameters: { github: { event_name: 'workflow_dispatch' } },
+        },
+      },
+      elsewhere: { runDetails: { metadata: { invocationId: 'https://github.com/ashlrai/phantom/actions/runs/44/attempts/1' } } },
+    })).toString('base64');
+    expect(publishRunFromAttestation({ attestations: [{ bundle: { dsseEnvelope: { payload: split } } }] })).toBeNull();
+    const wrong = Buffer.from(JSON.stringify({
+      predicate: {
+        buildDefinition: {
+          externalParameters: { workflow: { path: '.github/workflows/ci.yml' } },
+          internalParameters: { github: { event_name: 'workflow_dispatch' } },
+        },
+        runDetails: { metadata: { invocationId: 'https://github.com/ashlrai/phantom/actions/runs/44/attempts/1' } },
+      },
+    })).toString('base64');
+    expect(publishRunFromAttestation({ attestations: [{ bundle: { dsseEnvelope: { payload: wrong } } }] })).toBeNull();
+  });
+
+  it('caps finalize retries for one version and sha', () => {
+    const integrity = 'sha512-Z9STmExvd1DbX+gD466UJ2pxrpTAJ5KioHOtO2r5UlOPOFrAgqoM92gjl6hugOQmoX2N9KaFU9sY38OAA76bBA==';
+    const assets = [
+      'ashlr-phantom-3.30.27.tgz', 'ashlr-phantom-3.30.27.tgz.sig',
+      'Phantom_3.30.27_aarch64.app.tar.gz', 'Phantom_3.30.27_aarch64.app.tar.gz.sig',
+      'manifest.json', 'manifest.json.sig', 'latest.json',
+    ].map((name) => ({ name, created_at: '2026-11-09T03:30:00.000Z' }));
+    const base = {
+      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
+      attest: { runId: 22, attempt: 1, artifactId: 202, completedAt: '2026-11-09T03:10:00.000Z' },
+      audit: { runId: 33, attempt: 1 },
+      npmPublished: true as const,
+      npmPublish: { runId: 44, attempt: 1, integrity },
+      releases: [{ id: 3, tag_name: 'v3.30.27', draft: true, name: 'Phantom 3.30.27', body: 'notes', created_at: '2026-11-09T02:36:49Z', assets }],
+    };
+    const dispatched = (runs: TrainObservation['finalizeRuns']) => buildTrain(observation({ ...base, finalizeRuns: runs }))
+      .writes.some((write) => write.path.endsWith('/finalize-github-release.yml/dispatches'));
+    expect(dispatched([])).toBe(true);
+    const recent = { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: '3.30.27', sha: head };
+    expect(dispatched([recent])).toBe(false);
+    expect(finalizeRetryDecision({
+      now: '2026-11-09T06:00:00.000Z', version: '3.30.27', sha: head, since: '2026-11-09T02:30:00.000Z',
+      runs: [{ ...recent, createdAt: '2026-11-09T04:00:00.000Z' }],
+    }).dispatch).toBe(true);
+    expect(dispatched([
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T03:00:00.000Z', version: '3.30.27', sha: head },
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T04:30:00.000Z', version: '3.30.27', sha: head },
+    ])).toBe(false);
+    expect(dispatched([
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: null, sha: null },
+    ])).toBe(false);
+    expect(dispatched([
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T01:00:00.000Z', version: null, sha: null },
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: '9.9.9', sha: 'c'.repeat(40) },
+    ])).toBe(true);
   });
 
   it('rejects writes outside the sanctioned release paths', () => {
