@@ -12,7 +12,7 @@
  * raw exception text and never an invented healthy result. Never sends,
  * enqueues, claims, probes or writes.
  */
-import { isSlackTs } from '../core/agents/slack-network.js';
+import { isSlackChannelId, isSlackTs } from '../core/agents/slack-network.js';
 import { readSlackEvidenceBundle } from '../core/agents/slack-evidence-bundle.js';
 import type { SlackRequestTraceOptions } from '../core/agents/slack-request-trace.js';
 
@@ -21,11 +21,14 @@ const SCOPE = 'Local journal and send evidence only; does not prove current runt
 export interface FleetSlackEvidenceArgs {
   /** Validated Slack thread root ts the bundle is restricted to. */
   thread: string;
+  /** Optional Slack channel id; the collector filters rows and recomputes counts/freshness. */
+  channelId?: string;
   /** Optional freshness bound; the collector reports fresh/stale/unknown. */
   maxAgeSeconds?: number;
 }
 
 export type FleetSlackEvidenceBundle = ReturnType<typeof readSlackEvidenceBundle>;
+type FleetSlackEvidenceOptions = SlackRequestTraceOptions & { maxAgeSeconds?: number; channelId?: string };
 
 export interface FleetSlackEvidenceDeps {
   /** Slack runs root; default server-owned root (test seam). */
@@ -35,25 +38,30 @@ export interface FleetSlackEvidenceDeps {
   /** Clock override forwarded to the collector (test seam). */
   now?: () => Date;
   /** Bundle collector; default readSlackEvidenceBundle (test seam). */
-  readBundle?: (thread: string, options: SlackRequestTraceOptions & { maxAgeSeconds?: number }) => FleetSlackEvidenceBundle;
+  readBundle?: (thread: string, options: FleetSlackEvidenceOptions) => FleetSlackEvidenceBundle;
 }
 
 /**
  * Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so the server re-validates on every call. `thread` is a
- * required Slack ts and `maxAgeSeconds` an optional positive safe integer;
- * every other key — including any caller root, path, cwd, send, enqueue or
- * claim option — is an argument error, rejected before any read.
+ * required Slack ts, `channelId` an optional Slack channel id and
+ * `maxAgeSeconds` an optional positive safe integer; every other key —
+ * including any caller root, path, cwd, send, enqueue or claim option — is an
+ * argument error, rejected before any read.
  */
 export function parseFleetSlackEvidenceArgs(args: Record<string, unknown>): FleetSlackEvidenceArgs | null {
   const thread = args['thread'];
+  const channelId = args['channelId'];
   const maxAgeSeconds = args['maxAgeSeconds'];
-  if (Object.keys(args).some(key => key !== 'thread' && key !== 'maxAgeSeconds') ||
-    args['thread'] === null || args['maxAgeSeconds'] === null ||
+  if (Object.keys(args).some(key => key !== 'thread' && key !== 'channelId' && key !== 'maxAgeSeconds') ||
+    args['thread'] === null || args['channelId'] === null || args['maxAgeSeconds'] === null ||
     typeof thread !== 'string' || !isSlackTs(thread) ||
+    (channelId !== undefined && (typeof channelId !== 'string' || !isSlackChannelId(channelId))) ||
     (maxAgeSeconds !== undefined &&
       (typeof maxAgeSeconds !== 'number' || !Number.isSafeInteger(maxAgeSeconds) || maxAgeSeconds <= 0))) return null;
-  return { thread, ...(maxAgeSeconds !== undefined ? { maxAgeSeconds: maxAgeSeconds as number } : {}) };
+  return { thread,
+    ...(channelId !== undefined ? { channelId: channelId as string } : {}),
+    ...(maxAgeSeconds !== undefined ? { maxAgeSeconds: maxAgeSeconds as number } : {}) };
 }
 
 /**
@@ -67,10 +75,11 @@ export async function readFleetSlackEvidence(
   input: FleetSlackEvidenceArgs,
   deps: FleetSlackEvidenceDeps = {},
 ): Promise<FleetSlackEvidenceBundle> {
-  const options: SlackRequestTraceOptions & { maxAgeSeconds?: number } = {
+  const options: FleetSlackEvidenceOptions = {
     ...(deps.runsDir !== undefined ? { runsDir: deps.runsDir } : {}),
     ...(deps.stateRoot !== undefined ? { stateRoot: deps.stateRoot } : {}),
     ...(deps.now !== undefined ? { now: deps.now } : {}),
+    ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
     ...(input.maxAgeSeconds !== undefined ? { maxAgeSeconds: input.maxAgeSeconds } : {}),
   };
   try {
