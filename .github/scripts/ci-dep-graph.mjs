@@ -201,6 +201,18 @@ function listing(cwd) {
   return entries;
 }
 
+function ensureLocalBlobs(cwd, count) {
+  // A partial clone fetches each missing blob on its own. A cold graph reads
+  // every source file, so expand the checkout once and then read locally.
+  if (count < 32) return;
+  try {
+    const sparse = execFileSync('git', ['config', '--bool', '--get', 'core.sparseCheckout'], { cwd, encoding: 'utf8' }).trim();
+    if (sparse === 'true') execFileSync('git', ['sparse-checkout', 'disable'], { cwd, stdio: 'ignore' });
+  } catch {
+    // A full checkout has nothing to expand.
+  }
+}
+
 function blobTexts(cwd, hashes) {
   if (hashes.length === 0) return new Map();
   const out = execFileSync('git', ['cat-file', '--batch'], {
@@ -227,6 +239,7 @@ function updateFromGit(cwd, outPath) {
   const entries = listing(cwd);
   const prior = previous.files;
   const missing = entries.filter((entry) => prior[entry.path]?.hash !== entry.hash);
+  ensureLocalBlobs(cwd, missing.length);
   const texts = blobTexts(cwd, missing.map((entry) => entry.hash));
   for (const entry of missing) entry.text = texts.get(entry.hash) ?? '';
   const { graph, reparsed } = updateGraph(previous, entries);

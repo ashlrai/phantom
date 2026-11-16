@@ -222,7 +222,10 @@ jobs:
         run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
       - name: Materialize the full tree
         if: github.event_name == 'push' || steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || steps.inputs.outputs.lint_count != '0'
-        run: git sparse-checkout disable
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
       - name: Set up Node.js 22
         if: github.event_name == 'push' || steps.history.outputs.equal != 'true' && (steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || steps.inputs.outputs.lint_count != '0') || steps.mcp_selection.outputs.mcp_output == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -472,7 +475,10 @@ jobs:
         run: node .github/scripts/ci-green-reuse.mjs announce --job authority-drift --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/authority-drift.json"
       - name: Materialize the full tree
         if: steps.drift_reuse.outputs.reuse != 'true'
-        run: git sparse-checkout disable
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
       - name: Set up Node.js 22
         if: steps.drift_reuse.outputs.reuse != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -596,7 +602,10 @@ jobs:
         run: node .github/scripts/ci-green-reuse.mjs announce --job fast-tests --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"
       - name: Materialize the full tree
         if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || (steps.select.outputs.mode != 'docs' && steps.tests_reuse.outputs.reuse != 'true')
-        run: git sparse-checkout disable
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
       - name: Set up Node.js 22
         if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || (steps.select.outputs.mode != 'docs' && steps.tests_reuse.outputs.reuse != 'true')
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
