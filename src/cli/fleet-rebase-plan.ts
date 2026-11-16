@@ -173,7 +173,9 @@ async function readCoverage(queueDir: string, readText: (path: string) => Promis
     }
   }
   if (read === 0) return { state: 'missing', jobs: [] };
-  return { state: missing > 0 ? 'degraded' : 'ok', jobs };
+  // ready.tsv follows router-queue.md: its latest status supersedes the original READY line.
+  const latest = new Map(jobs.map(job => [job.id, job]));
+  return { state: missing > 0 ? 'degraded' : 'ok', jobs: [...latest.values()] };
 }
 
 /** Shared read-only queue evidence for merge-batch-run; no dispatch side effects. */

@@ -48,6 +48,19 @@
 
 import { assertQueueTier, QUEUE_TIER_SCOPE } from './queue-tier.js';
 import { collapseJobOutcomes, type JobOutcome } from '../queue/job-outcomes.js';
+import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
+
+/** Lock before reading queue/state; dead process locks are recovered by the shared lock service. */
+export async function withQueuegenLock<T>(queuePath: string, cycle: () => Promise<T>): Promise<T | null> {
+  const held = acquireLocalStoreLockWithOutcome(`${queuePath}.queuegen.lock`, 0);
+  if (held.state === 'contended') return null;
+  if (held.state !== 'acquired') throw new Error('QUEUEGEN_LOCK_UNAVAILABLE');
+  try {
+    return await cycle();
+  } finally {
+    releaseLocalStoreLock(held.lock);
+  }
+}
 
 export const QUEUEGEN_CYCLE_CAP = 20;
 export const QUEUEGEN_PR_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -436,6 +449,11 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
       } catch (error) {
         io.log(`QUEUEGEN_GH_ERROR list ${repo}`);
         throw error;
+      }
+      // Only a complete successful open-PR read proves a persisted PR is terminal.
+      const open = new Set(prs.map(pr => `${repo}#${pr.number}`));
+      for (const key of Object.keys(state.emitted)) {
+        if (key.startsWith(`${repo}#`) && !open.has(key)) delete state.emitted[key];
       }
       const short = shortName(repo);
       for (const pr of prs) {

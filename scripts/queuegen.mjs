@@ -94,9 +94,9 @@ function listPullRequests(repo) {
     }
     if (!connection.pageInfo?.hasNextPage) return prs;
     cursor = connection.pageInfo.endCursor;
-    if (!cursor) return prs;
+    if (!cursor) throw new Error('gh failed: missing pagination cursor');
   }
-  return prs;
+  throw new Error('gh failed: incomplete PR pagination');
 }
 
 /** Every check run on the PR head, flagged required from branch protection. */
@@ -271,6 +271,11 @@ async function main() {
   flags['--mirrors-root'] = resolve(flags['--mirrors-root']);
   flags['--metrics'] = resolve(flags['--metrics']);
 
+  const { withQueuegenLock } = await import('../dist/core/drive/queuegen.js');
+  return (await withQueuegenLock(flags['--queue'], () => generate(flags, dryRun))) ?? 0;
+}
+
+async function generate(flags, dryRun) {
   const { runQueuegenCycle, normalizeState, QUEUEGEN_PR_WINDOW_MS, QUEUEGEN_REPOS } =
     await import('../dist/core/drive/queuegen.js');
   const { readRebaseCoverage } = await import('../dist/cli/fleet-rebase-plan.js');

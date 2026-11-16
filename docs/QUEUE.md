@@ -305,6 +305,14 @@ evidence never suppresses — suppression is advisory and fails open. The
 ledger read is tail-bounded via `--metrics` (default
 `~/.ashlr-runs/metrics/jobs.jsonl`).
 
+Queuegen serializes each queue's read, append and state save with a process-owned
+lock; overlapping invocations leave the active cycle to finish. A restart
+recovers dead process locks and reads queued work before generating new jobs,
+including when an append succeeded before the state save. Active rebases hold
+the PR across head changes. The latest `ready.tsv` status overrides the original
+router line, so failed or cancelled jobs can retry. A complete open-PR read
+removes history for closed or merged PRs; failed or incomplete reads retain it.
+
 The recut loop ([`recut-loop.ts`](../src/core/fleet/recut-loop.ts)) applies
 the same rule to the drop jobs it mints for conflicting fleet PRs: when the
 last two attempts it wrote for one PR on the *same head* all finished empty
