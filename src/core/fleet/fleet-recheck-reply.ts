@@ -110,7 +110,7 @@ export function formatRecheckReply(r: FleetRecheck): string {
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
     ...(withComputers && computers !== null ? [computers] : []),
-    ...(withComputers && withPool ? [pool] : []),
+    ...(withPool ? [pool] : []),
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,

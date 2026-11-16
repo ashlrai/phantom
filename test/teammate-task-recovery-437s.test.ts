@@ -25,15 +25,17 @@ const reconcile = vi.fn(async (): Promise<{ rowid: number; sent: boolean; delive
 const transport = () => ({ runsDir, now: () => clock, approved, send, reconcile });
 const cliDeps = (out: string[]): FleetTeammateTasksDeps => ({
   config: () => cfg,
+  now: () => clock,
   output: (text) => out.push(text),
   enqueue: (input, _cfg, opts = {}) => enqueueTeammateTask(input, cfg, { ...opts, ...transport() }),
   dispatch: (_cfg, opts = {}) => runTeammateTasks(cfg, { ...opts, ...transport() }),
   list: () => listTeammateTasks({ runsDir, now: () => clock }),
   peers: () => teammateTaskPeers({ runsDir, now: () => clock }),
 });
+const deadline = new Date(Date.now() + 3_600_000).toISOString();
 const enqueueArgs = (jobId = 'RQ-FIXTURE-1', peer = 'dot') => ['enqueue', '--peer', peer, '--job', jobId, '--kind', 'research',
   '--scope', 'Investigate fixture failures', '--repo', 'example/fixture',
-  '--format', 'Report findings with evidence', '--deadline', new Date(clock + 3_600_000).toISOString(), '--json'];
+  '--format', 'Report findings with evidence', '--deadline', deadline, '--json'];
 const tasks = () => listTeammateTasks({ runsDir, now: () => clock }).tasks;
 const task = (jobId = 'RQ-FIXTURE-1') => tasks().find(row => row.jobId === jobId)!;
 const queue = () => new QueueStore(join(runsDir, 'queue')).read();
