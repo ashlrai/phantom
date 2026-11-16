@@ -27,7 +27,10 @@
 import { lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { listTeammateTasks, type TeammateTaskOptions } from '../core/comms/imessage-teammate-tasks.js';
+import {
+  listTeammateTasks, teammateQueueJobMatchesIdentity, teammateTaskQueueIdentities,
+  type TeammateTaskOptions,
+} from '../core/comms/imessage-teammate-tasks.js';
 import { imessageStateDir } from '../core/integrations/imessage.js';
 import { QueueStore } from '../core/queue/store.js';
 import type { QueueJob } from '../core/queue/schema.js';
@@ -95,6 +98,8 @@ export interface FleetImessageTasksDeps {
   runsDir?: string;
   /** Task collector; default listTeammateTasks (test seam). */
   listTasks?: (options: TeammateTaskOptions) => ReturnType<typeof listTeammateTasks>;
+  /** Reserved-identity index; default teammateTaskQueueIdentities (test seam). */
+  listIdentities?: (options: TeammateTaskOptions) => ReturnType<typeof teammateTaskQueueIdentities>;
 }
 
 type ListedTask = ReturnType<typeof listTeammateTasks>['tasks'][number];
@@ -128,14 +133,22 @@ function probeLedger(runsDir: string): FleetImessageLedgerState {
 }
 
 /** Whitelist projection: the collector's token and private fields never cross. */
-function projectTask(task: ListedTask, jobs: QueueJob[] | null): FleetImessageTaskReceipt {
+function projectTask(
+  task: ListedTask,
+  jobs: QueueJob[] | null,
+  identities: ReturnType<typeof teammateTaskQueueIdentities> | null,
+): FleetImessageTaskReceipt {
   const job = jobs?.find(candidate => candidate.id === task.jobId);
   const claim = job?.claims.at(-1);
   // Only consistent active or finished claims establish a binding; this does not prove execution or verification.
   const active = job?.status === 'CLAIMED' && claim && !claim.finishedAt;
   const finished = job && ['DONE', 'BLOCKED'].includes(job.status) && claim?.finishedAt;
-  const binding = jobs === null ? 'unavailable' : !job ? 'missing' :
-    claim?.owner === task.resource && job.repo === task.repo && (active || finished) ? 'bound' : 'conflicting';
+  // The binding must prove the same identity the queue writer reserved — RESULT
+  // token, owner, repo and scope — not merely a matching id/owner/repo row.
+  const identity = identities?.get(task.jobId);
+  const matches = job !== undefined && identity !== undefined && teammateQueueJobMatchesIdentity(job, identity);
+  const binding = jobs === null || identities === null ? 'unavailable' : !job ? 'missing' :
+    matches && (active || finished) ? 'bound' : 'conflicting';
   const receipt = task.receipt;
   const result = task.result;
   return {
@@ -192,12 +205,14 @@ export async function readFleetImessageTasks(
     return { ...base, sourceState: 'unavailable', ledgerState, queueState, matched: null, tasks: null };
   }
   const matchedTasks = input.jobId === undefined ? tasks : tasks.filter(task => task.jobId === input.jobId);
+  let identities: ReturnType<typeof teammateTaskQueueIdentities> | null = null;
+  try { identities = (deps.listIdentities ?? teammateTaskQueueIdentities)({ runsDir }); } catch { /* Unverifiable identity is not a match. */ }
   return {
     ...base,
     sourceState: 'ok',
     ledgerState,
     queueState,
     matched: input.jobId === undefined ? null : matchedTasks.length > 0,
-    tasks: matchedTasks.slice(-input.limit).map(task => projectTask(task, jobs)),
+    tasks: matchedTasks.slice(-input.limit).map(task => projectTask(task, jobs, identities)),
   };
 }
