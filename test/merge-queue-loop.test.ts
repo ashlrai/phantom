@@ -114,13 +114,24 @@ describe('classifyMergeQueuePr', () => {
     expect(classifyMergeQueuePr(pr({ checks: 'PENDING', mergeState: 'UNSTABLE' }), queueRepo, fleet)).toBe('wait');
   });
 
-  it('respects review gates, the queue and existing auto-merge', () => {
+  it('respects review gates and distinguishes queue membership from auto-merge', () => {
     expect(classifyMergeQueuePr(pr({ reviewDecision: 'CHANGES_REQUESTED' }), queueRepo, fleet)).toBe('blocked');
     expect(classifyMergeQueuePr(pr({ reviewDecision: 'REVIEW_REQUIRED' }), queueRepo, fleet)).toBe('blocked');
     expect(classifyMergeQueuePr(pr({ mergeState: 'BLOCKED', checks: 'PENDING' }), queueRepo, fleet)).toBe('blocked');
     expect(classifyMergeQueuePr(pr({ mergeState: 'BLOCKED' }), queueRepo, fleet)).toBe('blocked');
     expect(classifyMergeQueuePr(pr({ inMergeQueue: true }), queueRepo, fleet)).toBe('queued');
-    expect(classifyMergeQueuePr(pr({ autoMerge: true }), queueRepo, fleet)).toBe('queued');
+    expect(classifyMergeQueuePr(pr({ autoMerge: true }), queueRepo, fleet)).toBe('enqueue');
+  });
+
+  it.each([
+    [{ checks: 'PENDING' }, 'wait'], [{ checks: 'EXPECTED' }, 'wait'], [{ checks: 'NONE' }, 'wait'],
+    [{ checks: 'FAILURE' }, 'red'], [{ checks: 'ERROR' }, 'red'],
+    [{ reviewDecision: 'REVIEW_REQUIRED' }, 'blocked'], [{ reviewDecision: 'CHANGES_REQUESTED' }, 'blocked'],
+    [{ mergeState: 'BLOCKED' }, 'blocked'], [{ mergeable: 'UNKNOWN' }, 'wait'],
+    [{ files: ['.github/workflows/ci.yml'] }, 'pinned'], [{ filesTruncated: true }, 'pinned'],
+    [{ inMergeQueue: true }, 'queued'], [{ isDraft: true }, 'skip'],
+  ] as [Partial<MergeQueuePr>, string][])('keeps gates enforced for armed PRs: %j', (over, expected) => {
+    expect(classifyMergeQueuePr(pr({ autoMerge: true, ...over }), queueRepo, fleet)).toBe(expected);
   });
 
   it('never auto-enqueues Security-pinned or unproven file sets', () => {
@@ -140,6 +151,23 @@ describe('classifyMergeQueuePr', () => {
 });
 
 describe('runMergeQueueCycle', () => {
+  it('enqueues a stranded armed head once and leaves the actual queue to enforce merge checks', () => {
+    const candidate = pr({ autoMerge: true });
+    const snapshots = only([candidate]);
+    const fake = makeIo({ snapshots });
+    fake.io.enqueue = (repo, head) => {
+      expect([repo, head.id, head.headSha]).toEqual([REPO, candidate.id, sha('a')]);
+      snapshots.set(REPO, snap([pr({ autoMerge: true, inMergeQueue: true, checks: 'PENDING' })]));
+    };
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).enqueued).toBe(1);
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).repos[0]?.totals).toEqual({ queued: 1 });
+    for (const options of [{ hold: new Set(['phantom#1']) }, { snapshots: only([candidate], { mergeQueue: false }) }]) {
+      const blocked = makeIo({ snapshots: only([candidate]), ...options });
+      expect(runMergeQueueCycle(blocked.io, { repos: [REPO] }).enqueued).toBe(0);
+      expect(blocked.calls).toEqual([`read ${REPO}`]);
+    }
+  });
+
   it('covers the seven approved repos by default and nothing else', () => {
     const fake = makeIo();
     runMergeQueueCycle(fake.io);
@@ -227,9 +255,9 @@ describe('runMergeQueueCycle', () => {
     expect(fake.lines).toHaveLength(2);
   });
 
-  it('spaces retries 15 minutes apart and caps attempts at 3 per rolling 24h', () => {
+  it.each([false, true])('spaces retries and caps attempts at 3 per rolling 24h (armed=%s)', (autoMerge) => {
     let at = NOW;
-    const fake = makeIo({ snapshots: only([pr({ number: 5 })]), now: () => at });
+    const fake = makeIo({ snapshots: only([pr({ number: 5, autoMerge })]), now: () => at });
     const enqueues = () => fake.calls.filter((c) => c.startsWith('enqueue')).length;
     runMergeQueueCycle(fake.io, { repos: [REPO] });
     at += 5 * MIN;

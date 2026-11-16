@@ -12,7 +12,20 @@ phm fleet merge-latency --events merge-events.jsonl --record '{"repo":"ashlrai/p
 phm fleet merge-latency --events merge-events.jsonl --json
 ```
 
-Use actual observed timestamps. Eligible means the observer saw the PR satisfy its merge requirements; this command does not determine eligibility. Blocker reasons are `required_checks`, `review`, `conflict`, `queue`, or `other`. The report retains blocker timestamps and gives enqueue-to-eligibility and eligibility-to-merge durations only when each boundary is unique, ordered, and no blocker was recorded after eligibility. Missing or ambiguous evidence stays unknown. The ledger is not populated automatically, and recording an observation never changes the queue or bypasses required checks. The JSON report is the agent interface; omit `--json` for plain words.
+Use actual observed timestamps. Eligible means the observer saw the PR satisfy its merge requirements; this command does not determine eligibility. Blocker reasons are `required_checks`, `review`, `conflict`, `queue`, or `other`. The report retains blocker timestamps and measures eligibility-to-merge even when readiness precedes enqueue or enqueue is missing. Each measured boundary must be unique and ordered; reblocking, conflicts, closure or observed head changes after readiness make that episode unknown. Missing or ambiguous evidence stays unknown. The ledger is not populated automatically, and recording an observation never changes the queue or bypasses required checks. The JSON report is the agent interface; omit `--json` for plain words.
+
+Each `queue_timelines` row splits readiness-to-merge into `ready_to_queue_s`
+and `ready_in_queue_s` when enqueue is unique and no later than merge.
+Already queued PRs have zero admission wait. `dominant_delay` is
+`queue_admission` or `queue_execution` for the larger span, otherwise null.
+Missing enqueue still permits total readiness-to-merge measurement; it cannot
+establish the dominant delay. Queue execution includes any merge-group checks;
+these spans identify where time passed, not the cause between observations.
+
+The existing [merge queue loop](QUEUE.md#merge-queue-throughput-loop) repairs
+green, mergeable fleet PRs with auto-merge armed but no actual queue membership.
+It uses the normal head-pinned enqueue request, with the same holds, file gates
+and retry caps. Required checks, reviews and merge queue rules still apply.
 
 For each PR, `pr_stages` reports seconds from `opened` to `queued` (queue wait), `queued` to `checks_passed` (required checks), and `checks_passed` to `merged` (merge). The checks interval is elapsed time between observations, not a sum of check runtimes; record `checks_passed` only when all required checks are known to have passed. Missing or repeated boundaries are listed in `missing_or_ambiguous`; reversed timestamps set `out_of_order`. A duration with invalid boundaries is null, and `slowest_stage` is null unless all three durations are known, ordered and have a unique maximum. Open PRs and merges with unknown times remain visible; dated merges outside the selected window are excluded.
 
