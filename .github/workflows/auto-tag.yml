@@ -19,6 +19,9 @@
 # - any conclusion other than success: fail at once. skipped and neutral are NOT
 #   green: required checks here use the skip-job pattern (phantom #811),
 #   which reports success, so a skipped required check means it did not run.
+# - "Check generated files" and "Check authority drift (hermetic)" are always
+#   required on the exact sha in addition to the discovered checks, even though
+#   the second is advisory for merge (RQ-PH-GATE-SPLIT-1).
 name: Auto-tag
 
 on:
@@ -107,6 +110,12 @@ jobs:
           if [ -z "$required" ]; then
             echo "::error::no required checks discovered for $BRANCH; refusing to tag"; exit 1
           fi
+          # RQ-PH-GATE-SPLIT-1: Merge Gate does not cover the advisory authority
+          # drift job, and a failed generated-files job once let a tag through.
+          # Both split jobs must also be completed + success on this exact sha,
+          # with the same rules as every discovered check (skipped is not green,
+          # missing or running waits within the bounded loop, then no tag).
+          required=$( { printf '%s\n' "$required" "Check generated files" "Check authority drift (hermetic)"; } | sort -u )
           # One evaluation pass. Check runs: only GitHub Actions (app id
           # $ACTIONS_APP_ID) counts, and EVERY latest run with the required name
           # must be completed + success. Commit statuses are ignored: a required
