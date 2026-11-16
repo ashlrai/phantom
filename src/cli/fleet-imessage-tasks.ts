@@ -3,15 +3,16 @@ import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { scrubSecrets } from '../core/util/scrub.js';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
-import { enqueueTeammateTask, listTeammateTasks, runTeammateTasks, teammateTaskPeers } from '../core/comms/imessage-teammate-tasks.js';
+import { cancelTeammateTask, enqueueTeammateTask, listTeammateTasks, runTeammateTasks, teammateTaskPeers } from '../core/comms/imessage-teammate-tasks.js';
 
 const USAGE = `Usage: phm fleet imessage-tasks enqueue --peer dot|instinct --job <id>
   --kind research|triage|report|rebase --scope <text> --repo <owner/name>
   [--pr <number> ...] --format <text> --deadline <ISO timestamp>
   [--apply|--dry-run] [--json]
+       phm fleet imessage-tasks cancel --job <id> [--apply|--dry-run] [--json]
        phm fleet imessage-tasks dispatch [--apply|--dry-run] [--json]
        phm fleet imessage-tasks list|peers [--json]
-Enqueue and dispatch preview by default. Apply reserves work or uses the
+Enqueue, cancel and dispatch preview by default. Apply reserves work or uses the
 existing approved teammate transport. Reports omit message bodies and handles.`;
 
 // Reject malformed envelopes before configuration or ledger access.
@@ -28,6 +29,7 @@ const envelope = z.object({
 
 export interface FleetImessageTasksDeps {
   enqueue?: typeof enqueueTeammateTask;
+  cancel?: typeof cancelTeammateTask;
   list?: typeof listTeammateTasks;
   dispatch?: typeof runTeammateTasks;
   peers?: typeof teammateTaskPeers;
@@ -55,10 +57,10 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
     }
     if (values.help) { output(json ? JSON.stringify({ usage: USAGE }) : USAGE); return 0; }
     const [command] = positionals;
-    if (positionals.length !== 1 || !['enqueue', 'dispatch', 'list', 'peers'].includes(command)) throw new Error('Invalid command');
+    if (positionals.length !== 1 || !['enqueue', 'cancel', 'dispatch', 'list', 'peers'].includes(command)) throw new Error('Invalid command');
     const allowed = command === 'enqueue'
       ? ['json', 'apply', 'dry-run', 'peer', 'job', 'kind', 'scope', 'repo', 'format', 'deadline', 'pr']
-      : command === 'dispatch' ? ['json', 'apply', 'dry-run'] : ['json'];
+      : command === 'cancel' ? ['json', 'apply', 'dry-run', 'job'] : command === 'dispatch' ? ['json', 'apply', 'dry-run'] : ['json'];
     if (Object.keys(values).some(key => !allowed.includes(key)) || values.apply && values['dry-run']) throw new Error('Invalid options');
     let result: object;
     if (command === 'enqueue') {
@@ -75,6 +77,10 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
       parsed = true;
       result = await (deps.enqueue ?? enqueueTeammateTask)({ jobId, peer, kind, scope, repo, format, deadline, ...(prRefs ? { prRefs } : {}) },
         (deps.config ?? loadConfigReadOnlyStrict)(), { apply: values.apply === true });
+    } else if (command === 'cancel') {
+      if (!envelope.shape.jobId.safeParse(values.job).success) throw new Error('Invalid job');
+      parsed = true;
+      result = await (deps.cancel ?? cancelTeammateTask)(values.job!, { apply: values.apply === true });
     } else {
       parsed = true;
       result = command === 'list' ? await (deps.list ?? listTeammateTasks)()
