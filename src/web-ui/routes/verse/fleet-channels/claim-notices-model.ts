@@ -14,6 +14,9 @@ export interface ClaimNoticesView {
   recent: Array<{ state: string; claimId: string; at: number; delivery: ClaimNoticeDeliveryWord }>;
   delivery: ClaimNoticesDelivery;
   pending: Array<{ state: string; threadKey: string; text: string }>;
+  /** Live claims whose notices are dropped for want of a bound thread. */
+  unbound: { state: 'known' | 'unknown'; total: number;
+    rows: Array<{ claimId: string; repo: string; agent: string; claimedAt: number }> };
   slackConfigured: boolean | 'unknown';
 }
 
@@ -26,6 +29,17 @@ const word = (v: unknown): ClaimNoticeDeliveryWord =>
   v === 'slack-sent' || v === 'no-slack-receipt' || v === 'unknown' ? v : 'unknown';
 const sendStore = (v: unknown): ClaimNoticesDelivery['sendStore'] =>
   v === 'ok' || v === 'missing' || v === 'degraded' ? v : 'unknown';
+
+/** A missing or malformed field (old server) reads as unknown, never as "none". */
+function narrowUnbound(raw: unknown): ClaimNoticesView['unbound'] {
+  const unknown = { state: 'unknown' as const, total: 0, rows: [] };
+  if (!object(raw) || raw.state !== 'known' || !Array.isArray(raw.rows)) return unknown;
+  const rows = raw.rows.slice(0, CLAIM_NOTICE_ROWS).flatMap(row =>
+    object(row) && str(row.claimId) && str(row.repo) && str(row.agent)
+      && typeof row.claimedAt === 'number' && Number.isFinite(row.claimedAt)
+      ? [{ claimId: str(row.claimId), repo: str(row.repo), agent: str(row.agent), claimedAt: row.claimedAt }] : []);
+  return { state: 'known', total: Math.max(count(raw.total), rows.length), rows };
+}
 
 export function narrowClaimNotices(raw: unknown): ClaimNoticesView | null {
   if (!object(raw) || raw.v !== 1) return null;
@@ -43,6 +57,6 @@ export function narrowClaimNotices(raw: unknown): ClaimNoticesView | null {
   const pending = (Array.isArray(raw.pending) ? raw.pending : []).slice(0, CLAIM_NOTICE_ROWS).flatMap(row =>
     object(row) && str(row.state) ? [{ state: str(row.state), threadKey: str(row.threadKey), text: str(row.text) }] : []);
   return { source: raw.source, bindings: count(raw.bindings), sentTotal: count(sent.total), recent,
-    delivery: summary, pending,
+    delivery: summary, pending, unbound: narrowUnbound(raw.unbound),
     slackConfigured: typeof raw.slackConfigured === 'boolean' ? raw.slackConfigured : 'unknown' };
 }
