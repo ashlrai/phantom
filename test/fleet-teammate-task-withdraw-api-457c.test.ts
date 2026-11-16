@@ -51,13 +51,14 @@ it('200 cancelled: projection only, cancel called once with apply true', async (
   expect(cancel).toHaveBeenCalledTimes(1);
   expect(cancel).toHaveBeenCalledWith('RQ-FAKE-1', { apply: true });
 });
-it('200 refused passes the reason through, capped at 200 chars, keys limited', async () => {
-  const cancel = vi.fn(async (): Promise<Result> => ({ state: 'refused', reason: `Already sent ${'x'.repeat(500)}`, task: {} }));
+it('200 refused uses a closed reason and never echoes caller text', async () => {
+  const secret = `Already sent ${'x'.repeat(500)}`;
+  const cancel = vi.fn(async (): Promise<Result> => ({ state: 'refused', reason: secret, task: {} }));
   const r = await call(cancel, 'POST', ok);
   expect(r.status).toBe(200);
   expect(Object.keys(r.body!).sort()).toEqual(['jobId', 'reason', 'state', 'v']);
-  expect((r.body!.reason as string).length).toBe(200);
-  expect(r.body!.reason).toMatch(/^Already sent x/);
+  expect(r.body!.reason).toBe('Teammate task withdrawal refused');
+  expect(r.raw).not.toContain('Already sent');
 });
 it('409 busy and 503 unavailable without leaking the message', async () => {
   const busy = await call(vi.fn(async () => { throw new Error('Teammate tasks busy'); }), 'POST', ok);
