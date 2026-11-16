@@ -57,12 +57,14 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   the exhaustive platform suites and the existing seven-day Mac rotation.
   Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
   `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
-  Forty minutes before each of those full runs (`37 5,11,17,23 * * *`), and
-  when Auto-tag is requested while the master version still owes a published
-  release, [Preflight fixer](../.github/workflows/preflight-fixer.yml) runs the
-  affected tests since the last green full run plus test paths named by open
-  `p0-fix-forward` issues. A second Auto-tag request for the same master SHA
-  inside six hours does not start another run. It uploads `preflight-reds.json`
+  Forty minutes before each of those full runs (`37 5,11,17,23 * * *`),
+  [Preflight fixer](../.github/workflows/preflight-fixer.yml) runs the affected
+  tests since the last green full run plus test paths named by open
+  `p0-fix-forward` issues. Auto-tag starts that same workflow with
+  `workflow_dispatch` on master. The fixer has no `workflow_run` trigger. A
+  dispatch skips unless master still owes a published release, and a second
+  dispatch for the same SHA inside six hours does not run the suite again.
+  It uploads `preflight-reds.json`
   and updates one `p0-fix-forward` issue. Each failing test also gets its own
   issue with a stable `RQ-PREFLIGHT-<test>` line in the RQ-FIXUP shape, so a
   lane can pick it up before the scheduled run. The weekly
