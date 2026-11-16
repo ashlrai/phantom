@@ -161,12 +161,28 @@ reproducible evidence and a linked issue in the existing ledger.
 
 The Release PR workflow and the release train both wake every 5 minutes.
 `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
-1440 minutes, and defaults to 5. The train does not raise that value.
-It requests a patch bump, then synchronizes
-README, desktop and registry version carriers and the dated changelog in that
-release PR. Auto-tag creates the tag and draft only after the exact commit's
-required checks succeed. Signed publication then makes the complete updater
-feed visible; a draft is not an update.
+1440 minutes, and defaults to 5; set it to `180` for a release every three
+hours. The train does not raise that value. A cycle is skipped only when
+nothing changed since the last release tag (`no-new-commits`). It requests a
+patch bump, then synchronizes README, desktop and registry version carriers
+and the dated changelog in that release PR. The same commit also runs
+[`scripts/regenerate-tracked-files.mjs`](../scripts/regenerate-tracked-files.mjs),
+the one list of tracked generated files that the `Check generated files` job
+checks. A stale `docs/llms.txt` (the v3.30.34 failure) is rewritten inside the
+release job, so it can never block a release. A master push run that is red
+only at `Check generated files` (and the Merge Gate that requires it) does
+not skip the cycle; the plan reason is
+`stale-generated-files-regenerate-in-release`. Any other red, cancelled or
+running push run still defers the cycle.
+
+Auto-tag creates the tag and draft only after the exact commit's required
+checks succeed and its one release gate is green: the fast gate plus the
+release job's own tag CI (`Desktop release smoke` and `Release suites`) on
+that exact SHA. The scheduled six-hour full suite is a signal that files P0
+fix-forward lines; it never blocks a tag. `RELEASE_GATE_MODE` is retired:
+unset, `split` and `full` all select this gate, and any other value refuses.
+Signed publication then makes the complete updater feed visible; a draft is
+not an update.
 
 ## Continuous release train
 
@@ -208,13 +224,19 @@ What runs without a per-release approval:
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
   the candidate rather than a newer master HEAD. The half-hour schedule on
   master is unchanged.
-- A candidate whose master push CI run concluded red can never build:
-  release-build reuses only a green exact-source push run. When that
-  candidate has no build, master is strictly past it and still carries its
-  version, and the required checks (the fast Merge Gate) on master HEAD are
-  green, the train fixes forward. The plan lists the candidate in
+- A failed step retries, then fixes forward. A candidate whose master push
+  CI run concluded red can never build: release-build reuses only a green
+  exact-source push run. While that run's attempt is below 2, the train asks
+  GitHub to rerun only its failed jobs (`rerun-failed-jobs`, empty body, plan
+  reason `candidate-push-ci-retry`). A release-gate build dispatched on the
+  tag that ends `failure` or `timed_out` is dispatched again until two have
+  failed; then the train stops redispatching (`candidate-build-failed`).
+  Failed scheduled full runs on master never count. Once retries are spent,
+  the candidate has no build, master is strictly past it and still carries
+  its version, and the required checks (the fast Merge Gate) on master HEAD
+  are green, the train fixes forward. The plan lists the candidate in
   `skippedTags` and `superseded`, sets `advance` to the next patch at master
-  HEAD with reason `candidate-push-ci-red`, and its next step is
+  HEAD with reason `candidate-push-ci-red` or `candidate-build-failed`, and its next step is
   `release-pr`. It then enqueues a green release PR for exactly that patch,
   or dispatches the Release PR workflow, which re-checks green master and
   cadence itself. That run writes nothing to the skipped tag or its draft.
@@ -433,6 +455,27 @@ messages, npm `latest` and GitHub
 release metadata are insufficient. Installed-app version/update and successful
 launch remain unverified until supported tooling is used with authorized Mac
 access. See the [complete evidence checklist](contracts/CONTRACT-M523.md#recovery-evidence).
+
+### Verify a release end to end on the Mac
+
+[`scripts/release-verify-installed.mjs`](../scripts/release-verify-installed.mjs)
+checks one published release with anonymous GET reads: the seven signed
+assets are uploaded and non-empty, the updater feed serves that version or a
+newer one, and `/Applications/Phantom.app/Contents/Info.plist` reports
+`CFBundleShortVersionString` at that version or newer. When all three hold it
+appends one line per tag to `~/.ashlr-runs/metrics/releases.jsonl` with
+`tag`, `publishedEt`, `mergeToInstalledMinutes` and `installedVersion`. The
+installed time is the first check that saw the version, so the minutes are an
+upper bound within one poll. Exit 0 is verified, 3 is pending (draft, zero
+assets, stale feed, or the app has not self-updated) and 1 is refused. It
+never signs, publishes, mutates a release or tag, or reads credentials.
+
+```sh
+node scripts/release-verify-installed.mjs --json --metrics "$(mktemp -d)/releases.jsonl"
+```
+
+Running it on every `release-autorun` tick is a Security pin change; the
+package is `contrib/mac/staged/RELEASE-CONTINUOUS-1/`.
 
 ## Supplemental and historical references
 

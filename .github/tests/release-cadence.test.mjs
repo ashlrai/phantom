@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit } from '../scripts/release-cadence.mjs';
+import { cadenceMinutes, nextPatch, planReleaseCadence, regenerationOnlyFailure, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit } from '../scripts/release-cadence.mjs';
 import { peelReleaseTag } from '../scripts/peel-release-tag.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
@@ -81,9 +81,16 @@ test('no new commits, an untagged bump, and moved master never open another vers
   ]) assert.deepEqual(await planReleaseCadence(fixture(overrides).input), { due: false, reason });
 });
 
+const job = (name, conclusion = 'success', steps = [{ name, conclusion }]) => ({ name, status: 'completed', conclusion, steps });
+const pushJobs = (...jobs) => ({ '/actions/runs/123/attempts/1/jobs?per_page=100': { total_count: jobs.length, jobs } });
+const greenJobs = () => ['Secret-shape scan', 'Secret scan (diff)', 'Quick typecheck', 'Check authority drift (hermetic)', 'Classify PR site lane'].map(name => job(name));
+
 test('failed, running, absent, foreign and ambiguous CI evidence fails closed', async () => {
   for (const conclusion of ['failure', 'cancelled', 'skipped', 'neutral', null]) {
-    const f = fixture(); f.run.conclusion = conclusion;
+    // A real failure (secret scan) next to the stale tree is never excused.
+    const f = fixture(pushJobs(...greenJobs().filter(row => row.name !== 'Secret scan (diff)'), job('Secret scan (diff)', 'failure'),
+      job('Check generated files', 'failure'), job('Merge Gate', 'failure')));
+    f.run.conclusion = conclusion;
     assert.equal((await planReleaseCadence(f.input)).due, false);
   }
   const f = fixture(); f.run.status = 'in_progress';
@@ -97,8 +104,36 @@ test('failed, running, absent, foreign and ambiguous CI evidence fails closed', 
   await assert.rejects(planReleaseCadence(missing.input), /incomplete/);
 });
 
+test('skip the cycle only when nothing changed: a stale generated file does not skip it', async () => {
+  // Nothing new since the last release tag: the only skip.
+  assert.deepEqual(await planReleaseCadence(fixture({ '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'commit', sha: revision } } }).input),
+    { due: false, reason: 'no-new-commits' });
+  // v3.30.34 shape: master push run red only at Check generated files (and the Merge Gate that requires it).
+  const stale = fixture(pushJobs(...greenJobs(), job('Check generated files', 'failure'), job('Merge Gate', 'failure')));
+  stale.run.conclusion = 'failure';
+  assert.deepEqual(await planReleaseCadence(stale.input), {
+    due: true, reason: 'stale-generated-files-regenerate-in-release', version: '3.30.2', revision, ciRunId: 123, ciRunAttempt: 1,
+  });
+});
+
+test('only a lone stale generated-file failure is excused', () => {
+  const stale = [...greenJobs(), job('Check generated files', 'failure'), job('Merge Gate', 'failure')];
+  assert.equal(regenerationOnlyFailure(stale), true);
+  assert.equal(regenerationOnlyFailure([...greenJobs(), job('Check generated files', 'failure')]), true);
+  assert.equal(regenerationOnlyFailure(greenJobs()), false, 'no generated-file failure');
+  assert.equal(regenerationOnlyFailure([...stale, job('Quick typecheck', 'failure')]), false, 'a second failing job');
+  assert.equal(regenerationOnlyFailure([...greenJobs(), job('Check generated files', 'cancelled'), job('Merge Gate', 'failure')]), false, 'cancelled');
+  assert.equal(regenerationOnlyFailure([...greenJobs(), job('Check generated files', 'failure', [{ name: 'Checkout', conclusion: 'failure' }])]), false, 'failed before the check step');
+  assert.equal(regenerationOnlyFailure([...greenJobs(), job('Check generated files', 'failure', [
+    { name: 'Set up Node.js 22', conclusion: 'failure' }, { name: 'Check generated files', conclusion: 'failure' }])]), false, 'two failing steps');
+  assert.equal(regenerationOnlyFailure([...stale, job('Merge Gate', 'cancelled')]), false, 'gate cancelled');
+  assert.equal(regenerationOnlyFailure([...stale, { name: 'Fast gate', status: 'in_progress', conclusion: null, steps: [] }]), false, 'still running');
+  assert.equal(regenerationOnlyFailure([...stale, job('Check generated files', 'failure')]), false, 'ambiguous check');
+});
+
 test('a newer failed run cannot inherit an older success; tip rechecked before eligibility', async () => {
-  const f = fixture(); const key = Object.keys(f.data).find(k => k.includes('/runs?'));
+  const f = fixture({ '/actions/runs/124/attempts/1/jobs?per_page=100': { total_count: 2, jobs: [job('Quick typecheck', 'failure'), job('Merge Gate', 'failure')] } });
+  const key = Object.keys(f.data).find(k => k.includes('/runs?'));
   f.data[key] = { total_count: 2, workflow_runs: [f.run, { ...f.run, id: 124, conclusion: 'failure' }] };
   assert.equal((await planReleaseCadence(f.input)).due, false);
   const g = fixture(); let branches = 0;

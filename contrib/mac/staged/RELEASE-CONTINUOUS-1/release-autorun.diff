@@ -1,0 +1,16 @@
+--- a/contrib/mac/release-autorun.sh
++++ b/contrib/mac/release-autorun.sh
+@@ -257,4 +257,13 @@
+   rm -f "$RELF" "$ASTF" "$FBODY" "$MBODY" "$SBODY" "$ABODY" "$EBODY"
+ done
+ fi
++# rev3 (RELEASE-CONTINUOUS-1): end-to-end check of the latest published release on this Mac with anonymous GET reads:
++# seven assets, updater feed version, and the installed bundle's Info.plist version. Once all three hold it appends one
++# line per tag to metrics/releases.jsonl (tag, publishedEt, mergeToInstalledMinutes, installedVersion). It never signs,
++# publishes, mutates a release or tag, or reads the keychain. rc 0 verified, 3 pending, 1 refused; all are logged only.
++VERIFY=$R/bin/release-verify-installed.mjs; NODE=${RA_NODE_SELFTEST:-/opt/homebrew/bin/node}
++if [ -f "$VERIFY" ] && [ -x "$NODE" ]; then
++  VOUT=$("$NODE" "$VERIFY" --json --metrics "$R/metrics/releases.jsonl" 2>&1); vrc=$?
++  log "installed-verify rc=$vrc $(printf '%s' "$VOUT" | head -c 400)"
++fi
+ exit 0

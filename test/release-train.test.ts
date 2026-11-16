@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
 import {
-  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
+  admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, BUILD_FAILURE_CAP, candidateStuck, failedTagBuild, PUSH_CI_ATTEMPT_CAP, PUSH_CI_RETRY_WINDOW_MS, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isMissingTagRef, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation, finalizeRetryDecision,
@@ -280,12 +280,12 @@ describe('release train', () => {
       const master = stuck.masterSha;
       const pkg = (version: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version })).toString('base64') });
       const repo = { full_name: 'ashlrai/phantom' };
-      const pushRun = (conclusion: string) => ({
-        id: 43807308941, run_attempt: 1, head_sha: candidate, event: 'push', head_branch: 'master', path: '.github/workflows/ci.yml',
+      const pushRun = (conclusion: string, attempt: number) => ({
+        id: 43807308941, run_attempt: attempt, head_sha: candidate, event: 'push', head_branch: 'master', path: '.github/workflows/ci.yml',
         status: 'completed', conclusion, repository: repo, head_repository: repo,
       });
       const reads: string[] = [];
-      const observe = (conclusion: string, masterGate: 'success' | 'failure') => observeTrain(async (path) => {
+      const observe = (conclusion: string, masterGate: 'success' | 'failure', attempt = PUSH_CI_ATTEMPT_CAP) => observeTrain(async (path) => {
         reads.push(path);
         const data: Record<string, unknown> = {
           'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
@@ -297,7 +297,7 @@ describe('release train', () => {
           'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.34', commit: { sha: candidate } }],
           'repos/ashlrai/phantom/releases?per_page=100&page=1': [{ id: 34, tag_name: 'v3.30.34', draft: true, name: 'Phantom 3.30.34', body: 'notes', created_at: '2026-11-16T02:05:00Z', assets: [] }],
           'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
-          [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${candidate}&per_page=20`]: { total_count: 1, workflow_runs: [pushRun(conclusion)] },
+          [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${candidate}&per_page=20`]: { total_count: 1, workflow_runs: [pushRun(conclusion, attempt)] },
           ...greenCi(candidate),
           [`repos/ashlrai/phantom/commits/${master}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
             total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: masterGate, app: { id: 15368 } }],
@@ -308,6 +308,13 @@ describe('release train', () => {
         if (path.startsWith('registry/')) return null;
         throw new Error(`unexpected ${path}`);
       }, '2026-11-16T06:30:00.000Z', 5, { fleet: 'inactive', autorun: 'inactive' });
+
+      reads.length = 0;
+      const firstRed = await observe('failure', 'success', 1);
+      expect(firstRed).toMatchObject({ pushCiRed: true, pushCiRun: { runId: 43807308941, attempt: 1 }, buildFailures: 0 });
+      expect(firstRed.masterCi, 'a retry is still owed, so master is not read yet').toBeUndefined();
+      expect(reads.some((path) => path.startsWith(`repos/ashlrai/phantom/commits/${master}/check-runs`))).toBe(false);
+      expect(buildTrain(firstRed).writes).toEqual([{ method: 'POST', path: 'repos/ashlrai/phantom/actions/runs/43807308941/rerun-failed-jobs', body: {} }]);
 
       const red = await observe('failure', 'success');
       expect(red).toMatchObject({ pushCiRed: true, candidateCi: 'green', masterCi: 'green' });
@@ -321,6 +328,100 @@ describe('release train', () => {
       expect(green.pushCiRed).toBe(false);
       expect(green.masterCi).toBeUndefined();
       expect(reads.some((path) => path.startsWith(`repos/ashlrai/phantom/commits/${master}/check-runs`))).toBe(false);
+    });
+  });
+
+  describe('a failed step retries, then fixes forward to the next patch', () => {
+    const fixture = JSON.parse(readFileSync(join(__dirname, 'fixtures/release-train/v3.30.34-push-ci-red.json'), 'utf8')) as { observation: TrainObservation };
+    const stuck = fixture.observation;
+    const releasePrDispatch = 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches';
+    const rerun = (id: number): ReleaseWrite => ({ method: 'POST', path: `repos/ashlrai/phantom/actions/runs/${id}/rerun-failed-jobs`, body: {} });
+    const dispatchesCi = (writes: ReleaseWrite[]) => writes.some((write) => write.path.endsWith('/ci.yml/dispatches'));
+
+    it('reruns the failed jobs of a red push run once before fixing forward', () => {
+      const first = buildTrain({ ...stuck, pushCiRun: { runId: 43807308941, attempt: 1 } });
+      expect(first.writes).toEqual([rerun(43807308941)]);
+      expect(first.state.advance).toBeUndefined();
+      expect(first.state.steps.build).toEqual({ status: 'pending', reason: 'candidate-push-ci-retry' });
+      expect(dispatchesCi(first.writes)).toBe(false);
+      expect(candidateStuck({ ...stuck, pushCiRun: { runId: 1, attempt: 1 } })).toBeNull();
+
+      const spent = buildTrain({ ...stuck, pushCiRun: { runId: 43807308941, attempt: PUSH_CI_ATTEMPT_CAP } });
+      expect(spent.state).toMatchObject({ version: '3.30.35', tag: 'v3.30.35', advance: { reason: 'candidate-push-ci-red' }, superseded: ['v3.30.34'] });
+      expect(spent.writes).toEqual([{ method: 'POST', path: releasePrDispatch, body: { ref: 'master', inputs: {} } }]);
+    });
+
+    it('fixes forward instead of rerunning a red push run older than the retry window', () => {
+      const now = Date.parse(stuck.now);
+      const fresh = new Date(now - PUSH_CI_RETRY_WINDOW_MS + 60_000).toISOString();
+      const old = new Date(now - PUSH_CI_RETRY_WINDOW_MS - 60_000).toISOString();
+      expect(buildTrain({ ...stuck, pushCiRun: { runId: 7, attempt: 1, completedAt: fresh } }).writes).toEqual([rerun(7)]);
+      const late = buildTrain({ ...stuck, pushCiRun: { runId: 7, attempt: 1, completedAt: old } });
+      expect(late.state.advance?.reason).toBe('candidate-push-ci-red');
+      expect(late.writes.some((write) => write.path.includes('rerun'))).toBe(false);
+      expect(candidateStuck({ ...stuck, pushCiRun: { runId: 7, attempt: 1, completedAt: 'garbage' } })).toBe('candidate-push-ci-red');
+    });
+
+    it('does not retry a red push run while its rerun is running or once a build exists', () => {
+      expect(buildTrain({ ...stuck, pushCiRun: { runId: 7, attempt: 1 }, buildPending: true }).writes).toEqual([]);
+      const built = buildTrain({ ...stuck, pushCiRun: { runId: 7, attempt: 1 }, build: { runId: 5, attempt: 1, artifactId: 9, completedAt: null } });
+      expect(built.writes.some((write) => write.path.includes('rerun'))).toBe(false);
+    });
+
+    it('redispatches a failed tag build until the cap, then fixes forward from green master', () => {
+      const tagBuildFailed = { ...stuck, pushCiRed: false };
+      const retry = buildTrain({ ...tagBuildFailed, buildFailures: BUILD_FAILURE_CAP - 1 });
+      expect(retry.state.advance).toBeUndefined();
+      expect(retry.writes.filter((write) => write.path.endsWith('/ci.yml/dispatches'))).toEqual([
+        { method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches', body: { ref: 'v3.30.34', inputs: { release_gate: 'true' } } },
+      ]);
+
+      const plan = buildTrain({ ...tagBuildFailed, buildFailures: BUILD_FAILURE_CAP });
+      expect(plan.state).toMatchObject({
+        reason: 'fix-forward-from-master', version: '3.30.35', tag: 'v3.30.35', next: 'release-pr',
+        advance: { action: 'advance-from-master', version: '3.30.35', sha: stuck.masterSha, reason: 'candidate-build-failed' },
+        superseded: ['v3.30.34'],
+      });
+      expect(plan.state.skippedTags?.at(-1)?.reason).toMatch(/^candidate-build-failed: tag=v3\.30\.34 /);
+      expect(plan.writes).toEqual([{ method: 'POST', path: releasePrDispatch, body: { ref: 'master', inputs: {} } }]);
+      // The 0-asset draft and its tag are left exactly as they are.
+      expect(JSON.stringify(plan.writes)).not.toMatch(/PATCH|DELETE|git\/refs|releases\/|ci\.yml/);
+    });
+
+    it('stops redispatching a failed tag build when it cannot fix forward yet', () => {
+      const plan = buildTrain({ ...stuck, pushCiRed: false, buildFailures: BUILD_FAILURE_CAP, masterCi: 'pending' });
+      expect(plan.state.advance).toBeUndefined();
+      expect(dispatchesCi(plan.writes)).toBe(false);
+      expect(plan.state.steps.build).toEqual({ status: 'pending', reason: 'candidate-build-failed' });
+    });
+
+    it('counts only failed release-gate builds dispatched on the candidate tag', () => {
+      const repo = { full_name: 'ashlrai/phantom' };
+      const run = (event: string, branch: string, conclusion: string) => ({
+        head_sha: head, path: '.github/workflows/ci.yml', event, head_branch: branch, status: 'completed', conclusion, repository: repo, head_repository: repo,
+      });
+      expect(failedTagBuild(run('workflow_dispatch', 'v3.30.27', 'failure'), head, 'v3.30.27')).toBe(true);
+      expect(failedTagBuild(run('workflow_dispatch', 'v3.30.27', 'timed_out'), head, 'v3.30.27')).toBe(true);
+      // The scheduled full suite on master is a signal, never a release blocker.
+      expect(failedTagBuild(run('schedule', 'master', 'failure'), head, 'v3.30.27')).toBe(false);
+      expect(failedTagBuild(run('workflow_dispatch', 'master', 'failure'), head, 'v3.30.27')).toBe(false);
+      expect(failedTagBuild(run('push', 'master', 'failure'), head, 'v3.30.27')).toBe(false);
+      expect(failedTagBuild(run('workflow_dispatch', 'v3.30.27', 'cancelled'), head, 'v3.30.27')).toBe(false);
+      expect(failedTagBuild(run('workflow_dispatch', 'v3.30.27', 'success'), head, 'v3.30.27')).toBe(false);
+      expect(failedTagBuild({ ...run('workflow_dispatch', 'v3.30.27', 'failure'), head_sha: sha }, head, 'v3.30.27')).toBe(false);
+      expect(failedTagBuild({ ...run('workflow_dispatch', 'v3.30.27', 'failure'), head_repository: { full_name: 'fork/phantom' } }, head, 'v3.30.27')).toBe(false);
+    });
+
+    it('admits only an empty-body rerun of failed jobs on this repository', () => {
+      expect(() => assertReleaseWrite(rerun(43807308941))).not.toThrow();
+      expect(releaseWriteUsesAppToken('POST', rerun(1).path)).toBe(false);
+      for (const path of [
+        'repos/ashlrai/phantom/actions/runs/1/rerun',
+        'repos/ashlrai/phantom/actions/runs/1/cancel',
+        'repos/ashlrai/phantom/actions/runs/0/rerun-failed-jobs',
+        'repos/other/phantom/actions/runs/1/rerun-failed-jobs',
+      ]) expect(() => assertReleaseWrite({ method: 'POST', path, body: {} }), path).toThrow();
+      expect(() => assertReleaseWrite({ method: 'POST', path: rerun(1).path, body: { enable_debug_logging: true } } as unknown as ReleaseWrite)).toThrow();
     });
   });
 
