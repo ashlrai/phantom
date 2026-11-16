@@ -13,7 +13,8 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]> [--json]
+const USAGE = `Usage: phm metrics <loop [--dry-run]|merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]> [--json]
+phm metrics loop [--json] measures throughput, loop times, cost per merged PR and capacity per node; see phm metrics loop --help.
 phm metrics merges [--json] reads the last 24 hourly buckets from the local jobs ledger.
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.
@@ -49,6 +50,7 @@ function cmdIngest(args: string[], io: CliIo): number {
 
 export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number> {
   if (argv[0] === 'idle') return cmdMetricsIdle(argv);
+  if (argv[0] === 'loop') return import('./metrics-loop.js').then(({ cmdMetricsLoop }) => cmdMetricsLoop(argv.slice(1), io));
   if (argv[0] === 'levers' || (argv[0] === '--json' && argv[1] === 'levers')) {
     const args = argv[0] === 'levers' ? argv : ['levers', '--json', ...argv.slice(2)];
     return import('./metrics-levers.js').then(({ cmdMetricsLevers }) => cmdMetricsLevers(args, io));
