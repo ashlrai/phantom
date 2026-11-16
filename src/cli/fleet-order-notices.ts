@@ -1,13 +1,17 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { planOrderBlockedNotices } from '../core/fleet/order-blocked-notice.js';
 import { readOrderTrace } from '../core/fleet/order-trace.js';
 import { planOrderMergeNotices, readOrderNoticeLedger, sendOrderMergeNotices,
   type OrderMergeNoticeSenders } from '../core/fleet/order-merge-notice.js';
+import { readLaneTargets, type LaneTargetsV1 } from '../core/fleet/runs-lane-targets.js';
 
 const usage = 'Usage: ashlr fleet order-notices [--apply] [--json] [--runs-dir DIR]';
 export interface FleetOrderNoticesDeps {
   runsDir?: string;
   senders?: OrderMergeNoticeSenders;
+  lanes?: () => Promise<LaneTargetsV1>;
+  read?: typeof readOrderTrace;
   output?: (text: string) => void;
   error?: (text: string) => void;
   now?: () => number;
@@ -31,7 +35,7 @@ export async function cmdFleetOrderNotices(args: string[], deps: FleetOrderNotic
   }
   let trace;
   try {
-    trace = await readOrderTrace({ runsDir: root, now: deps.now });
+    trace = await (deps.read ?? readOrderTrace)({ runsDir: root, now: deps.now });
     if (Object.values(trace.sources).every(state => state === 'missing')) {
       error('fleet order-notices: trace cannot be read'); return 1;
     }
@@ -39,7 +43,14 @@ export async function cmdFleetOrderNotices(args: string[], deps: FleetOrderNotic
   let sent = new Set<string>();
   try { sent = readOrderNoticeLedger(root); }
   catch { /* The locked sender reports ledger failures without sending. */ }
-  const notices = planOrderMergeNotices(trace, sent);
+  // Lane holds are read once per run, like order-state: a throw or a
+  // non-healthy slots.json yields no blocker evidence, never a failure.
+  let lanes: LaneTargetsV1 | undefined;
+  try {
+    const targets = await (deps.lanes ?? (() => readLaneTargets({ runsDir: root })))();
+    if (targets.sourceState === 'healthy') lanes = targets;
+  } catch { /* lanes stays undefined: no blocked notices */ }
+  const notices = [...planOrderMergeNotices(trace, sent), ...planOrderBlockedNotices(trace, lanes, sent)];
   const counts = apply ? await sendOrderMergeNotices(root, notices, deps.senders) : undefined;
   if (json) output(JSON.stringify({ apply, notices, ...(counts ?? {}) }));
   else if (counts) output(`sent ${counts.sent}, skipped ${counts.skipped}, failed ${counts.failed}`);
