@@ -20,9 +20,10 @@ function fixture(rows: unknown[], live: Record<number, object | null> = {}) {
   const recorded: Recorded[] = [];
   const calls: string[][] = [];
   let output = '';
-  const state = { failMerge: false, failView: false };
+  const state = { failMerge: false, failView: false, list: null as unknown };
   const gh: CloudGh = async args => {
     calls.push(args);
+    if (args[1] === 'list') return state.list === null ? { ok: false, stdout: '', stderr: '' } : { ok: true, stdout: JSON.stringify(state.list), stderr: '' };
     if (args[1] === 'merge') return { ok: !state.failMerge, stdout: '', stderr: 'never expose provider errors' };
     if (state.failView) return { ok: false, stdout: '', stderr: 'never expose provider errors' };
     const pr = Number(args[2]);
@@ -191,5 +192,45 @@ describe('fleet merge-retry', () => {
   it('is reachable as `phm fleet merge-retry`', async () => {
     const mod = await FLEET_SUBCOMMAND_LOADERS['merge-retry']!();
     expect(typeof mod.cmdFleetMergeRetry).toBe('function');
+  });
+
+  describe('conflict prediction before arming', () => {
+    const row = (number: number, paths: string[], armed = false, isDraft = false) =>
+      ({ number, isDraft, autoMergeRequest: armed ? { enabledAt: 'x' } : null, files: paths.map(path => ({ path })) });
+
+    it('skips arming a PR that shares a file with an armed PR, spending no retry', async () => {
+      const f = fixture(failed(7));
+      f.state.list = [row(7, ['src/a.ts', 'src/b.ts']), row(9, ['src/b.ts'], true)];
+      expect(await f.run(['--apply', '--json'])).toBe(0);
+      expect(f.report.rows[0]).toMatchObject({ pr: 7, action: 'predicted-conflict' });
+      expect(f.merges()).toEqual([]);
+      expect(f.recorded).toEqual([]);
+    });
+
+    it('arms when overlap is only with unarmed or draft PRs, or none', async () => {
+      const f = fixture(failed(7));
+      f.state.list = [row(7, ['src/a.ts']), row(9, ['src/a.ts'], false), row(10, ['src/a.ts'], true, true), row(11, ['x.ts'], true)];
+      await f.run(['--apply', '--json']);
+      expect(f.report.rows[0].action).toBe('auto-merge-requested');
+    });
+
+    it.each([
+      ['listing fails', null],
+      ['PR absent from the snapshot', [row(9, ['src/a.ts'], true)]],
+      ['file list at the gh cap', [{ ...row(7, []), files: Array.from({ length: 100 }, (_, i) => ({ path: `f${i}` })) }, row(9, ['f1'], true)]],
+      ['malformed snapshot', [{ number: 'x' }]],
+    ])('unknown evidence still arms: %s', async (_name, list) => {
+      const f = fixture(failed(7));
+      f.state.list = list;
+      await f.run(['--apply', '--json']);
+      expect(f.report.rows[0].action).toBe('auto-merge-requested');
+    });
+
+    it('lists each repo once per run', async () => {
+      const f = fixture([...failed(7), ...failed(8)]);
+      f.state.list = [row(7, ['a']), row(8, ['b'])];
+      await f.run(['--apply', '--json']);
+      expect(f.calls.filter(args => args[1] === 'list')).toHaveLength(1);
+    });
   });
 });
