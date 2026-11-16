@@ -183,7 +183,7 @@ export function tailRunsFile(runsDir: string, relative: string, maxBytes: number
     const count = buf.length > 0 ? readSync(fd, buf, 0, buf.length, start) : 0;
     let text = buf.subarray(0, count).toString('utf8');
     const nl = text.indexOf('\n');
-    if (start > 0 && nl >= 0) text = text.slice(nl + 1);
+    if (start > 0) text = nl >= 0 ? text.slice(nl + 1) : '';
     const lines = text.trimEnd().split('\n');
     const keep = Math.max(0, Number.isSafeInteger(maxLines) ? maxLines : TAIL_MAX_LINES);
     return lines.slice(-keep).join('\n');
@@ -197,11 +197,19 @@ export function tailRunsFile(runsDir: string, relative: string, maxBytes: number
 }
 
 /**
- * Remove query strings and fragments from every http(s) URL in `text`; they
+ * Remove query strings and fragments from every scheme URL in `text`; they
  * can carry tokens or signed parameters and never belong in a model prompt.
  */
 export function stripUrlQueries(text: string): string {
-  return text.replace(/\bhttps?:\/\/[^\s"'<>|)\]]+/gi, url => url.replace(/[?#].*$/, ''));
+  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>|)\]]+/gi, url => url.replace(/[?#].*$/, ''));
+}
+
+function sanitizedTail(text: string, keepChars: number): string {
+  const sanitized = stripUrlQueries(text);
+  if (sanitized.length <= keepChars) return sanitized;
+  const start = sanitized.length - keepChars;
+  const tail = sanitized.slice(start);
+  return /\s/.test(sanitized[start - 1]) ? tail : tail.replace(/^\S+/, '');
 }
 
 /** Publish rows keep only an exact GitHub pull/issue URL; anything else is dropped. */
@@ -297,7 +305,7 @@ export function fleetVitalsDigest(runsDir: string): string {
     ['jobs.jsonl tail', 'metrics/jobs.jsonl', 4500],
   ] as const) {
     const tail = tailRunsFile(runsDir, relative, TAIL_READ_BYTES, TAIL_MAX_LINES);
-    if (tail !== null && tail.length > 0) parts.push(`${label}:\n${tail.slice(-keepChars)}`);
+    if (tail !== null && tail.length > 0) parts.push(`${label}:\n${sanitizedTail(tail, keepChars)}`);
   }
   return stripUrlQueries(parts.join('\n')).slice(0, VITALS_MAX_CHARS);
 }
