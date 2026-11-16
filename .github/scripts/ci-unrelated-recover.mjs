@@ -2,10 +2,11 @@
 /* global process, console */
 // Recovers open auto-merge PRs whose Merge Gate or fast-gate failed for a
 // reason outside the PR. REST only (gh api); the query API's secondary limits
-// are why this stays on REST. A behind branch is updated with the merge
-// method and expected_head_sha. A red master check is retried once per head
-// SHA. Secret-shape, secret scan, generated-file, signing and notarization
-// failures are left alone. No admin, no history rewrite, no ruleset edits.
+// are why this stays on REST. A red master check is rerun once per head SHA.
+// The merge queue brings a behind branch up to date; this job does not write
+// to the branch. Secret-shape, secret scan, generated-file, signing and
+// notarization failures are left alone. No admin, no history rewrite, no
+// ruleset edits.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +39,7 @@ export function normalizeState(value, now) {
   const attempts = [];
   const rows = Array.isArray(value?.attempts) ? value.attempts : [];
   for (const row of rows) {
-    if (!row || (row.kind !== 'update-branch' && row.kind !== 'rerun')) continue;
+    if (!row || row.kind !== 'rerun') continue;
     if (!Number.isSafeInteger(row.pr) || row.pr < 1) continue;
     if (typeof row.sha !== 'string' || !SHA.test(row.sha)) continue;
     if (!Number.isSafeInteger(row.at) || now - row.at > RETRY_WINDOW_MS || row.at > now) continue;
@@ -116,11 +117,9 @@ export function planRecovery(snapshot) {
     if (failure.wait) { log(pull.number, 'in-progress'); continue; }
     const master = latest(snapshot.checks[snapshot.masterSha] ?? [], failure.name);
     const masterRed = failedConclusion(master);
-    if (pull.dirty === true) { log(pull.number, 'conflicts', ` check=${failure.name}`); continue; }
-    if (pull.dirty == null) { log(pull.number, 'pull-unreadable', ` check=${failure.name}`); continue; }
-    if (pull.behindBy == null && !masterRed) { log(pull.number, 'behind-unknown', ` check=${failure.name}`); continue; }
-    const behind = pull.behindBy > 0;
-    if (!masterRed && !behind) { log(pull.number, 'own-failure', ` check=${failure.name}`); continue; }
+    // A behind head is the merge queue's job. Rerun only when master's same
+    // check is red, so a PR's own failure is not retried.
+    if (!masterRed) { log(pull.number, 'own-failure', ` check=${failure.name}`); continue; }
     const jobs = failure.runId == null ? null : snapshot.jobs[String(failure.runId)];
     if (!jobs || !Array.isArray(jobs.failed) || !Number.isSafeInteger(jobs.runAttempt)) {
       log(pull.number, 'jobs-unknown', ` check=${failure.name}`);
@@ -129,12 +128,6 @@ export function planRecovery(snapshot) {
     if (jobs.failed.some(protectedJob)) { log(pull.number, 'protected-job', ` check=${failure.name}`); continue; }
     if (attemptsFor(state, pull.number, snapshot.now) >= MAX_PR_ATTEMPTS) { log(pull.number, 'pr-budget'); continue; }
     if (actions.length >= budget) { log(pull.number, 'budget'); continue; }
-    if (behind) {
-      if (seen(state, pull.headSha, 'update-branch')) { log(pull.number, 'already-updated'); continue; }
-      actions.push({ kind: 'update-branch', pr: pull.number, sha: pull.headSha, check: failure.name });
-      logs.push(`recover update-branch pr=${pull.number} sha=${pull.headSha.slice(0, 7)} check=${failure.name} method=merge`);
-      continue;
-    }
     if (seen(state, pull.headSha, 'rerun')) { log(pull.number, 'already-retried'); continue; }
     if (jobs.runAttempt !== 1) { log(pull.number, 'already-retried', ` attempt=${jobs.runAttempt}`); continue; }
     actions.push({ kind: 'rerun', pr: pull.number, sha: pull.headSha, runId: failure.runId, check: failure.name });
@@ -146,12 +139,6 @@ export function planRecovery(snapshot) {
 export function mutationRequest(repo, action) {
   if (repo !== REPO) throw new Error('unexpected repository');
   switch (action.kind) {
-    case 'update-branch':
-      if (!Number.isSafeInteger(action.pr) || action.pr < 1 || !SHA.test(action.sha)) throw new Error('invalid update');
-      return {
-        args: ['api', '--method', 'PUT', `repos/${repo}/pulls/${action.pr}/update-branch`, '--input', '-'],
-        body: { expected_head_sha: action.sha, update_method: 'merge' },
-      };
     case 'rerun':
       if (!Number.isSafeInteger(action.runId) || action.runId < 1) throw new Error('invalid rerun');
       return { args: ['api', '--method', 'POST', `repos/${repo}/actions/runs/${action.runId}/rerun-failed-jobs`], body: null };
@@ -258,13 +245,7 @@ export async function loadSnapshot(gh, repo) {
     if (!head.ok || !head.complete) { pull.unreadable = 'checks-unreadable'; checks[pull.headSha] = []; continue; }
     checks[pull.headSha] = head.checks;
     const failure = chooseFailure(head.checks, watched);
-    if (!failure || failure.wait) { pull.behindBy = 0; pull.dirty = false; continue; }
-    const detail = await apiGet(gh, `repos/${repo}/pulls/${pull.number}`);
-    if (!detail.ok || detail.body?.head?.sha !== pull.headSha) { pull.dirty = null; pull.behindBy = null; continue; }
-    pull.dirty = detail.body.mergeable_state === 'dirty';
-    const compare = await apiGet(gh, `repos/${repo}/compare/${masterSha}...${pull.headSha}`);
-    pull.behindBy = compare.ok && Number.isSafeInteger(compare.body?.behind_by) && compare.body.behind_by >= 0 ? compare.body.behind_by : null;
-    if (failure.runId == null) continue;
+    if (!failure || failure.wait || failure.runId == null) continue;
     const jobReply = await apiGet(gh, `repos/${repo}/actions/runs/${failure.runId}/jobs?per_page=100&filter=latest`);
     const list = Array.isArray(jobReply.body?.jobs) ? jobReply.body.jobs : null;
     const total = jobReply.body?.total_count;
@@ -309,11 +290,12 @@ function writeState(path, state) {
 
 export async function main(options = {}) {
   const log = options.log ?? ((line) => console.log(line));
-  if (options.allowLocal !== true && process.env.GITHUB_ACTIONS !== 'true') {
+  const env = options.env ?? process.env;
+  if (options.allowLocal !== true && env.GITHUB_ACTIONS !== 'true') {
     log('recover refuse reason=not-actions');
     return 2;
   }
-  const repo = options.repo ?? process.env.GITHUB_REPOSITORY;
+  const repo = options.repo ?? env.GITHUB_REPOSITORY;
   if (repo !== REPO) { log('recover refuse reason=repository'); return 2; }
   const statePath = options.statePath ?? process.env.RECOVER_STATE;
   if (typeof statePath !== 'string' || statePath.length === 0 || statePath.includes('\0')) {
@@ -333,7 +315,6 @@ export async function main(options = {}) {
   const plan = planRecovery({ ...loaded.snapshot, state, now, budget: MAX_MUTATIONS });
   for (const line of plan.logs) log(line);
   if (plan.abort) return 1;
-  if (plan.actions.some((action) => action.kind === 'update-branch')) log('recover note update-branch-may-await-actions-approval');
   const applied = [];
   let fatal = false;
   for (const action of plan.actions) {

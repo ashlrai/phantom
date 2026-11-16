@@ -74,24 +74,16 @@ test('a later successful required check is not a failure, and an in-progress che
   assert.match(waiting.logs[0], /in-progress/);
 });
 
-test('a behind branch is updated with merge and is not also rerun', () => {
-  const plan = planRecovery(snapshot({
-    pulls: [pull({ behindBy: 3 })],
+test('a behind branch is left to the merge queue unless master is red', () => {
+  const green = planRecovery(snapshot({
+    pulls: [pull({ behindBy: 3, dirty: true })],
     checks: { [head]: [run()], [master]: [run({ id: 9, conclusion: 'success' })] },
   }));
-  assert.equal(plan.actions.length, 1);
-  assert.equal(plan.actions[0].kind, 'update-branch');
-  const request = mutationRequest(REPO, plan.actions[0]);
-  assert.deepEqual(request.body, { expected_head_sha: head, update_method: 'merge' });
-  assert.equal(request.args.includes('graphql'), false);
-  assert.match(request.args.find((arg) => arg.startsWith('repos/')), /\/update-branch$/);
-  const again = planRecovery(snapshot({
-    pulls: [pull({ behindBy: 3 })],
-    checks: { [head]: [run()], [master]: [run({ id: 9, conclusion: 'success' })] },
-    state: commitAttempts({ v: 1, attempts: [] }, plan.actions, NOW),
-  }));
-  assert.deepEqual(again.actions, []);
-  assert.match(again.logs[0], /already-updated/);
+  assert.deepEqual(green.actions, []);
+  assert.match(green.logs[0], /own-failure/);
+  const red = planRecovery(snapshot({ pulls: [pull({ behindBy: 3 })] }));
+  assert.deepEqual(red.actions, [{ kind: 'rerun', pr: 10, sha: head, runId: 50, check: 'Merge Gate' }]);
+  assert.equal(red.actions.some((action) => action.kind !== 'rerun'), false);
 });
 
 test('an up-to-date red PR whose master check is green is left alone', () => {
@@ -102,13 +94,12 @@ test('an up-to-date red PR whose master check is green is left alone', () => {
   assert.match(plan.logs[0], /own-failure/);
 });
 
-test('drafts, forks, disabled auto-merge, conflicts, protected jobs and unknown jobs do not mutate', () => {
+test('drafts, forks, disabled auto-merge, protected jobs and unknown jobs do not mutate', () => {
   for (const [name, pulls, jobMap] of [
     ['draft', [pull({ draft: true })], jobs()],
     ['fork', [pull({ sameRepo: false })], jobs()],
     ['manual', [pull({ autoMerge: false })], jobs()],
-    ['dirty', [pull({ behindBy: 2, dirty: true })], jobs()],
-    ['secret', [pull({ behindBy: 2 })], jobs({ failed: ['Secret-shape scan', 'Merge Gate'] })],
+    ['secret', [pull()], jobs({ failed: ['Secret-shape scan', 'Merge Gate'] })],
     ['unknown', [pull()], { }],
   ]) {
     const plan = planRecovery(snapshot({ pulls, jobs: jobMap, checks: { [head]: [run()], [master]: [run({ id: 9, conclusion: 'failure' })] } }));
@@ -147,12 +138,12 @@ test('missing recoverable required checks abort before any action', () => {
   assert.deepEqual(plan.actions, []);
 });
 
-test('mutation requests are merge or rerun and nothing else', () => {
-  const update = mutationRequest(REPO, { kind: 'update-branch', pr: 10, sha: head });
+test('the only mutation is one rerun of the failed jobs', () => {
   const rerun = mutationRequest(REPO, { kind: 'rerun', pr: 10, sha: head, runId: 50 });
-  assert.deepEqual(update.body, { expected_head_sha: head, update_method: 'merge' });
   assert.equal(rerun.body, null);
+  assert.equal(rerun.args.includes('PUT'), false);
   assert.match(rerun.args.at(-1), /\/actions\/runs\/50\/rerun-failed-jobs$/);
+  assert.throws(() => mutationRequest(REPO, { kind: 'update-branch', pr: 10, sha: head }));
   assert.throws(() => mutationRequest(REPO, { kind: 'rebase', pr: 10, sha: head }));
   assert.throws(() => mutationRequest('other/repo', { kind: 'rerun', runId: 1 }));
 });
@@ -172,6 +163,10 @@ test('the workflow and script stay on REST and off protected gates', () => {
   assert.doesNotMatch(workflow, /secrets\./);
   assert.doesNotMatch(workflow, /pull_request_target/);
   assert.match(workflow, /name: recover-unrelated-pr-failures/);
+  assert.doesNotMatch(source, /update-branch/);
+  assert.doesNotMatch(workflow, /update-branch/);
+  assert.doesNotMatch(workflow, /contents: write/);
+  assert.doesNotMatch(workflow, /pull-requests: write/);
 });
 
 function route(map) {
@@ -203,10 +198,8 @@ function apiMap(over = {}) {
       number: 10, draft: false, auto_merge: { merge_method: 'squash' },
       head: { sha: head, repo: { full_name: REPO } }, base: { repo: { full_name: REPO } },
     }],
-    [`GET repos/${REPO}/commits/${master}/check-runs?per_page=100&page=1`]: { total_count: 1, check_runs: [checkRun(9, 'success')] },
+    [`GET repos/${REPO}/commits/${master}/check-runs?per_page=100&page=1`]: { total_count: 1, check_runs: [checkRun(9, 'failure')] },
     [`GET repos/${REPO}/commits/${head}/check-runs?per_page=100&page=1`]: { total_count: 1, check_runs: [checkRun(4, 'failure')] },
-    [`GET repos/${REPO}/pulls/10`]: { head: { sha: head }, mergeable_state: 'blocked' },
-    [`GET repos/${REPO}/compare/${master}...${head}`]: { behind_by: 2, status: 'behind' },
     [`GET repos/${REPO}/actions/runs/50/jobs?per_page=100&filter=latest`]: {
       total_count: 2,
       jobs: [
@@ -218,22 +211,23 @@ function apiMap(over = {}) {
   };
 }
 
-test('load and apply use REST, record one merge update, and do not repeat it', async () => {
+test('load and apply rerun once per head and do not repeat it', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'recover-'));
   const statePath = join(dir, 'state.json');
   try {
     const first = route(apiMap());
-    const code = await main({ allowLocal: true, repo: REPO, gh: first.gh, statePath, now: NOW, log() {} });
+    const code = await main({ allowLocal: true, repo: REPO, gh: first.gh, statePath, now: NOW, env: {}, log() {} });
     assert.equal(code, 0);
-    const puts = first.calls.filter((call) => call.args.includes('PUT'));
-    assert.equal(puts.length, 1);
-    assert.deepEqual(JSON.parse(puts[0].input), { expected_head_sha: head, update_method: 'merge' });
+    const posts = first.calls.filter((call) => call.args.includes('POST'));
+    assert.equal(posts.length, 1);
+    assert.match(posts[0].args.at(-1), /\/rerun-failed-jobs$/);
+    assert.equal(first.calls.some((call) => call.args.includes('PUT')), false);
     assert.equal(first.calls.every((call) => call.args.every((arg) => !String(arg).includes('graphql'))), true);
     const saved = JSON.parse(readFileSync(statePath, 'utf8'));
     assert.equal(saved.attempts.length, 1);
-    assert.equal(saved.attempts[0].kind, 'update-branch');
+    assert.equal(saved.attempts[0].kind, 'rerun');
     const second = route(apiMap());
-    const again = await main({ allowLocal: true, repo: REPO, gh: second.gh, statePath, now: NOW, log() {} });
+    const again = await main({ allowLocal: true, repo: REPO, gh: second.gh, statePath, now: NOW, env: {}, log() {} });
     assert.equal(again, 0);
     assert.equal(second.calls.some((call) => call.args.includes('PUT') || call.args.includes('POST')), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -244,19 +238,29 @@ test('a validation failure still consumes the head budget', async () => {
   const statePath = join(dir, 'state.json');
   try {
     const reader = route(apiMap());
-    const mixed = async (args, input) => args.includes('PUT') ? { ok: false, status: 422, body: '' } : reader.gh(args, input);
-    assert.equal(await main({ allowLocal: true, repo: REPO, gh: mixed, statePath, now: NOW, log() {} }), 0);
+    const mixed = async (args, input) => args.includes('POST') ? { ok: false, status: 422, body: '' } : reader.gh(args, input);
+    assert.equal(await main({ allowLocal: true, repo: REPO, gh: mixed, statePath, now: NOW, env: {}, log() {} }), 0);
     const next = route(apiMap());
-    assert.equal(await main({ allowLocal: true, repo: REPO, gh: next.gh, statePath, now: NOW, log() {} }), 0);
-    assert.equal(next.calls.some((call) => call.args.includes('PUT')), false);
+    assert.equal(await main({ allowLocal: true, repo: REPO, gh: next.gh, statePath, now: NOW, env: {}, log() {} }), 0);
+    assert.equal(next.calls.some((call) => call.args.includes('POST') || call.args.includes('PUT')), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('the job refuses to run outside Actions or another repository', async () => {
   const calls = [];
+  const logs = [];
   const gh = async () => { calls.push(1); return { ok: false, status: 500, body: '' }; };
-  assert.equal(await main({ gh, repo: REPO, statePath: 'unused', log() {} }), 2);
-  assert.equal(await main({ allowLocal: true, gh, repo: 'other/repo', statePath: 'unused', log() {} }), 2);
+  const log = (line) => logs.push(line);
+  // CI sets GITHUB_ACTIONS and GITHUB_REPOSITORY on the process. The guard must
+  // read the env handed to this call, not whatever the runner inherited.
+  assert.equal(await main({ gh, repo: REPO, statePath: 'unused', env: {}, log }), 2);
+  assert.match(logs.at(-1), /not-actions/);
+  assert.equal(await main({
+    gh, statePath: 'unused', log,
+    env: { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'other/repo' },
+  }), 2);
+  assert.match(logs.at(-1), /repository/);
+  assert.equal(await main({ allowLocal: true, gh, repo: 'other/repo', statePath: 'unused', env: { GITHUB_ACTIONS: 'true' }, log }), 2);
   assert.deepEqual(calls, []);
 });
 
