@@ -61,6 +61,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Explain empty jobs | [Empty jobs](https://github.com/ashlrai/phantom/blob/master/docs/EMPTY-JOBS.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
 | Inspect fleet graphs, agent routes and advisory specialist assignments | [Fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md) |
+| Assign repository owner roles and preview orphan PRs and ready jobs | [Repository owners](REPO-OWNERS.md) |
 | Read fleet observations through a standalone MCP server | [Fleet MCP onramp](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MCP-ONRAMP.md) |
 | Inspect iMessage intake, teammate tasks and acknowledgement evidence | [iMessage](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
