@@ -7,7 +7,7 @@ import { cmdRelease } from '../src/cli/release.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
-  enqueueReleasePullRequest, hostedTrainGate, isReleasePleaseCommit,
+  enqueueReleasePullRequest, hostedTrainGate, isMissingTagRef, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
@@ -381,6 +381,9 @@ describe('release train', () => {
     expect(due.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
     expect(due.state.advance).toBeUndefined();
     expect(ENQUEUE_PULL_REQUEST).toContain('enqueuePullRequest');
+    // The declared GraphQL variable must match the variables key sent, or GitHub rejects $id as an invalid ID! (v3.30.35 train runs 43858601478, 43858533926).
+    const declared = [...ENQUEUE_PULL_REQUEST.matchAll(/\$(\w+):/g)].map((m) => m[1]);
+    expect(declared).toEqual(Object.keys((merge as { body: { variables: Record<string, string> } }).body.variables));
     expect(JSON.stringify(due.writes)).not.toMatch(/admin|bypass|\/merge/);
     expect(mergeStageDone('OPEN')).toBe(false);
     expect(mergeStageDone('MERGED')).toBe(true);
@@ -726,5 +729,15 @@ describe('release train', () => {
     await expect(pending).resolves.toMatchObject({ pullChecks: { pending: 1, failing: 0 } });
     const failing = observe([actions('Merge Gate', 'completed', 'success'), actions('Dependency audit', 'completed', 'failure'), actions('Docs PR', 'completed', 'skipped')]);
     await expect(failing).resolves.toMatchObject({ pullChecks: { pending: 0, failing: 1 } });
+  });
+  it('maps only a 404 on the exact version tag ref to not-tagged', () => {
+    // Train runs 43861440856 and 43861554608 failed with "github GET repos/ashlrai/phantom/git/ref/tags/v3.30.35 failed"
+    // right after release PR #6291 merged, before the tag existed.
+    expect(isMissingTagRef('repos/ashlrai/phantom/git/ref/tags/v3.30.35', 'gh: Not Found (HTTP 404)')).toBe(true);
+    expect(isMissingTagRef('repos/ashlrai/phantom/git/ref/tags/v3.30.35', 'gh: Server Error (HTTP 500)')).toBe(false);
+    expect(isMissingTagRef('repos/ashlrai/phantom/git/ref/tags/v3.30.35', undefined)).toBe(false);
+    expect(isMissingTagRef('repos/ashlrai/phantom/commits/master', 'gh: Not Found (HTTP 404)')).toBe(false);
+    expect(isMissingTagRef('repos/ashlrai/other/git/ref/tags/v3.30.35', 'gh: Not Found (HTTP 404)')).toBe(false);
+    expect(isMissingTagRef('repos/ashlrai/phantom/git/ref/tags/v3.30.35-rc', 'gh: Not Found (HTTP 404)')).toBe(false);
   });
 });

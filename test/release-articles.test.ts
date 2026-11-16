@@ -674,7 +674,7 @@ describe('fresh public facts are data, not saved release authority', () => {
     ['proof-step-deleted', (y: string) => y.replace(/ {6}- name: Prove source-identical history fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')],
     ['mutated-secret-scan', (y: string) => y.replace('Scan candidate diff (fail closed)', 'Scan candidate diff')],
     ['mutated-classifier-command', (y: string) => y.replace('node .github/scripts/ci-site-lane.mjs', 'node .github/scripts/ci-site-lane-mutated.mjs')],
-    ['mutated-merge-gate-needs', (y: string) => y.replace('secret-shape, secret-scan, classify, quick,', 'secret-shape, secret-scan, classify,')],
+    ['mutated-merge-gate-needs', (y: string) => y.replace('secret-shape, secret-scan, classify, clean-tree, quick,', 'secret-shape, secret-scan, classify, clean-tree,')],
     ['mutated-full-role-condition', (y: string) => y.replace("needs.classify.outputs.lane == 'full'", "needs.classify.outputs.lane == 'site'")],
   ])('refuses release facts for an unreviewed workflow mutation: %s', async (_kind, mutate) => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');

@@ -173,7 +173,7 @@ export interface TrainState {
   stages: Record<string, StageTiming>;
 }
 
-export const ENQUEUE_PULL_REQUEST = 'mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{position state}}}';
+export const ENQUEUE_PULL_REQUEST = 'mutation($pullRequestId:ID!){enqueuePullRequest(input:{pullRequestId:$pullRequestId}){mergeQueueEntry{position state}}}';
 const PULL_NODE = /^PR_[A-Za-z0-9_-]+$/;
 export type ReleaseWrite =
   | { method: 'PATCH'; path: string; body: { name: string; body: string; draft: true; prerelease: false } }
@@ -1025,9 +1025,19 @@ function gh(method: string, path: string, body?: unknown): string {
       encoding: 'utf8', input: call.input,
       maxBuffer: 8 * 1024 * 1024, env,
     });
-  } catch {
+  } catch (error) {
+    // The current version's tag does not exist yet right after a release PR
+    // merges; observeTrain treats a null read as "not tagged". Only that exact
+    // GET maps 404 to empty; every other failure stays fail-closed.
+    if (method === 'GET' && isMissingTagRef(path, (error as { stderr?: unknown }).stderr)) return '';
     throw new Error(`github ${method} ${path} failed`);
   }
+}
+
+const TAG_REF_PATH = new RegExp(`^repos/${REPOSITORY}/git/ref/tags/v\\d+\\.\\d+\\.\\d+$`);
+/** True only for a 404 on this repository's exact version tag ref. */
+export function isMissingTagRef(path: string, stderr: unknown): boolean {
+  return TAG_REF_PATH.test(path) && typeof stderr === 'string' && /\bHTTP 404\b/.test(stderr);
 }
 
 async function githubRead(path: string): Promise<unknown> {
