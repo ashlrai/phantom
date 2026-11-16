@@ -9,10 +9,12 @@ import {
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isMissingTagRef, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation, finalizeRetryDecision,
+  RELEASE_GATE_RECEIPT, releaseGateReceipt,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
+import { RELEASE_GATE } from '../.github/scripts/ci-release-gate.mjs';
 
 const sha = 'a'.repeat(40);
 const head = 'b'.repeat(40);
@@ -453,6 +455,97 @@ describe('release train', () => {
     const remaining = refusePublishIfSuccessorConflict(first.writes, raced);
     expect(remaining.find((write) => write.path.endsWith('/publish-canonical-npm.yml/dispatches'))).toBeUndefined();
     expect(refusePublishIfSuccessorConflict(first.writes, ready)).toEqual(first.writes);
+  });
+
+  it('admits a tagged sha from its package version and release-gate receipt', () => {
+    expect([...RELEASE_GATE_RECEIPT]).toEqual([...RELEASE_GATE]);
+    const runs = RELEASE_GATE_RECEIPT.map(([name]) => ({ name, status: 'completed', conclusion: 'success', appId: 15368 }));
+    expect(releaseGateReceipt(runs)).toBe('green');
+    expect(releaseGateReceipt(runs.map((run) => run.name === 'Merge Gate' ? { ...run, conclusion: 'skipped' } : run))).toBe('red');
+    expect(releaseGateReceipt(runs.flatMap((run) => run.name === 'Desktop release smoke'
+      ? [run, { ...run, conclusion: 'skipped' }] : [run]))).toBe('green');
+    expect(releaseGateReceipt(runs.filter((run) => run.name !== 'Release suites (build + signing path)'))).toBe('pending');
+    const tagged = 'e'.repeat(40);
+    const older = 'f'.repeat(40);
+    const headRow = {
+      tag: 'v3.30.35', sha: tagged,
+      message: 'ci(release): RELEASE-GATE-SPLIT-3 accept push-scoped checks (#6365)\n',
+      packageVersion: '3.30.35', releaseGate: 'green' as const,
+      ancestry: 'ancestor' as const, committedAt: '2026-11-16T18:26:53Z',
+    };
+    const plan = buildTrain(observation({
+      masterVersion: '3.30.35',
+      tags: [{ name: 'v3.30.35', sha: tagged }, { name: 'v3.30.34', sha: older }],
+      head: headRow,
+      releases: [
+        { id: 35, tag_name: 'v3.30.35', draft: true, name: 'Phantom 3.30.35', body: 'notes', created_at: '2026-11-16T18:30:00Z', assets: [] },
+        { id: 34, tag_name: 'v3.30.34', draft: true, name: 'Phantom 3.30.34', body: 'held', created_at: '2026-11-15T00:00:00Z', assets: [] },
+      ],
+    }));
+    expect(plan.exitCode).toBe(0);
+    expect(plan.state).toMatchObject({ tag: 'v3.30.35', sha: tagged, version: '3.30.35' });
+    expect(JSON.stringify(plan.writes)).not.toContain('releases/34');
+    expect(JSON.stringify(plan.writes)).not.toContain('git/refs');
+    expect(JSON.stringify(plan.writes)).not.toContain('v3.30.34');
+    const dispatch = plan.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
+    expect(dispatch && dispatch.method === 'POST' && 'ref' in dispatch.body && dispatch.body.ref).toBe('v3.30.35');
+    const held = buildTrain(observation({
+      masterVersion: '3.30.35',
+      tags: [{ name: 'v3.30.35', sha: tagged }],
+      head: { ...headRow, releaseGate: 'pending' },
+      releases: [],
+    }));
+    expect(held.exitCode).toBe(1);
+    expect(held.state.reason).toContain('release_message_mismatch: tag=v3.30.35');
+    expect(held.writes).toEqual([]);
+  });
+
+  it('selects a newer tagged sha over v3.30.34 when the receipt is green', async () => {
+    const tagged = 'e'.repeat(40);
+    const older = 'f'.repeat(40);
+    const version = '3.30.35';
+    const pkg = (value: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: value })).toString('base64') });
+    const names = RELEASE_GATE_RECEIPT.map(([name]) => name);
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      [`repos/ashlrai/phantom/commits/${sha}`]: { sha, commit: { message: 'merge', committer: { date: '2026-11-16T19:00:00Z' } } },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg(version),
+      [`repos/ashlrai/phantom/contents/package.json?ref=${tagged}`]: pkg(version),
+      [`repos/ashlrai/phantom/contents/package.json?ref=${older}`]: pkg('3.30.34'),
+      'repos/ashlrai/phantom/git/ref/tags/v3.30.35': { ref: 'refs/tags/v3.30.35', object: { type: 'commit', sha: tagged } },
+      [`repos/ashlrai/phantom/commits/${tagged}`]: { sha: tagged, commit: { message: 'ci(release): RELEASE-GATE-SPLIT-3 accept push-scoped checks (#6365)\n', committer: { date: '2026-11-16T18:26:53Z' } } },
+      [`repos/ashlrai/phantom/commits/${older}`]: { sha: older, commit: { message: 'chore(master): release 3.30.34 (#1)\n', committer: { date: '2026-11-15T00:00:00Z' } } },
+      [`repos/ashlrai/phantom/compare/${tagged}...${sha}`]: { status: 'ahead', ahead_by: 2 },
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.35', commit: { sha: tagged } }, { name: 'v3.30.34', commit: { sha: older } }],
+      [`repos/ashlrai/phantom/commits?sha=${tagged}&per_page=30`]: [{ commit: { message: 'ci(release): RELEASE-GATE-SPLIT-3 accept push-scoped checks (#6365)' } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [
+        { id: 35, tag_name: 'v3.30.35', draft: true, name: 'Phantom 3.30.35', body: 'notes', created_at: '2026-11-16T18:30:00Z', assets: [] },
+        { id: 34, tag_name: 'v3.30.34', draft: true, name: 'Phantom 3.30.34', body: 'held', created_at: '2026-11-15T00:00:00Z', assets: [] },
+      ],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+      [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${tagged}&per_page=20`]: { total_count: 0, workflow_runs: [] },
+      [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${tagged}&status=success&per_page=5`]: { total_count: 0, workflow_runs: [] },
+      'registry/npm/@ashlr/phantom/3.30.35': null,
+      ...greenCi(tagged),
+      [`repos/ashlrai/phantom/commits/${tagged}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
+        total_count: names.length,
+        check_runs: names.map((name) => ({ name, status: 'completed', conclusion: 'success', app: { id: 15368 } })),
+      },
+    };
+    const observed = await observeTrain(async (path) => {
+      if (Object.hasOwn(data, path)) return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (path.startsWith('registry/')) return null;
+      throw new Error(`unexpected ${path}`);
+    }, '2026-11-16T19:10:00.000Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+    expect(observed.head).toMatchObject({ tag: 'v3.30.35', sha: tagged, packageVersion: '3.30.35', releaseGate: 'green' });
+    expect(observed.skippedTags ?? []).toEqual([]);
+    const plan = buildTrain(observed);
+    expect(plan.state).toMatchObject({ tag: 'v3.30.35', sha: tagged, version: '3.30.35' });
+    expect(JSON.stringify(plan.writes)).not.toContain('releases/34');
+    expect(JSON.stringify(plan.writes)).not.toContain('v3.30.34');
+    expect(JSON.stringify(plan.writes)).not.toContain('git/refs');
   });
 
   it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
