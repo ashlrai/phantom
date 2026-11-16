@@ -1,9 +1,18 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * Paths whose change can move the authority drift snapshots: src/ (Tier-1 roots and closure),
+ * test/ (CODEOWNERS covers Tier-1 tests by import, and the snapshot lives in test/fixtures),
+ * scripts/ (the closure also walks shipped scripts), and CODEOWNERS itself.
+ */
+export function affectsAuthorityDrift(path) {
+  return path.startsWith('src/') || path.startsWith('test/') || path.startsWith('scripts/') || path === '.github/CODEOWNERS';
+}
 
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
@@ -12,9 +21,48 @@ export function selectChangedFiles(changedPaths, existingPaths) {
   return {
     lintFiles: changed.filter((path) => existing.has(path) && /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(path)),
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
-    authorityDrift: changed.some((path) => path.startsWith('src/') || path.startsWith('test/') || path === '.github/CODEOWNERS'),
+    authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
   };
+}
+
+/**
+ * Merge Gate runs the drift tests on the queue tree (master plus every PR ahead), not on a PR
+ * head. A branch that is green alone can still drift once it meets what landed on master since
+ * its merge-base. True when master moved a drift-relevant path since the merge-base.
+ */
+export function masterMovedAuthorityDrift(root, exec = execFileSync) {
+  const git = (...args) => exec('git', args, { cwd: root, encoding: 'utf8' });
+  const base = git('merge-base', 'HEAD', 'origin/master').trim();
+  return git('diff', '--name-only', '--no-renames', '-z', base, 'origin/master', '--').split('\0').filter(Boolean).some(affectsAuthorityDrift);
+}
+
+/**
+ * Materialize origin/master with this branch's changed files laid over it (including dirty and
+ * untracked edits, and deletions), so the drift tests can run on the tree the queue will build.
+ * Returns the temp directory; the caller removes it.
+ */
+export function materializeMasterOverlay(root, changed, exec = execFileSync) {
+  const dir = mkdtempSync(join(tmpdir(), 'phantom-drift-'));
+  try {
+    const archive = exec('git', ['archive', 'origin/master'], { cwd: root, maxBuffer: 1 << 30 });
+    exec('tar', ['-x', '-C', dir], { input: archive, maxBuffer: 1 << 30 });
+    for (const path of changed) {
+      const from = resolve(root, path);
+      const to = resolve(dir, path);
+      if (existsSync(from) && statSync(from).isFile()) {
+        mkdirSync(dirname(to), { recursive: true });
+        copyFileSync(from, to);
+      } else {
+        rmSync(to, { force: true });
+      }
+    }
+    symlinkSync(resolve(root, 'node_modules'), join(dir, 'node_modules'), 'dir');
+    return dir;
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Identify changed test files without a test declaration; unreadable files are left to other checks. */
@@ -486,6 +534,28 @@ function main() {
   if (selection.authorityDrift && !run('authority drift', 'scripts/test-ci.mjs', ['test/authority-codeowners-310b.test.ts', 'test/authority-tier1-closure-310b.test.ts'])) {
     console.error('Review authority drift, then run npm run authority:regen');
     return;
+  }
+  if (selection.authorityDrift) {
+    let overlay = null;
+    try {
+      if (masterMovedAuthorityDrift(root)) overlay = materializeMasterOverlay(root, changed);
+    } catch (error) {
+      console.log(`SKIP authority drift on current master: ${error.message}`);
+    }
+    if (overlay) {
+      try {
+        const result = spawnSync(process.execPath, ['scripts/test-ci.mjs', 'test/authority-codeowners-310b.test.ts', 'test/authority-tier1-closure-310b.test.ts'], { cwd: overlay, stdio: 'inherit' });
+        const passed = !result.error && result.status === 0;
+        console.log(`${passed ? 'PASS' : 'FAIL'} authority drift on current master`);
+        if (!passed) {
+          console.error('origin/master moved since this branch forked and the combination drifts. Rebase onto origin/master, then run npm run authority:regen and review the diff.');
+          process.exitCode = 1;
+          return;
+        }
+      } finally {
+        rmSync(overlay, { recursive: true, force: true });
+      }
+    }
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {

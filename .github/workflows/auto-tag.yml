@@ -1,7 +1,7 @@
 # Auto-tag: create v<version> and its draft GitHub release when the version in
 # package.json on master is untagged and every required check for that exact
-# commit is green. A missing tag is owed even when the bump landed earlier, so
-# this heals a stranded release instead of waiting for the next bump.
+# commit is green and its latest six-hour scheduled full CI is green. A missing
+# tag is owed even when the bump landed earlier, so this heals a stranded release instead of waiting for the next bump.
 # Tags and releases are created only here, with the ashlr-release GitHub App
 # token. The release starts as a draft: releases/latest keeps resolving to the
 # last fully stocked feed until scripts/publish-desktop-release.mjs attaches
@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -149,9 +149,16 @@ jobs:
           ref: ${{ env.SHA }}
           persist-credentials: false
 
+      # Fail closed before minting write authority. Exact SHA only: descendants
+      # wait for their own scheduled full, even if a required fast check is green.
+      - name: Require scheduled full green on this exact commit
+        id: full
+        if: steps.checks.outputs.green == 'true'
+        run: node .github/scripts/ci-master-full.mjs require
+
       - name: Mint ashlr-release App token (contents write, this repo only)
         id: app
-        if: steps.checks.outputs.green == 'true'
+        if: steps.checks.outputs.green == 'true' && steps.full.outputs.green == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.ASHLR_RELEASE_APP_ID }}
@@ -165,7 +172,7 @@ jobs:
       # draft so releases/latest keeps serving the last complete feed until the
       # sanctioned local publisher attaches the signed artifacts.
       - name: Create tag v${{ steps.version.outputs.version }} and its draft release
-        if: steps.checks.outputs.green == 'true'
+        if: steps.checks.outputs.green == 'true' && steps.full.outputs.green == 'true'
         id: tag
         shell: bash
         env:
@@ -184,7 +191,7 @@ jobs:
       # workflows. Do not request actions on the App mint: the installation
       # lacks that permission and the token request would 422.
       - name: Dispatch release-gate CI on the new tag
-        if: steps.checks.outputs.green == 'true' && steps.tag.outputs.release == 'draft-created'
+        if: steps.checks.outputs.green == 'true' && steps.full.outputs.green == 'true' && steps.tag.outputs.release == 'draft-created'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
