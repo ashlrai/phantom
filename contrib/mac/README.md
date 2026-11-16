@@ -1119,7 +1119,12 @@ record. It arms with `gh pr merge --auto --match-head-commit <sha>` only on SAFE
 same head and not already armed, and at most `--max-arms` (default 3) per run. It drops records on RED, expiry or a
 changed head. Without `--apply` it only prints `WOULD_ARM`. The host needs `gh` signed in for the fleet account.
 
-Install (arm_gate.py ships with `install.sh`; a plain bin install is not enough to run the sweep):
+Rollout. `install.sh` copies `arm_gate.py` into `~/.ashlr-runs/bin` and is idempotent (an identical file reports
+`unchanged`). It does NOT install `publish.sh`: this checkout holds a reviewable mirror and the live
+`~/.ashlr-runs/bin/publish.sh` is a host-owned, Security-pinned file, deployed by its owner under the pin. Order does
+not matter and every partial state fails safe: a new `publish.sh` without `arm_gate.py` (or an old `publish.sh` with
+it) never arms through the new path. `/usr/bin/python3 --version` must report 3.8 or newer (stdlib only; verify on the
+host, it is not assumed).
 
 ```sh
 contrib/mac/install.sh --dry-run          # review, then run without --dry-run
@@ -1127,8 +1132,16 @@ mkdir -p ~/.ashlr-runs/arm-deferred ~/.ashlr-runs/logs
 sed -e "s|__PYTHON3__|/usr/bin/python3|" -e "s|__RUNS__|$HOME/.ashlr-runs|g" \
     -e "s|__INTERVAL__|300|" -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
     contrib/mac/com.ashlr.arm-gate-sweep.plist.in > ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+plutil -lint ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl bootout "gui/$UID/com.ashlr.arm-gate-sweep" 2>/dev/null || true   # re-runs: unload any loaded copy first
 launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl print "gui/$UID/com.ashlr.arm-gate-sweep" | head -5
 ```
+
+Check with `python3 -I -B ~/.ashlr-runs/bin/arm_gate.py sweep --dir ~/.ashlr-runs/arm-deferred` (no `--apply`, prints
+`WOULD_ARM`/`KEEP`/`DROP` only). Rollback: `launchctl bootout "gui/$UID/com.ashlr.arm-gate-sweep"`, delete the plist,
+restore `~/.ashlr-runs/bin/arm_gate.py` from its `.bak-macdispatch-*` copy or delete it on a first install, and restore
+the previous `publish.sh` from the owner's backup. Leftover `arm-deferred/*.json` records are inert without the sweep.
 
 Without launchd, a dispatchd tick or any fleet work-order can run the same `arm_gate.py sweep` command. Live files are
 sha-pinned by Security: re-pin publish.sh and arm_gate.py after install. Fixture tests use a fake `gh`:
