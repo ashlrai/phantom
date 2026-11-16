@@ -1040,7 +1040,7 @@ echo pending=true; exit 2
     const shared = jobs['ci-shared-macos']!;
     expect(jobs.classify?.outputs).toEqual({
       lane: '${{ steps.lane.outputs.lane }}',
-      release_gate: "${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}",
+      release_gate: "${{ github.event_name == 'workflow_dispatch' && inputs.release_gate == true }}",
       mac_slice: '${{ steps.mac.outputs.mac_slice }}',
       mac_general_exclude: '${{ steps.mac.outputs.mac_general_exclude }}',
     });
@@ -1063,7 +1063,7 @@ echo pending=true; exit 2
       const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
       expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '0,30 * * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(2);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced

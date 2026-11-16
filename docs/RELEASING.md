@@ -73,7 +73,7 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   commit to `published_at` in
   [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
   The committed file is the baseline; each weekly run uploads a fresh copy.
-- At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
+- On manual dispatch with `release_gate=true` (release-prep.yml once per master SHA, and Auto-tag on a tag): reuse a
   completed successful **push** CI run for the exact master SHA. The unsigned
   combined `Desktop release smoke` job reuses an immutable artifact for that
   source when available, otherwise builds once with cached compiler inputs.
@@ -206,8 +206,8 @@ What runs without a per-release approval:
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
   candidate. The ref is the tag when the tag is behind master, and `master`
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
-  the candidate rather than a newer master HEAD. The half-hour schedule on
-  master is unchanged.
+  the candidate rather than a newer master HEAD. There is no half-hour
+  schedule; release-prep and Auto-tag dispatch `release_gate=true`.
 - A candidate whose master push CI run concluded red can never build:
   release-build reuses only a green exact-source push run. When that
   candidate has no build, master is strictly past it and still carries its

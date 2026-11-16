@@ -21,8 +21,10 @@ on:
   # Full suite on master every six hours at 17 minutes past the hour.
   schedule:
     - cron: "17 */6 * * *"
-    # Release preparation reuses green push CI; it never reruns full suites.
-    - cron: "0,30 * * * *"
+  # Release-gate runs (Desktop release smoke + Release suites) are started by
+  # release-prep.yml once per master sha and by Auto-tag on a tag, both via
+  # workflow_dispatch release_gate=true. The old half-hour schedule duplicated
+  # that and is gone (CI-PHANTOM-CRON-30MIN).
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
   # The scheduled run rotates the Mac exhaustive work over seven daily slices
   # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
@@ -392,7 +394,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
-      release_gate: ${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}
+      release_gate: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate == true }}
       mac_slice: ${{ steps.mac.outputs.mac_slice }}
       mac_general_exclude: ${{ steps.mac.outputs.mac_general_exclude }}
     steps:
