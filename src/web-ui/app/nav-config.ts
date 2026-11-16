@@ -45,6 +45,12 @@ export const NAV_GROUPS: NavGroup[] = [
         implemented: true,
       },
       {
+        path: '/bots',
+        label: 'Bots',
+        description: 'Spin up a new bot from a template: avatar, role, memory seed, starter tasks, crons and channels.',
+        implemented: true,
+      },
+      {
         path: '/universe',
         label: 'Experiments',
         description: 'Compare experiments, follow variant lineages, and inspect the retained population.',

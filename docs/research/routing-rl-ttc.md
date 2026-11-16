@@ -28,9 +28,10 @@ Paper results are evidence for experiment selection, not measured Phantom gains.
 | [Qian et al., xRouter: Training Cost-Aware LLMs Orchestration System via Reinforcement Learning](https://arxiv.org/abs/2510.08439v1) | 2025-10-09, v1 | A router learns whether to answer or call external models using cost-aware RL rewards. Useful for multi-step escalation, but training cost, orchestration failures and model drift must be included in Phantom's evaluation. |
 | [Muennighoff et al., s1: Simple test-time scaling](https://arxiv.org/abs/2501.19393v3) | First submitted 2025-01-31; revised 2025-03-01, v3 | Budget forcing controls reasoning length in a fine-tuned model. It motivates treating compute as a decision variable. Appending “Wait” is not a generic control API for hosted coding agents and is not proposed here. |
 
-## Current code and integration boundary
+## Baseline code and integration boundary
 
-Read [router.ts](../../src/core/routing/router.ts),
+The observations below describe the stated baseline and require revalidation before
+use with current routing code. Read [router.ts](../../src/core/routing/router.ts),
 [policy.ts](../../src/core/routing/policy.ts),
 [headroom.ts](../../src/core/routing/headroom.ts) and
 [reset-pressure.ts](../../src/core/routing/reset-pressure.ts) together.
