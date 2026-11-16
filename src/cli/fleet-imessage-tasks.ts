@@ -11,7 +11,8 @@ const USAGE = `Usage: phm fleet imessage-tasks enqueue --peer dot|instinct --job
   [--apply|--dry-run] [--json]
        phm fleet imessage-tasks cancel --job <id> [--apply|--dry-run] [--json]
        phm fleet imessage-tasks dispatch [--apply|--dry-run] [--json]
-       phm fleet imessage-tasks list|peers [--json]
+       phm fleet imessage-tasks list [--job <id>] [--json]
+       phm fleet imessage-tasks peers [--json]
 Enqueue, cancel and dispatch preview by default. Apply reserves work or uses the
 existing approved teammate transport. Reports omit message bodies and handles.`;
 
@@ -82,8 +83,9 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
     if (positionals.length !== 1 || !['enqueue', 'cancel', 'dispatch', 'list', 'peers'].includes(command)) throw new Error('Invalid command');
     const allowed = command === 'enqueue'
       ? ['json', 'apply', 'dry-run', 'peer', 'job', 'kind', 'scope', 'repo', 'format', 'deadline', 'pr']
-      : command === 'cancel' ? ['json', 'apply', 'dry-run', 'job'] : command === 'dispatch' ? ['json', 'apply', 'dry-run'] : ['json'];
+      : command === 'cancel' ? ['json', 'apply', 'dry-run', 'job'] : command === 'dispatch' ? ['json', 'apply', 'dry-run'] : command === 'list' ? ['json', 'job'] : ['json'];
     if (Object.keys(values).some(key => !allowed.includes(key)) || values.apply && values['dry-run']) throw new Error('Invalid options');
+    if (command === 'list' && values.job !== undefined && !envelope.shape.jobId.safeParse(values.job).success) throw new Error('Invalid job');
     let result: object;
     if (command === 'enqueue') {
       const { peer, kind, job: jobId, scope, repo, format, deadline } = values;
@@ -110,11 +112,17 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
         : await (deps.dispatch ?? runTeammateTasks)((deps.config ?? loadConfigReadOnlyStrict)(), { apply: values.apply === true });
     }
     // Peers retain their distinct owner declarations and peer-reported observations.
-    const visible = command === 'peers' ? result : {
+    let visible = command === 'peers' ? result : {
       ...taskReport.parse(result),
       coverage: 'local-evidence-only-peer-reported-results-unverified',
       claimKeyEvidence: 'label-only-queue-binding-unverified',
     };
+    if (command === 'list' && values.job !== undefined) {
+      const report = taskReport.parse(visible);
+      const healthy = report.state === 'healthy' && report.ok !== false;
+      const tasks = healthy ? (report.tasks ?? []).filter(task => task.jobId === values.job) : [];
+      visible = { ...visible, selection: { jobId: values.job }, matched: healthy ? tasks.length > 0 : null, tasks };
+    }
     output(JSON.stringify(visible, null, json ? undefined : 2));
     const report = result as { state?: string; ok?: boolean };
     return report.ok === false || ['error', 'unavailable', 'refused'].includes(report.state ?? '') ? 1 : 0;
