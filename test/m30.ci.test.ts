@@ -148,7 +148,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
+    const keys = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'quick', 'site', 'docs', ...full, 'release-build'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -174,27 +174,45 @@ describe('M30 CI workflow', () => {
       });
     };
     const ok = { 'secret-shape': 'success', 'secret-scan': 'success', classify: 'success' };
+    // Event matrix (RQ-PH-GATE-SPLIT-1). clean-tree (Check generated files) is
+    // required on pull_request, merge_group and master push: success only.
+    // Elsewhere (schedule, dispatch, reusable tag push) it is designed not to
+    // run, so it must be skipped. authority-drift is advisory, off the gate.
+    const fastOk = { ...ok, 'clean-tree': 'success' };
     for (const event of ['pull_request', 'merge_group']) {
-      expect(execute(event, 'full', { ...ok, quick: 'success' })).not.toThrow();
-      expect(execute(event, 'site', { ...ok, quick: 'success' })).not.toThrow();
-      expect(execute(event, 'docs', ok)).toThrow();
-      expect(execute(event, 'docs', { ...ok, quick: 'success' })).not.toThrow();
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
-        expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...ok, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...ok, quick: 'success', 'secret-scan': outcome }), `diff scan ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...ok, quick: 'success', 'secret-scan': outcome }), `docs diff scan ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...ok, quick: outcome }), `quick ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...ok, quick: outcome }), `docs quick ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...ok, quick: 'success', classify: outcome })).toThrow();
+        expect(execute(event, 'full', { ...fastOk, 'clean-tree': outcome, quick: 'success' }), `${event} clean-tree ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...fastOk, 'clean-tree': outcome, quick: 'success' }), `${event} docs clean-tree ${outcome}`).toThrow();
+      }
+      expect(execute(event, 'full', { ...fastOk, quick: 'success' }, 'clean-tree'), `${event} clean-tree missing`).toThrow();
+      // Quick stays advisory: a failed quick with a green clean-tree still passes.
+      expect(execute(event, 'full', { ...fastOk, quick: 'failure' }), `${event} quick failure advisory`).not.toThrow();
+    }
+    for (const event of ['pull_request', 'merge_group']) {
+      expect(execute(event, 'full', { ...fastOk, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'site', { ...fastOk, quick: 'success' })).not.toThrow();
+      // Quick typecheck is advisory on fast events (Mason 2026-11-13): even a missing result passes.
+      expect(execute(event, 'docs', fastOk)).not.toThrow();
+      expect(execute(event, 'docs', { ...fastOk, quick: 'success' })).not.toThrow();
+      for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+        expect(execute(event, 'full', { ...fastOk, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...fastOk, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...fastOk, quick: 'success', 'secret-scan': outcome }), `diff scan ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...fastOk, quick: 'success', 'secret-scan': outcome }), `docs diff scan ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...fastOk, quick: outcome }), `quick ${outcome} advisory`).not.toThrow();
+        expect(execute(event, 'docs', { ...fastOk, quick: outcome }), `docs quick ${outcome} advisory`).not.toThrow();
+        expect(execute(event, 'full', { ...fastOk, quick: 'success', classify: outcome })).toThrow();
       }
       for (const name of ['site', 'docs', ...full]) {
-        expect(execute(event, 'full', { ...ok, quick: 'success', [name]: 'success' }), `${event} ran ${name}`).toThrow();
+        expect(execute(event, 'full', { ...fastOk, quick: 'success', [name]: 'success' }), `${event} ran ${name}`).toThrow();
       }
-      for (const name of keys) expect(execute(event, 'full', { ...ok, quick: 'success' }, name), `missing ${name}`).toThrow();
-      expect(execute(event, 'bogus', { ...ok, quick: 'success' })).toThrow();
+      for (const name of keys) expect(execute(event, 'full', { ...fastOk, quick: 'success' }, name), `missing ${name}`).toThrow();
+      expect(execute(event, 'bogus', { ...fastOk, quick: 'success' })).toThrow();
     }
     const complete = { ...ok, ci: 'success', 'windows-service-authority': 'success' };
+    // clean-tree never runs on the daily/dispatch/tag-push events: skipped is expected, success tolerated, failure refused.
+    expect(execute('schedule', 'full', { ...complete, 'clean-tree': 'success' })).not.toThrow();
+    for (const outcome of ['failure', 'cancelled']) expect(execute('schedule', 'full', { ...complete, 'clean-tree': outcome }), `schedule clean-tree ${outcome}`).toThrow();
     for (const event of ['schedule', 'workflow_dispatch']) {
       expect(execute(event, 'full', complete)).not.toThrow();
       expect(execute(event, 'full', { ...complete, quick: 'success' })).toThrow();
@@ -230,15 +248,20 @@ describe('M30 CI workflow', () => {
     // A direct master push takes the seconds-fast gate so auto-tag gets its
     // required check: quick must succeed and every full lane must be skipped.
     const master = 'refs/heads/master';
-    expect(execute('push', 'full', { ...ok, quick: 'success' }, undefined, master)).not.toThrow();
-    expect(execute('push', 'full', { ...ok, quick: 'success', site: 'success' }, undefined, master)).toThrow();
-    expect(execute('push', 'full', { ...ok, quick: 'success', ci: 'success' }, undefined, master)).toThrow();
-    expect(execute('push', 'full', { ...ok }, undefined, master)).toThrow();
-    expect(execute('push', 'docs', { ...ok, quick: 'success' }, undefined, master)).not.toThrow();
+    expect(execute('push', 'full', { ...fastOk, quick: 'success' }, undefined, master)).not.toThrow();
+    expect(execute('push', 'full', { ...fastOk, quick: 'success', site: 'success' }, undefined, master)).toThrow();
+    expect(execute('push', 'full', { ...fastOk, quick: 'success', ci: 'success' }, undefined, master)).toThrow();
+    expect(execute('push', 'full', { ...fastOk }, undefined, master)).not.toThrow();
+    // clean-tree is required on the master push: Auto-tag reads it from the exact sha.
     for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
-      expect(execute('push', 'full', { ...ok, quick: outcome }, undefined, master), `push quick ${outcome}`).toThrow();
-      expect(execute('push', 'full', { ...ok, quick: 'success', 'secret-shape': outcome }, undefined, master), `push secret ${outcome}`).toThrow();
-      expect(execute('push', 'full', { ...ok, quick: 'success', 'secret-scan': outcome }, undefined, master), `push diff scan ${outcome}`).toThrow();
+      expect(execute('push', 'full', { ...ok, 'clean-tree': outcome, quick: 'success' }, undefined, master), `push clean-tree ${outcome}`).toThrow();
+    }
+    expect(execute('push', 'full', { ...ok, quick: 'success' }, 'clean-tree', master)).toThrow();
+    expect(execute('push', 'docs', { ...fastOk, quick: 'success' }, undefined, master)).not.toThrow();
+    for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
+      expect(execute('push', 'full', { ...fastOk, quick: outcome }, undefined, master), `push quick ${outcome} advisory`).not.toThrow();
+      expect(execute('push', 'full', { ...fastOk, quick: 'success', 'secret-shape': outcome }, undefined, master), `push secret ${outcome}`).toThrow();
+      expect(execute('push', 'full', { ...fastOk, quick: 'success', 'secret-scan': outcome }, undefined, master), `push diff scan ${outcome}`).toThrow();
     }
   });
 
@@ -304,7 +327,7 @@ describe('M30 CI workflow', () => {
     const lanes = ['full', 'site', 'docs'];
     // The fast gate: secret-shape scan, classification, the quick typecheck and
     // the required Merge Gate — Ubuntu runners only.
-    const approvedFast = ['secret-shape', 'secret-scan', 'classify', 'quick', 'merge-gate'];
+    const approvedFast = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'authority-drift', 'quick', 'merge-gate'];
     for (const [id, job] of Object.entries(jobs)) {
       const oses = runners(job);
       expect(oses.length, `${id} declares no runner`).toBeGreaterThan(0);
@@ -328,6 +351,7 @@ describe('M30 CI workflow', () => {
       for (const lane of lanes) {
         expect(evaluateIf(jobs['merge-gate']!.if, event, lane)).toBe(true);
         expect(evaluateIf(jobs.quick!.if, event, lane)).toBe(true);
+        for (const id of ['clean-tree', 'authority-drift']) expect(evaluateIf(jobs[id]!.if, event, lane), `${event} ${id}`).toBe(true);
       }
     }
     // The reusable release call arrives under the caller's TAG push event: `ci`
@@ -337,14 +361,14 @@ describe('M30 CI workflow', () => {
     for (const id of ['ci', 'secret-shape', 'classify', 'merge-gate']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', tagRef), `push ${id}`).toBe(true);
     }
-    for (const id of ['quick', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
+    for (const id of ['quick', 'clean-tree', 'authority-drift', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', tagRef), `push ${id}`).toBe(false);
     }
     // A direct push to master is the opposite shape: the seconds-fast gate
     // runs so the required Merge Gate exists on the exact commit for auto-tag,
     // and every paid or full lane stays deferred to the daily run.
     const masterRef = 'refs/heads/master';
-    for (const id of ['secret-shape', 'classify', 'quick', 'merge-gate']) {
+    for (const id of ['secret-shape', 'classify', 'quick', 'clean-tree', 'authority-drift', 'merge-gate']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', masterRef), `master push ${id}`).toBe(true);
     }
     for (const id of ['site', 'docs', 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
@@ -355,7 +379,7 @@ describe('M30 CI workflow', () => {
       for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'merge-gate', 'fixup-queue']) {
         expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(true);
       }
-      expect(evaluateIf(jobs.quick!.if, event, 'full'), `${event} quick`).toBe(false);
+      for (const id of ['quick', 'clean-tree', 'authority-drift']) expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(false);
       // The timer's explicit release mode must never run the nightly suites.
       for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
         expect(evaluateIf(jobs[id]!.if, event, 'full', masterRef, 'true'), `release ${id}`).toBe(false);
@@ -429,7 +453,7 @@ describe('M30 CI workflow', () => {
     }
   });
 
-  it('runs both authority drift checks in the required fast job without regeneration or failure suppression', () => {
+  it('keeps Quick typecheck advisory and free of the two split-out checks', () => {
     const workflow = parse(ciYml);
     const quick = workflow.jobs.quick;
     expect(quick.name).toBe('Quick typecheck');
@@ -472,15 +496,10 @@ describe('M30 CI workflow', () => {
     // scripts/tsgo-parity.mjs). Emission stays on tsc in the build script.
     expect(pkg.scripts.typecheck).toBe('tsgo --noEmit && npm run typecheck:web');
     expect(pkg.scripts['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
-    const drift = quick.steps.find((step: { name?: string }) => step.name === 'Check authority drift (hermetic)');
-    expect(drift).toBeDefined();
-    expect(drift.if).toBe("steps.history.outputs.equal != 'true'");
-    expect(drift['continue-on-error']).toBeUndefined();
-    expect(drift.env).toBeUndefined();
-    expect(drift.run).toBe(
-      'HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false ' +
-      'test/authority-codeowners-310b.test.ts test/authority-tier1-closure-310b.test.ts',
-    );
+    // The two split-out steps must not run twice: they no longer live in quick.
+    for (const name of ['Check authority drift (hermetic)', 'Check generated files']) {
+      expect(quick.steps.find((step: { name?: string }) => step.name === name), `${name} left in quick`).toBeUndefined();
+    }
     expect(quick.steps[0].with.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}');
   });
 
@@ -570,7 +589,7 @@ describe('M30 CI workflow', () => {
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
     // Compiler and drift steps require the trusted proof; the selected MCP
     // contract still needs dependencies even for a source-identical candidate.
-    const expensive = ['Hash protected-branch compiler inputs', 'Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
+    const expensive = ['Hash protected-branch compiler inputs', 'Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check'];
     for (const name of expensive) {
       expect(step(name).if, name).toBe(name === 'Install dependencies'
         ? "steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'"
@@ -593,7 +612,7 @@ describe('M30 CI workflow', () => {
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
     }
-    // Only these five steps may key off the proof output — checkout, setup
+    // Only these four steps may key off the proof output: checkout, setup
     // and protected-branch cache saving must never join the exemption.
     const gated = quick.steps
       .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
@@ -602,10 +621,18 @@ describe('M30 CI workflow', () => {
     expect(gated).toEqual([...expensive].sort());
   });
 
-  it('runs a read-only generated-files check on every required fast-path event', () => {
-    type Step = { name?: string; if?: string; run?: string; 'continue-on-error'?: unknown };
-    const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
-    const check = quick.steps.find((step) => step.name === 'Check generated files');
+  it('runs a read-only generated-files check as its own required job on every fast-path event', () => {
+    type Step = { name?: string; if?: string; run?: string; uses?: string; with?: Record<string, unknown>; 'continue-on-error'?: unknown };
+    const job = (parse(ciYml).jobs as Record<string, { name: string; if?: string; needs?: unknown; 'runs-on': string; permissions?: unknown; steps: Step[] }>)['clean-tree']!;
+    expect(job.name).toBe('Check generated files');
+    expect(job['runs-on']).toBe('ubuntu-latest');
+    expect(job.needs).toBeUndefined();
+    expect(job.permissions).toBeUndefined();
+    expect(job.if).toBe(parse(ciYml).jobs.quick.if);
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}\b/);
+    expect(checkout?.with?.['persist-credentials']).toBe(false);
+    const check = job.steps.find((step) => step.name === 'Check generated files');
     expect(check, 'missing Check generated files step').toBeDefined();
     expect(check!.if).toBeUndefined();
     expect(check!['continue-on-error']).toBeUndefined();
@@ -613,10 +640,36 @@ describe('M30 CI workflow', () => {
     expect(check!.run).toContain('git status --porcelain --untracked-files=normal');
     expect(check!.run).not.toMatch(/git add|git commit|git push|auto-commit/);
     expect(check!.run).not.toMatch(/llms\.txt[^\n]*(exempt|exclude|ignore)/);
-    const names = quick.steps.map((step) => step.name);
-    expect(names.indexOf('Set up Node.js 22')).toBeGreaterThan(-1);
-    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf('Check generated files')!);
-    expect(names.indexOf('Check generated files')).toBeLessThan(names.indexOf('Prove source-identical history fast path')!);
+    const names = job.steps.map((step) => step.name);
+    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf('Check generated files'));
+  });
+
+  it('runs the hermetic authority drift tests as their own advisory job on every fast-path event', () => {
+    type Step = { name?: string; if?: string; run?: string; env?: unknown; uses?: string; with?: Record<string, unknown>; 'continue-on-error'?: unknown };
+    const jobs = parse(ciYml).jobs as Record<string, { name: string; if?: string; needs?: unknown; 'runs-on': string; permissions?: unknown; 'continue-on-error'?: unknown; steps: Step[] }>;
+    const job = jobs['authority-drift']!;
+    expect(job.name).toBe('Check authority drift (hermetic)');
+    expect(job['runs-on']).toBe('ubuntu-latest');
+    expect(job.if).toBe(jobs.quick!.if);
+    expect(job.needs).toBeUndefined();
+    expect(job.permissions).toBeUndefined();
+    expect(job['continue-on-error']).toBeUndefined();
+    for (const step of job.steps.filter((entry) => entry.uses)) expect(step.uses, step.uses).toMatch(/@[0-9a-f]{40}\b/);
+    expect(job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.['persist-credentials']).toBe(false);
+    const drift = job.steps.find((step) => step.name === 'Check authority drift (hermetic)');
+    expect(drift).toBeDefined();
+    expect(drift!.if).toBeUndefined();
+    expect(drift!['continue-on-error']).toBeUndefined();
+    expect(drift!.env).toBeUndefined();
+    expect(drift!.run).toBe(
+      'HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false ' +
+      'test/authority-codeowners-310b.test.ts test/authority-tier1-closure-310b.test.ts',
+    );
+    // Advisory for merge and off the gate's critical path: not a Merge Gate dependency.
+    expect(jobs['merge-gate']!.needs).not.toContain('authority-drift');
+    expect(jobs['merge-gate']!.needs).toContain('clean-tree');
+    // Neither new job adds a secret, trigger or permission.
+    expect(JSON.stringify([jobs['clean-tree'], job])).not.toMatch(/secrets\.|id-token|pull_request_target/);
   });
 
   it('executes the real history proof contract for equal and fallback outcomes', async () => {
@@ -909,8 +962,10 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(25);
-    expect(new Set(names).size).toBe(25);
+    expect(names).toHaveLength(27);
+    expect(new Set(names).size).toBe(27);
+    expect(names).toContain('Check generated files');
+    expect(names).toContain('Check authority drift (hermetic)');
     expect(names).toContain('Secret scan (diff)');
     expect(names).toContain('Master full qualification');
     expect(names).toContain('Desktop release smoke');
