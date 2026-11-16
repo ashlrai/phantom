@@ -13,6 +13,7 @@ const FOOTER = 'Claims are advisory; this reply assigns nothing.';
 const HOME_PATH = /\/(?:Users|home)\/[^/\s;,)]+/g;
 const CONTROL = /\p{Cc}/gu;
 /** ESC-led CSI sequences are removed whole so no `[31m` residue remains. */
+// eslint-disable-next-line no-control-regex -- ESC is the point: strips ANSI CSI sequences.
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
 function scrub(value: unknown): string {
