@@ -10,6 +10,15 @@ from launch_precheck import (precheck, park, parked as precheck_parked, park_key
                              attempt_identity, empty_reason, read_attempts, with_prompt)
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
+# Separate fixed read-only slice: never copy a ready.tsv job into the node queue.
+# Opt-in and Security re-pin required before live adoption. Keep dry runs read-only.
+if os.path.isfile(Q + "/muse-light.enabled") and "--dry-run" not in sys.argv:
+    try:
+        with open(Q + "/muse-light.lock", "a") as node_lock:
+            fcntl.flock(node_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            subprocess.run(["phm", "node", "light", "restock", "--apply", "--json"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired): pass  # unavailable node path never blocks lane restock
 gate = queue_gate.read_gate(Q)
 print("QUEUE_GATE allow=%s depth=%s target=%s src=restock" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
 if not gate["allow"]: sys.exit(0)
@@ -21,7 +30,7 @@ CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 wh
 CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
 GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
-# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
+# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlr-landing live there too but
 # are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
 GS_REPOS = {"phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-plugin", "ashlr-stack"}
 BOLD_MIN = 0.30   # keep READY at >=30% bet=bold lines: counted before each restock; under the floor bold picks first

@@ -2,14 +2,9 @@
 
 # Quickstart — Phantom
 
-<!-- fresh:begin install-snippet -->
-Latest dated changelog release (verify promoted package availability before installing):
+With Node.js 22.15+ and Git installed, the [console setup](#open-verse) takes a few minutes. Provider installation and sign-in may take longer. Then [make your first useful turn](#make-your-first-useful-turn).
 
-```sh
-npm install -g @ashlr/phantom@3.30.31
-phm --version
-```
-<!-- fresh:end -->
+
 
 Phantom by AshlrAI is the everyday coding-agent workbench, formerly Ashlr Verse.
 The Universe experiment kernel is a separate, bounded source-checkout path below.
@@ -19,7 +14,7 @@ its work are distinct steps.
 The primary CLI is `phm`; `ashlr` remains compatible. Current source uses
 `@ashlr/phantom` in `ashlrai/phantom`. Find the current qualified release at
 [GitHub releases](https://github.com/ashlrai/phantom/releases/latest).
-This source tree targets version 3.30.33; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.34; check canonical release availability and exact matching assets before installation.
 The verified 3.25.3 compatibility release remains `@ashlr/hub`.
 Local routes remain `/verse/`, and the published macOS app is `Phantom.app`. See
 [the product naming guide](PHANTOM-BRAND.md).
@@ -83,6 +78,15 @@ Use `npm install -g @ashlr/phantom@latest` for current installation. To reproduc
 a particular release, pin a published version and use its matching desktop
 artifacts; the source candidate is not proof of publication. Package
 installation, desktop installation and fleet activation are separate steps.
+
+<!-- fresh:begin install-snippet -->
+Latest dated changelog release (verify promoted package availability before installing):
+
+```sh
+npm install -g @ashlr/phantom@3.30.33
+phm --version
+```
+<!-- fresh:end -->
 
 ### Desktop app on Apple silicon Mac
 

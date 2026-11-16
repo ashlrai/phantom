@@ -63,6 +63,14 @@
  * ['orders: reader failed']. It is evidence only: it never changes a state,
  * overall, missing[], the pick or any claim field, and grants nothing.
  *
+ * Top-level peers reports read-only peer bus budgets under the same reader
+ * bound. Reader failure yields unavailable evidence; it never changes a
+ * section, overall, missing[], or a task pick.
+ *
+ * Top-level owners joins the three bridge surfaces' advisory claims under
+ * one reader bound. It shares the claims snapshot and verdict clock; a failed
+ * or stalled read yields null and never changes any state or missing reason.
+ *
  * Output is sanitized through sanitizeIdentityText (home → ~, IPs dropped);
  * no message bodies, leases or env values ever reach the result.
  *
@@ -75,7 +83,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
 import { listWorkBoard, type WorkBoardResult } from '../comms/work-board.js';
-import { readChannelHealth, type ChannelHealthReport } from './channel-health.js';
+import { readChannelHealth, type ChannelHealth, type ChannelHealthReport } from './channel-health.js';
 import { readFleetBoard, type FleetBoard, type FleetClaim } from './coordination.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
@@ -83,7 +91,10 @@ import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
 import { defaultPoolReachDeps, readPoolReach, type PoolReach } from './pool-reach.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import type { LiveJobIds } from './order-work-state.js';
+import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
+import { summarizePeers, type RecheckPeers } from './recheck-peers-line.js';
 import { summarizeOrders, type RecheckOrders } from './recheck-orders-line.js';
+import { readSurfaceOwner, type SurfaceOwnerDeps } from './surface-owner.js';
 import { defaultTailnetPeersDeps, readTailnetPeers, type TailnetPeers } from './tailnet-peers.js';
 import {
   bindPickToCoordination,
@@ -120,6 +131,22 @@ export interface FleetRecheckBridge {
   processAlive: boolean | 'unknown';
   /** First missing reason for this channel, or null when nothing is missing. */
   missingBridge: string | null;
+  /**
+   * Evidence only: the channel's recent-request reply coverage, copied from
+   * ChannelHealth.proof.requestCoverage when the observation carries a
+   * meaningful per-request proof. Present for 'unproven' and 'verified';
+   * absent for an 'idle' observation (absent means idle or no per-request
+   * proof metadata — never that a request was answered); 'unknown' on the
+   * no-bridge-evidence placeholder row. Never changes a channel state,
+   * missingBridge, the section verdict or the overall verdict.
+   */
+  requestCoverage?: 'idle' | 'unproven' | 'verified' | 'unknown';
+  /**
+   * Evidence only: recent in-window requests without a bound reply, copied
+   * from ChannelHealth.unansweredCount alongside requestCoverage; null on the
+   * no-bridge-evidence placeholder row. Never changes any state or verdict.
+   */
+  unansweredCount?: number | null;
 }
 
 export interface FleetRecheckClaim {
@@ -207,6 +234,10 @@ export interface FleetRecheck {
   pool?: PoolReach | null;
   /** Mason's last-24h inbox orders by work state; evidence only, never changes a state or the pick. */
   orders?: RecheckOrders | null;
+  /** Peer bus budgets; evidence only, never changes a verdict or task pick. */
+  peers?: RecheckPeers | null;
+  /** Advisory ownership evidence only; landed history never establishes an owner. */
+  owners?: FleetRecheckOwners | null;
   sections: {
     runtime: {
       state: FleetRecheckState;
@@ -246,6 +277,35 @@ export interface FleetRecheck {
   };
 }
 
+export interface FleetRecheckOwners {
+  asOf: string;
+  surfaces: Array<{
+    surface: 'slack-bridge' | 'imessage-bridge' | 'dot-handoff';
+    owner: string;
+    ownerSource: 'advisory-claim' | 'none';
+    liveClaims: number;
+    lastLandedJob: string | null;
+    reason: string | null;
+  }>;
+}
+
+async function readOwnersSnapshot(deps: SurfaceOwnerDeps): Promise<FleetRecheckOwners | null> {
+  const surfaces = ['slack-bridge', 'imessage-bridge', 'dot-handoff'] as const;
+  const reports = await Promise.all(surfaces.map(surface => readSurfaceOwner(surface, deps)));
+  if (reports.some(report => report === null)) return null;
+  return {
+    asOf: reports[0]!.asOf,
+    surfaces: reports.map((report, i) => ({
+      surface: surfaces[i]!,
+      owner: report!.owner,
+      ownerSource: report!.ownerSource,
+      liveClaims: report!.liveClaims.length,
+      lastLandedJob: report!.lastLanded?.jobId ?? null,
+      reason: report!.ownerSource === 'advisory-claim' ? null : report!.reasons[0] ?? 'owner unknown',
+    })),
+  };
+}
+
 /** Read a single task that claims a host can verify a runtime, the channels
  * and work board. No FleetClaim field in the claims ledger identifies a
  * work-board item: claim.id is a ledger uuid and claim.task is free text, so
@@ -275,6 +335,8 @@ export function defaultFleetRecheckDeps(now: () => Date): Required<FleetRecheckD
     readTailnetPeers: () => readTailnetPeers(defaultTailnetPeersDeps()),
     readPool: () => readPoolReach(defaultPoolReachDeps()),
     readOrders: () => readOrderTrace(),
+    readPeers: () => readPeerLedger(),
+    readOwners: () => readOwnersSnapshot({ now: () => now().getTime() }),
     readLaneTargets: () => readLaneTargets(),
   };
 }
@@ -292,6 +354,8 @@ export type FleetRecheckDeps = {
   readTailnetPeers?: () => Promise<TailnetPeers> | TailnetPeers;
   readPool?: () => Promise<PoolReach> | PoolReach;
   readOrders?: () => Promise<OrderTraceV1> | OrderTraceV1;
+  readPeers?: () => PeerLedgerReport;
+  readOwners?: () => Promise<FleetRecheckOwners | null> | FleetRecheckOwners | null;
   readLaneTargets?: () => Promise<LaneTargetsV1> | LaneTargetsV1;
 };
 
@@ -455,6 +519,44 @@ function observationFreshness(label: string, asOf: string, nowMs: number): strin
   return null;
 }
 
+/** Build one observed channel's evidence row. requestCoverage and
+ * unansweredCount are copied only when the observation carries a meaningful
+ * per-request proof ('unproven' or 'verified'): an 'idle' observation omits
+ * both, absent meaning idle or no per-request proof metadata, never that a
+ * request was answered. Neither field can change the state, missingBridge,
+ * the section verdict or the overall verdict. */
+function bridgeChannelView(channel: ChannelHealth, missingBridge: string | null): FleetRecheckBridge {
+  const row: FleetRecheckBridge = {
+    channel: channel.channel,
+    state: channel.state as FleetRecheckBridge['state'],
+    runtimeHost: channel.runtimeHost ?? null,
+    processAlive: channel.processAlive,
+    missingBridge,
+  };
+  const coverage = channel.proof?.requestCoverage;
+  if (coverage === 'unproven' || coverage === 'verified') {
+    row.requestCoverage = coverage;
+    row.unansweredCount = channel.unansweredCount ?? null;
+  }
+  return row;
+}
+
+/** The no-bridge-evidence placeholder for a required channel absent from the
+ * report: the identified gap is the channel's missing reason, the state is
+ * UNKNOWN, and the coverage fields carry 'unknown' and null. Pure evidence —
+ * the section verdict is driven by the content gap, never by this row. */
+function absentChannelView(name: 'slack' | 'imessage'): FleetRecheckBridge {
+  return {
+    channel: name,
+    state: 'UNKNOWN',
+    runtimeHost: null,
+    processAlive: 'unknown',
+    missingBridge: `${name} bridge evidence absent`,
+    requestCoverage: 'unknown',
+    unansweredCount: null,
+  };
+}
+
 type BridgeSection = FleetRecheck['sections']['bridge'];
 
 const REQUIRED_CHANNELS = ['slack', 'imessage'] as const;
@@ -492,6 +594,7 @@ function bridgeSection(
       contentMissing.push(`${name} bridge evidence absent`);
       blocked = true;
       allLive = false;
+      rows.push(absentChannelView(name));
       continue;
     }
     const content: string[] = [...(channel.missing ?? [])];
@@ -506,24 +609,12 @@ function bridgeSection(
       ? observationFreshness(`${name} channel`, channel.asOf, nowMs)
       : VERDICT_CLOCK_REASON;
     if (fresh !== null) channelFreshness.push(fresh);
-    rows.push({
-      channel: name,
-      state: channel.state as FleetRecheckBridge['state'],
-      runtimeHost: channel.runtimeHost ?? null,
-      processAlive: channel.processAlive,
-      missingBridge: content[0] ?? fresh,
-    });
+    rows.push(bridgeChannelView(channel, content[0] ?? fresh));
   }
   // Extra observed channels ride along as evidence without affecting the verdict.
   for (const channel of report.channels ?? []) {
     if ((REQUIRED_CHANNELS as readonly string[]).includes(channel.channel)) continue;
-    rows.push({
-      channel: channel.channel as FleetRecheckBridge['channel'],
-      state: channel.state as FleetRecheckBridge['state'],
-      runtimeHost: channel.runtimeHost ?? null,
-      processAlive: channel.processAlive,
-      missingBridge: (channel.missing ?? [])[0] ?? null,
-    });
+    rows.push(bridgeChannelView(channel, (channel.missing ?? [])[0] ?? null));
   }
   section.channels = rows;
   const reportReason = nowOk
@@ -802,10 +893,23 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     d.readOrders = () => readOrderTrace({ now: () => nowMs });
   }
 
-  // All ten readers run concurrently, each inside its own 5 s bound.
-  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets] = await Promise.all([
+  const claimsRead = attempt(d.readFleetBoard);
+  if (deps.readOwners === undefined) {
+    d.readOwners = async () => {
+      const claims = await claimsRead;
+      return readOwnersSnapshot({
+        now: () => nowMs,
+        board: () => claims.ok ? claims.value : {
+          schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null,
+        },
+      });
+    };
+  }
+
+  // All readers share the same 5 s bound; ownership reuses the claims read.
+  const [runtime, claims, bridge, board, coordination, live, tailnet, pool, orders, laneTargets, owners, peers] = await Promise.all([
     attempt(d.readRuntimeIdentity),
-    attempt(d.readFleetBoard),
+    claimsRead,
     attempt(d.readChannelHealth),
     attempt(d.listWorkBoard),
     attempt(d.listCoordination),
@@ -814,6 +918,8 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     attempt(d.readPool),
     attempt(d.readOrders),
     attempt(d.readLaneTargets),
+    attempt(d.readOwners),
+    attempt(d.readPeers),
   ]);
 
   // Orders evidence uses healthy snapshots only; anything else is "no evidence".
@@ -845,6 +951,11 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
     tailnet: tailnetEvidence(tailnet, asOf, home),
     pool: poolEvidence(pool, asOf),
     orders: ordersEvidence(orders, asOf, asOf, liveJobs, lanes),
+    owners: owners.ok ? owners.value : null,
+    peers: peers.ok ? summarizePeers(peers.value) : {
+      asOf, status: 'unavailable', liveRows: 0, capacity: 0, rateLimited: 0,
+      tightest: null, nearCap: 0, reasons: ['peers: reader failed'],
+    },
     sections,
     overall: { state: verified ? 'VERIFIED' : worst, missing },
   };

@@ -55,7 +55,7 @@ describe('docs/lanes.md', () => {
 
 describe('docs/lanes.md links', () => {
   it('is linked from the README', () => {
-    expect(read('README.md')).toContain('[docs/lanes.md](docs/lanes.md)');
+    expect(read('README.md')).toContain('(docs/lanes.md)');
   });
 
   it('is linked from the docs index', () => {

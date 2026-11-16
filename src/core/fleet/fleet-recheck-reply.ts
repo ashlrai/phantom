@@ -11,11 +11,13 @@
  * recheck-pool-line.ts). An optional "Orders 24h:" evidence line (Mason's
  * inbox orders over the last 24h classified by order-trace; see
  * recheck-orders-line.ts) sits directly after the Task line when the verdict
- * carries orders evidence the trace could prove. It is the first line
- * dropped when the reply would exceed the cap, then Pool, then Computers,
+ * carries orders evidence the trace could prove. An optional "Owners:" line
+ * follows Bridge and names advisory bridge claimants. An optional "Peers:"
+ * line follows Orders and reports peer bus budgets. When the reply would
+ * exceed the cap, drop Peers, then per-channel coverage, then Owners, Orders, Pool, Computers,
  * then Running job, then Last verified, so the verdict line is never clipped.
  * One optional "Last verified:" evidence line sits
- * after the Orders line when the task section carries lastVerified (the newest
+ * after the Peers line when the task section carries lastVerified (the newest
  * finished item with a named owner and claim receipt), dropped last of the
  * three. One optional "Running job:" line follows it (dropped before Last
  * verified) when task.liveWorker carries process-table evidence; it is
@@ -30,7 +32,9 @@
  */
 import type { FleetRecheck } from './fleet-recheck.js';
 import { formatComputersLine } from './recheck-computers-line.js';
+import { formatPeersLine } from './recheck-peers-line.js';
 import { formatOrdersLine } from './recheck-orders-line.js';
+import { formatOwnersLine } from './recheck-owners-line.js';
 import { formatPoolLine } from './recheck-pool-line.js';
 import { sanitizeIdentityText } from './runtime-identity.js';
 
@@ -50,6 +54,31 @@ const FORBIDDEN_WORDS = /\b(?:routed|dispatched)\b/gi;
 /** Redact home paths, IP addresses and contract-banned words from one value. */
 function scrub(value: string): string {
   return sanitizeIdentityText(value.replace(HOME_PATH, '~'), '').replace(FORBIDDEN_WORDS, '[verb]');
+}
+
+/**
+ * Bounded per-channel request-coverage evidence lines (at most one per
+ * required channel, fixed length for any count): 'unproven' with a positive
+ * pending count names the exact gap, 'verified' says recent requests answered
+ * in thread, and 'idle' or 'unknown' (the no-bridge-evidence placeholder)
+ * prints nothing. Evidence only: the lines never change a state, the verdict
+ * line or the cap handling, and they are dropped after Peers when the
+ * reply would exceed the cap.
+ */
+function coverageLines(
+  channels: FleetRecheck['sections']['bridge']['channels'],
+): string[] {
+  return channels
+    .filter(c => c.channel === 'slack' || c.channel === 'imessage')
+    .map(c => {
+      const label = c.channel === 'slack' ? 'Slack' : 'IMessage';
+      if (c.requestCoverage === 'unproven' && typeof c.unansweredCount === 'number' && c.unansweredCount > 0) {
+        return `${label}: ${c.unansweredCount} ${c.unansweredCount === 1 ? 'request' : 'requests'} without a bound reply`;
+      }
+      if (c.requestCoverage === 'verified') return `${label}: recent requests answered in thread`;
+      return null;
+    })
+    .filter((line): line is string => line !== null);
 }
 
 /** Format a fleet recheck verdict as one paste-ready thread reply. */
@@ -73,7 +102,10 @@ export function formatRecheckReply(r: FleetRecheck): string {
   const computers = formatComputersLine(r.tailnet, scrub);
   const pool = formatPoolLine(r.pool, scrub);
   const orders = formatOrdersLine(r.orders, scrub);
-  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false): string => [
+  const peers = formatPeersLine(r.peers, scrub);
+  const coverage = coverageLines(bridge.channels);
+  const owners = formatOwnersLine(r.owners, scrub);
+  const build = (withOrders: boolean, withLast: boolean, withRunning: boolean, withComputers: boolean, withPool = false, withOwners = false, withCoverage = false, withPeers = false): string => [
     `Phantom recheck ${r.overall.state} · as of ${scrub(r.asOf)} · source fleet-recheck`,
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
@@ -82,10 +114,13 @@ export function formatRecheckReply(r: FleetRecheck): string {
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
+    ...(withOwners && owners !== null ? [owners] : []),
+    ...(withCoverage ? coverage : []),
     task.task === null
       ? `Task: none, ${scrub(task.missing[0] ?? 'no task evidence')} (${task.state})`
       : `Task: ${scrub(task.task.id)} ${task.task.state} · owner ${scrub(task.task.owner)} · claim ${scrub(task.task.claimReceipt)} (${task.state})`,
     ...(withOrders && orders !== null ? [orders] : []),
+    ...(withPeers && peers !== null ? [peers] : []),
     ...(withLast && lastVerified !== null ? [lastVerified] : []),
     ...(withRunning && running !== null ? [running] : []),
     r.overall.state === 'VERIFIED'
@@ -94,11 +129,22 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  let text = build(true, true, true, true, true);
+  let text = build(true, true, true, true, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, true);
   if (text.length > REPLY_MAX) text = build(false, true, true, false);
   if (text.length > REPLY_MAX) text = build(false, true, false, false);
   if (text.length > REPLY_MAX) text = build(false, false, false, false);
+  // Oversized core evidence must not crowd out a complete verdict line.
+  // An oversized verdict reason itself retains the existing ellipsis cap.
+  if (text.length > REPLY_MAX) {
+    const verdict = text.slice(text.lastIndexOf('\n') + 1);
+    if (verdict.length < REPLY_MAX - 1) {
+      return `${text.slice(0, REPLY_MAX - verdict.length - 2)}…\n${verdict}`;
+    }
+  }
   return text.length <= REPLY_MAX ? text : `${text.slice(0, REPLY_MAX - 1)}…`;
 }

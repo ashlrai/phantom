@@ -24,7 +24,7 @@ afterEach(() => { roots.splice(0).forEach(root => rmSync(root, { recursive: true
 function runsDir(): string {
   const root = mkdtempSync(join(tmpdir(), 'leader-status-')); roots.push(root);
   for (const dir of ['queue', 'supervisor', 'leader']) mkdirSync(join(root, dir));
-  writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ rollup_24h: { by_lane: {
+  writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ last_tick: '2026-11-09T03:09:00Z', rollup_24h: { by_lane: {
     claude: { merged: 9, median_ttm_s: 1500 }, 'codex-personal': { merged: 3, median_ttm_s: 2400 }, devin: { merged: 0 } } } }));
   writeFileSync(join(root, 'supervisor', 'status-main-guardian.md'), [
     '# Main guardian status (2026-11-09 03:00:00)', '',
@@ -41,7 +41,8 @@ describe('leader reply cleanup', () => {
   it('turns the Nov 7 raw output into clean text', () => {
     const clean = cleanLeaderReplyText(NOV7_RAW);
     expect(clean).toBe('The workspace is empty.\nSpinner done');
-    expect(clean).not.toMatch(/Welcome to Devin|\u001b|╭|\r/);
+    expect(clean).not.toContain('\u001b');
+    expect(clean).not.toMatch(/Welcome to Devin|╭|\r/);
   });
   it('keeps ordinary replies intact', () => {
     expect(cleanLeaderReplyText('Welcome back. 12 PRs merged.\n\n\n\nAll good.')).toBe('Welcome back. 12 PRs merged.\n\nAll good.');

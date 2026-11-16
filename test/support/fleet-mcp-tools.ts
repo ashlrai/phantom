@@ -35,6 +35,7 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_job_current_batch',
   'fleet_job_current',
   'fleet_intent_read',
+  'fleet_orchestration_read',
   'fleet_job_current_snapshot',
   'fleet_job_patch',
   'fleet_path_history',
@@ -63,4 +64,5 @@ export const FLEET_MCP_TOOL_NAMES: readonly string[] = Object.freeze([
   'fleet_self_tick_last',
   'fleet_recheck',
   'fleet_recheck_history',
+  'fleet_bridge_check',
 ]);

@@ -21,6 +21,7 @@ import { parseOrderAt } from '../../cli/fleet-orders.js';
 import { classifyWorkItem } from '../comms/work-item-state.js';
 import { orderEvidence, mostAdvancedJob, type LiveJobIds } from '../fleet/order-work-state.js';
 import { heldLaneBlocker } from '../fleet/order-lane-blocker.js';
+import { readRouteReplyFacts, threadReplyOf, type RouteReplyFacts } from '../fleet/order-thread-reply.js';
 import { readOrderTrace, type OrderTraceV1 } from '../fleet/order-trace.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
 import { readLaneTargets, type LaneTargetsV1 } from '../fleet/runs-lane-targets.js';
@@ -76,6 +77,8 @@ export interface FleetOrderStateApiDeps {
   lanes?: () => Promise<LaneTargetsV1>;
   /** Per-reader bound in ms (default VERSE_FLEET_ORDER_STATE_TIMEOUT_MS). */
   timeoutMs?: number;
+  /** null or a thrown read leaves reply delivery unknown. */
+  replies?: () => ReadonlyMap<string, RouteReplyFacts> | null;
 }
 
 export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): ApiModule {
@@ -83,6 +86,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
   const liveRead = deps.live ?? listLiveWorkers;
   const lanesRead = deps.lanes ?? readLaneTargets;
   const timeoutMs = deps.timeoutMs ?? VERSE_FLEET_ORDER_STATE_TIMEOUT_MS;
+  const repliesRead = deps.replies ?? (() => readRouteReplyFacts());
   const now = deps.now ?? (() => new Date());
   return async (_ctx, req, res, path, method) => {
     if (path !== VERSE_FLEET_ORDER_STATE_PATH) return false;
@@ -113,7 +117,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
     try {
       trace = await bounded(() => read({ now: () => nowMs }), timeoutMs);
     } catch {
-      sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', orders: [] });
+      sendJson(res, 200, { v: 1, asOf: nowIso, sources: 'unavailable', live: 'unavailable', orders: [] });
       return true;
     }
     let live: LiveJobIds | undefined;
@@ -134,6 +138,8 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
       if (targets.sourceState === 'healthy') lanes = targets;
     } catch { /* lanes stays undefined: no blocker evidence */ }
     const lanesState: 'healthy' | 'unavailable' = lanes === undefined ? 'unavailable' : 'healthy';
+    let replies: ReadonlyMap<string, RouteReplyFacts> | null;
+    try { replies = repliesRead(); } catch { replies = null; }
     let orders = [...trace.orders].sort((a, b) => b.at.localeCompare(a.at));
     if (since !== undefined) {
       const cutoff = nowMs - since * 3600_000;
@@ -166,6 +172,7 @@ export function createFleetOrderStateApi(deps: FleetOrderStateApiDeps = {}): Api
         return {
           at: o.at, source: o.source, key: o.key,
           state: c.state, asOf: c.asOf, evidenceSource: c.source,
+          threadReply: threadReplyOf(o.requestId, replies),
           missing: c.missing, pr: evidence.verified?.artifact ?? null, owner,
           ...(blocker !== undefined ? { blocker } : {}),
         };

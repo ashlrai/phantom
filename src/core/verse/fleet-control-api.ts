@@ -6,6 +6,7 @@
  *   GET  /api/verse/fleet/control/queue         → FleetControlQueueV1
  *   GET  /api/verse/fleet/control/runs/<id>/log → FleetRunLogV1
  *   GET  /api/verse/fleet/control/stray-slots   → StraySlotsV1 (counted slots lost to strays)
+ *   GET  /api/verse/fleet/control/teammate-tasks → Dot/Instinct handoffs (fleet-teammate-tasks-api.ts)
  *   POST /api/verse/fleet/control               → one FleetControlAction → FleetControlActionResultV1
  *
  * The operations live in core/fleet/fleet-control.ts (each reuses the one
@@ -339,6 +340,27 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   }
   if (path === '/api/verse/fleet/control/merge-graph') {
     return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/sessions') {
+    return (await import('./fleet-sessions-map-api.js')).handleFleetSessionsMapApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/claim-notices') {
+    return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/teammate-tasks') {
+    return (await import('./fleet-teammate-tasks-api.js')).handleFleetTeammateTasksApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/orchestration') {
+    return (await import('./fleet-orchestration-api.js')).handleFleetOrchestrationApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/slack-trace') {
+    return (await import('./fleet-slack-trace-api.js')).handleFleetSlackTraceApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/compute') {
+    return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/org') {
+    return (await import('./company-org-api.js')).handleCompanyOrgApi(ctx, req, res, path, method);
   }
   // Per-session operator guidance (RQ-PHX-RECUTDESKOLDC203, recut of #5253).
   //   GET  /api/verse/fleet/control/guidance        → aggregate ack state

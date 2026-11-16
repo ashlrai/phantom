@@ -21,6 +21,39 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
+
+`agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
+`work.post.dispatch: {tier: fast|mid|work|frontier, scope, acceptance}` (4000/2000
+character caps), and `work.result: {jobId, claimKey, queueId, receiptId, outcome,
+reason?}`. Outcomes are `reserved|admitted|complete|failed`; reasons are bounded
+codes. Queue/receipt IDs are `peer-work-<32 hex>` / `pw-<32 hex>`.
+Existing work posts remain coordination-only without a dispatch payload.
+
+`agentnet/work-dispatch.ts` exports
+`consumePeerWork(session: PeerSession, input?: {apply?: boolean; after?: number},
+options?: PeerBusOptions)`. The host-owned private `dispatch.json` beside peer
+bindings supplies enabled state, peer allowlist, repository allowlist, tier ceilings
+and exact permitted paths. See [Agent Bus dispatch](docs/AGENT-BUS.md#bounded-peer-dispatch).
+Results contain status, dryRun, bounded results, and a cursor on success.
+Only authenticated admission receipts qualify; labels and peer status messages
+cannot authorize claims or prove completion. No shell, engine, merge or spending
+is invoked. Queue task strings remain untrusted data under existing worker gates.
+
+`QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
+atomically insert a new READY job and claim it under the existing queue lock.
+The optional synchronous host guard runs under that lock; an existing ID or an
+invalid intake fails without mutation. The two-argument claim contract is unchanged.
+`queue/decompose.ts` exports its existing `promptText(field, value, max): string`
+validator for shared bounded, printable, secret-free queue prompt validation.
+
+`PeerRequest.work?: z.infer<typeof workPostBodySchema>` is accepted only for a
+directed task; its authenticated bus body is `work.post`, with the same enrollment
+and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>`
+and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
+Dispatch is a read-only preview unless apply is exactly true. Results use only
+the local bus and its current comms/participant allowlist, never a Slack send.
+
 ---
 
 ## src/core/types.ts — THE CONTRACT (types only)
@@ -446,3 +479,190 @@ in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' |
 and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
 report for unusable/incomplete input, and 2 indicates invalid arguments.
 Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
+
+## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
+
+`src/core/fleet/feedback-triage.ts` exports pure `triageFeedback(signal, existing)`:
+`FeedbackSignal {source, text, refs}` becomes an ignored reason or a classified
+`TriageResult {kind, priority, suggestedLane, suggestedTier, dedupeKey, promptSeed}`.
+`feedback-ingest.ts` exports bounded dependency-injected `ingestFeedback`.
+`feedback-cycle.ts` exports `runFeedback` and pure `feedbackDigest`.
+`src/cli/fleet-feedback.ts` exports `cmdFleetFeedback`; scan previews by default,
+apply uses existing drop admission, and digest reports twelve-hour observations.
+No merge, publish, send or scheduler authority is added. The full limits,
+dedupe, protected-scope and failure contract is in the
+[feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
+
+## Fleet chief-of-staff v1
+
+`src/core/fleet/chief-of-staff.ts` exports `FleetSnapshot`, `ChiefOfStaffPlan`,
+`CHIEF_OF_STAFF_SCHEMA = 'fleet.chief-of-staff.v1'`,
+`CHIEF_OF_STAFF_LIMITS: { lanes: 64; jobs: 200; outcomes: 1000; brief: 12000 }`,
+`parseFleetSnapshot(value: unknown): FleetSnapshot` and
+`planChiefOfStaff(snapshot: FleetSnapshot): ChiefOfStaffPlan`.
+`src/cli/fleet-chief-of-staff.ts` exports `FleetChiefOfStaffDeps` (optional
+`read(path): Promise<string>`, `runsDir`, `now(): Date`, `out(text)` and `err(text)`)
+and `cmdFleetChiefOfStaff(args: string[], deps?: FleetChiefOfStaffDeps): Promise<number>`.
+The [v1 schema contract](docs/contracts/CONTRACT-FLEET-CHIEF-OF-STAFF-V1.md)
+defines bounds, deterministic rules, read-only capture and literal advisory
+authority. Core has no I/O or ambient clock; the CLI never applies a plan.
+## Fleet proof artifacts
+
+`fleet.proof.v1` carries bounded claims, evidence provenance, command exits,
+diff statistics, risk classification and a reviewer checklist. The bridge
+publisher captures actual staged Git and runner artifacts before publication;
+`phm fleet proof verify <resultRef>` checks the local digest-bound bundle without
+executing commands. Agent assertions alone never establish proof. See
+[the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
+trust boundary, bounds, redaction and Security-pinned deployment requirements.
+## Bridge publisher diff scope (`contrib/mac/publish.sh`)
+
+The publisher stages only the job's change set, never ambient worktree state.
+Change set = paths whose worktree content differs from the job's fork point
+(`git merge-base BASE HEAD`) plus untracked, non-ignored files that are not
+scratch-shaped (`*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store`).
+An optional manifest `~/.ashlr-runs/<job>.files` (one repo-relative path per
+line, written ops-side from the work claim) is authoritative: only listed paths
+are staged; a malformed manifest aborts (`scope-manifest-invalid`). The index is
+reset to BASE before staging, so a stale fork point cannot re-revert main.
+Excluded paths are reported as `NOTE SCOPE_EXCLUDED`. The integrated-merge
+profile is unchanged. Secret-shape, G1 and protected-path gates are unchanged.
+Live install needs a Security re-pin.
+## Fleet outcome measurement and advisory policy v1
+
+`buildOutcomeMetrics` in `src/core/fleet/outcome-metrics.ts` folds injected job
+events into attempt-cohort lane/model-tier rates, measured USD estimates,
+repo merge velocity, seven-day revert rates and merge-time percentiles.
+Missing evidence stays null; sample counts and event references accompany
+measurements. `suggestOutcomePolicy` returns bounded, evidence-backed
+`PolicySuggestion` advice with `suggestOnly: true`; it never applies changes.
+`generateWeeklySelfReport` produces Markdown for chief-of-staff attachment.
+
+`phm fleet metrics report --hours 24 --json`, `suggest --json` and `weekly`
+read the jobs ledger only. Weekly defaults to 168 hours. The
+[full contract](docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) defines
+cohorts, observation coverage, unknowns, thresholds and exit codes.
+
+## Agent peer mesh
+
+[CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
+session-bound callsigns, team-only peer messages, Slack provisioning drafts,
+the approval-gated broker and bounded chief-of-staff delegation.
+## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
+
+`src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
+feature domains, lane/model preferences, relative memory paths, current-job
+metadata and outcome statistics. `src/core/fleet/specialist-memory.ts` appends
+markdown job outcomes and renders bounded, scrubbed context for future prompts.
+`src/cli/fleet-roster.ts` exposes `phm fleet roster list|show|assign|note --json`.
+The live session roster stays separate. Storage, exported functions, failure
+behavior and verification are pinned in
+[the specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md).
+
+## Fleet orchestration cycle (`fleet.orchestration.v1`)
+
+`phm fleet orchestrate [--snapshot <path|auto>] [--top <1..8>] [--apply] [--json]`
+composes chief-of-staff, roster/memory, authenticated peer bus, weekly outcome
+metrics and the owner thread. Default top is three. Preview performs reads only.
+Apply requires fresh (at most 60 seconds old), available fleet evidence and the
+existing host peer session; it never dispatches, merges, edits the queue or applies
+policy. Run the command again to observe subsequent dispatch outcomes and plan
+the next cycle. This command does not install a daemon or change lane execution.
+
+PLAN retains chief-of-staff ordering and attaches weekly metrics suggestions with
+`suggestOnly: true`. DELEGATE chooses idle roster identities with an explicit
+matching lane allowlist, in stable identity order, and includes bounded historical
+memory and relevant outcome advice. Existing peer authentication, audience,
+approval, rate and KILL/pause gates remain binding. EXECUTE belongs to existing
+dispatch; a handoff is no claim or proof of execution. MEASURE reads the jobs
+ledger afresh each cycle; unknown evidence remains unknown. REPORT records one
+bounded leader verdict/brief through `postOwnerNotice` in the desktop owner thread;
+it does not add a transport or send an unsolicited external reply.
+
+`orchestrateFleet` in `src/core/fleet/orchestrate.ts` accepts fixture snapshot/events
+and host options. Apply serializes using the existing roster lock and reserves
+`orchestration.json` receipts before peer sends. Job/lane/queue-time receipts dedup
+retries, including drafts and uncertain delivery; a crash reservation stays visible.
+A later matching finish releases only this loop's current-job metadata, without
+claiming merge/proof acceptance. Undated reused job IDs remain deduplicated. The
+private journal is capped at 2,000 receipts and fails closed at capacity; state
+repair/archival is an operator task. Exit 0 means the cycle completed without
+attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
+Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
+
+## Fleet compute observation (`fleet.compute.v1`)
+
+`GET /api/verse/fleet/control/compute` serves the read-only projection in
+`src/core/fleet/compute-view.ts`: local OS readings, registered node heartbeat
+observations, fenced job placement and dispatcher lane hard caps. All missing
+measurements are null and source failures are explicit. No parameters or writes
+are accepted. Node beats may carry the closed numeric `HostStats` schema defined
+in `src/core/drive/nodes/state.ts`; legacy beats remain valid. This telemetry
+never changes routing authority. See [machine telemetry](docs/MACHINE-TELEMETRY.md#unified-fleet-compute-map).
+
+## Fleet session map (`fleet.sessions.v1`)
+
+`GET /api/verse/fleet/control/sessions` composes the existing
+`GET /api/fleet/sessions` dispatch inventory with `fleet.compute.v1` through
+`src/core/fleet/sessions-view.ts`. It accepts no query parameters or mutations.
+The existing sessions endpoint and its schema remain compatible.
+
+The map projection preserves inventory source states, counts, sessions and
+recent rows unchanged, and adds `computeAt`, `mapSessions` and `mapRecent`. Map
+rows contain `nodeId`, `placement`, `mapState`,
+`branch`, `worktree`, `activity` and `detailSources`, alongside job/lane/model,
+status, elapsed and outcome fields. Counts describe the local
+dispatch inventory; claim-only remote rows are additional observations, with
+unknown lane/model/status and null elapsed time. Placement uses a unique fenced
+node claim or a confirmed local worker process. Conflicting claims or a remote
+claim conflicting with a local process yield null placement. Queue membership
+alone never establishes a node. Map states group launching/running/publishing
+as running, exited as idle (awaiting reap), parked as held, queued as queued,
+and stale/unknown/finished as unknown. No absence establishes idle capacity.
+
+Only local inventory rows receive bounded, scrubbed job details (at most 100,
+eight concurrent readers); omitted evidence stays null and limits set
+`truncated`. Worktree `recorded` means branch metadata exists in the base
+receipt, not that the directory still exists or is clean. Paths are withheld;
+no worktree traversal, provider calls or raw prompt reads occur. Activity is
+the last retained scrubbed log excerpt, capped at 160 characters, with unknown
+activity time; it is not a semantic completion claim. Remote claims never read
+local artifacts with matching job names. Missing sources and telemetry remain
+explicit; the map renders unknown placement and empty inventories without
+seeded sessions. All reads use the existing bounded regular-file readers.
+## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
+
+`src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
+`liveOverride`, `setLiveOverride`, `clearLiveOverride`, `readConfigAudit`,
+`classifyKey`, `validateOverride`, `RESTART_REQUIRED`, `MUTABLE_KEY_PATTERNS`,
+`PINNED_DEFAULTS`, `DynConfigError` and the types `ResolvedConfig`, `LiveEntry`,
+`LiveConfigFile`, `AuditEntry`, `ConfigAuditReport`. `src/cli/fleet-config.ts`
+exports `cmdFleetConfig(args: string[]): Promise<number>`.
+
+Precedence (low to high): pinned defaults < slots.json < budget-overrides.json <
+`queue/live-config.json` < one-shot CLI. Writes are lock + temp + rename; the audit
+line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
+who/when/why. Restart-required keys (security pins, paid-model blocks, credential
+paths, GATES files) are refused by the writer and ignored by the resolver. See
+[docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
+
+## Agent Bus v2 foundation
+
+`src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
+reject ASCII controls including DEL. Claims grant no execution authority.
+
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[])`
+in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+It validates at most 1024 retained receipts in strictly increasing cursor order;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
+provider comes from the post or explicit participant metadata (missing is refused).
+Statuses update only retained jobs from the same routing owner; orphan statuses
+are ignored. Duplicate job posts and malformed work bodies refuse the projection.
+Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+This is a pure retained-snapshot projection, not a historical ledger or identity
+check. It performs no I/O, transport, claim mutation or execution. Existing v1
+journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
+No HTTP feed endpoint is provided by this foundation.

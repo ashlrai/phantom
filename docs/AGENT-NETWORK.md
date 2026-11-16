@@ -126,6 +126,9 @@ provider transcripts. The runner must not publish, resolve copied credentials or
 perform unfenced external effects. It must pass the claim token to any effect sink
 that accepts effects; a preflight lease check alone cannot fence external effects.
 No runner executable is installed by this change.
+The [reference runner](NODES.md#reference-runner-security-review-before-installation)
+provides `phm node run-once` for the fixed `shell-check` and `omlx-chat` packs;
+its operator-owned wrapper requires Security review before installation.
 
 Workers target a three-second renewal and pressure-check interval; bounded
 synchronous telemetry probes and SSH operations can delay a check. They hold on local `~/.ashlr-runs/PAUSE` or `KILL`,
@@ -164,6 +167,36 @@ The [node layout](NODES.md) describes custody and deployment limits. Agent Bus
 claims, `/api/verse/agent-bus`, the desktop Durable bus tab and A2A schemas keep
 providing coordination. Their local claims do not become multi-host execution
 leases. The already shipped node router is reused for execution fencing instead.
+
+## Company desktop view
+
+Open **Company overview** from the Fleet hub, choose **Company** in the pane
+menu, or open `/verse/?pane=company`. The read-only view combines the recorded
+mission/leader verdict, READY queue depth and departures per hour, live and
+recent sessions, PR merges, lane quota windows, enrolled nodes (including muse)
+and their heartbeats, and observed agent/channel assignments. Job buttons open
+the existing worker log; PR links open the recorded GitHub pull request.
+
+The view reuses the shared queries for `/api/fleet/sessions`, `/api/fleet/lanes`,
+`/api/nodes`, `/api/queue/stats?window=3600`, `/api/verse/fleet/runs`,
+`/api/verse/fleet/runs/mission`, `/api/verse/fleet/comms-status`,
+`/api/verse/fleet/work-board?limit=20`, and `/api/verse/agent-bus/status`.
+Panels refresh every 15 seconds only while visible. Each has its own loading,
+empty, retry and stale-reading state; recordings older than two minutes are
+marked stale. Finished includes failed jobs in the source's trailing hour;
+truncated session counts are lower bounds, and missing evidence stays unknown.
+Quota `used_frac` is derived from observed remaining percent; reset-pending
+readings are unknown rather than fresh quota.
+
+The Company view uses a lane roster; it does not display specialist callsigns
+or per-agent memory freshness. Its chief-of-staff brief panel remains pending;
+the existing mission is shown separately. Specialist assignments are available
+separately in the Channels pane's Leader orchestration journal (see
+[fleet coordination](FLEET-COORDINATION.md)). Channel assignments show
+recorded owners and channel references, not proven Slack membership or current
+reachability. Unread counts and channel-creation proposals stay unknown because
+the existing JSON endpoints do not expose them. Unexpired bus messages are
+labelled separately. Company adds no backend route, writes, sends, or grants.
 
 ## Slack bridge
 
@@ -326,3 +359,27 @@ phm org join --member evan-deloria --machine evan-mac --lane claude=20 --json
 echo '[{"id":"RQ-1","priority":3}]' > /tmp/jobs.json
 phm org plan --queue /tmp/jobs.json --json
 ```
+
+## Agent peer mesh
+
+Host-enrolled specialists address one another by callsign through the existing
+bus and approved Slack broker:
+
+```sh
+phm agentnet peers list --json
+phm agentnet peers read --after 0 --json
+phm agentnet peers send reviewer review "Review pr:123" --json
+phm agentnet peers send builder handoff "Review complete" --reply-to peer-00000000-0000-0000-0000-000000000000 --json
+phm agentnet channels propose parser-review --json
+phm agentnet channels propose parser-review --apply --json
+phm agentnet identity register reviewer --json
+```
+
+Channel proposals preview by default; `--apply` and identity registration record
+local drafts. Actual bot/channel provisioning needs a reviewed provisioner and
+outbound approval. Session bindings come from the trusted host, never a callsign
+argument. Missing bindings fail closed. Peer messages are untrusted coordination,
+not work-launch authority; replies must carry the preceding message's `replyTo`.
+The ninth hop and repeated origin/pair escalate to the human queue. See the
+[peer mesh contract](contracts/CONTRACT-AGENTNET-PEERBUS.md) for enrollment,
+limits, CoS opt-in, delivery results and the separate Security handoff.

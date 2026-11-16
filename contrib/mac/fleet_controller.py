@@ -145,6 +145,65 @@ def lane_quality(stats):
     return out
 
 
+def outcome_quality(report, previous, now, lanes):
+    """Eval-report -> bounded preference weights, persisted hysteresis, metadata-only receipts.
+
+    Only resolved merges count; CI correlation uses those same PRs, with >=5 in each
+    cohort. Unknown/stale/degraded evidence has no influence, even after a penalty.
+    Entry <=.80, recovery >=.90, at most one transition/hour; weights are .75 or 1.
+    """
+    valid = isinstance(report, dict) and report.get("schema") == "fleet.eval-report.v1"
+    stamp = parse_ts(report.get("generatedAt")) if valid else None
+    window = report.get("window") if valid else None
+    until = parse_ts(window.get("until")) if isinstance(window, dict) else None
+    sources = report.get("sources", {}) if valid else {}
+    sources = sources if isinstance(sources, dict) else {}
+    health = lambda name: sources[name].get("state") if isinstance(sources.get(name), dict) else None
+    valid = (valid and stamp is not None and until is not None and
+             0 <= now - stamp <= 900 and 0 <= now - until <= 900 and
+             health("jobs") == "healthy" and health("pullRequests") in ("healthy", "absent") and
+             health("observations") in ("healthy", "missing", "disabled") and
+             isinstance(report.get("pullRequests"), list))
+    rows = report["pullRequests"] if valid else []
+    weights, state, receipts = {}, {}, []
+    previous = previous if isinstance(previous, dict) else {}
+    for lane in lanes:
+        old = previous.get(lane, {})
+        decided = _num(old.get("decided_at")) if isinstance(old, dict) else None
+        penalized = (old.get("penalized") is True if isinstance(old, dict) else False)
+        if decided is None or decided > now or decided < 0:
+            penalized, decided = False, None
+        cohort = [p for p in rows if isinstance(p, dict) and p.get("lane") == lane and
+                  p.get("durability") in ("stable", "reverted", "regressed", "followed-up")]
+        # A malformed/repeated PR cannot inflate the minimum-N gate.
+        urls = [p.get("url") for p in cohort]
+        complete = all(isinstance(u, str) and u.startswith("https://github.com/") for u in urls)
+        n = len(cohort) if complete and len(set(urls)) == len(urls) else 0
+        stable = sum(p["durability"] == "stable" for p in cohort)
+        ci = [[p for p in cohort if p.get("checkState") == kind] for kind in ("clean", "failed-checks")]
+        correlation = (sum(p["durability"] != "stable" for p in ci[1]) / len(ci[1]) -
+                       sum(p["durability"] != "stable" for p in ci[0]) / len(ci[0])) if min(map(len, ci)) >= 5 else None
+        score = max(0.0, stable / n - 0.1 * max(0.0, correlation or 0.0)) if n >= 20 else None
+        before = 0.75 if penalized else 1.0
+        reason = "unmeasured" if not valid or n == 0 else "minimum_samples" if score is None else "deadband"
+        if score is not None:
+            proposed = True if score <= 0.80 else False if score >= 0.90 else penalized
+            if proposed != penalized:
+                if decided is not None and now - decided < 3600:
+                    reason = "minimum_residency"
+                else:
+                    penalized, decided, reason = proposed, now, "quality_adjustment"
+            elif score <= 0.80 or score >= 0.90:
+                reason = "same_quality"
+            weights[lane] = 0.75 if penalized else 1.0
+        state[lane] = {"penalized": penalized, "decided_at": decided}
+        receipts.append({"schema": "route.quality.v1", "lane": lane, "ts": now,
+                         "decided_at": decided, "report_at": stamp, "resolved": n if valid else None,
+                         "score": score, "ci_adverse_delta": correlation if n else None,
+                         "from": before, "to": weights.get(lane), "reason": reason})
+    return weights, state, receipts
+
+
 def tier_depth(lines, valid_tiers):
     """queue depth by tier from raw ready.tsv lines (parked rows skipped by the caller)."""
     d = {t: 0 for t in sorted(valid_tiers)}
@@ -455,7 +514,7 @@ def _lane_target(desired, floor, bound, factor):
     return max(0, min(t, desired, bound))
 
 
-def plan(r, lanes, level, quality=None, shed_reasons=()):
+def plan(r, lanes, level, quality=None, shed_reasons=(), outcome_weights=None):
     """Per-lane effective targets for one tick.
 
     lanes: lane -> {"desired", "floor", "bound" (min(hard_cap, pin)), "held" (bool, hold list included), "held_by"}.
@@ -468,6 +527,9 @@ def plan(r, lanes, level, quality=None, shed_reasons=()):
         floor = max(0, min(_int(s["floor"]) or 0, desired, bound))
         w = quality.get(lane, 1.0) if level else 1.0
         factor = FACTORS[level] * (w if 0 < level < 3 else 1.0)
+        measured = (outcome_weights or {}).get(lane)
+        if measured is not None and level < 3:
+            factor *= max(0.75, min(1.0, _num(measured) or 1.0))
         eff = _lane_target(desired, floor, bound, factor)
         if s["held"]:
             reason = "held:%s" % (s.get("held_by") or "operator")
@@ -475,6 +537,8 @@ def plan(r, lanes, level, quality=None, shed_reasons=()):
             reason = "normal"
         else:
             reason = "%s x%.2f%s" % (LEVEL_NAMES[level], factor, " q=%.2f" % w if w < 1 else "")
+        if measured is not None and measured < 1 and not s["held"]:
+            reason += " outcome_quality=%.2f" % measured
         out[lane] = {"target": eff, "desired": desired, "held": bool(s["held"]), "reason": reason, "quality": quality.get(lane, 1.0),
                      "factor": round(factor, 3)}
     return {"level": level, "level_name": LEVEL_NAMES[level], "reasons": list(shed_reasons), "lanes": out}
@@ -611,6 +675,7 @@ def ledger_record(now, r, pl, mode, mutations=(), reroutes=(), ambiguous=(), sha
             "mutations": list(mutations)[:50],
             "reroutes": [{"job": j, "from": a, "to": b} for j, a, b in reroutes],
             "ambiguous_holds": list(ambiguous)}
+    rec["quality_receipts"] = r.get("quality_receipts", [])
     if shadow is not None:
         rec["shadow"] = {"shed_level": shadow["level"], "shed": shadow["level_name"], "reasons": shadow["reasons"],
                          "targets": {l: p["target"] for l, p in shadow["lanes"].items()}}
