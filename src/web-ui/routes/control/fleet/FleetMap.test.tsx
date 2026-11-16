@@ -48,6 +48,17 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); evictAll(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+it('rejects incompatible successful responses without crashing or replacing retained observations', async () => {
+  await mount();
+  machine = {} as FleetCompute;
+  inventory = { schema: 'fleet.sessions.v1', sessions: [] } as unknown as FleetSessionMap;
+  await tick();
+  expect(screen.getByText('Compute unavailable · showing last reading.')).toBeInTheDocument();
+  expect(screen.getByText('Sessions unavailable · showing last reading.')).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Machine mini' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Inspect session RQ-MAP' })).toBeInTheDocument();
+});
+
 describe('FleetMap', () => {
   it('renders real node telemetry, capacity heat and placed session tokens', async () => {
     await mount();
