@@ -2081,6 +2081,21 @@ concurrency.save(CONC_PATH, CONC)
 
 # Finished-worktree discovery/sorting runs at most every ten minutes. Drain the
 # cached priority list after launches each tick so cadence cannot throttle merges.
+# Terminal cleanup is independent of publishing, even when publish is held.
+# Helpers are installed only through reviewed host machinery; never run repo copies.
+_disk_stamp = Q + "/.disk-maintenance.stamp"
+if not os.path.exists(_disk_stamp) or NOW - os.path.getmtime(_disk_stamp) >= 600:
+    open(_disk_stamp, "w").close()
+    for _helper, _args in [("disk-growth.py", ["--json"])] + [
+            ("wt_closed_prune.py", ["--apply", "--json", "--wtroot", root])
+            for root in (WTROOT, R + "/wt") if os.path.isdir(root)]:
+        _script = R + "/bin/" + _helper
+        if os.path.isfile(_script) and not os.path.islink(_script):
+            try:
+                with os.fdopen(os.open(Q + "/disk-maintenance.log", os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW, 0o600), "a") as _output:
+                    spawn([sys.executable, "-I", "-B", _script] + _args, stdin=subprocess.DEVNULL,
+                          stdout=_output, stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError: log("disk maintenance unavailable: " + _helper)
 # Stamp before
 # starting so a timeout does not cause a costly retry on every dispatcher tick.
 _reap_stamp = Q + "/.worktree-reap.stamp"

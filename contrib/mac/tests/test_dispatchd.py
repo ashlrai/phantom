@@ -283,6 +283,29 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGKILL', events(home))
 
 
+class DiskMaintenanceTests(unittest.TestCase):
+    def test_terminal_cleanup_and_sampling_run_every_ten_minutes_even_when_held(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name)
+        root = home / '.ashlr-runs'; (root / 'wt').mkdir()
+        for name in ('disk-growth.py', 'wt_closed_prune.py'):
+            (root / 'bin' / name).write_text('import pathlib, sys\n'
+                'p=pathlib.Path(__file__).parents[1]/"calls"\n'
+                'with p.open("a") as f: f.write(pathlib.Path(__file__).name+" "+" ".join(sys.argv[1:])+"\\n")\n')
+        for expected in (3, 3, 6):
+            if expected == 6:
+                old = time.time() - 601
+                os.utime(root / 'queue/.disk-maintenance.stamp', (old, old))
+            result = tick(home)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                lines = (root / 'calls').read_text().splitlines() if (root / 'calls').exists() else []
+                if len(lines) >= expected: break
+                time.sleep(.02)
+            self.assertEqual(len(lines), expected)
+        self.assertEqual(sum('--apply --json --wtroot' in line for line in lines), 4)
+
+
 class SlotDefaultTests(unittest.TestCase):
     def test_missing_devin_slot_seeds_leverage_defaults(self):
         # No devin entry in slots.json: the DEFAULT row seeds target 6, floor 3, ceiling 10, hard_cap 10.

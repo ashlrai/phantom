@@ -950,16 +950,22 @@ This supplies jobs only; it does not recut, merge, install, or publish anything.
 
 ### Disk growth
 
-Run `python3 contrib/mac/disk-growth.py --json` periodically to sample free disk
-space and directory sizes. `--budget-seconds` bounds the total time spent in
+Run `phm fleet vitals [--json]` to read disk sizes and changes since the previous
+sample (null means unknown; samples older than 15 minutes are marked stale).
+`python3 contrib/mac/disk-growth.py --json` samples free disk and each direct
+directory under `~/.ashlr-runs` and `~/Projects/ashlrai/wt`, without following
+symlinks or reading file contents. `--budget-seconds` bounds the total time spent in
 `du` (default 10 seconds). The sampler retains 48 readings under
 `~/.ashlr-runs/queue`; it does not delete sampled files. The dispatcher copies
 its latest report to `autopilot.disk` in `status.json` on the next tick. Install
 and schedule the sampler through the normal reviewed host machinery; this source
-change does not install it. Rates compare against the oldest retained reading;
-missing or timed-out directory measurements are omitted, and a null projection
-means there is not yet evidence of a positive disk burn rate. Directory sizes
-overlap: worktree totals include their `node_modules` and `target` directories.
+change does not install it. The dispatcher starts the installed sampler and
+closed-worktree reaper every ten minutes, independent of disk pressure. The
+reaper preserves kept, active, dirty and unknown worktrees; Git removes eligible
+MERGED/CLOSED worktrees without force. Security review and re-pinning are required
+before live installation; stopped ticks or unavailable helpers cannot meet the
+15-minute target. Rates and signed directory deltas use the latest prior sample;
+missing or timed-out measurements are null, never zero.
 
 ### Read merge latency
 
