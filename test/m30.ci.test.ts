@@ -552,7 +552,7 @@ echo pending=true; exit 2
     expect(quick.name).toBe('Quick typecheck');
     expect(quick['continue-on-error']).toBeUndefined();
     const restore = quick.steps.find((step: { name?: string }) => step.name === 'Restore protected-branch compiler state');
-    expect(restore.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(restore.if).toBe("github.event_name == 'push'");
     expect(restore.uses).toBe('actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809');
     expect(restore.with.path.trim().split('\n')).toEqual([
       'node_modules/.cache/phantom-backend.tsbuildinfo',
@@ -574,7 +574,7 @@ echo pending=true; exit 2
     expect(pointer.if).toBe(save.if);
     expect(pointer.with.path).toBe(save.with.path);
     const compiler = quick.steps.find((step: { name?: string }) => step.name === 'Core no-emit type check');
-    expect(compiler.if).toBe("steps.history.outputs.equal != 'true'");
+    expect(compiler.if).toBe("github.event_name == 'push'");
     expect(compiler.run).toContain('npm run typecheck\n');
     expect(compiler.run).toContain('$GITHUB_STEP_SUMMARY');
     expect(compiler.run).toContain('test -s "$graph"');
@@ -654,64 +654,34 @@ echo pending=true; exit 2
     }
   }, 90_000);
 
-  it('gates only the expensive Quick steps on the proven source-identical flag', () => {
-    type Step = { name?: string; id?: string; if?: string; env?: Record<string, string>; run?: string; uses?: string };
+  it('skips the duplicate Quick typecheck on PR and merge_group but keeps it on master pushes', () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string };
     const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
     const step = (name: string) => {
       const found = quick.steps.find((entry) => entry.name === name);
       expect(found, `missing step ${name}`).toBeDefined();
       return found!;
     };
-    const proof = step('Prove source-identical history fast path');
-    expect(proof.id).toBe('history');
-    expect(proof.env?.GH_TOKEN).toBe('${{ github.token }}');
-    expect(proof.run).toContain('ci-history-source.mjs');
-    expect(proof.run).toContain('github-repository-binding.mjs');
-    expect(proof.run).toContain('GITHUB_OUTPUT');
-    // The proof step itself is PR/merge-group only; master pushes skip it and
-    // therefore always run every expensive step below.
-    const proofIf = (event: string): boolean => Boolean(runInNewContext(
-      `(${proof.if!.replace(/github\.event_name/g, 'event')})`,
-      { event },
+    // fast-gate is the blocking typecheck on PR and merge_group; the
+    // source-identical proof is gone with the duplicate it used to skip.
+    expect(quick.steps.find((entry) => entry.id === 'history')).toBeUndefined();
+    expect(quick.steps.some((entry) => (entry.if ?? '').includes('steps.history'))).toBe(false);
+    const runs = (condition: string, event: string, mcpOutput = 'false'): boolean => Boolean(runInNewContext(
+      `(${condition.replace(/github\.event_name/g, JSON.stringify(event)).replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))})`,
     ));
-    for (const event of ['pull_request', 'merge_group']) expect(proofIf(event), event).toBe(true);
-    for (const event of ['push', 'schedule', 'workflow_dispatch', 'workflow_call']) expect(proofIf(event), event).toBe(false);
-    // Ordering: proof runs after Node setup and before any dependency install.
-    const names = quick.steps.map((entry) => entry.name);
-    expect(names.indexOf('Set up Node.js 22')).toBeLessThan(names.indexOf(proof.name!));
-    expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
-    // Compiler and drift steps require the trusted proof; the selected MCP
-    // contract still needs dependencies even for a source-identical candidate.
-    const expensive = ['Hash protected-branch compiler inputs', 'Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check'];
-    for (const name of expensive) {
-      expect(step(name).if, name).toBe(name === 'Install dependencies'
-        ? "steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'"
-        : "steps.history.outputs.equal != 'true'");
-    }
-    // Execute the actual workflow predicate: skip only when the flag is the
-    // exact string 'true'; every fallback shape (false, unset, empty) runs.
-    const runs = (condition: string, equal: string | undefined, mcpOutput = 'false'): boolean => Boolean(runInNewContext(
-      `(${condition.replace(/steps\.history\.outputs\.equal/g, JSON.stringify(equal ?? '')).replace(/steps\.mcp_selection\.outputs\.mcp_output/g, JSON.stringify(mcpOutput))})`,
-    ));
-    for (const name of expensive) {
+    for (const name of ['Hash protected-branch compiler inputs', 'Restore protected-branch compiler state', 'Core no-emit type check']) {
       const condition = step(name).if!;
-      expect(runs(condition, 'true'), `${name} skips on proven equality`).toBe(false);
-      for (const fallback of ['false', undefined, '']) {
-        expect(runs(condition, fallback), `${name} runs on ${String(fallback)}`).toBe(true);
-      }
+      expect(runs(condition, 'push'), `${name} on push`).toBe(true);
+      for (const event of ['pull_request', 'merge_group']) expect(runs(condition, event), `${name} on ${event}`).toBe(false);
     }
-    expect(runs(step('Install dependencies').if!, 'true', 'true')).toBe(true);
-    // A tampered or unknown flag spelling must never satisfy the skip either.
-    for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
-      expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
-    }
-    // Only these four steps may key off the proof output: checkout, setup
-    // and protected-branch cache saving must never join the exemption.
-    const gated = quick.steps
-      .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
-      .map((entry) => entry.name)
-      .sort();
-    expect(gated).toEqual([...expensive].sort());
+    const install = step('Install dependencies').if!;
+    expect(runs(install, 'push')).toBe(true);
+    expect(runs(install, 'pull_request')).toBe(false);
+    expect(runs(install, 'pull_request', 'true')).toBe(true);
+    expect(runs(install, 'merge_group', 'true')).toBe(true);
+    expect(step('Test MCP output contract').if).toBe("steps.mcp_selection.outputs.mcp_output == 'true'");
+    const fastGate = (parse(ciYml).jobs as Record<string, { steps: Step[] }>)['fast-gate'];
+    expect(fastGate.steps.find((entry) => entry.name === 'Core no-emit type check')?.run).toContain('npm run typecheck');
   });
 
   it('runs a read-only generated-files check as its own required job on every fast-path event', () => {
