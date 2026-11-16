@@ -18,8 +18,8 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { fullHistory } from './ci-master-full.mjs';
 import { failedTestFiles } from './ci-fast-run.mjs';
+import { boundedHistory, ensureCommitReachable, gitRunner } from './preflight-history.mjs';
 import {
   changedPaths, classifyPaths, needsDist, selectFallback, selectRelated,
 } from './ci-fast-select.mjs';
@@ -319,10 +319,10 @@ function runUrl() {
   return `https://github.com/ashlrai/phantom/actions/runs/${id}`;
 }
 
-export async function loadHistory(repo, read = fullHistory) {
-  try { return await read({ repo }); } catch (error) {
+export async function loadHistory(repo, api = apiGet) {
+  try { return await boundedHistory({ repo, api }); } catch (error) {
     console.log(`CI history unavailable (${error?.message ?? 'unknown'}); using fallback selection`);
-    return [];
+    return { latest: null, green: null, evidence: [], capped: true };
   }
 }
 
@@ -350,8 +350,8 @@ async function planMain(cwd) {
   // Advisory run: a transient CI metadata failure must not fail the job. Without
   // history there is no known green base, so the fallback selection runs.
   const history = await loadHistory(process.env.GITHUB_REPOSITORY);
-  const latest = history[0] ?? null;
-  const green = history.find((run) => run.qualified) ?? null;
+  const latest = history.latest ?? null;
+  const green = history.green ?? null;
   let changed = [];
   let selection;
   if (!green) {
@@ -359,6 +359,8 @@ async function planMain(cwd) {
     selection = { mode: 'fallback', reason: 'no prior green full run', tests: picked.tests, node: picked.node, deferred: [] };
   } else {
     try {
+      const reach = ensureCommitReachable({ git: gitRunner(cwd), sha: green.head_sha });
+      console.log(`preflight base: ${reach.mode} deepens=${reach.deepens} unshallow=${reach.unshallow}`);
       changed = changedPaths({ base: green.head_sha, head, cwd });
       selection = affectedFromPaths({ cwd, paths: changed });
     } catch {

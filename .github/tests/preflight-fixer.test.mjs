@@ -56,6 +56,8 @@ test('preflight workflow rejects workflow_run', () => {
   assert.doesNotMatch(workflow, /workflow_run/);
   assert.match(workflow, /^ {2}schedule:/m);
   assert.match(workflow, /^ {2}workflow_dispatch:/m);
+  assert.match(workflow, /fetch-depth: 40/);
+  assert.doesNotMatch(workflow, /fetch-depth: 0/);
   const autoTag = readFileSync(join(here, '../workflows/auto-tag.yml'), 'utf8');
   const start = autoTag.slice(autoTag.indexOf('Start preflight fixer on master'));
   assert.match(start, /preflight-fixer\.yml\/dispatches/);
@@ -178,7 +180,5 @@ test('preflight writes issues and labels only', () => {
 
 test('plan degrades to fallback selection when CI history is unavailable', async () => {
   const failing = async () => { throw new Error('CI metadata unavailable; refusing unverified full evidence'); };
-  assert.deepEqual(await loadHistory('ashlrai/phantom', failing), []);
-  const history = [{ id: 1, qualified: true }];
-  assert.equal(await loadHistory('ashlrai/phantom', async () => history), history);
+  assert.deepEqual(await loadHistory('ashlrai/phantom', failing), { latest: null, green: null, evidence: [], capped: true });
 });
