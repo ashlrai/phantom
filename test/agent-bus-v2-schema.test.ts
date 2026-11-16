@@ -111,6 +111,8 @@ describe('body kinds and work feed', () => {
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'dot-main', leaseMs: 1000 },
     { kind: 'work.claim', op: 'renew', claimKey: 'queue:q', token: TOKEN, leaseMs: 1000 },
     { kind: 'work.status', jobId: 'j1', status: 'rescheduled' },
+    { kind: 'work.result', jobId: 'j1', claimKey: 'queue:q', queueId: 'peer-work-' + 'a'.repeat(32),
+      receiptId: 'pw-' + 'a'.repeat(32), outcome: 'admitted' },
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN, outcome: 'completed' },
     { kind: 'wake', target: 'dot-main', reason: 'new work' },
   ];
