@@ -20,6 +20,7 @@ import { createChannelReceiver, CHANNEL_REQUEST_ID_PATTERN } from '../fleet/chan
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
 import type { InboxAppendResult } from '../fleet/mason-inbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
+import { loadAppsRecoveryIncident } from '../fleet/apps-recovery-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
@@ -543,7 +544,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     }
     if (method === 'GET' && path === VERSE_FLEET_RUNS_GLANCE_PATH) {
       try {
-        sendJson(res, 200, await readOperatorGlance({ runsDir: deps.runsDir, now: () => new Date(now()) }));
+        sendJson(res, 200, await readOperatorGlance({ runsDir: deps.runsDir, now: () => new Date(now()), loadRecovery: loadAppsRecoveryIncident }));
       } catch {
         sendJson(res, 200, { v: 1, at: new Date(now()).toISOString(), running: null, target: null, usagePct: null, resetsAt: null, mergesToday: null, main: 'unknown', incidents: [] });
       }
