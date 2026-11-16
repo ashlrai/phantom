@@ -1,0 +1,84 @@
+diff --git a/contrib/mac/dispatchd.py b/contrib/mac/dispatchd.py
+index 4c22faeb10..21f4402ed2 100644
+--- a/contrib/mac/dispatchd.py
++++ b/contrib/mac/dispatchd.py
+@@ -10,7 +10,7 @@
+ # RQ-DEVINTOKENSN9SQ8 rev: finish rows carry the usage each lane already reports — claude*/claude-api
+ # result JSON usage, devin's sessions.db tokens + billed ACUs, the 'tokens used' log line — with
+ # usage_source and a usage_missing reason when nothing was recorded.
+-import os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
++import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
+ from concurrent.futures import ThreadPoolExecutor
+ H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
+ WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
+@@ -40,7 +40,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
+            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
+            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
+            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
+-import concurrency, batcher, batch_sessions, work_market
++import concurrency, batcher, batch_sessions, work_market, postrun_pr
+ from session_handoff import handoff_advice
+ from launch_precheck import classify_empty
+ import fleet_controller as fc
+@@ -1127,6 +1127,27 @@ for bp in glob.glob(R + "/*.base"):
+         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
+         continue
+ 
++# RQ-DISPATCHD-POSTRUN-PR-1: a lane whose sandbox cannot read the gh config (EPERM) can commit locally and finish
++# RESULT EMPTY with no PR. This step runs outside the sandbox: commits not on origin/master plus a finished-empty
++# publish -> one detached postrun_pr.py child (PR lookup, then the unchanged publish.sh). The marker makes it once per job.
++def postrun_pr_start(j, wt, b, res):
++    mk = RUN + "/" + j + ".postrun"
++    if not postrun_pr.eligible(res) or os.path.exists(R + "/" + postrun_pr.OFF_SWITCH): return False
++    try:
++        n = int(open(mk).read() or 0) if os.path.exists(mk) else 0
++        if n and NOW - os.path.getmtime(mk) < postrun_pr.PUBLISH_TIMEOUT_S + 120 and not os.path.exists(RUN + "/" + j + ".postrun.json"): return True   # child still in flight
++        if n >= postrun_pr.MAX_ATTEMPTS or os.path.exists(RUN + "/" + j + ".postrun.json"): return False
++        if not ab_contained(wt) or not ab_gs_ok(): return False
++        try: ahead = int(ab_git(wt, "rev-list", "--count", "HEAD", "^origin/master").strip() or 0)
++        except Exception: ahead = int(ab_git(wt, "rev-list", "--count", b[0] + "..HEAD").strip() or 0)   # no origin ref in this tree
++        if ahead <= 0: return False
++        with open(mk, "w") as f: f.write(str(n + 1))
++        spawn([sys.executable, "-I", "-B", R + "/bin/postrun_pr.py", j], stdin=subprocess.DEVNULL, start_new_session=True,
++              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++        ev("POSTRUN_PR start %s ahead=%d attempt=%d" % (j, ahead, n + 1)); return True
++    except Exception as e:
++        log("postrun_pr err %s %s" % (j, type(e).__name__)); return False
++
+ def reap_worktrees():
+     global nreap, publish_busy, drip_budget
+     for bp in _reap_candidates:
+@@ -1196,6 +1217,7 @@ def reap_worktrees():
+                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
+                     "pool_error": perr})
+         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
++        if postrun_pr_start(j, wt, b, res): publish_busy = True; continue   # the child runs publish.sh; reap-one.sh follows on a later tick
+         os.mkdir(RUN + "/" + j + ".reaping"); nreap += 1; publish_busy = True
+         spawn(["/bin/bash", R + "/bin/reap-one.sh", j], stdin=subprocess.DEVNULL,
+                          stdout=open(RUN + "/" + j + ".reap.log", "a"), stderr=subprocess.STDOUT, start_new_session=True)
+diff --git a/contrib/mac/install.sh b/contrib/mac/install.sh
+index dd0eff9f73..d30ade66a4 100755
+--- a/contrib/mac/install.sh
++++ b/contrib/mac/install.sh
+@@ -9,7 +9,7 @@
+ # Live files are sha-pinned by Security (G1-CODE-PIN / GS_SHA): re-pin the sha256 values printed here before the next tick.
+ set -u
+ src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+-FILES="process_snapshot.py work_market.py session_handoff.py dispatchd.py fleet_controller.py concurrency.py batcher.py batch_sessions.py batch-launch.sh batch-sessions.json local_job.py restock.py launch_precheck.py install-gate.py launch-gate.sh judge_gate.py"
++FILES="process_snapshot.py work_market.py session_handoff.py dispatchd.py fleet_controller.py concurrency.py batcher.py batch_sessions.py batch-launch.sh batch-sessions.json local_job.py restock.py launch_precheck.py install-gate.py launch-gate.sh judge_gate.py postrun_pr.py"
+ bin=${ASHLR_RUNS_BIN:-$HOME/.ashlr-runs/bin}; dry=0; json=0
+ while [ $# -gt 0 ]; do
+   case $1 in
+diff --git a/contrib/mac/tests/test_install.py b/contrib/mac/tests/test_install.py
+index 8349f4879c..d4fd9ee20d 100644
+--- a/contrib/mac/tests/test_install.py
++++ b/contrib/mac/tests/test_install.py
+@@ -14,7 +14,7 @@ MAC = Path(__file__).resolve().parents[1]
+ INSTALL = MAC / 'install.sh'
+ FILES = ('process_snapshot.py', 'work_market.py', 'session_handoff.py', 'dispatchd.py', 'fleet_controller.py', 'concurrency.py', 'batcher.py', 'batch_sessions.py', 'batch-launch.sh',
+          'batch-sessions.json', 'local_job.py', 'restock.py', 'launch_precheck.py', 'install-gate.py',
+-         'launch-gate.sh', 'judge_gate.py')
++         'launch-gate.sh', 'judge_gate.py', 'postrun_pr.py')
+ 
+ 
+ def sha(p):
