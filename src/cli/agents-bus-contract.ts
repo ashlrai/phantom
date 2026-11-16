@@ -5,12 +5,14 @@ import { listChannelRegistry, probeRegisteredChannel } from '../core/agents/chan
 import { CHANNEL_IDS, type ChannelId } from '../core/agents/channel-policy.js';
 import { readFleetEdges } from '../core/fleet/fleet-edges.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
 ashlr agents edges [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
+${AGENTS_BUS_UNIFIED_HELP}
 
 Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
 Print the Agent Bus v2 contract version, providers, body kinds, work statuses and
@@ -27,6 +29,9 @@ export async function runAgentsCli(
 ): Promise<number> {
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
   if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
+  if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
+    return runAgentsBusUnified(args.slice(1), out, err);
+  }
   const json = args.includes('--json');
   if (args.filter(arg => arg === '--json').length > 1) {
     err(json ? JSON.stringify({ error: 'invalid-argument' }) : HELP);
