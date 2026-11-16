@@ -172,6 +172,7 @@ function relativeSpecifiers(text) {
 }
 
 test('a warm sparse checkout covers every import of ci-fast-select', () => {
+  // Runs while fast-gate is still sparse. A restored graph does not expand it.
   // The select step runs while the fast-gate sparse checkout is still on.
   // A restored dependency graph does not expand it, so every relative import
   // has to be inside that list or the step cannot load the module.
