@@ -74,7 +74,8 @@ jobs:
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
 
   quick:
-    # Per-PR, merge-queue and master-push typecheck plus authority drift checks.
+    # Per-PR, merge-queue and master-push typecheck (advisory on fast events).
+    # Generated-file and authority-drift checks live in their own jobs below.
     # Start alongside classification so the longest fast job has no serial wait.
     # This also checks docs-only PRs. Full suites run in the daily run.
     # A push event whose ref is a TAG is the reusable M33 verify call — it keeps
@@ -106,18 +107,6 @@ jobs:
         with:
           node-version: '22.22.3'
           cache: npm
-      # Read-only dirty diff on every PR, merge_group, and master push. Runs
-      # the tracked-file generator and fails if any path changes, including
-      # docs/llms.txt. No auto-commit and no path exemptions.
-      - name: Check generated files
-        run: |
-          set -euo pipefail
-          node scripts/generate-docs-llms.mjs
-          status="$(git status --porcelain --untracked-files=normal)"
-          if [ -n "$status" ]; then
-            printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
-            exit 1
-          fi
       # Source-identical fast path (pull_request and merge_group only): the
       # exact whole tracked tree of the checked-out candidate is compared with
       # the authenticated current canonical base. The proof code is fetched
@@ -242,16 +231,69 @@ jobs:
             node_modules/.cache/phantom-backend.tsbuildinfo
             node_modules/.cache/phantom-web.tsbuildinfo
           key: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-master-${{ github.run_id }}-${{ github.run_attempt }}
-      # Full authority shards are deferred; drift must still fail the required gate.
+      - name: Test MCP output contract
+        if: steps.mcp_selection.outputs.mcp_output == 'true'
+        run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
+
+  clean-tree:
+    # Split out of Quick typecheck (RQ-PH-GATE-SPLIT-1) so a stale generated file
+    # is a hard Merge Gate requirement while Quick stays advisory. The stable
+    # check name is also read by Auto-tag on the exact tagged sha.
+    name: Check generated files
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+      # Read-only dirty diff on every PR, merge_group, and master push. Runs
+      # the tracked-file generator and fails if any path changes, including
+      # docs/llms.txt. No auto-commit and no path exemptions.
+      - name: Check generated files
+        run: |
+          set -euo pipefail
+          node scripts/generate-docs-llms.mjs
+          status="$(git status --porcelain --untracked-files=normal)"
+          if [ -n "$status" ]; then
+            printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
+            exit 1
+          fi
+
+  authority-drift:
+    # Split out of Quick typecheck (RQ-PH-GATE-SPLIT-1). Advisory for merge:
+    # it is deliberately not in Merge Gate needs, so it never lengthens the
+    # gate. It must still run and report on every fast event so Auto-tag and
+    # the release gate can require it green on the exact sha.
+    name: Check authority drift (hermetic)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      # Full authority shards are deferred; drift is checked here on every fast event.
       - name: Check authority drift (hermetic)
-        if: steps.history.outputs.equal != 'true'
         run: >-
           HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
           test/authority-codeowners-310b.test.ts
           test/authority-tier1-closure-310b.test.ts
-      - name: Test MCP output contract
-        if: steps.mcp_selection.outputs.mcp_output == 'true'
-        run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
 
   classify:
     name: Classify PR site lane
@@ -1194,13 +1236,14 @@ jobs:
 
   merge-gate:
     # One stable required check. PR and merge_group: Secret-shape scan, Classify
-    # and Quick typecheck must pass, and every full lane must
+    # and Check generated files (clean-tree) must pass, Quick typecheck is
+    # advisory, and every full lane must
     # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
     # selected full lanes. Exact dependency keys; anything skipped, cancelled or
     # missing that should have run is a failure.
     name: Merge Gate
     # macOS lanes are not needed: they never run on PR or merge_group (waiver).
-    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, windows-service-authority, release-build]
+    needs: [secret-shape, secret-scan, classify, clean-tree, quick, site, docs, ci, windows-service-authority, release-build]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1214,7 +1257,7 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'windows-service-authority'];
-          const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
+          const expected = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'quick', 'site', 'docs', ...full, 'release-build'];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -1248,9 +1291,16 @@ jobs:
           // stale branch) does not block the merge. The daily full lane and
           // main-guardian remain the correctness floor. Secret-shape, secret-scan
           // and classify stay hard requirements.
-          const chosen = release ? ['release-build'] : fast ? [] : selected;
+          // RQ-PH-GATE-SPLIT-1: clean-tree (Check generated files) is a hard
+          // requirement on every fast event. It is designed not to run on
+          // schedule, dispatch and tag-push (reusable) events, where it must be
+          // skipped; if it did run there, only success is accepted.
+          // authority-drift (Check authority drift (hermetic)) is advisory and
+          // deliberately off Merge Gate needs; Auto-tag and the release gate
+          // read it from the exact sha instead.
+          const chosen = release ? ['release-build'] : fast ? ['clean-tree'] : selected;
           const advisory = fast && !release ? ['quick'] : [];
-          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
+          const excluded = ['quick', 'clean-tree', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
           const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
@@ -1262,6 +1312,7 @@ jobs:
             if (outcome(name) !== 'skipped' && outcome(name) !== 'success') console.log(`ADVISORY ${name} concluded ${outcome(name) ?? 'missing'} — not blocking (fast lane)`);
           }
           for (const name of excluded) {
+            if (name === 'clean-tree' && outcome(name) === 'success') continue;
             if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
           console.log(`Merge Gate passed: ${fast ? 'fast' : 'full'} ${lane} CI`);
@@ -1271,7 +1322,7 @@ jobs:
     # Independent of Merge Gate's fast branch. Only the six-hour master run
     # produces this receipt; half-hour release preparation is never evidence.
     name: Master full qualification
-    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
+    needs: [secret-shape, secret-scan, classify, quick, clean-tree, authority-drift, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
     if: ${{ always() && github.event_name == 'schedule' && github.event.schedule == '17 */6 * * *' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
