@@ -77,18 +77,24 @@ describe('original #4280 isStatusRequest examples through isOwnerStatusRequest',
 });
 
 describe('ownerStatusReply wrapper contract behind the Slack statusReply seam', () => {
-  it('exposes the same ask predicate and the fixed fallback the adapter posts on failure', async () => {
+  it('accepts status asks through reply.ask and keeps the fixed fallback plus snapshot evidence', async () => {
     const reply = ownerStatusReply({ brief: async () => { throw new Error('synthetic status read failure'); } });
-    expect(reply.ask).toBe(isOwnerStatusRequest);
+    // reply.ask is a superset of isOwnerStatusRequest (recheck, orders, review,
+    // owners, bridge, peers). These status phrases stay true for both.
+    for (const text of ['status', 'Status?', 'status??', '/status', 'glance', "what's up", "how's the fleet"]) {
+      expect(isOwnerStatusRequest(text), text).toBe(true);
+      expect(reply.ask(text), text).toBe(true);
+    }
+    for (const text of ['status please', 'phantom status now', 'the status', 'status update', 'status of PR 4245?']) {
+      expect(reply.ask(text), text).toBe(false);
+    }
     expect(reply.fallback).toBe(OWNER_STATUS_FALLBACK);
-    // Original composeStatusReply never threw — a failed read printed
-    // 'unknown'. The evolved contract returns one fixed fallback line instead
-    // (posted in-thread by slack-leader.ts; covered end-to-end in
-    // slack-leader-status-reply.test.ts). Here the compose seam itself is
-    // proven non-throwing through the same injected-brief seam the other
-    // suites use.
-    await expect(reply.compose('/fake-runs-312s', NOW)).resolves.toBe(OWNER_STATUS_FALLBACK);
-  });
+    // A failed digest read still starts with the fixed fallback. Slack compose
+    // then appends snapshot evidence lines, including fleet state.
+    const text = await reply.compose('/fake-runs-312s', NOW);
+    expect(text.split('\n')[0]).toBe(OWNER_STATUS_FALLBACK);
+    expect(text).toContain('\nFleet state: ');
+  }, 15_000);
 
   it('bounds the composed answer at 1500 chars with the ET-clock heading', async () => {
     // Equivalent of the original <=8-line bound: the digest is five fixed

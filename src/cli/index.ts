@@ -2207,6 +2207,7 @@ async function main(): Promise<void> {
           printCoreUsage('metrics', 'Local metrics reports.', [
             ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
             ['phm metrics loop [--dry-run] [--json]', 'Self-awareness loop: throughput, loop times, cost, capacity per node'],
+            ['phm metrics prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL] [--json]', 'Read bridge PR publication evidence'],
           ]);
           process.exitCode = 0;
           break;

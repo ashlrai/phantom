@@ -23,7 +23,7 @@ const SINGLE_PEERS = {
 };
 
 function statusBody(peerMap: Record<string, unknown>): string {
-  return JSON.stringify({ Self: { HostName: 'mac-self' }, Peer: peerMap });
+  return JSON.stringify({ BackendState: 'Running', Self: { HostName: 'mac-self' }, Peer: peerMap });
 }
 
 afterEach(() => vi.restoreAllMocks());

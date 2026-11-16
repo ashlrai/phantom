@@ -119,6 +119,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
+| Give any agent one routed model call through the loopback endpoint or `phm run --model auto` | [Router gateway](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-GATEWAY.md) |
 | Route a bounded read-only slice to the 8 GB muse node | [Muse light routing](https://github.com/ashlrai/phantom/blob/master/docs/nodes/MUSE.md) |
 | Serve a measured local model on 8/16 GB Macs as `omlx` pool lanes | [oMLX on the small Macs](https://github.com/ashlrai/phantom/blob/master/docs/OMLX-SMALL-MACS.md) |
 | Explore the proposed path from personal nodes to shared compute | [Node scale path](https://github.com/ashlrai/phantom/blob/master/docs/architecture/scale-path.md) |
@@ -152,6 +153,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
+| Read bridge PR merge, release ancestry and exact npm or crates.io publication | [Bridge production metrics](PRODUCTION-METRICS.md) (`phm metrics prod --json`) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Refresh standalone advertised model metadata through Phantom Secrets | [Model capability cache](https://github.com/ashlrai/phantom/blob/master/docs/MODELCAPS.md) |
 | Read real repository adoption signals | [Repository signals](SIGNALS.md) |

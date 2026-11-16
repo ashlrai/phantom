@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 import {
-  classifyPaths, plan, changedPaths, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
+  classifyPaths, plan, changedPaths, selectRelated, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
 } from '../scripts/ci-fast-select.mjs';
-import { failedTestFiles } from '../scripts/ci-fast-run.mjs';
+import { failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
 import { prNumber, related, attribute } from '../scripts/ci-fast-attribute.mjs';
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -124,10 +124,30 @@ test('changedPaths uses the merge-base diff and rejects a mismatched checkout', 
   assert.throws(() => changedPaths({ base: 'main', head, cwd: dir }), /exact commit SHAs/);
 });
 
+test('fallback shards share the runner instead of each taking every CPU', () => {
+  assert.equal(shardWorkers(4, 3), 1);
+  assert.equal(shardWorkers(16, 3), 5);
+  assert.equal(shardWorkers(2, 3), 1);
+  assert.equal(shardWorkers(8, 0), 8);
+});
+
 test('failed test files parse from vitest and node output', () => {
   const log = ' FAIL  |unit| test/a.test.ts > suite > case\nAssertionError\n × test/b.test.ts 12ms\n✗ .github/tests/c.test.mjs\n FAIL  |real-io| test/a.test.ts > other\n';
   assert.deepEqual(failedTestFiles(log), ['.github/tests/c.test.mjs', 'test/a.test.ts', 'test/b.test.ts']);
   assert.deepEqual(failedTestFiles('all passed'), []);
+});
+
+test('an explicit cap can keep more than the fast-gate maximum', (t) => {
+  const files = { 'src/core/wide.ts': 'export const w = 1;\n' };
+  for (let i = 0; i < 30; i += 1) files[`test/wide-${i}.test.ts`] = "import '../src/core/wide.js';\n";
+  const { dir, commit } = repo(t, files);
+  commit('seed');
+  const capped = selectRelated({ cwd: dir, paths: ['src/core/wide.ts'] });
+  const wide = selectRelated({ cwd: dir, paths: ['src/core/wide.ts'], cap: 100 });
+  assert.equal(capped.tests.length, MAX_RELATED_TESTS);
+  assert.equal(wide.tests.length, 30);
+  assert.ok(capped.capped > 0);
+  assert.equal(wide.capped, 0);
 });
 
 test('merge group attribution maps a failing test to the PR whose commit touched its source', (t) => {

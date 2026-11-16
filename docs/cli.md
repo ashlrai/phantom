@@ -314,6 +314,7 @@ Every command, grouped by topic.
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.
     incident report|receipts [--json]                                                          Turn a production signal into one bounded fix job, or send receipts for finished incidents.
     router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
+    router serve|models|pick|config [--json]                                                   Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
     worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                             Show merged pull requests from the jobs ledger.
     library list [--json]                                                                      List leader files. Read-only.
@@ -344,6 +345,7 @@ Every command, grouped by topic.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                     Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
     queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     repos rank [proposals] [--json] [--recompute]                                              Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
+    job cost <id> [--json]                                                                     Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
     telemetry [status]                                                                         M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).

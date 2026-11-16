@@ -390,6 +390,25 @@ uses enrolled CLI/API seats through authenticated numeric loopback. See
 [App drive](docs/APP-DRIVE.md) for examples and DESK integration limits.
 Security 606e84d2 must pin new loopback-client changes before merge.
 
+## Router gateway
+
+One routed model call for any agent. `phm run --model auto` asks the seat
+router to pick a granted seat under the budget mode and reserves; a pinned
+`<lane>:<model>` passes the same checks. The loopback endpoint runs the same
+code. `phm router pick` previews the decision and calls no model. Copy and
+paste these commands; see [Router gateway](docs/ROUTER-GATEWAY.md):
+
+```sh
+phm router pick --model auto --json
+phm run --model auto "Summarize this diff in three bullets." --json
+phm router serve --json
+```
+
+The endpoint binds 127.0.0.1 only and needs the bearer token in
+`~/.ashlr/router/token`; read the file, never print it. Provider auth stays in
+each lane CLI. Local models must be on loopback. Nothing is called while the
+kill switch is on.
+
 ## Typed routing decisions
 
 `phm route decide --input request.json --json` validates a closed set from local model, slot and admission snapshots. Local fast, one schema retry, existing Jev escalation and deterministic fallback share a 450 ms service budget. Advisory only; dispatcher observations append `metrics/route.explain.jsonl` without changing launches. See [typed routing](docs/ROUTING.md) for the request schema and a copy-paste offline example.
