@@ -86,8 +86,7 @@ describe('tailnet backend state awareness', () => {
     expect(result.reasons).toContain('tailscale backend not running: Stopped');
   });
 
-  it('handles backend state absence gracefully and preserves normal behavior', () => {
-    // Without BackendState, should work like before (backward compatibility)
+  it('does not treat a missing BackendState as a running backend', () => {
     const raw = JSON.stringify({
       Self: { HostName: 'fake-self-mac' },
       Peer: {
@@ -97,10 +96,10 @@ describe('tailnet backend state awareness', () => {
         },
       },
     });
-    
+
     const result = readTailnetPeers(deps({ exec: () => raw }));
-    expect(result.peers[0]?.online).toBe(true);
-    expect(result.reasons).toEqual([]);
+    expect(result.peers[0]?.online).toBe('unknown');
+    expect(result.reasons).toEqual(['tailscale backend not running: unknown']);
   });
 
   it('reports when backend is in transitioning state', () => {
