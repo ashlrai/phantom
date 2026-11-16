@@ -836,4 +836,10 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
   'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
+  'test/auto-tag-gate-split.test.ts', // spawnSync runs node against the tag-gate script
+  'test/channel-health-slack-binding-338.test.ts', // spawnSync runs a real child for the Slack binding check
+  'test/m30.ci.test.ts', // spawnSync runs node against CI workflow fixtures
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // spawnSync runs a real child for the job snapshot
+  'test/no-stray-source-artifacts-373.test.ts', // spawnSync scans the worktree with a real child
+  'test/verify-changed-master-overlay.test.ts', // spawnSync runs node scripts/verify-changed.mjs
 ];
