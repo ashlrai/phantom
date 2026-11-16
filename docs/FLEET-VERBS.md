@@ -19,6 +19,8 @@
 | channel-health | `src/cli/fleet-channel-health.ts` | Read-only health of the Slack and iMessage bridges from receipts and process checks (`--json`) | no |
 | ci-failures | `src/cli/fleet-ci-failures.ts` | Reads CI failure groups from a repo, configurable repo and hours window | no |
 | ci-nightly | `src/cli/fleet-ci-nightly.ts` | Reads CI nightly hotspots for a repo, configurable repo flag | no |
+| claim-bind | `src/cli/fleet-claim-bind.ts` | Binds a fleet claim to the Slack thread it came from (`<claimId> --repo <owner/name> --thread <threadKey>`, optional `--pr`, `--head`, `--json`) so `claim-notices` can post its ASSIGNED, RELEASED, BLOCKED and VERIFIED notices there; local state only, sends nothing | yes, one private JSONL row |
+| claim-notices | `src/cli/fleet-claim-notices.ts` | Plans (`--dry-run`) or posts claim notices into each claim's bound Slack thread; a claim with no binding is dropped, never guessed into a channel (`--json`) | yes, unless `--dry-run` |
 | class-share | `src/cli/fleet-class-share.ts` | Offline accounting only; never changes dispatch or merge authority | no |
 | conflict-risk | `src/cli/fleet-conflict-risk.ts` | Read-only conflict predictor for the rebase scheduler: predicts which open PRs will conflict with the next `--next` predicted merges (file-overlap plus merge-recency heuristic) into `fleet.conflict-risk.v1`; high-risk rows carry `rebaseRecommended`. Failed or truncated reads degrade honestly, never clean | no |
 | dead-heads | `src/cli/fleet-dead-heads.ts` | Read-only report; never edits queue state or launches jobs | no |
@@ -77,6 +79,7 @@
 | trim | `src/cli/fleet-trim.ts` | Read-only lane trim report from queue/status.json: flags STARVED lanes (queued, none running, target above 0, not held, global running at the cap) and lanes that WASTE slots (10 or more jobs in 24 h with merge rate under 0.3 or empty rate over 0.5), then prints `SLOTS <lane> <from> -> <to>` suggestions. Applies nothing | no |
 | wait-jobs | `src/cli/fleet-wait-jobs.ts` | Waits for fleet jobs by ID, monitors publication status | no |
 | work-board | `src/cli/fleet-work-board.ts` | Read-only one line per work request: state, as-of, source, owner, claim and channel, then a footer with item count and inbox and claims availability (`--root <absolute>`, `--thread <ref>`, `--limit <1..100>`, `--json`) | no |
+| work-feed | `src/cli/fleet-work-feed.ts` | Read-only bus v2 work feed, newest first (`--status <status>`, `--root <absolute>`, `--json`); routing labels grant no authority | no |
 | work-result | `src/cli/fleet-work-result.ts` | Posts exactly one result form as a bus reply: verified `{pr,head}`, `{tests}` or `{artifact}`, or blocked `{dependency}`. Needs `--request-id` and `--reply-id`; a retry reuses the same reply id; missing or expired requests are refused. A result receipt is evidence, not authority: it does not complete or release a claim | appends one bus reply |
 | work-state | `src/cli/fleet-work-state.ts` | Read-only state per item from a `--evidence <file.json>` of `WorkItemEvidence`; prose such as "routed" is never evidence | no |
 | work-trace | `src/cli/fleet-work-trace.ts` | Read-only state of one bus message from the durable stores (`--id <bus-message-id>`, `--root <absolute>`, `--json`); an unknown id is RECEIVED with as-of unknown | no |
