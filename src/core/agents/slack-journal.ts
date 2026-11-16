@@ -73,7 +73,8 @@ function boundedField(value: unknown): value is string {
 
 /** Whitelist copy: only the declared metadata fields, and only bounded strings. */
 function sanitize(obs: SlackObservation): Record<string, string> | null {
-  if (!boundedField(obs.at) || (obs.decision !== 'ingested' && obs.decision !== 'ignored')) return null;
+  if (!boundedField(obs.at) || !Number.isFinite(Date.parse(obs.at)) ||
+      (obs.decision !== 'ingested' && obs.decision !== 'ignored')) return null;
   const out: Record<string, string> = { at: obs.at, decision: obs.decision };
   if (boundedField(obs.envelopeId)) out['envelopeId'] = obs.envelopeId;
   if (boundedField(obs.eventId)) out['eventId'] = obs.eventId;
