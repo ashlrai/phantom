@@ -140,6 +140,37 @@ describe('readFleetMainHealth', () => {
     expect((await withAttempts(rows)).repos[0]!.fixJobs).toEqual([]);
   });
 
+  it('counts repeated empty attempts for one failure and holds retries at the limit', async () => {
+    const attempt = (n: number) => [event('launch', 30 - n * 10), event('finish', 25 - n * 10, { empty: true })];
+    const one = await withAttempts(attempt(0));
+    expect(one.repos[0]).toMatchObject({ fixJobs: [], emptyAttempts: 1, retryHold: false });
+    const two = await withAttempts([...attempt(0), ...attempt(1)]);
+    expect(two.repos[0]).toMatchObject({ fixJobs: [], emptyAttempts: 2, retryHold: true });
+    // Duplicate ledger rows are one attempt, not two.
+    const dup = await withAttempts([...attempt(0), attempt(0)[1]!]);
+    expect(dup.repos[0]).toMatchObject({ emptyAttempts: 1, retryHold: false });
+  });
+
+  it('resets the count after a published fix or a non-empty finish', async () => {
+    const rows = [event('launch', 40), event('finish', 35, { empty: true }), event('publish', 30),
+      event('launch', 20), event('finish', 15, { empty: true })];
+    expect((await withAttempts(rows)).repos[0]).toMatchObject({ emptyAttempts: 1, retryHold: false });
+    const mixed = [event('launch', 40), event('finish', 35, { empty: true }), event('launch', 30),
+      event('finish', 25, { empty: false }), event('launch', 20), event('finish', 15, { empty: true })];
+    expect((await withAttempts(mixed)).repos[0]).toMatchObject({ emptyAttempts: 1, retryHold: false });
+  });
+
+  it('never holds an actively repaired or independent failure', async () => {
+    const other = 'FIXUP-MAIN-ashlr-md-6e97fd8';
+    const two = [event('launch', 30), event('finish', 25, { empty: true }), event('launch', 20), event('finish', 15, { empty: true })];
+    const status = SAMPLE.replace(/\| ashlr-md[^\n]*\n/, `| ashlr-md | main | 6e97fd8537 | red | 2026-11-01 23:42:07 | build | ${other} | |\n`);
+    const otherRows = [{ event: 'launch', job: other, ts: new Date(NOW - 3 * 60_000).toISOString() }];
+    const report = await withAttempts([...two, ...otherRows], status);
+    const [phantom, ashlr] = report.repos;
+    expect(phantom).toMatchObject({ repo: 'phantom', emptyAttempts: 2, retryHold: true });
+    expect(ashlr).toMatchObject({ repo: 'ashlr-md', fixJobs: [other], emptyAttempts: 0, retryHold: false });
+  });
+
   it('retains assignments when the ledger is torn', async () => {
     const report = await withAttempts([event('launch', 10), event('finish', 5, { empty: true })], SAMPLE, '\n{');
     expect(report.repos[0]!.fixJobs).toEqual([job]);

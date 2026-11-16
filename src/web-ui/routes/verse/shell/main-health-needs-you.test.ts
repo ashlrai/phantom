@@ -34,6 +34,16 @@ describe('main health needs you', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
+  it('escalates a held failure with a stop-retrying step, and leaves an independent red repo on the normal alert', () => {
+    const held = { ...repo, emptyAttempts: 2, retryHold: true };
+    const other = { ...repo, repo: 'locus', emptyAttempts: 1, retryHold: false };
+    expect(derive({ ...data, red: 2, repos: [held, other] })).toMatchObject([
+      { id: 'main-red-phantom', severity: 'urgent', title: 'phantom master is red after 2 empty fix attempts: build',
+        nextStep: expect.stringContaining('Do not retry the same fix') },
+      { id: 'main-red-locus', title: 'locus master is red with no fix job: build', nextStep: 'Read ~/.ashlr-runs/guardian/guardian.log' },
+    ]);
+  });
+
   it('shows a red branch without a fix job', () => {
     expect(derive(data)).toMatchObject([{ id: 'main-red-phantom', severity: 'urgent',
       title: 'phantom master is red with no fix job: build', detail: expect.stringContaining('abcdef0'),
