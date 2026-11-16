@@ -133,6 +133,13 @@ export interface TrainObservation {
   candidateCi: CandidateCi;
   build: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   buildPending: boolean;
+  /**
+   * The master push CI run for `head.sha` finished without success (for example
+   * a red advisory Quick typecheck, which leaves Merge Gate green). The desktop
+   * release-build job reuses only a green exact-source push run, so a
+   * dispatched CI run can never produce the build artifact for this SHA.
+   */
+  pushCiRed?: boolean;
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
@@ -453,7 +460,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // same SHA when they match, but github.ref_name must be the tag so the
   // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
   const ref = headTag.name;
-  if (!input.build && !input.buildPending && publishable && !(row?.draft === false && input.npmPublished === true)) {
+  if (!input.build && !input.buildPending && publishable && !input.pushCiRed && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
       // ci.yml types release_gate as boolean. The dispatch API stores inputs as
@@ -509,7 +516,8 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     supersede: { status: writes.some((write) => write.method === 'PATCH') ? 'pending' : 'complete' },
     build: {
       status: input.build ? 'complete' : 'pending',
-      ...(!input.build && !publishable ? { reason: input.candidateCi === 'pending' ? 'candidate-ci-pending' : 'candidate-ci-unknown' } : {}),
+      ...(!input.build && !publishable ? { reason: input.candidateCi === 'pending' ? 'candidate-ci-pending' : 'candidate-ci-unknown' }
+        : !input.build && input.pushCiRed ? { reason: 'candidate-push-ci-red' } : {}),
     },
     attest: { status: input.attest ? 'complete' : 'pending' },
     sign: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
@@ -704,13 +712,13 @@ export async function observeTrain(
       if (record(item?.app)?.id !== 15368) continue;
       actions += 1;
       if (item?.status !== 'completed') pending += 1;
-      else if (item.conclusion !== 'success') failing += 1;
+      else if (item.conclusion !== 'success' && item.conclusion !== 'skipped') failing += 1;
     }
     if (actions === 0) failing += 1;
     pullChecks = { pending, failing };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
-  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false };
+  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
   const audit = head ? await auditRun(read, head.sha) : null;
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
@@ -720,7 +728,7 @@ export async function observeTrain(
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
-    openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending,
+    openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed,
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
@@ -816,14 +824,19 @@ export function admitCiRun(run: Record<string, unknown>, sha: string, tag: strin
   return run.head_branch === 'master' || run.head_branch === tag;
 }
 
-async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean }> {
+async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean; pushCiRed: boolean }> {
   const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
   if (!Number.isInteger(listed?.total_count) || Number(listed?.total_count) > 20 && runs.length === 20) throw new Error('incomplete build inventory');
   let pending = false;
+  let pushRed = false; let pushGreen = false;
   for (const row of runs) {
     const run = record(row);
     if (!run || run.head_sha !== sha) continue;
+    if (run.event === 'push' && run.head_branch === 'master' && run.path === '.github/workflows/ci.yml') {
+      if (run.status === 'completed' && run.conclusion === 'success') pushGreen = true;
+      else if (run.status === 'completed') pushRed = true;
+    }
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
     if (!admitCiRun(run, sha, tag)) continue;
     if (run.status !== 'completed' || run.conclusion !== 'success') continue;
@@ -835,9 +848,9 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
     const name = `ashlr-build-${Number(id)}-${Number(attempt)}`;
     const match = rows.map(record).find((artifact) => artifact?.name === name && artifact.expired !== true);
     if (!match || !Number.isSafeInteger(match.id)) continue;
-    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending };
+    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending, pushCiRed: false };
   }
-  return { build: null, pending };
+  return { build: null, pending, pushCiRed: pushRed && !pushGreen };
 }
 
 async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
