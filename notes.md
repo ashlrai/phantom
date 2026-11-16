@@ -1,20 +1,31 @@
 # Notes: Devin absorption
 
-- Installed phm is available at /Users/masonwyatt/.local/bin/phm.
-- Node reports v22.22.3.
-- devin --help documents list --format json and --export [PATH]. Export occurs after turns, so it is not assumed to be a read-only historical export command.
-- devin list --format json returned [] in the fresh job worktree. This result is scoped to that directory.
-- os.stat on /Users/masonwyatt/.ashlr-runs and its queue/ready.tsv returned PermissionError, errno 1, Operation not permitted. Path.exists initially hid this failure as false; stat verified that absence is not established.
-- No app internal database or credential file was read.
-- phm wire status defaults to every editor and reads Codex configuration. Only the explicit Claude target is eligible under this task's hard limit.
-- Source batch_sessions.py documents exclusive per-line .batched leases in queue/run. Their availability cannot be verified while fleet filesystem access is denied.
-- Final deliverable: BRIDGE_NOTES.md plus a local fallback ledger if the required external ledger remains inaccessible.
-- Sanctioned devin list --format json returned [] in all three queried directories: this worktree, /Users/masonwyatt/Projects/ashlrai/phantom, and /Users/masonwyatt. None establishes account-wide history since November 10.
-- Official CLI reference confirms that devin list is directory-scoped and --export writes after each turn: https://docs.devin.ai/cli/reference/commands . No new turn was launched.
-- gh pr list failed before contacting GitHub because /Users/masonwyatt/.config/gh/config.yml is inaccessible (EPERM). No merged-PR coverage was established.
-- Direct os.open(O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW) of the required ledger returned PermissionError 1. No ledger data was written to the requested destination.
-- Verified actions so far: 0 absorbed, 0 confirmed duplicates, 0 commits/pushes/publications. Eligible and total session counts remain unknown.
-- phm devin list --all --json returned 4 local tracked task records, all created and last updated before November 10 (September 28 through October 1). Every record has sessionId=null. This is not a provider session export or evidence that later sessions do not exist.
-- npm run check:docs passed. npm run typecheck failed before checking code because tsgo is unavailable. npm run lint failed because ESLint's ../lib/cli module is missing.
-- The sanctioned dependency installer remained pending without progress and was interrupted (exit 130). The changed-file verifier backend tsc was interrupted; it must not be reported as an overall pass. Its file-selection and empty-test guards passed; ESLint preflight skipped for missing dependencies.
-- git diff --check passed. A temporary-HOME Python check passed 3 artifact assertions, with 0 session rows in the local TSV. This provides no session completeness or deduplication evidence.
+## Current evidence
+
+- Base commit is 81dddab5d5c8b15b135a8b1c302e01861c72b6f0. It already contains task_plan.md, notes.md and a header-only devin-absorb.tsv from an earlier attempt.
+- Node reports v22.22.3. The installed Devin CLI reports 3000.12.32 (1126aba4a596).
+- devin list --help explicitly scopes sessions to the current directory, with JSON and CSV formats.
+- Current devin list --format json calls returned [] in this worktree and /Users/masonwyatt/Projects/ashlrai/phantom, both exit 0.
+- devin --help documents --export as exporting after each turn. It is not a standalone historical export. No new turn was started.
+- devin cloud --help offers drs resource management, not session history export. No cloud session was started.
+- No account-wide session export or session outputs since November 10 were obtained. Eligible and duplicate totals remain unknown.
+- phm devin list --all --json returned 4 locally tracked tasks dated September 28 through October 1. All sessionId fields are null; none provides a session output in the requested window.
+
+## Coordination and deduplication
+
+- stat of ~/.ashlr-runs/queue/ready.tsv and queue/run/RQ-DEVIN-ABSORB-1.line returned PermissionError errno 1.
+- stat of queue/run/RQ-DEVIN-ABSORB-1.batched returned FileNotFoundError errno 2. This does not establish an available or held lease.
+- append-open of ~/.ashlr-runs/metrics/devin-absorb.tsv with O_NOFOLLOW returned PermissionError errno 1. No acceptance ledger rows were written.
+- gh pr list for ashlrai/phantom merged since 2026-11-10 failed on ~/.config/gh/config.yml access, before a GitHub response.
+- Zero work items absorbed and zero duplicates confirmed in this attempt. These are action counts, not account inventory totals.
+
+## Access boundaries
+
+- Global npm installation failed with EPERM; installed Phantom docs, help and MCP metadata remained readable.
+- Default phm wire status attempted ~/.codex/config.toml and was denied. No config contents returned. Do not repeat the default probe.
+- No credential, cookie, Keychain, app internal database or TCC database contents were read. No settings, permissions, pinned files or live machinery were changed.
+- No companion MCP tools were called: toolsUsed = [].
+
+## Validation
+
+Current validation results and exact operational commands are recorded in BRIDGE_NOTES.md. Earlier baseline notes reported dependency failures; those are historical, not results of the current check runs.
