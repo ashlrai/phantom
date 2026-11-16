@@ -21,7 +21,7 @@ export function summarizeRebases(repo: string, prs: Pr[], jobs: QueueRow[], now:
     const prefix = `RQ-REBASE-${short}-${pr.number}-`;
     const matching = jobs.filter(j => j.id?.toUpperCase().startsWith(prefix) && (j.status === 'READY' || j.status.startsWith('PARKED-') || j.status === 'RUNNING'));
     if (!/^[a-f0-9]{7,40}$/i.test(pr.headRefOid)) unknownHead++;
-    else if (matching.some(j => j.id?.toUpperCase() === `${prefix}${pr.headRefOid.slice(0, 7).toUpperCase()}`)) covered++;
+    else if (matching.some(j => j.id?.toUpperCase().replace(/-RETRY\d+$/, '') === `${prefix}${pr.headRefOid.slice(0, 7).toUpperCase()}`)) covered++;
     else if (matching.length) stale++;
   }
   ages.sort((a, b) => a - b);
