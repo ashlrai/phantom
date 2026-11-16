@@ -1,7 +1,7 @@
 /** Local-only Gmail triage. The caller supplies a read-only mailbox adapter;
  * this module never receives credentials and has no provider write operation. */
 import { createHash } from 'node:crypto';
-import { createDraft } from '../cos/drafts.js';
+import { createDraft, listDrafts } from '../cos/drafts.js';
 
 export interface GmailMessage {
   id: string;
@@ -23,6 +23,7 @@ export interface GmailBridgeDependencies {
 export interface GmailBridgeReport {
   scanned: number;
   updates: string[];
+  /** New drafts created during this poll; existing drafts are not counted. */
   drafted: number;
   review: number;
   failed: number;
@@ -34,6 +35,7 @@ export async function pollGmailBridge(deps: GmailBridgeDependencies): Promise<Gm
   if (messages.length > 100) throw new Error('Gmail inbox batch exceeds 100 messages');
   const report: GmailBridgeReport = { scanned: messages.length, updates: [], drafted: 0, review: 0, failed: 0 };
   const seen = new Set<string>();
+  let draftSources: Set<string> | undefined;
   for (const message of messages) {
     if (!message.id || seen.has(message.id)) { report.review++; continue; }
     seen.add(message.id);
@@ -42,9 +44,12 @@ export async function pollGmailBridge(deps: GmailBridgeDependencies): Promise<Gm
       if (classification === 'update') {
         report.updates.push(await deps.summarizeUpdate(message));
       } else if (classification === 'reply' && message.autoSubmitted?.toLowerCase() === 'no') {
-        const body = await deps.composeReply(message);
         const source = `gmail-${createHash('sha256').update(message.id).digest('hex').slice(0, 16)}`;
+        draftSources ??= new Set((await listDrafts({ runsDir: deps.runsDir })).map((draft) => draft.source));
+        if (draftSources.has(source)) continue;
+        const body = await deps.composeReply(message);
         await createDraft({ to: message.from, subject: `Re: ${message.subject}`, body, source }, deps.runsDir);
+        draftSources.add(source);
         report.drafted++;
       } else {
         report.review++;

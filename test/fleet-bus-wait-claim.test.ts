@@ -6,7 +6,7 @@ import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { waitClaimBusWork } from '../src/core/fleet/bus-wait-claim.js';
 import { cmdFleetBusWaitClaim } from '../src/cli/fleet-bus-wait-claim.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 

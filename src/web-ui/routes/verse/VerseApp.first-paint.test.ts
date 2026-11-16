@@ -1,17 +1,17 @@
 /**
- * VerseApp first-paint imports (review 3.10 d1).
+ * PhantomApp first-paint imports (review 3.10 d1).
  *
- * Every module VerseApp imports statically is in the chunk a cold chat paint
+ * Every module PhantomApp imports statically is in the chunk a cold chat paint
  * must download before anything shows. The overlays (⌘K palette, ⌘J drawer,
  * ⌘/ shortcuts, the ⚙ tray), first-run onboarding and the rail's badge /
  * capacity module cannot draw anything at first paint, and together they were
- * ~97 KB of the 125 KB VerseConsoleApp chunk (727 KB chat critical JS against
+ * ~97 KB of the 125 KB PhantomConsoleApp chunk (727 KB chat critical JS against
  * the 350 KB budget). They must stay dynamic imports; a type-only import is
  * erased at build time and is fine.
  *
  * Measured with a scratch `vite build --config vite.config.web.ts` and the
- * static-closure walk of index → VerseConsoleApp → ChatSection:
- * 727.4 KB → 658.4 KB raw (239.0 → 221.3 KB gzip); VerseConsoleApp 125.0 → 27.8 KB.
+ * static-closure walk of index → PhantomConsoleApp → ChatSection:
+ * 727.4 KB → 658.4 KB raw (239.0 → 221.3 KB gzip); PhantomConsoleApp 125.0 → 27.8 KB.
  *
  * 3.11 (369.3 → 349.1 KB, `npm run check:first-paint`): the transcript
  * derivation, context-math, the composer's cost estimator, the session gate,
@@ -19,7 +19,7 @@
  * runners left the static closure too. The second describe below walks the
  * WHOLE static-import graph from the first-paint roots — the same closure the
  * budget script measures, from source — so a static import added anywhere in
- * it (not only in VerseApp) fails here before the budget does.
+ * it (not only in PhantomApp) fails here before the budget does.
  *
  * 3.11.4 (351.8 → 333.1 KB, `npm run check:first-paint`, 352 KB budget): the
  * command catalog split in two — the keys (command-keys.ts) stay, the
@@ -44,7 +44,7 @@ function staticValueImports(src: string): string[] {
   return out;
 }
 
-/** Modules VerseApp itself loads with import(). */
+/** Modules PhantomApp itself loads with import(). */
 const DYNAMIC = [
   './shell/CommandPalette.js',
   './shell/NeedsYouDrawer.js',
@@ -84,7 +84,7 @@ const LAZY_ONLY = [
   // Reached only through ./onboarding/OnboardingGate.js.
   './onboarding/OnboardingFlow.js',
   './onboarding/useOnboarding.js',
-  // Reached only through ./shell/warmup.js, never from VerseApp at all.
+  // Reached only through ./shell/warmup.js, never from PhantomApp at all.
   './shell/idle-prefetch.js',
   './shell/surface-prefetch.js',
   // Reached only through the Resources chunk.
@@ -100,7 +100,7 @@ const LAZY_ONLY = [
   './computer/computer-queries.js',
 ];
 
-describe('VerseApp keeps non-first-paint modules out of its static imports', () => {
+describe('PhantomApp keeps non-first-paint modules out of its static imports', () => {
   const statics = staticValueImports(SOURCE);
 
   it('sees the static imports it should (the parser works)', () => {
@@ -121,7 +121,7 @@ describe('VerseApp keeps non-first-paint modules out of its static imports', () 
     // warm-up chunk the moment the shell mounts.
     expect(staticValueImports(WARMUP)).not.toContain('./surface-prefetch.js');
     expect(WARMUP).toContain(`import('./surface-prefetch.js')`);
-    // And VerseApp never names the scheduler or the table itself.
+    // And PhantomApp never names the scheduler or the table itself.
     expect(SOURCE).not.toMatch(/['"]\.\/shell\/(idle-prefetch|surface-prefetch)\.js['"]/);
   });
 });
@@ -198,12 +198,12 @@ const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
   'web-ui/routes/verse/panes/index.ts': 'the pane registry: DockHost, the Workspace header, and ChatSection preloads it',
   'web-ui/routes/verse/panes/pane-registry.ts': 'the pane registry (panes/index.ts)',
   'web-ui/routes/verse/panes/builtin-panes.tsx': 'the first-party panes (panes/index.ts)',
-  'web-ui/routes/verse/shell/deep-link.ts': 'VerseApp imports it only when the URL carries ?chat= / ?pane=',
+  'web-ui/routes/verse/shell/deep-link.ts': 'PhantomApp imports it only when the URL carries ?chat= / ?pane=',
   'web-ui/routes/verse/NewChatDialog.tsx': 'opens on request',
   'web-ui/routes/verse/verse-model.ts': 'ChatSection preloads the seat lookups',
   'core/verse/context-math.ts': 'verse-store uses compaction-point.ts instead',
   'web-ui/routes/verse/chat/composer-state.ts': 'first-paint callers use composer-forget.ts / composer-wipe.ts',
-  'web-ui/components/auth/SessionGate.tsx': 'VerseConsoleApp loads it while the probe runs',
+  'web-ui/components/auth/SessionGate.tsx': 'PhantomConsoleApp loads it while the probe runs',
   'web-ui/components/auth/MutationTokenDialog.tsx': 'preloaded by ChatSection and guarded-action',
   'web-ui/components/primitives/Dialog.tsx': 'preloaded by ChatSection',
   'web-ui/routes/inbox/ConfirmDialog.tsx': 'preloaded by guarded-action',
@@ -212,11 +212,11 @@ const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
   'web-ui/routes/verse/shell/reveal-anchor.ts': 'preloaded by anchor-requests.ts',
   'web-ui/routes/verse/shell/guarded-runners.ts': 'run-command imports it when a guarded run is confirmed',
   'web-ui/routes/verse/shell/copy-setup.ts': 'run-command imports it when ⌘K "Copy autonomy setup command" runs',
-  'web-ui/routes/verse/shell/CommandPalette.tsx': 'VerseApp overlay',
+  'web-ui/routes/verse/shell/CommandPalette.tsx': 'PhantomApp overlay',
   'web-ui/routes/verse/shell/ReviewMenu.tsx': 'loaded only when Review is opened',
   'web-ui/routes/verse/chat/ActionMenu.tsx': 'chat and Review menus, never shell first paint',
-  'web-ui/routes/verse/shell/warmup.ts': 'VerseApp after-first-paint warm-up',
-  'web-ui/routes/verse/resources/ResourcesChrome.tsx': 'VerseApp Resources chrome',
+  'web-ui/routes/verse/shell/warmup.ts': 'PhantomApp after-first-paint warm-up',
+  'web-ui/routes/verse/resources/ResourcesChrome.tsx': 'PhantomApp Resources chrome',
   'web-ui/routes/verse/resources/account-reading-refresh.ts': 'selected-account mutation loads only on operator request',
   'web-ui/routes/verse/shell/command-catalog.ts': 'the palette loads it; keys and the menu bridge read command-keys.ts',
   'web-ui/routes/verse/onboarding/onboarding-store.ts': 'OnboardingGate (lazy) reads it',
@@ -226,10 +226,10 @@ const NEVER_FIRST_PAINT: Readonly<Record<string, string>> = {
   'web-ui/routes/verse/verse-readouts.ts': 'token and turn readouts — the workspace, meters and usage panels',
   'core/verse/types.ts': 'verse-store takes the transient-event guard from transient-events.ts',
   'web-ui/data/appearance-presets.ts': 'Settings ▸ Appearance only',
-  'web-ui/app/verse-first-paint.ts': "the shell's bounded first-paint wait — VerseConsoleApp imports it as it evaluates",
-  'web-ui/app/sidecar-restart.ts': 'desktop sidecar re-adoption — VerseConsoleApp imports it after mount',
-  'web-ui/routes/verse/shell/NeedsYouDrawer.tsx': 'VerseApp overlay (warm-up)',
-  'web-ui/routes/verse/shell/ShortcutsOverlay.tsx': 'VerseApp overlay (warm-up)',
+  'web-ui/app/verse-first-paint.ts': "the shell's bounded first-paint wait — PhantomConsoleApp imports it as it evaluates",
+  'web-ui/app/sidecar-restart.ts': 'desktop sidecar re-adoption — PhantomConsoleApp imports it after mount',
+  'web-ui/routes/verse/shell/NeedsYouDrawer.tsx': 'PhantomApp overlay (warm-up)',
+  'web-ui/routes/verse/shell/ShortcutsOverlay.tsx': 'PhantomApp overlay (warm-up)',
 };
 
 describe('the chat first-paint static closure (whole graph)', () => {

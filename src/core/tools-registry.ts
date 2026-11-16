@@ -17,6 +17,8 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } 
 import { homedir } from 'node:os';
 import { join, win32 } from 'node:path';
 import type { ToolInfo, ToolsRegistry } from './types.js';
+import { createToolVersionCacheSession } from '../doctor/tool-version-cache.js';
+import { findDoctorExecutable } from '../doctor/executable.js';
 
 /** Optional remote capabilities use caller-owned authenticated MCP sessions. */
 export const STACKSYNC_CAPABILITY = {
@@ -529,10 +531,10 @@ function probeTool(
  * ashlrcode, aw (ashlr-workbench), morphkit, binshield, ashlr-md (app), ashlr-hub,
  * lexicon.
  */
-export function getToolsRegistry(options: { parallel: true }): Promise<ToolsRegistry>;
+export function getToolsRegistry(options: { parallel: true; nativePath?: boolean }): Promise<ToolsRegistry>;
 export function getToolsRegistry(): ToolsRegistry;
-export function getToolsRegistry(options?: { parallel: true }): ToolsRegistry | Promise<ToolsRegistry> {
-  if (options?.parallel) return getToolsRegistryAsync();
+export function getToolsRegistry(options?: { parallel: true; nativePath?: boolean }): ToolsRegistry | Promise<ToolsRegistry> {
+  if (options?.parallel) return getToolsRegistryAsync(options.nativePath === true);
   const tools: ToolInfo[] = [];
 
   for (const spec of TOOL_SPECS) {
@@ -555,13 +557,19 @@ export function getToolsRegistry(options?: { parallel: true }): ToolsRegistry | 
 }
 
 /** Same inventory as getToolsRegistry, with independent child probes in parallel. */
-async function getToolsRegistryAsync(): Promise<ToolsRegistry> {
+async function getToolsRegistryAsync(nativePath: boolean): Promise<ToolsRegistry> {
+  const versions = createToolVersionCacheSession();
   const tools = await Promise.all(TOOL_SPECS.map(async spec => {
     try {
       if (spec.appPaths?.length) return probeTool(spec);
       let binary: string | undefined;
       let path: string | null = null;
       for (const candidate of spec.binaries) {
+        if (nativePath && process.platform !== 'win32') {
+          path = findDoctorExecutable(candidate);
+          if (path) { binary = candidate; break; }
+          continue;
+        }
         const locator = binaryLocator(candidate);
         if (!locator) break;
         const output = await runProbeAsync(locator[0], [locator[1]], LOCATOR_TIMEOUT_MS);
@@ -572,15 +580,21 @@ async function getToolsRegistryAsync(): Promise<ToolsRegistry> {
         }
       }
       const args = spec.versionArgs ?? (path ? [path, '--version'] : []);
-      const raw = path && !isBootstrapLauncher(path) && spec.versionArgs !== null
+      const cached = path && spec.versionArgs !== null
+        ? versions.forExecutable(args[0]!, args.slice(1)) : null;
+      const version = cached?.read();
+      const raw = version ?? (path && !isBootstrapLauncher(path) && spec.versionArgs !== null
         ? await runProbeAsync(args[0]!, args.slice(1), VERSION_TIMEOUT_MS)
-        : null;
+        : null);
       // Reuse the canonical fallback, ambiguity and version parsing rules.
-      return probeTool(spec, candidate => candidate === binary ? path : null, () => raw);
+      const tool = probeTool(spec, candidate => candidate === binary ? path : null, () => raw);
+      if (!version && tool.version) cached?.write(tool.version);
+      return tool;
     } catch {
       return { id: spec.id, name: spec.name, installed: false, version: null, path: null };
     }
   }));
+  versions.flush();
   return { tools, installedCount: tools.filter(tool => tool.installed).length };
 }
 

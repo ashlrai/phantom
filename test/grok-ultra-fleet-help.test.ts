@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 describe('fleet Grok usage help', () => {
   it('lists Grok usage alongside the legacy status option', async () => {

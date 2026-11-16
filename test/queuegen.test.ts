@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { QUEUE_TIERS } from '../src/core/drive/queue-tier.js';
+import { QUEUE_TIERS, QUEUE_TIER_SCOPE } from '../src/core/drive/queue-tier.js';
 import type { JobOutcome } from '../src/core/queue/job-outcomes.js';
 import {
   runQueuegenCycle, firstErrorLine, errorFile, acceptanceCommand,
@@ -121,7 +121,7 @@ describe('queuegen emitted line shape', () => {
     expect(summary).toMatchObject({ emitted: 1, deduped: 0 });
     expect(lines).toHaveLength(1);
     const line = lines[0]!;
-    expect(line).toMatch(/^- READY RQ-FIXUP-phantom-1-[0-9a-f]{7} \(P1, pool=any, tier=work, repo=phantom, after none, queuegen \d{2}:\d{2}\): /);
+    expect(line).toMatch(/^- READY RQ-FIXUP-phantom-1-[0-9a-f]{7} \(P1, pool=any, tier=work, repo=phantom, after none, queuegen \d{2}:\d{2}, max-files=15, size<=200\): /);
     for (const fragment of [
       'FIXUP phantom#1', 'branch=fleet/fix-broken', `head=${sha('a').slice(0, 7)}`,
       'file=src/core/drive/x.ts', 'check="build-test"', 'acceptance="',
@@ -599,6 +599,11 @@ describe('queuegen tier validation', () => {
     expect(runQueuegenCycle(io, { tier })).toMatchObject({ emitted: 1 });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(`, tier=${tier}, repo=phantom,`);
+    const scope = QUEUE_TIER_SCOPE[tier];
+    expect(lines[0]).toContain(`max-files=${scope.maxFiles}, size<=${scope.maxLines}`);
+    expect(rebaseLine('ashlrai/phantom', pr({}), ['src/a.ts'], false, '00:00', {
+      rebasePriority: 'P0', pool: 'any', tier,
+    })).toContain(`max-files=${scope.maxFiles}, size<=${scope.maxLines}`);
   });
 
   it.each(['standard', 'low', 'q8'])('refuses %s before any line is written', (tier) => {

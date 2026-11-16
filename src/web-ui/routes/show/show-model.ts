@@ -15,11 +15,6 @@ export const WINS_LIMIT = 8;
 /** Journal status labels that mean something concrete landed or was proven. */
 const WIN_STATUSES = new Set(['merged', 'verified', 'proposal-created', 'done']);
 
-/** Live agent activity: actions and runs, newest first (input is already sorted). */
-export function buildAgentFeed(entries: JournalEntry[], limit = FEED_LIMIT): JournalEntry[] {
-  return entries.filter(e => e.source === 'agent-action' || e.source === 'run').slice(0, limit);
-}
-
 /** Wins: merges plus verified/completed/proposal-producing work. */
 export function buildWins(entries: JournalEntry[], limit = WINS_LIMIT): JournalEntry[] {
   return entries

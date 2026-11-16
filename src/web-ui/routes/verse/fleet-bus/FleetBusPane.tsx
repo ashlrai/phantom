@@ -16,6 +16,7 @@ import { BusPostBox, type BusPostPrefill } from './BusPostBox.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { recentSenders } from './bus-post-model.js';
 import { replyCounts, threadHeadline, threadOf } from './bus-thread-model.js';
+import { PeerLedgerCard } from './PeerLedgerCard.js';
 import styles from './fleet-bus.module.css';
 
 // Include an occurrence number so identical log lines remain separate events.
@@ -109,7 +110,7 @@ const channelLabels = { telegram: 'Telegram', email: 'email', mobile: 'phone', d
 function durableError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 401) return 'Read session expired. Reopen the console.';
-    if (error.status === 404) return 'This hub has no durable bus route yet (update the hub).';
+    if (error.status === 404) return 'This Phantom has no durable bus route yet (update Phantom).';
     if (error.status === 503) return 'Durable bus storage unavailable.';
   }
   return 'Durable bus is unavailable.';
@@ -152,7 +153,7 @@ function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; quer
     finally { setLoadingOlder(false); }
   };
   const error = status.error ?? page.error ?? olderError;
-  const errorText = agentBusMissing() ? 'This hub has no durable bus route yet (update the hub).' : error ? durableError(error) : null;
+  const errorText = agentBusMissing() ? 'This Phantom has no durable bus route yet (update Phantom).' : error ? durableError(error) : null;
   const allRows = envelopeRows(messages, Date.now());
   const selected = thread === null ? null : threadOf(messages, thread);
   const counts = replyCounts(messages);
@@ -161,6 +162,7 @@ function DurableBus({ visible, query, setQuery, tell }: { visible: boolean; quer
     [row.from, row.to, row.priority, row.kind, row.channel ?? '', row.excerpt].some(value => value.toLowerCase().includes(query.toLowerCase())));
   return <section className={styles.root} aria-label="Durable bus">
     {status.data && <p className={styles.header}>{busStatusLine(status.data)}</p>}
+    <PeerLedgerCard visible={visible} />
     {errorText && <p className={styles.notice} role="status">{errorText}</p>}
     {!errorText && (status.data === null || page.data === null) && <p className={styles.notice}>Durable bus is unavailable.</p>}
     <input className={styles.search} type="search" aria-label="Filter bus events" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setQuery(''); }} />

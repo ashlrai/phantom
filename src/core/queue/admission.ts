@@ -21,18 +21,51 @@ export const DAEMON_TICK_MAX_S = 15 * 60;
 export const LEGACY_GLOBAL_HARD_CAP = 18;
 const STATUS_TIMEOUT_MS = 30_000;
 
+/** RQ-PACE-TO-RESET: one lane's weekly-quota pacing verdict (mirrors dispatchd's usage_verdict). */
+export interface UsagePacingVerdict {
+  admit: boolean; reason: string;
+  used_fraction: number | null; elapsed_fraction: number | null; limit: number | null;
+}
+export interface LaneAdmission { routine: UsagePacingVerdict; critical: UsagePacingVerdict }
+
+/**
+ * Weekly quota pacing: routine claims defer when weekly_used_pct is ahead of
+ * the reset window (elapsed fraction + 0.10 headroom); critical work may spend
+ * into the 95% reserve. Unknown usage admits; a missing/unusable reset falls
+ * back to the 60% routine ceiling. Numeric reset_at is Unix seconds; strings
+ * are ISO timestamps — same contract as dispatchd's usage_verdict.
+ */
+export function usageVerdict(row: Record<string, unknown>, now: number, critical = false): UsagePacingVerdict {
+  const used = row.weekly_used_pct;
+  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || used > 100) {
+    return { admit: true, reason: 'usage unknown', used_fraction: null, elapsed_fraction: null, limit: null };
+  }
+  const reset = typeof row.reset_at === 'number' ? row.reset_at * 1000
+    : typeof row.reset_at === 'string' ? Date.parse(row.reset_at) : NaN;
+  const week = 7 * 86400_000;
+  const elapsed = Number.isFinite(reset) && now < reset && reset <= now + week ? Math.max(0, 1 - (reset - now) / week) : null;
+  const limit = critical ? 0.95 : elapsed === null ? 0.60 : Math.min(1, elapsed + 0.10);
+  const admit = used / 100 <= limit;
+  return { admit, reason: `${critical ? 'critical reserve' : elapsed === null ? 'reset unknown: 60% fallback' : 'reset pacing'}: ${admit ? 'admit' : 'defer'}`,
+    used_fraction: used / 100, elapsed_fraction: elapsed, limit };
+}
+
 export interface InstallLockHolder { pid: number; job?: string; command?: string; since?: number }
 export interface AdmissionInput {
   load1: number; ncpu: number; procs: number; worktrees: number;
   /** Seconds since the ashlr daemon's lastTickAt, or null when unknown. */
   daemonTickAgeS: number | null; daemonWhy?: string | null;
-  slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null; disabled?: boolean;
+  slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null;
   /** dispatchd's adaptive cap from queue/concurrency.json, or null on hosts that have not run the controller. */
   adaptiveCap?: number | null;
 }
 export interface AdmissionReport {
   snapshot?: Record<string, unknown>;
-  admit: boolean; reason: string | null; reasons: string[]; disabled: boolean;
+  /** Per-lane weekly-quota pacing verdicts (RQ-PACE-TO-RESET); absent on very old hosts. */
+  lanes?: Record<string, LaneAdmission>;
+  admit: boolean; reason: string | null; reasons: string[];
+  /** Only an older dispatchd snapshot can set this (its LOADGATE_OFF marker); live probes never disable the gate. */
+  disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
   cap: number; hardCap: number | null; adaptiveCap: number | null; running: number; installLock: { holder: InstallLockHolder | null };
@@ -68,13 +101,11 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   else if (input.daemonTickAgeS > DAEMON_TICK_MAX_S) reasons.push(`daemon_tick_stale ${Math.floor(input.daemonTickAgeS)}s > ${DAEMON_TICK_MAX_S}s`);
   const adaptiveCap = input.adaptiveCap ?? null;
   const { cap, hardCap } = globalCap(input.slots, input.ncpu, adaptiveCap);
-  const disabled = input.disabled === true;
-  const tripped = reasons.length > 0 && !disabled;
-  const blockers = tripped ? [...reasons] : [];
+  const blockers = [...reasons];
   if (input.running >= cap) blockers.push(`at_cap running ${input.running} >= cap ${cap}`);
   const blocked = blockers.length > 0;
   return {
-    admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled,
+    admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled: false,
     load: { load1: input.load1, max: loadMax }, ncpu: input.ncpu, procs: input.procs, worktrees: input.worktrees,
     daemon: { tickAgeSeconds: input.daemonTickAgeS, maxAgeSeconds: DAEMON_TICK_MAX_S, error: input.daemonWhy ?? null },
     cap, hardCap, adaptiveCap, running: input.running, installLock: { holder: input.holder },
@@ -138,6 +169,7 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
       cap: Number(a.cap), hardCap: isCount(a.hard_cap) ? a.hard_cap : null,
       adaptiveCap: isCount(a.concurrency_cap) ? a.concurrency_cap : null, running: Number(a.running),
       installLock: { holder: a.install_lock_holder as InstallLockHolder | null }, snapshot: a,
+      lanes: a.lanes as Record<string, LaneAdmission> | undefined,
     };
   } catch { /* Older hosts use the legacy probes below. */ }
   const alive = opts.pidAlive ?? defaultAlive;
@@ -181,9 +213,23 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
     if (h && Number.isInteger(h.pid) && h.pid > 0 && alive(h.pid)) holder = h;
   } catch { /* garbage content is no holder */ }
 
+  // RQ-PACE-TO-RESET: mirror dispatchd's per-lane weekly pacing verdicts from
+  // budget-overrides.json for hosts whose dispatcher predates the lanes field.
+  let usage: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(await text(join(queue, 'budget-overrides.json')) ?? '{}');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) usage = raw;
+  } catch { /* unknown usage: every verdict admits */ }
+  const lanes = Object.fromEntries(Object.keys(slots).filter(lane => !GLOBAL_SLOT_KEYS.has(lane)).map(lane => {
+    const row = usage[lane];
+    const r = row && typeof row === 'object' && !Array.isArray(row) ? row as Record<string, unknown> : {};
+    return [lane, { routine: usageVerdict(r, now), critical: usageVerdict(r, now, true) }];
+  }));
   const report = evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
-    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap, disabled: await exists(join(queue, 'LOADGATE_OFF')),
+    // RQ-BATCH-SESSIONS-2: queue/LOADGATE_OFF no longer disables the gate (dispatchd reports it as off_switch_ignored).
+    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap,
   });
+  report.lanes = lanes;
   return staleSnapshot ? { ...report, staleSnapshot } : report;
 }

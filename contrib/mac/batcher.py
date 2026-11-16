@@ -1,12 +1,12 @@
 #!/usr/bin/python3
-"""Task batching for dispatchd (RQ-QUEUE-BATCH-1, Mason A1 Nov 4).
+"""Task batching for dispatchd (RQ-QUEUE-BATCH-1, Mason A1 Nov 4; per-line PRs since RQ-BATCH-SESSIONS-2, Nov 10).
 
-One agent session handles many related ready tasks: dispatchd groups them by repo, tier and code area
-(the source directories their prompts name) and launches one RQ-BATCH-* job. That session fans out its
-own subagents and lands one reviewable PR. Logging stays per task: the batch prompt carries a checklist
-the session keeps in BRIDGE_NOTES.md, and at reap time each member gets its own task_outcome metric.
-Members not done (failed, deferred, never reported) go back to ready.tsv as individual lines. After
-MAX_ATTEMPTS batch attempts a task only runs solo.
+One agent session handles up to 10 related ready lines: dispatchd groups them by repo and code area (the
+source directories their prompts name) and launches one RQ-BATCH-* session that fans out to its own subagents.
+Each line keeps its own lease, worktree and PR (see batch_sessions.py for the prompt, leases and model mix).
+The session keeps a per-line checklist in its BRIDGE_NOTES.md; at reap time each member gets its own
+task_outcome metric, done and skipped lines go to the normal per-job publish, and the rest go back to
+ready.tsv as individual lines. After MAX_ATTEMPTS bundle attempts a line only runs solo.
 
 Self-improvement: tasks completed per session-hour and per million tokens, per lane and mode
 (single vs batch), are computed from metrics/jobs.jsonl. They drive the batch lane choice (among the
@@ -27,14 +27,15 @@ import time
 SCHEMA = "dispatchd.batch.v1"
 TUNING_SCHEMA = "dispatchd.batch-tuning.v1"
 BATCH_PREFIX = "RQ-BATCH-"
-# codex-local runs a small local model with a 6-session pool; batches go to the hosted agent lanes only.
-BATCH_LANES = ("codex-cmp", "codex-personal", "claude", "devin", "claude-api")
+# Subscription lanes only (RQ-BATCH-SESSIONS-2: no new spend): codex-local is a 6-session local model and
+# claude-api spends API credits, so neither takes bundles.
+BATCH_LANES = ("codex-cmp", "codex-personal", "claude", "devin")
 # Release, desktop, main-repair and PR-maintenance work stays one job per session: each targets a
 # specific branch or PR and their priority buckets must not wait for unrelated batch-mates.
 SOLO_PREFIXES = ("RQ-FIX-MAIN-", "RQ-REL-", "RQ-DESK-", BATCH_PREFIX)
 SOLO_KINDS = re.compile(r"(?:RQ-)?(?:LAND|FIXUP|RECUT|SALVAGE|CONSOLIDATE|CLOSE)(?:[-_]|$)")
-MIN_BATCH = 3            # fewer related tasks than this launch individually
-MIN_SIZE, DEFAULT_SIZE, MAX_SIZE = 4, 16, 64
+MIN_BATCH = 2            # fewer related tasks than this launch individually
+MIN_SIZE, DEFAULT_SIZE, MAX_SIZE = 2, 8, 10   # Mason Nov 10: "about ten tasks in one session"
 MAX_PROMPT_CHARS = 200_000
 MAX_ATTEMPTS = 2
 MIN_SESSIONS = 3         # samples before a lane's throughput counts for lane choice or tuning
@@ -80,20 +81,20 @@ def batch_id(repo, area, members):
     return "%s%s-%s-%s" % (BATCH_PREFIX, slug(repo, 24), slug(area.split(":")[-1].split("/")[-1], 24), digest)
 
 
-def pick_members(lead, pool, size):
+def pick_members(lead, pool, size, min_batch=MIN_BATCH):
     """Choose the batch for `lead` from `pool` (priority order, lead excluded).
 
-    Entries are dicts with job, repo, tier, area and chars (prompt length). Same repo, tier and area
-    first; a lead whose area is too small for a batch absorbs other small-area orphans of its repo and
-    tier, never members of an area big enough to batch on its own. Batches are evened out (n tasks over
+    Entries are dicts with job, repo, tier, area and chars (prompt length). Same repo and area first; a
+    lead whose area is too small for a batch absorbs other small-area orphans of its repo, never members
+    of an area big enough to batch on its own. Tiers may mix: each line gets its own subagent model. Batches are evened out (n tasks over
     ceil(n / size) batches) and bounded by MAX_PROMPT_CHARS. Returns [] when fewer than MIN_BATCH fit.
     """
-    peers = [c for c in pool if c["repo"] == lead["repo"] and c["tier"] == lead["tier"]]
+    peers = [c for c in pool if c["repo"] == lead["repo"]]
     area_n = Counter(c["area"] for c in peers + [lead])
     group = [lead] + [c for c in peers if c["area"] == lead["area"]]
-    if len(group) < MIN_BATCH:
-        group += [c for c in peers if c["area"] != lead["area"] and area_n[c["area"]] < MIN_BATCH]
-    if len(group) < MIN_BATCH:
+    if len(group) < min_batch:
+        group += [c for c in peers if c["area"] != lead["area"] and area_n[c["area"]] < min_batch]
+    if len(group) < min_batch:
         return []
     take = math.ceil(len(group) / math.ceil(len(group) / max(MIN_SIZE, size)))
     out, chars = [], 0
@@ -104,32 +105,7 @@ def pick_members(lead, pool, size):
             continue
         out.append(c)
         chars += c["chars"]
-    return out if len(out) >= MIN_BATCH else []
-
-
-def render(bid, repo, area, members):
-    """members: [(job, prompt text)]. The checklist block is what parse_outcomes reads back."""
-    n = len(members)
-    head = ["# %s: batch of %d related tasks (%s, %s)" % (bid, n, repo, area), "",
-            "One agent session owns all %d tasks below (RQ-QUEUE-BATCH-1). Work them in parallel: fan out" % n,
-            "subagents or parallel tool calls for independent tasks, serialize edits to shared files, and land",
-            "them together as one coherent, reviewable change. Each task keeps its own RULES; where they",
-            "differ, the strictest rule wins. Run each task's checks before you mark it done.", "",
-            "Per-task checklist (required). Copy this block into BRIDGE_NOTES.md at the worktree root and",
-            "keep it current, one line per task. dispatchd parses it to log every task's outcome and",
-            "re-queues each task that is not done:", "",
-            "<!-- batch-checklist:%s -->" % bid]
-    head += ["- [ ] %s — pending" % job for job, _ in members]
-    head += ["<!-- /batch-checklist -->", "",
-             "Finish each line as `- [x] <JOB> — done: <one-line summary>` or",
-             "`- [ ] <JOB> — failed|skipped|deferred: <reason>`. Use skipped only when no change is needed",
-             "(already satisfied, duplicate, obsolete); it is not retried. Failed, deferred and pending tasks",
-             "are re-queued individually, so an honest status costs nothing. In BRIDGE_NOTES.md, also list",
-             "the commands you ran and their results for each task.", ""]
-    body = []
-    for i, (job, prompt) in enumerate(members, 1):
-        body += ["", "## Task %d of %d: %s" % (i, n, job), "", prompt.rstrip(), ""]
-    return "\n".join(head + body) + "\n"
+    return out if len(out) >= min_batch else []
 
 
 CHECK = re.compile(r"^\s*[-*]\s*\[(?P<box>[ xX])\]\s*(?P<job>[A-Za-z0-9._-]+)\s*(?:—|–|-|:)+\s*(?P<word>[A-Za-z]*)", re.M)
@@ -160,14 +136,16 @@ def _epoch(ts):
 def throughput(rows, now, window_s=7 * 86400):
     """Per lane and mode: sessions, session hours, tokens, tasks completed and the two rates.
 
-    A task counts as completed when its session published a PR: a single job that finished non-empty,
-    or a batch member the session reported done.
+    A task counts as completed when it published a PR: a single job that finished non-empty, or a batch
+    member the session reported done whose own per-line publish carried a PR url. Finish rows a bundle
+    member gets from its own per-job reap carry `bundle` and are not separate sessions.
     """
     pub = {r.get("job") for r in rows if r.get("event") == "publish" and r.get("url")}
-    done = Counter(r.get("batch") for r in rows if r.get("event") == "task_outcome" and r.get("outcome") == "done")
+    done = Counter(r.get("batch") for r in rows if r.get("event") == "task_outcome" and r.get("outcome") == "done"
+                   and r.get("job") in pub)
     out = {}
     for r in rows:
-        if r.get("event") != "finish" or not isinstance(r.get("lane"), str):
+        if r.get("event") != "finish" or not isinstance(r.get("lane"), str) or r.get("bundle"):
             continue
         t = _epoch(r.get("ts"))
         if t is None or now - t > window_s:
@@ -178,8 +156,10 @@ def throughput(rows, now, window_s=7 * 86400):
         s["session_s"] += r.get("wall_s") or 0
         s["tokens"] += r.get("tokens_total") or 0
         s["tasks_offered"] += r.get("batch_size") or 1
-        if r.get("job") in pub:
-            s["tasks"] += done[r["job"]] if mode == "batch" else (0 if r.get("empty") else 1)
+        if mode == "batch":
+            s["tasks"] += done[r.get("job")]
+        elif r.get("job") in pub:
+            s["tasks"] += 0 if r.get("empty") else 1
     for modes in out.values():
         for s in modes.values():
             s["tasks_per_session_hour"] = round(s["tasks"] / (s["session_s"] / 3600), 3) if s["session_s"] else None

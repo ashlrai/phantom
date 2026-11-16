@@ -32,6 +32,7 @@ export interface SelfTickCheckOptions {
   uid?: number;      // for gui/<uid>/<label>; defaults to getuid
   now?: number;      // ms epoch for lastRun age
   runsDir?: string;  // when set, also read queue/self-tick-last.json under it
+  maxAgeSeconds?: number; // lastRun stale threshold; defaults to SELF_TICK_LAST_STALE_SECONDS
   probe: SelfTickCheckProbe;
 }
 
@@ -93,20 +94,21 @@ function probeSystemd(probe: SelfTickCheckProbe, unit: string): SelfTickManagerC
   return { tool: 'systemctl', target: unit, state };
 }
 
-function readLastRun(runsDir: string | undefined, now: number): SelfTickLastRunCheck | null {
+function readLastRun(runsDir: string | undefined, now: number, maxAgeSeconds?: number): SelfTickLastRunCheck | null {
   if (runsDir === undefined) return null;
+  const staleAfter = maxAgeSeconds ?? SELF_TICK_LAST_STALE_SECONDS;
   const view = readSelfTickLast(runsDir, now);
   if (view === null || view.state === 'unreadable') return { state: view === null ? 'missing' : 'unreadable' };
   return {
-    state: view.ageSeconds <= SELF_TICK_LAST_STALE_SECONDS ? 'fresh' : 'stale',
+    state: view.ageSeconds <= staleAfter ? 'fresh' : 'stale',
     at: view.at, ageSeconds: view.ageSeconds, mode: view.mode,
-    ranState: view.ranState, failedSteps: view.failedSteps, staleAfterSeconds: SELF_TICK_LAST_STALE_SECONDS,
+    ranState: view.ranState, failedSteps: view.failedSteps, staleAfterSeconds: staleAfter,
   };
 }
 
 export function checkSelfTickSchedule(options: SelfTickCheckOptions): SelfTickCheckReport {
   const platform = options.platform ?? process.platform;
-  const lastRun = readLastRun(options.runsDir, options.now ?? Date.now());
+  const lastRun = readLastRun(options.runsDir, options.now ?? Date.now(), options.maxAgeSeconds);
   if (platform !== 'darwin' && platform !== 'linux') {
     return { v: 1, platform, supported: false, installed: false, units: [], manager: null,
       lastRun, verdict: 'unknown', exitCode: 3, suggestedInstall: null };
@@ -133,4 +135,94 @@ export function checkSelfTickSchedule(options: SelfTickCheckOptions): SelfTickCh
     exitCode: verdict === 'active' ? 0 : verdict === 'unknown' ? 3 : 1,
     suggestedInstall: verdict === 'missing' || verdict === 'inactive' ? SELF_TICK_INSTALL_ARGV : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Record-health verdict (`fleet self-tick-check --record-only`)
+// ---------------------------------------------------------------------------
+
+/** Default staleness bound for the record verdict: the slowest legal gap plus margin. */
+export const SELF_TICK_RECORD_MAX_AGE_DEFAULT_SECONDS = 1800;
+/** A record `at` this far ahead of the injected clock is 'future', never fresh. */
+export const SELF_TICK_RECORD_FUTURE_SKEW_SECONDS = 60;
+
+export type SelfTickRecordReason =
+  | 'ok' | 'missing' | 'unreadable' | 'future' | 'stale' | 'busy' | 'failed' | 'dry-run';
+
+export interface SelfTickRecordCheckOptions {
+  /** Runs root holding queue/self-tick-last.json (already resolved by the caller). */
+  runsDir: string;
+  now?: number;            // ms epoch
+  maxAgeSeconds?: number;  // default SELF_TICK_RECORD_MAX_AGE_DEFAULT_SECONDS
+  requireApply?: boolean;  // the recorded run's mode must be 'apply'
+}
+
+export interface SelfTickRecordCheck {
+  v: 1;
+  healthy: boolean;
+  reason: SelfTickRecordReason;
+  at: string | null;
+  ageSeconds: number | null;
+  mode: 'apply' | 'dry-run' | null;
+  ranState: 'ran' | 'busy' | null;
+  failedSteps: string[];
+  maxAgeSeconds: number;
+  requireApply: boolean;
+  /** Human explanation of the verdict; never emitted in --json. */
+  detail: string;
+  exitCode: 0 | 1; // 0 healthy record; 1 unhealthy — usage errors stay exit 2 in the CLI
+}
+
+/**
+ * Judge the recorded self-tick run itself — the verdict a host supervisor
+ * (launchd/systemd/cron wrapper) branches on when it must prove the timer
+ * actually RAN and succeeded, not merely that the service manager lists it.
+ * Reads only queue/self-tick-last.json through readSelfTickLast; never spawns,
+ * locks, ticks or writes, and works on every platform.
+ *
+ * Reason precedence: missing → unreadable → future → stale → busy → failed →
+ * dry-run → ok. 'future' guards clock writeahead/forged records — the reader
+ * clamps ageSeconds at 0, so a far-future `at` is re-checked against `now`.
+ */
+export function checkSelfTickRecord(options: SelfTickRecordCheckOptions): SelfTickRecordCheck {
+  const nowMs = options.now ?? Date.now();
+  const maxAge = options.maxAgeSeconds ?? SELF_TICK_RECORD_MAX_AGE_DEFAULT_SECONDS;
+  const requireApply = options.requireApply ?? false;
+  const view = readSelfTickLast(options.runsDir, nowMs);
+
+  const base = {
+    v: 1 as const,
+    at: view !== null && view.state === 'ok' ? view.at : null,
+    ageSeconds: view !== null && view.state === 'ok' ? view.ageSeconds : null,
+    mode: view !== null && view.state === 'ok' ? view.mode : null,
+    ranState: view !== null && view.state === 'ok' ? view.ranState : null,
+    failedSteps: view !== null && view.state === 'ok' ? view.failedSteps : [],
+    maxAgeSeconds: maxAge,
+    requireApply,
+  };
+  const verdict = (reason: SelfTickRecordReason, detail: string): SelfTickRecordCheck => ({
+    ...base, healthy: reason === 'ok', reason, detail, exitCode: reason === 'ok' ? 0 : 1,
+  });
+
+  if (view === null) return verdict('missing', 'no recorded self-tick run');
+  if (view.state === 'unreadable') {
+    return verdict('unreadable', 'the recorded run will not parse or fails validation');
+  }
+  const aheadMs = Date.parse(view.at) - nowMs;
+  if (aheadMs > SELF_TICK_RECORD_FUTURE_SKEW_SECONDS * 1_000) {
+    return verdict('future', `recorded at ${view.at}, ${Math.floor(aheadMs / 1_000)}s ahead of this clock`);
+  }
+  if (view.ageSeconds > maxAge) {
+    return verdict('stale', `last run ${view.at} is ${view.ageSeconds}s old (> ${maxAge}s)`);
+  }
+  if (view.ranState === 'busy') {
+    return verdict('busy', 'the recorded run found the self-tick lock held; no step ran');
+  }
+  if (view.failedSteps.length > 0) {
+    return verdict('failed', `failed steps: ${view.failedSteps.join(',')}`);
+  }
+  if (requireApply && view.mode === 'dry-run') {
+    return verdict('dry-run', 'the recorded run was a dry-run; --require-apply needs an apply pass');
+  }
+  return verdict('ok', `last run ${view.at} (${Math.floor(view.ageSeconds / 60)}m ago) ${view.mode} failed=none`);
 }

@@ -3,7 +3,7 @@
  * ResourcePoolConsoleApp). No global dashboard shell, router, or observer
  * stream: the read session is probed against /api/verse/bootstrap, host-
  * injected tokens (desktop wrapper) are adopted before that probe, and the
- * full-bleed VerseApp takes over once authenticated.
+ * full-bleed PhantomApp takes over once authenticated.
  *
  * V3.10 — first paint without a serial wait. The chunk of the section the
  * shell will mount (Chat, unless the operator left another one open) used to
@@ -27,7 +27,7 @@ import { ToastProvider } from '../components/primitives/Toast.js';
 import { adoptInjectedTokens, markCheckComplete } from '../data/auth-store.js';
 import { getQuerySnapshot, runQuery } from '../data/cache.js';
 import { useAuthPhase } from '../data/hooks.js';
-import { VerseApp } from '../routes/verse/VerseApp.js';
+import { PhantomApp } from '../routes/verse/VerseApp.js';
 import { verseBootstrapQuery } from '../routes/verse/verse-queries.js';
 import uiFontLatin from '../design/fonts/AshlrSans-latin.woff2?url';
 import displayFontLatin from '../design/fonts/SpaceGrotesk-latin.woff2?url';
@@ -64,12 +64,12 @@ export function preloadVerseFonts(doc: Document | null, display: boolean): void 
 /**
  * Start what the first paint will need, without waiting for the auth probe.
  * Everything here is a cache warm-up: a failure is ignored, because the real
- * mount (VerseApp's sectionLoader, the CSS @font-face) repeats the request
+ * mount (PhantomApp's sectionLoader, the CSS @font-face) repeats the request
  * and owns the error handling.
  *
  * `signedIn` is the best guess available before the probe: the desktop shell
  * injected its tokens, so the chat is what paints. Otherwise the display face
- * waits for the authenticated phase (VerseConsoleApp below).
+ * waits for the authenticated phase (PhantomConsoleApp below).
  */
 export function preloadVerseFirstPaint(
   doc: Document | null = typeof document === 'undefined' ? null : document,
@@ -117,7 +117,7 @@ const DecisionInbox = lazy(() => import('../routes/verse/inbox/DecisionInbox.js'
  */
 const UpdateReloadBanner = lazy(() => import('./UpdateReloadBanner.js').then((m) => ({ default: m.UpdateReloadBanner })));
 
-export function VerseConsoleApp() {
+export function PhantomConsoleApp() {
   const [inboxOpen, setInboxOpen] = useState(() => window.location.hash === '#/inbox');
   useEffect(() => {
     const update = () => setInboxOpen(window.location.hash === '#/inbox');
@@ -157,7 +157,7 @@ export function VerseConsoleApp() {
   if (phase === 'unauthenticated') {
     return (
       <Suspense fallback={<p className={styles.checking} role="status">Checking for an existing Phantom session…</p>}>
-        <SessionGate heading={`Connect to ${PRODUCT_NAME}`} command="phm verse" subject={PRODUCT_NAME} mutationField />
+        <SessionGate heading={`Connect to ${PRODUCT_NAME}`} command="phm console" subject={PRODUCT_NAME} mutationField />
       </Suspense>
     );
   }
@@ -171,8 +171,11 @@ export function VerseConsoleApp() {
             <a href="#">Back to workspace</a>
             <Suspense fallback={<p role="status">Loading inbox…</p>}><DecisionInbox /></Suspense>
           </main>
-        ) : <VerseApp />}
+        ) : <PhantomApp />}
       </div>
     </ToastProvider>
   );
 }
+
+/** @deprecated Legacy name for {@link PhantomConsoleApp}; kept so external imports keep resolving. */
+export const VerseConsoleApp = PhantomConsoleApp;

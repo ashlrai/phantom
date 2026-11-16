@@ -3,7 +3,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { CopyPill } from '../apps/CopyPill.js';
-import { GMAIL_TRIAGE_COMMAND, GMAIL_TRIAGE_PATH, GMAIL_TRIAGE_SAMPLE_NOTE, gmailTriageLine, readGmailTriageView } from './gmail-triage-model.js';
+import { GMAIL_TRIAGE_COMMAND, GMAIL_TRIAGE_PATH, GMAIL_TRIAGE_SAMPLE_NOTE, gmailEvidenceLine, gmailTriageLine, readGmailEvidence, readGmailTriageView } from './gmail-triage-model.js';
 import styles from './fleet-inbox.module.css';
 
 const gmailTriageQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-gmail-triage', fetch: s => apiGet(GMAIL_TRIAGE_PATH, s) };
@@ -28,6 +28,7 @@ export function GmailTriageCard({ visible }: { visible: boolean }) {
     <h3 className={styles.day}>Gmail triage</h3>
     <p className={styles.meta}>{line.summary}</p>
     <p className={styles.meta}>{line.unread}</p>
+    <p className={styles.meta}>{gmailEvidenceLine(readGmailEvidence(triage.data))}</p>
     <p className={styles.meta}>{GMAIL_TRIAGE_SAMPLE_NOTE}</p>
   </section>;
 }

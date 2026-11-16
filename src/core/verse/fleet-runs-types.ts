@@ -8,7 +8,7 @@ export interface FleetRunsV1 {
   lastTick: string|null; paused: boolean|null; memFreePct: number|null; diskFreeGb: number|null; switches: string[]; claudeLane: string|null;
   host: import('../fleet/host-load.js').HostLoad | null;
   lanes: Array<{ lane: string; running: number; target: number; queued: number; held: boolean; heldReason: string|null; tokensLastHour: number|null; merged24h: number|null; mergeRate24h: number|null }>;
-  workers: Array<{ job: string; repo: string; lane: string; tier: string; ageSeconds: number|null }>;
+  workers: Array<{ job: string; repo: string; lane: string; tier: string; ageSeconds: number|null; overrun?: { ratio: number; medianMs: number } }>;
   claimed?: Array<{ job: string; lane: string; tier: string; at: string }>;
   leaders: Array<{ label: string; ageSeconds: number|null }>; orchestratorAgents: number|null;
   publishesLastHour: Array<{ job: string; lane: string|null; url: string|null; at: string }>;

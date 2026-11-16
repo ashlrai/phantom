@@ -67,6 +67,47 @@ imessage-teammate-<rowid> --owner <agent> --lease-ms <ms>`); a claim is local
 coordination only and grants no execution authority. Owner texts stay off the
 bus; the mirror is best effort and never changes a receipt or the cursor.
 
+## Chunked patch transfers
+
+The personal Codex dot can text a patch as a sequence of protocol frames, one
+iMessage per frame (message bodies are size-limited, so a diff is chunked).
+`src/core/comms/imessage-patch-transfer.ts` reassembles them:
+
+```
+PATCH-BEGIN <id> <parts> <sha256>
+PATCH-PART <id> <i>/<parts>
+<chunk text — the remainder of the message after the first newline>
+PATCH-END <id> <sha256>
+```
+
+`<id>` is a sender-chosen slug (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`); `<sha256>`
+is the lowercase hex digest of the UTF-8 payload — every part's chunk bytes
+concatenated in index order. BEGIN declares it and END repeats it; both must
+agree before any bytes are trusted.
+
+- Intake consumes each frame from the raw chat.db row (not the scrubbed inbox
+  copy) into durable per-transfer state under
+  `~/.ashlr-runs/imessage/patches/open/`; `patches/state.json` keeps a bounded
+  dedup ring of handled frame rowids and the high-water rowid, so a re-polled
+  frame is a `duplicate` and a replay can never apply twice.
+- A transfer completes only when END is seen and every part is present; the
+  reassembled payload is sha256-verified before `patches/<id>.patch` is
+  written (dir 0700, files 0600) next to a `<id>.receipt.json` evidence file
+  (outcome, declared sha256/parts/bytes, source rowids, hashed sender — never
+  the handle or the patch body).
+- Conflicting parts or re-begins, a hash mismatch, oversize payloads, a spent
+  transfer id, secret-shaped chunks and malformed frames are terminal:
+  `rejected` receipts, no artifact, and the id can never be reused. An open
+  transfer unfinished after six hours is expired by the sweep (an `expired`
+  receipt), so stale frames are never resurrected and the watermark advances
+  past them.
+- Frames are protocol traffic, not conversation: the findings mirror counts
+  them `protocol` and never posts them as findings. Instead, each verified
+  artifact is announced once on `teammate.findings` as
+  `imessage-patch-<id>` — a `note` with the artifact name, sha256 prefix and
+  part/byte counts, deduped by the `announcedPatchIds` ring in
+  `findings-bridge.json`. Nothing applies, stages or executes a patch.
+
 ## Local teammate replies
 
 `phm imessage respond --apply --json` polls intake and processes at most three
@@ -99,7 +140,11 @@ fallbacks and no tool execution from agent messages.
 The private `imessage/teammate-replies.json` journal records bounded work claims,
 drafts and send attempts before native delivery. Restarted workers reconcile
 exact outgoing text, including attributed-body-only macOS records; an uncertain
-send is never automatically repeated. Pure acknowledgements and artifact-only
+send is never repeated while its attempt could still have landed. A send attempt
+that still has no chat.db record after thirty minutes returns the durable draft
+to the normal send path for a bounded retry — at most three send attempts in
+all — after which the row is suppressed and marked answered, so wedged sends
+cannot starve newer replies. Pure acknowledgements and artifact-only
 updates produce no reply. Requests for approval, decisions, or certain actions stay
 pending for leader review; they do not prevent later replyable messages in the
 same pass from being examined. Pending and uncertain records are preserved when
@@ -110,6 +155,53 @@ live route with a fresh teammate task question, then inspect the private reply
 receipt for an exact outgoing message match and its sent/delivered flags. Keep
 that evidence tied to the actual responsible native app and source revision;
 a foreground CLI result does not establish desktop background operation.
+
+## Fleet teammate tasks and evidence
+
+Fleet-originated tasks use a separate durable task journal. Inspect configured
+peers and existing tasks without sending:
+
+```sh
+phm fleet imessage-tasks peers --json
+phm fleet imessage-tasks list --json
+```
+
+`imessage-tasks enqueue` requires `--peer dot|instinct`, `--job`,
+`--kind research|triage|report|rebase`, bounded `--scope`, `--repo owner/name`,
+`--format` and a future ISO `--deadline`; optional repeated `--pr` values
+name PR numbers. Enqueue previews by default. `--apply` reserves the task
+and an exclusive CLAIMED queue job owned by `imsg:<peer>`; it does not send.
+`imessage-tasks dispatch` also previews by default; its `--apply` uses the
+approved teammate transport, reconciles uncertain sends, and accepts only
+a matching task result from the expected peer after the outgoing receipt.
+Peer results remain unverified evidence even when the local queue marks DONE.
+
+`imessage-tasks cancel --job <id>` previews withdrawal. With `--apply` it
+withdraws only a provably unsent, unexpired queued task and settles its local
+claim as BLOCKED. Sending, pending, expired and replied tasks refuse; cancellation
+does not assert a remote stop. `teammate-tasks` exposes the older
+enqueue/dispatch/list/peers interface; prefer `imessage-tasks` for bounded
+receipts that omit private task correlation tokens.
+
+Counts and metadata readers help distinguish configuration, intake and delivery:
+
+```sh
+phm fleet imessage-path --json
+phm fleet imessage-acks --limit 20 --json
+phm fleet imessage-acks --rowid 123 --json
+phm fleet teammates --json
+phm fleet teammate-latency --window-hours 24 --target-minutes 5 --json
+```
+
+`imessage-path` reports bounded local path evidence; its legacy owner-only
+transport and unsupported-collaborator states do not assess the separate
+teammate task transport described above. `imessage-acks` reads the
+acknowledgement journal; no match in its bounded tail does not prove a message
+was never ingested, and recorded-not-sent is not delivery. `teammates` shows
+declared counterparts and masked handles with observed text times. Latency
+summarizes recorded replies and unanswered age; missing sources remain unknown.
+The read-only fleet MCP equivalents are in the
+[fleet MCP onramp](FLEET-MCP-ONRAMP.md#coordination-and-imessage-observations).
 
 ## Check it
 
@@ -141,10 +233,12 @@ tagged `[src:imessage]`. Replies the Leader writes for you (entries in
 can be texted back to that same handle, once each.
 
 ```bash
-phm imessage replies --json   # dry run by default: counts what is waiting, sends nothing
+phm imessage replies --json   # sends when comms.leaderRepliesSend is true
 ```
 
-To send for real, set `comms.leaderRepliesSend` to `true` in `~/.ashlr/config.json`.
+With `comms.leaderRepliesSend` unset or false, this is a dry run. Setting it to
+`true` in `~/.ashlr/config.json` enables sending on this command and on
+`poll --apply`; `--json` selects output format and does not force a dry run.
 Replies go only to `comms.imessageHandle`, never to anyone else. Each reply is
 recorded by hash in `~/.ashlr-runs/imessage/leader-sent.jsonl` (mode 0600), so it
 is never sent twice. The first live pass marks existing replies as already seen,

@@ -1,0 +1,19 @@
+merge-plan ashlrai/phantom: 335 open (2 draft) + 241 merged/59 closed rows in snapshot
+  178 merges / 58 closes in 24h → 7.42 merges/h, 2.42 closes/h; ttm p50 2.9 min (merges back to 2026-11-09T17:06:06Z)
+  open age p50 46.9 h; states: UNKNOWN=335
+  cause unknown-state: 335 PRs (#915,#924,#927,#929,#932,#948,#949,#950)
+  cause draft: 2 PRs (#929,#932)
+  duplicates: 51 close proposal(s) in 38 rework families
+    close #929 (origin) — Superseded by #4632, the open rework PR that replaces this one.
+    close #950 (origin) — Superseded by #4652, the open rework PR that replaces this one.
+    close #976 (origin) — Superseded by #4701, the open rework PR that replaces this one.
+    close #1022 (origin) — Superseded by #4641, the open rework PR that replaces this one.
+    close #1048 (origin) — Superseded by #4696, the open rework PR that replaces this one.
+    close #1509 (origin) — Superseded by #4715, the open rework PR that replaces this one.
+    close #1563 (origin) — Superseded by #4723, the open rework PR that replaces this one.
+    close #1685 (origin) — Superseded by #4725, the open rework PR that replaces this one.
+    close #2831 (origin) — Superseded by #4722, the open rework PR that replaces this one.
+    close #2915 (origin) — Superseded by #4722, the open rework PR that replaces this one.
+  rebase candidates: unknown (no merge-state evidence)
+  batch plan: 335 batch(es) (335 independent, 0 serial), 0 rebase(s) expected — phm fleet merge-batch for the order
+  superseded by merged jobs: unknown (prompts unreadable)

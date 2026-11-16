@@ -87,7 +87,8 @@ describe('ChatSection bootstrap', () => {
     }));
     expect(getDockSnapshot().state.open).toBe(false);
     mount();
-    await screen.findByText('Fleet is running on this Mac. Opened the fleet workspace.');
+    // The auto-open lands behind the lazy dock chunk, a fetch and an effect; give CI slack.
+    await screen.findByText('Fleet is running on this Mac. Opened the fleet workspace.', {}, { timeout: 5000 });
     expect(getDockSnapshot().state).toMatchObject({ open: true, active: 'fleet-hub', splitWith: 'fleet-lanes', tabs: ['fleet-hub', 'fleet-lanes', 'fleet-merges', 'fleet-inbox'] });
   });
 
@@ -241,7 +242,9 @@ describe('ChatSection sessions', () => {
     }
   });
 
-  it('creates a session with the contract body and selects it', async () => {
+  // First New-chat consumer pays the dialog's lazy-chunk load; under a busy
+  // host that alone can eat the 5 s default, so this test gets extra room.
+  it('creates a session with the contract body and selects it', { timeout: 20_000 }, async () => {
     const { fetch, state } = verseFetch();
     vi.stubGlobal('fetch', fetch);
     setMutationToken(TOKEN);
@@ -250,7 +253,7 @@ describe('ChatSection sessions', () => {
     await screen.findByRole('button', { name: /Fix the login bug/ });
 
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     if (within(dialog).getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded') === 'false') {
       await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
     }
@@ -721,7 +724,7 @@ describe('ChatSection — context orchestration wiring', () => {
     mount();
     await screen.findByRole('button', { name: /Fix the login bug/ });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     if (within(dialog).getByRole('button', { name: 'Advanced' }).getAttribute('aria-expanded') === 'false') {
       await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
     }
@@ -842,7 +845,7 @@ describe('ChatSection — commands and keys (3.10)', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     act(() => { requestVerseCommand('new-chat', { seatId: 'local:qwen3-coder', projectPath: '/Users/mason/dev/site' }); });
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     expect(within(dialog).getByLabelText('Project')).toHaveValue('/Users/mason/dev/site');
     expect(within(dialog).getByLabelText('Seat and model')).toHaveValue(JSON.stringify(['local:qwen3-coder', 'qwen3-coder']));
   });
@@ -1204,7 +1207,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     expect(within(dialog).queryByLabelText('Seat and model')).not.toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), 'Review the security of this code');
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1230,7 +1233,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     act(() => { requestVerseCommand('new-chat', { seatId: 'local:qwen3-coder', projectPath: '/Users/mason/dev/site' }); });
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     expect(within(dialog).getByRole('button', { name: 'Manual' })).toHaveAttribute('aria-pressed', 'true');
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), 'Explain the navigation');
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1253,7 +1256,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const message = 'Review the security of this code';
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), message);
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1274,7 +1277,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const message = 'Review the security of this code';
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), message);
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));
@@ -1294,7 +1297,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const option = await within(dialog).findByRole('option', { name: 'Product — 2 folders' });
     await user.selectOptions(within(dialog).getByLabelText('Project'), option);
     const message = 'Review the security of this code';
@@ -1321,7 +1324,7 @@ describe('Automatic initial session and turn', () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
     await user.click(within(screen.getByRole('navigation', { name: 'Chats' })).getByRole('button', { name: 'New chat' }));
-    const dialog = await screen.findByRole('dialog', { name: 'New chat' });
+    const dialog = await screen.findByRole('dialog', { name: 'New chat' }, { timeout: 5000 });
     const message = 'Review the security of this code';
     await user.type(within(dialog).getByLabelText('What would you like to work on?'), message);
     await user.click(within(dialog).getByRole('button', { name: 'Start chat' }));

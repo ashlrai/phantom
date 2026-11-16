@@ -32,14 +32,14 @@ describe('controller inspector console isolation', () => {
     });
     vi.stubGlobal('fetch', request);
     render(<UniverseConsoleApp />);
-    await screen.findByRole('heading', { name: 'Universe records unavailable' });
+    await screen.findByRole('heading', { name: 'Experiment records unavailable' });
     expect(screen.getByRole('heading', { name: 'Controller inspector' })).toBeInTheDocument();
     expect(request.mock.calls.map(([path]) => path)).toEqual(['/api/universe/console', '/api/universe']);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('Controller ID'), 'fleet');
     await user.click(screen.getByRole('button', { name: 'Inspect controller' }));
     expect(await screen.findByText(/No controller registration was found/)).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Universe records unavailable' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Experiment records unavailable' })).toBeInTheDocument();
     expired = true;
     await user.click(screen.getByRole('button', { name: 'Refresh controller' }));
     await screen.findByRole('heading', { name: 'Connect to Phantom' });

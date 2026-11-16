@@ -14,9 +14,8 @@
 #                       vulnerable glib 0.18.5 (GHSA-wrw7-89jp-8q8g).
 #
 # Sidecar pipeline (required before `cargo tauri build`):
-#   1. `bun run build`          — builds the @ashlr/hub npm package
-#   2. `node scripts/build-sea.mjs`          — compiles the Bun SEA binary to dist-bin/
-#   3. `node desktop/scripts/prepare-sidecar.mjs` — copies it into src-tauri/binaries/<triple>
+#   1. `node scripts/build-sea.mjs`          — `npm run build`, then the Bun SEA binary in dist-bin/
+#   2. `node desktop/scripts/prepare-sidecar.mjs` — copies it into src-tauri/binaries/<triple>
 #
 # ── Code-signing secrets (ALL OPTIONAL for unsigned dev builds) ──────────────
 #
@@ -130,11 +129,9 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
-      # ── Build the @ashlr/hub package ────────────────────────────────────────
-      - name: Build @ashlr/hub
-        run: npm run build
-
-      # ── Build the Bun SEA sidecar binary ────────────────────────────────────
+      # ── Build the package and the Bun SEA sidecar binary ────────────────────
+      # build-sea.mjs runs `npm run build` itself; a separate build step before
+      # it compiled the whole package twice.
       - name: Build SEA sidecar (dist-bin/ashlr-<triple>)
         run: node scripts/build-sea.mjs
 

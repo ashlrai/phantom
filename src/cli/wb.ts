@@ -1,8 +1,10 @@
 import { parseArgs } from 'node:util';
+import { readWbLocus } from '../core/workbench/locus.js';
 import { readWorkbenchSecrets } from '../core/workbench/secrets.js';
 import { runSteerAction, SteerRefusedError, type SteerRequest } from '../core/workbench/steer.js';
 
 const HELP = `Usage: phm wb secrets [--json]
+       phm wb locus [--json]
        phm wb steer --text <note> [--apply] [--json]
        phm wb reprioritize <job-id> --priority P0|P1|P2|P3 [--apply] [--json]
        phm wb stop <job-id> [--apply] [--json]
@@ -10,6 +12,7 @@ const HELP = `Usage: phm wb secrets [--json]
 Desktop workbench verbs — the same actions POST /api/wb/v1/action runs.
 Every verb is a dry run unless --apply is passed.
 
+  locus               Read Locus custody health.
   secrets             Read Phantom Secrets custody metadata (names only).
   steer               Append a steer note to the leaders' inbox.
   reprioritize        Re-priority one unclaimed queue line (READY or HOLD).
@@ -68,6 +71,11 @@ function parseSteer(verb: string, args: string[]): { request?: SteerRequest; jso
 export async function cmdWb(args: string[]): Promise<number> {
   const verb = args[0];
   if (verb === undefined || verb === '--help' || verb === '-h') { console.log(HELP); return 0; }
+  if (verb === 'locus') {
+    if (args.slice(1).some(arg => arg !== '--json') || args.length > 2) { console.error(HELP); return 2; }
+    console.log(JSON.stringify(await readWbLocus(), null, 2));
+    return 0;
+  }
   if (verb === 'secrets') {
     if (args.slice(1).some(arg => arg !== '--json')) { console.error(HELP); return 2; }
     return cmdSecrets(args.slice(1));
@@ -83,7 +91,7 @@ export async function cmdWb(args: string[]): Promise<number> {
     return 0;
   } catch (error) {
     // SteerRefusedError = bad input (HTTP's 400); anything else = operational (503).
-    const message = error instanceof SteerRefusedError ? `invalid ${verb}` : (error instanceof Error ? error.message : `${verb} unavailable`);
+    const message = error instanceof SteerRefusedError ? (error.message === 'flag-only' ? 'that looks like a flag, not a message; did you mean `ashlr ... --help`?' : `invalid ${verb}`) : (error instanceof Error ? error.message : `${verb} unavailable`);
     if (parsed.json) console.log(JSON.stringify({ v: 1, dryRun, error: message }));
     else console.error(message);
     return error instanceof SteerRefusedError ? 2 : 1;

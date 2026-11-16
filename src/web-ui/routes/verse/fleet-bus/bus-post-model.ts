@@ -39,6 +39,6 @@ export function postOutcomeText(status: PostStatus, cursor?: number): string {
     case 'full': return 'The bus is full.';
     case 'unavailable': return 'The bus is unavailable.';
     case 'locked': return 'Unlock mutations to post to the bus.';
-    case 'dispatch-disabled': return 'This hub was started without --allow-dispatch, so nothing can post.';
+    case 'dispatch-disabled': return 'Phantom was started without --allow-dispatch, so nothing can post.';
   }
 }

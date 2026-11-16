@@ -75,6 +75,9 @@ export function overBudget(usage: RunUsage, budget: RunBudget): boolean;
 
 /** Estimated USD cost. LOCAL providers (ollama/lmstudio) return 0. */
 export function estCostUsd(provider: string, tokensIn: number, tokensOut: number): number;
+
+/** Pure hypothetical cloud reference; clamps negative counters without resolving host providers. */
+export function cloudReferenceCost(tokensIn: number, tokensOut: number): number;
 ```
 
 ---

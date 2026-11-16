@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { FablePlan } from '../routing/fable-orchestrator.js';
 import { FABLE_ORCHESTRATOR_MODEL } from '../routing/fable-orchestrator.js';
 /**
@@ -10,6 +11,10 @@ import type { UsageSensorReport } from '../usage/sensor-reading.js';
 import type { RepoHeadline } from '../observe/types.js';
 import { GROWTH_FIELD_NEEDS, type GrowthSeriesId, type GrowthSnapshot } from '../growth/series.js';
 import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type Field, type Freshness, type WorldModel } from './types.js';
+
+/** Bound on per-directive stale blind spots. The stale count stays exact. */
+export const MAX_STALE_INTENT_SPOTS = 20;
+const INTENT_SOURCE = 'ashlr.intent-ledger/v1';
 
 const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and runwayHours on usage.sensors.v1. Those keys are absent, so pace stays unknown.';
 
@@ -34,6 +39,22 @@ export interface WorldProjectInput {
   outcomes: readonly RepoHeadline[] | null;
   /** Latest growth-series readings. Null leaves every growth field unknown. */
   growth?: GrowthSnapshot | null;
+  /** intentSummary reading. Null or absent leaves every intents field unknown. */
+  intents?: IntentWorldReading | null;
+}
+
+/** The slice of intentSummary the world model keeps. Titles are not part of it. */
+export interface IntentWorldReading {
+  sourceQuality: 'readable' | 'missing' | 'unavailable';
+  countQuality: 'observed' | 'unknown';
+  items: number;
+  tracked: number;
+  merged: number;
+  shipped: number;
+  verified: number;
+  stale: number;
+  partial: number;
+  staleItems: ReadonlyArray<{ id: string }>;
 }
 
 function iso(nowMs: number): string {
@@ -85,6 +106,8 @@ function needFor(path: string): string {
   if (path === 'bottlenecks.count') return 'Eng Ops writes ~/.ashlr-runs/export/bottlenecks.json (bottlenecks.v1).';
   if (path === 'humanSteps.remaining') return 'Eng Ops writes ~/.ashlr-runs/export/human-steps.json (ashlr.human-steps/v1).';
   if (path.startsWith('outcomes.')) return 'A complete pull export. Merged-per-day needs mergedAt. Change-failure rate needs reverted, fixForward, and failedRelease on every merged pull.';
+  if (path.startsWith('intents.stale.')) return 'This directive is past its stale timer. Review with phm fleet intent-sweep --json. It is not closed automatically.';
+  if (path.startsWith('intents.')) return 'A readable local ashlr.intent-ledger/v1 at ~/.ashlr-runs/intent/ledger.json. A missing or unreadable ledger is unknown, not zero.';
   if (path.startsWith('growth.')) return GROWTH_FIELD_NEEDS[path] ?? `A fresh reading for ${path}.`;
   return `A fresh reading for ${path}.`;
 }
@@ -103,7 +126,8 @@ export function blindSpotsFrom(model: Omit<WorldModel, 'blindSpots'>): { spots: 
   const walk = (node: unknown, path: string): void => {
     if (isField(node)) {
       if (node.freshness === 'fresh') fresh += 1;
-      else spots.push({ id: stableFieldId(path), path, freshness: node.freshness, need: needFor(path) });
+      // Not at zero is the normal state; its absence is not a blind spot.
+      else if (!path.endsWith('.zeroCapacityUntil')) spots.push({ id: stableFieldId(path), path, freshness: node.freshness, need: needFor(path) });
       return;
     }
     if (Array.isArray(node)) {
@@ -144,7 +168,14 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       }
       return reading(value, source ?? 'usage.sensors.v1', observedAt, 'fresh');
     };
-    const remaining = laneNumber(lane.remaining);
+    const remaining = lane.zeroCapacityUntil
+      ? reading(0, source ?? 'usage.sensors.v1', observedAt, 'fresh')
+      : laneNumber(lane.remaining);
+    const resetKnown = lane.resetAt !== null && Date.parse(lane.resetAt) > input.nowMs;
+    const resetAt = resetKnown ? reading(lane.resetAt, source ?? 'usage.sensors.v1', observedAt, 'fresh') : unknown<string>(source ?? 'usage.sensors.v1');
+    const zeroCapacityUntil = lane.zeroCapacityUntil
+      ? reading(lane.zeroCapacityUntil, source ?? 'usage.sensors.v1', observedAt, 'fresh')
+      : unknown<string>(source ?? 'usage.sensors.v1');
     const burnRate = laneNumber(lane.burnRate);
     const idleIncludedWastedPerWeek = laneNumber(lane.idleIncludedWastedPerWeek);
     const paceFreshness: Freshness = fresh ? 'fresh' : 'unknown';
@@ -158,7 +189,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const paceHour = paceField(pacePerHour);
     const required = paceField(requiredPacePerHour);
     const runway = paceField(runwayHours);
-    return { lane: lane.lane, headroom, used, limit, remaining, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
+    return { lane: lane.lane, headroom, used, limit, remaining, resetAt, zeroCapacityUntil, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
   });
   if (input.fablePlan) {
     const plan = input.fablePlan;
@@ -169,6 +200,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       fableOverallWeeklyUsedPercent: percent(plan.fableOverallWeeklyUsedPercent),
       used: percent(plan.fableOverallWeeklyUsedPercent), limit: percent(plan.fableOverallWeeklyUsedPercent === null ? null : 100),
       remaining: percent(plan.fableOverallWeeklyUsedPercent === null ? null : Math.max(0, plan.sharePercent - plan.fableOverallWeeklyUsedPercent)),
+      resetAt: unknown<string>('claude-usage'), zeroCapacityUntil: unknown<string>('claude-usage'),
       headroom: unknown('claude-usage'), burnRate: unknown('claude-usage'), idleIncludedWastedPerWeek: unknown(),
       pacePerHour: unknown(), requiredPacePerHour: unknown(), runwayHours: unknown() });
   }
@@ -246,6 +278,40 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       costPerMergedPr: growthField('costPerMergedPr'),
       bottleneckTrends: growthField('bottleneckTrends'),
     },
+    intents: intentFields(input.intents, now),
   };
-  return { ...draft, blindSpots: blindSpotsFrom(draft).spots };
+  const spots = blindSpotsFrom(draft).spots;
+  if (intentsObserved(input.intents)) {
+    const ids = [...new Set(input.intents.staleItems.map((item) => opaqueIntentId(item.id)))].sort().slice(0, MAX_STALE_INTENT_SPOTS);
+    for (const id of ids) {
+      const path = `intents.stale.${id}`;
+      spots.push({ id: stableFieldId(path), path, freshness: 'stale', need: needFor(path) });
+    }
+    spots.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  }
+  return { ...draft, blindSpots: spots };
+}
+
+/** Stable, non-reversible handle so blind spots never echo ledger content. */
+function opaqueIntentId(id: string): string {
+  return `i-${createHash('sha256').update(id).digest('hex').slice(0, 10)}`;
+}
+
+function intentsObserved(snapshot: WorldProjectInput['intents']): snapshot is IntentWorldReading {
+  return !!snapshot && snapshot.sourceQuality === 'readable' && snapshot.countQuality === 'observed';
+}
+
+function intentFields(snapshot: WorldProjectInput['intents'], now: string): WorldModel['intents'] {
+  if (!intentsObserved(snapshot)) {
+    const none = (): Field<number> => unknown<number>(INTENT_SOURCE);
+    return { items: none(), tracked: none(), merged: none(), shipped: none(), verified: none(), stale: none(), partial: none() };
+  }
+  const count = (value: number): Field<number> => Number.isFinite(value) && value >= 0
+    ? reading(value, INTENT_SOURCE, now, 'fresh')
+    : unknown<number>(INTENT_SOURCE);
+  return {
+    items: count(snapshot.items), tracked: count(snapshot.tracked), merged: count(snapshot.merged),
+    shipped: count(snapshot.shipped), verified: count(snapshot.verified), stale: count(snapshot.stale),
+    partial: count(snapshot.partial),
+  };
 }

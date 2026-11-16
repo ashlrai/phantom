@@ -125,14 +125,20 @@ export function apiPost<T>(path: string, body: unknown, mutationToken: string, s
   return mutateJson<T>('POST', path, body, mutationToken, signal);
 }
 
+/** PUT: same gates as POST. Local-only — the phone gateway has no PUT surface. */
+export function apiPut<T>(path: string, body: unknown, mutationToken: string, signal?: AbortSignal): Promise<T> {
+  if (isRemoteMobileMode()) return Promise.reject(new ApiError('Not available on the phone gateway.', 405, path));
+  return mutateJson<T>('PUT', path, body, mutationToken, signal);
+}
+
 /** DELETE retains its empty-body/text-response contract. */
 export function apiDelete<T>(path: string, mutationToken: string, signal?: AbortSignal): Promise<T> {
   return mutateJson<T>('DELETE', path, {}, mutationToken, signal);
 }
 
-async function mutateJson<T>(method: 'POST' | 'DELETE', path: string, body: unknown, token: string, signal?: AbortSignal): Promise<T> {
-  if (isRemoteMobileMode()) return (await loadRemote()).remoteMutate<T>(method, path, body);
-  const post = method === 'POST';
+async function mutateJson<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, token: string, signal?: AbortSignal): Promise<T> {
+  if (isRemoteMobileMode() && method !== 'PUT') return (await loadRemote()).remoteMutate<T>(method, path, body);
+  const post = method !== 'DELETE';
   const res = await fetch(path, {
     method, credentials: 'same-origin',
     headers: post ? { 'Content-Type': 'application/json', 'x-ashlr-token': token } : { 'x-ashlr-token': token },

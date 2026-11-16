@@ -481,7 +481,7 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
     expect(state.costPerMTokenOut).toBe(0);
   });
 
-  it('maps usedPercent=95 → throttled', async () => {
+  it('maps usedPercent=95 → near', async () => {
     mockCodexSession({ usedPercent: 95, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 1800 });
     vi.doMock('../src/core/observability/codex-source.js', () => ({
       readCodexRateLimits: vi.fn().mockReturnValue({
@@ -492,7 +492,7 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
     const { getBackendResourceState } = await import('../src/core/fabric/resource-monitor.js');
 
     const state = await getBackendResourceState('codex', baseCfg());
-    expect(state.availability).toBe('throttled');
+    expect(state.availability).toBe('near');
     expect(state.usedPct).toBe(95);
   });
 
@@ -524,7 +524,7 @@ describe('M250 ResourceMonitor — Codex delegation', () => {
 
     const state = await getBackendResourceState('codex', baseCfg());
     expect(state.usedPct).toBe(92);
-    expect(state.availability).toBe('throttled');
+    expect(state.availability).toBe('near');
   });
 
   it('returns unknown when the session collector has no reading', async () => {

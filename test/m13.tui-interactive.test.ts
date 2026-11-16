@@ -3,7 +3,7 @@
  * src/tui/app.ts, the path m13.tui-once.test.ts deliberately never reaches:
  *
  *   - Alt-screen enter/leave, cursor hide/show, raw-mode toggling.
- *   - Raw keypress decoding: q/Q/Ctrl-C quit, 1-7 tab select, tab/shift-tab
+ *   - Raw keypress decoding: q/Q/Ctrl-C quit, 1-8 tab select, tab/shift-tab
  *     cycling (with wrap-around), j/k + arrow-key row movement (clamped),
  *     r/R/enter refresh, ignored keys.
  *   - SIGWINCH repaint (clear + redraw).
@@ -64,6 +64,28 @@ function makeSnapshot(): DashboardSnapshot {
     ],
     genome: { entries: 10, projects: 3 },
     inbox: { pending: 0 },
+    sessions: {
+      schema: 'fleet.sessions.v1',
+      generatedAt: '2026-06-08T10:00:00.000Z',
+      runsDirPresent: true,
+      sourceState: 'healthy',
+      sources: { runDir: 'healthy', ready: 'healthy', claimed: 'missing', precheck: 'missing', status: 'healthy', metrics: 'missing', live: 'healthy' },
+      dispatcher: { lastTick: '2026-06-08T09:59:58.000Z', paused: false, tickAgeSeconds: 12 },
+      sessions: [{
+        job: 'RQ-TEST-SESSION-1', repo: 'phantom', lane: 'codex-personal', tier: 'work',
+        status: 'running', model: null, batchId: null, pid: null, live: 'unknown',
+        exitCode: null, timedOut: false,
+        enqueuedAt: '2026-06-08T09:40:00.000Z', claimedAt: '2026-06-08T09:45:00.000Z',
+        launchedAt: '2026-06-08T09:48:00.000Z', startedAt: '2026-06-08T09:48:00.000Z',
+        finishedAt: null, elapsedSeconds: 720, durationSeconds: null,
+        queueWaitSeconds: 300, tokensTotal: null, wallSeconds: null,
+        diffLines: null, outcome: null, prUrl: null,
+      }],
+      recent: [],
+      counts: { queued: 0, parked: 0, launching: 0, running: 1, publishing: 0, exited: 0, stale: 0 },
+      malformed: 0,
+      truncated: false,
+    },
   };
 }
 
@@ -264,7 +286,7 @@ describe('runInteractive — terminal lifecycle', () => {
 // ---------------------------------------------------------------------------
 
 describe('runInteractive — tab selection keys', () => {
-  it('digit keys 1-7 select the matching tab', async () => {
+  it('digit keys 1-8 select the matching tab', async () => {
     const s = await start();
 
     clearCaptured();
@@ -288,6 +310,10 @@ describe('runInteractive — tab selection keys', () => {
     expect(stripAnsi(captured())).toContain('No portfolio data'); // body, not the tab bar
 
     clearCaptured();
+    key('8');
+    expect(stripAnsi(captured())).toContain('RQ-TEST-SESSION-1'); // sessions rows
+
+    clearCaptured();
     key('1');
     expect(stripAnsi(captured())).toContain('Operator briefing');
 
@@ -297,7 +323,6 @@ describe('runInteractive — tab selection keys', () => {
   it('out-of-range digits and unknown keys are no-ops (no repaint)', async () => {
     const s = await start();
     clearCaptured();
-    key('8');
     key('9');
     key('0');
     key('x');
@@ -323,8 +348,8 @@ describe('runInteractive — tab selection keys', () => {
 
     clearCaptured();
     key('\x1b[Z'); // runs → overview
-    key('\x1b[Z'); // overview → wraps to portfolio (last tab)
-    expect(stripAnsi(captured())).toContain('No portfolio data');
+    key('\x1b[Z'); // overview → wraps to sessions (last tab)
+    expect(stripAnsi(captured())).toContain('RQ-TEST-SESSION-1');
 
     expect(await quit(s)).toBe(0);
   });

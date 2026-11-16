@@ -29,6 +29,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -49,8 +50,9 @@ name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
 **Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and — unless the change is
-docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+the secret-shape scan, lane classification, and quick typecheck with
+CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
+all on Ubuntu. `Merge Gate` is the one
 required check and fails unless exactly that selection ran and every full lane
 was skipped. No pull request or merge-queue commit may occupy a macOS or
 Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
@@ -77,6 +79,24 @@ and writes under the real `~/.ashlr` fail the test.
 desktop app; `scripts/` build, gate and check tooling. See
 [CONTRIBUTING.md](../CONTRIBUTING.md#project-layout) and
 [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Routing eval
+
+`npm run eval:routing` scores hybrid local and frontier routing on the corpus in `test/fixtures/routing-eval/corpus.json`. It is offline. The model client is a stub, and the command does not open a network connection or read a key. It is not a CI job. The normal test suite only checks the hard invariants in `test/routing-complexity-invariants.test.ts`.
+
+The command prints a JSON report and writes the same JSON to `eval/routing/out/routing-eval.json`. That directory is gitignored.
+
+Read the report like this:
+
+- `shareRoutedLocal` is the fraction of tasks kept on the local tier.
+- `escalationReasons` counts tasks that carried each reason for leaving local. One task can carry more than one reason.
+- `accuracy` is the fraction whose tier matches `expectedTier` on the fixture. Misses are listed in `mismatches`.
+- `frontierDollarsAvoided` is a labeled estimate of what the local-tier tasks would have cost on the frontier rate card in `src/core/routing-eval/prices.ts`. The rates are not a bill and not a live provider price. `localInputTokens` and `localOutputTokens` are the token totals that produced `usd`.
+- `modelCalls` is how many times the stub was invoked. A correct run prints 0.
+
+Exit 0 means every fixture matched and no invariant failed. Exit 1 means a mismatch, a broken invariant, or a model call. Exit 2 means the corpus could not be read.
+
+The decision lives in `src/core/routing/policy.ts` (`decideComplexityTier`) and the limits live in `src/core/routing/tiers.ts`. Local loops are edit, test, lint, and draft. The policy escalates for planning, architecture, a Tier-1 path, a merge onto the default branch, a merge or credential role, a second failed verify attempt, context above the local limit (32,768 tokens), or a local inference host that is not loopback. Tier-1 uses `matchProtectedPath` for this repo, including test paths named in `importsTier1`. The policy does not read file contents.
 
 **Docs.** The map is [docs/README.md](README.md). `scripts/check-documentation.mjs`
 checks the operator entrypoints in its `OPERATOR_DOCUMENTATION` list. Each of
@@ -274,11 +294,54 @@ SIGINT/SIGTERM. Finished jobs emit once. Unknown jobs return a JSON error
 and exit 1; malformed arguments exit 2. This command is read-only and
 never contacts providers.
 
+### Local message bus mailbox
+
+`phm bus send|inbox|ack` manages durable local mailboxes. It does not dispatch
+remote work, execute agents or grant authority. `phm bus thread|task` remains
+the separate shared task board (`phm fleet bus ...`). Addresses are routing
+labels accessible to processes running as the same OS user, not authenticated
+principals.
+
+```sh
+phm bus send --from codex-cmp --to fleet --id task-1 --body '{"task":"review"}' --priority P1 --ttl 60000 --json
+phm bus inbox --to fleet --limit 100 --json
+phm bus ack task-1 --to fleet --json
+```
+
+The envelope is exactly `id/from/to/priority/ttl/body`; body accepts any JSON
+value. Send defaults to a UUID, P2 and 300000 ms. Preserve the original envelope
+and ID when retrying a send: identical retries deduplicate without extending
+TTL; changed contents under the same ID refuse. Inbox returns unacknowledged,
+unexpired envelopes in priority and acceptance order, with remaining TTL and
+`hasMore` for a truncated result. Reading never acknowledges. Ack checks the
+recipient and is idempotent; unknown IDs refuse.
+
+State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
+separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,
+unsafe or concurrently changing stores refuse rather than reporting an empty
+inbox. Retry a transient storage refusal. History is retained with a
+5000-message/64 MiB admission limit, reserving space for acknowledgments. At
+capacity, existing inboxes, retries and acknowledgments remain available; new
+traffic needs a new private `ASHLR_HOME`. No history is automatically deleted.
+Credential-shaped payloads refuse; use Phantom Secrets `phm_<name>` references.
+`--json` emits one object on stdout, including errors. Exit codes are 0 success,
+1 operational refusal and 2 bad usage. `phm bus send --help` performs no work.
+
+### Owner Assist
+
+The desktop menu bar's **Owner Assist** opens the personal floating chat. It uses
+the existing Verse runtime with its own store and one concurrent turn, outside
+fleet job admission. Project editing, configured local/API models, shared memory,
+inline terminal approval and explicit Phantom fleet handoff are described in
+[Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md).
+
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,
-`doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`
-and `ecosystem [--write] [--json]`.
+`doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`,
+`ecosystem [--write] [--json]` and `fleet`. The last starts the separate
+read-only fleet server; discover its observation tools with MCP `tools/list`.
+See the [fleet MCP onramp](FLEET-MCP-ONRAMP.md).
 
 `phm wire [claude|codex|cursor|all] [--config <path>] [--json]` registers the
 gateway as server `ashlr-hub` with command `ashlr` and args `["mcp"]`. It backs
@@ -328,7 +391,8 @@ the resident daemon under an active grant. See
 
 ### Where state lives
 
-Everything is under `~/.ashlr/`. Verified paths:
+Runtime state uses several roots. The paths below are relative to
+`$ASHLR_HOME` (default `~/.ashlr/`):
 
 | Path | Contents |
 | --- | --- |
@@ -340,6 +404,13 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `logs/` | supervised local-runtime stdout and stderr |
 | `daemon.launchd.out.log`, `daemon.launchd.err.log` (macOS), `daemon.systemd.log` (Linux) | daemon service output |
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
+| `bus/` | shared task board state (`phm bus thread|task`, `phm fleet bus`) |
+| `bus-mailbox/` | durable local message mailboxes (`phm bus send|inbox|ack`) |
+| `fleet/bus-inbox/` | cursor-based Agent Bus (`phm comms bus`, HTTP and fleet MCP) |
+
+Host queue, metrics, specialist coordination and iMessage state normally live
+under `~/.ashlr-runs/`; connector profiles use `~/.phantom/connectors/`.
+Check each command's root options before comparing evidence from different processes.
 
 [RELIABILITY.md](RELIABILITY.md#where-state-lives) lists the rest
 (`enrollment.json`, `daemon.json`, `inbox/`, `sandboxes/`, `audit/`).
@@ -396,6 +467,60 @@ one versioned intent to the operator-provisioned `~/.ashlr/router-queue/actions.
 it does not apply the action. Targets are confined to that queue or
 `~/.ashlr/vision/leader/`, without symlink components. Audit failures fail the
 command; no executor consumes these intents automatically.
+
+### Drive routine offload
+
+`phm fleet drive [--once] [--root <directory>] [--json]` refreshes local
+`~/.ashlr/drive/relay-status.json`. `--root <directory>` selects another state
+directory; `--json` also prints the report, including the same top three
+actionable levers ranked by affected count with stable ties. A quiet fleet can
+have fewer than three levers. It reuses the fleet digest for proposal activity
+and needs no model, transport or new credentials.
+
+The relay consumes a versioned local file contract owned by the driver:
+
+- `status.json`: `{ "schemaVersion": 1, "observedAt": "<ISO timestamp>",
+  "main": "green|red|unknown", "lanes": [{ "id": "mac", "queued": 0,
+  "running": 0, "paused": false }] }`. The main value is one enum member.
+- `jobs.jsonl`: one job transition per line with `id`, `state`
+  (`queued|running|completed|failed`), `updatedAt` (ISO timestamp), and optional
+  `prUrl`. Last record per job wins. An empty journal is valid.
+
+Snapshots older than 15 minutes or more than one minute ahead are reported
+as unhealthy. Running jobs without an update for 30 minutes are stuck. Idle,
+unpaused lanes produce restock findings. These routines only report findings;
+Grok Bot retains orchestration decisions and the existing dispatch gates.
+Only exact HTTPS GitHub pull request URLs enter the deduplicated PR list.
+Malformed or missing inputs cause exit 1 without refreshing the previous report.
+
+Masbot owns delivery. It reads `generatedAt`, `health`, `levers`, `prLinks`
+and `fleet` from the atomically replaced, owner-only relay file. It must refuse
+stale reports, deduplicate deliveries, and never treat an old report as a fresh
+health check. This command sends no messages. Grok Bot should stop polling
+these routine inputs once the local job and Masbot relay are commissioned.
+
+To restock a Mac, run `phm fleet drive jobs --bin /absolute/path/to/phm` with an
+optional absolute `--root`. It emits a JSON array containing a launchd label
+and plist whose program runs `fleet drive --once`. Save the `plist` value as
+`~/Library/LaunchAgents/ai.ashlr.drive-routines.plist`, then load it with
+`launchctl bootstrap gui/$(id -u) <absolute-plist-path>`. The single recurring
+Mac job refreshes health, levers and PR links every five minutes and at load.
+Generation does not install or activate jobs. Use an installed `phm` executable
+that resolves Node on launchd's PATH. When the driver snapshot producer lands,
+adapt it to this contract; the report and relay need no transport changes.
+
+### Fleet graph, orchestration and teammate evidence
+
+The desktop Graph pane shows lane/worker relationships and live seat state.
+The Channels pane shows the Leader orchestration journal. The
+[fleet coordination guide](FLEET-COORDINATION.md) covers their CLI and MCP
+readers, advisory assignment previews, and the distinction between the router
+topology and the engine/account registry graph.
+
+For iMessage, use the [intake and teammate guide](IMESSAGE.md): it covers
+local replies, fleet-originated scoped tasks, unsent-task cancellation, and
+counts-only path, acknowledgement and latency readers. Ordinary intake polling
+does not activate teammate delivery.
 
 ### Stop and pause
 
@@ -813,3 +938,45 @@ refix, review or ok. A failed open-PR read still emits the versioned shape
 with `reads.open: 'failed'` (exit 1); a failed merged or prompts read degrades
 only the superseded leg. Read-only — `gh pr list` calls only. See
 [pr-hygiene](fleet/pr-hygiene.md) for the report shape.
+
+### Production stack-trace hot patches
+
+Set `PHM_HOT_PATCH_LOG` in the Phantom server's environment to the path of a
+local, regular log file to opt in. With cloud self-improvement enabled, its
+normal discovery pass reads the last 256 KiB and queues up to ten distinct Node.js
+error stacks for the configured repository. It extracts only exception class
+names and relative `src/` or `lib/` stack locations; log messages, absolute paths,
+and function names are not sent to the agent. Configure the log producer to emit
+repository-relative frames. The fix agent is asked to reproduce the failure with
+a regression test and deliver a small draft PR, or report no-change when the
+signal is insufficient. Existing cloud budgets, backlog deduplication, and PR
+review gates apply. Unset the variable to disable intake; already queued items
+remain in the backlog.
+
+## Fleet dashboard metrics feed
+
+`phm fleet status --json` includes an additive `metrics` object with schema
+`fleet-metrics.v1`. Existing status fields are unchanged. `formatFleetMetrics`
+in `src/core/fleet/metrics-feed.ts` renders the same rollups, retirement
+candidates, impact scoreboard, production and exploration shares, and per-pool
+budget projections for text surfaces.
+
+The local RQ-METRICS-ROUTER-FEED and RQ-BUDGET-LEDGER seam lives in
+`src/core/fleet/metrics-feed.ts`. Its reader currently returns unavailable until
+those upstream modules are integrated. Consumers must check `sourceState`:
+unknown rollups and shares are `null`, and unavailable rankings and pools are
+empty arrays. A healthy empty work window has zero counts and null shares.
+`observedAt` and `windowHours` describe the measurement, not the CLI read time.
+
+Each input work row represents one unique PR. Shares count all work in the
+window; impact rankings count merged work only. Scores are supplied by the
+upstream feed, never inferred from diff size. Retirement candidates have zero
+realized impact and are advisory only, ranked by work count. Rankings contain
+at most ten entries with deterministic ties. No routing or retirement is applied.
+
+Each pool carries its own unit and reset time. Remaining capacity is clamped at
+zero; burn per hour is used capacity divided by observed hours. Exhaustion
+projects that average forward from the observation time and is compared with
+reset. Zero burn has no exhaustion date; missing observation duration gives
+unknown burn. Expired reset windows and invalid or duplicate evidence degrade
+the metrics slice. Projections are observations and grant no spending authority.
