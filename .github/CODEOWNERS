@@ -1030,6 +1030,7 @@
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-plan-owner-preservation-304s.test.ts @masonwyatt23
 /test/merge-plan-preservation-167.test.ts @masonwyatt23
+/test/merge-queue-loop.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
