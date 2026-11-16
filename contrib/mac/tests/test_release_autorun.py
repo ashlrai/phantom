@@ -91,6 +91,12 @@ class AutorunTest(unittest.TestCase):
  def state(self,name):return self.root/'release-sign/autorun'/name
  def promote_latest(self,tag=TAG):
   self.data['repos/ashlrai/phantom/releases/latest']={'tag_name':tag}
+ def test_tag_ref_audit_is_accepted(self):
+  self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']=TAG
+  self.execute(); self.assertEqual(len(self.calls()),1)
+ def test_foreign_branch_audit_is_held(self):
+  self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']='feature'
+  self.execute(); self.assertEqual(self.calls(),[])
  def test_original_stale_first_counterfactual_and_fixed_exact_binding(self):
   self.execute(original=True);self.assertEqual(self.calls(),[]);self.assertTrue(self.state('attest-22-2.seen').exists())
   self.state('attest-22-2.seen').unlink();self.execute();calls=self.calls();self.assertEqual(len(calls),1)

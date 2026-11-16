@@ -121,6 +121,7 @@ describe('release train', () => {
     expect(ancestor.state.steps.build?.reason).toBeUndefined();
     expect(ancestor.state.advance).toBeUndefined();
     expect(ancestor.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'))?.body).toEqual({ ref: 'v3.30.27', inputs: { release_gate: 'true' } });
+    expect(ancestor.writes.find((write) => write.path.endsWith('/dependency-audit.yml/dispatches'))?.body).toEqual({ ref: 'v3.30.27', inputs: {} });
     expect(ancestor.writes.some((write) => write.path.includes('release-please.yml'))).toBe(false);
     const current = buildTrain(observation({ masterSha: head, aheadBy: 0 }));
     expect(current.exitCode).toBe(0);
@@ -526,7 +527,7 @@ describe('release train', () => {
       ],
       'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
       [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${tagged}&per_page=20`]: { total_count: 0, workflow_runs: [] },
-      [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${tagged}&status=success&per_page=5`]: { total_count: 0, workflow_runs: [] },
+      [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${tagged}&per_page=10`]: { total_count: 0, workflow_runs: [] },
       'registry/npm/@ashlr/phantom/3.30.35': null,
       ...greenCi(tagged),
       [`repos/ashlrai/phantom/commits/${tagged}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
@@ -688,6 +689,7 @@ describe('release train', () => {
 
   it('sends workflow dispatches with GITHUB_TOKEN, not the App token', () => {
     expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches')).toBe(false);
+    expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/dispatches')).toBe(false);
     expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/attest-ci-build.yml/dispatches')).toBe(false);
     expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/publish-canonical-npm.yml/dispatches')).toBe(false);
     expect(releaseWriteUsesAppToken('POST', 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches')).toBe(false);
@@ -918,7 +920,7 @@ describe('release train', () => {
       'repos/ashlrai/phantom/releases?per_page=100&page=1': [{ id: 3, tag_name: 'v3.30.27', draft: true, name: 'Phantom 3.30.27', body: '', created_at: '2026-11-09T02:36:49Z', assets: [] }],
       'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
       [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${head}&per_page=20`]: { total_count: 0, workflow_runs: [] },
-      [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${head}&status=success&per_page=5`]: { total_count: 0, workflow_runs: [] },
+      [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${head}&per_page=10`]: { total_count: 0, workflow_runs: [] },
       'registry/npm/@ashlr/phantom/3.30.27': null,
       ...greenCi(head),
     };
