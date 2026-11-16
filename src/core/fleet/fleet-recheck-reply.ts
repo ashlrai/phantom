@@ -129,8 +129,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  // Drop order is the contract in the file header: Peers, coverage, Owners,
-  // Orders, Pool, Computers, Running job, then Last verified.
+  // Drop optional evidence in this order, keeping the verdict line whole:
+  // Peers, coverage, Owners, Orders, Pool, Computers, Running job, Last verified.
   let text = build(true, true, true, true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true, false);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, false, false);
