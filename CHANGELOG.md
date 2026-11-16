@@ -54,6 +54,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [3.30.34] - 2026-11-16
 
+> **Tagged on red.** Tag `v3.30.34` points at commit `8060b4bd1d14228fe609cfef0576a49dee83bc61`, and the master push CI run on that exact commit ([run 43807308941](https://github.com/ashlrai/phantom/actions/runs/43807308941)) failed the step "Check generated files" (Merge Gate succeeded). Auto-tag [run 43807308912](https://github.com/ashlrai/phantom/actions/runs/43807308912) created the tag anyway. The tag and the GitHub release "Phantom 3.30.34" are kept as they are, neither deleted nor retargeted, and this note does not change the tree. Treat 3.30.34 as not release-grade; the next green cut supersedes it.
+
 
 ### Changes
 
