@@ -1,4 +1,4 @@
-import { isSlackChannelId } from './slack-network.js';
+import { isSlackChannelId, isSlackTs } from './slack-network.js';
 import { readSlackRequestTrace, type SlackRequestTraceOptions, type SlackTraceRow } from './slack-request-trace.js';
 
 function countRows(rows: readonly SlackTraceRow[]) {
@@ -14,6 +14,7 @@ function countRows(rows: readonly SlackTraceRow[]) {
 
 /** A bounded local snapshot, not evidence of live task ownership or execution. */
 export function readSlackEvidenceBundle(thread: string, options: SlackRequestTraceOptions & { maxAgeSeconds?: number; channelId?: string } = {}) {
+  if (!isSlackTs(thread)) throw new Error('slack-thread-invalid');
   if (options.channelId !== undefined && !isSlackChannelId(options.channelId)) throw new Error('slack-channel-invalid');
   const { maxAgeSeconds, channelId, ...traceOptions } = options;
   const trace = readSlackRequestTrace({ ...traceOptions, thread });
@@ -23,6 +24,7 @@ export function readSlackEvidenceBundle(thread: string, options: SlackRequestTra
     schema: 'phantom.fleet.slack-evidence.v1' as const,
     scope: 'Local journal and send evidence only; does not prove current runtime reachability, durable task ownership, or execution.',
     thread,
+    collectionScope: { thread, ...(channelId !== undefined ? { channelId } : {}) },
     ...scoped,
     ...(maxAgeSeconds !== undefined ? {
       freshness: {
