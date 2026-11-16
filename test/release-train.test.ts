@@ -168,6 +168,19 @@ describe('release train', () => {
     expect(pendingPlan.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
   });
 
+  it('stops redispatching release CI when the master push CI for the tag SHA concluded red', () => {
+    // v3.30.34: the advisory Quick typecheck failed on the push run, so Merge Gate
+    // is green but release-build reuses only a green exact-source push run and
+    // every dispatched CI run ends with no ashlr-build artifact.
+    const redPush = buildTrain(observation({ pushCiRed: true }));
+    expect(redPush.exitCode).toBe(0);
+    expect(redPush.state.steps.build).toEqual({ status: 'pending', reason: 'candidate-push-ci-red' });
+    expect(redPush.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
+    // An existing build still advances to attest.
+    const built = buildTrain(observation({ pushCiRed: true, build: { runId: 5, attempt: 1, artifactId: 9, completedAt: null } }));
+    expect(built.state.steps.build?.status).toBe('complete');
+  });
+
   it('does not recursively dispatch Release PR from its own completion', () => {
     const path = 'repos/ashlrai/phantom/actions/workflows/release-please.yml/dispatches';
     expect(allowReleasePrDispatch(path, 'false')).toBe(false);
