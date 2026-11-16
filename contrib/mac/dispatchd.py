@@ -764,6 +764,8 @@ pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
+pat_lj = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")   # session leaders spawned by the launch phase
+job_leaders = {}   # job -> pids of its launch wrapper (RQ-JOB-MAX-RUNTIME-1 watchdog)
 ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
@@ -776,6 +778,8 @@ for line in ps.splitlines():
     if "dispatchd.py" in line: continue
     m = pat_pb.search(line)
     if m: publishing.add(m.group(1)); continue
+    m = pat_lj.search(line); f_ = line.split(None, 1)[0] if line.strip() else ""
+    if m and f_.isdigit(): job_leaders.setdefault(m.group(1), set()).add(int(f_))
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
@@ -801,6 +805,51 @@ alive -= (reaping | publishing)   # publish.sh children run inside the worktree
 for p in glob.glob(RUN + "/*.dispatched"):   # launch grace (fetch/worktree add before agent starts)
     j = os.path.basename(p)[:-11]
     if NOW - os.path.getmtime(p) < GRACE: alive.add(j)
+
+# ---- RQ-JOB-MAX-RUNTIME-1: per-job max runtime. A live-but-wedged child (dead socket, hung model call) never writes
+# .rc/.fin and is never an orphan, so its lane slot would leak forever. Past the limit: write .rc=124, emit
+# `REAP TIMEOUT`, SIGTERM the launch wrapper's process group; if it survives 30 s, SIGKILL it on a later tick. The next
+# tick then reaps it through the normal finish path (exit_code 124), so the queue can recut the job.
+# Limit: slots.json <lane>.max_runtime_s, else top-level max_runtime_s, else ASHLR_JOB_MAX_RUNTIME_S, else 2 h.
+# 0 disables; a nonzero value is clamped to >= 300 s. Start time is the launch receipt (.dispatched), else .line.
+JOB_MAX_RUNTIME_S = 7200; JOB_MAX_RUNTIME_MIN_S = 300; JOB_KILL_GRACE_S = 30
+def _max_runtime(lane):
+    ls_ = slots.get(lane)
+    for v in (ls_.get("max_runtime_s") if isinstance(ls_, dict) else None,
+              slots.get("max_runtime_s"), os.environ.get("ASHLR_JOB_MAX_RUNTIME_S")):
+        try: v = float(v)
+        except (TypeError, ValueError): continue
+        if v != v or v < 0: continue
+        return 0 if v == 0 else max(JOB_MAX_RUNTIME_MIN_S, v)
+    return JOB_MAX_RUNTIME_S
+def _kill_leaders(pids, sig):
+    for pid in pids:   # only a real session leader's own group: never pid 1, ourselves, or a shared group
+        try:
+            if pid > 1 and pid != os.getpid() and os.getpgid(pid) == pid and pid != os.getpgrp(): os.killpg(pid, sig)
+        except OSError: pass
+def job_watchdog():
+    for j, pids in sorted(job_leaders.items()):
+        if not JID.match(j) or j in reaping or j in publishing: continue
+        try:
+            ln = rd(RUN + "/" + j + ".line").strip().split("\t")
+            lane = ln[2].strip() if len(ln) > 2 else ""
+            limit = _max_runtime(lane)
+            if not limit: continue
+            src = RUN + "/" + j + (".dispatched" if os.path.exists(RUN + "/" + j + ".dispatched") else ".line")
+            age = NOW - os.path.getmtime(src)
+            mk = RUN + "/" + j + ".maxruntime"
+            if os.path.exists(mk):   # already terminated once: escalate if the group is still there
+                if NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S and os.path.getsize(mk) == 0:
+                    _kill_leaders(pids, signal.SIGKILL); open(mk, "w").write("KILL\n"); ev("REAP TIMEOUT %s SIGKILL" % j)
+                continue
+            if age < limit: continue
+            open(mk, "w").close()
+            if not os.path.exists(RUN + "/" + j + ".rc"):
+                t = "%s/%s.rc.tmp.%d" % (RUN, j, os.getpid()); open(t, "w").write("124\n"); os.replace(t, RUN + "/" + j + ".rc")
+            ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
+            _kill_leaders(pids, signal.SIGTERM)
+        except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
+job_watchdog()
 
 keep = set(rd(Q + "/keep.txt").split())
 def result(j):
@@ -1944,7 +1993,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
         if j in keep:
             keep.discard(j); open(Q + "/keep.txt", "w").write("\n".join(sorted(keep)) + "\n")
-        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".bundled-in"):
+        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".maxruntime", ".bundled-in"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)

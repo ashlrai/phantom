@@ -48,6 +48,20 @@ supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
 is installed; do not install into `bin/` from an agent.
 
+**Max job runtime (RQ-JOB-MAX-RUNTIME-1).** A launch wrapper that is alive but
+wedged (dead socket, hung model call) never writes `.rc`/`.fin`, so its lane
+slot would leak. Each tick `dispatchd.py` compares the job's launch receipt
+(`run/<job>.dispatched`, else `.line`) with its limit: `slots.json`
+`<lane>.max_runtime_s`, else top-level `max_runtime_s`, else
+`ASHLR_JOB_MAX_RUNTIME_S`, else 7200 s (`0` disables; other values clamp to at
+least 300 s). Past it the job gets `run/<job>.rc` = `124`, a
+`REAP TIMEOUT <job> lane=… age=… limit=…` event, and SIGTERM to the launch
+wrapper's own process group (only a real session leader's group, never pid 1 or
+the dispatcher); a survivor gets SIGKILL after 30 s (`REAP TIMEOUT <job>
+SIGKILL`). The next tick reaps it as a normal finish with `exit_code` 124 so the
+queue can recut it. The live `launch.sh` is not repo-owned, so enforcement lives
+in the dispatcher; installing it needs a Security pin.
+
 ## Self-supply: refill idle lanes between leader passes
 
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
