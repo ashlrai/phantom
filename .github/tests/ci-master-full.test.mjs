@@ -160,3 +160,21 @@ for (const conclusion of ['success', 'failure']) {
     if (conclusion === 'success') assert.match(readFileSync(summary, 'utf8'), /full-green-sha=.*full-run=20 full-attempt=1/);
   });
 }
+
+test('push trigger holds quietly (green=false, exit 0) while other triggers fail closed', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'master-full-push-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const output = join(dir, 'output');
+  writeFileSync(output, '');
+  writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o700 });
+  for (const trigger of ['push', 'schedule']) {
+    writeFileSync(output, '');
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/ci-master-full.mjs', import.meta.url)), 'require'], {
+      encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, SHA: candidate, TRIGGER: trigger,
+        GITHUB_REPOSITORY: repo, GITHUB_REPOSITORY_ID: '1263526319', GITHUB_REPOSITORY_OWNER_ID: '258113726',
+        GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: join(dir, 'summary') },
+    });
+    assert.equal(result.status, trigger === 'push' ? 0 : 1, result.stderr);
+    assert.equal(readFileSync(output, 'utf8'), trigger === 'push' ? 'green=false\n' : '');
+  }
+});

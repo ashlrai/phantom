@@ -117,9 +117,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     requireProducerEnvironment(process.env);
     if (process.argv[2] === 'require') {
-      const run = await requireFullGreen({ repo: process.env.GITHUB_REPOSITORY, candidate: process.env.SHA });
-      appendFileSync(process.env.GITHUB_OUTPUT, 'green=true\n');
-      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `full-green-sha=${run.head_sha} full-run=${run.id} full-attempt=${run.run_attempt}\n`);
+      try {
+        const run = await requireFullGreen({ repo: process.env.GITHUB_REPOSITORY, candidate: process.env.SHA });
+        appendFileSync(process.env.GITHUB_OUTPUT, 'green=true\n');
+        appendFileSync(process.env.GITHUB_STEP_SUMMARY, `full-green-sha=${run.head_sha} full-run=${run.id} full-attempt=${run.run_attempt}\n`);
+      } catch (error) {
+        // A fresh master push never has its own scheduled full yet. Hold quietly
+        // (no tag, no red run); the scheduled-full workflow_run re-evaluates.
+        if (process.env.TRIGGER !== 'push') throw error;
+        process.stderr.write(`::notice::${error.message}\n`);
+        appendFileSync(process.env.GITHUB_OUTPUT, 'green=false\n');
+      }
     } else if (process.argv[2] === 'record') {
       const { receipt, summary } = await recordFull({ env: process.env, needs: JSON.parse(process.env.FULL_NEEDS) });
       writeFileSync('master-full.json', `${JSON.stringify(receipt, null, 2)}\n`);
