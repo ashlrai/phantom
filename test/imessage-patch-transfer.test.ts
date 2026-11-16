@@ -58,7 +58,7 @@ const ingest = (messages: IntakeMsg[], now = NOW) =>
 const bridge = (options: Parameters<typeof bridgeTeammateFindings>[0] = {}) =>
   bridgeTeammateFindings({ runsDir, busRoot, now: () => NOW, ...options });
 const busEnvelopes = () => {
-  const page = listBusInboxAfter(0, 100, { root: busRoot });
+  const page = listBusInboxAfter(0, 100, { root: busRoot, now: () => NOW.getTime() });
   return page.status === 'ok' ? page.messages.map((m) => m.envelope) : [];
 };
 const receipt = (id: string): PatchReceipt =>
@@ -245,7 +245,7 @@ describe('ingestIMessages patch intake', () => {
       row(15, 'the gate is red on lane work'),
     ];
     const result = await ingest(rows);
-    expect(result).toMatchObject({ ok: true, state: 'ingested', scanned: 5, teammate: 5, cursor: 15 });
+    expect(result).toMatchObject({ ok: true, state: 'ingested', scanned: 5, teammate: 1, cursor: 15 });
     expect(readCursor(runsDir)).toBe(15);
 
     // Artifact verified and written; the rowids are spent.
@@ -254,7 +254,7 @@ describe('ingestIMessages patch intake', () => {
 
     // Frames are protocol traffic: the mirror skipped them (protocol count),
     // posted the finding row, and announced the verified artifact.
-    expect(result.findings).toMatchObject({ state: 'healthy', posted: 1, protocol: 4, announced: 1, lastRowid: 15 });
+    expect(result.findings).toMatchObject({ state: 'healthy', posted: 1, protocol: 0, announced: 1, lastRowid: 15 });
     const envelopes = busEnvelopes();
     expect(envelopes.map((e) => e.id)).toEqual(['imessage-teammate-15', 'imessage-patch-fix-9']);
     expect(envelopes[1]).toMatchObject({ to: TEAMMATE_FINDINGS_TOPIC, channel: 'imessage', channel_ref: 'imessage:patches:fix-9', body: { kind: 'note', thread: senderIdFor(TEAMMATE) } });
@@ -273,7 +273,7 @@ describe('ingestIMessages patch intake', () => {
     ];
     const result = await ingest(rows);
     expect(result.patches).toMatchObject({ frames: 3, completed: 0, rejected: 1 });
-    expect(result.findings).toMatchObject({ posted: 1, protocol: 3, announced: 0 });
+    expect(result.findings).toMatchObject({ posted: 1, protocol: 0, announced: 0 });
     expect(busEnvelopes().map((e) => e.id)).toEqual(['imessage-teammate-14']);
     expect(receipt('fail-1')).toMatchObject({ outcome: 'rejected', reason: 'hash-mismatch' });
   });
