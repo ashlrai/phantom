@@ -21,8 +21,8 @@ def release_assets():
  return [relasset(501,'latest.json',len(FEED_TEXT),sha(FEED_TEXT)),relasset(502,'manifest.json',len(MANIFEST_TEXT),sha(MANIFEST_TEXT)),
   relasset(503,'manifest.json.sig',len(MSIG),sha(MSIG)),relasset(504,APP_NAME+'.sig',len(APPSIG),sha(APPSIG)),
   relasset(505,APP_NAME,1234567,APP_SHA),relasset(506,CLI_NAME,7654321,CLI_SHA),relasset(507,CLI_NAME+'.sig',300,CLISIG_SHA)]
-def run(rid,attempt,sha,workflow,branch='master'):
- return {'id':rid,'run_attempt':attempt,'head_sha':sha,'head_branch':branch,'path':'.github/workflows/'+workflow+'.yml','status':'completed','conclusion':'success','repository':REPO,'head_repository':REPO}
+def run(rid,attempt,sha,workflow,branch='master',event='push'):
+ return {'id':rid,'run_attempt':attempt,'head_sha':sha,'head_branch':branch,'event':event,'path':'.github/workflows/'+workflow+'.yml','status':'completed','conclusion':'success','repository':REPO,'head_repository':REPO}
 def artifact(aid,name,rid,sha):
  return {'id':aid,'name':name,'expired':False,'digest':'sha256:'+'c'*64,'workflow_run':{'id':rid,'head_sha':sha,'repository_id':1263526319,'head_repository_id':1263526319}}
 def inventory(rows):return {'total_count':len(rows),'artifacts':rows}
