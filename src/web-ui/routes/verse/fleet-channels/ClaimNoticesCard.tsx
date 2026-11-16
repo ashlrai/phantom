@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatRelative } from '../autonomy/format.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { claimNoticesQuery } from './claim-notices-query.js';
 import type { ClaimNoticesView } from './claim-notices-model.js';
+import { bindClaimThread, isThreadKey, NEEDS_NEWER_HOST } from './claim-bind-action.js';
 import styles from './fleet-channels.module.css';
 
 /** Read-only: what Phantom has told, and would tell, a Slack thread. */
@@ -45,10 +47,32 @@ export function ClaimNoticesBody({ view, nowMs }: { view: ClaimNoticesView; nowM
             <div className={styles.meta}><strong>{row.claimId}</strong><span>{row.repo}</span><span>{row.agent}</span>
               <time dateTime={new Date(row.claimedAt).toISOString()}>{formatRelative(new Date(row.claimedAt).toISOString(), nowMs)}</time></div>
             <code>{`ashlr fleet claim-bind ${row.claimId} --repo ${row.repo} --thread <threadKey>`}</code>
+            <BindForm claimId={row.claimId} repo={row.repo} />
           </li>)}
         </ul>
       </>}
       <p className={styles.message}>Posted means a durable bus note was written, not that Slack delivered it.</p>
     </>}
   </section>;
+}
+
+function BindForm({ claimId, repo }: { claimId: string; repo: string }) {
+  const refetch = useRefetch(claimNoticesQuery);
+  const [thread, setThread] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const valid = isThreadKey(thread.trim());
+  const submit = async () => {
+    setBusy(true);
+    const out = await bindClaimThread(claimId, repo, thread);
+    setBusy(false);
+    if (out.kind === 'no-route') setNote(NEEDS_NEWER_HOST);
+    else if (out.kind === 'failed') setNote(out.outcome);
+    else { setNote(out.kind === 'unchanged' ? 'already bound' : 'bound'); refetch(); }
+  };
+  return <form className={styles.meta} onSubmit={e => { e.preventDefault(); if (valid && !busy) void submit(); }}>
+    <label>Slack thread <input type="text" value={thread} onChange={e => setThread(e.target.value)} placeholder="T00000000/C00000000/1700000000.000100" disabled={busy} /></label>
+    <button type="submit" disabled={!valid || busy}>Bind</button>
+    {note !== null && <span role="status">{note}</span>}
+  </form>;
 }
