@@ -801,6 +801,7 @@
     "src/core/fleet/runs-history.ts",
     "src/core/fleet/runs-job-activity.ts",
     "src/core/fleet/runs-job-changes.ts",
+    "src/core/fleet/runs-job-cost.ts",
     "src/core/fleet/runs-job-detail.ts",
     "src/core/fleet/runs-job-texts.ts",
     "src/core/fleet/runs-lane-hold-place.ts",
