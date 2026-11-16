@@ -62,3 +62,21 @@ existing chief-of-staff approval path is unchanged.
 
 Mapping reference: [Managed Agents setup](https://platform.claude.com/docs/en/managed-agents/agent-setup).
 The local format keeps provider-neutral resource classes and connector references.
+
+## Bot templates
+
+A bot template (`src/core/agents/bot-templates.ts`) bundles an avatar, a role (the org
+model's `leader`, `implementer`, `reviewer` or `researcher`), a doctrine, a memory seed,
+starter tasks, crons and channel references. Three ship: `pr-reviewer`, `release-scribe`
+and `ci-watchdog`. Creating a bot writes the profile above (drafts only, `limitsTodo`
+true), a private folder `~/.phantom/bots/<id>/` (`bot.json`, `doctrine.md`,
+`memory-seed.md`, mode 0600) and one disabled automation per cron. Creating a bot grants no
+authority: starter tasks are recorded, never dispatched, and nothing is sent or enabled. A
+taken id is refused (409), and a failure partway removes everything the call created.
+
+The desktop flow is the Bots view (`/bots`). The HTTP API on the local web server:
+
+- `GET /api/bots/templates` lists the templates.
+- `GET /api/bots` lists bots created from templates.
+- `POST /api/bots` with `{ templateId, id, name? }` creates one. It needs the mutation token
+  and a server started with dispatch enabled, like the other mutating routes.
