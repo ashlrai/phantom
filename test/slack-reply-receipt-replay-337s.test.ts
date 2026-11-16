@@ -29,13 +29,13 @@ describe('Slack reply receipt replay uniqueness (337S)', () => {
       expect(bind([newer, request], shuffled)).toEqual(deduped);
   });
 
-  it('keeps contradictory thread claims independent: one answer per claim, never multiplied', () => {
+  it('treats contradictory thread claims for one physical send as no answer', () => {
     const otherThread = '1700000000.000002';
     const result = bind([request, { ...request, threadTs: otherThread }, { ...request, messageTs: '1700000000.000120' }],
       [reply, { ...reply }, { ...reply, thread: otherThread }]);
-    expect(result.answered).toHaveLength(2);
-    expect(result.unanswered).toHaveLength(1);
-    expect(new Set(result.answered.map((row) => row.threadTs))).toEqual(new Set([request.threadTs, otherThread]));
+    expect(result.answered).toHaveLength(0);
+    expect(result.unanswered).toHaveLength(3);
+    expect(result.rejected).toBe(0);
   });
 
   it('keeps equal reply timestamps in different channels distinct', () => {
