@@ -18,7 +18,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
-import { isSlackTs } from './slack-network.js';
+import { isSlackChannelId, isSlackTs } from './slack-network.js';
 
 export const SLACK_JOURNAL_MAX_BYTES = 256 * 1024;
 const SLACK_JOURNAL_KEEP_BYTES = 192 * 1024;
@@ -74,11 +74,12 @@ function boundedField(value: unknown): value is string {
 /** Whitelist copy: only the declared metadata fields, and only bounded strings. */
 function sanitize(obs: SlackObservation): Record<string, string> | null {
   if (!boundedField(obs.at) || !Number.isFinite(Date.parse(obs.at)) ||
-      (obs.decision !== 'ingested' && obs.decision !== 'ignored')) return null;
+      (obs.decision !== 'ingested' && obs.decision !== 'ignored') ||
+      (obs.channelId !== undefined && !isSlackChannelId(obs.channelId))) return null;
   const out: Record<string, string> = { at: obs.at, decision: obs.decision };
   if (boundedField(obs.envelopeId)) out['envelopeId'] = obs.envelopeId;
   if (boundedField(obs.eventId)) out['eventId'] = obs.eventId;
-  if (boundedField(obs.channelId)) out['channelId'] = obs.channelId;
+  if (isSlackChannelId(obs.channelId)) out['channelId'] = obs.channelId;
   if (boundedField(obs.authorId)) out['authorId'] = obs.authorId;
   if (isSlackTs(obs.messageTs)) out['messageTs'] = obs.messageTs;
   if (isSlackTs(obs.threadTs)) out['threadTs'] = obs.threadTs;
@@ -150,7 +151,7 @@ export function recordSlackObservation(
  * Structural validation of one persisted row against the metadata contract
  * `sanitize` writes. Required `at`/`decision` must be present and well-formed;
  * optional fields that ARE present must satisfy their own rules (bounded
- * string, `isSlackTs`, or a known bus outcome). Absent optionals -- including
+ * string, Slack identity or timestamp, or a known bus outcome). Absent optionals -- including
  * `bus` on legacy ingested rows and `messageTs`/`threadTs`/`reason` on rows
  * dropped before channel validation -- stay legitimately absent. Returns null
  * for a corrupted row so the caller can mark the read degraded and skip it
@@ -161,10 +162,11 @@ function projectObservation(row: Record<string, unknown>): SlackObservation | nu
   const decision = row['decision'];
   if (!boundedField(at) || !Number.isFinite(Date.parse(at))) return null;
   if (decision !== 'ingested' && decision !== 'ignored') return null;
-  for (const key of ['envelopeId', 'eventId', 'channelId', 'authorId', 'reason'] as const) {
+  for (const key of ['envelopeId', 'eventId', 'authorId', 'reason'] as const) {
     const value = row[key];
     if (value !== undefined && !boundedField(value)) return null;
   }
+  if (row['channelId'] !== undefined && !isSlackChannelId(row['channelId'])) return null;
   for (const key of ['messageTs', 'threadTs'] as const) {
     const value = row[key];
     if (value !== undefined && !isSlackTs(value)) return null;
