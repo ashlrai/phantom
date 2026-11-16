@@ -699,6 +699,10 @@ export function agentDocsText(): string {
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
   lines.push('These read retained local evidence only; they never query or launch apps.');
+  lines.push('Intent evidence tools (local owner-directive ledger; tracking does not authorize action):');
+  lines.push('intent_list, intent_get and intent_stale read; intent_stale apply=true refreshes local tracking only.');
+  lines.push('intent_add, intent_update, intent_import, intent_link and intent_ship append local records;');
+  lines.push('intent_link and intent_ship record caller-supplied merge or release evidence and never verify it.');
   lines.push('Website tools: ashlr_website_status reads publication mode, phase and holds;');
   lines.push('ashlr_website_publish requests the exact normally merged website revision with');
   lines.push('profile=phantom-public-web and expectedMerge=<40-hex SHA>. The commissioned host');
