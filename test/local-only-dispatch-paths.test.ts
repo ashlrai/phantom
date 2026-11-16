@@ -245,6 +245,8 @@ describe('§A dispatch-path inventory', () => {
     // Director is retired and the dialogue delegates to the Leader thread,
     // whose replies go through leader-seat.ts (gated per transport).
     'core/fleet/manager.ts',         // ollamaDirectComplete — the local judge, 3-min timeout
+    'core/drive/nodes/runner.ts',    // numeric loopback oMLX pack; endpointPermitted before httpRequest
+    'core/routines/scheduler.ts',    // numeric loopback oMLX executor; endpointPermitted before fetch
     'core/radar/local-bench.ts',     // assertLoopbackBaseUrl (isLoopbackEndpoint) before fetch
     'core/genome/playbook.ts',       // LM Studio playbook synthesis (documented LOCAL-ONLY)
     'core/vision/strategist.ts',     // ollamaDirectComplete — mirrors manager.ts
@@ -314,7 +316,7 @@ describe('§A dispatch-path inventory', () => {
     for (const rel of RAW_TRANSPORT_RESIDUAL) {
       const src = readFileSync(join(SRC, rel), 'utf8');
       expect(
-        src.includes("from '../policy/local-only.js'"),
+        /from ['"](?:\.\.\/)+policy\/local-only\.js['"]/.test(src),
         `${rel} does not import the local-only policy`,
       ).toBe(true);
       const assertsBeforeFetch = rel === 'core/radar/local-bench.ts'
