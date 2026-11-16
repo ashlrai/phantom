@@ -146,6 +146,8 @@ export async function readFleetSlackEvidence(
     catch { asOf = new Date(0).toISOString(); }
     return {
       schema: 'phantom.fleet.slack-evidence.v1', scope: SCOPE, thread: input.thread,
+      collectionScope: { thread: input.thread,
+        ...(input.channelId !== undefined ? { channelId: input.channelId } : {}) },
       ...(input.messageTs !== undefined && input.channelId !== undefined
         ? { selection: { channelId: input.channelId, messageTs: input.messageTs } } : {}),
       asOf,
