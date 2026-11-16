@@ -20,6 +20,13 @@ describe('conservative node RAM and disk admission', () => {
     expect(nodeRamSlots(8 * GIB, 'shell-check')).toBe(10);
     expect(nodeRamSlots(3 * GIB, 'shell-check')).toBe(0);
   });
+  it('advertises more than one codex-file slot on an 8 GiB host under no pressure (live-pool regression)', () => {
+    const idle: HostHeadroom = { freePercent: 60, swapGb: 0, pressureLevel: 1 };
+    expect(assessNodeCapacity(8 * GIB, idle, 100e9)).toEqual({ ramBytes: 8 * GIB, slots: 4, held: null });
+    // slots:1 on this class of host means the legacy flat 4 GiB divisor (old phm) or real pressure, never this code
+    expect(nodeRamSlots(8 * GIB, 'no-such-pack')).toBe(1);
+    expect(assessNodeCapacity(8 * GIB, { ...idle, pressureLevel: 2 }, 100e9)).toMatchObject({ slots: 0, held: 'memory-pressure' });
+  });
   it('admits normal pressure despite low raw free memory and historical swap', () => {
     expect(assessNodeCapacity(16 * GIB, normal, 20e9)).toEqual({ ramBytes: 16 * GIB, slots: 11, held: null });
     expect(assessNodeCapacity(3 * GIB, normal, 20e9).held).toBe('memory-pressure');
