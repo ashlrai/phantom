@@ -1,5 +1,10 @@
 # Bus adapter host contract
 
+These are engine runners. Session identity, addressing and inbox reads for the
+claude, codex, devin, cursor and grok CLIs live in
+`src/core/agents/bus-cli-adapters.ts`, which names the runner below where one
+exists (docs/AGENT-BUS.md, "Unified bus").
+
 These modules are source-level imports, relative to this README's directory (use
 the corresponding compiled `.js` paths at runtime). They are separate building
 blocks; the host must connect them explicitly.
