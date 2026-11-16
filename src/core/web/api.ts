@@ -90,6 +90,7 @@ import {
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { buildNodesSnapshot } from '../nodes/view.js';
+import { NODE_PROFILES } from '../drive/nodes/profiles.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -2394,7 +2395,7 @@ export async function handleApi(
     // and secret-free by construction (src/core/nodes/view.ts); same read class
     // as /api/control.
     if (path === '/api/nodes' && method === 'GET') {
-      sendJson(res, 200, buildNodesSnapshot());
+      sendJson(res, 200, buildNodesSnapshot({ profiles: NODE_PROFILES }));
       return true;
     }
 
