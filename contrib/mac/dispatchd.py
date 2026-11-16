@@ -974,7 +974,8 @@ def reap_batch(j, wt, lane, wall_s):
     if not m or m.get("reaped"): return None
     members = _members(m); repo = m.get("repo", "")
     notes = rd(wt + "/BRIDGE_NOTES.md")
-    outcomes = batcher.parse_outcomes(notes, [x["job"] for x in members])
+    details = batcher.parse_details(notes, [x["job"] for x in members])
+    outcomes = {job: detail["outcome"] for job, detail in details.items()}
     done = m.get("handled") if isinstance(m.get("handled"), dict) else {}
     retry = 0
     for x in members:
@@ -983,10 +984,12 @@ def reap_batch(j, wt, lane, wall_s):
         o = outcomes[x["job"]]
         if o in ("done", "skipped") and not member_prepared(x["job"], j):
             o = outcomes[x["job"]] = "deferred"   # no worktree was prepared: nothing of its own to publish
+            details[x["job"]] = {"outcome": o, "reason": "Member worktree was not prepared for this session."}
         metric({"event": "task_outcome", "job": x["job"], "batch": j, "lane": lane, "repo": repo, "outcome": o,
-                "model": x.get("model")})
+                "model": x.get("model"), "reason": details[x["job"]]["reason"]})
         if o in batcher.RETRY: retry += requeue_member(x, j, repo)
         else: handoff_member(x, j)
+        m.setdefault("results", {})[x["job"]] = details[x["job"]]
         _handled(m, j, x["job"], o)
     old, new, why = batcher.tune(batch_tuning, lane, outcomes, wall_s, os.path.exists(RUN + "/" + j + ".timeout"), batch_stats(), NOW)
     batcher.save_json(BATCH_TUNING_PATH, batch_tuning)
