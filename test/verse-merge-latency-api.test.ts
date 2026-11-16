@@ -31,6 +31,7 @@ const at = (min: number) => new Date(NOW - 3_600_000 + min * 60_000).toISOString
 it('returns the report for a temp ledger', async () => {
   const ledgerPath = ledger([
     { repo: 'fake/repo', pr: 7, type: 'opened', at: at(0) },
+    { repo: 'fake/repo', pr: 7, type: 'eligible', at: at(1) },
     { repo: 'fake/repo', pr: 7, type: 'queued', at: at(2) },
     { repo: 'fake/repo', pr: 7, type: 'checks_passed', at: at(12) },
     { repo: 'fake/repo', pr: 7, type: 'merged', at: at(13), head_sha: SHA },
@@ -40,6 +41,8 @@ it('returns the report for a temp ledger', async () => {
   expect(body).toMatchObject({ schema: 'verse.merge-latency.v1', generatedAt: new Date(NOW).toISOString(), ledger: 'present' });
   expect(body.report.window_hours).toBe(6);
   expect(body.report.pr_stages).toEqual([expect.objectContaining({ pr: 7, queue_wait_s: 120, required_checks_s: 600, merge_s: 60 })]);
+  expect(body.report.queue_timelines).toMatchObject([{ eligible_to_merge_s: 720,
+    ready_to_queue_s: 60, ready_in_queue_s: 660, dominant_delay: 'queue_execution' }]);
 });
 
 it('reports a missing ledger as missing, not an error', async () => {
