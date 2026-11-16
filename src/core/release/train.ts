@@ -173,8 +173,15 @@ export interface TrainObservation {
    * be a later merge than the release-please commit (two merges a second apart).
    * It carries that release commit's message when it is an ancestor of the tag
    * and package.json at the tag still carries the tag version.
+   * packageVersion and releaseGate identify that same tagged SHA when the
+   * subject is not a release-please line: package.json equals the tag and the
+   * release-gate receipt on that SHA is green.
    */
-  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; compareStatus?: string; committedAt: string | null } | null;
+  head: {
+    tag: string; sha: string; message: string; releaseMessage?: string;
+    packageVersion?: string | null; releaseGate?: ReleaseGateReceipt;
+    ancestry: Ancestry; compareStatus?: string; committedAt: string | null;
+  } | null;
   skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
   openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
@@ -375,6 +382,38 @@ export function isReleasePleaseCommit(message: string, version: string): boolean
   return `${match[1]}.${match[2]}.${match[3]}` === version;
 }
 
+/** Same names and all/any rules as ci-release-gate.mjs. A receipt is those check runs on one SHA. */
+export const RELEASE_GATE_RECEIPT = Object.freeze([
+  ['Merge Gate', 'all'],
+  ['Secret-shape scan', 'all'],
+  ['Secret scan (diff)', 'all'],
+  ['Check generated files', 'any'],
+  ['Check authority drift (hermetic)', 'any'],
+  ['Quick typecheck', 'any'],
+  ['Fast gate (typecheck + affected tests)', 'any'],
+  ['Desktop release smoke', 'any'],
+  ['Release suites (build + signing path)', 'any'],
+] as const);
+
+export type ReleaseGateReceipt = 'green' | 'red' | 'pending' | 'unknown';
+
+/** Green only when every receipt row is present. Missing or running is pending. A bad conclusion is red. */
+export function releaseGateReceipt(
+  runs: readonly { name: string; status: string; conclusion: string | null; appId: number }[],
+): ReleaseGateReceipt {
+  let pending = false;
+  for (const [name, rule] of RELEASE_GATE_RECEIPT) {
+    const rows = runs.filter((run) => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (rows.length === 0) { pending = true; continue; }
+    if (rows.some((run) => run.status !== 'completed')) { pending = true; continue; }
+    const conclusions = rows.map((run) => run.conclusion ?? 'none');
+    if (conclusions.some((conclusion) => conclusion !== 'success' && conclusion !== 'skipped')) return 'red';
+    if (rule === 'all' && conclusions.includes('skipped')) return 'red';
+    if (rule === 'any' && !conclusions.includes('success')) pending = true;
+  }
+  return pending ? 'pending' : 'green';
+}
+
 function releaseMismatch(tag: string, message: string): string {
   return `release_message_mismatch: tag=${tag} first_line=${JSON.stringify(message.split(/\r?\n/, 1)[0] ?? '')} expected=chore(<scope>): release ${tag.slice(1)}`;
 }
@@ -571,9 +610,15 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
   const version = headTag.name.slice(1);
+  const subjectAdmitted = isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version);
+  // The tagged SHA is the release when its package.json version is the tag and
+  // the release-gate receipt on that SHA is green. The commit subject is not
+  // an input to the receipt, digest, or attestation checks, which stay bound
+  // to this SHA.
+  const receiptAdmitted = input.head.packageVersion === version && input.head.releaseGate === 'green';
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
-    && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
+    && (subjectAdmitted || receiptAdmitted);
   if (!admitted) {
     const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
       ? `compare_not_ahead: ${input.head.compareStatus ?? input.head.ancestry}`
@@ -756,6 +801,47 @@ async function pages(read: (path: string) => Promise<unknown>, path: string): Pr
   throw new Error('incomplete release inventory');
 }
 
+async function packageVersionAt(read: (path: string) => Promise<unknown>, sha: string): Promise<string | null> {
+  try {
+    const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${sha}`));
+    if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
+    const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
+    if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) return null;
+    return pkg.version;
+  } catch {
+    return null;
+  }
+}
+
+async function releaseGateFor(read: (path: string) => Promise<unknown>, sha: string): Promise<ReleaseGateReceipt> {
+  try {
+    const collected: { name: string; status: string; conclusion: string | null; appId: number }[] = [];
+    let total: number | null = null;
+    for (let page = 1; page <= 10; page += 1) {
+      const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+      const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+      const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+      if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+      if (total === null) total = pageTotal;
+      else if (pageTotal !== total) return 'unknown';
+      for (const row of batch) {
+        const item = record(row);
+        collected.push({
+          name: text(item?.name) ?? '',
+          status: text(item?.status) ?? '',
+          conclusion: text(item?.conclusion),
+          appId: Number(record(item?.app)?.id),
+        });
+      }
+      if (batch.length < 100) break;
+    }
+    if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
+    return releaseGateReceipt(collected);
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, tag: { name: string; sha: string }): Promise<string | null> {
   const version = tag.name.slice(1);
   const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${tag.sha}`));
@@ -826,11 +912,16 @@ export async function observeTrain(
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
     const candidate: NonNullable<TrainObservation['head']> = { tag: newest.name, sha: newest.sha, message, ancestry, compareStatus: status ?? 'unknown', committedAt };
-    if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
+    const version = newest.name.slice(1);
+    if (!isReleasePleaseCommit(message, version)) {
       const releaseMessage = await ancestorReleaseMessage(read, newest);
       if (releaseMessage) candidate.releaseMessage = releaseMessage;
     }
-    if (isReleasePleaseCommit(message, newest.name.slice(1)) || candidate.releaseMessage) {
+    candidate.packageVersion = await packageVersionAt(read, newest.sha);
+    if (candidate.packageVersion === version) candidate.releaseGate = await releaseGateFor(read, newest.sha);
+    const subject = isReleasePleaseCommit(message, version) || candidate.releaseMessage !== undefined;
+    const receipt = candidate.packageVersion === version && candidate.releaseGate === 'green';
+    if (subject || receipt) {
       head = candidate;
       break;
     }

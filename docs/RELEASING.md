@@ -192,6 +192,13 @@ What runs without a per-release approval:
   tags. A green open release PR for the next patch is still enqueued only
   after its own checks are green. The Release PR workflow independently
   checks green master, cadence and version carriers.
+- Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
+  release gate is green. The train treats that tagged SHA as the candidate
+  when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
+  release-gate receipt is green. The commit subject is not required. Receipt,
+  digest, and attestation checks stay bound to that SHA. `v3.30.34` is never
+  patched, published, deleted, or moved, including when a newer candidate is
+  selected.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
