@@ -39,7 +39,7 @@ afterEach(() => { setLeaderApiHooksForTest({}); setLeaderThreadDepsForTest(null)
 it('answers a short status ask from the digest and records both messages in order', async () => {
   const result = await call('POST', { text: 'Phantom status' });
   expect(result.status).toBe(200);
-  expect(result.body.reply.text).toMatch(/^Phantom status, .* ET\nline one\nline two\nline three\nline four\nline five$/);
+  expect(result.body.reply.text).toMatch(/^Phantom status, .* ET\nline one\nline two\nline three\nline four\nline five(\n|$)/);  // composeSlackStatusReply appends work-board and snapshot evidence lines after the digest
   expect(result.body.reply).toMatchObject({ channel: 'verse', replyTo: result.body.message.id });
   expect(result.body.reply.delivery).toBeUndefined();
   expect(model).not.toHaveBeenCalled();
@@ -58,7 +58,7 @@ it('records the ask and replies with the fallback when the digest read fails', a
   readDigest.mockRejectedValue(new Error('read failed'));
   const result = await call('POST', { text: 'Phantom status' });
   expect(result.status).toBe(200);
-  expect(result.body.reply.text).toBe(OWNER_STATUS_FALLBACK);
+  expect(result.body.reply.text.startsWith(OWNER_STATUS_FALLBACK)).toBe(true);  // snapshot evidence lines follow the fixed fallback
   expect(model).not.toHaveBeenCalled();
   const list = await call('GET');
   expect(list.body.messages.map((m: { id: string }) => m.id)).toEqual([result.body.message.id, result.body.reply.id]);
