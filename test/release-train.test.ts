@@ -381,6 +381,9 @@ describe('release train', () => {
     expect(due.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
     expect(due.state.advance).toBeUndefined();
     expect(ENQUEUE_PULL_REQUEST).toContain('enqueuePullRequest');
+    // The declared GraphQL variable must match the variables key sent, or GitHub rejects $id as an invalid ID! (v3.30.35 train runs 43858601478, 43858533926).
+    const declared = [...ENQUEUE_PULL_REQUEST.matchAll(/\$(\w+):/g)].map((m) => m[1]);
+    expect(declared).toEqual(Object.keys((merge as { body: { variables: Record<string, string> } }).body.variables));
     expect(JSON.stringify(due.writes)).not.toMatch(/admin|bypass|\/merge/);
     expect(mergeStageDone('OPEN')).toBe(false);
     expect(mergeStageDone('MERGED')).toBe(true);
