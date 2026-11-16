@@ -156,6 +156,16 @@ jobs:
       # blocking check, so Quick skips its duplicate and only runs the selected
       # MCP output contract test. Master pushes still typecheck here and
       # publish the compiler state fast-gate restores (CI-PHANTOM-QUICK-DUP).
+      # The sparse checkout above carries only config files. The master-push
+      # typecheck and the selected MCP contract test read src/ and test/, so
+      # materialize the full tree first, exactly as fast-gate does. Without
+      # this, tsgo fails with TS18003 (no inputs) on every master push.
+      - name: Materialize the full tree
+        if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
       - name: Install dependencies
         if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
