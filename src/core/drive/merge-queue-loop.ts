@@ -80,7 +80,7 @@ export type MergeQueueAction =
 export interface MergeQueueState {
   v: 1;
   /** `<action>:<short>#<n>:<epochMs>` -> attempt; reserved before each call. */
-  attempts: Record<string, { pr: string; action: 'enqueue' | 'rebase'; at: number }>;
+  attempts: Record<string, { pr: string; action: 'enqueue' | 'rebase' | 'resolve'; at: number }>;
   /** Drain ids this loop appended (refix shares the id space via the queue). */
   drained: Record<string, number>;
 }
@@ -91,6 +91,14 @@ export interface MergeQueueIo {
   enqueue(repo: string, pr: MergeQueuePr): void;
   /** updatePullRequestBranch(pullRequestId, expectedHeadOid, updateMethod: MERGE). */
   updateBranch(repo: string, pr: MergeQueuePr): void;
+  /**
+   * Optional mechanical conflict resolution (core/fleet/conflict-resolve.ts):
+   * merge the base into the PR head in a throwaway worktree and push the merge
+   * commit (never a force-push). 'resolved' means a new head was pushed and the
+   * PR needs no agent; 'real' means a conflict a model must read. A throw is
+   * treated as 'real'. Absent: every conflict goes straight to the lane.
+   */
+  resolveConflict?(repo: string, pr: MergeQueuePr): 'resolved' | 'real';
   readQueueIds(): Set<string>;
   appendQueueLine(line: string): void;
   /** Canonical hold list as "<short>#<n>"; must throw if unreadable. */
@@ -119,6 +127,7 @@ export interface MergeQueueRepoResult {
   totals: Partial<Record<MergeQueueAction, number>>;
   enqueued: number[];
   rebased: number[];
+  resolved: number[];
   drained: number[];
   failed: number[];
 }
@@ -128,6 +137,8 @@ export interface MergeQueueSummary {
   dryRun: boolean;
   enqueued: number;
   rebased: number;
+  /** Conflicts resolved mechanically, without a lane. */
+  resolved: number;
   drained: number;
   failed: number;
   capped: boolean;
@@ -182,7 +193,7 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
   for (const [key, entry] of Object.entries((row['attempts'] ?? {}) as Record<string, unknown>)) {
     const e = (entry ?? {}) as Record<string, unknown>;
     if (typeof e['pr'] === 'string' && Number.isSafeInteger(e['at'])
-      && (e['action'] === 'enqueue' || e['action'] === 'rebase')) {
+      && (e['action'] === 'enqueue' || e['action'] === 'rebase' || e['action'] === 'resolve')) {
       state.attempts[key] = { pr: e['pr'], action: e['action'], at: e['at'] as number };
     }
   }
@@ -224,10 +235,10 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
     if (now - at >= windowMs) delete state.drained[key];
   }
   const summary: MergeQueueSummary = {
-    v: 1, dryRun, enqueued: 0, rebased: 0, drained: 0, failed: 0, capped: false, repoErrors: 0, repos: [],
+    v: 1, dryRun, enqueued: 0, rebased: 0, resolved: 0, drained: 0, failed: 0, capped: false, repoErrors: 0, repos: [],
   };
-  const spent = { enqueue: 0, rebase: 0, conflict: 0 };
-  const budgetAllows = (action: 'enqueue' | 'rebase', tag: string): boolean => {
+  const spent = { enqueue: 0, rebase: 0, resolve: 0, conflict: 0 };
+  const budgetAllows = (action: 'enqueue' | 'rebase' | 'resolve', tag: string): boolean => {
     const prior = Object.values(state.attempts).filter((e) => e.pr === tag && e.action === action);
     return prior.length < prWindowCap && !prior.some((e) => now - e.at < retryMs);
   };
@@ -235,7 +246,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
   try {
     for (const repo of repos) {
       const result: MergeQueueRepoResult = {
-        repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], rebased: [], drained: [], failed: [],
+        repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], rebased: [], resolved: [], drained: [], failed: [],
       };
       summary.repos.push(result);
       let snapshot: MergeQueueRepoSnapshot;
@@ -263,6 +274,20 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         if (action === 'conflict') {
           const key = drainKey(repo, pr.number, pr.headSha);
           if (queueIds.has(key) || key in state.drained) continue;
+          // Mechanical first: lockfile, generated and changelog conflicts never need a model.
+          if (io.resolveConflict && budgetAllows('resolve', tag) && spent.resolve < cycleCap) {
+            spent.resolve++;
+            state.attempts[`resolve:${tag}:${now}`] = { pr: tag, action: 'resolve', at: now };
+            io.saveState(state);
+            let outcome: 'resolved' | 'real' = 'real';
+            try { outcome = io.resolveConflict(repo, pr); } catch { io.log(`MERGEQ_GH_ERROR resolve ${repo}#${pr.number}`); }
+            if (outcome === 'resolved') {
+              result.resolved.push(pr.number);
+              summary.resolved++;
+              io.log(`MERGEQ_RESOLVE ${repo}#${pr.number} head=${pr.headSha.slice(0, 7)}`);
+              continue;
+            }
+          }
           if (spent.conflict >= cycleCap) { summary.capped = true; continue; }
           spent.conflict++;
           io.appendQueueLine(drainRow(repo, {
@@ -298,7 +323,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         io.log(`MERGEQ_${action.toUpperCase()} ${repo}#${pr.number} head=${pr.headSha.slice(0, 7)}`);
       }
     }
-    io.log(`MERGEQ_CYCLE enqueued=${summary.enqueued} rebased=${summary.rebased} drained=${summary.drained} ` +
+    io.log(`MERGEQ_CYCLE enqueued=${summary.enqueued} rebased=${summary.rebased} resolved=${summary.resolved} drained=${summary.drained} ` +
       `failed=${summary.failed} repoErrors=${summary.repoErrors} capped=${summary.capped ? 1 : 0} dryRun=${dryRun ? 1 : 0}`);
     return summary;
   } finally {
