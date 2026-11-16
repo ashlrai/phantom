@@ -22,7 +22,7 @@ it('renders the unbound heading, rows and the literal bind command', () => {
   expect(within(list).getByText('claim-fake-b')).toBeInTheDocument();
   expect(within(list).getByText('ashlr fleet claim-bind claim-fake-b --repo fake-org/fake-repo --thread <threadKey>')).toBeInTheDocument();
   expect(screen.queryByText('Unbound claims: unknown')).toBeNull();
-  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.getAllByRole('button', { name: 'Bind' })).toHaveLength(2);
 });
 
 it('shows one unknown status line when unbound is unknown', () => {
