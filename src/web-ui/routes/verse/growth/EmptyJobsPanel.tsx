@@ -6,7 +6,16 @@ import { FLEET_EMPTY_WHY_REASONS } from '../../../../core/fleet/empty-why-classi
 import { EMPTY_WHY_COPY } from './empty-why-copy.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 
-const query: QueryDef<EmptyJobsReport> = { key: 'empty-jobs', fetch: signal => apiGet<EmptyJobsReport>('/api/fleet/empty-jobs', signal) };
+const query: QueryDef<EmptyJobsReport> = { key: 'empty-jobs', fetch: async signal => {
+  const value = await apiGet<EmptyJobsReport>('/api/fleet/empty-jobs', signal);
+  if (!value || value.schema !== 'jobs.empty.v1' || !Number.isSafeInteger(value.total) || value.total < 0 ||
+    !Array.isArray(value.topCauses) || value.topCauses.some(c => !c || typeof c.label !== 'string' ||
+      typeof c.class !== 'string' || typeof c.exampleJob !== 'string' || !Number.isSafeInteger(c.count) || c.count < 0) ||
+    (value.reasons != null && (!value.reasons.by_reason || typeof value.reasons.by_reason !== 'object'))) {
+    throw new Error('Unsupported empty job observation');
+  }
+  return value;
+} };
 export function EmptyJobsPanel() {
   const result = useQuery(query);
   const refetch = useRefetch(query);
