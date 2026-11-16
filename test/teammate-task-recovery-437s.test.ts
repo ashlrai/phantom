@@ -25,6 +25,7 @@ const reconcile = vi.fn(async (): Promise<{ rowid: number; sent: boolean; delive
 const transport = () => ({ runsDir, now: () => clock, approved, send, reconcile });
 const cliDeps = (out: string[]): FleetTeammateTasksDeps => ({
   config: () => cfg,
+  now: () => clock,
   output: (text) => out.push(text),
   enqueue: (input, _cfg, opts = {}) => enqueueTeammateTask(input, cfg, { ...opts, ...transport() }),
   dispatch: (_cfg, opts = {}) => runTeammateTasks(cfg, { ...opts, ...transport() }),
