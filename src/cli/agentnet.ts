@@ -1,6 +1,7 @@
 import { readPeerInbox, sendPeerMessage, type PeerBusOptions } from '../core/agentnet/peer-bus.js';
 import { listPeers, proposeSlackAction, type PeerSession } from '../core/agentnet/slack-identities.js';
-const usage = 'phm agentnet peers list|read|send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]\nphm agentnet channels propose <name> [--apply] [--json]\nphm agentnet identity register <callsign> [--json]';
+import { consumePeerWork } from '../core/agentnet/work-dispatch.js';
+const usage = 'phm agentnet peers list|read|send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]\nphm agentnet peers post <to> <work-post-json> [--json]\nphm agentnet peers dispatch [--after <cursor>] [--apply] [--json]\nphm agentnet channels propose <name> [--apply] [--json]\nphm agentnet identity register <callsign> [--json]';
 export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, session: PeerSession = {
   lane: process.env.PHM_AGENTNET_LANE ?? '', sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: process.env.PHM_AGENTNET_SESSION_TOKEN ?? '',
 }): Promise<number> {
@@ -22,7 +23,12 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
   try {
     let result: unknown;
     if (group === 'peers' && verb === 'read' && positional.length === 2 && !apply && !replyTo && !threadId) result = readPeerInbox(session, after ?? 0, options);
+    else if (group === 'peers' && verb === 'dispatch' && positional.length === 2 && !replyTo && !threadId) result = await consumePeerWork(session, { apply, after }, options);
     else if (after !== undefined) return 2;
+    else if (group === 'peers' && verb === 'post' && positional.length === 4 && !apply && !replyTo && !threadId) {
+      if (kind!.length > 8000) return 2;
+      result = await sendPeerMessage({ toAgent: name, kind: 'task', text: 'Work feed proposal', work: JSON.parse(kind!) }, session, options);
+    }
     else if (group === 'peers' && verb === 'send' && positional.length === 5 && !apply) {
       result = await sendPeerMessage({ ...(name!.startsWith('#') ? { channel: name!.slice(1) } : { toAgent: name }), kind, text,
         ...(replyTo ? { replyTo } : {}), ...(threadId ? { threadId } : {}) }, session, options);

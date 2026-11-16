@@ -6,11 +6,13 @@ import {
 
 import { returnFleetClaim } from '../core/fleet/coordination-return.js';
 import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { claimNoticeDir, claimNoticePaths } from '../core/fleet/claim-notice-send.js';
+import { appendClaimThreadBinding, validateClaimThreadKey } from '../core/fleet/claim-thread-binding-write.js';
 
 const USAGE = 'Usage: ashlr fleet coordination <claim|release|return|returns|handoff|board|post|inbox|assign> [options]';
 export const FLEET_COORDINATION_HELP = [
   USAGE,
-  '  claim --repo owner/repo --task "work" --agent name [--ttl-seconds 3600] [--json]',
+  '  claim --repo owner/repo --task "work" --agent name [--ttl-seconds 3600] [--thread <slack:T:C:ts | T/C/ts>] [--json] — binds the claim\'s ASSIGNED/RELEASED/BLOCKED/VERIFIED notices to that thread; local state, not authority.',
   '  release <claim-id> --agent name --lease <lease> [--json]',
   '  return <claim-id> --agent name --lease <lease> (--pr n --head sha | --tests text | --artifact text | --blocked dependency) [--ttl-seconds 86400] [--json] — evidence, not authority; does not merge, verify or close anything; agent labels do not authenticate senders (the lease fences only release).',
   '  handoff <claim-id> --agent name --lease <lease> --to name [--ttl-seconds 3600] [--json]',
@@ -23,13 +25,13 @@ export const FLEET_COORDINATION_HELP = [
   'Keep the lease from claim/handoff private; it fences release and later handoffs.',
 ].join('\n');
 const VALUES: Record<string, string[]> = {
-  claim: ['--repo', '--task', '--agent', '--ttl-seconds'], release: ['--agent', '--lease'],
+  claim: ['--repo', '--task', '--agent', '--ttl-seconds', '--thread'], release: ['--agent', '--lease'],
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
   handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [], returns: [],
   post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent'],
   assign: ['--repo', '--task', '--to', '--ttl-seconds'],
 };
-export async function cmdFleetCoordination(args: string[]): Promise<number> {
+export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: string; now?: () => number } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(FLEET_COORDINATION_HELP); return 0; }
   const [sub, ...rest] = args;
   const allowed = sub === undefined ? undefined : VALUES[sub];
@@ -74,6 +76,21 @@ export async function cmdFleetCoordination(args: string[]): Promise<number> {
       pr: values['--pr'], head: values['--head'], tests: values['--tests'], artifact: values['--artifact'], blocked: values['--blocked'], ttlMs });
     output(result);
     return result.ok ? 0 : result.outcome === 'invalid-input' ? 2 : 1;
+  }
+  const threadKey = values['--thread'];
+  if (threadKey !== undefined && !validateClaimThreadKey(threadKey)) return invalid();
+  if (sub === 'claim' && threadKey !== undefined) {
+    const result = claimFleetWork({ repo: value('repo'), task: value('task'), agent: value('agent'), ttlMs });
+    if (!result.ok) {
+      output(result);
+      return result.error === 'invalid-input' ? 2 : 1;
+    }
+    const { claim } = result.value;
+    const binding = appendClaimThreadBinding(claimNoticePaths(claimNoticeDir(deps.runsRoot)).bindings,
+      { claimId: claim.id, repo: claim.repo, threadKey }, (deps.now ?? Date.now)());
+    output({ ...result, threadBinding: binding.ok
+      ? { ok: true, status: binding.status } : { ok: false, reason: binding.reason } });
+    return binding.ok ? 0 : 1;
   }
   const result = sub === 'claim' ? claimFleetWork({ repo: value('repo'), task: value('task'), agent: value('agent'), ttlMs })
     : sub === 'release' ? releaseFleetClaim({ id: positional[0]!, agent: value('agent'), lease: value('lease') })
