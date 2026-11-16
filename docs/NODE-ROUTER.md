@@ -46,6 +46,8 @@ phm node pull --node box --session 1 --json
 # While working, renew; when done, complete (values come from the pull output):
 phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
+# A claim you will not run is handed back at once (job returns to pending; this session is not offered it again):
+phm node release --job fix-123 --node box --session 1 --token 5 --leader-token 3
 
 # What this owner scope can see:
 phm node status --owner acme

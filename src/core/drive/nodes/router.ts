@@ -36,6 +36,7 @@ function activeClaims(state: NodesState, nodeId: string, now: number): number {
 
 function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   if (!node.owners?.includes(job.owner!)) return 'owner';
+  if (job.declined?.includes(node.session)) return 'declined';
   const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));
   if (missing.length) return `caps:${missing.join(',')}`;
   if ((job.requires ?? []).includes('gh') && node.auth !== 'ok') return 'auth';
@@ -72,6 +73,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --node <id> --owner ${job.owner} --caps <caps>`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
+      : reasons.has('declined') && !reasons.has('caps')
+        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;

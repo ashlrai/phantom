@@ -70,12 +70,19 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     if (pulled.demoted || !pulled.result['pulled']) return { pulled: false };
     const claim = pulled.result['claim'] as JobClaim;
     const job = pulled.result['job'] as JobView;
-    if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job)) || nodeStopped() || capacityNow().held) return { held: 'unsupported-job' };
     const lease = [...identity, '--job', claim.jobId, '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+    // A claim we will not run is handed back at once; stranding it until expiry shows the job
+    // as running while nothing executes. Best effort: an older primary without `release` just expires.
+    const refuse = (held: string): Record<string, unknown> => {
+      let released = false;
+      try { released = callPool(config, 'release', lease).result['released'] === true; } catch { /* expiry fences it */ }
+      return { held, released };
+    };
+    if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
+        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job)) || nodeStopped() || capacityNow().held) return refuse('unsupported-job');
     // Check immediately before spawn as well as throughout execution.
     const renewed = callPool(config, 'renew', lease);
-    if (!renewed.result['expiresAt'] || renewed.demoted || capacityNow().held) return { held: 'lease-lost' };
+    if (!renewed.result['expiresAt'] || renewed.demoted || capacityNow().held) return refuse('lease-lost');
     active++;
     const resultRef = await new Promise<string | null>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,

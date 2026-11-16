@@ -116,6 +116,30 @@ describe('multi-Mac worker lifecycle', () => {
     expect(ports.spawn).not.toHaveBeenCalled();
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
   });
+  it('releases a pulled job it refuses so the claim is not stranded until expiry', async () => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => {
+      const reply = route(...args);
+      if (args[1] === 'pull') reply.result.job = { id: 'j', requires: [], secrets: [] };
+      if (args[1] === 'release') return { demoted: false, result: { released: true } };
+      return reply;
+    });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toEqual({ held: 'unsupported-job', released: true });
+    const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
+    expect(release).toEqual(expect.arrayContaining(['--job', 'j', '--token', '4', '--leader-token', '3']));
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('still refuses cleanly when the primary predates the release verb', async () => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'release') throw new Error('Invalid drive pool verb');
+      const reply = route(...args);
+      if (args[1] === 'pull') reply.result.job = { id: 'j', requires: [], secrets: [] };
+      return reply;
+    });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toEqual({ held: 'unsupported-job', released: false });
+  });
   it('kills work on pressure before admitting another job', async () => {
     const { result } = await start();
     ports.capacity.mockReturnValue({ slots: 0, held: 'disk-pressure' });

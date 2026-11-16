@@ -14,6 +14,9 @@ export interface QueueJobV1 {
   /** Secret NAMES the executor resolves from its own local custody, never values. */
   secrets?: string[];
   claim?: JobClaim;
+  /** Node sessions that released this job unrun (it cannot execute it). A session never re-pulls it;
+   * a rejoined node has a new session and tries again. Bounded to the newest 16. */
+  declined?: number[];
   result?: string;
 }
 
@@ -40,4 +43,6 @@ export interface QueueV1 {
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null;
   renewClaim(claim: JobClaim): JobClaim | null;
   complete(claim: JobClaim, result: string): boolean;
+  /** Hand a held claim back unrun; the job returns to pending without penalty. */
+  release(claim: JobClaim): boolean;
 }

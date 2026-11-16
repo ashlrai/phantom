@@ -93,6 +93,40 @@ describe('drive node leases', () => {
     expect(f.a.complete(next, 'ok')).toBe(true);
   });
 
+  it('release returns the job to pending, kills the token and cannot double-complete', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job', { owner: 'o' });
+    const claim = f.a.claim(leader, f.bob, 'job')!;
+    expect(f.a.release({ ...claim, token: claim.token + 1 })).toBe(false); // forged token
+    expect(f.a.release(claim)).toBe(true);
+    expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending', declined: [f.bob.session] });
+    expect(f.a.snapshot().jobs[0].claim).toBeUndefined();
+    expect(f.b.renewClaim(claim)).toBeNull();
+    expect(f.b.complete(claim, 'late')).toBe(false);
+    expect(f.b.release(claim)).toBe(false);
+    const next = f.a.claim(leader, f.alice, 'job')!;
+    expect(next.token).toBeGreaterThan(claim.token);
+    expect(f.b.release(claim)).toBe(false); // stale holder cannot release the newer claim
+    expect(f.a.complete(next, 'ok')).toBe(true);
+    expect(f.a.release(next)).toBe(false);
+    expect(parseState(f.store.state).jobs[0].state).toBe('completed');
+  });
+
+  it('does not re-route a released job to the session that declined it', () => {
+    const f = fixture();
+    const alice = f.a.join('alice2', { owners: ['o'] })!, bob = f.b.join('bob2', { owners: ['o'] })!;
+    f.a.heartbeat(alice); f.b.heartbeat(bob);
+    f.a.enqueue('job', { owner: 'o', requires: [], secrets: [] });
+    const claim = (f.b.pull(bob) ?? f.a.pull(alice))!.claim;
+    const [holder, other, otherNode] = claim.nodeId === 'bob2' ? [f.b, f.a, alice] : [f.a, f.b, bob];
+    const self = claim.nodeId === 'bob2' ? bob : alice;
+    expect(holder.release(claim)).toBe(true);
+    expect(holder.pull(self)).toBeNull();
+    expect(other.plan('o')[0]!.nodeId).toBe(otherNode.nodeId);
+    expect(other.pull(otherNode)!.claim.jobId).toBe('job');
+  });
+
   it('split brain: only the higher fencing token can complete the same job', () => {
     const f = fixture();
     const oldLeader = f.a.heartbeat(f.alice)!.leader!;

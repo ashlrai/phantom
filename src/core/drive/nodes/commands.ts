@@ -16,6 +16,7 @@ const FLAGS: Record<string, { value: string[]; boolean?: string[] }> = {
   pull: { value: ['--node', '--session'] },
   renew: { value: LEASE },
   complete: { value: [...LEASE, '--result'] },
+  release: { value: LEASE },
   status: { value: ['--owner'] },
   list: { value: ['--owner'] },
   leave: { value: ['--node', '--session'] },
@@ -111,6 +112,11 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       if (!done) throw new UsageError('lease-lost', 'Completion refused: the lease is gone or the job is already complete.',
         'Discard this run\'s result. Another node holds a newer token or the job finished.', 1);
       return { jobId: need(flags, '--job'), completed: true };
+    }
+    case 'release': {
+      if (!nodes.release(claimOf(flags))) throw new UsageError('lease-lost', 'Release refused: the lease is gone or the job is already complete.',
+        'Nothing to hand back. Another node holds a newer token or the job finished.', 1);
+      return { jobId: need(flags, '--job'), released: true };
     }
     case 'list':
     case 'status': return { ...nodes.view(csv(need(flags, '--owner'))) };

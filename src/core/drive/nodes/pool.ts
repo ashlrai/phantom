@@ -56,7 +56,7 @@ export function executePool(store: NodesStore, request: PoolRequest, owner: stri
       return { schemaVersion: 1, active: pool.active, epoch: pool.epoch, demoted, result: { heartbeatAt: pool.heartbeatAt } };
     }
     const verb = request.verb;
-    if (!verb || !['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'list', 'status', 'leave'].includes(verb)) {
+    if (!verb || !['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'list', 'status', 'leave'].includes(verb)) {
       throw new Error('Invalid drive pool verb');
     }
     const read = ['list', 'status', 'plan'].includes(verb);
