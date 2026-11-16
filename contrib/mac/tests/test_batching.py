@@ -25,6 +25,18 @@ def metrics(home, event):
 
 
 class Batching(unittest.TestCase):
+    def test_terminal_target_is_removed_before_batch_leases(self):
+        for job in ('RQ-Q-A', 'RQ-Q-B', 'RQ-Q-C'):
+            self.queue(job, f'{job} (pr={42 if job == "RQ-Q-B" else 43}): edit src/core/queue/store.ts')
+        from datetime import datetime, timezone
+        (self.r / 'metrics/jobs.jsonl').write_text(json.dumps(dict(event='outcome', job='old', state='MERGED',
+            url='https://github.com/ashlrai/phantom/pull/42', ts=datetime.now(timezone.utc).isoformat())) + '\n')
+        self.run_tick()
+        _, manifest = self.only_batch()
+        self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-A', 'RQ-Q-C'})
+        self.assertFalse((self.q / 'run/RQ-Q-B.batched').exists())
+        self.assertTrue(any(r.get('job') == 'RQ-Q-B' and r.get('state') == 'DONE-NOOP' for r in metrics(self.home, 'outcome')))
+
     def setUp(self):
         slots = held_lanes()
         slots['devin'] = devin_slot(target=10, last_change=int(1e15))
