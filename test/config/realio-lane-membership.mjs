@@ -83,6 +83,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-job-precheck-cli.test.ts', // Creates real git commits for precheck CLI coverage.
   'test/fleet-job-precheck-batch-nov04-spb1.test.ts', // Builds real git history for batch precheck coverage.
   'test/fleet-job-path-history-nov04-spb2.test.ts', // Creates and renames real git history for exact job lookup.
+  'test/fleet-install.test.ts', // Reads committed fleet sources and runs diffs in real temporary Git repositories.
   'test/fleet-deploy-plan.test.ts', // Compares committed scripts in real temporary Git repositories.
   'test/fleet-path-history-cli.test.ts', // Creates and reads real git history through the CLI.
   'test/fleet-path-history-literal-cli-04-spq1.test.ts', // Creates real temp git repos (git init/commit via execFileSync) for literal path-history CLI coverage.
