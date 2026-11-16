@@ -89,6 +89,8 @@ import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
+import { DEFAULT_FLEET_IMESSAGE_TASKS, MAX_FLEET_IMESSAGE_TASKS, parseFleetImessageTasksArgs,
+  readFleetImessageTasks, type FleetImessageTasksArgs } from './fleet-imessage-tasks.js';
 import { parseFleetSlackEvidenceArgs, readFleetSlackEvidence,
   type FleetSlackEvidenceArgs } from './fleet-slack-evidence.js';
 
@@ -319,6 +321,7 @@ export interface FleetReaders {
   commsReadiness?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
+  imessageTasks?: (input: FleetImessageTasksArgs) => Promise<unknown>;
   slackEvidence?: (input: FleetSlackEvidenceArgs) => Promise<unknown>;
   ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
@@ -886,6 +889,19 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_imessage_tasks',
+      description: 'Read the local teammate task ledger through the same listTeammateTasks collector as `phm fleet imessage-tasks list` — never a second store, reader or dispatcher: each row is projected to jobId, peer, resource, state, claimKey, createdAt/attemptedAt/deadline timestamps, the sanitized transport receipt (rowid, sent, delivered, error) and the peer-reported result (rowid, status, at, evidence) — never the envelope token, scope, format, result summary, handles, message bodies or filesystem paths. `jobId` is an optional exact selector applied before `limit` truncation (1–100, default 20, newest matches kept in collector order); an unmatched selector reports matched:false and never another task. Ledger presence is reported separately (present, missing, unavailable) so a missing or corrupt store never poses as a healthy empty assignment, and a collector failure is fixed unavailable evidence without raw exception text. Task states are local ledger states verbatim: queued is never RUNNING, a DONE result is peer-reported and unverified, and a sent receipt is never delivery proof. Reads the server-owned runs root only; no caller directory, root, cwd, path, config, send, enqueue, poll or claim option is accepted, and the tool never sends, enqueues, dispatches, claims, writes or alters comms configuration.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$', description: 'Exact job id selector such as RQ-PHX-EXAMPLE-1; applied before limit truncation.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_IMESSAGE_TASKS, default: DEFAULT_FLEET_IMESSAGE_TASKS },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_ci_resume_inputs',
       description: 'Plan which CI jobs may reuse passing input-tree receipts after a fix — the RESUME-FROM-FAILURE order — through the same shared planCiResumeInputs planner as `phm fleet ci-resume-inputs`, never a second digest algorithm. Takes the version-1 manifest and prior-receipts documents inline as JSON objects (each at most 1 MiB serialized, never file paths) plus hexadecimal base and head revisions. Per job it returns the planner\'s structured reuse-or-rerun decision, fixed reasons, reproduced base and head input digests, covered and shared changed paths and the matched prior receipt; unknown or unmapped coverage stays a rerun. The repository is the server\'s own cwd: no caller cwd, filesystem path, executable, environment or git option is accepted. Read-only: git objects only (rev-parse, ls-tree, diff-tree), the working tree is never read, and the tool never posts a status or check, writes a receipt, dispatches a workflow or mutates CI.',
       inputSchema: {
@@ -1011,7 +1027,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1056,6 +1072,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const gmailArchivePlanLatestArgs = name === 'fleet_gmail_archive_plan_latest' ? parseFleetGmailArchivePlanLatestArgs(args) : null;
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
+    const imessageTasks = name === 'fleet_imessage_tasks' ? parseFleetImessageTasksArgs(args) : null;
     const slackEvidenceArgs = name === 'fleet_slack_evidence' ? parseFleetSlackEvidenceArgs(args) : null;
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
@@ -1092,6 +1109,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
+        name === 'fleet_imessage_tasks' ? imessageTasks === null :
         name === 'fleet_slack_evidence' ? slackEvidenceArgs === null :
         name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
         name === 'fleet_gmail_triage_latest' ? gmailTriageLatestArgs === null :
@@ -1183,6 +1201,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
+        : name === 'fleet_imessage_tasks' ? await (readers.imessageTasks ?? readFleetImessageTasks)(imessageTasks as FleetImessageTasksArgs)
         : name === 'fleet_slack_evidence' ? await (readers.slackEvidence ?? readFleetSlackEvidence)(slackEvidenceArgs as FleetSlackEvidenceArgs)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
