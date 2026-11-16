@@ -14,7 +14,7 @@ export const FULL_REQUIRED = Object.freeze([
   'mac-general', 'mac-isolated', 'native-macos-broker-foundation',
   'windows-service-authority', 'merge-gate',
 ]);
-export const FULL_SKIPPED = Object.freeze(['quick', 'site', 'docs', 'release-build']);
+export const FULL_SKIPPED = Object.freeze(['quick', 'clean-tree', 'authority-drift', 'site', 'docs', 'release-build']);
 // Full evidence sources: the six-hour schedule, and a manual full dispatch of
 // the canonical CI workflow on master (the workflow header documents dispatch as
 // a full run). A dispatched full has no receipt job, so it qualifies only when
