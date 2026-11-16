@@ -152,6 +152,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
+| Read bridge PR merge, release ancestry and exact npm or crates.io publication | [Bridge production metrics](PRODUCTION-METRICS.md) (`phm metrics prod --json`) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Refresh standalone advertised model metadata through Phantom Secrets | [Model capability cache](https://github.com/ashlrai/phantom/blob/master/docs/MODELCAPS.md) |
 | Read real repository adoption signals | [Repository signals](SIGNALS.md) |

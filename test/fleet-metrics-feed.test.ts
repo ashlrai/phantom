@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { formatFleetStatus } from '../src/cli/fleet.js';
 import { buildFleetMetrics, formatFleetMetrics, readFleetMetrics, readRouterMetricsFeed, type RouterMetricsFeed } from '../src/core/fleet/metrics-feed.js';
+import type { FleetStatus } from '../src/core/fleet/status.js';
 
 const fixture = (): RouterMetricsFeed => ({
   observedAt: '2026-10-26T12:00:00.000Z', windowHours: 24,
@@ -88,5 +90,21 @@ describe('fleet metrics v1 dashboard contract', () => {
     expect(JSON.stringify(feed)).toBe(before);
     feed.work.reverse();
     expect(buildFleetMetrics(feed)).toEqual(first);
+  });
+
+  it('prints the metrics slice on fleet status text when present', () => {
+    const metrics = buildFleetMetrics(fixture());
+    const status = {
+      killed: false,
+      daemon: { running: false, todaySpentUsd: 0 },
+      backends: [],
+      queue: { backlogItems: 0 },
+      proposals: { pending: 0, frontierPending: 0, applied: 0 },
+      merges: { recent: 0 },
+      metrics,
+    } as unknown as FleetStatus;
+    const text = formatFleetStatus(status);
+    expect(text).toContain('Metrics: healthy (fleet-metrics.v1)');
+    expect(text).toContain('top PR: repo#1');
   });
 });

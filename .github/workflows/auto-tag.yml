@@ -30,6 +30,10 @@ on:
   push:
     branches: [master]
     paths: ["package.json"]
+  # Desktop release smoke and Release suites are jobs in CI. This fires when
+  # that run completes and evaluates the gate for workflow_run.head_sha.
+  # Release prep starts that CI run on the master push and again every five
+  # minutes, deduped per sha, so a missed push is retried without a second build.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -40,8 +44,10 @@ on:
 
 permissions: {}
 
+# One evaluation per commit. A second completion for the same sha waits, then
+# the version step no-ops once the tag and its release both exist.
 concurrency:
-  group: auto-tag-${{ github.repository }}
+  group: auto-tag-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
