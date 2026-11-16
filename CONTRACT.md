@@ -21,6 +21,39 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
+
+`agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
+`work.post.dispatch: {tier: fast|mid|work|frontier, scope, acceptance}` (4000/2000
+character caps), and `work.result: {jobId, claimKey, queueId, receiptId, outcome,
+reason?}`. Outcomes are `reserved|admitted|complete|failed`; reasons are bounded
+codes. Queue/receipt IDs are `peer-work-<32 hex>` / `pw-<32 hex>`.
+Existing work posts remain coordination-only without a dispatch payload.
+
+`agentnet/work-dispatch.ts` exports
+`consumePeerWork(session: PeerSession, input?: {apply?: boolean; after?: number},
+options?: PeerBusOptions)`. The host-owned private `dispatch.json` beside peer
+bindings supplies enabled state, peer allowlist, repository allowlist, tier ceilings
+and exact permitted paths. See [Agent Bus dispatch](docs/AGENT-BUS.md#bounded-peer-dispatch).
+Results contain status, dryRun, bounded results, and a cursor on success.
+Only authenticated admission receipts qualify; labels and peer status messages
+cannot authorize claims or prove completion. No shell, engine, merge or spending
+is invoked. Queue task strings remain untrusted data under existing worker gates.
+
+`QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
+atomically insert a new READY job and claim it under the existing queue lock.
+The optional synchronous host guard runs under that lock; an existing ID or an
+invalid intake fails without mutation. The two-argument claim contract is unchanged.
+`queue/decompose.ts` exports its existing `promptText(field, value, max): string`
+validator for shared bounded, printable, secret-free queue prompt validation.
+
+`PeerRequest.work?: z.infer<typeof workPostBodySchema>` is accepted only for a
+directed task; its authenticated bus body is `work.post`, with the same enrollment
+and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>`
+and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
+Dispatch is a read-only preview unless apply is exactly true. Results use only
+the local bus and its current comms/participant allowlist, never a Slack send.
+
 ---
 
 ## src/core/types.ts — THE CONTRACT (types only)
