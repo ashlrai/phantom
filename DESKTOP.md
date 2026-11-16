@@ -28,6 +28,15 @@ See `desktop/README.md` for full setup, build, and open-item details, and
 
 ## Watch and steer
 
+Choose **View → Fleet** in the native menu, or **Fleet** in the console
+navigation (⌘2 on macOS), to open the live compute and agent map in the same
+window. Fleet starts with the **Compute & agents** lens and its 2D/3D controls;
+**Workspaces** and **Runs graph** remain available beside it. The map reads the
+existing authenticated compute and session projections and pauses its polling
+while hidden. Unavailable readings stay labeled rather than showing an empty
+fleet as healthy. The menu uses the `open-fleet` desktop command; no extra
+listener, browser window or token handoff is needed.
+
 Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append to
 `~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
 [Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).

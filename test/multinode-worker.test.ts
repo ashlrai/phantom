@@ -49,6 +49,14 @@ describe('multi-Mac worker lifecycle', () => {
     child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
     expect(await result).toEqual({ jobId: 'j', completed: true });
   });
+  it('advertises its phm build as a capability on join without adding a join flag', async () => {
+    const { result } = await start();
+    const join = ports.call.mock.calls.find(c => c[1] === 'join')![2] as string[];
+    expect(join.filter(a => a.startsWith('--'))).toEqual(['--node', '--caps', '--slots']);
+    expect(join[join.indexOf('--caps') + 1]).toMatch(/^codex,claude,phm-\d+\.\d+\.\d+/);
+    child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
+    await result;
+  });
   it('runs the fixed muse light slice in two slots without a provider lane', async () => {
     ports.capacity.mockReturnValue({ slots: 2, held: null });
     const route = ports.call.getMockImplementation()!;
