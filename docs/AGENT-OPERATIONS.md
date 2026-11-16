@@ -29,6 +29,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -49,8 +50,9 @@ name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
 **Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and — unless the change is
-docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+the secret-shape scan, lane classification, and quick typecheck with
+CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
+all on Ubuntu. `Merge Gate` is the one
 required check and fails unless exactly that selection ran and every full lane
 was skipped. No pull request or merge-queue commit may occupy a macOS or
 Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
@@ -336,8 +338,10 @@ inline terminal approval and explicit Phantom fleet handoff are described in
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,
-`doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`
-and `ecosystem [--write] [--json]`.
+`doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`,
+`ecosystem [--write] [--json]` and `fleet`. The last starts the separate
+read-only fleet server; discover its observation tools with MCP `tools/list`.
+See the [fleet MCP onramp](FLEET-MCP-ONRAMP.md).
 
 `phm wire [claude|codex|cursor|all] [--config <path>] [--json]` registers the
 gateway as server `ashlr-hub` with command `ashlr` and args `["mcp"]`. It backs
@@ -387,7 +391,8 @@ the resident daemon under an active grant. See
 
 ### Where state lives
 
-Everything is under `~/.ashlr/`. Verified paths:
+Runtime state uses several roots. The paths below are relative to
+`$ASHLR_HOME` (default `~/.ashlr/`):
 
 | Path | Contents |
 | --- | --- |
@@ -401,6 +406,11 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
 | `bus/` | shared task board state (`phm bus thread|task`, `phm fleet bus`) |
 | `bus-mailbox/` | durable local message mailboxes (`phm bus send|inbox|ack`) |
+| `fleet/bus-inbox/` | cursor-based Agent Bus (`phm comms bus`, HTTP and fleet MCP) |
+
+Host queue, metrics, specialist coordination and iMessage state normally live
+under `~/.ashlr-runs/`; connector profiles use `~/.phantom/connectors/`.
+Check each command's root options before comparing evidence from different processes.
 
 [RELIABILITY.md](RELIABILITY.md#where-state-lives) lists the rest
 (`enrollment.json`, `daemon.json`, `inbox/`, `sandboxes/`, `audit/`).
@@ -498,6 +508,19 @@ Mac job refreshes health, levers and PR links every five minutes and at load.
 Generation does not install or activate jobs. Use an installed `phm` executable
 that resolves Node on launchd's PATH. When the driver snapshot producer lands,
 adapt it to this contract; the report and relay need no transport changes.
+
+### Fleet graph, orchestration and teammate evidence
+
+The desktop Graph pane shows lane/worker relationships and live seat state.
+The Channels pane shows the Leader orchestration journal. The
+[fleet coordination guide](FLEET-COORDINATION.md) covers their CLI and MCP
+readers, advisory assignment previews, and the distinction between the router
+topology and the engine/account registry graph.
+
+For iMessage, use the [intake and teammate guide](IMESSAGE.md): it covers
+local replies, fleet-originated scoped tasks, unsent-task cancellation, and
+counts-only path, acknowledgement and latency readers. Ordinary intake polling
+does not activate teammate delivery.
 
 ### Stop and pause
 
