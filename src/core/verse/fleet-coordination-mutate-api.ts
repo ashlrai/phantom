@@ -13,12 +13,23 @@
  * logged, never placed in an error, and no other route echoes it
  * (returnFleetClaim never returns it; the GET claims view drops it).
  *
+ * An optional `thread` on POST /claim binds the new claim to its source Slack
+ * thread (claim-thread-bindings.jsonl, the same row `ashlr fleet claim-bind`
+ * writes) so ASSIGNED / BLOCKED / VERIFIED notices have somewhere to go. A
+ * binding is local state that routes notices only: it grants no authority,
+ * and the label `agent` still authenticates nothing. The bind runs only after
+ * a successful claim; a failed bind still returns 200 with the lease and a
+ * `threadBinding.ok: false` marker so the caller retries the bind on the host.
+ *
  * The V1 dispatch + mutation-token gate in verse-api.ts runs before this
  * module sees any non-GET request; no second token check lives here. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from './api-modules.js';
 import { readBody, sendJson } from '../web/api.js';
 import { claimFleetWork, type FleetClaim, type FleetCoordinationResult } from '../fleet/coordination.js';
+import { claimNoticeDir, claimNoticePaths } from '../fleet/claim-notice-send.js';
+import { appendClaimThreadBinding, validateClaimThreadKey, type ClaimThreadBindResult } from '../fleet/claim-thread-binding-write.js';
+import type { ClaimThreadBinding } from '../fleet/claim-thread-notice.js';
 import { returnFleetClaim, type FleetClaimReturnInput, type FleetClaimReturnResult } from '../fleet/coordination-return.js';
 
 const BASE = '/api/verse/fleet/coordination-claims';
@@ -34,13 +45,15 @@ type ClaimResult = FleetCoordinationResult<{ claim: FleetClaim; lease: string }>
 export interface FleetCoordinationMutateApiDeps {
   /** Claim seam for tests. Default: claimFleetWork() on the default ledger. */
   claim?: (input: { repo: string; task: string; agent: string; ttlMs?: number }, now: number) => ClaimResult;
+  /** Thread-binding seam. Default: appendClaimThreadBinding() on the default bindings file. */
+  bind?: (binding: ClaimThreadBinding, now: number) => ClaimThreadBindResult;
   /** Return seam for tests. Default: returnFleetClaim() on the default ledger. */
   return?: (input: FleetClaimReturnInput, now: number) => FleetClaimReturnResult;
   /** Clock seam for tests; feeds the ledger's claimedAt / expiry. */
   now?: () => Date;
 }
 
-const CLAIM_KEYS = new Set(['repo', 'task', 'agent', 'ttlSeconds']);
+const CLAIM_KEYS = new Set(['repo', 'task', 'agent', 'ttlSeconds', 'thread']);
 const RETURN_KEYS = new Set(['claimId', 'agent', 'lease', 'result', 'ttlSeconds']);
 const RESULT_KEYS = new Set(['pr', 'head', 'tests', 'artifact', 'blocked']);
 
@@ -92,8 +105,9 @@ const invalid = (res: ServerResponse, error: string): void => {
 };
 
 async function handleClaim(req: IncomingMessage, res: ServerResponse,
-  claim: NonNullable<FleetCoordinationMutateApiDeps['claim']>, now: () => Date): Promise<void> {
-  const body = await readObject(req, res, CLAIM_KEYS, '{repo, task, agent, ttlSeconds?}');
+  claim: NonNullable<FleetCoordinationMutateApiDeps['claim']>,
+  bind: NonNullable<FleetCoordinationMutateApiDeps['bind']>, now: () => Date): Promise<void> {
+  const body = await readObject(req, res, CLAIM_KEYS, '{repo, task, agent, ttlSeconds?, thread?}');
   if (!body) return;
   const { repo, task, agent } = body;
   const ttl = ttlMs(body.ttlSeconds);
@@ -101,6 +115,10 @@ async function handleClaim(req: IncomingMessage, res: ServerResponse,
     return invalid(res, 'repo, task and agent must be strings.');
   }
   if (ttl === null) return invalid(res, `ttlSeconds must be an integer from 1 to ${MAX_TTL_SECONDS}.`);
+  const thread = body.thread;
+  if (thread !== undefined && (typeof thread !== 'string' || !validateClaimThreadKey(thread))) {
+    return invalid(res, 'thread must be a Slack thread reference: <team>/<channel>/<threadTs> or slack:<team>:<channel>:<rootTs>.');
+  }
   let result: ClaimResult;
   try {
     result = claim({ repo, task, agent, ...(ttl !== undefined ? { ttlMs: ttl } : {}) }, now().getTime());
@@ -114,9 +132,20 @@ async function handleClaim(req: IncomingMessage, res: ServerResponse,
   const { id, repo: r, task: t, agent: a, claimedAt, expiresAt } = result.value.claim;
   const view = { id, repo: r, task: t, agent: a,
     claimedAt: new Date(claimedAt).toISOString(), expiresAt: new Date(expiresAt).toISOString() };
+  let threadBinding: { ok: true; status: string } | { ok: false; reason: string } | undefined;
+  if (thread !== undefined) {
+    let bound: ClaimThreadBindResult;
+    try {
+      bound = bind({ claimId: id, repo: r, threadKey: thread }, now().getTime());
+    } catch {
+      bound = { ok: false, kind: 'refused', reason: 'bind-threw' };
+    }
+    threadBinding = bound.ok ? { ok: true, status: bound.status } : { ok: false, reason: bound.reason };
+  }
   // sendJson runs sanitizePublicJson over every body; the lease is a UUID it
   // leaves intact (the round-trip test proves the returned lease releases).
-  sendJson(res, 200, { ok: true, outcome: 'claimed', claim: view, lease: result.value.lease });
+  sendJson(res, 200, { ok: true, outcome: 'claimed', claim: view, lease: result.value.lease,
+    ...(threadBinding !== undefined ? { threadBinding } : {}) });
 }
 
 async function handleReturn(req: IncomingMessage, res: ServerResponse,
@@ -149,12 +178,13 @@ async function handleReturn(req: IncomingMessage, res: ServerResponse,
 
 export function createFleetCoordinationMutateApi(deps: FleetCoordinationMutateApiDeps = {}): ApiModule {
   const claim = deps.claim ?? ((input, now) => claimFleetWork(input, { now }));
+  const bind = deps.bind ?? ((binding, at) => appendClaimThreadBinding(claimNoticePaths(claimNoticeDir()).bindings, binding, at));
   const ret = deps.return ?? ((input, now) => returnFleetClaim(input, { now }));
   const now = deps.now ?? (() => new Date());
   return async (_ctx, req, res, path, method) => {
     if (path !== VERSE_FLEET_COORDINATION_CLAIM_PATH && path !== VERSE_FLEET_COORDINATION_RETURN_PATH) return false;
     if (method !== 'POST') sendJson(res, 405, { error: 'method not allowed' });
-    else if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH) await handleClaim(req, res, claim, now);
+    else if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH) await handleClaim(req, res, claim, bind, now);
     else await handleReturn(req, res, ret, now);
     return true;
   };
