@@ -13,14 +13,17 @@ it('distinguishes durable claims from orphan, conflict and unknown without writi
   mkdirSync(dir, { recursive: true });
   const ledger = join(dir, 'teammate-tasks.json');
   const ids = ['bound', 'orphan', 'conflict', 'terminal'];
+  const token = (n: number) => String(n).padStart(32, '0');
+  // The writer's reserved identity: RESULT <jobId> <token> acceptance plus owner, repo and scope.
+  const acceptance = (id: string, n: number) => `RESULT ${id} ${token(n)}; peer report only, independent verification required`;
   const tasks = ids.map((jobId, i) => ({ jobId, peer: 'dot', kind: 'research', repo: 'ashlrai/phantom',
     scope: 'PRIVATE_SCOPE', format: 'PRIVATE_FORMAT', deadline: '2027-06-01T00:00:00.000Z',
-    token: String(i + 1).padStart(32, '0'), createdAt: i, state: 'queued', metrics: [], settled: false, prRefs: [] }));
+    token: token(i + 1), createdAt: i, state: 'queued', metrics: [], settled: false, prRefs: [] }));
   writeFileSync(ledger, JSON.stringify({ v: 1, tasks, attempts: { dot: [], instinct: [] } }));
   const queue = new QueueStore(join(root, 'queue'));
-  for (const id of ['bound', 'conflict', 'terminal']) {
+  for (const [id, n] of [['bound', 1], ['conflict', 3], ['terminal', 4]] as const) {
     await queue.add({ id, status: id === 'terminal' ? 'DONE' : 'CLAIMED', priority: 'P2', tier: 'work',
-      repo: 'ashlrai/phantom', scope: 'PRIVATE_SCOPE', acceptance: 'PRIVATE_ACCEPTANCE', deps: [],
+      repo: 'ashlrai/phantom', scope: 'PRIVATE_SCOPE', acceptance: acceptance(id, n), deps: [],
       claims: [{ owner: id === 'conflict' ? 'imsg:instinct' : 'imsg:dot', claimedAt: '2026-01-01T00:00:00.000Z',
         ...(id === 'terminal' ? { finishedAt: '2026-01-02T00:00:00.000Z' } : {}) }] });
   }

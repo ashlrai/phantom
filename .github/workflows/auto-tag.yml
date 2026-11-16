@@ -1,7 +1,7 @@
 # Auto-tag: create v<version> and its draft GitHub release when the version in
 # package.json on master is untagged and every required check for that exact
-# commit is green. A missing tag is owed even when the bump landed earlier, so
-# this heals a stranded release instead of waiting for the next bump.
+# commit is green and its latest six-hour scheduled full CI is green. A missing
+# tag is owed even when the bump landed earlier, so this heals a stranded release instead of waiting for the next bump.
 # Tags and releases are created only here, with the ashlr-release GitHub App
 # token. The release starts as a draft: releases/latest keeps resolving to the
 # last fully stocked feed until scripts/publish-desktop-release.mjs attaches
@@ -19,6 +19,9 @@
 # - any conclusion other than success: fail at once. skipped and neutral are NOT
 #   green: required checks here use the skip-job pattern (phantom #811),
 #   which reports success, so a skipped required check means it did not run.
+# - "Check generated files" and "Check authority drift (hermetic)" are always
+#   required on the exact sha in addition to the discovered checks, even though
+#   the second is advisory for merge (RQ-PH-GATE-SPLIT-1).
 name: Auto-tag
 
 on:
@@ -41,7 +44,7 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -54,7 +57,11 @@ jobs:
       BRANCH: master
       VERSION_FILE: package.json
       SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-      TRIGGER: ${{ github.event_name }}
+      # A workflow_run for a push-event CI run evaluates a fresh master commit
+      # that cannot have its own scheduled full yet, so it holds quietly like a
+      # direct push. Only schedule-sourced workflow_run, schedule and dispatch
+      # fail closed (the scheduled full re-evaluates the held commit).
+      TRIGGER: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && 'push' || github.event_name }}
       # Required checks designed to report skipped on push to master (PR-only
       # jobs). Only these may be skipped; everything else must be success.
       SKIP_OK: ""
@@ -107,6 +114,12 @@ jobs:
           if [ -z "$required" ]; then
             echo "::error::no required checks discovered for $BRANCH; refusing to tag"; exit 1
           fi
+          # RQ-PH-GATE-SPLIT-1: Merge Gate does not cover the advisory authority
+          # drift job, and a failed generated-files job once let a tag through.
+          # Both split jobs must also be completed + success on this exact sha,
+          # with the same rules as every discovered check (skipped is not green,
+          # missing or running waits within the bounded loop, then no tag).
+          required=$( { printf '%s\n' "$required" "Check generated files" "Check authority drift (hermetic)"; } | sort -u )
           # One evaluation pass. Check runs: only GitHub Actions (app id
           # $ACTIONS_APP_ID) counts, and EVERY latest run with the required name
           # must be completed + success. Commit statuses are ignored: a required
@@ -149,9 +162,16 @@ jobs:
           ref: ${{ env.SHA }}
           persist-credentials: false
 
+      # Fail closed before minting write authority. Exact SHA only: descendants
+      # wait for their own scheduled full, even if a required fast check is green.
+      - name: Require scheduled full green on this exact commit
+        id: full
+        if: steps.checks.outputs.green == 'true'
+        run: node .github/scripts/ci-master-full.mjs require
+
       - name: Mint ashlr-release App token (contents write, this repo only)
         id: app
-        if: steps.checks.outputs.green == 'true'
+        if: steps.checks.outputs.green == 'true' && steps.full.outputs.green == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.ASHLR_RELEASE_APP_ID }}
@@ -165,7 +185,7 @@ jobs:
       # draft so releases/latest keeps serving the last complete feed until the
       # sanctioned local publisher attaches the signed artifacts.
       - name: Create tag v${{ steps.version.outputs.version }} and its draft release
-        if: steps.checks.outputs.green == 'true'
+        if: steps.checks.outputs.green == 'true' && steps.full.outputs.green == 'true'
         id: tag
         shell: bash
         env:
@@ -184,7 +204,7 @@ jobs:
       # workflows. Do not request actions on the App mint: the installation
       # lacks that permission and the token request would 422.
       - name: Dispatch release-gate CI on the new tag
-        if: steps.checks.outputs.green == 'true' && steps.tag.outputs.release == 'draft-created'
+        if: steps.checks.outputs.green == 'true' && steps.full.outputs.green == 'true' && steps.tag.outputs.release == 'draft-created'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}

@@ -29,7 +29,7 @@ function fastFixture(t) {
     300: { id: 300, run_attempt: 1, repository: metadata(repository), head_sha: attestorSha, head_branch: 'master', event: 'workflow_dispatch', path: '.github/workflows/attest-ci-build.yml', status: 'completed', conclusion: 'success' },
   };
   const job = (run, name, steps, labels = ['ubuntu-latest']) => ({ id: name.length, run_id: run, head_sha: f.sha, name, labels, status: 'completed', conclusion: 'success', steps: steps.map(name => ({ name, status: 'completed', conclusion: 'success' })) });
-  const pushJobs = [job(90, 'Secret-shape scan', ['Scan candidate diff (fail closed)']), job(90, 'Secret scan (diff)', ['Scan the commits this event adds']), job(90, 'Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)']), job(90, 'Classify PR site lane', ['Bind candidate source']), job(90, 'Merge Gate', ['Require selected CI lane'])];
+  const pushJobs = [job(90, 'Secret-shape scan', ['Scan candidate diff (fail closed)']), job(90, 'Secret scan (diff)', ['Scan the commits this event adds']), job(90, 'Quick typecheck', ['Core no-emit type check']), job(90, 'Check generated files', ['Check generated files']), job(90, 'Check authority drift (hermetic)', ['Check authority drift (hermetic)']), job(90, 'Classify PR site lane', ['Bind candidate source']), job(90, 'Merge Gate', ['Require selected CI lane'])];
   const fastJobs = fastJobPolicy(f.root).map(row => job(100, row.name, row.steps, row.labels));
   const read = endpoint => {
     if (endpoint === `repos/${repository}`) return metadata(repository);
@@ -80,7 +80,7 @@ for (const mutation of ['failed phase', 'failed critical step', 'duplicate criti
   assert.throws(f.qualify);
 });
 
-for (const mutation of ['push failure', 'manual CI', 'wrong push sha', 'wrong push attempt', 'fork CI', 'skipped step', 'duplicate job', 'self-hosted CI', 'wrong producer workflow', 'wrong producer event', 'wrong producer branch', 'self-hosted smoke', 'missing smoke step', 'binary changed', 'version mismatch', 'receipt false', 'unknown profile', 'full lanes']) {
+for (const mutation of ['push failure', 'manual CI', 'wrong push sha', 'wrong push attempt', 'fork CI', 'skipped step', 'skipped split check', 'failed generated-files check', 'duplicate job', 'self-hosted CI', 'wrong producer workflow', 'wrong producer event', 'wrong producer branch', 'self-hosted smoke', 'missing smoke step', 'binary changed', 'version mismatch', 'receipt false', 'unknown profile', 'full lanes']) {
   test(`fast qualification refuses ${mutation}`, t => {
     const f = fastFixture(t);
     if (mutation === 'push failure') f.runs[90].conclusion = 'failure';
@@ -88,7 +88,9 @@ for (const mutation of ['push failure', 'manual CI', 'wrong push sha', 'wrong pu
     if (mutation === 'wrong push sha') f.runs[90].head_sha = 'd'.repeat(40);
     if (mutation === 'wrong push attempt') f.runs[90].run_attempt = 1;
     if (mutation === 'fork CI') f.runs[90].repository.id++;
-    if (mutation === 'skipped step') f.pushJobs.find((job) => job.name === 'Quick typecheck').steps[1].conclusion = 'skipped';
+    if (mutation === 'skipped step') f.pushJobs.find((job) => job.name === 'Quick typecheck').steps[0].conclusion = 'skipped';
+    if (mutation === 'skipped split check') f.pushJobs.find((job) => job.name === 'Check authority drift (hermetic)').conclusion = 'skipped';
+    if (mutation === 'failed generated-files check') f.pushJobs.find((job) => job.name === 'Check generated files').conclusion = 'failure';
     if (mutation === 'duplicate job') f.pushJobs.push({ ...f.pushJobs[0] });
     if (mutation === 'self-hosted CI') f.pushJobs[0].labels.push('self-hosted');
     if (mutation === 'wrong producer workflow') f.runs[100].path = '.github/workflows/other.yml';
