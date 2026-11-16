@@ -114,7 +114,7 @@ function invalid(field: string, why: string): never {
 }
 
 /** Prompt-data text: bounded, printable, and free of secret-shaped material. */
-function promptText(field: string, value: unknown, max: number): string {
+export function promptText(field: string, value: unknown, max: number): string {
   if (typeof value !== 'string' || value.trim().length === 0) invalid(field, 'required');
   if (value.length > max) invalid(field, `exceeds ${max} characters`);
   for (const char of value) {

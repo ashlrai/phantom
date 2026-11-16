@@ -133,9 +133,10 @@ Print it: `ashlr agents bus contract --json` (read-only, no bus access).
 | --- | --- |
 | `note` | `text`, optional `thread`, `refs` |
 | `context` | `text`, optional `thread`, `refs` |
-| `work.post` | `jobId`, `title`, `repo`, `claimKeys[]`, optional `provider` |
+| `work.post` | `jobId`, `title`, `repo`, `claimKeys[]`, optional `provider`, `dispatch: {tier, scope, acceptance}` |
 | `work.claim` | `op: acquire` with `claimKey`, `owner`, `leaseMs`; or `op: renew` with `claimKey`, `token`, `leaseMs` |
 | `work.status` | `jobId`, `status`, optional `detail` |
+| `work.result` | `jobId`, `claimKey`, `queueId`, `receiptId`, `outcome: reserved\|admitted\|complete\|failed`, optional bounded `reason` code |
 | `work.release` | `claimKey`, `token`, `outcome: released\|completed` |
 | `wake` | `target`, `reason`, optional `jobId` |
 
@@ -188,6 +189,63 @@ as `updatedAt`; orphan statuses are ignored. Duplicate posts and malformed work
 bodies are refused. Legacy and unrelated bodies stay opaque. This projection is
 neither a historical ledger nor an identity check; labels grant no authority.
 HTTP work-feed endpoints remain unimplemented.
+
+### Bounded peer dispatch
+
+`phm agentnet peers post <to> <work-post-json>` posts a directed work proposal
+through the existing authenticated peer broker. `phm agentnet peers dispatch
+[--after <cursor>] [--apply] [--json]` consumes at most eight proposals per pass;
+omit `--apply` to preview with no queue, journal or bus writes. Advance with the
+returned `nextCursor`. This claims work for existing queue workers; it does not
+launch an executor or change dispatchd.
+
+The host must provision a private 0600 `dispatch.json` beside
+`~/.ashlr/agentnet/bindings.json`. Missing or invalid policy refuses dispatch:
+
+```json
+{"version":1,"enabled":true,"peers":["leader","specialist"],"repositories":[
+  {"repo":"ashlrai/phantom","tierCeiling":"mid","paths":["docs/AGENT-BUS.md"]}
+]}
+```
+
+Both callsigns must also be allowed `bus` identities in `agent-network.toml`;
+`comms.toml` must have `confirmedByMason = true`. KILL and comms pause halt claims
+and result sends. Current identity, policy and send gates are rechecked under
+the queue lock. The message cannot choose policy files, commands, lanes or credentials.
+
+Example work body (JSON data, never shell input):
+
+```json
+{"kind":"work.post","jobId":"RQ-DOCS","title":"Fix spelling","repo":"ashlrai/phantom",
+ "claimKeys":["queue:RQ-DOCS","path:ashlrai/phantom:docs/AGENT-BUS.md"],
+ "dispatch":{"tier":"fast","scope":"Fix spelling in the bus guide.","acceptance":"Documentation links pass."}}
+```
+
+Dispatch requires one `queue:<jobId>` key and at least one exact file key in the
+same repository. Globs, repository-wide claims, traversal, protected/Tier-1 paths,
+excess files and tiers above the host ceiling are refused. Scope and acceptance
+use the internal queue prompt validator (4000/2000 characters, printable,
+secret-free). The schema refuses command/executable fields. Prose is untrusted
+worker input and grants no authority beyond the listed files or existing gates.
+These file keys bound scope; resource leases still use the v2 coordination table
+and overlap protocol above, not this consumer's bookkeeping.
+
+The queue ID is `peer-work-` plus the first 32 hex characters of SHA-256 of JSON
+`[lowercaseRepo, jobId]`. It is independent of sender, consumer and envelope ID.
+The exclusive QueueStore transaction inserts and claims once as `peer:<callsign>`;
+replays with altered content or a different peer conflict. A bounded private
+`agentnet/work-dispatch.json` journal under the bus root records peer, claim key,
+queue ID, receipt ID, digests and outcome, never prompt text or credentials.
+It reserves before admission and recovers a committed claim after a crash.
+At 512 receipts it refuses new work rather than forgetting dedupe history.
+
+`work.result` replies use stable per-receipt/per-outcome bus IDs so retries do
+not multiply replies. Read them through the durable bus cursor API. They carry
+no claim token. Queue DONE/BLOCKED with a finished matching claim produces
+complete/failed, including when the feed cursor has advanced; peer work.status
+does not prove completion. Uncertain reservations remain visible and retryable.
+Comms-disabled or revoked peers receive no sends. Results stay on the local bus;
+Slack delivery is not part of this consumer.
 
 ### 5. Ownership table
 
