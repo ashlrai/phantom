@@ -12,23 +12,23 @@ const green = () => [
   run('Release suites (build + signing path)', 'skipped'),
 ];
 
-test('mode defaults to full and rejects unknown values', () => {
-  assert.equal(gateMode(undefined), 'full');
-  assert.equal(gateMode(''), 'full');
-  assert.equal(gateMode('split'), 'split');
+test('one fast gate: unset, split and the retired full value all select it', () => {
+  assert.equal(gateMode(undefined), 'fast');
+  assert.equal(gateMode(''), 'fast');
+  assert.equal(gateMode('split'), 'fast');
+  assert.equal(gateMode('full'), 'fast');
   assert.throws(() => gateMode('off'), /unknown RELEASE_GATE_MODE/);
 });
 
-test('full mode delegates to the unchanged scheduled-full requirement', async () => {
-  let called = 0;
-  const full = async () => { called += 1; return { id: 1, head_sha: candidate }; };
-  const result = await requireReleaseGate({ repo, candidate, mode: 'full', full, readRuns: () => { throw new Error('not read'); } });
-  assert.equal(called, 1);
-  assert.equal(result.mode, 'full');
-  await assert.rejects(requireReleaseGate({ repo, candidate, mode: undefined, full: async () => { throw new Error('latest scheduled full is missing, red or pending; refusing to tag'); } }), /refusing to tag/);
+test('the retired full value never waits on the scheduled full suite', async () => {
+  // A red or missing scheduled full run is not an input: only exact-SHA check runs are read.
+  const result = await requireReleaseGate({ repo, candidate, mode: 'full', readRuns: green });
+  assert.equal(result.mode, 'fast');
+  assert.equal(result.green, true);
+  await assert.rejects(requireReleaseGate({ repo, candidate, mode: 'off', readRuns: green }), /unknown RELEASE_GATE_MODE/);
 });
 
-test('split mode admits only when every release suite is green on the exact SHA', async () => {
+test('the gate admits only when every fast and tag CI check is green on the exact SHA', async () => {
   const result = await requireReleaseGate({ repo, candidate, mode: 'split', readRuns: green });
   assert.equal(result.green, true);
   await assert.rejects(requireReleaseGate({ repo, candidate: 'master', mode: 'split', readRuns: green }), /exact SHA/);
@@ -82,7 +82,7 @@ test('neutral, cancelled and timed_out are red', () => {
   }
 });
 
-test('the full suite is not a release gate in split mode', () => {
+test('the full suite is not a release gate', () => {
   const names = RELEASE_GATE.map(([name]) => name);
   assert.ok(!names.includes('Master full qualification'));
   assert.ok(!names.some(name => name.startsWith('Mac exhaustive') || name.startsWith('CI (Node 22')));

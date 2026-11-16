@@ -1,10 +1,11 @@
-// RELEASE-GATE-SPLIT-1: Auto-tag release gate. Two modes, chosen by the repo
-// variable RELEASE_GATE_MODE (absent = 'full', today's behavior):
-//   full  - unchanged: delegate to ci-master-full.mjs requireFullGreen.
-//   split - the exact candidate SHA must carry green release-relevant suites
-//           (build, typecheck, fast gate, desktop release smoke, signing
-//           path). The exhaustive full suite keeps running on its six-hour
-//           schedule and files P0 fix-forward lines, but no longer blocks a tag.
+// RELEASE-CONTINUOUS-1: Auto-tag release gate. One gate: the exact candidate
+// SHA must carry the fast gate (Merge Gate, secret floors, generated files,
+// authority drift, Quick typecheck, Fast gate) plus the release job's own tag
+// CI (Desktop release smoke, Release suites). The scheduled six-hour full
+// suite is a signal that files P0 fix-forward lines; it never blocks a tag.
+// RELEASE_GATE_MODE is retired: 'split' and 'full' both mean this gate, so a
+// stale repository variable can neither restore the full-suite block nor fail
+// Auto-tag. Any other value still refuses.
 // Read-only: the job token reads check runs for one exact SHA. No new
 // permissions, secrets or triggers. Fail closed on anything unexpected.
 import assert from 'node:assert/strict';
@@ -13,10 +14,10 @@ import { appendFileSync } from 'node:fs';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { requireProducerEnvironment } from './github-repository-binding.mjs';
-import { requireFullGreen } from './ci-master-full.mjs';
 
 export const ACTIONS_APP_ID = 15368;
-export const MODES = Object.freeze(['full', 'split']);
+// Accepted for compatibility with an existing repository variable. Both name the one fast gate.
+export const MODES = Object.freeze(['split', 'full']);
 // Exact check-run names (unchanged job names in ci.yml). 'all' = every latest
 // run with the name must be success. 'any' = at least one success and every
 // other run success or skipped (the job is designed to skip on the other event
@@ -67,44 +68,35 @@ export function evaluateReleaseGate(runs) {
   return { green: pending.length === 0 && bad.length === 0, pending, bad };
 }
 
+/** Returns 'fast' for unset, 'split' and the retired 'full'. Unknown values refuse. */
 export function gateMode(raw) {
-  const mode = (raw ?? '').trim() || 'full';
-  assert.ok(MODES.includes(mode), `unknown RELEASE_GATE_MODE '${mode}'`);
-  return mode;
+  const mode = (raw ?? '').trim();
+  assert.ok(mode === '' || MODES.includes(mode), `unknown RELEASE_GATE_MODE '${mode}'`);
+  return 'fast';
 }
 
-export async function requireReleaseGate({ repo, candidate, mode, readRuns = githubCheckRuns, full = requireFullGreen }) {
+export async function requireReleaseGate({ repo, candidate, mode, readRuns = githubCheckRuns }) {
   assert.ok(sha(candidate), 'candidate must be an exact SHA');
-  if (gateMode(mode) === 'full') return { mode: 'full', green: true, run: await full({ repo, candidate }) };
+  gateMode(mode);
   const result = evaluateReleaseGate(readRuns(repo, candidate));
   if (result.bad.length) throw new Error(`release gate red: ${result.bad.join('; ')}`);
-  return { mode: 'split', ...result };
+  return { mode: 'fast', ...result };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     requireProducerEnvironment(process.env);
     if (process.argv[2] !== 'require') throw new Error('Usage: ci-release-gate.mjs require');
-    const mode = gateMode(process.env.RELEASE_GATE_MODE);
-    try {
-      const result = await requireReleaseGate({ repo: process.env.GITHUB_REPOSITORY, candidate: process.env.SHA, mode });
-      if (result.green) {
-        appendFileSync(process.env.GITHUB_OUTPUT, 'green=true\n');
-        appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.mode === 'full'
-          ? `release-gate=full full-green-sha=${result.run.head_sha} full-run=${result.run.id}\n`
-          : `release-gate=split green sha=${process.env.SHA}\n`);
-      } else {
-        // split: suites not reported yet on this SHA (for example a push before
-        // the next half-hour release prep). Hold quietly; the release-prep CI
-        // workflow_run re-evaluates this exact SHA.
-        process.stderr.write(`::notice::release gate pending: ${result.pending.join('; ')}\n`);
-        appendFileSync(process.env.GITHUB_OUTPUT, 'green=false\n');
-      }
-    } catch (error) {
-      if (mode === 'full' && process.env.TRIGGER === 'push') {
-        process.stderr.write(`::notice::${error.message}\n`);
-        appendFileSync(process.env.GITHUB_OUTPUT, 'green=false\n');
-      } else throw error;
+    const result = await requireReleaseGate({ repo: process.env.GITHUB_REPOSITORY, candidate: process.env.SHA, mode: process.env.RELEASE_GATE_MODE });
+    if (result.green) {
+      appendFileSync(process.env.GITHUB_OUTPUT, 'green=true\n');
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, `release-gate=fast green sha=${process.env.SHA}\n`);
+    } else {
+      // Tag CI not reported yet on this SHA (for example a push before the
+      // release prep run finishes). Hold quietly; the release-prep CI
+      // workflow_run re-evaluates this exact SHA.
+      process.stderr.write(`::notice::release gate pending: ${result.pending.join('; ')}\n`);
+      appendFileSync(process.env.GITHUB_OUTPUT, 'green=false\n');
     }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);

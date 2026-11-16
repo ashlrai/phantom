@@ -729,7 +729,7 @@ echo pending=true; exit 2
     expect(check, 'missing Check generated files step').toBeDefined();
     expect(check!.if).toBeUndefined();
     expect(check!['continue-on-error']).toBeUndefined();
-    expect(check!.run).toContain('node scripts/generate-docs-llms.mjs');
+    expect(check!.run).toContain('node scripts/regenerate-tracked-files.mjs');
     expect(check!.run).toContain('git status --porcelain --untracked-files=normal');
     expect(check!.run).not.toMatch(/git add|git commit|git push|auto-commit/);
     expect(check!.run).not.toMatch(/llms\.txt[^\n]*(exempt|exclude|ignore)/);

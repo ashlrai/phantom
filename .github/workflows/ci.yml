@@ -258,12 +258,13 @@ jobs:
         with:
           node-version: '22.22.3'
       # Read-only dirty diff on every PR, merge_group, and master push. Runs
-      # the tracked-file generator and fails if any path changes, including
-      # docs/llms.txt. No auto-commit and no path exemptions.
+      # every tracked-file generator (scripts/regenerate-tracked-files.mjs,
+      # the same list the Release PR regenerates) and fails if any path
+      # changes, including docs/llms.txt. No auto-commit and no path exemptions.
       - name: Check generated files
         run: |
           set -euo pipefail
-          node scripts/generate-docs-llms.mjs
+          node scripts/regenerate-tracked-files.mjs
           status="$(git status --porcelain --untracked-files=normal)"
           if [ -n "$status" ]; then
             printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
@@ -1697,7 +1698,7 @@ jobs:
     # Merge Gate needs, so merge-queue required checks are unchanged. Hermetic:
     # no secrets, no signing identity, no notarization; the signing-path tests
     # exercise fail-closed verification code only. Auto-tag reads this check
-    # by name when RELEASE_GATE_MODE == 'split'. The suite list lives in
+    # by name as part of its one fast release gate. The suite list lives in
     # .github/scripts/ci-release-suites.mjs.
     name: Release suites (build + signing path)
     needs: [secret-shape, classify, release-build]

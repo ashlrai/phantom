@@ -83,10 +83,52 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
     assert.ok(Number.isSafeInteger(run.id) && run.id > 0 && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
   }
   const latest = [...runs].sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)[0];
-  if (!latest || latest.status !== 'completed' || latest.conclusion !== 'success') return { due: false, reason: 'push-ci-not-green' };
+  if (!latest || latest.status !== 'completed') return { due: false, reason: 'push-ci-not-green' };
+  let reason = 'green-master-cadence-due';
+  if (latest.conclusion !== 'success') {
+    // RELEASE-CONTINUOUS-1: a push run red only because a generated file is
+    // stale does not skip the cycle. The Release PR regenerates that file in
+    // the release commit, and the merge queue plus Auto-tag still gate it.
+    if (latest.conclusion !== 'failure' || !regenerationOnlyFailure(await pushJobs(read, base, latest))) return { due: false, reason: 'push-ci-not-green' };
+    reason = 'stale-generated-files-regenerate-in-release';
+  }
   // Re-read before opening a PR: this SHA must still be the default-branch tip.
   if ((await read(`${base}/branches/master`)).commit?.sha !== revision) return { due: false, reason: 'master-moved' };
-  return { due: true, reason: 'green-master-cadence-due', version, revision, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+  return { due: true, reason, version, revision, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+}
+
+/** The job named for the stale-tree check, its one failing step, and the gate that requires it. */
+export const REGENERATED_CHECK = 'Check generated files';
+const GATE_OF_REGENERATED = 'Merge Gate';
+
+async function pushJobs(read, base, run) {
+  const result = await read(`${base}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
+  assert.ok(Array.isArray(result?.jobs) && Number.isSafeInteger(result.total_count)
+    && result.total_count === result.jobs.length && result.total_count <= 100, 'incomplete push CI job inventory');
+  return result.jobs;
+}
+
+/**
+ * True only when the sole failure is the stale generated-file check: that job
+ * failed at its own step and nothing else, and every other job succeeded or
+ * skipped except Merge Gate, which requires it. Cancelled, timed out, missing
+ * or any second failing job stays red.
+ */
+export function regenerationOnlyFailure(jobs) {
+  assert.ok(Array.isArray(jobs));
+  const regenerated = jobs.filter(job => job?.name === REGENERATED_CHECK);
+  if (regenerated.length !== 1 || regenerated[0].status !== 'completed' || regenerated[0].conclusion !== 'failure') return false;
+  const steps = Array.isArray(regenerated[0].steps) ? regenerated[0].steps : [];
+  const failedSteps = steps.filter(step => step?.conclusion !== 'success' && step?.conclusion !== 'skipped');
+  if (failedSteps.length !== 1 || failedSteps[0].name !== REGENERATED_CHECK || failedSteps[0].conclusion !== 'failure') return false;
+  for (const job of jobs) {
+    if (job === regenerated[0]) continue;
+    if (job?.status !== 'completed') return false;
+    if (job.conclusion === 'success' || job.conclusion === 'skipped') continue;
+    if (job.name === GATE_OF_REGENERATED && job.conclusion === 'failure') continue;
+    return false;
+  }
+  return true;
 }
 
 class MetadataRateLimitError extends Error {}

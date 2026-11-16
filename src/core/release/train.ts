@@ -239,6 +239,20 @@ export interface TrainObservation {
    */
   pushCiRed?: boolean;
   /**
+   * The latest master push CI run for `head.sha` when `pushCiRed`. Its
+   * attempt number counts retries: below PUSH_CI_ATTEMPT_CAP the train asks
+   * GitHub to rerun its failed jobs; at the cap the candidate fixes forward.
+   * Absent means no retry is possible, so a red push fixes forward at once.
+   * A run that finished more than PUSH_CI_RETRY_WINDOW_MS ago is not rerun.
+   */
+  pushCiRun?: { runId: number; attempt: number; completedAt?: string | null } | null;
+  /**
+   * Completed release-gate CI runs dispatched on the candidate tag that ended
+   * failure or timed_out. Below BUILD_FAILURE_CAP the train dispatches again;
+   * at the cap it stops redispatching and fixes forward to the next patch.
+   */
+  buildFailures?: number;
+  /**
    * Required CI (the fast Merge Gate) on `masterSha`. Read only when the
    * candidate is stuck on `pushCiRed` with no build and master is strictly past
    * it. Green lets the train fix forward from master instead of waiting forever.
@@ -286,7 +300,8 @@ const PULL_NODE = /^PR_[A-Za-z0-9_-]+$/;
 export type ReleaseWrite =
   | { method: 'PATCH'; path: string; body: { name: string; body: string; draft: true; prerelease: false } }
   | { method: 'POST'; path: 'graphql'; body: { query: string; variables: { pullRequestId: string } } }
-  | { method: 'POST'; path: string; body: { ref: string; inputs: Record<string, string | boolean> } };
+  | { method: 'POST'; path: string; body: { ref: string; inputs: Record<string, string | boolean> } }
+  | { method: 'POST'; path: string; body: Record<string, never> };
 
 export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode: 0 | 1 }
 
@@ -400,17 +415,47 @@ function readyReleasePr(pr: OpenReleasePr, checks: TrainObservation['pullChecks'
   return ready ? pr : null;
 }
 
+/** A red master push run is rerun once (attempt 2) before the candidate fixes forward. */
+export const PUSH_CI_ATTEMPT_CAP = 2;
+/** Two failed release-gate builds on the tag (the first try and one retry) end the retries. */
+export const BUILD_FAILURE_CAP = 2;
+export const RERUN_FAILED_JOBS = /^repos\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/rerun-failed-jobs$/;
+
+export type StuckReason = 'candidate-push-ci-red' | 'candidate-build-failed';
+
+/** GitHub refuses reruns of old runs; past this window a red push run fixes forward instead. */
+export const PUSH_CI_RETRY_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/** A red push run that may still be retried: its failed jobs are rerun instead of fixing forward. */
+export function pushCiRetryDue(input: TrainObservation): boolean {
+  const run = input.pushCiRun;
+  if (input.pushCiRed !== true || input.build || input.buildPending || !run || run.attempt >= PUSH_CI_ATTEMPT_CAP) return false;
+  if (!run.completedAt) return true;
+  const age = Date.parse(input.now) - Date.parse(run.completedAt);
+  return Number.isFinite(age) && age < PUSH_CI_RETRY_WINDOW_MS;
+}
+
 /**
- * Fix forward past a candidate that can never build. Its master push CI ended
- * red, so release-build has no green exact-source run to reuse and every
- * dispatched CI run ends without an artifact (v3.30.34, push run 43807308941).
+ * Why the candidate can never produce a build, once retries are spent. A red
+ * master push run leaves release-build no green exact-source run to reuse
+ * (v3.30.34, push run 43807308941); repeated failed tag builds mean the
+ * release job itself cannot finish. Null while a retry is still owed.
+ */
+export function candidateStuck(input: TrainObservation): StuckReason | null {
+  if (input.build || input.buildPending) return null;
+  if (input.pushCiRed === true) return pushCiRetryDue(input) ? null : 'candidate-push-ci-red';
+  return (input.buildFailures ?? 0) >= BUILD_FAILURE_CAP ? 'candidate-build-failed' : null;
+}
+
+/**
+ * Fix forward past a candidate that can never build (see candidateStuck).
  * When master has moved strictly past it, still carries that version, and the
  * required fast gate on master HEAD is green, the next patch is cut from
  * master. The candidate is only listed as skipped and superseded in the plan;
- * its tag and draft are never written.
+ * its tag and draft are never written, deleted or moved.
  */
 export function fixForwardDue(input: TrainObservation, candidate: { name: string; sha: string }): boolean {
-  return input.pushCiRed === true && !input.build && !input.buildPending
+  return candidateStuck(input) !== null
     && input.head?.ancestry === 'ancestor' && input.masterSha !== candidate.sha
     && input.masterVersion === candidate.name.slice(1)
     && input.masterCi === 'green' && input.npmPublished !== true
@@ -539,6 +584,11 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     if (write.body.draft !== true || write.body.prerelease !== false) throw new Error('refusing to publish a superseded draft');
     return;
   }
+  if (RERUN_FAILED_JOBS.test(write.path)) {
+    // Retry only: an empty body, no debug logging, no other run endpoint.
+    if (Object.keys(write.body).length !== 0) throw new Error('refusing rerun');
+    return;
+  }
   if (write.path === 'graphql') {
     const body = write.body as { query?: string; variables?: { pullRequestId?: string } };
     if (body.query !== ENQUEUE_PULL_REQUEST || !PULL_NODE.test(body.variables?.pullRequestId ?? '')) throw new Error('refusing release enqueue');
@@ -574,7 +624,7 @@ const RELEASE_PR_DISPATCH = `repos/${REPOSITORY}/actions/workflows/release-pleas
  * and cadence itself) to cut one. No PATCH is planned, so the skipped
  * candidate's draft and every older draft stay untouched in this run.
  */
-function fixForward(input: TrainObservation, candidate: { name: string; sha: string }, successor: string, cadenceDue: boolean): TrainPlan {
+function fixForward(input: TrainObservation, candidate: { name: string; sha: string }, successor: string, cadenceDue: boolean, reason: StuckReason): TrainPlan {
   const pr = input.openReleasePr;
   const writes: ReleaseWrite[] = [];
   let releasePr: string;
@@ -591,7 +641,6 @@ function fixForward(input: TrainObservation, candidate: { name: string; sha: str
     releasePr = 'release-cadence-wait';
   }
   for (const write of writes) assertReleaseWrite(write);
-  const reason = 'candidate-push-ci-red';
   const skipped = { tag: candidate.name, reason: `${reason}: tag=${candidate.name} sha=${candidate.sha} superseded_by=v${successor} master=${input.masterSha}` };
   const pending = (why?: string) => ({ status: 'pending' as const, ...(why ? { reason: why } : {}) });
   const steps: TrainState['steps'] = {
@@ -694,7 +743,8 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   if (successorTagConflict(input.masterVersion, input.tags)) return stopped('duplicate_tag');
   const pr = input.openReleasePr;
   const checks = input.pullChecks;
-  if (fixForwardDue(input, headTag)) return fixForward(input, headTag, expected, cadenceDue);
+  const stuck = candidateStuck(input);
+  if (stuck && fixForwardDue(input, headTag)) return fixForward(input, headTag, expected, cadenceDue, stuck);
   const ready = cadenceDue ? readyReleasePr(pr, checks, expected) : null;
   if (ready) writes.push(enqueueReleasePullRequest(ready.nodeId));
 
@@ -710,7 +760,14 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // same SHA when they match, but github.ref_name must be the tag so the
   // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
   const ref = headTag.name;
-  if (!input.build && !input.buildPending && publishable && !input.pushCiRed && !(row?.draft === false && input.npmPublished === true)) {
+  const pushRetry = publishable && pushCiRetryDue(input);
+  if (pushRetry && input.pushCiRun) {
+    // A failed step retries first: rerun only the failed jobs of the exact
+    // master push run. No new run, ref or input; the next tick reads its result.
+    writes.push({ method: 'POST', path: `repos/${REPOSITORY}/actions/runs/${input.pushCiRun.runId}/rerun-failed-jobs`, body: {} });
+  }
+  const buildRetriesLeft = (input.buildFailures ?? 0) < BUILD_FAILURE_CAP;
+  if (!input.build && !input.buildPending && publishable && !input.pushCiRed && buildRetriesLeft && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
       // ci.yml types release_gate as boolean. The dispatch API stores inputs as
@@ -781,7 +838,8 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     build: {
       status: input.build ? 'complete' : 'pending',
       ...(!input.build && !publishable ? { reason: input.candidateCi === 'pending' ? 'candidate-ci-pending' : 'candidate-ci-unknown' }
-        : !input.build && input.pushCiRed ? { reason: 'candidate-push-ci-red' } : {}),
+        : !input.build && pushRetry ? { reason: 'candidate-push-ci-retry' }
+          : !input.build && stuck ? { reason: stuck } : {}),
     },
     attest: { status: input.attest ? 'complete' : 'pending' },
     sign: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
@@ -1028,7 +1086,7 @@ export async function observeTrain(
     pullChecks = { pending, failing };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
-  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
+  const found: RunScan = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false, pushCiRun: null, buildFailures: 0 };
   const audit = head ? await auditRun(read, head.sha) : null;
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
@@ -1056,12 +1114,14 @@ export async function observeTrain(
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
   const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
   // Only a candidate that can never build needs master's gate: see fixForwardDue.
-  const masterCi = head && found.pushCiRed && !found.build && !found.pending && head.sha !== masterSha
+  const stuck = candidateStuck({ now, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed, pushCiRun: found.pushCiRun, buildFailures: found.buildFailures } as TrainObservation);
+  const masterCi = head && stuck && head.sha !== masterSha
     ? await requiredCi(read, masterSha) : undefined;
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
     openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed,
+    pushCiRun: found.pushCiRun, buildFailures: found.buildFailures,
     ...(masterCi ? { masterCi } : {}),
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
@@ -1161,19 +1221,34 @@ export function admitCiRun(run: Record<string, unknown>, sha: string, tag: strin
   return run.head_branch === 'master' || run.head_branch === tag;
 }
 
-async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean; pushCiRed: boolean }> {
+interface RunScan { build: TrainObservation['build']; pending: boolean; pushCiRed: boolean; pushCiRun: TrainObservation['pushCiRun']; buildFailures: number }
+
+/** A release-gate build the train or Auto-tag dispatched on the candidate tag that ended red. */
+export function failedTagBuild(run: Record<string, unknown>, sha: string, tag: string): boolean {
+  return admitCiRun(run, sha, tag) && run.event === 'workflow_dispatch' && run.head_branch === tag
+    && run.status === 'completed' && (run.conclusion === 'failure' || run.conclusion === 'timed_out');
+}
+
+async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<RunScan> {
   const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
   if (!Number.isInteger(listed?.total_count) || Number(listed?.total_count) > 20 && runs.length === 20) throw new Error('incomplete build inventory');
   let pending = false;
   let pushRed = false; let pushGreen = false;
+  let pushRun: TrainObservation['pushCiRun'] = null;
+  let buildFailures = 0;
   for (const row of runs) {
     const run = record(row);
     if (!run || run.head_sha !== sha) continue;
     if (run.event === 'push' && run.head_branch === 'master' && run.path === '.github/workflows/ci.yml') {
       if (run.status === 'completed' && run.conclusion === 'success') pushGreen = true;
-      else if (run.status === 'completed') pushRed = true;
+      else if (run.status === 'completed') {
+        pushRed = true;
+        const id = Number(run.id); const attempt = Number(run.run_attempt);
+        if (Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0 && (!pushRun || id > pushRun.runId)) pushRun = { runId: id, attempt, completedAt: text(run.updated_at) };
+      }
     }
+    if (failedTagBuild(run, sha, tag)) buildFailures += 1;
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
     if (!admitCiRun(run, sha, tag)) continue;
     if (run.status !== 'completed' || run.conclusion !== 'success') continue;
@@ -1185,9 +1260,10 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
     const name = `ashlr-build-${Number(id)}-${Number(attempt)}`;
     const match = rows.map(record).find((artifact) => artifact?.name === name && artifact.expired !== true);
     if (!match || !Number.isSafeInteger(match.id)) continue;
-    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending, pushCiRed: false };
+    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending, pushCiRed: false, pushCiRun: null, buildFailures };
   }
-  return { build: null, pending, pushCiRed: pushRed && !pushGreen };
+  const pushCiRed = pushRed && !pushGreen;
+  return { build: null, pending, pushCiRed, pushCiRun: pushCiRed ? pushRun : null, buildFailures };
 }
 
 async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
@@ -1394,6 +1470,12 @@ async function main(): Promise<number> {
     for (const write of writes) {
       if (!allowReleasePrDispatch(write.path)) continue;
       assertReleaseWrite(write);
+      if (RERUN_FAILED_JOBS.test(write.path)) {
+        // Best effort: a refused rerun must not block the other release writes.
+        // The next tick sees the same red attempt and, past the window, fixes forward.
+        try { gh(write.method, write.path, write.body); } catch { process.stderr.write(`release train: rerun refused for ${write.path}\n`); }
+        continue;
+      }
       gh(write.method, write.path, write.body);
     }
     if (writes.some((write) => write.method === 'PATCH')) state = markWritesApplied(state);
