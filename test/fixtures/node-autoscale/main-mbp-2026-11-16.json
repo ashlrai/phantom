@@ -1,0 +1,105 @@
+{
+  "schema": "phantom.node-capacity.v1",
+  "node": "MacBook-Pro-2",
+  "measured_at": "2026-11-16T05:33:38.726Z",
+  "platform": "darwin",
+  "cpu": {
+    "cores": 18,
+    "load_1m": 71.96826171875,
+    "load_5m": 77.8359375,
+    "load_15m": 103.8994140625,
+    "busy_percent": 74.4,
+    "run_queue_per_core": 4,
+    "headroom_cores": 1.9
+  },
+  "mem_free": {
+    "total_bytes": 137438953472,
+    "free_bytes": 5809815552,
+    "free_percent": 51,
+    "pressure_level": 1,
+    "headroom_bytes": 28862180229
+  },
+  "swap": {
+    "used_bytes": 5271590011,
+    "total_bytes": 6442450944,
+    "swapouts_total": 4764546,
+    "swapouts_per_min": 0,
+    "growth_bytes_per_min": 0,
+    "growing": false
+  },
+  "per_harness_footprint": {
+    "codex": {
+      "sessions": 14,
+      "mem_bytes_max": 1023651976,
+      "mem_bytes_median": 155134220,
+      "cpu_cores_per_session": 0.496,
+      "source": "measured",
+      "learned_at": null
+    },
+    "claude": {
+      "sessions": 5,
+      "mem_bytes_max": 5059168464,
+      "mem_bytes_median": 3081396480,
+      "cpu_cores_per_session": 0.496,
+      "source": "measured",
+      "learned_at": null
+    },
+    "grok": {
+      "sessions": 1,
+      "mem_bytes_max": 38290248,
+      "mem_bytes_median": 38290248,
+      "cpu_cores_per_session": 0.496,
+      "source": "measured",
+      "learned_at": null
+    },
+    "devin": {
+      "sessions": 6,
+      "mem_bytes_max": 1244649144,
+      "mem_bytes_median": 405040316,
+      "cpu_cores_per_session": 0.496,
+      "source": "measured",
+      "learned_at": null
+    },
+    "local-model": {
+      "sessions": 1,
+      "mem_bytes_max": 13992776,
+      "mem_bytes_median": 13992776,
+      "cpu_cores_per_session": 0.496,
+      "source": "measured",
+      "learned_at": null
+    }
+  },
+  "agents_runnable_now": {
+    "codex": 3,
+    "claude": 3,
+    "grok": 3,
+    "devin": 3,
+    "cursor": null,
+    "gemini": null,
+    "local-model": null
+  },
+  "basis": {
+    "process_source": "pgrep+footprint",
+    "live_sessions": 27,
+    "limiting": {
+      "codex": "cpu",
+      "claude": "cpu",
+      "grok": "cpu",
+      "devin": "cpu",
+      "cursor": "unmeasured",
+      "gemini": "unmeasured",
+      "local-model": "unmeasured"
+    },
+    "notes": [
+      "cpu_cores_per_session = host busy cores / live harness sessions (process source reports no per-process CPU; upper bound)",
+      "local-model: server footprint excludes mmapped model weights; sized per model by the router"
+    ],
+    "policy": {
+      "memReserveFreePct": 30,
+      "growingSwapoutsPerMin": 100,
+      "cpuTargetFraction": 0.85,
+      "maxDeltaMs": 900000,
+      "learnedFootprintTtlMs": 604800000
+    }
+  }
+}
