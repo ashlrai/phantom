@@ -10,6 +10,9 @@
 export const ORDER_STATES = ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'] as const;
 export type OrderState = (typeof ORDER_STATES)[number];
 
+export type ThreadReply = 'delivered' | 'attempted' | 'none' | 'unknown';
+const THREAD_REPLIES: readonly string[] = ['delivered', 'attempted', 'none', 'unknown'];
+
 export interface OrderRow {
   at: string;
   source: string;
@@ -19,6 +22,8 @@ export interface OrderRow {
   evidenceSource: string;
   missing: string[];
   pr: string | null;
+  /** Absent on older servers; treated as unknown. */
+  threadReply?: ThreadReply;
   /** Absent on older servers; treated as null. */
   owner?: { job: string; lane: string | null } | null;
   /** Lane-hold dependency for BLOCKED rows; absent on older servers or when lanes are unreadable. */
@@ -70,6 +75,7 @@ export function parseRow(raw: unknown): OrderRow | null {
     evidenceSource: typeof r.evidenceSource === 'string' ? r.evidenceSource : '',
     missing: r.missing as string[], pr: r.pr as string | null, owner: parseOwner(r.owner),
     blocker: parseBlocker(r.blocker),
+    threadReply: typeof r.threadReply === 'string' && THREAD_REPLIES.includes(r.threadReply) ? r.threadReply as ThreadReply : 'unknown',
   };
 }
 
@@ -94,6 +100,7 @@ export interface OrderRowView {
   prLabel: string | null;
   ownerText: string;
   blockerText: string | null;
+  replyText: string;
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -106,6 +113,10 @@ function clock(iso: string): string {
 }
 
 const OWNER_JOB_MAX = 60;
+
+const REPLY_TEXT: Record<ThreadReply, string> = {
+  delivered: 'reply delivered', attempted: 'reply attempted (unconfirmed)', none: 'no reply yet', unknown: '',
+};
 
 export function orderRowView(row: OrderRow): OrderRowView {
   const pr = row.pr !== null && PR_URL.test(row.pr) ? row.pr : null;
@@ -125,5 +136,6 @@ export function orderRowView(row: OrderRow): OrderRowView {
     prLabel: pr === null ? null : `PR #${pr.slice(pr.lastIndexOf('/') + 1)}`,
     ownerText,
     blockerText,
+    replyText: REPLY_TEXT[row.threadReply ?? 'unknown'],
   };
 }

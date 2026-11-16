@@ -84,6 +84,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ci-triggers': () => import('./fleet-ci-triggers.js'),
   'claim': () => import('./fleet-claim.js'),
   'claim-drift': () => import('./fleet-claim-drift.js'),
+  'claim-notices': () => import('./fleet-claim-notices.js'),
   'class-share': () => import('./fleet-class-share.js'),
   'claude-quota': () => import('./fleet-claude-quota.js'),
   'comms-readiness': () => import('./fleet-comms-readiness.js'),

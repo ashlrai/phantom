@@ -6,13 +6,11 @@
  * claims coordinate only and grant no authority. See
  * src/core/fleet/surface-owner.ts.
  */
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { readFleetBoard } from '../core/fleet/coordination.js';
 import { readSurfaceOwner, SURFACES, type SurfaceOwnerDeps } from '../core/fleet/surface-owner.js';
+import { gitSurfaceLog } from '../core/fleet/surface-owner-git-log.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const exec = promisify(execFile);
 const usage = `Usage: ashlr fleet surface-owner (${Object.keys(SURFACES).join('|')}) [--json]`;
 
 export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDeps = {}): Promise<number> {
@@ -30,20 +28,7 @@ export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDep
   const report = await readSurfaceOwner(surface, {
     now: deps.now,
     board: deps.board ?? readFleetBoard,
-    log: deps.log ?? (async (file, count) => {
-      const { stdout } = await exec('git', ['--literal-pathspecs', 'log', `-n${count * 3}`, '--format=%h%x09%cI%x09%s', 'origin/master', '--', file],
-        { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-      return Promise.all(stdout.split('\n').filter(Boolean).map(async line => {
-        const [sha = '', date = '', ...subject] = line.split('\t');
-        let filesChanged: number | null = null;
-        try {
-          const { stdout: names } = await exec('git', ['show', '--format=', '--name-only', '-z', sha],
-            { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-          filesChanged = names.split('\0').filter(Boolean).length;
-        } catch { /* Unknown counts preserve existing behavior. */ }
-        return { sha, date, subject: subject.join('\t'), filesChanged };
-      }));
-    }),
+    log: deps.log ?? gitSurfaceLog,
   });
   const safe = sanitizePublicJson(report) as NonNullable<typeof report>;
   if (json) {

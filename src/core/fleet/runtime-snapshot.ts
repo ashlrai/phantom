@@ -64,7 +64,10 @@ export interface RuntimeSnapshot {
 export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<RuntimeSnapshot> {
   const now = deps.now();
   const reasons: string[] = [];
-  const home = resolve(deps.home());
+  // Resolver exceptions get their own boundary: they degrade only the path and
+  // freshness fields and never move the scan to a fallback directory.
+  let home: string | null = null;
+  try { home = resolve(deps.home()); } catch { reasons.push('home: path resolution failed'); }
   // Identity labels are single safe tokens: never echo emails, paths or arbitrary text.
   const label = (value: string | null): string => value && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && scrubSecrets(value) === value ? value : UNKNOWN;
   const readLabel = (name: string, read: () => string | null): string => {
@@ -73,20 +76,28 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     if (value === UNKNOWN) reasons.push(`${name}: unavailable`);
     return value;
   };
-  const root = resolve(deps.stateRoot());
-  const rel = relative(home, root);
-  const stateRoot = rel === '' ? '~' : rel !== '..' && !rel.startsWith(`..${sep}`) && !resolve(root).startsWith(`${sep}${sep}`)
-    ? `~/${rel.split(sep).join('/')}` : '[path outside home]';
+  let root: string | null = null;
+  try { root = resolve(deps.stateRoot()); } catch { reasons.push('stateRoot: path resolution failed'); }
+  let stateRoot: string = UNKNOWN;
+  if (home !== null && root !== null) {
+    const rel = relative(home, root);
+    stateRoot = rel === '' ? '~' : rel !== '..' && !rel.startsWith(`..${sep}`) && !resolve(root).startsWith(`${sep}${sep}`)
+      ? `~/${rel.split(sep).join('/')}` : '[path outside home]';
+  }
   const age = (ms: number): number | typeof UNKNOWN => Number.isFinite(ms) && ms <= now ? Math.floor((now - ms) / 1000) : UNKNOWN;
   const lastFleetStateRead: { mtime: string; ageSeconds: number | string } = { mtime: UNKNOWN, ageSeconds: UNKNOWN };
-  try {
-    const state = await readFleetRunsDirState({ runsDir: root, now: () => now });
-    if (!state.runsDirPresent) throw new Error('state root unavailable');
-    const ms = await newestMtime(root);
-    lastFleetStateRead.mtime = new Date(ms).toISOString();
-    lastFleetStateRead.ageSeconds = age(ms);
-    if (lastFleetStateRead.ageSeconds === UNKNOWN) reasons.push('lastFleetStateRead: future mtime; clock skew');
-  } catch { reasons.push('lastFleetStateRead: state missing, unreadable or scan limit exceeded'); }
+  if (root === null) {
+    reasons.push('lastFleetStateRead: state root unresolved');
+  } else {
+    try {
+      const state = await readFleetRunsDirState({ runsDir: root, now: () => now });
+      if (!state.runsDirPresent) throw new Error('state root unavailable');
+      const ms = await newestMtime(root);
+      lastFleetStateRead.mtime = new Date(ms).toISOString();
+      lastFleetStateRead.ageSeconds = age(ms);
+      if (lastFleetStateRead.ageSeconds === UNKNOWN) reasons.push('lastFleetStateRead: future mtime; clock skew');
+    } catch { reasons.push('lastFleetStateRead: state missing, unreadable or scan limit exceeded'); }
+  }
   const coordination: { state: string; activeClaims: number | string; newestReturnAgeSeconds: number | string; reason?: string } = {
     state: UNKNOWN, activeClaims: UNKNOWN, newestReturnAgeSeconds: UNKNOWN,
   };

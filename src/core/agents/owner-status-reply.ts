@@ -20,6 +20,8 @@ import { formatReviewPickReply } from '../fleet/review-pick-reply.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../fleet/runs-live-workers.js';
 import { readLaneTargets, type LaneTargetsV1 } from '../fleet/runs-lane-targets.js';
 import type { LiveJobIds } from '../fleet/order-work-state.js';
+import { defaults as runtimeDefaults, readRuntimeSnapshot, type RuntimeSnapshot } from '../fleet/runtime-snapshot.js';
+import { formatRuntimeStatusLines } from '../fleet/runtime-status-lines.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
@@ -43,6 +45,8 @@ function easternClock(now: Date): string {
 
 export interface OwnerStatusDeps {
   brief?: (runsDir: string, now: Date) => Promise<string>;
+  /** Fresh metadata for the status answer; failure appends a fixed UNKNOWN line. */
+  snapshot?: (now: Date) => Promise<RuntimeSnapshot>;
   /** Work-board read; the default scans the durable bus inbox under ~/.ashlr/fleet. */
   board?: (now: Date) => WorkBoardResult;
   /** One sanitized runtime-identity + channel-health line (see
@@ -171,6 +175,12 @@ async function runtimeLine(now: Date, seam: OwnerStatusDeps['runtime']): Promise
   try { return (await seam(now)).split('\n', 1)[0]; } catch { return ''; }
 }
 
+async function snapshotLines(now: Date, deps: OwnerStatusDeps): Promise<string[]> {
+  try {
+    return formatRuntimeStatusLines(await (deps.snapshot ?? (n => readRuntimeSnapshot({ ...runtimeDefaults, now: () => n.getTime() })))(now));
+  } catch { return ['Runtime: UNKNOWN (snapshot unavailable)']; }
+}
+
 /** Never throws: a failed read still tells the owner where the ask went.
  * The digest has priority: the runtime line sits directly under the heading;
  * work-board lines are dropped last-first, then the runtime line, never the
@@ -191,6 +201,15 @@ export async function composeOwnerStatusReply(runsDir: string, now: Date, deps: 
   } catch { return OWNER_STATUS_FALLBACK; }
 }
 
+/** Slack status answers always retain fresh snapshot evidence within the cap. */
+async function composeSlackStatusReply(runsDir: string, now: Date, deps: OwnerStatusDeps): Promise<string> {
+  const text = await composeOwnerStatusReply(runsDir, now, deps);
+  const snapshot = (await snapshotLines(now, deps)).join('\n');
+  const budget = MAX_REPLY_CHARS - snapshot.length - 1;
+  const body = text.length > budget ? `${text.slice(0, budget - 1)}…` : text;
+  return `${body}\n${snapshot}`;
+}
+
 /** The fixed auto-answer the Slack socket wiring injects into the Leader adapter.
  * Imported only by non-closure modules (cli + tests), so the digest readers stay
  * outside the Tier-1 import closure that slack-leader.ts belongs to. The same
@@ -207,7 +226,7 @@ export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: stri
         ? composeOwnerOrdersReply(now, deps)
         : text !== undefined && isReviewAsk(text)
           ? composeOwnerReviewReply(now, deps)
-          : composeOwnerStatusReply(runsDir, now, deps),
+          : composeSlackStatusReply(runsDir, now, deps),
     fallback: OWNER_STATUS_FALLBACK,
   };
 }
