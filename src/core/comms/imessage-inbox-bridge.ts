@@ -245,10 +245,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
           else if (frame.outcome === 'refused') frames.refused++;
           else if (frame.outcome === 'duplicate') frames.duplicate++;
           else if (frame.outcome === 'unavailable') { result.deferred = true; break; }
-        }
-        // Record the row even when the reassembler consumed it. The findings
-        // mirror then counts it as protocol and does not post the frame.
-        if (recordTeammateText(msg, deps.runsDir, now())) {
+        } else if (recordTeammateText(msg, deps.runsDir, now())) {
           result.teammate++;
         } else {
           // A teammate's artifact is not receipted until its local record is durable.

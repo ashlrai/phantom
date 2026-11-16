@@ -100,9 +100,9 @@ describe('recovered patch-transfer intake (from #4966)', () => {
         ],
       }),
     });
-    expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 4 });
+    expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 1 });
     expect(result.patches).toMatchObject({ frames: 3, completed: 1, rejected: 0, refused: 0 });
-    expect(result.findings).toMatchObject({ protocol: 3, announced: 1 });
+    expect(result.findings).toMatchObject({ protocol: 0, announced: 1 });
     expect(existsSync(join(imsgDir(), 'patches', 'fix-1.patch'))).toBe(true);
     expect(readFileSync(join(imsgDir(), 'patches', 'fix-1.patch'), 'utf8')).toBe(BODY);
     // One metadata-only note on the findings topic; never the patch body.
