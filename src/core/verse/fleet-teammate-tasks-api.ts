@@ -1,5 +1,6 @@
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { listTeammateTasks } from '../comms/imessage-teammate-tasks.js';
 
 const MAX_ROWS = 50;
@@ -23,15 +24,18 @@ function workState(t: RawTask): string {
 }
 
 /** Allow-list projection: token, receipt, claimKey, resource, metrics, result summary never leave this function. */
-export function projectTeammateTasks(raw: Raw, nowIso: string) {
+export function projectTeammateTasks(raw: Raw, nowIso: string, jobId?: string) {
+  // Counts cover the complete selected set before the presentation cap, as in the unfiltered view.
+  const selected = jobId === undefined ? raw.tasks : raw.tasks.filter(t => t.jobId === jobId);
   const counts = Object.fromEntries(COUNT_KEYS.map(k => [k, 0])) as Record<typeof COUNT_KEYS[number], number>;
-  for (const t of raw.tasks) counts[t.state]++;
-  const sorted = [...raw.tasks].sort((a, b) => b.createdAt - a.createdAt);
+  for (const t of selected) counts[t.state]++;
+  const sorted = [...selected].sort((a, b) => b.createdAt - a.createdAt);
   const rows = sorted.slice(0, MAX_ROWS).map(t => ({
     jobId: t.jobId, peer: t.peer, kind: t.kind, repo: t.repo, prRefs: [...t.prRefs],
     workState: workState(t), deadline: t.deadline, createdAt: new Date(t.createdAt).toISOString(),
   }));
-  return { schema: raw.schema, asOf: nowIso, counts, rows, truncated: sorted.length > MAX_ROWS };
+  return { schema: raw.schema, asOf: nowIso, counts, rows, truncated: sorted.length > MAX_ROWS,
+    ...(jobId === undefined ? {} : { selection: { jobId }, matched: selected.length > 0 }) };
 }
 
 /** Read-only: never enqueues, cancels, runs or takes the store lock. */
@@ -39,9 +43,19 @@ export function createFleetTeammateTasksApi(read: () => Raw = () => listTeammate
   return async (_ctx, req, res, path, method) => {
     if (path !== '/api/verse/fleet/control/teammate-tasks') return false;
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-    if (new URL(req.url ?? path, 'http://localhost').search) { sendJson(res, 400, { error: 'query parameters are not supported' }); return true; }
+    const params = new URL(req.url ?? path, 'http://localhost').searchParams;
+    const entries = [...params.entries()];
+    const jobId = entries[0]?.[1];
+    if (entries.length > 1 || (entries.length === 1 && (entries[0]![0] !== 'job' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(jobId!) || scrubSecrets(jobId!) !== jobId))) {
+      sendJson(res, 400, { error: 'invalid query parameters' }); return true;
+    }
     let body;
-    try { body = projectTeammateTasks(read(), now().toISOString()); }
+    try {
+      const raw = read();
+      if (raw.state !== 'healthy') throw new Error('unavailable');
+      body = projectTeammateTasks(raw, now().toISOString(), jobId);
+    }
     catch { sendJson(res, 503, { error: 'teammate tasks unavailable' }); return true; }
     sendJson(res, 200, body);
     return true;
