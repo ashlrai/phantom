@@ -12,13 +12,14 @@
  * delivered it. To keep that distinction honest each recent row also carries
  * `delivery`, which joins the row's claim binding onto the Slack transport's
  * own outbound send store: 'slack-sent' only when a same-channel, same-thread
- * `sent` receipt exists at-or-after the ledger time, 'no-slack-receipt' when
- * the store is healthy but nothing matches, 'unknown' whenever the evidence
+ * `sent` receipt with a well-formed Slack ts exists at-or-after the ledger
+ * time (minus skew) and no later than the collection time, 'no-slack-receipt'
+ * when the store is healthy but nothing matches, 'unknown' whenever the evidence
  * itself is incomplete (missing or ambiguous binding, unparseable threadKey,
  * missing/degraded/thrown store read). Thread keys are Slack ids/timestamps;
  * tokens, author ids and file paths never enter the view. */
 import { existsSync } from 'node:fs';
-import { loadAgentNetworkConfig } from '../agents/slack-network.js';
+import { isSlackTs, loadAgentNetworkConfig } from '../agents/slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
 import { parseNoticeThreadRef } from '../../cli/fleet-claim-notices.js';
 import { readFleetBoard } from './coordination.js';
@@ -81,6 +82,9 @@ const neverSend: ClaimNoticeSendDeps['send'] = () => { throw new Error('claim-no
 
 export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promise<ClaimNoticeView> {
   const now = opts.now ?? Date.now;
+  // One captured collection time stamps generatedAt and bounds receipt
+  // eligibility above, so a receipt cannot claim a send that has not happened.
+  const collectedAtMs = now();
   const root = claimNoticeDir(opts.runsRoot);
   let sendStore: SlackSendReceiptRead;
   try {
@@ -94,7 +98,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     noReceipt: recent.filter(r => r.delivery === 'no-slack-receipt').length,
     unknown: recent.filter(r => r.delivery === 'unknown').length,
   });
-  const base = { v: 1 as const, generatedAt: new Date(now()).toISOString() };
+  const base = { v: 1 as const, generatedAt: new Date(collectedAtMs).toISOString() };
   let slackConfigured: ClaimNoticeView['slackConfigured'] = 'unknown';
   try {
     const cfg = (opts.readConfig ?? loadAgentNetworkConfig)();
@@ -120,8 +124,10 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     const ref = parseNoticeThreadRef(threads.values().next().value!);
     if (ref === null) return 'unknown';
     const floorSeconds = (at - CLAIM_NOTICE_RECEIPT_SKEW_MS) / 1000;
+    const ceilingSeconds = collectedAtMs / 1000;
     return sendStore.receipts.some(r => r.state === 'sent' && r.channel === ref.channelId &&
-        r.thread === ref.threadTs && r.ts !== undefined && Number(r.ts) >= floorSeconds)
+        r.thread === ref.threadTs && isSlackTs(r.ts) &&
+        Number(r.ts) >= floorSeconds && Number(r.ts) <= ceilingSeconds)
       ? 'slack-sent' : 'no-slack-receipt';
   };
   const recent: ClaimNoticeView['sent']['recent'] = [];
