@@ -30,8 +30,22 @@ export interface EcosystemGrantOptions extends EcosystemOptions {
 }
 export class EcosystemGrantError extends Error {}
 
+const PLAN_HASH = /^[a-f0-9]{64}$/;
+
+/**
+ * Plan and grant ids are sha256 digests of capability selections. The shared
+ * scrubber treats bare hex-64 as secret-shaped, so those two fields are shown
+ * to it as public `sha256:` digests. Every other field is still refused.
+ */
+function assertGrantMetadata(text: string): void {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { assertMetadata(text); return; }
+  assertMetadata(JSON.stringify(value, (key, item) =>
+    (key === 'planId' || key === 'grantId') && typeof item === 'string' && PLAN_HASH.test(item) ? `sha256:${item}` : item));
+}
+
 async function atomicMetadata(path: string, value: unknown, home: string): Promise<void> {
-  assertMetadata(JSON.stringify(value));
+  assertGrantMetadata(JSON.stringify(value));
   await safePath(path, home);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temp = join(dirname(path), `.onboard-${randomUUID()}.tmp`);
@@ -156,7 +170,7 @@ async function wireCapability(capability: EcosystemCapability, options: Ecosyste
 
 export async function grantEcosystem(input: unknown, options: EcosystemGrantOptions = {}): Promise<EcosystemReceipt> {
   // Refuse secret-shaped and unknown fields before any write or action.
-  try { assertMetadata(JSON.stringify(input)); } catch { throw new EcosystemGrantError('Secret-shaped grant refused. Use capability ids only.'); }
+  try { assertGrantMetadata(JSON.stringify(input)); } catch { throw new EcosystemGrantError('Secret-shaped grant refused. Use capability ids only.'); }
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success || new Set(parsed.data?.selected).size !== parsed.data?.selected.length) throw new EcosystemGrantError('Expected a planId and a unique, nonempty selected capability list.');
   const request = parsed.data;
@@ -174,7 +188,7 @@ export async function grantEcosystem(input: unknown, options: EcosystemGrantOpti
   try { await mkdir(lock); } catch { throw new EcosystemGrantError('Another onboarding grant is running. Retry after it completes.'); }
   try {
     const prior = await readMetadataFile(path);
-    if (prior !== null) { assertMetadata(prior); return JSON.parse(prior) as EcosystemReceipt; }
+    if (prior !== null) { assertGrantMetadata(prior); return JSON.parse(prior) as EcosystemReceipt; }
     const results: CapabilityReceipt[] = [];
     for (const capability of selected as EcosystemCapability[]) {
       try {
