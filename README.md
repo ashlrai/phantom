@@ -168,7 +168,7 @@ The repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `
 
 ## Documentation and contributing
 
-[Documentation map](docs/README.md) · [User guide](docs/VERSE.md) · [Fleet lanes](docs/lanes.md) · [Self-hosting](docs/SELF-HOSTING.md) · [Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) · [Kernel reference](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) · [Changelog](CHANGELOG.md).
+[Documentation map](docs/README.md) · [User guide](docs/VERSE.md) · [Product direction](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) · [Fleet lanes](docs/lanes.md) · [Self-hosting](docs/SELF-HOSTING.md) · [Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) · [Kernel reference](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) · [Changelog](CHANGELOG.md).
 
 Contributors: start with [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md). Coding agents also follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
 

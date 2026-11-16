@@ -57,6 +57,20 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   the exhaustive platform suites and the existing seven-day Mac rotation.
   Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
   `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
+  Forty minutes before each of those full runs (`37 5,11,17,23 * * *`), and
+  when Auto-tag is requested while the master version still owes a published
+  release, [Preflight fixer](../.github/workflows/preflight-fixer.yml) runs the
+  affected tests since the last green full run plus test paths named by open
+  `p0-fix-forward` issues. A second Auto-tag request for the same master SHA
+  inside six hours does not start another run. It uploads `preflight-reds.json`
+  and updates one `p0-fix-forward` issue. Each failing test also gets its own
+  issue with a stable `RQ-PREFLIGHT-<test>` line in the RQ-FIXUP shape, so a
+  lane can pick it up before the scheduled run. The weekly
+  [Release flow metrics](../.github/workflows/release-flow-metrics.yml) job
+  records the scheduled full-run pass rate and the time from the tagged
+  commit to `published_at` in
+  [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
+  The committed file is the baseline; each weekly run uploads a fresh copy.
 - At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
   completed successful **push** CI run for the exact master SHA. The unsigned
   combined `Desktop release smoke` job reuses an immutable artifact for that
@@ -143,10 +157,10 @@ reproducible evidence and a linked issue in the existing ledger.
 
 ### Patch cadence and notes
 
-The existing Release PR workflow evaluates new green master commits every
-30 minutes. `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
-1440 minutes. The continuous release train raises any value below 60 to 60,
-so a release is cut at most hourly. It requests a patch bump, then synchronizes
+The Release PR workflow and the release train both wake every 5 minutes.
+`RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
+1440 minutes, and defaults to 5. The train does not raise that value.
+It requests a patch bump, then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
 release PR. Auto-tag creates the tag and draft only after the exact commit's
 required checks succeed. Signed publication then makes the complete updater
@@ -165,7 +179,8 @@ or trusted publishing. It resumes the sanctioned jobs and records
 
 What runs without a per-release approval:
 
-- A green `release-please` pull request is merged at most hourly, and only
+- A green `release-please` pull request is merged when the cadence is due
+  (default 5 minutes), and only
   when its version is the next patch, its head is `release-please--*`, and
   GitHub Actions checks on that head have no pending or failing results
   (`skipped` path-filtered jobs do not count as failures). The merge uses the
