@@ -5,7 +5,10 @@ const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack 
 
 /**
  * Read-only per-request trace: ingress receipt to same-thread reply outcome.
- * Exit 0 requires both sources ok and at least one request, all answered;
+ * Exit 0 requires both sources ok, at least one request, and every row both
+ * `answered` and carrying durable bus ingress evidence (`ingress !== 'unknown'`,
+ * the same join fleet slack-evidence enforces). `answered` is reply transport
+ * evidence only; it never proves RUNNING/VERIFIED task execution. Output is
  * ids and timestamps only, never text, author ids or paths.
  */
 export async function cmdFleetSlackTrace(
@@ -103,5 +106,7 @@ export async function cmdFleetSlackTrace(
     }
   }
   const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
-  return clean && trace.rows.length > 0 && trace.rows.every((row) => row.outcome === 'answered') ? 0 : 1;
+  // An answered row whose ingress is unknown has reply evidence but no bus receipt for the request itself; refuse it.
+  return clean && trace.rows.length > 0 &&
+    trace.rows.every((row) => row.outcome === 'answered' && row.ingress !== 'unknown') ? 0 : 1;
 }
