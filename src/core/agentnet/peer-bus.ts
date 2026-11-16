@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { workPostBodySchema } from '../agents/bus-v2-schema.js';
 import { localWriteGate } from '../agents/send-gate.js';
 import { configuredSlackCall, readSlackDeliveryPolicy } from '../agents/slack-leader.js';
 import { evaluateSlackAudience } from '../agents/slack-audience.js';
@@ -22,7 +23,9 @@ export const peerRequestSchema = z.object({
   toAgent: callsignSchema.optional(), channel: z.string().regex(/^[CG][A-Z0-9]{2,32}(?![\s\S])/).optional(),
   kind: z.enum(['task', 'review', 'handoff', 'query', 'social']), text: z.string().trim().min(1).max(12_000),
   refs: z.array(reference).max(32).default([]), threadId: reference.optional(), replyTo: idSchema.optional(),
-}).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel));
+  work: workPostBodySchema.optional(),
+}).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel))
+  .refine(r => !r.work || (r.kind === 'task' && Boolean(r.toAgent) && scrubSecrets(JSON.stringify(r.work)) === JSON.stringify(r.work)));
 export type PeerRequest = z.input<typeof peerRequestSchema>;
 export const rowSchema = z.object({ id: idSchema, fromAgent: callsignSchema, target: reference, origin: idSchema,
   digest: z.string().regex(/^[a-f0-9]{64}(?![\s\S])/), hopCount: z.number().int().min(1).max(8), threadId: reference, at: z.number().int().nonnegative() }).strict();
@@ -103,7 +106,7 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     const message = { fromAgent: sender.callsign, ...(recipient ? { toAgent: recipient.callsign } : { channel: mapping.channel }),
       kind: request.kind, text: scrubSecrets(request.text), refs: request.refs, threadId, origin, hopCount };
     const envelope = { id, from: sender.callsign, to: recipient?.callsign ?? mapping.topic, priority: 'P2' as const,
-      ttl: 86_400_000, body: { kind: 'peer.message', peer: message } };
+      ttl: 86_400_000, body: request.work ?? { kind: 'peer.message', peer: message } };
     const digest = createHash('sha256').update(JSON.stringify(envelope)).digest('hex');
     const row: Row = { id, fromAgent: sender.callsign, target, origin, hopCount, threadId, at: now, digest };
     // Reserve before publication. A crash may consume capacity, never allow a duplicate send.
@@ -114,7 +117,7 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     // The generic Slack drain refuses peer.message. Only this bound broker may adapt it.
     if (!policy.confirmedByMason) return { status: 'drafted', id, origin, hopCount, slack: 'approval-required' };
     const delivery = await deliverSlackEnvelope({ ...envelope, to: mapping.topic,
-      body: { kind: 'note', text: JSON.stringify(message), thread: threadId } }, { ...policy, call, signal,
+      body: { kind: 'note', text: JSON.stringify(request.work ?? message), thread: threadId } }, { ...policy, call, signal,
       stateRoot: join(directory, 'slack'), readPolicy: () => {
         try {
           const latestPolicy = policyReader();
