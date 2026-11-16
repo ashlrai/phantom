@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="800" viewBox="0 0 1500 800" role="img" aria-labelledby="title desc">
+  <title id="title">Phantom — One workbench. Your whole engineering fleet.</title>
+  <desc id="desc">An illustrative fleet board connects a shared queue to cloud, local, and remote agent lanes, then to a laptop, workstation, and remote node. This is a schematic, not a live product capture.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .ink { fill: #FFFFFF; } .muted { fill: #A3B3C3; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; letter-spacing: 1px; }
+    .rule { fill: none; stroke: #476787; stroke-opacity: .5; }
+    .card { fill: #152330; stroke: #476787; stroke-opacity: .6; }
+  </style>
+  <rect width="1500" height="800" fill="#0D1520"/>
+  <path class="rule" d="M80 96H1420M80 724H1420"/>
+  <path d="M80 96H144" stroke="#2563EB" stroke-width="3"/>
+  <text x="80" y="65" class="muted mono">PHANTOM / BY ASHLR.AI</text>
+  <text x="1420" y="65" text-anchor="end" class="muted mono">THE ENGINEERING AGENT WORKBENCH</text>
+  <text x="76" y="235" class="ink" font-size="120" font-weight="700" letter-spacing="-6">Phantom</text>
+  <text x="80" y="298" class="muted" font-size="30" letter-spacing="-.5">One workbench. Your whole engineering fleet.</text>
+  <text x="1420" y="295" text-anchor="end" class="mono" fill="#818CF8">ACCOUNTS · MODELS · MACHINES</text>
+  <!-- Deliberately schematic: no measured counts, versions, or fictitious live activity. -->
+  <rect x="80" y="354" width="1340" height="322" rx="16" fill="#101A24" stroke="#476787" stroke-opacity=".5"/>
+  <path class="rule" d="M378 354V676M1118 354V676"/>
+  <g class="mono muted">
+    <text x="108" y="396">01 / SHARED QUEUE</text><text x="410" y="396">02 / AGENT LANES</text><text x="1150" y="396">03 / NODE MAP</text>
+  </g>
+  <g class="card">
+    <rect x="108" y="425" width="230" height="54" rx="7"/>
+    <rect x="108" y="491" width="230" height="54" rx="7"/>
+    <rect x="108" y="557" width="230" height="54" rx="7"/>
+  </g>
+  <g class="ink" font-size="18">
+    <text x="148" y="459">Build a feature</text><text x="148" y="525">Review a change</text><text x="148" y="591">Explore an idea</text>
+  </g>
+  <g fill="#818CF8"><rect x="124" y="445" width="7" height="14" rx="2"/><rect x="124" y="511" width="7" height="14" rx="2"/><rect x="124" y="577" width="7" height="14" rx="2"/></g>
+  <path class="rule" d="M338 452H394V518H410M338 518H410M338 584H394V518"/>
+  <path d="M338 518H410" stroke="#818CF8" stroke-width="2"/>
+  <g class="card">
+    <rect x="410" y="425" width="210" height="186" rx="10"/>
+    <rect x="644" y="425" width="210" height="186" rx="10"/>
+    <rect x="878" y="425" width="210" height="186" rx="10"/>
+  </g>
+  <path d="M426 425H604" stroke="#818CF8" stroke-width="2"/>
+  <path d="M660 425H838M894 425H1072" stroke="#60A5FA" stroke-width="2"/>
+  <g class="ink" font-size="24" font-weight="500"><text x="434" y="470">Cloud</text><text x="668" y="470">Local</text><text x="902" y="470">Remote</text></g>
+  <g class="muted" font-size="17"><text x="434" y="501">Coding agents</text><text x="668" y="501">Your models</text><text x="902" y="501">Connected seats</text></g>
+  <g fill="#0D1520"><rect x="434" y="531" width="162" height="48" rx="6"/><rect x="668" y="531" width="162" height="48" rx="6"/><rect x="902" y="531" width="162" height="48" rx="6"/></g>
+  <g fill="none" stroke="#758DA5" stroke-width="2"><path d="M450 547H478M450 559H540M684 547H712M684 559H774M918 547H946M918 559H1008"/></g>
+  <path d="M515 611V642H983V611M749 611V642H1134V518H1180" fill="none" stroke="#476787"/>
+  <circle cx="749" cy="642" r="4" fill="#818CF8"/>
+  <path class="rule" d="M1204 492V450H1320M1228 518H1338V574"/>
+  <g class="card"><rect x="1180" y="492" width="48" height="48" rx="9"/><rect x="1302" y="432" width="36" height="36" rx="7"/><rect x="1320" y="574" width="36" height="36" rx="7"/></g>
+  <rect x="1197" y="509" width="14" height="14" rx="3" fill="#818CF8"/>
+  <circle cx="1320" cy="450" r="4" fill="#60A5FA"/><circle cx="1338" cy="592" r="4" fill="#60A5FA"/>
+  <g class="muted" font-size="14"><text x="1160" y="567">Workstation</text><text x="1302" y="419">Laptop</text><text x="1274" y="638">Remote node</text></g>
+  <text x="80" y="763" class="muted mono">OPEN SOURCE / phm.dev</text>
+  <text x="1420" y="763" text-anchor="end" class="muted mono">FLEET ARCHITECTURE · ILLUSTRATED</text>
+</svg>

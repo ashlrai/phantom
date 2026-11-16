@@ -9,13 +9,14 @@
  * Non-GET methods pass the family's dispatch + mutation gate first and are
  * then refused with 405. Read-only: the tail of <runs>/dispatchd.log for
  * queued ticks without launches, plus lanes whose status.json says running 0
- * while old jobs wait. Unreadable sources answer `source: 'unavailable'`,
+ * while old jobs wait, plus `why` (src/core/fleet/launch-why.ts): the one-line reason launches are blocked. Unreadable sources answer `source: 'unavailable'`,
  * never invented zeros. Every string is secret-scrubbed on the way out.
  */
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { explainLaunchBlock, readLaunchWhyInput, type LaunchWhy } from '../fleet/launch-why.js';
 import { parseLaunchStall, type LaunchStallReport } from '../fleet/launch-stall-read.js';
 import { fsLaneStallReader, readFleetLaneStall, type FleetLaneStallView } from '../../cli/fleet-lane-stall.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -36,6 +37,19 @@ export interface LaunchStallViewV1 {
   lanes: FleetLaneStallView['lanes'];
   /** 'unavailable' when the log or the lane queue could not be read. */
   source: 'ok' | 'unavailable';
+  /**
+   * Why launches are blocked (disk guard, load gate, cap, stale dispatcher), additive: older servers omit it.
+   * null when it could not be read; reading it never changes `source`, `stall` or `lanes`.
+   */
+  why?: LaunchWhy | null;
+}
+
+/** Plain-line launch block reason, secret-scrubbed; null on any read failure. */
+export async function readLaunchWhy(runsDir: string, now = Date.now()): Promise<LaunchWhy | null> {
+  try {
+    const why = explainLaunchBlock(await readLaunchWhyInput(runsDir, { now }));
+    return { code: why.code, line: scrubSecrets(why.line), detail: why.detail.map((line) => scrubSecrets(line)) };
+  } catch { return null; }
 }
 
 /** Last `maxBytes` of a file, starting at the first whole line when truncated. */
@@ -67,7 +81,8 @@ export async function readLaunchStallView(runsDir: string, now = Date.now()): Pr
       jobs: group.jobs.map((job) => ({ job: scrubSecrets(job.job), ageMinutes: job.ageMinutes })),
     }));
   } catch { source = 'unavailable'; }
-  return { v: 1, generatedAt: new Date(now).toISOString(), stall, lanes, source };
+  const why = await readLaunchWhy(runsDir, now);
+  return { v: 1, generatedAt: new Date(now).toISOString(), stall, lanes, source, why };
 }
 
 export const handleFleetLaunchStallApi: ApiModule = async (_ctx, _req, res, path, method) => {

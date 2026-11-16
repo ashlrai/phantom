@@ -3,7 +3,7 @@
  * self-update for the person at the screen. After the sidecar restarts on
  * new code the server reports a new build, but the page is still the OLD
  * interface bundle and silently disagrees with it; this slim top banner
- * says so and offers a reload. Mounted lazily from VerseConsoleApp so it
+ * says so and offers a reload. Mounted lazily from PhantomConsoleApp so it
  * costs the chat's first paint nothing (scripts/check-first-paint-budget.mjs
  * counts only static imports).
  *

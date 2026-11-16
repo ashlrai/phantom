@@ -217,7 +217,7 @@
   .foot { display: none; }
   .text { flex-direction: column; align-items: stretch; gap: 0; }
   /* A touch target on a phone — fixed on purpose: the DESKTOP density switch
-     must not shrink a finger target (same rule as VerseApp's bottom bar). */
+     must not shrink a finger target (same rule as PhantomApp's bottom bar). */
   .item { min-height: 48px; }
 }
 

@@ -21,7 +21,7 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { getFleetJobText } from '../src/core/fleet/runs-job-texts.js';
 
 const FIXED_NOW_ISO = '2026-10-31T23:45:00.000Z';

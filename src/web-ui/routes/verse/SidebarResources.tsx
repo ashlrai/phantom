@@ -6,6 +6,10 @@ import { apiGet } from '../../data/client.js';
 import { openFleetWorkspace } from './dock/dock-store.js';
 import { curatedWorkspace } from './fleet-hub/fleet-hub-model.js';
 import { DotResourceRow } from './resources/DotResourceRow.js';
+import { SpendDown } from './resources/SpendDown.js';
+import { useQuery, useRefetch } from '../../data/hooks.js';
+import { runtimeSnapshotQuery } from './fleet-host/runtime-snapshot-query.js';
+import { describeRuntimeIdentity } from './runtime-identity-row.js';
 import { usePanes } from './panes/pane-registry.js';
 import { setFocusMode } from './shell/focus-mode.js';
 import { usePollWhileVisible } from './shell/section-visibility.js';
@@ -38,6 +42,7 @@ export const SidebarResources = memo(function SidebarResources() {
 
   return (
     <div className={styles.resources}>
+      <RuntimeIdentityLine />
       <section aria-label="Agents">
         <h2 className={styles.heading}>Agents</h2>
         <button type="button" className={styles.entry} onClick={() => navigate('agents')}>View agents</button>
@@ -54,6 +59,7 @@ export const SidebarResources = memo(function SidebarResources() {
         <h2 className={styles.heading}>Dot</h2>
         <DotResourceRow />
       </section>
+      <SpendDown />
       <section aria-label="Machine">
         <h2 className={styles.heading}>Machine</h2>
         <button type="button" className={styles.entry} aria-haspopup="dialog" onClick={() => setMachineOpen(true)}>This machine</button>
@@ -66,6 +72,18 @@ export const SidebarResources = memo(function SidebarResources() {
     </div>
   );
 });
+
+/** Which runtime the console talks to and how fresh that reading is. Shares the Runtime card's cached query. */
+function RuntimeIdentityLine() {
+  const read = useQuery(runtimeSnapshotQuery, { freshMs: 30_000 });
+  const refetch = useRefetch(runtimeSnapshotQuery);
+  const [now, setNow] = useState(() => Date.now());
+  usePollWhileVisible(() => { setNow(Date.now()); refetch(); }, 30_000, { refreshOnShow: false });
+  // Re-age a cached reading whenever fresh data lands, not only on the poll.
+  if (read.data === undefined && read.error === undefined) return <p className={styles.runtimeRow} role="status">runtime reading…</p>;
+  const row = describeRuntimeIdentity(read.data, read.error, Math.max(now, read.updatedAt ?? 0));
+  return <p className={styles.runtimeRow} data-tone={row.tone} role={row.tone === 'down' ? 'alert' : 'status'}>{row.text}</p>;
+}
 
 function MachineSummary({ onClose }: { onClose: () => void }) {
   // This observation belongs to one modal opening, not the shared warm-data

@@ -38,7 +38,7 @@ function claudeEvents(patch: Record<string, unknown> = {}) {
       cache_creation_input_tokens: 6, cache_read_input_tokens: 8 }, ...patch }];
 }
 function nativeFixture(rows: unknown[] | string, extra = '', exitCode = 0,
-  version = '2.1.309 (Claude Code)', versionExitCode = 0): ResourceBinding {
+  version = '2.1.311 (Claude Code)', versionExitCode = 0): ResourceBinding {
   const script = join(fixtureRoot, `worker-${Math.random().toString(16).slice(2)}.cjs`);
   const transcript = typeof rows === 'string' ? rows : rows.map((row) => JSON.stringify(row)).join('\n') + '\n';
   writeFileSync(script, [
@@ -158,21 +158,21 @@ describe('resource native worker terminal and accounting evidence', () => {
       .toMatchObject({ status: 'uncertain', reason: 'worker-termination-uncertain' });
     expect(run).toHaveBeenCalledTimes(1);
   });
-  it.each(['2.1.308 (Claude Code)', '2.1.309-rc.1 (Claude Code)'])(
+  it.each(['2.1.310 (Claude Code)', '2.1.311-rc.1 (Claude Code)'])(
     'refuses Claude %s before task execution', async version => {
       const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), task());
       expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-outdated',
         output: '', inputTokens: null, outputTokens: null });
       expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
     });
-  it.each([['PRIVATE_DIAGNOSTIC', 0], ['2.1.309 (Claude Code)', 1]] as const)(
+  it.each([['PRIVATE_DIAGNOSTIC', 0], ['2.1.311 (Claude Code)', 1]] as const)(
     'refuses unverified Claude version output %# before task execution', async (version, exitCode) => {
       const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version, exitCode), task());
       expect(result).toEqual({ status: 'failed', reason: 'worker-cli-version-unverified',
         output: '', inputTokens: null, outputTokens: null });
       expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
     });
-  it.each(['2.1.309 (Claude Code)', '2.1.310 (Claude Code)'])(
+  it.each(['2.1.311 (Claude Code)', '2.1.312 (Claude Code)'])(
     'admits Claude %s and sends the task only to the execution invocation', async version => {
       const request = task();
       expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), request))
@@ -180,12 +180,30 @@ describe('resource native worker terminal and accounting evidence', () => {
       expect(invocation().prompt).toBe(request.prompt);
       expect(invocation().argv).not.toContain('--version');
     });
+  it.each(['2.1.309 (Claude Code)', '2.1.310 (Claude Code)'])(
+    'refuses builds below the watchdog and admission floor: %s', async version => {
+      expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), task()))
+        .toMatchObject({ status: 'failed', reason: 'worker-cli-version-outdated' });
+      expect(existsSync(join(fixtureRoot, 'invocation.json'))).toBe(false);
+    });
+  it.each(['2.1.311 (Claude Code)', '2.1.312 (Claude Code)'])(
+    'bounds Claude unattended usage-limit waits by the task deadline on %s', async version => {
+      const request = task({ timeoutMs: 60_000 });
+      expect(await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(), '', 0, version), request))
+        .toMatchObject({ status: 'completed' });
+      const env = invocation().env;
+      const wait = Number(env.CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS);
+      expect(Number.isSafeInteger(wait) && wait > 0 && wait <= request.timeoutMs).toBe(true);
+      const recheck = Number(env.CLAUDE_CODE_RETRY_WATCHDOG_USAGE_LIMIT_RECHECK_MS);
+      expect(Number.isSafeInteger(recheck) && recheck >= 1 && recheck <= Math.max(1, Math.floor(wait / 10)) &&
+        recheck <= 3_600_000).toBe(true);
+    });
   it('rechecks the enrolled wrapper on each task after a CLI downgrade', async () => {
     const binding = nativeFixture(claudeEvents());
     if (binding.kind !== 'native-cli') throw new Error('Fixture type');
     expect(await executeResourceWorker(worker('claude'), binding, task())).toMatchObject({ status: 'completed' });
     const script = binding.command[1]!;
-    writeFileSync(script, readFileSync(script, 'utf8').replace('2.1.309 (Claude Code)', '2.1.308 (Claude Code)'));
+    writeFileSync(script, readFileSync(script, 'utf8').replace('2.1.311 (Claude Code)', '2.1.310 (Claude Code)'));
     rmSync(join(fixtureRoot, 'invocation.json'));
     expect(await executeResourceWorker(worker('claude'), binding, task()))
       .toMatchObject({ status: 'failed', reason: 'worker-cli-version-outdated' });
@@ -284,6 +302,38 @@ describe('resource native worker terminal and accounting evidence', () => {
     const result = await executeResourceWorker(worker('claude'), nativeFixture([...claudeEvents(), ...claudeEvents()]), task());
     expect(result).toMatchObject({ status: 'failed', reason: 'worker-terminal-missing', inputTokens: null });
     expect(result).not.toHaveProperty('usageScope');
+  });
+
+  it.each([
+    { subtype: 'error_during_execution', is_error: true, errors: ['API Error: Usage credits required for 1M context'] },
+    { subtype: 'error_during_execution', is_error: true, result: 'Error: Usage credits required for 1M context' },
+    { subtype: 'error_during_execution', is_error: true,
+      errors: ['transient detail', 'API Error: Usage credits required for 1M context'] },
+    { is_error: true, result: 'usage credits required for 1m context' },
+  ])('classifies the observed Claude 1M-context-credits stop %#', async (patch) => {
+    const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(patch)), task());
+    expect(result).toMatchObject({ status: 'failed', reason: 'worker-1m-context-credits-stop' });
+  });
+
+  it.each([
+    { subtype: 'error_during_execution', is_error: true, errors: ['API Error: usage limit reached'] },
+    { subtype: 'error_during_execution', is_error: true, result: 'PRIVATE 1m context is turned off' },
+    { subtype: 'error_during_execution', is_error: true, errors: ['Usage credits required for 5h context'] },
+    { is_error: true, errors: 'Usage credits required for 1M context' },
+  ])('does not infer the 1M-context stop from partial wording %#', async (patch) => {
+    const result = await executeResourceWorker(worker('claude'), nativeFixture(claudeEvents(patch)), task());
+    expect(result).toMatchObject({ status: 'failed', reason: 'worker-terminal-failed' });
+    expect(result.reason).not.toContain('PRIVATE');
+  });
+
+  it('keeps the classified 1M-context stop through a non-zero Claude exit', async () => {
+    const stop = await executeResourceWorker(worker('claude'), nativeFixture(
+      claudeEvents({ subtype: 'error_during_execution', is_error: true, result: 'Error: Usage credits required for 1M context' }),
+      '', 1), task());
+    expect(stop).toMatchObject({ status: 'failed', reason: 'worker-1m-context-credits-stop' });
+    const other = await executeResourceWorker(worker('claude'), nativeFixture(
+      claudeEvents({ subtype: 'error_during_execution', is_error: true, result: 'PRIVATE other refusal' }), '', 1), task());
+    expect(other).toMatchObject({ status: 'failed', reason: 'worker-exit-failed' });
   });
 
   it.each([

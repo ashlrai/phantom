@@ -1,5 +1,6 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { abortableSleep } from '../util/await-support.js';
 import { readEmailOutbox, type EmailOutboxListing, type EmailOutboxStuckReason } from './email-outbox.js';
 
 export interface BatchRow {
@@ -34,15 +35,6 @@ function readSource(dir: string): EmailOutboxListing {
   return readEmailOutbox(dir);
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const done = (): void => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
-    const timer = setTimeout(done, ms);
-    signal.addEventListener('abort', done, { once: true });
-  });
-}
-
 export async function awaitEmailOutboxBatch(options: BatchOptions): Promise<BatchResult> {
   const now = options.now ?? Date.now;
   const deadline = now() + options.timeoutMs;
@@ -60,10 +52,13 @@ export async function awaitEmailOutboxBatch(options: BatchOptions): Promise<Batc
         const entry = matches[0];
         return entry ? { name: row.name, state: entry.state, reason: entry.reason } : { name: row.name, state: 'missing' };
       });
-    } catch { return result({ sourceFailure: true }); }
+    } catch {
+      rows = options.names.map((name) => ({ name, state: 'missing' }));
+      return result({ sourceFailure: true });
+    }
     if (rows.every((row) => row.state === 'sent' || row.state === 'drafted' || row.state === 'stuck')) return result();
     const remaining = deadline - now();
     if (remaining <= 0) return result({ timedOut: true });
-    await (options.sleep ?? sleep)(Math.min(options.pollMs, remaining), options.signal);
+    await (options.sleep ?? abortableSleep)(Math.min(options.pollMs, remaining), options.signal);
   }
 }

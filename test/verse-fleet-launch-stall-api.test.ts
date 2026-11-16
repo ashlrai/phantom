@@ -97,3 +97,32 @@ it('reads only the tail of a log over 512 KiB', async () => {
   const view = await readLaunchStallView(runs, NOW);
   expect(view.stall).toMatchObject({ minutes: 5, lastQ: 4 });
 });
+
+it('adds why from a fresh admission snapshot and diskguard markers', async () => {
+  writeFileSync(join(runs, 'dispatchd.log'), tick('2026-11-09 11:50:00', 3, 1));
+  seedQueue();
+  writeFileSync(join(runs, 'queue', 'run', 'RQ-FAKE-A.diskguard'), '');
+  writeFileSync(join(runs, 'queue', 'admission.json'), JSON.stringify({
+    schema: 'dispatchd.admission.v2', ts: '2026-11-09T11:59:00Z', admit: true, disabled: true,
+    cap: 18, running: 2, disk_free_gb: 41.5, disk_hard_stop_gb: 30,
+  }));
+  const view = await readLaunchStallView(runs, NOW);
+  expect(view.source).toBe('ok');
+  expect(view.stall).toMatchObject({ stalled: false });
+  expect(view.why).toEqual({
+    code: 'disk-reuse-only',
+    line: 'Only repair jobs can start: 41 GB free on the runs disk, under the 100 GB guard. 1 job is waiting for disk.',
+    detail: ['Load gate is switched off (LOADGATE_OFF); launches are not blocked by load.'],
+  });
+});
+
+it('scrubs secrets out of the why line', async () => {
+  seedQueue();
+  writeFileSync(join(runs, 'queue', 'admission.json'), JSON.stringify({
+    schema: 'dispatchd.admission.v2', ts: '2026-11-09T11:59:00Z', admit: false, disk_free_gb: 500,
+    gate_reason: 'probe failed token=ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE1',
+  }));
+  const view = await readLaunchStallView(runs, NOW);
+  expect(view.why?.code).toBe('load-gate');
+  expect(view.why?.line).not.toContain('ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE1');
+});

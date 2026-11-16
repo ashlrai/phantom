@@ -4,20 +4,25 @@
  * carry a "N new" chip while not showing. Plain buttons, so Tab reaches them and Enter/Space activate; the current one carries
  * aria-current.
  */
+import type { HomeChoice } from './home-view.js';
+import { FeedNavBadge } from '../feed/FeedNavBadge.js';
 import styles from './CompactNavStrip.module.css';
 import { unreadLabel, type UnreadCounts } from './unread-counts.js';
 
-export type CompactNavId = 'leader' | 'feed' | 'needs-you' | 'fleet';
+export type CompactNavId = HomeChoice | 'needs-you' | 'fleet';
 
 const ITEMS: readonly { id: CompactNavId; label: string }[] = [
   { id: 'leader', label: 'Leader' },
   { id: 'feed', label: 'Feed' },
+  { id: 'ideas', label: 'Ideas' },
+  { id: 'goals', label: 'Goals' },
+  { id: 'library', label: 'Library' },
   { id: 'needs-you', label: 'Needs you' },
   { id: 'fleet', label: 'Fleet' },
 ];
 
 export interface CompactNavStripProps {
-  /** The item whose view is showing; null when none of the four is. */
+  /** The item whose view is showing; null when none of the views is. */
   active: CompactNavId | null;
   needsYouCount: number | null;
   /** New Leader lines and Feed items since each was last seen; the active item shows no chip. */
@@ -30,11 +35,12 @@ export function CompactNavStrip({ active, needsYouCount, unread, onSelect }: Com
     <nav className={styles.strip} aria-label="Home views">
       {ITEMS.map((item) => {
         const count = item.id === 'needs-you' && needsYouCount ? needsYouCount : null;
-        const fresh = (item.id === 'leader' || item.id === 'feed') && active !== item.id ? unread?.[item.id] ?? 0 : 0;
+        const fresh = item.id === 'leader' && active !== item.id ? unread?.leader ?? 0 : 0;
         return (
           <button key={item.id} type="button" className={styles.item}
             aria-current={active === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
             {item.label}
+            {item.id === 'feed' ? <FeedNavBadge /> : null}
             {count !== null ? <span className={styles.count} aria-label={`${count} waiting`}>{count}</span> : null}
             {fresh ? <span className={styles.count} aria-label={`${fresh} new`}>{unreadLabel(fresh)}</span> : null}
           </button>

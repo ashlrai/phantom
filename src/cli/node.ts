@@ -27,9 +27,22 @@ export function nodeBootstrapPlan() {
 const USAGE = 'Usage: phm node bootstrap --dry-run [--json]';
 
 export async function cmdNode(args: string[]): Promise<number> {
+  if (args[0] === 'run-once' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-run-once.js')).cmdNodeRunOnce(args.slice(1));
+  }
+  if (args[0] === 'light' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-light.js')).cmdNodeLight(args.slice(1));
+  }
   if (!args.includes('--help') && !args.includes('-h') &&
       (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
+  }
+  if ((args[0] === 'capacity' || args[0] === 'route') && !args.includes('--help') && !args.includes('-h')) {
+    const m = await import('./node-capacity.js');
+    return args[0] === 'capacity' ? m.cmdNodeCapacity(args.slice(1)) : m.cmdNodeRoute(args.slice(1));
+  }
+  if (args[0] === 'self-update' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-self-update.js')).cmdNodeSelfUpdate(args.slice(1));
   }
   if (args[0] === 'lanes' && !args.includes('--help') && !args.includes('-h')) {
     const extra = args.slice(1).filter(a => a !== '--json');
@@ -58,9 +71,16 @@ phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias
 phm node join [--node <id>] --owner <scope> --primary <alias> --backup <alias> --json
 phm node join --json (repeat on an already configured Mac)
 phm node watch [--once] --json
-phm node worker --runner /absolute/host-owned-runner --json
+phm node worker --runner /absolute/host-owned-runner [--light] --json
+phm node run-once [--json] < request.json (reviewed runner stdin endpoint)
+phm node light restock [--apply] --json (bounded muse slice; preview by default)
+phm node light status --json (observed completions)
+phm node light run (fixed recipe runner stdin protocol)
 phm node rpc --json (SSH stdin endpoint)
-phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)`);
+phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)
+phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (measured agents runnable now per harness)
+phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring)
+phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)`);
     return 0;
   }
   if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));

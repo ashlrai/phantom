@@ -149,6 +149,7 @@ const KEYS = {
     'fleet.start': 'mod+alt+s',
     'fleet.pause': 'mod+alt+p',
     'fleet.interject': 'mod+alt+m',
+    'fleet.focus-steer': 'mod+shift+j',
     'fleet.resume': 'mod+alt+r',
     // Not `fleet.stop` (the shell's guarded palette row, which stays keyless):
     // this key opens the Fleet tab's own Stop confirmation.
@@ -287,7 +288,7 @@ export const WORKBENCH_COMMAND_EVENT = 'ashlr:command';
  * tray, a clicked notification (focus regained within 60 s) and the global
  * hotkey; C1 runs them. `open-session:<id>` carries a session id.
  */
-export const DESKTOP_COMMAND_NAMES = ['open-settings', 'toggle-theme', 'open-needs-you', 'new-chat', 'focus-composer'] as const;
+export const DESKTOP_COMMAND_NAMES = ['open-settings', 'toggle-theme', 'open-needs-you', 'open-fleet', 'new-chat', 'focus-composer'] as const;
 // Its own literal list (not `keyof typeof DESKTOP_COMMANDS`): NativeBinding
 // names it, COMMAND_KEYS uses NativeBinding, and DESKTOP_COMMANDS is typed by
 // KeyedCommandId — deriving it from the map would make the types circular.
@@ -298,6 +299,7 @@ export const DESKTOP_COMMANDS: Readonly<Record<DesktopCommandName, KeyedCommandI
   'open-settings': 'section.settings',
   'toggle-theme': 'appearance.toggle-theme',
   'open-needs-you': 'needs-you.open',
+  'open-fleet': 'surface.fleet',
   'new-chat': 'chat.new',
   'focus-composer': 'app.summon',
 };

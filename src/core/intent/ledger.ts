@@ -6,6 +6,7 @@ export { importIntentFiles } from './import.js';
 export { isStale, summarize, intentSummary } from './summary.js';
 export type { IntentSummary } from './summary.js';
 export { linkMergedPull, markShipped } from './evidence.js';
+export { noteMergedPulls, type NoteMergedPullsOptions, type NoteMergedPullsResult } from './merge-batch.js';
 export type { MergedPullNote, ShippedReleaseNote } from './evidence.js';
 export { noteShippedRelease } from './release.js';
 export { sweepStale } from './sweep.js';

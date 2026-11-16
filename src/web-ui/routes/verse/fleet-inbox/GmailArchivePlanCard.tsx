@@ -3,7 +3,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { CopyPill } from '../apps/CopyPill.js';
-import { triageAge } from './gmail-triage-model.js';
+import { gmailEvidenceLine, readGmailEvidence, triageAge } from './gmail-triage-model.js';
 import styles from './fleet-inbox.module.css';
 
 export const GMAIL_ARCHIVE_PLAN_PATH = '/api/verse/comms/gmail-triage/archive-plan';
@@ -48,6 +48,7 @@ export function GmailArchivePlanCard({ visible }: { visible: boolean }) {
     </section>;
   }
   const now = Date.now();
+  const evidence = readGmailEvidence(query.data);
   return <section className={styles.cos} aria-label="Gmail archive plan">
     <h3 className={styles.day}>Gmail archive plan</h3>
     {plans.map(p => {
@@ -55,10 +56,11 @@ export function GmailArchivePlanCard({ visible }: { visible: boolean }) {
       const stale = Number.isFinite(then) && now - then > STALE_MS;
       return <div key={p.inbox} aria-label={`Archive plan for ${p.inbox}`}>
         <p className={styles.meta}><strong>{p.inbox}</strong> · {triageAge(p.at, now)}{stale && ' · stale'}</p>
-        <p className={styles.meta}>{p.unread} unread now (target {p.target}) · would archive {p.archiveCount}</p>
+        <p className={styles.meta}>{p.unread} {evidence.scope === 'saved-export-sample' ? 'unread in the saved export' : 'unread (source unknown)'} (target {p.target}) · would archive {p.archiveCount}</p>
         {p.topSenders.length > 0 && <p className={styles.meta}>Top senders: {p.topSenders.map(s => `${s.sender} (${s.count})`).join(', ')}</p>}
       </div>;
     })}
+    <p className={styles.meta}>{gmailEvidenceLine(evidence)}</p>
     <p className={styles.meta}>Archive only, nothing is deleted.</p>
   </section>;
 }

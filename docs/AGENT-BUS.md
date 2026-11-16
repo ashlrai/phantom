@@ -50,6 +50,14 @@ data: coordinate on one by claiming its envelope id (`ashlr fleet bus-claim`),
 never by reading authority into its labels; they are never `kind: 'work'` and
 the work loop cannot execute them.  Owner iMessage texts stay off the bus.
 
+Verified chunked patch transfers (PATCH-BEGIN/PART/END frames reassembled and
+sha256-verified on disk; PATCH frames themselves are protocol traffic, never
+findings) are announced on the same `teammate.findings` topic as id
+`imessage-patch-<transfer id>` with a `note` body carrying only metadata —
+artifact name, sha256 prefix, part and byte counts — never the patch body.
+The artifact lives at `~/.ashlr-runs/imessage/patches/<id>.patch`; the
+announcement is evidence, not apply authority.
+
 ## Examples
 
 Read the latest page (cursor 0, limit 10):
@@ -79,9 +87,100 @@ what is on master:
 Why structured `to` is not ported: it would add a second address shape next to
 the flat label every adapter, the send gate and the claim table already key on.
 Nothing is blocked without it, because a recipient can already subscribe to a
-label. If a role or topic registry is wanted later, add it in
-`src/core/agents/channel-registry.ts` so it resolves to labels before delivery,
-and leave the wire envelope at six fields.
+label. The identity and channel registry added later (see
+[Unified bus](#unified-bus-identities-dms-channels-handoffs-and-wake)) follows
+this rule: it resolves names to flat labels before delivery and leaves the wire
+envelope unchanged.
+
+## Unified bus: identities, DMs, channels, handoffs and wake
+
+RQ-BUS-UNIFY-1 makes this store the single bus for every agent, whatever CLI,
+provider or model runs it. It adds names and conventions, not a second store:
+every send below is one `appendBusInbox` post, and every wake is one row in the
+existing wake queue. The model is Grok Bot teammates and SendToAgent: address a
+teammate by name, and raise the priority when it must act now.
+
+**Identity.** `phm agents bus id register <handle>` records an identity in
+`<root>/agent-identities/registry.json` beside `<root>/bus-inbox` (default root
+`$ASHLR_HOME/fleet`, 0600 file in 0700 directories, writer lock, atomic
+replace). The id is `agt_` plus 20 hex characters of SHA-256 over the handle,
+so it is the same on every node and does not change when the agent moves from
+Claude to Codex or from one model to another. Each identity keeps:
+
+- `runtimes`: every `{cli, provider, model}` it has run on, newest refreshed in place;
+- `aliases`: legacy routing labels it still answers to (lane names, v2
+  `participantId`s). An alias belongs to exactly one identity and may not start
+  with `agent:`, `group:`, `dm:` or `handoff:`.
+
+An identity is a routing name, never authentication. It grants no tool, spend,
+send or execution authority; consumers keep their own admission checks.
+
+**Addresses.** The envelope keeps its fields; the unified API fills in the
+channel metadata group (`sender.agent_id` is the `agt_` id, `sender.vendor` the
+latest runtime's provider, `origin_bridge` is `agent-bus`).
+
+| Kind | `to` | `channel` | Body |
+| --- | --- | --- | --- |
+| DM | `agent:<handle>` | `bus` | v2 `note` |
+| Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
+| Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
+
+Channel posts are refused unless the sender is a member
+(`phm agents bus channel create|join|leave`). Because channel addresses are
+bus-group addresses, existing `subscribeGroup` readers see the same posts.
+
+**Priority wake.** P0 always wakes and cannot be turned off. P1 and handoffs
+wake by default (`--no-wake` opts out); P2 and P3 wake only with `--wake`. A
+wake is recorded after the store accepts the post, through `createBusWakeHook`
+into `~/.ashlr-runs/bus/wake-queue.jsonl`, and carries only `id`, `from` and
+`to`. Resending the same id returns `duplicate` from the store and re-attempts
+the wake, which the queue deduplicates, so a failed wake is recovered without
+a second message.
+
+**Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
+posts in the agent's channels (minus its own) and traffic still addressed to its
+aliases, highest priority first. Persist `nextCursor` only after handling the
+page. `--frame <cli>` prints the page as one bounded block marked untrusted
+data, the same for every CLI. `phm agents bus wakes <agent>` lists wake hints
+for the agent and its channels.
+
+**CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
+`codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
+`PHM_AGENT_CLI`, else the runtime markers already used by team approvals, such
+as `CLAUDECODE` or `CODEX_SANDBOX`), maps it to a v2 provider, and records the
+session as a runtime of the `PHM_AGENT_ID` identity. Codex, Devin and Grok name
+their existing engine runner in `src/core/fleet/bus-adapters/`; Claude Code and
+Cursor read their inbox in the live session on wake. Adapters never spawn a
+CLI. `phm agents bus adapters --json` prints the table.
+
+### Migration from existing bus directories
+
+Nothing is moved or rewritten. Each existing directory keeps its role:
+
+| Directory | Role after unification | Action |
+| --- | --- | --- |
+| `$ASHLR_HOME/fleet/bus-inbox/` | The one bus store | None |
+| `$ASHLR_HOME/fleet/agent-identities/` | New: identity and channel registry | Created on first `id register` |
+| `~/.ashlr-runs/bus/wake-queue.jsonl` | Wake hints, same row shape | None |
+| `$ASHLR_HOME/fleet/bus/hops.jsonl` | Hop log for wakes | None |
+| `$ASHLR_HOME/bus-mailbox/` (`phm bus send\|inbox\|ack`) | Per-recipient mailbox with acks, kept for its current users | Do not copy; see below |
+| `~/.ashlr/agentnet/bindings.json` | Slack peer session bindings | None; a callsign is a valid handle |
+
+To move an agent onto the unified bus:
+
+1. Register its identity once per agent: `phm agents bus id register <handle>`,
+   adding `--alias <label>` for every label senders already use (its lane name,
+   v2 `participantId`, `phm bus` mailbox label). Its inbox then includes old
+   traffic without rewriting history.
+2. Set `PHM_AGENT_ID=<handle>` (and `PHM_AGENT_CLI` where no runtime marker
+   exists, as for Devin) in the launcher, and run `phm agents bus id register`
+   from the session to record the runtime.
+3. Turn existing `group:<room>:<topic>` rooms into channels by creating a
+   channel with the room's name; posts to any topic of that room reach its members.
+4. Drain a `phm bus` mailbox with `phm bus inbox --to <label>` and
+   `phm bus ack`, then send new traffic with `phm agents bus dm`. Copying
+   mailbox records into the store is not supported: it would duplicate ids and
+   lose acknowledgment state.
 
 ## Desktop app
 
@@ -125,9 +224,10 @@ Print it: `ashlr agents bus contract --json` (read-only, no bus access).
 | --- | --- |
 | `note` | `text`, optional `thread`, `refs` |
 | `context` | `text`, optional `thread`, `refs` |
-| `work.post` | `jobId`, `title`, `repo`, `claimKeys[]`, optional `provider` |
+| `work.post` | `jobId`, `title`, `repo`, `claimKeys[]`, optional `provider`, `dispatch: {tier, scope, acceptance}` |
 | `work.claim` | `op: acquire` with `claimKey`, `owner`, `leaseMs`; or `op: renew` with `claimKey`, `token`, `leaseMs` |
 | `work.status` | `jobId`, `status`, optional `detail` |
+| `work.result` | `jobId`, `claimKey`, `queueId`, `receiptId`, `outcome: reserved\|admitted\|complete\|failed`, optional bounded `reason` code |
 | `work.release` | `claimKey`, `token`, `outcome: released\|completed` |
 | `wake` | `target`, `reason`, optional `jobId` |
 
@@ -171,8 +271,72 @@ are the v2 layer above it.
 ### 4. Work feed
 
 Every job is `{id, owner, provider, repo, claimKeys[], status, updatedAt}`
-and every participant can read the feed (`{v:2, jobs:[...]}`). Jobs derive
-from `work.post` and `work.status` messages.
+and the feed is `{v:2, jobs:[...]}`. `projectBusWorkFeed` in
+`src/core/agents/bus-work-feed.ts` projects a retained receipt snapshot without
+I/O. Posts start queued; `owner` is the sender label. Provider comes from the
+post or explicit participant metadata; absent provider refuses the projection.
+Statuses from that owner update retained jobs in cursor order with receipt time
+as `updatedAt`; orphan statuses are ignored. Duplicate posts and malformed work
+bodies are refused. Legacy and unrelated bodies stay opaque. This projection is
+neither a historical ledger nor an identity check; labels grant no authority.
+HTTP work-feed endpoints remain unimplemented.
+
+### Bounded peer dispatch
+
+`phm agentnet peers post <to> <work-post-json>` posts a directed work proposal
+through the existing authenticated peer broker. `phm agentnet peers dispatch
+[--after <cursor>] [--apply] [--json]` consumes at most eight proposals per pass;
+omit `--apply` to preview with no queue, journal or bus writes. Advance with the
+returned `nextCursor`. This claims work for existing queue workers; it does not
+launch an executor or change dispatchd.
+
+The host must provision a private 0600 `dispatch.json` beside
+`~/.ashlr/agentnet/bindings.json`. Missing or invalid policy refuses dispatch:
+
+```json
+{"version":1,"enabled":true,"peers":["leader","specialist"],"repositories":[
+  {"repo":"ashlrai/phantom","tierCeiling":"mid","paths":["docs/AGENT-BUS.md"]}
+]}
+```
+
+Both callsigns must also be allowed `bus` identities in `agent-network.toml`;
+`comms.toml` must have `confirmedByMason = true`. KILL and comms pause halt claims
+and result sends. Current identity, policy and send gates are rechecked under
+the queue lock. The message cannot choose policy files, commands, lanes or credentials.
+
+Example work body (JSON data, never shell input):
+
+```json
+{"kind":"work.post","jobId":"RQ-DOCS","title":"Fix spelling","repo":"ashlrai/phantom",
+ "claimKeys":["queue:RQ-DOCS","path:ashlrai/phantom:docs/AGENT-BUS.md"],
+ "dispatch":{"tier":"fast","scope":"Fix spelling in the bus guide.","acceptance":"Documentation links pass."}}
+```
+
+Dispatch requires one `queue:<jobId>` key and at least one exact file key in the
+same repository. Globs, repository-wide claims, traversal, protected/Tier-1 paths,
+excess files and tiers above the host ceiling are refused. Scope and acceptance
+use the internal queue prompt validator (4000/2000 characters, printable,
+secret-free). The schema refuses command/executable fields. Prose is untrusted
+worker input and grants no authority beyond the listed files or existing gates.
+These file keys bound scope; resource leases still use the v2 coordination table
+and overlap protocol above, not this consumer's bookkeeping.
+
+The queue ID is `peer-work-` plus the first 32 hex characters of SHA-256 of JSON
+`[lowercaseRepo, jobId]`. It is independent of sender, consumer and envelope ID.
+The exclusive QueueStore transaction inserts and claims once as `peer:<callsign>`;
+replays with altered content or a different peer conflict. A bounded private
+`agentnet/work-dispatch.json` journal under the bus root records peer, claim key,
+queue ID, receipt ID, digests and outcome, never prompt text or credentials.
+It reserves before admission and recovers a committed claim after a crash.
+At 512 receipts it refuses new work rather than forgetting dedupe history.
+
+`work.result` replies use stable per-receipt/per-outcome bus IDs so retries do
+not multiply replies. Read them through the durable bus cursor API. They carry
+no claim token. Queue DONE/BLOCKED with a finished matching claim produces
+complete/failed, including when the feed cursor has advanced; peer work.status
+does not prove completion. Uncertain reservations remain visible and retryable.
+Comms-disabled or revoked peers receive no sends. Results stay on the local bus;
+Slack delivery is not part of this consumer.
 
 ### 5. Ownership table
 
@@ -189,6 +353,9 @@ Outside implementers (Dot included) call only the HTTP contract above.
 | Provider send bridges | `src/core/agents/bridges/` |
 | Adapters and fleet bus verbs | `src/cli/fleet-bus-*.ts`, `src/core/fleet/bus-adapters/` |
 | Contract printer | `src/cli/agents-bus-contract.ts` |
+| Identity and channel registry | `src/core/agents/bus-identity.ts` |
+| DM, channel, handoff, inbox and wake API | `src/core/agents/bus-unified.ts`, `src/cli/agents-bus-unified.ts` |
+| CLI session adapters (claude, codex, devin, cursor, grok) | `src/core/agents/bus-cli-adapters.ts` |
 | Webhook relay | not built; an internet-facing relay must verify signed requests and gets its own security review |
 
 Message-id claims, team leases, and bus-board task claims write their leases

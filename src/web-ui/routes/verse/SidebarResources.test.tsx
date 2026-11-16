@@ -7,8 +7,9 @@ import { installFetch, json } from './context/context-fixtures.test-support.js';
 import { getVerseUiState, resetVerseUi, setVerseSection } from './verse-ui-store.js';
 import { SidebarResources } from './SidebarResources.js';
 
-// The Dot row makes its own comms-status read; these suites count the sidebar's other reads (see SidebarResources.dot.test.tsx).
+// The Dot row and Spend down section make their own reads; these suites count the sidebar's other reads (see SidebarResources.dot.test.tsx).
 vi.mock('./resources/DotResourceRow.js', () => ({ DotResourceRow: () => null }));
+vi.mock('./resources/SpendDown.js', () => ({ SpendDown: () => null }));
 
 function observation(state: HostSummary['killSwitch']['state'] = 'inactive'): HostSummary {
   return {
@@ -35,6 +36,8 @@ describe('sidebar resources', () => {
     const { calls } = installFetch(() => json({ error: 'unexpected read' }, 500));
     const user = userEvent.setup();
     render(<SidebarResources />);
+    // Spend reads belong to the mocked resource, never an inline sidebar copy.
+    expect(screen.queryByRole('region', { name: 'Spend down' })).toBeNull();
     for (const name of ['Agents', 'Routines', 'Machine']) {
       expect(screen.getByRole('region', { name })).toBeVisible();
     }

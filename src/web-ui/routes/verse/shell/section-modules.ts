@@ -6,7 +6,7 @@
  * this file pins it to the directory), so the framework-free ui store can ask
  * "has Command landed?" (for the first-launch-of-the-day rule) without
  * importing the shell component. Keys are `./sections/<Module>.tsx` — relative
- * to routes/verse, the form VerseApp and VerseConsoleApp's first-paint preload
+ * to routes/verse, the form PhantomApp and PhantomConsoleApp's first-paint preload
  * have always used.
  *
  * Chat, the section a cold load opens on, is imported directly. Every other

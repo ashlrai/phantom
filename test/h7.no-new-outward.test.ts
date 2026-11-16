@@ -455,10 +455,17 @@ describe('h7 [BEHAVIORAL] — readiness + doctor probes mutate the isolated ~/.a
     const after = snapshotDir(ashlrDir);
     const filesAfter = listFiles(ashlrDir);
 
+    // The doctor-fast tool-version cache is the one sanctioned persistent
+    // write: bounded (64 KiB), private-mode, display-only metadata under
+    // cache/doctor/. Exempt exactly that artifact; every other byte must be
+    // identical.
+    const VERSION_CACHE = 'cache/doctor/versions.json';
+    delete after[VERSION_CACHE];
+
     // Byte-identical: no probe mutated enrollment/kill/daemon/sandbox state, and
     // the transient writeable sentinel was cleaned up.
     expect(after).toEqual(before);
-    expect(filesAfter).toEqual(filesBefore);
+    expect(filesAfter.filter((f) => f !== VERSION_CACHE)).toEqual(filesBefore);
     expect(filesAfter.some((f) => f.includes('preflight') && f.endsWith('.tmp'))).toBe(false);
   });
 

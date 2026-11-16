@@ -6,7 +6,7 @@ import {
   type FleetCanaryLadderDeps,
   type FleetCanaryLadderSource,
 } from '../src/cli/fleet-canary-ladder.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { CANARY_LADDER_DEFAULT_STATE } from '../src/core/fleet/automerge-canary-ladder.js';
 import { newFleetMergeState, writeFleetMergeState } from '../src/core/fleet/fleet-merge-state.js';
 

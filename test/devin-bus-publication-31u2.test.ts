@@ -140,7 +140,8 @@ describe('Devin bus atomic outbox publication', () => {
     expect(dirname(staged!.source)).toBe(mailbox);
     if (process.platform !== 'win32') expect(staged!.mode).toBe(0o600);
     expect(readFileSync(request.outboxPath, 'utf8')).toBe(expected);
-    expect(result).toEqual({ bytes: Buffer.byteLength(expected, 'utf8') });
+    expect(result).toEqual({ bytes: Buffer.byteLength(expected, 'utf8'),
+      peers: { wired: false, registered: false, joined: false, usageReported: false } });
     expect(result.bytes).toBeGreaterThan(expected.length);
     expect(readFileSync(request.inboxPath, 'utf8')).toBe('Fabricated inbox message');
     expectClean();

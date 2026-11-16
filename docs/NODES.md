@@ -45,8 +45,67 @@ production driver queue. A host-owned runner must implement the documented worke
 contract; existing dispatchd work must remain isolated until a shared claim adapter
 is commissioned. The Agent Bus and A2A contracts remain coordination and context
 surfaces, not a second admission authority. No message sending is introduced.
-No new log paths are created; child diagnostics and provider output are discarded,
-and only references and bounded metadata enter private node state.
+Child diagnostics and provider output are discarded. The reference runner below
+adds private result artifacts and metadata-only outcome rows.
+
+## Reference runner (Security review before installation)
+
+`phm node run-once [--json]` implements `phm-node-worker/v1`: it reads one JSON
+object from stdin and writes only `{"resultRef":"node-results:<jobId>"}` on
+success. Failure returns a nonzero exit with a fixed stderr message and no stdout.
+Input is limited to 16 KiB and five seconds; execution has a 60-second deadline
+inside the worker's existing 30-minute ceiling. No executable is installed here.
+
+The closed request contains `protocol`, the router's running `job` view
+(`id`, `owner`, `state`, `requires`, `pack`, `secrets`) and its exact `claim`
+(`nodeId`, `session`, `jobId`, `token`, `leaderToken`, `expiresAt`). Secret lists
+must be empty. Job IDs must be a single filename component: an alphanumeric
+character followed by at most 119 alphanumerics, dots, underscores or hyphens.
+Unknown fields and packs are refused; requests cannot supply commands or prompts.
+
+| Pack | Fixed action | Boundary |
+| --- | --- | --- |
+| `shell-check` | Node prints a constant health marker | Permission sandbox, no filesystem/child/worker/addon grants, empty environment, no shell, 10-second timeout and 1 KiB output cap |
+| `omlx-chat` | Ask the configured local model to reply `OK` | Enabled local lane required; POST only to `http://127.0.0.1:8000/v1/chat/completions`, no redirects or credentials, 16 generated tokens and 16 KiB response cap |
+
+These are health-check packs. Node's permission model is not a general hostile-code
+or network sandbox; the shell pack executes only compiled-in code. The chat pack
+has no tools and never executes or persists model text. Extending either action
+requires review of the execution boundary. There is no cloud fallback.
+The oMLX model directory must match the selected catalog repository's basename;
+oMLX accepts directory names even when a model has an API alias. See the
+[upstream model naming contract](https://github.com/jundot/omlx#per-model-settings).
+
+The runner binds the claim to the configured node and owner, renews with the
+witness before work, every three seconds, and before recording a result. Loss of
+the lease or a stop sentinel aborts the action. The worker still owns capacity
+checks and process-group termination. Only the worker's fenced `complete`
+transition establishes queue completion; a local artifact alone proves no completion.
+
+Results are immutable mode-0600 files at
+`~/.ashlr-runs/node-results/<jobId>.json`, with claim tokens and output byte counts.
+The directories must be owned, real and mode 0700. The reference resolves on the
+executing node; collection by the primary uses its existing trusted SSH access,
+not automatic replication. `~/.ashlr-runs/metrics/jobs.jsonl` receives `finish`
+rows with `succeeded`, `failed` or `fenced` outcomes, never transcripts or error
+details. Invalid requests write nothing. SIGKILL cannot emit a final row.
+An orphan artifact after a crash or failed completion is evidence to reconcile
+against the witness; retries never overwrite it. Use a new job ID after reconciliation.
+
+After Security reviews the worker execution path, an operator can provision a
+mode-0755 regular, owned wrapper with safe parents (no symlinks), checked by
+`checkDriveExecutable`. Replace both absolute paths with reviewed installations:
+
+```sh
+#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = run ] || exit 2
+unset NODE_OPTIONS NODE_PATH
+exec /absolute/path/to/node /absolute/path/to/phantom/dist/cli/index.js node run-once
+```
+
+Then use `phm node worker --runner /absolute/path/to/reviewed-node-runner --json`.
+Do not install this worktree over live fleet machinery. No Security pin, runner
+installation, production execution or primary artifact collection is claimed here.
 
 ## Small Mac enrollment and admission
 

@@ -1,6 +1,6 @@
 /**
  * app/VerseMobileApp.tsx — isolated bootstrap for /verse/m, Verse on a phone
- * (pattern: VerseConsoleApp). No workbench, no global dashboard shell, no
+ * (pattern: PhantomConsoleApp). No workbench, no global dashboard shell, no
  * Hub observer stream: the read session is probed against
  * /api/verse/bootstrap, and the phone shell (routes/verse/mobile/) takes over
  * once authenticated.
@@ -25,18 +25,19 @@ import { useAuthPhase } from '../data/hooks.js';
 import { MobileShell } from '../routes/verse/mobile/MobileShell.js';
 import { Button, SkeletonList, ui } from '../routes/verse/mobile/ui.js';
 import { verseBootstrapQuery } from '../routes/verse/verse-bootstrap-query.js';
-import { VERSE_MOBILE_PATH } from './console-mode.js';
+import { mobilePathFor } from './console-mode.js';
 import '../design/global.css';
 
 const importSessionGate = () => import('../components/auth/SessionGate.js');
 const SessionGate = lazy(() => importSessionGate().then((m) => ({ default: m.SessionGate })));
 const RemoteMobileApp = lazy(() => import('../routes/verse/mobile/RemoteMobileApp.js').then((m) => ({ default: m.RemoteMobileApp })));
 
-/** `/verse/m` → `/verse/m/`, keeping the hash (the screen). */
+/** `/verse/m` → `/verse/m/` (`/app/m` → `/app/m/`), keeping the hash (the screen). */
 export function canonicalizeMobilePath(win: Window = window): void {
-  if (win.location.pathname === VERSE_MOBILE_PATH) return;
+  const target = mobilePathFor(win.location.pathname);
+  if (win.location.pathname === target) return;
   try {
-    win.history.replaceState(win.history.state, '', `${VERSE_MOBILE_PATH}${win.location.hash}`);
+    win.history.replaceState(win.history.state, '', `${target}${win.location.hash}`);
   } catch {
     /* the app works at either path; only offline launch needs the slash */
   }
@@ -83,7 +84,7 @@ const CONNECTING = (
   </>
 );
 
-export function VerseMobileApp() {
+export function PhantomMobileApp() {
   useEffect(() => {
     canonicalizeMobilePath();
     void import('../routes/verse/mobile/pwa.js')
@@ -97,10 +98,13 @@ export function VerseMobileApp() {
   // Decide before mounting the local token gate or starting its read probe.
   return isRemoteMobileMode()
     ? <Suspense fallback={<Boot>{CONNECTING}</Boot>}><RemoteMobileApp shell={<MobileShell />} Button={Button} ui={ui} /></Suspense>
-    : <LocalVerseMobileApp />;
+    : <LocalPhantomMobileApp />;
 }
 
-function LocalVerseMobileApp() {
+/** @deprecated Legacy name for {@link PhantomMobileApp}; kept so external imports keep resolving. */
+export const VerseMobileApp = PhantomMobileApp;
+
+function LocalPhantomMobileApp() {
   const phase = useAuthPhase();
   const [unreachable, setUnreachable] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -130,7 +134,7 @@ function LocalVerseMobileApp() {
     <Boot>
       {phase === 'unauthenticated' ? (
         <Suspense fallback={CONNECTING}>
-          <SessionGate heading="Connect to your Mac" command="phm verse" subject={PRODUCT_NAME} mutationField />
+          <SessionGate heading="Connect to your Mac" command="phm console" subject={PRODUCT_NAME} mutationField />
         </Suspense>
       ) : unreachable ? (
         <div role="alert">

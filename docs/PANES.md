@@ -5,13 +5,16 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | Id | Title | Chord | Source file |
 | --- | --- | --- | --- |
 | `checks` | Checks | — | `src/web-ui/routes/verse/agents/checks.pane.tsx` |
+| `company` | Company | none | `src/web-ui/routes/verse/company/company.pane.tsx` |
 | `computer` | Computer use | — | `src/web-ui/routes/verse/computer/computer.pane.tsx` |
 | `feed` | Feed | — | `src/web-ui/routes/verse/feed/feed.pane.tsx` |
+| `fleet-board` | Board | none | `src/web-ui/routes/verse/fleet-board/fleet-board.pane.tsx` |
 | `fleet-bus` | Bus | `mod+alt+b` | `src/web-ui/routes/verse/fleet-bus/fleet-bus.pane.tsx` |
 | `fleet-capacity` | Capacity | — | `src/web-ui/routes/verse/fleet-capacity/fleet-capacity.pane.tsx` |
 | `fleet-channels` | Channels | — | `src/web-ui/routes/verse/fleet-channels/fleet-channels.pane.tsx` |
 | `fleet-dispatch` | Dispatch | — | `src/web-ui/routes/verse/fleet-dispatch/fleet-dispatch.pane.tsx` |
 | `fleet-events` | Fleet events | `mod+alt+e` | `src/web-ui/routes/verse/fleet-events/fleet-events.pane.tsx` |
+| `fleet-forum` | Forum | none | `src/web-ui/routes/verse/fleet-forum/fleet-forum.pane.tsx` |
 | `fleet-goals` | Goals | — | `src/web-ui/routes/verse/fleet-goals/fleet-goals.pane.tsx` |
 | `fleet-graph` | Graph | — | `src/web-ui/routes/verse/fleet-graph/fleet-graph.pane.tsx` |
 | `fleet-host` | Mac host | `mod+alt+h` | `src/web-ui/routes/verse/fleet-host/fleet-host.pane.tsx` |
@@ -26,6 +29,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-queue` | Queue | `mod+alt+q` | `src/web-ui/routes/verse/fleet-queue/fleet-queue.pane.tsx` |
 | `fleet-releases` | Releases | — | `src/web-ui/routes/verse/fleet-releases/fleet-releases.pane.tsx` |
 | `fleet-steering` | Steering | — | `src/web-ui/routes/verse/fleet-steering/fleet-steering.pane.tsx` |
+| `fleet-steer` | Steer | none | `src/web-ui/routes/verse/fleet-steer/fleet-steer.pane.tsx` |
 | `fleet-supply` | Supply | `mod+alt+u` | `src/web-ui/routes/verse/fleet-supply/fleet-supply.pane.tsx` |
 | `fleet-timeline` | Worker timeline | `mod+alt+t` | `src/web-ui/routes/verse/fleet-timeline/fleet-timeline.pane.tsx` |
 | `fleet-usage` | Usage | — | `src/web-ui/routes/verse/fleet-usage/fleet-usage.pane.tsx` |

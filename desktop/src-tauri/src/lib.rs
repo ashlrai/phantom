@@ -1,5 +1,6 @@
 //! Native-only foundations that are deliberately not wired into the desktop UI.
 
+pub mod child_reaper;
 pub mod native_launchd_broker;
 
 // Deterministic signed-update policy is qualified by the required native library lane.

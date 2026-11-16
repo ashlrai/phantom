@@ -322,7 +322,7 @@ for chat seats (`src/core/verse/verse-mcp-types.ts`).
 
 | File | Responsibility |
 |------|---------------|
-| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/goals`; mounts the Phantom console routes from `src/core/verse/verse-api.ts`. |
+| `api.ts` | REST API, including `/api/fleet`, `/api/inbox`, `/api/runs`, `/api/swarms`, `/api/genome`, `/api/pulse`, `/api/queue/stats`, `/api/goals`; mounts the Phantom console routes from `src/core/verse/verse-api.ts`. |
 | `server.ts` | Loopback HTTP server plus separate read and mutation capabilities: read header/cookie for content, independent raw token for enabled actions. |
 | `control.ts` | Control endpoints: pause, resume, approve, reject. |
 
@@ -482,3 +482,7 @@ see the [source milestone index](https://github.com/ashlrai/phantom/blob/master/
 | M140+ | Verification-First — test-iterate loop, judge traces, best-of-N, SWE-bench harness | `run/best-of-n`, `fleet/judge-trace`, `fleet/judge-calibration`, `core/eval/` |
 
 Each milestone has a binding contract file in `docs/contracts/CONTRACT-M<N>.md` pinning its exported signatures.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

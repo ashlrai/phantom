@@ -12,6 +12,21 @@ scope and standing authority. The Mac's **Scheduled planning passes** and
 **Leader planning loop** switches control supplementary historical schedules;
 they do not select the model used by the Leader.
 
+## Role slots and the leadership lease
+
+Leader, planner and reviewer are capability slots. `resolveRole`
+(`src/core/routing/role-slots.ts`) maps a slot to its requirements (task shape,
+context floor, declared capabilities), runs the shared seat router over every
+admitted lane, and returns ranked candidates, so any engine or local model can
+hold any slot. Per-role preferences are hints: they reorder lanes the router
+already admitted and never admit an ineligible one. `failoverRole` re-resolves
+with an exhausted lane set aside.
+
+`src/core/routing/role-lease.ts` holds the pure heartbeat lease. A live lease
+blocks rivals; once heartbeats lapse past the TTL any eligible agent may claim
+it. The epoch is a fencing token, so a late former holder fails its next
+heartbeat. Callers persist the lease and supply the clock.
+
 ## Release-backed articles (successor candidate)
 
 The opt-in `release-articles` maintenance lane follows Phantom's latest stable
@@ -30,7 +45,7 @@ ashlr release-articles disable
 ```
 
 Enablement permits this maintenance lane, not a new grant. A current autonomous
-standing grant with exact `ashlrai/ashlar-landing` merge scope, an enrolled
+standing grant with exact `ashlrai/ashlr-landing` merge scope, an enrolled
 checkout and Stop off is required before it queues an article in the existing
 fleet task store. The resident standing tick calls the same maintenance path;
 dry runs and disabled/missing configuration do not probe providers or create

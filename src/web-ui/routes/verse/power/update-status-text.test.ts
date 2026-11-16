@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DesktopUpdateState } from '../../../app/desktop-updates.js';
 import { updateStatusText } from './update-status-text.js';
 
-const base: DesktopUpdateState = { phase: 'idle', enabled: true, version: '3.29.15', bytesReceived: 0, bytesTotal: null, reason: null };
+const base: DesktopUpdateState & { feed: { status: 'ok' } } = { feed: { status: 'ok' }, phase: 'idle', enabled: true, version: '3.29.15', bytesReceived: 0, bytesTotal: null, reason: null };
 
 describe('updateStatusText', () => {
   it('names the installed version when idle and says no installable newer release is on the feed', () => {

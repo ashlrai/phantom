@@ -223,7 +223,10 @@ export interface LeaderModelRow {
 }
 
 /** Where evidence comes from. Every source may throw; a thrower is reported as unknown, never as zero. */
+type AmplifyEvidence = Pick<import('../amplify/snapshot.js').AmplifySnapshot, 'objective' | 'actions'>;
+
 export interface LeaderEvidenceSources {
+  amplify?(nowMs: number): Promise<AmplifyEvidence>;
   outcomes?(): import('./leader-outcomes.js').LeaderOutcomeEvidence;
   /** Recorded metadata only; source failure remains unknown. */
   executionFeedback?(nowMs: number): import('../fleet/execution-feedback.js').ExecutionFeedbackSnapshot;
@@ -250,6 +253,7 @@ export interface LeaderEvidenceSources {
 }
 
 export interface LeaderEvidence {
+  amplify?: AmplifyEvidence;
   outcomes?: import('./leader-outcomes.js').LeaderOutcomeEvidence;
   executionFeedback?: import('../fleet/execution-feedback-types.js').LeaderExecutionFeedback;
   grant: {
@@ -448,6 +452,10 @@ export async function gatherLeaderEvidence(sources: LeaderEvidenceSources, nowMs
       if (!complete) unknown.push('execution-feedback-partial');
     }
   }
+  let amplify: AmplifyEvidence | undefined;
+  if (sources.amplify) {
+    try { amplify = await sources.amplify(nowMs); } catch { unknown.push('amplify'); }
+  }
   // 3.15: the Leader's own standing notes (directive.self) — its words, so untrusted data.
   const selfNotes = attempt('self-directives', () => listSelfDirectives().map((d) => ({ id: d.id, text: d.text, since: d.createdAt.slice(0, 10) })));
   return {
@@ -474,6 +482,7 @@ export async function gatherLeaderEvidence(sources: LeaderEvidenceSources, nowMs
     ...(lessons ? { lessons } : {}),
     ...(playbooks && playbooks.length > 0 ? { playbooks } : {}),
     ...(executionFeedback ? { executionFeedback } : {}),
+    ...(amplify ? { amplify } : {}),
     ...(selfNotes && selfNotes.length > 0 ? { selfDirectives: selfNotes } : {}),
     unknown: [...new Set(unknown)].sort(),
   };
@@ -529,6 +538,7 @@ export function buildLeaderPrompt(
   const blocks = [
     untrustedBlock('STANDING GRANT (null = none: every action is a dry run)', evidence.grant),
     untrustedBlock('BUDGET POLICY', evidence.budget),
+    ...(evidence.amplify ? [untrustedBlock('AMPLIFY ADVISORY (proposals only; grants no authority)', evidence.amplify)] : []),
     untrustedBlock('SEAT HEADROOM (used % bucketed to 10)', evidence.seats),
     ...(evidence.executionFeedback ? [untrustedBlock('RECORDED EXECUTION OUTCOMES (producer success is not verification or merge; incomplete totals are unknown)', evidence.executionFeedback)] : []),
     untrustedBlock('GOALS AND FOCUS', evidence.goals),
@@ -957,10 +967,16 @@ export interface LeaderRunDeps {
    * the answer labels the memo and never reaches a gate. Absent = no advice.
    */
   adviseActionClass?: LeaderActionAdvisor;
+  /** Release-live announcement (release-live-announce.ts); absent in injected tests. */
+  announceRelease?: () => Promise<unknown>;
+  /** Offline advisory pass: its only write is metrics/amplify.jsonl. */
+  amplifyTick?: (nowMs: number) => Promise<void>;
 }
 
 export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<LeaderRunDeps> {
   const feedback = await import('../fleet/execution-feedback.js');
+  const amplifier = await import('../amplify/index.js');
+  let amplifySnapshot: import('../amplify/snapshot.js').AmplifySnapshot | null = null;
   // Trigger and prompt gathering in one tick share the same bounded inspection.
   // This cache belongs to this dependency instance, never another home/account.
   let feedbackRead: { at: number; root: string | undefined; snapshot: import('../fleet/execution-feedback.js').ExecutionFeedbackSnapshot } | null = null;
@@ -987,7 +1003,13 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     seat,
     cloudBacklog: { append: (items) => cloudBacklog.appendUserBacklogItems(items) },
     adviseActionClass: defaultLeaderActionAdvisor(cfg),
+    announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
+    amplifyTick: async nowMs => { amplifySnapshot = await amplifier.amplifyTick(undefined, nowMs); },
     sources: {
+      amplify: async nowMs => {
+        const snapshot = amplifySnapshot?.at === new Date(nowMs).toISOString() ? amplifySnapshot : await amplifier.readAmplifyStatus(undefined, nowMs);
+        return { objective: snapshot.objective, actions: snapshot.actions };
+      },
       outcomes: () => apply.outcomes!.evidence(),
       executionFeedback: (nowMs) => {
         const root = process.env.ASHLR_HOME;
@@ -1476,6 +1498,8 @@ export interface LeaderTickResult {
  */
 export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
   const nowMs = deps.now();
+  try { await deps.amplifyTick?.(nowMs); }
+  catch { console.error('leader tick: amplify advisory journal unavailable'); }
   // Both the resident daemon and CLI use this boundary. Away digests must
   // continue even when the daemon already consumed the ordinary memo cadence.
   // The private network worker lock fences overlapping background ticks.
@@ -1496,6 +1520,12 @@ export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean
     void import('./leader-drive.js')
       .then((drive) => drive.runLeaderDriveIfDue(deps))
       .catch(() => undefined);
+  }
+  // One post per new live release; an error is logged and never fails the tick.
+  if (deps.announceRelease) {
+    void Promise.resolve().then(deps.announceRelease).catch((error: unknown) => {
+      console.error(`leader tick: release announcement failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
   }
   let graded: LeaderOutcomeRecord[] = [];
   try {

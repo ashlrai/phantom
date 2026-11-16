@@ -162,10 +162,42 @@ if [ -e "$G1F" ] || [ -L "$G1F" ]; then
   echo "NOTE G1 mode pinned tree $G1T parent $G1P"; fi
 if [ -n "$G1R" ]; then echo "G1 category3=$G1R"; [ -n "$G1T" ] || { echo "RESULT ABORT g1-pass-required category3=$G1R"; exit 1; }; else echo "G1 not-required"; G1OK=1; fi
 PD=".github .envrc .vscode .husky"; { [ -n "$G1T" ] || [ "$G1OK" = 1 ]; } && PD=".envrc .vscode .husky"
+# RQ-PUBLISH-WORKTREE-SCOPE-1: the job's fork point. When HEAD was cut from an older main than BASE, a bare soft reset
+# keeps the OLD tree in the index, so the PR diff re-reverts every main change since (the +2876/42-file, exec.ts-deletion PRs).
+MB=""; [ "$IM" = 1 ] || { MB=$(git merge-base "$BASE" HEAD 2>/dev/null) && [[ "$MB" =~ ^[0-9a-f]{40,64}$ ]] || { echo "RESULT ABORT no-merge-base"; exit 1; }; }
 [ "$IM" = 1 ] || { [ "$(git rev-parse HEAD)" = "$BASE" ] || git reset --soft "$BASE"; }
 NOTES=""; [ -f BRIDGE_NOTES.md ] && { NOTES=$(cat BRIDGE_NOTES.md); mv BRIDGE_NOTES.md $R/$J.notes.md; }
 GD=$(git status --porcelain -uall -- $PD | cut -c4-); [ -n "$GD" ] && { echo "NOTE PROTECTED_DRIFT reverted: $(echo $GD)"; for d in $PD; do git checkout "$BASE" -- $d 2>/dev/null; git clean -fdq -- $d; done; echo "$GD" | grep -q "^\.github/workflows" && { echo "RESULT ABORT workflow-drift"; exit 1; }; }
-git add -A
+# >>> SCOPED_STAGE
+# Stage ONLY the job's change set, never ambient worktree state. Change set = paths whose worktree content differs from the
+# job's fork point $MB (tracked edits/deletions, committed or not) + untracked, non-ignored files that are not scratch-shaped
+# (*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store). If $R/$J.files exists (the job's work-claim changed-file
+# list, one repo-relative path per line, written ops-side) it is authoritative: only listed paths are staged. Everything else
+# stays uncommitted and is reported. The index is first reset to $BASE so stale index state cannot leak into the diff.
+scoped_stage() {
+  local mf="$R/$J.files" cand sel skipped=""
+  git reset -q "$BASE" -- . || return 1
+  cand=$(mktemp "${TMPDIR:-/tmp}/scope.XXXXXX") || return 1   # NUL-separated lists live in files (command substitution drops NULs)
+  sel="$cand.sel"
+  { git diff --no-ext-diff --no-textconv --no-renames --name-only -z "$MB" && git ls-files -o --exclude-standard -z; } > "$cand" || { rm -f "$cand"; return 1; }
+  if [ -f "$mf" ] && [ ! -L "$mf" ]; then
+    # manifest mode: validate (relative, no .., no control chars), then intersect with the candidates
+    perl -e 'my %m; open(my $f,"<",$ARGV[0]) or exit 2; while(<$f>){chomp; next unless length; if(m{^/}||m{(^|/)\.\.(/|$)}||/[\x00-\x1f]/){exit 3} s{^\./}{}; s{/+$}{}; $m{$_}=1}
+      local $/="\0"; while(<STDIN>){chomp; print "$_\0" if $m{$_}}' "$mf" < "$cand" > "$sel" || { rm -f "$cand" "$sel"; echo "RESULT ABORT scope-manifest-invalid"; exit 1; }
+  else
+    perl -e 'local $/="\0"; while(<STDIN>){chomp; next if m{(^|/)(\.DS_Store|[^/]*(\.(backup|bak|orig|rej|patch|diff|swp)|~))$}; print "$_\0"}' < "$cand" > "$sel" || { rm -f "$cand" "$sel"; return 1; }
+  fi
+  # report what was left out (candidates not selected)
+  skipped=$(perl -e 'my %s; { open(my $f,"<",$ARGV[0]); local $/="\0"; while(<$f>){chomp; $s{$_}=1} } local $/="\0"; my @x; while(<STDIN>){chomp; push @x,$_ unless $s{$_}} print join(" ",@x[0..($#x<19?$#x:19)]), (@x>20?" ...(+".(@x-20).")":"")' "$sel" < "$cand")
+  [ -z "$skipped" ] || echo "NOTE SCOPE_EXCLUDED not staged: $skipped"
+  # literal pathspecs: no globbing/magic from file names
+  if [ -s "$sel" ]; then
+    perl -e 'local $/="\0"; while(<STDIN>){chomp; print ":(literal)$_\0"}' < "$sel" > "$sel.p" && git add -A --pathspec-from-file="$sel.p" --pathspec-file-nul || { rm -f "$cand" "$sel" "$sel.p"; return 1; }
+  fi
+  rm -f "$cand" "$sel" "$sel.p"
+}
+# <<< SCOPED_STAGE
+if [ "$IM" = 1 ]; then git add -A; else scoped_stage || { echo "RESULT ABORT scoped-stage"; exit 1; }; fi
 verify_dependency_links || { echo "RESULT ABORT dependency-directory-link-or-index-unavailable"; exit 1; }
 FILES=$(git diff --cached --name-only "$BASE"); [ -z "$FILES" ] && [ "$IM" = 0 ] && { echo "RESULT EMPTY"; exit 0; }
 [ "$IM" = 0 ] || [ -z "$FILES" ] || { echo "RESULT ABORT integrated-unreviewed-delta"; exit 1; }
@@ -199,6 +231,13 @@ TR="no test command"; if [ -n "$TC" ]; then
   HOME=$TH npm_config_cache=$NPMC CARGO_HOME=$CARGO_HOME RUSTUP_HOME=$RUSTUP_HOME PATH=$PWD/node_modules/.bin:$CARGO_HOME/bin:$PATH perl -e 'alarm shift; exec @ARGV' 1500 $TC 2>&1 | $SCRUB > $R/$J.test.log; rc=$?
   TR="\`$TC\` (temp HOME) exit $rc; tail: $(tail -5 $R/$J.test.log | tr '\n' ' ' | cut -c1-400)"; fi
 echo "TEST $TR"
+# Source candidate: Security review/re-pin required before any live install.
+# The installed trusted CLI captures the exact staged tree and the publisher's
+# actual runner exit/output. Never infer tool proof from BRIDGE_NOTES.
+PROOF_GITDIR=$(git rev-parse --absolute-git-dir) && PROOF_TREE=$(git write-tree) || { echo "RESULT ABORT proof-git"; exit 1; }
+PROOF_ARGS=(fleet proof capture --repo "$WT" --git-dir "$PROOF_GITDIR" --base "$BASE" --output "$R/$J.proof.$$.json")
+if [ -n "$TC" ]; then PROOF_ARGS+=(--test-command "$TC" --test-exit "$rc" --test-log "$R/$J.test.log"); fi
+phm "${PROOF_ARGS[@]}" || { echo "RESULT ABORT proof-capture"; exit 1; }
 if [ "$IM" = 0 ]; then
   git -c core.hooksPath=/dev/null ${GUN:+-c "user.name=$GUN"} ${GUE:+-c "user.email=$GUE"} commit -q --no-verify -m "bridge($J): $(echo "$NOTES" | grep -m1 -v '^\s*$' | sed 's/^#* *//' | cut -c1-60)" || { echo "RESULT ABORT commit"; exit 1; }
   SHA=$(git rev-parse HEAD); [ "$(git rev-list --parents -n1 $SHA | awk '{print NF-1, $2}')" = "1 $BASE" ] || { echo "RESULT ABORT parent"; exit 1; }
@@ -206,6 +245,7 @@ else
   SHA=$(git rev-parse HEAD)
   [ "$SHA" = "$IMSHA" ] || { echo "RESULT ABORT integrated-head-changed"; exit 1; }
 fi
+[ "$(git rev-parse HEAD^{tree})" = "$PROOF_TREE" ] || { echo "RESULT ABORT proof-tree-changed"; exit 1; }
 [ -n "$G1T" ] && { [ "$(git rev-parse HEAD^{tree})" = "$G1T" ] && [ "$(git rev-parse HEAD^)" = "$G1P" ] && [ "$(git rev-list --count "$G1P..HEAD")" = 1 ] || { git reset -q --soft "$BASE"; echo "RESULT ABORT g1-tree-mismatch"; exit 1; }; }
 # Integrated mode has already proved the original fork exists; never bootstrap one.
 if [ "$IM" = 0 ]; then

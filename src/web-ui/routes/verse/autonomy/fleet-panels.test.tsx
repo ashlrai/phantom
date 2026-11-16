@@ -178,7 +178,7 @@ describe('LocalRuntimePanel', () => {
     );
     expect(screen.getByRole('button', { name: 'Stop runtime' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Restart runtime' })).toBeDisabled();
-    expect(screen.getByText(/Managed outside the hub/)).toBeInTheDocument();
+    expect(screen.getByText(/Managed outside Phantom/)).toBeInTheDocument();
   });
 
   it('calls an absent route a missing source, not a stopped runtime', () => {

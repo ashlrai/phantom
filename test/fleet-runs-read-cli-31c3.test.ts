@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const mock = vi.hoisted(() => ({ runs: vi.fn(), journal: vi.fn(), parked: vi.fn(), queue: vi.fn() }));
 vi.mock('../src/core/fleet/runs-dir-state.js', () => ({ readFleetRunsDirState: mock.runs }));

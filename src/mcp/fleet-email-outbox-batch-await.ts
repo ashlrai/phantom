@@ -5,6 +5,7 @@
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { readEmailDropConfig } from '../core/comms/email-drop-config.js';
 import { awaitEmailOutboxBatch, type BatchResult, type BatchRow } from '../core/comms/email-outbox-batch-await.js';
 import {
@@ -41,6 +42,8 @@ export interface FleetEmailOutboxBatchAwaitDeps {
   runsDir?: string;
   readConfig?: typeof readEmailDropConfig;
   awaitBatch?: typeof awaitEmailOutboxBatch;
+  /** Clock seam for the shared timeoutMs budget; defaults to performance.now. */
+  now?: () => number;
 }
 
 /** Bounded exactly like the CLI; unknown keys (dir/root/cwd/send) rejected. */
@@ -58,10 +61,52 @@ export function parseFleetEmailOutboxBatchAwaitArgs(args: Record<string, unknown
   return { names: names as string[], timeoutMs, ...(pollMs === undefined ? {} : { pollMs: pollMs as number }) };
 }
 
+type ConfigRead = Awaited<ReturnType<typeof readEmailDropConfig>>;
+
+type ConfigDiscovery =
+  | { kind: 'config'; config: ConfigRead }
+  | { kind: 'rejected' }
+  | { kind: 'cancelled' }
+  | { kind: 'expired' };
+
+/** Races the config read against the caller abort and the shared deadline so a
+ * stalled or rejected discovery cannot wedge the wait. Handlers stay attached
+ * after settlement, so a late resolve/reject is always observed, never an
+ * unhandled rejection; the deadline timer and abort listener are disposed on
+ * every path. */
+function raceConfigDiscovery(
+  pending: Promise<ConfigRead>,
+  signal: AbortSignal | undefined,
+  deadlineAt: number,
+  now: () => number,
+): Promise<ConfigDiscovery> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome: ConfigDiscovery): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(outcome);
+    };
+    const onAbort = (): void => finish({ kind: 'cancelled' });
+    pending.then(
+      (config) => finish({ kind: 'config', config }),
+      () => finish({ kind: 'rejected' }),
+    );
+    const remaining = deadlineAt - now();
+    const timer = setTimeout(() => finish({ kind: 'expired' }), Math.max(0, remaining));
+    if (signal?.aborted) { finish({ kind: 'cancelled' }); return; }
+    if (remaining <= 0) { finish({ kind: 'expired' }); return; }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /** Missing/invalid config and missing/unreadable outbox each report their own
  * sourceState with sourceFailure true and null rows — never an invented
  * observation. The outbox resolves like the CLI: `outboxDir`, else
- * `inboxDir`'s sibling. */
+ * `inboxDir`'s sibling. timeoutMs is one total budget: config discovery and
+ * polling share it, and awaitBatch only runs with the undiscovered remainder. */
 export async function readFleetEmailOutboxBatchAwait(
   input: FleetEmailOutboxBatchAwaitArgs,
   signal?: AbortSignal,
@@ -78,8 +123,20 @@ export async function readFleetEmailOutboxBatchAwait(
   const report = (sourceState: FleetEmailOutboxAwaitSourceState, extra: Partial<FleetEmailOutboxBatchAwaitReport>): FleetEmailOutboxBatchAwaitReport =>
     ({ ...base, sourceState, rows: null, timedOut: false, cancelled: false, sourceFailure: false, ...extra });
 
+  const now = deps.now ?? (() => performance.now());
+  const deadlineAt = now() + input.timeoutMs;
   if (signal?.aborted) return report('unobserved', { cancelled: true });
-  const config = await readConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs'));
+  let pending: Promise<ConfigRead>;
+  try {
+    pending = Promise.resolve(readConfig(deps.runsDir ?? join(homedir(), '.ashlr-runs')));
+  } catch {
+    return report('invalid-config', { sourceFailure: true });
+  }
+  const discovery = await raceConfigDiscovery(pending, signal, deadlineAt, now);
+  if (discovery.kind === 'cancelled') return report('unobserved', { cancelled: true });
+  if (discovery.kind === 'expired') return report('unobserved', { timedOut: true });
+  if (discovery.kind === 'rejected') return report('invalid-config', { sourceFailure: true });
+  const config = discovery.config;
   if (signal?.aborted) return report('unobserved', { cancelled: true });
   if (config.state !== 'ok' || !config.config) {
     return report(config.state === 'missing' ? 'missing-config' : 'invalid-config', { sourceFailure: true });
@@ -93,10 +150,13 @@ export async function readFleetEmailOutboxBatchAwait(
   }
   if (sourceState !== 'ok') return report(sourceState, { sourceFailure: true });
 
+  if (signal?.aborted) return report('ok', { cancelled: true });
+  const remaining = deadlineAt - now();
+  if (remaining <= 0) return report('ok', { timedOut: true });
   const result: BatchResult = await awaitBatch({
     dir: outboxDir,
     names: input.names,
-    timeoutMs: input.timeoutMs,
+    timeoutMs: remaining,
     pollMs: input.pollMs ?? DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS,
     signal: signal ?? new AbortController().signal,
   });

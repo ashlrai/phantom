@@ -1,5 +1,5 @@
 import { IntentError, MAX_EVIDENCE, type IntentItem, type IntentStatus } from './schema.js';
-import { readLedger, writeLedger } from './store.js';
+import { readLedger, transactIntentLedger } from './store.js';
 
 export interface SweepRow {
   id: string;
@@ -17,6 +17,9 @@ function actionFor(item: IntentItem): SweepRow['action'] {
   return 'requeue';
 }
 
+const overdue = (item: IntentItem, now: number): boolean =>
+  !terminal.has(item.status) && now - Date.parse(item.lastTouchedAt) > item.staleAfterMs;
+
 /** Refresh local tracking only; recommendations never close or dispatch work. */
 export async function sweepStale(opts: { root?: string; apply?: boolean; now?: string } = {}): Promise<{ stale: SweepRow[]; applied: boolean; updated: number }> {
   const at = opts.now ?? new Date().toISOString();
@@ -24,10 +27,21 @@ export async function sweepStale(opts: { root?: string; apply?: boolean; now?: s
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(at) || !Number.isFinite(now)) {
     throw new IntentError('Time must be an ISO timestamp.');
   }
-  const ledger = await readLedger(opts.root);
-  const items = ledger.items.filter(item => !terminal.has(item.status) && now - Date.parse(item.lastTouchedAt) > item.staleAfterMs);
-  const actions = items.map(actionFor);
-  if (opts.apply) {
+  if (!opts.apply) {
+    const items = (await readLedger(opts.root)).items.filter(item => overdue(item, now));
+    return { stale: items.map(item => ({ id: item.id, title: item.title, status: item.status, action: actionFor(item) })), applied: false, updated: 0 };
+  }
+  // This unlocked read only skips the no-op case: an apply with nothing stale
+  // still writes nothing (and never creates a ledger), exactly as the old
+  // unlocked path behaved. The read-modify-write below recomputes against the
+  // freshest ledger inside transactIntentLedger, so a concurrent
+  // addIntent/updateIntent committed before the lock is seen and preserved.
+  if (!(await readLedger(opts.root)).items.some(item => overdue(item, now))) {
+    return { stale: [], applied: opts.apply === true, updated: 0 };
+  }
+  const stale = await transactIntentLedger(opts.root, (ledger) => {
+    const items = ledger.items.filter(item => overdue(item, now));
+    const actions = items.map(actionFor);
     for (const [index, item] of items.entries()) {
       const action = actions[index]!;
       if (action === 'requeue') item.status = 'queued';
@@ -35,9 +49,8 @@ export async function sweepStale(opts: { root?: string; apply?: boolean; now?: s
       item.lastTouchedAt = at;
       item.updatedAt = at;
     }
-    if (items.length) await writeLedger(ledger, opts.root);
-  }
-  // Rows report the persisted status: post-apply when applying, untouched on preview.
-  const stale = items.map((item, index) => ({ id: item.id, title: item.title, status: item.status, action: actions[index]! }));
-  return { stale, applied: opts.apply === true, updated: opts.apply ? items.length : 0 };
+    // Rows report the persisted status: post-apply when applying, untouched on preview.
+    return items.map((item, index) => ({ id: item.id, title: item.title, status: item.status, action: actions[index]! }));
+  });
+  return { stale, applied: opts.apply === true, updated: stale.length };
 }

@@ -8,6 +8,7 @@ import { newestLeaderPassMs } from './interject-ack-model.js';
 import { dialogDescription, landedText } from './interject-dialog-eta.js';
 import { closeInterjectDialog, postInterjection, takeInterjectPrefill, useInterjectDialogOpen } from './interject-dialog-store.js';
 import { inboxTailQuery } from './interject-queries.js';
+import { mintInterjectRequestId } from './interject-request.js';
 import styles from './interject-dialog.module.css';
 
 function errorMessage(error: unknown): string {
@@ -32,6 +33,9 @@ function InterjectDialogBody() {
   const active = useRef(true);
   const sending = useRef(false);
   const pendingCaret = useRef<string | null>(null);
+  // One request id per composed message; a retry reposts it so the Hub
+  // replays the first write instead of appending a second inbox line.
+  const requestKey = useRef<{ text: string; id: string } | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -66,8 +70,10 @@ function InterjectDialogBody() {
     setBusy(true);
     setError('');
     try {
-      const at = await postInterjection(trimmed);
+      if (requestKey.current?.text !== trimmed) requestKey.current = { text: trimmed, id: mintInterjectRequestId() };
+      const at = await postInterjection(trimmed, requestKey.current.id);
       if (!active.current) return;
+      requestKey.current = null;
       setText('');
       setLanded(Date.parse(at));
     } catch (err) {

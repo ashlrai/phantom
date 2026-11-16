@@ -25,6 +25,9 @@ export const SPOOL_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const SPOOL_MAX_ENTRIES_SCAN = 2048;
 const RECORD_PATTERN = /^reply-[0-9a-f]{32}\.json$/;
 const LOCK_WAIT_MS = 500;
+/** Stamp skew covering the producer's ceil() on consumed budget (<1 ms) and
+ * sub-millisecond capture jitter; erring earlier only shortens retained life. */
+const SPOOL_PREPARED_SKEW_MS = 2;
 
 export interface SpooledWorkerExit { status: 'returned'; exitCode: number }
 export interface PendingContextReply { reply: BusEnvelope; preparedAt: number; workerExit: SpooledWorkerExit }
@@ -150,6 +153,59 @@ function parseRecord(text: string): PendingContextReply | null {
   return { reply: checked.value, preparedAt: record.preparedAt as number, workerExit: exit as SpooledWorkerExit };
 }
 
+/** A bus-clock reading usable as a spool timestamp, or null when the injected
+ * clock throws or returns non-integer or negative time. */
+function busClockStamp(clock: () => number): number | null {
+  try {
+    const value = clock();
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  } catch { return null; }
+}
+
+interface RequestStampSource { json: string; id: string; ttl: number }
+/** Canonical request snapshot used only to anchor the spool timestamp; it is
+ * never rewritten into the reply and grants no authority of its own. */
+function requestStampSource(requestFile: string): RequestStampSource | null {
+  if (!isAbsolute(requestFile) || requestFile.includes('\0')) return null;
+  try {
+    const read = readStableRegularFile(requestFile, { anchorPath: dirname(requestFile),
+      maxFileBytes: MAX_BUS_ENVELOPE_BYTES, remainingBytes: MAX_BUS_ENVELOPE_BYTES });
+    if (!read.ok || read.text.includes('\ufffd')) return null;
+    const checked = parseBusEnvelope(read.text);
+    return checked.ok ? { json: checked.json, id: checked.value.id, ttl: checked.value.ttl } : null;
+  } catch { return null; }
+}
+
+/** Conservative preparation stamp on the same clock the retry path reads.
+ * runContextReply shrinks reply.ttl by the monotonic time from its own start
+ * to envelope construction, so request.ttl - reply.ttl is the consumed budget.
+ * Re-anchoring that budget on the earliest bus-clock reading before the run
+ * lands at (or just before) the true preparation instant: a slow failed
+ * publication can no longer push the retained deadline forward, and an
+ * injected bus clock is honored instead of Date.now. When the request bytes
+ * cannot be proven stable across the run, or the clock gives no coherent
+ * reading, the stamp falls back to the earliest observed bus time (or 0),
+ * which can only shorten — never extend — the remaining lifetime. */
+function spooledPreparedAt(input: {
+  startedAt: number | null; endedAt: number | null;
+  before: RequestStampSource | null; after: RequestStampSource | null;
+  reply: BusEnvelope;
+}): number {
+  const stamps = [input.startedAt, input.endedAt].filter((v): v is number => v !== null);
+  const fallback = stamps.length === 0 ? 0 : Math.min(...stamps);
+  const { startedAt, endedAt, before, after, reply } = input;
+  const body = reply.body;
+  const repliedTo = body !== null && typeof body === 'object' && !Array.isArray(body)
+    ? body.inReplyTo : undefined;
+  const coherent = startedAt !== null && before !== null && after !== null &&
+    before.json === after.json && repliedTo === before.id;
+  if (!coherent || startedAt === null || before === null) return fallback;
+  const derived = startedAt + (before.ttl - reply.ttl) - SPOOL_PREPARED_SKEW_MS;
+  if (!Number.isSafeInteger(derived)) return fallback;
+  // A backward clock jump must not stamp later than the latest reading either.
+  return Math.max(0, Math.min(derived, endedAt ?? derived));
+}
+
 /** Republish one explicit spool record. Only `publishContextReply` runs: the
  * worker is never re-executed, and age is measured on the wall clock so the
  * original wire TTL keeps shrinking across restarts and can never extend. */
@@ -207,6 +263,9 @@ export async function runContextReplyDelivery(
   }
   try { assertSpoolDirectory(opts.spoolDir, true); }
   catch { return { workerExit: { status: 'not-started' }, delivery: { status: 'unsafe' }, exitCode: 2 }; }
+  const clock = bus.now ?? Date.now;
+  const startedAt = busClockStamp(clock);
+  const requestBefore = requestStampSource(opts.requestFile);
   const result = await runContextReply(opts, io, bus);
   if (result.reply === null) {
     return { workerExit: result.workerExit, delivery: { status: result.replyReceipt.status }, exitCode: result.exitCode };
@@ -216,8 +275,12 @@ export async function runContextReplyDelivery(
     return { workerExit: result.workerExit, delivery: { status: result.replyReceipt.status }, exitCode: result.exitCode };
   }
   const exitCode = result.workerExit.status === 'returned' ? result.workerExit.exitCode : result.exitCode;
+  const preparedAt = spooledPreparedAt({
+    startedAt, endedAt: busClockStamp(clock),
+    before: requestBefore, after: requestStampSource(opts.requestFile), reply: result.reply,
+  });
   const saved = savePendingContextReply(opts.spoolDir, {
-    reply: result.reply, preparedAt: Date.now(), workerExit: { status: 'returned', exitCode },
+    reply: result.reply, preparedAt, workerExit: { status: 'returned', exitCode },
   });
   return {
     workerExit: result.workerExit,

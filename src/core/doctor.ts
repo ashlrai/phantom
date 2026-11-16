@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import type { AshlrConfig, DoctorCheck, DoctorCheckStatus, DoctorReport, McpRegistry, ToolsRegistry } from './types.js';
 import { loadConfig } from './config.js';
 import { getPhantomStatus } from './phantom.js';
@@ -37,6 +37,8 @@ import {
   SANDBOX_ORPHAN_WARN_THRESHOLD,
 } from './readiness.js';
 import { describeStaleGitLocks } from './sandbox/stale-git-locks.js';
+import { evalBudget } from './observability/budget-alert.js';
+import { findDoctorExecutable } from '../doctor/executable.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,15 +56,16 @@ function check(
   return c;
 }
 
-/** Run a command synchronously, returning stdout trimmed or null on error. */
-function runCmd(cmd: string, args: string[]): string | null {
-  try {
-    const result = spawnSync(cmd, args, { encoding: 'utf8', timeout: 5000 });
-    if (result.error || result.status !== 0) return null;
-    return (result.stdout ?? '').trim() || null;
-  } catch {
-    return null;
-  }
+/** Keep process startup off the critical path shared with network probes. */
+function runCmd(cmd: string, args: string[]): Promise<string | null> {
+  return new Promise(resolve => {
+    try {
+      const child = execFile(cmd, args, {
+        encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024,
+      }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
+      child.stdin?.end();
+    } catch { resolve(null); }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +137,7 @@ async function tryDiscoverMcpServers(): Promise<McpRegistry | null> {
 async function tryGetToolsRegistry(): Promise<ToolsRegistry | null> {
   try {
     const mod = await import('./tools-registry.js');
-    return await mod.getToolsRegistry({ parallel: true });
+    return await mod.getToolsRegistry({ parallel: true, nativePath: true });
   } catch {
     return null;
   }
@@ -161,21 +164,21 @@ async function tryCheckPoolCliVersions(): Promise<DoctorCheck[] | null> {
  * window configured in cfg (default '7d'). Returns null when the module is
  * not yet built or if any error occurs — caller must degrade gracefully.
  */
-async function tryBuildBudgetRollup(
+async function tryGetBudgetAlert(
   cfg: AshlrConfig,
-): Promise<import('./types.js').ActivityRollup | null> {
+): Promise<import('./types.js').BudgetAlert | null> {
   try {
     const win: '1d' | '7d' | '30d' = cfg.telemetry?.budgetWindow ?? '7d';
+    // With no cap, the diagnosis depends only on current config. Avoid
+    // scanning usage/history whose totals cannot affect that diagnosis.
+    if (cfg.telemetry?.budgetUsd == null && cfg.telemetry?.budgetTokens == null) {
+      return evalBudget({ spentUsd: 0, spentTokens: 0 }, cfg, win);
+    }
     // Literal specifiers throughout this file: the Bun-compiled binary bundles
     // only what it can see, and a variable specifier always misses there (the
     // section silently came back empty). Every module these load now exists.
-    const mod = await import('./observability/rollup.js') as {
-      buildRollup: (
-        window: '1d' | '7d' | '30d',
-        cfg: AshlrConfig,
-      ) => import('./types.js').ActivityRollup;
-    };
-    return mod.buildRollup(win, cfg);
+    const mod = await import('./observability/rollup.js');
+    return (await mod.buildRollupAsync(win, cfg)).budget;
   } catch {
     return null;
   }
@@ -191,6 +194,10 @@ async function tryEvalGovernance(
   cfg: AshlrConfig,
 ): Promise<import('./types.js').GovernanceStatus | null> {
   try {
+    if (cfg.telemetry?.budgetUsd == null) {
+      return { level: 'ok', spentUsd: 0, capUsd: null,
+        window: cfg.telemetry?.budgetWindow ?? '7d', message: 'No spend cap set.' };
+    }
     const mod = await import('./observability/governance.js') as {
       evalGovernance: (cfg: AshlrConfig) => import('./types.js').GovernanceStatus;
     };
@@ -278,13 +285,13 @@ async function tryGetIdentity(): Promise<import('./types.js').Identity | null> {
  * If the rollup module is not yet available or throws, degrades to pass/skip
  * so that doctor never hangs or crashes due to missing M5 modules.
  *
- * @param rollup - pre-fetched rollup result (or null on unavailability)
+ * @param budget - current budget evaluation (or null on unavailability)
  */
 function checkSpendBudget(
-  rollup: import('./types.js').ActivityRollup | null,
+  budget: import('./types.js').BudgetAlert | null,
 ): DoctorCheck {
   // Module not available yet or rollup failed — degrade silently to pass.
-  if (rollup === null) {
+  if (budget === null) {
     return check(
       'budget-spend',
       'Spend budget',
@@ -292,8 +299,6 @@ function checkSpendBudget(
       'Observability module not yet available — skipping budget check',
     );
   }
-
-  const { budget } = rollup;
 
   // No cap configured on either dimension → nothing to alert on.
   if (budget.capUsd === null && budget.capTokens === null) {
@@ -354,8 +359,8 @@ function checkNodeVersion(): DoctorCheck {
 }
 
 /** git present on PATH */
-function checkGit(): DoctorCheck {
-  const out = runCmd('git', ['--version']);
+async function checkGit(): Promise<DoctorCheck> {
+  const out = await runCmd('git', ['--version']);
   if (out) {
     return check('git', 'git installed', 'pass', out);
   }
@@ -389,11 +394,12 @@ function checkLocalBin(phm: string | null): DoctorCheck {
 }
 
 /** Workbench binary present: canonical phm or compatible ashlr. */
-function checkAshlrInstalled(phm: string | null): DoctorCheck {
+async function checkAshlrInstalled(phm: string | null): Promise<DoctorCheck> {
   // `which` is Unix-only; Windows uses `where`.
   const finder = process.platform === 'win32' ? 'where' : 'which';
   // `phantom` belongs to Secrets and cannot satisfy this workbench check.
-  const out = phm ?? runCmd(finder, ['ashlr']);
+  const out = phm ?? (process.platform === 'win32'
+    ? await runCmd(finder, ['ashlr']) : findDoctorExecutable('ashlr'));
   if (out) {
     return check('ashlr', 'Phantom CLI installed (phm / ashlr)', 'pass', out);
   }
@@ -1469,6 +1475,11 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   const providers = import('./providers.js')
     .then((m) => m.getProviderRegistry(cfg))
     .catch(() => null);
+  const git = checkGit();
+  const finder = process.platform === 'win32' ? 'where' : 'which';
+  const phmPath = process.platform === 'win32'
+    ? runCmd(finder, ['phm']) : Promise.resolve(findDoctorExecutable('phm'));
+  const installed = phmPath.then(checkAshlrInstalled);
 
   // --- Pre-fetch M3 + M5 + M7 + M19 + M33 + pool-CLI registry results (all async-safe, never throw) ---
   // The receipt-store and worktree-reaper graphs are heavy, so their probe
@@ -1480,7 +1491,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   const [mcpRegistry, toolsRegistry, budgetRollup, genomeHealth, identity, governance, telemetrySinkInfo, poolCliChecks, receiptMod, reaperMod, pluginsCheck, localInferenceCheck] = await Promise.all([
     tryDiscoverMcpServers(),
     tryGetToolsRegistry(),
-    tryBuildBudgetRollup(cfg),
+    tryGetBudgetAlert(cfg),
     tryGetGenomeHealth(cfg, providers),
     tryGetIdentity(),
     tryEvalGovernance(cfg),
@@ -1498,11 +1509,10 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     'pool-cli', 'Pool CLI versions', 'warn',
     'Pool CLI version checks unavailable — rerun phm doctor',
   )]));
-  checks.push(checkGit());
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const phm = runCmd(finder, ['phm']);
+  checks.push(await git);
+  const phm = await phmPath;
   checks.push(checkLocalBin(phm));
-  checks.push(checkAshlrInstalled(phm));
+  checks.push(await installed);
   checks.push(checkConfig());
   checks.push(checkIndex());
   const phantom = getPhantomStatus();

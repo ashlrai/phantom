@@ -96,7 +96,8 @@ describe('Grok bus mailbox contract', () => {
     // Includes a split inside a multibyte Unicode code point.
     for (const byte of bytes) child.stdout.write(Buffer.from([byte]));
     child.complete('');
-    expect(await operation).toEqual({ bytes: Buffer.byteLength('Reply ✓') });
+    expect(await operation).toEqual({ bytes: Buffer.byteLength('Reply ✓'),
+      peers: { wired: false, registered: false, joined: false, usageReported: false } });
     expect(await readFile(request.outboxPath, 'utf8')).toBe('Reply ✓');
     if (process.platform !== 'win32') expect((await stat(request.outboxPath)).mode & 0o777).toBe(0o600);
     expect((await readdir(root)).sort()).toEqual(['inbox.txt', 'outbox.txt']);

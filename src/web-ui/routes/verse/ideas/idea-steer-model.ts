@@ -11,6 +11,7 @@ const NOTE_MAX = 200;
 const VERDICT_TEXT: Record<IdeaVerdict, string> = { 'do-next': 'Do next', 'not-now': 'Not now' };
 
 // Control characters (C0, DEL, C1) and line/paragraph separators become spaces, then whitespace collapses.
+// eslint-disable-next-line no-control-regex -- matching control bytes is the point.
 const oneLine = (value: string): string => value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
 
 export function ideaSteerText(idea: { title: string; repo: string }, verdict: IdeaVerdict, note?: string): string | null {

@@ -2,14 +2,14 @@
 // RQ-MR-8-SIZE-CAP — router queue admission lint (dispatchd step).
 //
 // Reads candidate router queue lines and reports which ones the size cap
-// rejects — a line touching more than one top-level area or carrying an
-// EST-LINES estimate over 300 — along with the proposed split into
+// rejects: a line exceeding its tier's area or EST-LINES budget, along with
+// the proposed split into
 // dependency-free children (one per top-level area, each sliced under the
 // line cap, no depends= edges). Lines whose scope or estimate cannot be
 // measured are reported `review`, never silently admitted.
 //
 //   phantom exec -- node scripts/router-lint.mjs [--input PATH]
-//     [--max-lines N] [--max-areas N] [--max-children N]
+//     [--max-lines N] [--max-areas N] [--max-children N] [--json]
 //
 // Input defaults to stdin and is capped at 8 MiB / 20,000 lines. Requires
 // `npm run build` (imports dist). The report on stdout is a proposal only:
@@ -23,7 +23,7 @@ import { open } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const USAGE = 'node scripts/router-lint.mjs [--input PATH] [--max-lines N] [--max-areas N] [--max-children N]';
+const USAGE = 'node scripts/router-lint.mjs [--input PATH] [--max-lines N] [--max-areas N] [--max-children N] [--json]';
 const INPUT_CAP_BYTES = 8 * 1024 * 1024;
 
 /** One bounded read: the size cap cannot be raced by growth after stat. */
@@ -58,7 +58,8 @@ async function readInput(path) {
 
 async function main() {
   const flags = { '--input': null, '--max-lines': null, '--max-areas': null, '--max-children': null };
-  const args = process.argv.slice(2);
+  // JSON was already the only output format; accept the explicit agent flag.
+  const args = process.argv.slice(2).filter(arg => arg !== '--json');
   if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   if (args.length % 2 !== 0) { console.error(`usage: ${USAGE}`); return 2; }
   for (let i = 0; i < args.length; i += 2) {
