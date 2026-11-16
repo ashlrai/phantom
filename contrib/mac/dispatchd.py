@@ -42,7 +42,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1785,9 +1785,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     ready_ranks = _ready_repo_ranks()
-    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
+    yield_groups, pr_states = admission_history(JOBS, NOW)
+    admission = {f[0]: admission_rank(f[0], f[3], f[2], yield_groups) for f in cand}
+    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
+    for f in cand:
+        reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
+        if reason:
+            admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
+            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason))
+            ev("DONE-NOOP %s [%s]" % (f[0], reason))
+    jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
+    cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
     seen = set(); pc_n = 0; local_ok = None
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.

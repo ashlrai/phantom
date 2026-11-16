@@ -7,7 +7,7 @@ import { cmdQueue } from '../src/cli/queue.js';
 
 const roots: string[] = [];
 const created = 1_800_000_000;
-afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'queue-batches-')); roots.push(root);
   await mkdir(join(root, 'queue', 'batches'), { recursive: true });
@@ -30,6 +30,22 @@ async function publish(root: string, batch: ReturnType<typeof manifest>, job: st
 }
 
 describe('per-line batch session evidence', () => {
+  it('exposes admission reasons through queue JSON and keeps stale or invalid evidence unknown', async () => {
+    const root = await fixture(), runs = join(root, '.ashlr-runs'), path = join(runs, 'queue', 'ranking.json');
+    await mkdir(join(runs, 'queue'), { recursive: true }); vi.stubEnv('HOME', root);
+    const ranking = { at: Date.now() / 1000, decisions: [{ job: 'RQ-A', mergeRate: null, sampledLaunches: 0,
+      unknownLaunches: 1, score: 1, reason: 'target_pr_merged', outcome: 'DONE-NOOP' }] };
+    await writeFile(path, JSON.stringify(ranking));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdQueue(['--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0][0])).ranking).toEqual(ranking);
+    for (const invalid of [{ ...ranking, at: ranking.at - 301 }, { ...ranking, at: ranking.at + 301 },
+      { ...ranking, decisions: [{ ...ranking.decisions[0], reason: 'untrusted arbitrary text' }] }]) {
+      await writeFile(path, JSON.stringify(invalid));
+      expect((await readQueueBatches(runs)).ranking).toBeNull();
+    }
+  });
+
   it('reports 12 outcomes in 3 sessions, isolates failure and preserves empty reasons and auto-merge evidence', async () => {
     const root = await fixture();
     for (const area of ['queue', 'agents', 'fleet']) {

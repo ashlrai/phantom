@@ -17,6 +17,12 @@ const manifestSchema = z.object({
   results: z.record(z.string(), z.object({ outcome: status, reason: z.string().max(500).nullable() })).optional(),
 });
 type Manifest = z.infer<typeof manifestSchema>;
+const rankingSchema = z.object({ at: z.number().finite().positive(), decisions: z.array(z.object({
+  job: id, mergeRate: z.number().min(0).max(1).nullable(), sampledLaunches: z.number().int().nonnegative(),
+  unknownLaunches: z.number().int().nonnegative(), score: z.number().min(0.1).max(1),
+  reason: z.enum(['observed_merge_rate_24h', 'unknown_sample', 'unknown_outcomes', 'target_pr_merged', 'target_pr_closed']),
+  outcome: z.enum(['ready', 'DONE-NOOP']),
+})).max(10000) });
 export interface BatchLineOutcome {
   job: string; outcome: 'pr' | 'empty' | 'failed' | 'unknown';
   pr: string | null; reason: string | null; autoMerge: 'armed' | 'off' | 'unknown';
@@ -26,6 +32,7 @@ export interface QueueBatchReport {
   sessions: Array<{ id: string; repo: string; area: string; outcomes: BatchLineOutcome[] }>;
   totals: { sessions: number; lines: number; pr: number; empty: number; failed: number; unknown: number } | null;
   gaps: string[];
+  ranking: z.infer<typeof rankingSchema> | null;
 }
 
 /** Bound each read and refuse symlinks/devices; receipts are evidence, never executable input. */
@@ -82,8 +89,13 @@ async function lineOutcome(root: string, manifest: Manifest, job: string): Promi
 
 /** Read the dispatcher's existing per-line manifests; no launch, publication or GitHub calls. */
 export async function readQueueBatches(root = join(homedir(), '.ashlr-runs')): Promise<QueueBatchReport> {
-  const report: QueueBatchReport = { schema: 'phantom.queue-batches.v1', evidence: 'available', sessions: [], totals: null,
+  const report: QueueBatchReport = { schema: 'phantom.queue-batches.v1', evidence: 'available', sessions: [], totals: null, ranking: null,
     gaps: ['Publication and auto-merge reflect local receipts; missing evidence is unknown, not live GitHub state.'] };
+  try {
+    const ranking = rankingSchema.parse(JSON.parse((await snapshot(join(root, 'queue', 'ranking.json'), 4 * 1024 * 1024)).text));
+    if (Date.now() / 1000 - ranking.at >= 0 && Date.now() / 1000 - ranking.at <= 300) report.ranking = ranking;
+  } catch { /* Missing or invalid ranking evidence stays unknown. */ }
+  report.gaps.push('Ranking uses resolved solo launches and explicit pr= targets; pending outcomes and live GitHub state are unknown.');
   let names: string[];
   try { names = (await readdir(join(root, 'queue', 'batches'))).filter(name => name.endsWith('.json')).sort(); }
   catch { return { ...report, evidence: 'unknown', gaps: [...report.gaps, 'Batch manifests are unavailable.'] }; }
