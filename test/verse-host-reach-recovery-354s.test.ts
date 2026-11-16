@@ -24,6 +24,7 @@ const SECRET_EXEC = 'SECRET-exec /Users/fakehome/bin 100.64.0.7';
 const SECRET_CONFIG = 'SECRET-config /Users/fakehome/pool.json 100.64.0.8';
 
 const statusA = JSON.stringify({
+  BackendState: 'Running',
   Self: { HostName: 'mac-self', TailscaleIPs: ['100.64.0.9'] },
   Peer: {
     a: { HostName: 'mac-primary', OS: 'macOS', Online: true, LastSeen: '2026-11-14T09:59:00Z', TailscaleIPs: ['100.64.0.1'] },
@@ -31,6 +32,7 @@ const statusA = JSON.stringify({
   },
 });
 const statusB = JSON.stringify({
+  BackendState: 'Running',
   Self: { HostName: 'mac-self', TailscaleIPs: ['100.64.0.9'] },
   Peer: {
     a: { HostName: 'mac-primary', OS: 'macOS', Online: false, LastSeen: '2026-11-14T10:05:00Z', TailscaleIPs: ['100.64.0.1'] },
