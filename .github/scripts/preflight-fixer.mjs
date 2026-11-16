@@ -30,7 +30,7 @@ export const LABEL = 'p0-fix-forward';
 export const SUMMARY_TITLE = '[P0 fix-forward] preflight predicted reds';
 export const CLOUD_CAP = 40;
 export const REPO = 'ashlrai/phantom';
-const CAUSES = new Set(['schedule', 'workflow_dispatch', 'workflow_run']);
+const CAUSES = new Set(['schedule', 'workflow_dispatch']);
 const RUNNABLE = /^(?:test\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts|\.github\/tests\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.mjs)$/;
 
 export function isRunnableTest(file) {
@@ -322,9 +322,11 @@ function runUrl() {
 async function planMain(cwd) {
   requireProducerEnvironment(process.env);
   const cause = process.env.PREFLIGHT_CAUSE ?? '';
-  assert.ok(CAUSES.has(cause), 'PREFLIGHT_CAUSE must be schedule, workflow_dispatch, or workflow_run');
+  assert.ok(CAUSES.has(cause), 'PREFLIGHT_CAUSE must be schedule or workflow_dispatch');
   const head = headSha(cwd);
-  if (cause === 'workflow_run') {
+  // A dispatch from Auto-tag is workflow_dispatch. Skip unless a published
+  // release is still owed, and do not stack another run for the same SHA.
+  if (cause === 'workflow_dispatch') {
     const owed = await owedRelease(cwd);
     const covered = owed && coveredByExistingRun({
       runs: recentPreflightRuns(head), selfId: Number(process.env.GITHUB_RUN_ID), headSha: head, now: Date.now(),

@@ -120,10 +120,26 @@ class AutorunTest(unittest.TestCase):
  def test_started_without_completion_is_held_without_any_network_or_overwrite(self):
   marker=self.state('sha-'+H+'.started');marker.write_bytes(b'original intent\n');before=marker.stat()
   self.execute();self.assertEqual(self.calls(),[]);self.assertFalse((self.root/'gh.calls').exists());self.assertEqual(marker.read_bytes(),b'original intent\n');self.assertEqual(marker.stat().st_ino,before.st_ino)
- def test_all_completed_outcomes_remain_final_without_automatic_retry(self):
-  for rc in [0,4,5,12,14,16]:
+ def test_terminal_signer_outcomes_are_not_retried(self):
+  for rc in [0,5,16]:
    with self.subTest(rc=rc):
     self.state('sha-'+H+'.started').write_text('original\n');self.state('sha-'+H+'.rc').write_text(str(rc)+'\n');self.execute();self.assertEqual(self.calls(),[])
+ def test_retryable_signer_failure_logs_and_stops_after_three_attempts(self):
+  (self.root/'signer.rc').write_text('14\n')
+  self.execute();self.assertEqual(len(self.calls()),1);self.assertTrue(self.state('sha-'+H+'.log').is_file())
+  self.execute();self.execute();self.assertEqual(len(self.calls()),3)
+  self.execute();self.assertEqual(len(self.calls()),3)
+  self.assertTrue((self.root/('release-sign/NEEDS-MASON-'+TAG+'-rc14')).is_file())
+ def test_v3_30_34_is_skipped_and_not_signed_or_recorded(self):
+  self.data['repos/ashlrai/phantom/tags?per_page=100']=[{'name':'v3.30.34','commit':{'sha':H}}]
+  self.execute()
+  self.assertEqual(self.calls(),[])
+  self.assertFalse(self.state('sha-'+H+'.started').exists())
+  self.assertFalse(self.state('sha-'+H+'.rc').exists())
+  self.assertFalse(self.state('sha-'+H+'.log').exists())
+  log=self.state('autorun.log').read_text()
+  self.assertIn('skip v3.30.34 superseded; not edited, published, deleted, or moved', log)
+  self.assertEqual(list((self.root/'release-sign').glob('NEEDS-MASON-v3.30.34*')),[])
  def test_successful_once_per_source_is_not_repeated(self):
   self.execute();self.execute();self.assertEqual(len(self.calls()),1)
  def test_stop_is_untouched_and_blocks_before_network(self):

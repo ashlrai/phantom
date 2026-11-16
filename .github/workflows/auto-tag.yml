@@ -82,6 +82,16 @@ jobs:
       SKIP_OK: ""
       ACTIONS_APP_ID: "15368"   # GitHub Actions; other apps' same-named runs never count
     steps:
+      # GATES v4: preflight must not use workflow_run. Start it here, on
+      # master, with the job token this workflow already holds. A dispatch
+      # failure does not block the tag.
+      - name: Start preflight fixer on master
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${REPO}/actions/workflows/preflight-fixer.yml/dispatches" --input - <<'EOF'
+          {"ref":"master"}
+          EOF
       - name: Detect version change
         id: version
         shell: bash
