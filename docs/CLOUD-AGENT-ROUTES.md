@@ -45,6 +45,7 @@ On the host, these CLI reads are also supported (use `--json`):
 | `ashlr fleet work-board` | The bus work board and availability indicators. |
 | `ashlr fleet order-state` | Inbox order classifications from order-trace and live evidence. |
 | `ashlr fleet runtime-identity` | Sanitized runtime identity and version/freshness evidence. |
+| `ashlr fleet runtime` | Runtime identity plus coordination ledger state (active claims, newest return age) in one sanitized snapshot with one `asOf`. |
 | `ashlr fleet tailnet-peers` | Sanitized tailnet peer evidence. |
 | `ashlr fleet pool-reach` | Primary/backup alias-to-peer reachability evidence. |
 | `ashlr fleet coordination board` | The separate local advisory coordination ledger: claims, messages, proposals and expired-claim count. |
