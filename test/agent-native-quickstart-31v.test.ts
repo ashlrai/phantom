@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TOP_LEVEL_COMMANDS } from '../src/cli/completions.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { cmdKnowledge } from '../src/cli/knowledge.js';
 import { cmdMcp } from '../src/cli/mcp.js';
 import { cmdVerse } from '../src/cli/verse.js';

@@ -194,6 +194,8 @@ export function MoreScreen() {
 
       <Section title="Go to">
         <Row title="Feed" subtitle="Your news, alerts and fleet updates in one stream" onClick={() => navigate({ screen: 'feed' })} />
+        <Row title="Goals" subtitle="What the fleet is aiming for, and how far along each is" onClick={() => navigate({ screen: 'goals' })} />
+        <Row title="Ideas" subtitle="The ranked work backlog the fleet picks from" onClick={() => navigate({ screen: 'ideas' })} />
         <Row title="Live runs" subtitle="What is running on your Mac right now, and a line to the leaders" onClick={() => navigate({ screen: 'runs' })} />
         <Row title="Inbox" subtitle="Everything you told the leaders, from every channel" onClick={() => navigate({ screen: 'inbox' })} />
         <Row title="Leaders" subtitle="What the leaders said, next pass due, directives" onClick={() => navigate({ screen: 'leader' })} />

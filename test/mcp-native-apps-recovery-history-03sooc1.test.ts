@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as history from '../src/core/fleet/apps-recovery-history.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { callNativeTool, listNativeTools, nativeToolSafety } from '../src/core/mcp-native.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
+
+registerFleetNativeTools();
 
 const name = 'phantom_fleet_apps_history';
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

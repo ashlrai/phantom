@@ -163,6 +163,9 @@ def append_locked(queue, planned, timeout):
         for lane, lines in planned.items():
             alive = [line for line in lines
                      if not re.search(r'\b' + re.escape(job_id(line) or '') + r'\b', text)]
+            alive = [re.sub(r'\):', ', enq=%d):' % int(time.time()), line, count=1)
+                     if not re.search(r'(?:^|[\s,(])enq=\d+(?=$|[\s,)])', line) else line
+                     for line in alive]
             kept[lane] = alive
             text += '\n' + '\n'.join(alive)
         flat = [line for lines in kept.values() for line in lines]

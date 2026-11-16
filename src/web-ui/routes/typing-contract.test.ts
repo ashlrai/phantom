@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import seatStrip from './verse/command/seat-strip-model.ts?raw';
 import activity from './verse/chat/activity-model.ts?raw';
-import liveNow from './journal/LiveNowStrip.tsx?raw';
+import liveNow from '../components/stream/LiveSessionCards.tsx?raw';
 
 function typingEscapes(source: string): string[] {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.JSX, source);
@@ -21,7 +21,7 @@ describe('route typing contracts', () => {
   it.each([
     ['seat-strip-model.ts', seatStrip],
     ['activity-model.ts', activity],
-    ['LiveNowStrip.tsx', liveNow],
+    ['LiveSessionCards.tsx', liveNow],
   ])('%s uses checked types without escape hatches', (_name, source) => {
     expect(typingEscapes(source)).toEqual([]);
   });

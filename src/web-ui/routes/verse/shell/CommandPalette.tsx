@@ -1,7 +1,7 @@
 /**
  * routes/verse/shell/CommandPalette.tsx — ⌘K (unit C1; SPEC-310C §1).
  *
- * Lives in the SHELL chunk (VerseApp imports it statically), so opening it
+ * Lives in the SHELL chunk (PhantomApp imports it statically), so opening it
  * costs one render — no chunk to fetch, no surface to mount — which is how
  * it opens inside the 50 ms budget. It NEVER switches surface on its own:
  * opening it on Fleet leaves Fleet on screen (the pre-3.10 switcher jumped to

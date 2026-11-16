@@ -41,3 +41,7 @@ The original contracts-first planning content that lived in this file
 git history for anyone who wants the original reasoning; it is not restated
 here because every one of its milestones has since shipped and the concrete
 "what to build" detail is no longer actionable.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

@@ -18,6 +18,7 @@
  * whose time does not parse, sorts newest first and caps the stream. Every
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
+import { groupMergeBursts } from './feed-merge-burst.js';
 import type { FeedReport } from '../../../../core/feed.js';
 import { buildCommsDigestFeedItems, type CommsDigestInput } from '../../../../core/fleet/feed-comms-digest.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
@@ -78,6 +79,7 @@ export interface FeedSources {
   teammate?: (UnifiedInboxView & { generatedAt?: string }) | null;
   /** The Comms agent's latest run reading; one digest item per run id. */
   comms?: CommsDigestInput | null;
+  inboxPlans?: unknown;
 }
 
 export type FeedFilter = 'all' | 'leader' | 'alert' | 'merge' | 'owner' | 'update' | 'bus' | 'teammate' | 'comms';
@@ -205,8 +207,41 @@ const KIND_PANE: Partial<Record<FeedKind, FeedPane>> = {
  * Applied in buildFeed so each adapter's output stays the source's own data.
  */
 export function feedItemPane(item: Pick<FeedItem, 'id' | 'kind'>): FeedPane | undefined {
-  if (item.kind === 'alert') return item.id.startsWith('gmail:') ? 'fleet-inbox' : undefined;
+  if (item.kind === 'alert') return (item.id.startsWith('gmail:') || item.id.startsWith('inbox-over:')) ? 'fleet-inbox' : undefined;
   return KIND_PANE[item.kind];
+}
+
+const INBOX_SCHEMA = 'fleet.gmail-archive-plan-latest.v1';
+const INBOX_STALE_MS = 24 * 3_600_000;
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/**
+ * One alert per inbox in the saved Gmail archive plan whose unread count is over
+ * its target. A payload that is not the plan schema, or any malformed plan row,
+ * gives nothing. Plans older than 24 h say so in the title.
+ */
+export function inboxOverAdapter(payload: unknown, now: number = Date.now()): FeedItem[] {
+  const top = record(payload);
+  const latest = record(top.latest);
+  if (top.schema !== INBOX_SCHEMA || latest.schema !== INBOX_SCHEMA || !Array.isArray(latest.plans)) return [];
+  const items: FeedItem[] = [];
+  for (const raw of latest.plans as unknown[]) {
+    const p = record(raw);
+    if (typeof p.inbox !== 'string' || typeof p.at !== 'string' || !isCount(p.unread) || !isCount(p.target) || !isCount(p.archiveCount)) return [];
+    if (p.unread <= p.target) continue;
+    const then = Date.parse(p.at);
+    const stale = Number.isFinite(then) && now - then > INBOX_STALE_MS;
+    const senders = (Array.isArray(p.topSenders) ? p.topSenders as unknown[] : []).flatMap(s => {
+      const r = record(s);
+      return typeof r.sender === 'string' && isCount(r.count) ? [`${r.sender} (${r.count})`] : [];
+    }).slice(0, 3);
+    items.push({
+      id: `inbox-over:${p.inbox}:${p.at}`, at: p.at, kind: 'alert', label: 'Inbox',
+      title: `${p.inbox}: ${p.unread} unread, target ${p.target}${stale ? ' (plan is stale)' : ''}`,
+      body: `The archive plan would archive ${p.archiveCount}.${senders.length ? ` Top senders: ${senders.join(', ')}` : ''}`,
+    });
+  }
+  return items;
 }
 
 /** Every source merged, each item with its owning pane: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
@@ -224,6 +259,7 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.n
     ...teammateAdapter(sources.teammate),
     ...commsWaitingAdapter(sources.teammate),
     ...buildCommsDigestFeedItems(sources.comms, now),
+    ...inboxOverAdapter(sources.inboxPlans, now),
   ];
   const timed = all.flatMap(item => {
     const ms = Date.parse(item.at);
@@ -237,9 +273,8 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.n
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     out.push(item);
-    if (out.length >= limit) break;
   }
-  return out;
+  return groupMergeBursts(out).slice(0, Math.max(0, limit));
 }
 
 export function filterFeed(items: readonly FeedItem[], filter: FeedFilter): FeedItem[] {

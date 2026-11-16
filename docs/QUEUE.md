@@ -1,18 +1,142 @@
-# Phantom job queue
+# Shared capability-routed work market
 
-`phm queue` owns a dispatch-neutral `queue.v1` snapshot at
+Jobs describe required capabilities and desired impact. They enter one shared
+market. The dispatcher selects an available executor at claim time, using the
+job's requirements, provider availability and measured outcomes. A lane or pool
+on an older job is a preferred-lane hint. An absent or unknown hint leaves the
+job open to every eligible executor. An explicit local executor remains local.
+
+This is the source candidate in `contrib/mac/dispatchd.py`, supported by
+`contrib/mac/work_market.py`. Live adoption requires Security review and re-pin,
+then the sanctioned `contrib/mac/install.sh` path. Agents never install over
+`~/.ashlr-runs/bin`. Publication remains fork-only through `publish.sh`.
+
+## Job requirements
+
+The live producer input is `queue/router-queue.md`. For example:
+
+```text
+- READY RQ-MARKET (P0, repo=phantom, tier=frontier, needs=git|gh|node, min_tier=work, max_cost_class=included, exclusive=true, impact=90): Implement the shared work market. Acceptance: routing tests pass.
+- READY RQ-CLI (P1, repo=phantom, tier=work, preferred_lane=claude, needs=claude-cli|secrets:EXAMPLE_HANDLE): Complete the CLI integration.
+```
+
+`needs` is a list of capability names, including `git`, `gh`, `node`,
+`codex-cli`, `claude-cli`, `browser`, or `secrets:NAME`. A secret capability is
+only a host-advertised reference name. It never resolves credentials and grants
+no new access. Missing required capabilities exclude a lane. Explicit CLI needs
+stay binding even when the preferred executor is full. `min_tier` and `tier`
+use `fast`, `mid`, `work`, `frontier`; a requested execution tier below its
+minimum stays unrunnable. `max_cost_class` is `local`, `included`, or `metered`.
+The ordering is a budget constraint, not a dollar estimate or spending authority.
+`exclusive=true` keeps a job out of combined agent sessions. It does not stop
+unrelated workers. Priority (`P0` before `P1`, etc.) precedes descending numeric
+impact. Existing repair, repository, size and use-it-all preferences break ties;
+rebase work cannot jump ahead of a higher-priority runnable job.
+
+`pool=` and `lane=` remain accepted hints; `preferred_lane=` takes precedence.
+Restock retains legacy lane hints in the third TSV column for older readers and
+carries the original requirements in a sixth JSON column. It never replaces an
+unknown original hint with a hard executor constraint. Existing five-column
+rows work unchanged. The full wire shape is:
+
+```text
+job<TAB>repo<TAB>lane-hint-or-empty<TAB>tier<TAB>prompt-path<TAB>requirements-json
+```
+
+For example, the sixth column can be:
+
+```json
+{"preferred_lane":null,"needs":["git","gh","node"],"min_tier":"work","max_cost_class":"included","priority":"P0","impact":90,"exclusive":true}
+```
+
+Invalid requirement objects remain queued with `invalid_requirements`; they
+never fall back to unrestricted execution. Prompt paths, retired jobs,
+dependencies, prechecks, active worktrees, batch leases and the tick lock retain
+their existing checks. Producers count lane-neutral and unknown-hint rows toward
+the same global queue capacity, preventing over-admission.
+
+## Executor admission and selection
+
+Host-owned `queue/slots.json` supplies targets, bounds, holds, quota and optional
+`capabilities`, `tiers`, and `cost_class`. Existing executor contracts default to
+`git`, `gh`, `node` and their own CLI where supported. Browser and secret names
+must be advertised explicitly. Local models require explicit local selection,
+loopback health and the existing size and concurrency checks.
+
+Additional host-installed executors can join without another lane constant.
+Their slots entry must set `executor_ready:true`, advertise `capabilities`, and
+supply nonnegative integer `target`, `ceiling`, and `hard_cap` bounds. This is an
+advertisement of an already installed launcher, not an installation or auth flow.
+New executors also need explicit `tiers` and `cost_class`; unknown tier or cost
+evidence excludes them. Advertise only supported `tiers`. Targets and operator
+bounds remain enforced; no new fixed market concurrency limit is introduced.
+
+The market rejects capability, tier and cost mismatches, holds, auth failures,
+exhausted quota, provider backoff, unhealthy local endpoints and saturated lanes.
+It checks `models.json` tier availability, the fleet controller's budget quota
+projection, and the effective targets after load shedding. Capacity is checked
+again for every candidate so several jobs cannot reserve the same final slot.
+The existing admission gate remains the authority for host load, processes,
+worktrees, disk, adaptive global concurrency and the per-tick claim limit.
+
+Among eligible executors, preference comes first, followed by utilization,
+measured empty rate and yield, cost class, known remaining quota, measured model
+latency and stable executor order. Recent finish events supply empty-rate and
+`model_s` latency observations, with measured `wall_s` session duration as a
+fallback. Audit `latency_source` distinguishes a model phase from total session
+time; it never labels total time as model-only latency. An optional `queue/adaptive.json` projection may
+supply `{ts,lanes:{"lane-name":{empty_rate,yield_rate,model_latency_s,backoff}}}`;
+only observations at most 300 seconds old are used. Missing measurements stay
+null in audit data. Advisory observations cannot advertise capabilities, change
+a target, clear a hold or enable spending. Unknown model mappings do not invent
+a price. Cost classes come from host executor metadata.
+
+## Routing receipts and JSON audit
+
+Every evaluated decision appends a private JSON record to
+`metrics/work-market.jsonl`. Lifecycle events remain in `metrics/jobs.jsonl`.
+The decision shape is:
+
+```json
+{"schema":"work-market.v1","event":"route_decision","job":"RQ-MARKET","chosen_lane":"claude","rejected_lanes":[{"lane":"codex-personal","reason_codes":["saturated"]}],"reason_codes":["healthy_capacity","preferred_lane_fallback"],"ranking_inputs":{"claude":{"running":0,"target":2,"quota":null,"empty_rate":null,"yield_rate":null,"cost_class":"included","latency_s":null}}}
+```
+
+Other reason codes include `missing_capability`, `tier_unavailable`,
+`cost_class_exceeded`, `quota_exhausted`, `provider_backoff`, `held`,
+`no_runnable_lane`, `global_admission`, and `hysteresis_*`. An evaluated job with
+no eligible executor records `chosen_lane:null`. No task text or credentials
+appear in these records. This versioned event is also an input seam for the Jev
+typed-decision learner; it does not itself activate a learner.
+
+Actual assignments persist under `ready.lock` in `queue/route-state.json`.
+Enqueue hints have `assigned:false` until a runnable claim. Existing receipts
+without that field remain binding. Assigned routes keep the 60-minute residency
+and two moves per six hours. Only explicit auth failure or numeric zero quota
+permits early movement; congestion and manual holds do not. A recovered or new
+launch receipt fixes the pool permanently, including each batch member.
+Changing preferences cannot move a running job. See
+[route hysteresis](ROUTE-HYSTERESIS.md).
+
+```sh
+phm route explain --json
+phm pool admission --json
+```
+
+## Dispatch-neutral queue snapshot
+
+`phm queue` owns the separate `queue.v1` coordination snapshot at
 `~/.ashlr-runs/queue/queue.v1.json`. `--dir <directory>` selects an isolated store.
-This command does not start workers, change dispatchd, push code, access vendor
-authentication, call inference, or fetch credentials. dispatchd remains the
-fallback until a separate, explicit cutover. Do not dispatch the same imported
-jobs from both schedulers. Publication remains exclusively through publish.sh.
+The CLI accepts and round-trips the same requirements. Adding to this snapshot
+does not append to `ready.tsv` or start a worker. There is no second scheduler
+cutover here; live production remains the router Markdown and dispatcher path.
+Do not dispatch the same jobs through two schedulers.
 
 ## Commands
 
 ```sh
 phm queue import router-queue.md --json
 phm queue list --json
-phm queue add RQ-EXAMPLE --priority P0 --pool codex-personal --tier frontier \
+phm queue add RQ-EXAMPLE --priority P0 --tier frontier --needs git,gh,node \
   --repo phantom --scope 'Implement the feature' --acceptance 'Tests pass' \
   --deps RQ-PREREQUISITE --json
 phm queue claim RQ-EXAMPLE --owner worker-1 --json
@@ -41,7 +165,10 @@ The canonical TypeScript contract and runtime validator are in
 [`schema.ts`](../src/core/queue/schema.ts). A document contains `schema: "queue.v1"`
 and a `jobs` array. Each job has a unique `id`, status
 `READY|CLAIMED|PR-OPEN|BLOCKED|HOLD|PROPOSED|SPLIT-PARENT|FIXUP|LAND|DONE|RETIRED|DROPPED`,
-`priority`, `pool`, `tier`, `repo`, `deps`, `scope`, `acceptance`, and `claims`.
+`priority`, `tier`, `repo`, `deps`, `scope`, `acceptance`, and `claims`.
+The optional compatibility `pool` defaults to `any` when adding a job. Optional `preferred_lane`, `needs`,
+`min_tier`, `max_cost_class`, `exclusive`, and `impact` carry the market contract;
+JSON import, replay, and Markdown exports preserve them.
 Claims record `owner`, `claimedAt`, and optional `finishedAt`. Jobs optionally
 carry `prUrl` and `blockedReason`. Timestamps are ISO dates, PR URLs are
 credential-free HTTPS, and self-dependencies and duplicate dependency IDs are
@@ -68,8 +195,8 @@ bold. Job IDs use the `RQ-` prefix; the job id is the last `RQ-*` token in the
 header (everything before the first `:` that follows the first `RQ-*` token),
 excluding tokens claimed by a dependency or `children`/`parent` keyword. Field
 groups are balanced parentheses, so inner `(...)` pairs do not truncate them.
-Fields accept comma or semicolon separators. Routing fields (`priority`, `pool`,
-`tier`, `repo`, `deps`) come only from parenthesized groups; `pool` may also be
+Fields accept comma or semicolon separators. Routing fields (`priority`, `pool`, `preferred_lane`, `needs`,
+`min_tier`, `max_cost_class`, `exclusive`, `impact`, `tier`, `repo`, `deps`) come only from parenthesized groups; `pool` may also be
 inferred from a known pool name in the pre-id tokens. Dependencies use `|`, `+`,
 commas, or spaces within the field (CLI `--deps` uses commas), and are also
 collected from prose (`deps=`, `depends on`, `after`, `waits for`, `blocked by`,
@@ -113,6 +240,55 @@ tier name itself. The vocabulary lives in
 [`queue-tier.ts`](../src/core/drive/queue-tier.ts). Keep it identical to
 `TIERS` in `contrib/mac/dispatchd.py`.
 
+### Tier-scaled session scope
+
+Choose a job's tier for the model that will actually run it. Use `frontier`
+for complete features spanning related concerns on models such as
+`gpt-6-astra`, Opus or `swe-2-max`; keep small models on `fast`. A model name
+or pool alone never upgrades a task's tier. Check the launcher's selected model
+before assigning a larger brief.
+
+| Tier | Files per PR | Changed-line budget | Top-level areas in admission lint |
+| --- | ---: | ---: | ---: |
+| `frontier` | 40 | 600 | 8 |
+| `work` | 15 | 200 | 1 |
+| `mid` | 8 | 120 | 1 |
+| `fast` | 2 | 80 | 1 |
+
+`QUEUE_TIER_SCOPE` in `src/core/drive/queue-tier.ts` defines these planning
+budgets. Queuegen FIXUP and REBASE envelopes emit `max-files=` and `size<=`.
+The Mac restocker and launcher candidate emit matching scope and acceptance:
+finish the complete feature, not the minimum demo; add tests, run them, and
+update docs. Frontier briefs can combine related concerns, with **one mergeable
+PR per job**. Narrower explicit task limits and named-file restrictions win.
+The local-model lane always receives the fast prompt budget.
+
+Admission lint checks declared `EST-LINES` against the tier's line budget
+and checks the union of declared and inferred top-level areas. A tierless
+envelope uses work defaults. An explicit `size<=` can lower the estimate cap;
+`max-files=` can lower the file planning budget. JSON results include effective
+`scope: {tier, maxFiles, maxLines, maxAreas}` on valid admission lines. File
+counts are prompt budgets, not a measurement of the eventual diff. Missing
+estimates remain `review`; unknown or conflicting tiers remain `invalid`.
+Unbounded scope is still rejected. Explicit operator `--max-lines` and
+`--max-areas` options override tier defaults, with narrower envelope caps retained.
+
+Copy-paste an offline admission example after building the source:
+
+```sh
+printf '%s\n' '- READY RQ-FEATURE (pool=devin, tier=frontier, repo=phantom, max-files=40, size<=600): Finish src/feature.ts with test/feature.test.ts and docs/feature.md EST-LINES=600' | node scripts/router-lint.mjs --json
+python3 contrib/mac/restock.py --dry-run --json
+```
+
+The second command reads local queue state and includes `scope_budgets` in its
+JSON plan. Neither command launches work. The restocker and launcher are
+repository candidates; Security must review and re-pin them before any live
+installation. Existing secret, sandbox, hold-list, publish and merge controls
+still apply. Work-only supply writers keep `size<=200`; empty-job retries
+retain their deliberately smaller recovery brief. No tracked general prompt
+template contains the literal `Under 15 files`; explicit owner-authored caps
+are preserved verbatim.
+
 ### Queuegen dedupe and empty-outcome suppression
 
 `queuegen` ([`queuegen.ts`](../src/core/drive/queuegen.ts), run by
@@ -142,6 +318,32 @@ The same empty-streak rule guards relaunch at the dispatcher: see
 [`contrib/mac/README.md`](../contrib/mac/README.md) for launch-precheck
 code 14.
 
+### Merge-queue throughput loop
+
+`merge-queue-loop` ([`merge-queue-loop.ts`](../src/core/drive/merge-queue-loop.ts),
+run by `node scripts/merge-queue-loop.mjs cycle [--dry-run]`) makes one pass
+over the fleet PRs of the seven approved repos. A green, mergeable PR is
+added to the default branch's GitHub merge queue (`enqueuePullRequest` with
+`expectedHeadOid`, so a moved head is refused); the queue still runs every
+required check on the merge group. A BEHIND PR gets `updatePullRequestBranch`
+with the MERGE method (a base merge commit, never a rewrite or force-push) only
+where it helps: in a repo without a merge queue, or when its head reports no
+checks at all; the queue tests against the latest base itself. A conflicting PR gets one fix-forward line per head
+under the same `RQ-DRAIN-<repo>-<pr>-<sha7>` id refix-loop uses, so the two
+never double-append. Red checks stay with refix-loop. Repos without a merge
+queue are never auto-enqueued, and PRs touching Security-pinned paths (or with
+a truncated file list) are reported as `pinned`, not enqueued. Each action is
+written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
+per cycle.
+
+`node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE ...`
+counts merged PRs per UTC day from each clone's first-parent history
+([`merged-per-day.ts`](../src/core/drive/merged-per-day.ts)) and appends
+`fleet.merged-per-day.v1` rows to `~/.ashlr-runs/metrics/merged-per-day.jsonl`.
+A row is `verified` only when the ref tip closes the day, first-parent dates
+are ordered and no PR repeats; a shallow clone that stops inside the day is
+reported as `history-short`, not as a low count.
+
 ### Stage delegation (bottleneck-only)
 
 Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
@@ -163,6 +365,63 @@ update the status while retaining original text and append a comment with claim,
 PR and block metadata. JSON export is the complete backup and restore format.
 `export --md` writes `queue.mirror.md` with a read-only notice and mode 0444 on
 POSIX. It never overwrites `router-queue.md`; the mirror is not an input channel.
+
+## Self-decomposition (spawn.v1)
+
+A worker that holds a CLAIMED or PR-OPEN job may propose bounded children
+through a `spawn.v1` document — agent self-decomposition without dispatch
+authority. The proposer names `parent` and `owner` (which must hold the
+parent's active claim) plus 1-8 `jobs` carrying `scope`, `acceptance`,
+optional `deps` (existing or sibling ids, never self), and optional `tier`
+and `priority` fields. Child ids are `RQ-*`; omitting `id` derives a
+deterministic content hash so replays dedup. Intake is atomic: any policy
+violation fails the whole proposal, while ids already present in the queue
+(any status) or in the `jobs.jsonl` merged ledger are skipped as duplicates.
+
+Children land as PROPOSED with `parent` and `depth` lineage recorded on the
+job and emitted as `parent=`/`depth=` fields on exported lines. The intake
+is fail-closed bounded: at most 8 children per parent ever, at most 4
+accepted proposals per parent per 24 h (a `spawn-proposals.jsonl` journal
+beside the snapshot; a corrupt journal refuses rather than unlocking the
+cap), and a decomposition depth cap of 2 — grandchildren cannot spawn
+further. There is no credential or lane escalation: children always inherit
+the parent's `pool` and `repo`, may only take an equal-or-lower tier
+(`fast < work < mid < frontier`) and equal-or-lower urgency (`P0`-`P9`, the
+digit must not beat the parent's), and must satisfy the standing pool-kind
+routing policy. Scope and acceptance are prompt data: bounded to 4 000 and
+2 000 characters, free of control characters, and refused outright when they
+carry secret-shaped material — the rejection never echoes the text.
+
+```sh
+phm queue spawn ./spawn.json --dir <queue-directory> --json
+cat spawn.json | phm queue spawn - --json
+phm queue serve --port 8471 --token-file ~/.ashlr-runs/queue/spawn-ingest.token --json
+```
+
+`phm queue serve` exposes the same planner as a small loopback-only ingest
+API (`POST /v1/spawn` on 127.0.0.1, `GET /v1/health` for liveness), gated by
+a bearer token kept in a mode-0600 file that is created on first run and
+never printed. The API is value-blind: request bodies are never logged and
+error bodies carry rejection codes only (`invalid-document`,
+`unknown-parent`, `parent-not-active`, `owner-mismatch`, `depth-cap`,
+`children-cap`, `rate-limited`, `tier-escalation`, `priority-escalation`,
+`pool-routing`, `unknown-dep`) — never submitted text. PROPOSED children are
+not claimable; promotion to READY is the operator act `phm queue promote <id>`,
+and no ready.tsv or dispatchd wiring is implied.
+
+## Specialist coordination and teammate reservations
+
+The [orchestration cycle](FLEET-COORDINATION.md#leader-orchestration) proposes
+specialist assignments from existing queue and outcome evidence. Applying it
+records advisory peer messages and a journal; the existing dispatcher still
+claims and executes jobs. A journal status of `admitted` is not execution proof.
+
+[iMessage teammate tasks](IMESSAGE.md#fleet-teammate-tasks-and-evidence) reserve
+an exclusive CLAIMED job for `imsg:<peer>` when enqueue is applied. They do not
+enter the ordinary READY worker pool. A matching peer DONE result settles the
+local claim, while BLOCKED/FAILED, expiry or an allowed unsent withdrawal
+settles it as BLOCKED. These are local bookkeeping outcomes; independently
+verify peer-reported work before relying on a completion claim.
 
 ## Storage and failure behavior
 
@@ -324,3 +583,21 @@ is the sum of recorded job tokens divided by merged PRs; it is unknown if any
 job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
+
+## Waiting to launch
+
+Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading.
+
+### Retry empty jobs
+
+Run `phm jobs retry-empty --dry-run` to preview READY lines for empty jobs from
+ the last 24 hours whose notes or logs identify an overly broad task or slow or
+ timed-out tests. Run `phm jobs retry-empty --apply` to append the same kind of
+ lines to the router queue. `--json` returns the planned lines for agents;
+ `--file <path>` selects a queue file. Each retry keeps the original repo and
+ route and asks for one independently shippable part. Jobs without one
+ unambiguous original queue line are skipped, as are duplicates and work
+ already done. The queue directory's `empty-retry-receipts` records each retry
+ permanently, including if the queue line is later removed. Keep that directory
+ when moving the queue. A crash between recording a receipt and writing the
+ queue can leave a job unqueued; inspect the queue before manual recovery.

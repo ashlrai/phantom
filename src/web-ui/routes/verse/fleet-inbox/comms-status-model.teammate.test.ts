@@ -3,7 +3,7 @@ import { readCommsStatus, teammateLatencyLine, type TeammateLatency } from './co
 
 const base: TeammateLatency = {
   windowHours: 24, targetMinutes: 5, texts: 6, answered: 5, unanswered: 1, medianMinutes: 2, withinTarget: 5,
-  oldestUnanswered: { ageMinutes: 14 }, sourceState: 'healthy',
+  oldestUnanswered: { ageMinutes: 14 }, latestTextAt: '2026-11-09T11:30:00.000Z', sourceState: 'healthy',
 };
 const response = (teammate: unknown) => ({
   version: 1, generatedAt: '2026-11-09T12:00:00.000Z', drafts: null, emailOutbox: null,
@@ -34,4 +34,6 @@ it('gives null for missing or malformed teammate input', () => {
   expect(readCommsStatus(response({ ...base, texts: -1 }))?.teammate).toBeNull();
   expect(readCommsStatus(response({ ...base, sourceState: 'fast' }))?.teammate).toBeNull();
   expect(readCommsStatus(response({ ...base, oldestUnanswered: { ageMinutes: 'x' } }))?.teammate).toBeNull();
+  expect(readCommsStatus(response({ ...base, latestTextAt: 5 }))?.teammate).toBeNull();
+  expect(readCommsStatus(response({ ...base, latestTextAt: 'not a date' }))?.teammate).toBeNull();
 });

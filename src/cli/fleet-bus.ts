@@ -17,10 +17,12 @@ export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json
        phm bus task claim|renew|release <task-id> [--peer <id>] [--json]
        phm bus task handoff <task-id> <peer-id> [--peer <id>] [--json]
 
-phm fleet bus ... is the same board. --root <abs> and --queue-root <abs> override
-the default private coordination paths. Quote titles and bodies as one argument;
--- permits content beginning with -. Output is JSON. Peer labels are cooperative
-routing labels, never identities; fleet claims grant no execution authority.`;
+phm fleet bus ... is the same board. phm bus send|inbox|ack is the separate
+durable mailbox (phm bus send --help). --root <abs> and --queue-root <abs>
+override the default private coordination paths. Quote titles and bodies as one
+argument; -- permits content beginning with -. Output is JSON. Peer labels are
+cooperative routing labels, never identities; fleet claims grant no execution
+authority.`;
 
 const ARITIES: Record<string, number> = {
   'thread:create': 1, 'thread:join': 1, 'thread:post': 2,

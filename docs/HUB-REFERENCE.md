@@ -162,7 +162,7 @@ They do not install an unreleased source feature or activate the dormant daemon.
 
 ### Install from source
 
-The npm install is [in the README](../README.md#the-cli). To run from a checkout instead:
+The npm install is [in the README](../README.md#quickstart). To run from a checkout instead:
 
 ```sh
 git clone https://github.com/ashlrai/phantom
@@ -459,6 +459,17 @@ ashlr pulse memory --samples memory.json  # sampled RSS and memguard benchmark
 ashlr audit                # append-only confinement + action audit log
 ```
 
+`fleet dispatch-events` reads the dispatcher's text log,
+`~/.ashlr-runs/queue/dispatch-events.log` (else `~/.ashlr-runs/dispatch-events.log`),
+or `--file <path>`. A row is a timestamp, an uppercase kind (`LAUNCH`,
+`LANE_HOLD`, `DISKGUARD`, ...) and free-text payload. The timestamp is either
+the dispatcher's local `YYYY-MM-DD HH:MM:SS` or an ISO instant with a timezone,
+optionally in square brackets. `--since` takes an ISO instant with a timezone
+and is inclusive. `--json` returns `{ events, truncated, malformedLines,
+emptyLines, source, path }`; each event has `timestamp`, `at` (UTC ISO), `kind`
+and the uninterpreted `message`. At most the newest 5000 matches are kept.
+A missing file reports `source: "missing"`. The command only reads.
+
 `fleet status --json` emits the additive `schema: "fleet.v1"` contract.
 Its `memory` block reads only local files under `~/.ashlr-runs`:
 
@@ -720,3 +731,7 @@ Resolution: env → `locus.enforce` → `locus.firm === true` → off. See
 warn): [`docs/LOCUS-FIRM-FLEET.md`](https://github.com/ashlrai/phantom/blob/master/docs/LOCUS-FIRM-FLEET.md). When repos are
 enrolled, Locus is on PATH, and `locus.firm` is still false, `ashlr doctor` /
 preflight soft-warns *consider locus.firm for production* (non-blocking).
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

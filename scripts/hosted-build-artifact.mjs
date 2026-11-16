@@ -503,6 +503,7 @@ export function verifyPushCi({ repository, revision, runId, runAttempt, read }) 
   }
   const required = [
     ['Secret-shape scan', ['Scan candidate diff (fail closed)']],
+    ['Secret scan (diff)', ['Scan the commits this event adds']],
     ['Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)']],
     ['Classify PR site lane', ['Bind candidate source']],
     ['Merge Gate', ['Require selected CI lane']],

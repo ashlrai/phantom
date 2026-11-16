@@ -265,6 +265,19 @@ an `ApiError` with that code.
 
 ---
 
+## 5a. UI settings — one file
+
+Appearance (theme, accent, density, display size/font, radius, motion) and layout
+(sidebar/resources width, panel visibility) live in `~/.ashlr/ui.json`, defined
+once in `src/core/ui-settings-schema.ts` (schema, defaults, total normalizer; no
+node imports so the browser bundles it) with file IO in `src/core/ui-settings.ts`
+and `GET`/`PUT /api/ui-settings` (PUT needs `--allow-dispatch` plus the mutation
+token). `data/ui-settings-sync.ts` applies the file over the stores once the read
+session exists, and debounces store changes back into one PUT; localStorage is
+only the first-paint cache. Agents edit the same file; Settings ▸ Config file
+shows the path, a copy button, a raw editor and "Reload from file". To add a
+setting: add it to the schema, then to the owning store — nothing else.
+
 ## 6. Auth — two tokens, two lifecycles
 
 Mirrors `server.ts` exactly; see `data/auth-store.ts`'s header comment for
@@ -676,7 +689,7 @@ More, stored as layout state only).
   scopes, step-up) are in `mobile/device-permissions.ts`; they can only take
   authority away.
 - **Two budgets.** `check-first-paint-budget.mjs` measures the phone's own
-  first paint (`--mobile-budget-kb`, 250) from `VerseMobileApp` + the Home
+  first paint (`--mobile-budget-kb`, 250) from `PhantomMobileApp` + the Home
   frame. React is ~220 KB of it, so the first paint is a frame of skeletons;
   the runtime (activity loop, permissions, sheet, toasts), Home's cards and
   every other screen are preloaded chunks that download in parallel with the

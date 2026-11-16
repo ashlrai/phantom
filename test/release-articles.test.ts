@@ -213,7 +213,7 @@ function qualificationWorkflow(documentation = false, frontend = false): Record<
   const jobs = workflow['jobs'] as Record<string, Record<string, unknown>>;
   // Restore the protected-era topology: post-era fast-lane jobs and their daily,
   // dispatch and merge-group conditions did not exist in the reviewed source.
-  for (const name of ['secret-shape', 'quick', 'docs', 'fixup-queue', 'documentation', 'frontend']) delete jobs[name];
+  for (const name of ['secret-shape', 'secret-scan', 'quick', 'docs', 'fixup-queue', 'documentation', 'frontend']) delete jobs[name];
   jobs['site']!['if'] = "needs.classify.outputs.lane == 'site'";
   jobs['ci']!['if'] = "needs.classify.outputs.lane == 'full'";
   if (frontend) documentation = true;
@@ -509,10 +509,16 @@ describe('fresh public facts are data, not saved release authority', () => {
     }
     return value;
   }
-  function withMergeGateJobs(endpoint: string, raw: unknown, separateProducer = false): unknown {
+  function withMergeGateJobs(endpoint: string, raw: unknown, separateProducer = false, diffScan = false): unknown {
     const value = withAncillaryJobs(endpoint, raw) as Record<string, unknown>;
     if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
       const jobs = value['jobs'] as Record<string, unknown>[];
+      if (diffScan) jobs.push({ id: 909, name: 'Secret scan (diff)', run_id: 20, head_sha: SOURCE,
+        status: 'completed', conclusion: 'success', labels: ['ubuntu-latest'], steps: [
+          { name: 'Checkout', status: 'completed', conclusion: 'success' },
+          { name: 'Install pinned Gitleaks', status: 'completed', conclusion: 'success' },
+          { name: 'Scan the commits this event adds', status: 'completed', conclusion: 'success' },
+        ] });
       jobs.push({ id: 903, name: 'Docs PR (docs-only)', run_id: 20, head_sha: SOURCE,
         status: 'completed', conclusion: 'skipped', labels: ['ubuntu-latest'], steps: [] });
       jobs.push({ id: 902, name: 'Merge Gate', run_id: 20, head_sha: SOURCE,
@@ -561,7 +567,7 @@ describe('fresh public facts are data, not saved release authority', () => {
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
   it('binds the exact current complete source while retaining all fifteen full qualification jobs', async () => {
-    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
+    const reader = fixtureReader((endpoint, raw) => withMergeGateJobs(endpoint, raw, false, true), { workflowBytes: readFileSync(join(process.cwd(), '.github/workflows/ci.yml')) });
     expect(await verifyPublishedRelease(proposed, reader, NOW)).toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
   });
   it('retains the immutable C22 separate-producer workflow and its complete 24-job inventory', async () => {
@@ -584,7 +590,7 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it.each(['smoke-missing', 'smoke-duplicate', 'legacy-skipped', 'daily-ran', 'daily-missing'])('refuses a mixed or incomplete combined producer inventory: %s', async kind => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const smoke = jobs.find(job => job['name'] === 'Desktop release smoke')!;
@@ -602,7 +608,7 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it.each(RELEASE_CI_JOBS)('the combined producer cannot replace complete release role %s', async name => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         jobs.splice(jobs.findIndex(job => job['name'] === name), 1);
@@ -614,7 +620,7 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it.each(['full-skipped', 'full-step-skipped', 'full-step-missing', 'scan-skipped', 'scan-step-skipped', 'scan-runner', 'producer-ran', 'smoke-ran', 'excluded-step-ran'])('refuses incomplete current release qualification: %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const full = jobs.find(job => job['name'] === RELEASE_CI_JOBS[0])!;
@@ -653,12 +659,12 @@ describe('fresh public facts are data, not saved release authority', () => {
       .toMatchObject({ sourceSha: SOURCE, ci: { id: 20, attempt: 1 } });
     for (const edited of [current.replace('    timeout-minutes: 90', '    timeout-minutes: 91'),
       current.replace("matrix.label == 'ubuntu, authority 1/3' && 60 || 25", "matrix.label == 'ubuntu, authority 1/3' && 61 || 25")]) {
-      await expect(verifyPublishedRelease(proposed, fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(edited) }), NOW)).rejects.toThrow();
+      await expect(verifyPublishedRelease(proposed, fixtureReader((endpoint, raw) => withMergeGateJobs(endpoint, raw, false, true), { workflowBytes: Buffer.from(edited) }), NOW)).rejects.toThrow();
     }
   });
   it('refuses an edited current workflow even when all reported jobs pass', async () => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(current + '\n# unreviewed source revision\n') });
+    const reader = fixtureReader((endpoint, raw) => withMergeGateJobs(endpoint, raw, false, true), { workflowBytes: Buffer.from(current + '\n# unreviewed source revision\n') });
     await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each([
@@ -668,13 +674,13 @@ describe('fresh public facts are data, not saved release authority', () => {
     ['proof-step-deleted', (y: string) => y.replace(/ {6}- name: Prove source-identical history fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')],
     ['mutated-secret-scan', (y: string) => y.replace('Scan candidate diff (fail closed)', 'Scan candidate diff')],
     ['mutated-classifier-command', (y: string) => y.replace('node .github/scripts/ci-site-lane.mjs', 'node .github/scripts/ci-site-lane-mutated.mjs')],
-    ['mutated-merge-gate-needs', (y: string) => y.replace('secret-shape, classify, quick,', 'secret-shape, classify,')],
+    ['mutated-merge-gate-needs', (y: string) => y.replace('secret-shape, secret-scan, classify, quick,', 'secret-shape, secret-scan, classify,')],
     ['mutated-full-role-condition', (y: string) => y.replace("needs.classify.outputs.lane == 'full'", "needs.classify.outputs.lane == 'site'")],
   ])('refuses release facts for an unreviewed workflow mutation: %s', async (_kind, mutate) => {
     const current = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
     const mutated = mutate(current);
     expect(mutated).not.toBe(current);
-    const reader = fixtureReader(withMergeGateJobs, { workflowBytes: Buffer.from(mutated) });
+    const reader = fixtureReader((endpoint, raw) => withMergeGateJobs(endpoint, raw, false, true), { workflowBytes: Buffer.from(mutated) });
     await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each([
@@ -697,7 +703,7 @@ describe('fresh public facts are data, not saved release authority', () => {
     }],
   ])('refuses a skipped or claimed compiler fast-path outcome in release facts: %s', async (_kind, mutate) => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         mutate(value['jobs'] as Record<string, unknown>[]);
         value['total_count'] = (value['jobs'] as unknown[]).length;
@@ -719,7 +725,7 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it.each(['docs-ran', 'docs-missing'])('withholds release facts when the docs lane %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const index = jobs.findIndex((job) => job['name'] === 'Docs PR (docs-only)');
@@ -733,7 +739,7 @@ describe('fresh public facts are data, not saved release authority', () => {
   });
   it.each(['missing', 'failure', 'skipped-step', 'wrong-runner'])('withholds release facts for Merge Gate %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const gate = jobs.find((job) => job['name'] === 'Merge Gate')!;
@@ -751,7 +757,7 @@ describe('fresh public facts are data, not saved release authority', () => {
     'classifier-step-skipped', 'classifier-step-duplicate', 'site-success', 'site-ran', 'ancillary-run', 'ancillary-head',
     'ancillary-runner', 'missing-pair'])('refuses current qualification topology %s', async (kind) => {
     const reader = fixtureReader((endpoint, raw) => {
-      const value = withMergeGateJobs(endpoint, raw) as Record<string, unknown>;
+      const value = withMergeGateJobs(endpoint, raw, false, true) as Record<string, unknown>;
       if (endpoint.includes('/runs/20/') && endpoint.includes('/jobs?')) {
         const jobs = value['jobs'] as Record<string, unknown>[];
         const classifier = jobs.find(job => job['name'] === 'Classify PR site lane')!;

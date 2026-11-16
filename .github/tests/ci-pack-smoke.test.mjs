@@ -142,6 +142,25 @@ test('checks source identity after pack and reports offending porcelain lines', 
   } }), /source changed after build:\n\?\? unexpected-generated\.txt/);
 });
 
+test('refuses an injected tracked-file edit during pack and names the file', (t) => {
+  const f = fixture(t);
+  assert.throws(() => packBuild({ ...f, runNpm: (_bin, args) => {
+    writeFileSync(join(f.root, '.gitignore'), 'dist/\n# build-time edit\n');
+    return report(args[4]);
+  } }), /source changed after build:\nM \.gitignore/);
+});
+
+test('refuses a tracked edit hidden from git status by a skip-worktree flag', (t) => {
+  const f = fixture(t);
+  f.git('update-index', '--skip-worktree', '.gitignore');
+  writeFileSync(join(f.root, '.gitignore'), 'dist/\n# hidden edit\n');
+  assert.equal(f.git('status', '--porcelain', '--untracked-files=normal'), '', 'fixture must be invisible to git status');
+  let calls = 0;
+  assert.throws(() => packBuild({ ...f, runNpm: () => { calls++; return ''; } }),
+    /source changed after build:\nS \.gitignore \(hidden index flag\)/);
+  assert.equal(calls, 0);
+});
+
 for (const [name, overrides] of [
   ['wrong package', { name: '@other/hub' }], ['wrong version', { version: '3.24.1' }],
   ['path traversal', { filename: '../ashlr-hub-3.24.2.tgz' }],

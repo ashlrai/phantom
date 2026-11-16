@@ -17,6 +17,23 @@ METRICS_TAIL_BYTES = 8 * 1024 * 1024
 _TERMINAL_EMPTY = {"EMPTY", "DONE-NOOP", "EMPTY_DONE", "SKIPPED-EMPTY"}
 _streak_cache = {}
 
+# RQ-EMPTY-SIGNAL-1: a finish row's boolean `empty` only says "no diff vs the launch
+# base". It cannot tell an agent that ran cleanly and legitimately changed nothing
+# (research, already done) from one that died, hit a pool error, or never wrote its
+# exit status. Penalizing a lane for the first kind burns quota-routing signal on
+# healthy work, so classify. Returns None when the row is not a measured empty.
+EMPTY_NO_DIFF = "no_diff"    # exit 0, no pool error: ran fine, produced nothing publishable
+EMPTY_ERROR = "error"        # nonzero exit or a classified pool error: infrastructure
+EMPTY_UNKNOWN = "unknown"    # no exit status recorded: possible capture gap, not blamed on prompt
+
+
+def classify_empty(empty, exit_code, pool_error=None):
+    if empty is not True:
+        return None
+    if pool_error or (type(exit_code) is int and exit_code != 0):
+        return EMPTY_ERROR
+    return EMPTY_NO_DIFF if exit_code == 0 and type(exit_code) is int else EMPTY_UNKNOWN
+
 
 def empty_streaks(jobs_path):
     """job id -> count of consecutive trailing empty finishes; {} on any read problem."""
@@ -132,3 +149,101 @@ def park(state, job, key, now, code=None, reason=None):
     if code is not None:
         state[job].update(code=code, reason=reason)
     return first
+
+
+def attempt_identity(repo, prompt, home, runner=run):
+    """Use the local upstream ref, without a fetch or a network call."""
+    import hashlib
+    try:
+        result = runner(['git', '-C', home + '/Projects/ashlrai/' + repo,
+                         'rev-parse', '--verify', 'refs/remotes/origin/HEAD^{commit}'], 2)
+        sha = result.stdout.strip()
+        if result.returncode or not re.fullmatch(r'[0-9a-f]{40,64}', sha): return {}
+        return {'repo': repo, 'base_sha': sha,
+                'prompt_hash': hashlib.sha256(prompt.encode()).hexdigest()}
+    except Exception:
+        return {}
+
+
+# RQ-CODEXP-EMPTY-1: prompt_hash covers the whole prompt file, whose first line
+# names the job id and the lane ("Job X (pool L, tier T, ...)"). A re-cut under a
+# new id, a re-route to another lane, or any upstream commit therefore misses
+# prompt_empty_same_base_24h. task_hash names the task text alone, so a task that
+# already finished empty TASK_EMPTY_REPEAT times in 24 hours (any id, lane or base)
+# stops relaunching. Two attempts, not one: a single empty on an older base can
+# still be retried once on a newer one.
+TASK_EMPTY_REPEAT = 2
+TASK_MIN_CHARS = 16
+
+
+def task_hash(job, prompt):
+    """sha256 of the normalized `<job> (attrs): <task>` text, or None (fail open).
+
+    The job id inside the text, the attrs (pool, tier, priority) and whitespace
+    or case differences are excluded, so routing changes keep the same identity.
+    """
+    import hashlib
+    try:
+        line = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
+        cut = line.find("): ")
+        if cut < 0: return None
+        text = line[cut + 3:].replace(job, "<job>")
+        text = " ".join(text.lower().split())
+        if len(text) < TASK_MIN_CHARS: return None
+        return hashlib.sha256(text.encode()).hexdigest()
+    except Exception:
+        return None
+
+
+def with_prompt(identity, job, prompt):
+    """Bind a repo/base identity to one prompt: prompt_hash plus task_hash when known."""
+    import hashlib
+    if not identity: return {}
+    out = dict(identity, prompt_hash=hashlib.sha256(prompt.encode()).hexdigest())
+    task = task_hash(job, prompt)
+    if task: out["task_hash"] = task
+    return out
+
+
+def empty_reason(job, identity, rows, now):
+    """Only successful empty finishes suppress work. Auth failures must retry.
+
+    Claims bind each finish to its own attempt, so an older empty cannot mask
+    a newer nonempty run. MERGED outcomes remain independently measurable.
+    """
+    from datetime import datetime
+    if not identity: return None
+    claims = {}; latest = {}
+    for row in rows:
+        if not isinstance(row, dict): continue
+        key = row.get('job')
+        if row.get('event') == 'claim': claims[key] = row
+        if row.get('event') != 'finish': continue
+        evidence = dict(claims.get(key, {}), **row)
+        if evidence.get('repo') != identity['repo']: continue
+        latest[key] = evidence
+    task = identity.get('task_hash'); task_repeats = 0
+    for key, row in latest.items():
+        if row.get('empty') is not True or row.get('exit_code') != 0: continue
+        try: age = now - datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
+        except (KeyError, ValueError, TypeError): age = None
+        recent = age is not None and 0 <= age < 86400
+        if task and recent and row.get('task_hash') == task: task_repeats += 1
+        if row.get('base_sha') != identity['base_sha']: continue
+        if key == job and job.startswith('RQ-UPKEEP-'): return 'upkeep_empty_same_base'
+        if recent and row.get('prompt_hash') == identity['prompt_hash']:
+            return 'prompt_empty_same_base_24h'
+    if task_repeats >= TASK_EMPTY_REPEAT: return 'task_empty_repeat_24h'
+    return None
+
+
+def read_attempts(runs):
+    import json
+    rows = []
+    try:
+        with open(runs + '/metrics/jobs.jsonl') as stream:
+            for line in stream:
+                try: rows.append(json.loads(line))
+                except ValueError: pass
+    except OSError: pass
+    return rows

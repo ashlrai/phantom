@@ -3,8 +3,11 @@ import { useQuery, useRefetch } from '../../data/hooks.js';
 import { controlLogsObservationQuery, fleetActivityQuery, fleetLanesQuery, fleetStatusQuery, inboxQuery, runsQuery } from '../../data/queries.js';
 import { buildJournalEntries } from '../journal/journal-model.js';
 import { EpistemicBadge } from '../../components/primitives/Epistemic.js';
-import { AgentFeed, QuotaGauges, WinFeed, type PanelState } from './ShowPanels.js';
-import { buildAgentFeed, buildQuotaGauges, buildWins } from './show-model.js';
+import { LiveSessionCards } from '../../components/stream/LiveSessionCards.js';
+import { FleetHealthStrip } from '../../components/fleet/FleetHealthStrip.js';
+import { AgentComms, QuotaGauges, WinFeed, type PanelState } from './ShowPanels.js';
+import { buildCommsThreads } from './comms-model.js';
+import { buildQuotaGauges, buildWins } from './show-model.js';
 import styles from './ShowView.module.css';
 
 const REFRESH_MS = 15_000;
@@ -30,7 +33,7 @@ export function ShowView() {
   const [position, setPosition] = useState(0);
   const entries = useMemo(() => buildJournalEntries({ logs: logs.data, fleetActivity: activity.data, runs: runs.data, inbox: inbox.data }), [logs.data, activity.data, runs.data, inbox.data]);
   const merges = entries.filter(entry => entry.source === 'merge');
-  const feed = useMemo(() => buildAgentFeed(entries), [entries]);
+  const threads = useMemo(() => buildCommsThreads(activity.data?.recentActions, runs.data), [activity.data, runs.data]);
   const wins = useMemo(() => buildWins(entries), [entries]);
   const gauges = useMemo(() => buildQuotaGauges(lanes.data), [lanes.data]);
   const current = entries[position % (entries.length || 1)];
@@ -62,6 +65,8 @@ export function ShowView() {
       <div><span>Awaiting review</span><strong>{inbox.data?.pending ?? '—'}</strong><small>pending proposals</small></div>
       <div><span>Recent merges</span><strong>{fleet.data?.merges.recent ?? '—'}</strong><small>fleet status</small></div>
     </section>
+    <FleetHealthStrip />
+    <LiveSessionCards />
     <p className={styles.blockers}>Repair route blocked: <strong>{fleet.data?.queue.repairRouteBlockedItems ?? 'unknown'}</strong> · Repair control blocked: <strong>{fleet.data?.queue.repairControlBlockedItems ?? 'unknown'}</strong></p>
     <div className={styles.columns}>
       <section className={styles.stage} aria-label="Fleet story">
@@ -78,7 +83,7 @@ export function ShowView() {
       </section>
     </div>
     <div className={styles.ambient}>
-      <AgentFeed entries={feed} state={panelState(activity, runs)} />
+      <AgentComms threads={threads} state={panelState(activity)} quality={activity.data?.recentActionsSource} />
       <WinFeed entries={wins} state={panelState(activity, runs)} />
       <QuotaGauges gauges={gauges} state={panelState(lanes)} />
     </div>

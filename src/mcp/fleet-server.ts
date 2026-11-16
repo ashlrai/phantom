@@ -1,21 +1,45 @@
 /** Isolated MCP adapter: no gateway discovery, forwarding, or mutation tools. */
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ashlrHome } from '../core/cloud/store.js';
+import { listWorkBoard, WORK_BOARD_DEFAULT_LIMIT, WORK_BOARD_MAX_LIMIT } from '../core/comms/work-board.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
+import { buildSlackBridgeStatus } from '../core/agents/slack-status.js';
+import { defaultTailnetPeersDeps, readTailnetPeers } from '../core/fleet/tailnet-peers.js';
+import { defaultPoolReachDeps, readPoolReach } from '../core/fleet/pool-reach.js';
+import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
+import { projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
+import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
+import { readChannelHealth } from '../core/fleet/channel-health.js';
+import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
 import { MAX_FLEET_TICKS, MAX_FLEET_BUS_HOPS, readFleetLoop, readFleetStatus, readFleetBusHops } from './fleet.js';
 import {
   MAX_FLEET_BUS_INBOX_READ, parseFleetBusInboxArgs, readFleetBusInbox, type FleetBusInboxArgs,
 } from './fleet-inbox.js';
+import { parseFleetRuntimeArgs, readFleetRuntime } from './fleet-runtime.js';
+import { SURFACES } from '../core/fleet/surface-owner.js';
+import { NOTE as SESSION_HANDOFF_NOTE, parseFleetSessionHandoffArgs, readFleetSessionHandoff } from './fleet-session-handoff.js';
+import { NOTE as PEER_LEDGER_NOTE, parseFleetPeerLedgerArgs, readFleetPeerLedger, type FleetPeerLedgerArgs } from './fleet-peer-ledger.js';
+import { NOTE as BRIDGE_CHECK_NOTE, parseFleetBridgeCheckArgs, readFleetBridgeCheck } from './fleet-bridge-check.js';
+import { parseFleetSurfaceOwnerArgs, readFleetSurfaceOwner } from './fleet-surface-owner.js';
+import { parseFleetClaimExecutionArgs, readFleetClaimExecution } from './fleet-claim-execution.js';
 import { readFleetLanes } from './fleet-lanes.js';
 import { parseFleetSelfTickLastArgs, readFleetSelfTickLast } from './fleet-self-tick.js';
+import { MAX_FLEET_RECHECK_HISTORY, DEFAULT_FLEET_RECHECK_HISTORY, parseFleetRecheckArgs, parseFleetRecheckHistoryArgs,
+  readFleetRecheckTool, readFleetRecheckHistoryTool, type FleetRecheckHistoryArgs } from './fleet-recheck.js';
 import { readFleetUsageResets } from './fleet-usage-resets.js';
 import {
   MAX_FLEET_RESET_HISTORY, parseFleetResetHistoryArgs, readFleetResetHistory, type FleetResetHistoryArgs,
 } from './fleet-reset-history.js';
 
+import { parseFleetReviewPickArgs, readFleetReviewPick, type FleetReviewPickArgs } from './fleet-review-pick.js';
+import { parseFleetOrderStateArgs, readFleetOrderState, type FleetOrderStateArgs } from './fleet-order-state.js';
 import { parseFleetResetGroupAwaitArgs, readFleetResetGroupAwait, type FleetResetGroupAwaitArgs } from './fleet-reset-group-await.js';
 import { RESET_GROUP_AWAIT_MAX_LANES } from '../core/fleet/reset-group-await.js';
 import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
@@ -35,6 +59,7 @@ import { JOB_OVERLAP_MIN_IDS } from '../core/fleet/job-overlap.js';
 import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs } from './fleet-job-overlap.js';
 import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch, type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
 import { DEFAULT_FLEET_INTENT_LIMIT, MAX_FLEET_INTENT_LIMIT, parseFleetIntentReadArgs, readFleetIntent, type FleetIntentReadArgs } from './fleet-intent-read.js';
+import { DEFAULT_FLEET_ORCHESTRATION_LIMIT, MAX_FLEET_ORCHESTRATION_LIMIT, parseFleetOrchestrationReadArgs, readFleetOrchestration, type FleetOrchestrationReadArgs } from './fleet-orchestration-read.js';
 import { INTENT_STATUSES } from '../core/intent/schema.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
@@ -64,6 +89,10 @@ import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
+import { DEFAULT_FLEET_IMESSAGE_TASKS, MAX_FLEET_IMESSAGE_TASKS, parseFleetImessageTasksArgs,
+  readFleetImessageTasks, type FleetImessageTasksArgs } from './fleet-imessage-tasks.js';
+import { parseFleetSlackEvidenceArgs, readFleetSlackEvidence,
+  type FleetSlackEvidenceArgs } from './fleet-slack-evidence.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -85,6 +114,157 @@ import { FLEET_RELEASE_CANDIDATE_REPO_PATTERN, FLEET_RELEASE_CANDIDATE_TAG_PATTE
 
 export const MAX_FLEET_OUTPUT_BYTES = 64 * 1024;
 
+export interface FleetWorkBoardArgs {
+  /** Cap on returned board items, applied newest-first after filtering. */
+  limit: number;
+  /** Exact channel_ref filter; omitted keeps every channel. */
+  thread?: string;
+}
+
+const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread']);
+
+/** Runtime argument validation: low-level SDK servers never check the
+ * tools/list schema, so unknown keys — including any caller `root` —,
+ * out-of-range limits and oversized or non-string threads are rejected
+ * before the store is touched. The board always reads the server-owned
+ * default fleet root. */
+function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardArgs | null {
+  const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'];
+  if (Object.keys(args).some(key => !WORK_BOARD_ARG_KEYS.has(key)) ||
+    args['limit'] === null || args['thread'] === null ||
+    typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > WORK_BOARD_MAX_LIMIT ||
+    thread !== undefined && (typeof thread !== 'string' || thread.length > 512)) return null;
+  return { limit, thread: thread as string | undefined };
+}
+
+/** One bounded board read through the canonical listWorkBoard listing — the
+ * same classifier as `ashlr fleet work-board`, never a second one — with the
+ * invocation clock stamped as `asOf`. */
+async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
+  const now = Date.now();
+  const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread });
+  return { ...board, asOf: new Date(now).toISOString() };
+}
+
+/** Same bound as the verse comms-status API uses for the bridge health read. */
+const CHANNEL_HEALTH_TIMEOUT_MS = 5_000;
+const SLACK_REPLIES_TIMEOUT_MS = 5_000;
+
+/** Read only the server-owned default ledger; callers cannot select its location. */
+function readFleetCoordinationClaims() {
+  const now = Date.now();
+  let board: FleetBoard | null;
+  try { board = readFleetBoard(); } catch { board = null; }
+  return projectCoordinationClaims(board, now);
+}
+
+/** Read retained receipts from the server-owned ledger without exposing reader errors. */
+function readFleetCoordinationReturns() {
+  const now = Date.now();
+  let board: FleetBoard | null;
+  try { board = readFleetBoard(); } catch { board = null; }
+  return projectCoordinationReturns(board, now);
+}
+
+/** Runtime identity: host, installed version and fleet-state freshness, sanitized by the reader. */
+async function readFleetRuntimeIdentity() {
+  return readRuntimeIdentity(defaultRuntimeIdentityDeps());
+}
+
+/** The bridge report with runtimeHost redacted like runtime-identity output (as the verse API does). */
+async function readSanitizedChannelHealth() {
+  const report = await readChannelHealth();
+  const home = homedir();
+  return {
+    ...report,
+    channels: report.channels.map(channel => ({
+      ...channel,
+      runtimeHost: channel.runtimeHost === null ? null : sanitizeIdentityText(channel.runtimeHost, home),
+    })),
+  };
+}
+
+/** Bounded read. A throw or timeout is reported as status 'unknown' with a
+ * short code — never an invented report. */
+async function readBounded(
+  read: () => Promise<unknown>,
+  code: string,
+  timeoutMs = CHANNEL_HEALTH_TIMEOUT_MS,
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error instanceof Error && error.message === 'timeout' ? `${code}-timeout` : `${code}-unavailable` };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+const readFleetChannelHealth = (read: () => Promise<unknown> = readSanitizedChannelHealth, timeoutMs?: number) =>
+  readBounded(read, 'channel-health', timeoutMs);
+
+/** Sanitized tailnet peers (reader never throws; deps are fixed, no caller input). */
+const readFleetTailnetPeers = (read: () => Promise<unknown> = async () => readTailnetPeers(defaultTailnetPeersDeps()), timeoutMs?: number) =>
+  readBounded(read, 'tailnet-peers', timeoutMs);
+
+/** Pool reachability join (reader never throws; deps are fixed, no caller input). */
+const readFleetPoolReach = (read: () => Promise<unknown> = async () => readPoolReach(defaultPoolReachDeps()), timeoutMs?: number) =>
+  readBounded(read, 'pool-reach', timeoutMs);
+
+/** Slack reply binding: the `replies` section of the offline bridge status plus its `at`. */
+async function readSlackRepliesEvidence() {
+  const status = buildSlackBridgeStatus();
+  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample } = status.replies;
+  return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample };
+}
+
+/** Bounded Slack-replies read. A throw or timeout is reported as status
+ * 'unknown' with a short code — never an invented answered/unanswered count. */
+async function readFleetSlackReplies(
+  read: () => Promise<unknown> = readSlackRepliesEvidence,
+  timeoutMs = SLACK_REPLIES_TIMEOUT_MS,
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error instanceof Error && error.message === 'timeout' ? 'slack-replies-timeout' : 'slack-replies-unavailable' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** Read the desktop claim-notice evidence without exposing reader failures. */
+async function readFleetClaimNotices(
+  read: () => Promise<unknown> = () => readClaimNoticeView(),
+): Promise<unknown> {
+  const timeout = Symbol('claim-notices-timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(timeout), 5_000);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error === timeout ? 'claim-notices-timeout' : 'claim-notices-unavailable' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export interface FleetReaders {
   stagingScanner?: StagingScanner;
   stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
@@ -93,6 +273,20 @@ export interface FleetReaders {
   bus?: (limit: number) => Promise<unknown>;
   hostRuns?: () => Promise<unknown>;
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
+  workBoard?: (input: FleetWorkBoardArgs) => Promise<unknown>;
+  runtime?: () => Promise<unknown>;
+  peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
+  sessionHandoff?: (input: { job: string }) => unknown;
+  surfaceOwner?: (surface: string) => Promise<unknown>;
+  claimExecution?: () => Promise<unknown>;
+  runtimeIdentity?: () => Promise<unknown>;
+  channelHealth?: () => Promise<unknown>;
+  tailnetPeers?: () => Promise<unknown>;
+  poolReach?: () => Promise<unknown>;
+  reviewPick?: (args: FleetReviewPickArgs) => Promise<unknown>;
+  orderState?: (args: FleetOrderStateArgs) => Promise<unknown>;
+  slackReplies?: () => Promise<unknown>;
+  claimNotices?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
@@ -127,11 +321,17 @@ export interface FleetReaders {
   commsReadiness?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
+  imessageTasks?: (input: FleetImessageTasksArgs) => Promise<unknown>;
+  slackEvidence?: (input: FleetSlackEvidenceArgs) => Promise<unknown>;
   ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
+  orchestrationRead?: (input: FleetOrchestrationReadArgs) => Promise<unknown>;
   intentRead?: (input: FleetIntentReadArgs) => Promise<unknown>;
+  recheck?: () => Promise<unknown>;
+  recheckHistory?: (input: FleetRecheckHistoryArgs) => Promise<unknown>;
+  bridgeCheck?: () => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -208,6 +408,128 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           to: { type: 'string', description: 'Exact case-sensitive recipient routing label.' },
           from: { type: 'string', description: 'Exact case-sensitive sender routing label.' },
         },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_work_board',
+      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20) and `thread` keeps one exact channel_ref. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: WORK_BOARD_MAX_LIMIT, default: 20 },
+          thread: { type: 'string', maxLength: 512, description: 'Exact channel_ref filter such as a Slack <team>/<channel>/<threadTs>.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_coordination_claims',
+      description: 'Read-only fresh claims from the host coordination ledger, newest first (at most 50, task capped at 200 characters). Claims are advisory and grant no execution authority. Unknown means ownership is unknown, not absent. Returns no messages, proposals or lease material. Takes no arguments; no caller path, root or working directory is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_coordination_returns',
+      description: "Read-only retained RESULT receipts from this computer's coordination ledger, newest first, at most 50. VERIFIED means the returning agent named that evidence, not that Phantom checked the PR. Unknown means unknown, not absent. Takes no arguments; no caller path, root or cwd is accepted; never writes.",
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_runtime_identity',
+      description: 'Read sanitized runtime identity: host, platform, asOf, installedVersion versus sourceVersion with versionDrift, fleetState freshness (mtime, age, stale), tailnet name and reasons — the same readRuntimeIdentity evidence as `ashlr fleet runtime-identity`. Evidence only; it grants no dispatch, claim or merge authority. Paths, addresses and token-shaped text are redacted by the reader. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_runtime',
+      description: 'Read-only sanitized runtime and coordination evidence with one asOf, the same snapshot as `ashlr fleet runtime`. Evidence only; it grants no dispatch, claim or merge authority. An MCP server on another computer reads that computer\'s state. Takes no arguments; no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_surface_owner',
+      description: "Read-only sanitized ownership evidence for a named surface: live advisory claims and landed origin/master history. Claims grant no dispatch, claim or merge authority. Reads this computer's ledger; no caller root, path or cwd is accepted, and the tool never writes anything.",
+      inputSchema: { type: 'object', properties: { surface: { type: 'string', enum: Object.keys(SURFACES) } }, required: ['surface'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_peer_ledger',
+      description: PEER_LEDGER_NOTE,
+      inputSchema: { type: 'object', properties: {
+        fromAgent: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+        target: { type: 'string', pattern: '^[a-zA-Z0-9_.:/#-]{1,128}$' },
+      }, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_session_handoff',
+      description: SESSION_HANDOFF_NOTE,
+      inputSchema: { type: 'object', properties: { job: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$' } }, required: ['job'], additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_claim_execution',
+      description: 'Read-only sanitized claim execution evidence: which live advisory claims have a matching worker process on this computer. RUNNING requires a matched worker; otherwise CLAIMED_NO_WORKER or UNKNOWN. Grants no dispatch, claim or merge authority. Accepts no arguments and never writes.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_channel_health',
+      description: 'Read Slack and iMessage bridge channel health (LIVE / DEGRADED / BLOCKED / UNKNOWN per channel with proof and asOf) — the same readChannelHealth report as `ashlr fleet channel-health`. Evidence only; it grants no send, dispatch or merge authority. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented healthy report. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_tailnet_peers',
+      description: 'Read the sanitized tailnet peer list: self host name and each peer\'s name, OS, online, lastSeen, ageSeconds, reasons and asOf — the same readTailnetPeers evidence as `ashlr fleet tailnet-peers`. Evidence only; it grants no dispatch, claim, network or merge authority. No addresses, DNS names or keys are returned. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented peer list. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_pool_reach',
+      description: 'Read whether the node pool\'s primary and backup SSH aliases match online tailnet peers: asOf, self, role and per-slot hosts (slot, alias, matched, online, lastSeen, ageSeconds, isSelf) plus reasons — the same readPoolReach evidence as `ashlr fleet pool-reach`. Evidence only; it grants no SSH, dispatch, failover, claim or merge authority. No addresses, DNS names or keys are returned. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented host list. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_review_pick',
+      description: "Read one currently unowned review task with repository, PR/head and current owner, as in ashlr fleet review-pick. Evidence only; grants no claim or execution authority. owner: 'none' is returned only when every ownership source read cleanly. Optional repo (owner/name, default ashlrai/phantom) and limit (integer 1-100). Invalid values return status invalid. Overall read bound: 20 seconds; unavailable evidence withholds the pick. No caller root, path, cwd or runsDir is accepted.",
+      inputSchema: { type: 'object', properties: { repo: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_order_state',
+      description: 'Read Mason\'s inbox order states: each order classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with at, source, key, asOf, evidenceSource, missing evidence, pr, owner and blocker, plus live and lanes source health — the same readOrderTrace plus one listLiveWorkers snapshot and one readLaneTargets read as `ashlr fleet order-state`. A BLOCKED row\'s blocker names the held lane dependency (lane and held-until only, never hold reasons or attribution); blocker is null when no healthy lane evidence supports BLOCKED. Evidence only; it grants no claim, dispatch or merge authority, and a queued line names an owner but is not a claim. Each read is bounded to 8 seconds: a trace read that throws or times out returns sources "unavailable" with no orders, an unavailable live read leaves RUNNING unproven, and an unavailable lanes read leaves BLOCKED unproven — never an invented state. `sinceHours` is an optional integer 1-720 windowing the orders; anything else returns { status: "invalid" }. No order text bodies, file paths, command lines or pids are returned; no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: { sinceHours: { type: 'integer', minimum: 1, maximum: 720 } }, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_claim_notices',
+      description: 'Read the same Slack claim-notice evidence as the desktop view: bound threads, sent notices and pending ASSIGNED / RELEASED / BLOCKED / VERIFIED notices. A `sent` row means a durable bus note was written, not that Slack delivered it; pending rows are a dry-run plan. Authority none: never sends, ledgers or writes. The read is bounded to 5 seconds; a throw or timeout returns { status: "unknown", reason } without thrown text. Takes no arguments; any argument is refused.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_slack_replies',
+      description: 'Read the Slack reply binding: which ingested Slack requests have a same-thread `sent` receipt (answered) and which do not (unanswered), with state, oldestUnansweredAt, uncertainSends, rejected, futureDated, a capped unansweredSample (channelId, threadTs, messageTs, at) and asOf, from the same replies section as the Slack bridge status. Lets an agent tell RECEIVED from answered. Evidence only; it grants no send, dispatch or merge authority, and an `attempted` send is never counted as an answer. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented answered or unanswered count. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_slack_evidence',
+      description: 'Read the durable Slack evidence bundle for one thread through the same readSlackEvidenceBundle collector as `phm fleet slack-evidence` — never a second join: the bundle keeps its schema, scope, thread, asOf, rows, counts, sources (journal and sends state) and optional freshness verdict verbatim — persisted local journal and send-store evidence only, never proof of current runtime reachability, durable task ownership, execution, or a live claim. `thread` is a required Slack thread timestamp, `channelId` an optional Slack channel id restricting rows to that channel (counts and freshness recomputed from the filtered rows, matching `--channel` on the CLI), `messageTs` an optional Slack message timestamp that requires `channelId` and selects exactly one request — rows, counts and freshness are recomputed for the selected message only and the result echoes `selection`, matching `--message` on the CLI — and `maxAgeSeconds` an optional positive integer freshness bound reported as fresh/stale/unknown; a collector failure returns fixed unavailable evidence with the requested selection and no raw exception or private path. No caller directory, root, cwd, path, send, enqueue or claim option is accepted, and the tool never sends, enqueues, claims, probes or writes anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          thread: { type: 'string', pattern: '^\\d{1,20}\\.\\d{1,10}$', description: 'Exact Slack thread root timestamp such as 1731000000.000100.' },
+          channelId: { type: 'string', pattern: '^[CDG][A-Z0-9]{2,32}$', description: 'Optional Slack channel id such as C0123ABCDEF; restricts the bundle to that channel.' },
+          messageTs: { type: 'string', pattern: '^\\d{1,20}\\.\\d{1,10}$', description: 'Optional Slack message timestamp such as 1731000010.000100; requires channelId and selects exactly one request, matching --message on the CLI.' },
+          maxAgeSeconds: { type: 'integer', minimum: 1, description: 'Optional positive safe-integer freshness bound; omitted returns no freshness verdict.' },
+        },
+        required: ['thread'],
         additionalProperties: false,
       },
       annotations,
@@ -363,6 +685,20 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_INTENT_LIMIT, default: DEFAULT_FLEET_INTENT_LIMIT, description: 'list only: maximum rows returned.' },
         },
         required: ['action'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_orchestration_read',
+      description: 'Read the leader orchestration journal: specialist assignment receipts newest assignedAt first, with global status counts and every unresolved reserved receipt. Optional exact status/job filters and limit (default 25, max 100) apply to receipts; total counts matching rows before the limit. Missing state reports source:missing; corrupt or invalid state is a tool error. Authority is none. No caller path, root, environment or command; never writes, locks or sends.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['reserved', 'admitted', 'complete'] },
+          job: { type: 'string', maxLength: 64 },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_ORCHESTRATION_LIMIT, default: DEFAULT_FLEET_ORCHESTRATION_LIMIT },
+        },
         additionalProperties: false,
       },
       annotations,
@@ -553,6 +889,19 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_imessage_tasks',
+      description: 'Read the local teammate task ledger through the same listTeammateTasks collector as `phm fleet imessage-tasks list` — never a second store, reader or dispatcher: each row is projected to jobId, peer, resource, state, claimKey, createdAt/attemptedAt/deadline timestamps, the sanitized transport receipt (rowid, sent, delivered, error) and the peer-reported result (rowid, status, at, evidence) — never the envelope token, scope, format, result summary, handles, message bodies or filesystem paths. `jobId` is an optional exact selector applied before `limit` truncation (1–100, default 20, newest matches kept in collector order); an unmatched selector reports matched:false and never another task. Ledger presence is reported separately (present, missing, unavailable) so a missing or corrupt store never poses as a healthy empty assignment, and a collector failure is fixed unavailable evidence without raw exception text. Task states are local ledger states verbatim: queued is never RUNNING, a DONE result is peer-reported and unverified, and a sent receipt is never delivery proof. Reads the server-owned runs root only; no caller directory, root, cwd, path, config, send, enqueue, poll or claim option is accepted, and the tool never sends, enqueues, dispatches, claims, writes or alters comms configuration.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$', description: 'Exact job id selector such as RQ-PHX-EXAMPLE-1; applied before limit truncation.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_IMESSAGE_TASKS, default: DEFAULT_FLEET_IMESSAGE_TASKS },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_ci_resume_inputs',
       description: 'Plan which CI jobs may reuse passing input-tree receipts after a fix — the RESUME-FROM-FAILURE order — through the same shared planCiResumeInputs planner as `phm fleet ci-resume-inputs`, never a second digest algorithm. Takes the version-1 manifest and prior-receipts documents inline as JSON objects (each at most 1 MiB serialized, never file paths) plus hexadecimal base and head revisions. Per job it returns the planner\'s structured reuse-or-rerun decision, fixed reasons, reproduced base and head input digests, covered and shared changed paths and the matched prior receipt; unknown or unmapped coverage stays a rerun. The repository is the server\'s own cwd: no caller cwd, filesystem path, executable, environment or git option is accepted. Read-only: git objects only (rev-parse, ls-tree, diff-tree), the working tree is never read, and the tool never posts a status or check, writes a receipt, dispatches a workflow or mutates CI.',
       inputSchema: {
@@ -653,16 +1002,39 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
+    {
+      name: 'fleet_recheck',
+      description: 'Run the read-only fleet recheck verdict: runtime identity, the claims ledger, Slack/iMessage bridge channel health and the work board joined into per-section VERIFIED / UNKNOWN / BLOCKED states with missing reasons — the same readFleetRecheck() evidence as `ashlr fleet recheck`. Evidence only; it grants no dispatch, claim, send or merge authority. Takes no arguments: no caller root, path or cwd is accepted, and the tool never appends to the recheck log or writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_recheck_history',
+      description: 'Read the retained recheck verdict rows from the local recheck log (fleet/recheck-log.jsonl): newest-first rows with per-section states and recorded missing reasons, plus skipped (malformed-line) and missing (no log yet) flags — the same readRecheckRecords() evidence as `ashlr fleet recheck-record --last`. Evidence only; it grants no dispatch, claim, send or merge authority. `last` caps returned rows (1–50, default 5). No caller root, path or cwd is accepted, and the tool never records a row or writes anything.',
+      inputSchema: {
+        type: 'object', properties: { last: { type: 'integer', minimum: 1, maximum: MAX_FLEET_RECHECK_HISTORY, default: DEFAULT_FLEET_RECHECK_HISTORY } },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_bridge_check',
+      description: BRIDGE_CHECK_NOTE,
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
       throw new McpError(ErrorCode.InvalidParams, 'Invalid fleet tool arguments.');
     }
+    const surfaceOwner = name === 'fleet_surface_owner' ? parseFleetSurfaceOwnerArgs(args) : null;
+    const claimExecution = name === 'fleet_claim_execution' ? parseFleetClaimExecutionArgs(args) : null;
     const retry = name === 'fleet_staging_inventory_retry' ? await retryStagingInventory(args, readers.stagingScanner) : null;
     const stagingRoots = name === 'fleet_staging_inventory_batch' ? parseStagingBatchArgs(args) : null;
     const fleetStagingInventory = name === 'fleet_staging_inventory' ? parseFleetStagingInventoryArgs(args) : null;
@@ -670,6 +1042,9 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
     const limit = args['limit'] ?? 20;
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
+    const workBoard = name === 'fleet_work_board' ? parseFleetWorkBoardArgs(args) : null;
+    const reviewPick = name === 'fleet_review_pick' ? parseFleetReviewPickArgs(args) : null;
+    const orderState = name === 'fleet_order_state' ? parseFleetOrderStateArgs(args) : null;
     const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
     const resetGroupAwait = name === 'fleet_reset_group_await' ? parseFleetResetGroupAwaitArgs(args) : null;
     const resetAwait = name === 'fleet_reset_await' ? parseFleetResetAwaitArgs(args) : null;
@@ -697,14 +1072,33 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const gmailArchivePlanLatestArgs = name === 'fleet_gmail_archive_plan_latest' ? parseFleetGmailArchivePlanLatestArgs(args) : null;
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
+    const imessageTasks = name === 'fleet_imessage_tasks' ? parseFleetImessageTasksArgs(args) : null;
+    const slackEvidenceArgs = name === 'fleet_slack_evidence' ? parseFleetSlackEvidenceArgs(args) : null;
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    const orchestrationRead = name === 'fleet_orchestration_read' ? parseFleetOrchestrationReadArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
+    const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
+    const peerLedgerArgs = name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) : null;
+    const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
+    const recheckHistory = name === 'fleet_recheck_history' ? parseFleetRecheckHistoryArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
-    if (name === 'fleet_intent_read' ? intentRead === null :
+    if (name === 'fleet_review_pick' ? reviewPick === null :
+        name === 'fleet_order_state' ? orderState === null :
+        name === 'fleet_work_board' ? workBoard === null :
+        name === 'fleet_orchestration_read' ? orchestrationRead === null :
+        name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
+        name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
+        name === 'fleet_peer_ledger' ? peerLedgerArgs === null :
+        name === 'fleet_session_handoff' ? sessionHandoffArgs === null :
+        name === 'fleet_surface_owner' ? surfaceOwner === null :
+        name === 'fleet_claim_execution' ? claimExecution === null :
+        name === 'fleet_recheck' ? recheckArgs === null :
+        name === 'fleet_recheck_history' ? recheckHistory === null :
+        name === 'fleet_bridge_check' ? parseFleetBridgeCheckArgs(args) === null :
         name === 'fleet_release_candidate' ? releaseCandidate === null :
         name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
@@ -715,6 +1109,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
+        name === 'fleet_imessage_tasks' ? imessageTasks === null :
+        name === 'fleet_slack_evidence' ? slackEvidenceArgs === null :
         name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
         name === 'fleet_gmail_triage_latest' ? gmailTriageLatestArgs === null :
         name === 'fleet_disk_forecast' ? diskForecastArgs === null :
@@ -753,8 +1149,26 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_loop' ? await readers.loop(limit as number)
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
+        : name === 'fleet_coordination_claims' ? readFleetCoordinationClaims()
+        : name === 'fleet_coordination_returns' ? readFleetCoordinationReturns()
+        : name === 'fleet_runtime' ? await (readers.runtime ?? readFleetRuntime)()
+        : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)(peerLedgerArgs as FleetPeerLedgerArgs)
+        : name === 'fleet_session_handoff' ? (readers.sessionHandoff ?? readFleetSessionHandoff)(sessionHandoffArgs!)
+        : name === 'fleet_surface_owner' ? await (readers.surfaceOwner ?? readFleetSurfaceOwner)(surfaceOwner!.surface)
+        : name === 'fleet_claim_execution' ? await (readers.claimExecution ?? readFleetClaimExecution)()
+        : name === 'fleet_runtime_identity' ? await (readers.runtimeIdentity ?? readFleetRuntimeIdentity)()
+        : name === 'fleet_channel_health' ? await readFleetChannelHealth(readers.channelHealth)
+        : name === 'fleet_tailnet_peers' ? await readFleetTailnetPeers(readers.tailnetPeers)
+        : name === 'fleet_pool_reach' ? await readFleetPoolReach(readers.poolReach)
+        : name === 'fleet_review_pick' ? await (readers.reviewPick ?? readFleetReviewPick)(reviewPick as FleetReviewPickArgs)
+        : name === 'fleet_order_state' ? await (readers.orderState ?? readFleetOrderState)(orderState as FleetOrderStateArgs)
+        : name === 'fleet_claim_notices' ? await readFleetClaimNotices(readers.claimNotices)
+        : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
+        : name === 'fleet_recheck' ? await (readers.recheck ?? (() => readFleetRecheckTool()))()
+        : name === 'fleet_recheck_history' ? await (readers.recheckHistory ?? readFleetRecheckHistoryTool)(recheckHistory as FleetRecheckHistoryArgs)
+        : name === 'fleet_bridge_check' ? await (readers.bridgeCheck ?? readFleetBridgeCheck)()
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
         : name === 'fleet_reset_group_await' ? await (readers.resetGroupAwait ?? readFleetResetGroupAwait)(resetGroupAwait as FleetResetGroupAwaitArgs)
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
@@ -787,11 +1201,15 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
+        : name === 'fleet_imessage_tasks' ? await (readers.imessageTasks ?? readFleetImessageTasks)(imessageTasks as FleetImessageTasksArgs)
+        : name === 'fleet_slack_evidence' ? await (readers.slackEvidence ?? readFleetSlackEvidence)(slackEvidenceArgs as FleetSlackEvidenceArgs)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
+        : name === 'fleet_orchestration_read' ? await (readers.orchestrationRead ?? readFleetOrchestration)(orchestrationRead as FleetOrchestrationReadArgs)
         : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
+        : name === 'fleet_work_board' ? await (readers.workBoard ?? readFleetWorkBoard)(workBoard as FleetWorkBoardArgs)
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.

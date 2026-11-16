@@ -2,9 +2,8 @@
  * RQ-MR-8-SIZE-CAP — router queue admission lint (offline, pure).
  *
  * One router queue line may produce at most one bounded job: a task that
- * touches more than one top-level area of its repo, or whose declared
- * estimate exceeds the merge volume cap (300 changed lines), can never
- * land under the standing size limits as a single change. This lint
+ * exceeds its tier's area or changed-line budget cannot be admitted as
+ * a single change. Frontier jobs may span related concerns. This lint
  * rejects such lines and, where the overrun is enumerable, proposes a
  * split into dependency-free children — one child per top-level area,
  * each further sliced so no child carries an estimate over the cap.
@@ -28,7 +27,7 @@
  * lint never fabricates one. `EST_LINES` is accepted as an alias.
  *
  * Verdicts per admission line (READY or PROPOSED):
- *   accept  — exactly one top-level area and a declared estimate <= cap.
+ *   accept: bounded top-level areas and a declared estimate <= tier cap.
  *   reject  — `multi-area`, `oversized` and/or `unbounded-scope`.
  *   review  — no cap violation, but the scope, estimate or status is
  *             undeclared/unknown, so admission cannot be proven safe.
@@ -46,7 +45,7 @@
  * never executed, interpolated into commands, or treated as authority.
  */
 
-import { queueTierProblem } from './queue-tier.js';
+import { queueTierProblem, QUEUE_TIER_SCOPE, type QueueTier } from './queue-tier.js';
 
 export const ROUTER_LINT_LIMITS = Object.freeze({
   inputBytes: 8 * 1024 * 1024,
@@ -56,7 +55,7 @@ export const ROUTER_LINT_LIMITS = Object.freeze({
   taskChars: 31_000,
   idChars: 184,
   maxAreas: 1,
-  maxEstLines: 300,
+  maxEstLines: 200,
   maxChildrenPerLine: 8,
   maxEstValue: 1_000_000,
 } as const);
@@ -69,9 +68,9 @@ export type RouterLintReason =
 export type RouterSplitBlock = 'unbounded-scope' | 'fan-out-too-wide' | 'id-too-long';
 
 export interface RouterLintOptions {
-  /** Admission cap on distinct top-level areas per line (default 1). */
+  /** Override the tier's admission cap on distinct top-level areas. */
   maxAreas?: number;
-  /** Admission cap on the declared changed-line estimate (default 300). */
+  /** Override the tier's admission cap on the declared changed-line estimate. */
   maxEstLines?: number;
   /** Bound on dependency-free children emitted for one rejected line. */
   maxChildrenPerLine?: number;
@@ -88,6 +87,8 @@ export interface RouterLineReport {
   areas: string[];
   /** Declared changed-line estimate; null when undeclared. */
   estLines: number | null;
+  /** Effective planning scope; absent for skipped or invalid lines. */
+  scope?: { tier: QueueTier; maxFiles: number; maxLines: number; maxAreas: number };
   /** Operator-facing explanation, set only for `unknown-tier` verdicts. */
   detail?: string;
 }
@@ -357,17 +358,18 @@ function boundedOption(value: number | undefined, fallback: number, max: number)
   if (!Number.isSafeInteger(value) || value < 1) fail();
   return Math.min(value, max);
 }
-function resolveOptions(options: RouterLintOptions): Required<RouterLintOptions> {
+function resolveOptions(options: RouterLintOptions, tier: QueueTier = 'work'): Required<RouterLintOptions> {
+  const scope = QUEUE_TIER_SCOPE[tier];
   return {
-    maxAreas: boundedOption(options.maxAreas, ROUTER_LINT_LIMITS.maxAreas, 64),
-    maxEstLines: boundedOption(options.maxEstLines, ROUTER_LINT_LIMITS.maxEstLines, ROUTER_LINT_LIMITS.maxEstValue),
+    maxAreas: boundedOption(options.maxAreas, scope.maxAreas, 64),
+    maxEstLines: boundedOption(options.maxEstLines, scope.maxLines, ROUTER_LINT_LIMITS.maxEstValue),
     maxChildrenPerLine: boundedOption(options.maxChildrenPerLine, ROUTER_LINT_LIMITS.maxChildrenPerLine, 64),
   };
 }
 
 /** Lint one line; non-admission and non-queue shapes skip without judging. */
 export function lintRouterLine(text: string, options: RouterLintOptions = {}, lineNumber = 1): RouterLineResult {
-  const opts = resolveOptions(options);
+  let opts = resolveOptions(options);
   const line = text.endsWith('\r') ? text.slice(0, -1) : text;
   const trimmed = line.trim();
   if (trimmed === '' || trimmed.startsWith('#') || trimmed.startsWith('<!--') || !trimmed.includes('RQ-')) {
@@ -382,19 +384,32 @@ export function lintRouterLine(text: string, options: RouterLintOptions = {}, li
   const areas = new Set([...declared.areas, ...inferredAreas(parsed.task)]);
   const sortedAreas = [...areas].sort();
   const { estLines, malformed } = declaredEstimate(fields);
-  const base = { line: lineNumber, id: parsed.id, status };
+  const base: Pick<RouterLineReport, 'line' | 'id' | 'status' | 'scope'> = { line: lineNumber, id: parsed.id, status };
   if (status === null) {
     return { ...base, verdict: 'review', reasons: ['status-unknown'], areas: sortedAreas, estLines };
   }
   if (!ADMISSION_STATUSES.has(status)) {
     return { ...base, verdict: 'skip', reasons: ['not-admission'], areas: sortedAreas, estLines };
   }
-  for (const match of parsed.envelope.matchAll(ENVELOPE_TIER_RE)) {
+  let tier: QueueTier = 'work';
+  const tiers = [...parsed.envelope.matchAll(ENVELOPE_TIER_RE)];
+  for (const match of tiers) {
     const problem = queueTierProblem(match[1]!);
     if (problem !== null) {
       return { ...base, verdict: 'invalid', reasons: ['unknown-tier'], areas: sortedAreas, estLines, detail: problem };
     }
+    tier = match[1] as QueueTier;
   }
+  if (new Set(tiers.map(match => match[1])).size > 1) return invalidLine(lineNumber, parsed.id, status, sortedAreas, estLines);
+  opts = resolveOptions(options, tier);
+  // A task's explicit narrower budget wins over the tier default and options.
+  let maxFiles = QUEUE_TIER_SCOPE[tier].maxFiles as number;
+  for (const match of parsed.envelope.matchAll(/(?:^|[,;\s])(size<=|max-files=)([^,;\s]*)/g)) {
+    if (!/^[1-9]\d{0,6}$/.test(match[2]!)) return invalidLine(lineNumber, parsed.id, status, sortedAreas, estLines);
+    if (match[1] === 'size<=') opts.maxEstLines = Math.min(opts.maxEstLines, Number(match[2]));
+    else maxFiles = Math.min(maxFiles, Number(match[2]));
+  }
+  base.scope = { tier, maxFiles, maxLines: opts.maxEstLines, maxAreas: opts.maxAreas };
   if (parsed.task.includes('\u0000') || parsed.task.includes('\uE000')) {
     return invalidLine(lineNumber, parsed.id, status, sortedAreas, estLines);
   }
@@ -404,7 +419,7 @@ export function lintRouterLine(text: string, options: RouterLintOptions = {}, li
   else if (areas.size > opts.maxAreas) reasons.push('multi-area');
   if (estLines !== null && estLines > opts.maxEstLines) reasons.push('oversized');
   if (reasons.length > 0) {
-    const report: RouterLineReport = { line: lineNumber, id: parsed.id, status, verdict: 'reject',
+    const report: RouterLineReport = { ...base, verdict: 'reject',
       reasons, areas: sortedAreas, estLines };
     return { ...report, split: proposeSplit(report, parsed.id, parsed.envelope, parsed.task, opts) };
   }

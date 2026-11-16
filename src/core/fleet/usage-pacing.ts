@@ -9,6 +9,8 @@ export interface UsageReading { pct: number; at: string }
 export interface UsagePool { resetAt: string; readings: UsageReading[] }
 export interface FleetUsageConfig { usage: Record<string, UsagePool>; [key: string]: unknown }
 const HOUR = 3_600_000;
+// Mason's Nov 5, 2026 no-reserve order: use the full subscription pool.
+export const USAGE_PACE_TARGET_PCT = 100;
 const timestamp = (value: string): number => {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) {
     throw new Error('Timestamp must be ISO 8601 with a timezone');
@@ -41,8 +43,8 @@ export function usagePacing(pool: UsagePool, now = Date.now()) {
   // Observed endpoints within the trailing 12h, without inventing samples.
   const pointsPerHour12h = rate(current.find(r => timestamp(r.at) >= now - 12 * HOUR));
   const active = reset > now;
-  const paceNeeded = latest && active ? Math.max(0, 98 - latest.pct) * HOUR / (reset - now) : null;
-  const throttle = active && latest !== undefined && (latest.pct >= 98 || (pointsPerHour !== null && paceNeeded !== null && pointsPerHour > paceNeeded));
+  const paceNeeded = latest && active ? Math.max(0, USAGE_PACE_TARGET_PCT - latest.pct) * HOUR / (reset - now) : null;
+  const throttle = active && latest !== undefined && (latest.pct >= USAGE_PACE_TARGET_PCT || (pointsPerHour !== null && paceNeeded !== null && pointsPerHour > paceNeeded));
   const runOut = latest && pointsPerHour !== null && pointsPerHour > 0
     ? timestamp(latest.at) + (100 - latest.pct) * HOUR / pointsPerHour : null;
   return {

@@ -44,6 +44,10 @@ export interface WorldModel {
       used: Field<number>;
       limit: Field<number>;
       remaining: Field<number>;
+      /** The window reset. A fact until it passes, so it outlives a stale usage reading. */
+      resetAt: Field<string>;
+      /** Set only while the lane is at zero capacity. Absent means not known to be at zero. */
+      zeroCapacityUntil: Field<string>;
       burnRate: Field<number>;
       idleIncludedWastedPerWeek: Field<number>;
       pacePerHour: Field<number>;
@@ -77,6 +81,20 @@ export interface WorldModel {
     laneUtilization: Field<number>;
     costPerMergedPr: Field<number>;
     bottleneckTrends: Field<number>;
+  };
+  /**
+   * Counts from the local intent ledger. Null value and freshness `unknown`
+   * means the ledger is missing, unreadable, or not ashlr.intent-ledger/v1.
+   * Merged is never promoted to shipped. No directive text is carried here.
+   */
+  intents: {
+    items: Field<number>;
+    tracked: Field<number>;
+    merged: Field<number>;
+    shipped: Field<number>;
+    verified: Field<number>;
+    stale: Field<number>;
+    partial: Field<number>;
   };
   blindSpots: BlindSpot[];
 }

@@ -17,6 +17,22 @@ export type GmailTriageView =
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
+export type GmailEvidence = { scope: 'saved-export-sample' | 'unknown'; liveInbox: 'unknown'; archiveRun: 'unverified' };
+
+export function readGmailEvidence(data: unknown): GmailEvidence {
+  const evidence = isRecord(data) && isRecord(data.evidence) ? data.evidence : null;
+  return {
+    scope: evidence?.scope === 'saved-local-export-sample' ? 'saved-export-sample' : 'unknown',
+    liveInbox: 'unknown',
+    archiveRun: 'unverified',
+  };
+}
+
+export function gmailEvidenceLine(e: GmailEvidence): string {
+  const source = e.scope === 'saved-export-sample' ? 'From a saved export sample' : 'Source unknown';
+  return `${source} · live inbox not checked · archiving not run by Phantom`;
+}
+
 export function readGmailTriageView(data: unknown): GmailTriageView | null {
   if (!isRecord(data) || data.schema !== SCHEMA) return null;
   const latest = data.latest;

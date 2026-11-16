@@ -2,12 +2,13 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn() }));
+const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn(), hostStats: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: ports.spawn, spawnSync: () => ({ status: 0 }) }));
 vi.mock('node:fs', async original => ({ ...await original<typeof import('node:fs')>(), lstatSync: ports.stat }));
 vi.mock('../src/core/drive/script-bridge.js', () => ({ checkDriveExecutable: ports.check }));
 vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ callPool: ports.call }));
-vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.capacity }));
+vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.capacity,
+  sampleHostStats: ports.hostStats }));
 import { runNodeWorker } from '../src/core/drive/nodes/worker.js';
 
 const config = { role: 'worker' as const, primary: 'main', backup: 'backup', owner: 'mason', node: 'worker' };
@@ -22,6 +23,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   ports.capacity.mockReturnValue({ slots: 1, ramBytes: 16 * 1024 ** 3, held: null });
+  ports.hostStats.mockImplementation(() => ({ sampledAtMs: Date.now(), uptimeSeconds: 1, load: [0, 0, 0], ramTotal: 16, ramUsed: 8, diskFree: 4, cores: [] }));
   child = new Child();
   ports.stat.mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
   ports.check.mockResolvedValue(undefined);
@@ -39,6 +41,57 @@ async function start() {
   return { result };
 }
 describe('multi-Mac worker lifecycle', () => {
+  it('continues fenced work when optional host telemetry cannot be collected', async () => {
+    ports.hostStats.mockImplementation(() => { throw new Error('unavailable'); });
+    const { result } = await start();
+    const beatArgs = ports.call.mock.calls.find(c => c[1] === 'beat')![2] as string[];
+    expect(beatArgs).not.toContain('--host-stats');
+    child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
+    expect(await result).toEqual({ jobId: 'j', completed: true });
+  });
+  it('advertises its phm build as a capability on join without adding a join flag', async () => {
+    const { result } = await start();
+    const join = ports.call.mock.calls.find(c => c[1] === 'join')![2] as string[];
+    expect(join.filter(a => a.startsWith('--'))).toEqual(['--node', '--caps', '--slots']);
+    expect(join[join.indexOf('--caps') + 1]).toMatch(/^codex,claude,phm-\d+\.\d+\.\d+/);
+    child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
+    await result;
+  });
+  it('runs the fixed muse light slice in two slots without a provider lane', async () => {
+    ports.capacity.mockReturnValue({ slots: 2, held: null });
+    const route = ports.call.getMockImplementation()!;
+    let pulls = 0;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'status') return { result: { jobs: [], nodes: [{ nodeId: 'muse', owners: ['ashlr'],
+        caps: ['light', 'comms'], slots: 2, usage: 0, live: true, heartbeatAt: Date.now(), expiresAt: Date.now() + 30_000 }] } };
+      const response = route(...args);
+      if (args[1] === 'pull') {
+        const id = `muse-light-channels-status-${++pulls}`;
+        response.result.job = { id, owner: 'ashlr', requires: ['light', 'comms'], secrets: [], pack: 'muse-light:channels-status:v1' };
+        response.result.claim.jobId = id;
+      }
+      return response;
+    });
+    const second = new Child();
+    ports.spawn.mockReturnValueOnce(child).mockReturnValueOnce(second);
+    const result = runNodeWorker({ ...config, node: 'muse', owner: 'ashlr' }, '/reviewed/runner', true);
+    await Promise.resolve();
+    expect(ports.capacity).toHaveBeenCalledWith(true);
+    expect(ports.spawn).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(3000);
+    const beats = ports.call.mock.calls.filter(c => c[1] === 'beat');
+    expect(beats.at(-1)?.[2]).toEqual(expect.arrayContaining(['--usage', '1000', '--slots', '2']));
+    const beatArgs = beats.at(-1)![2] as string[];
+    expect(JSON.parse(beatArgs[beatArgs.indexOf('--host-stats') + 1]!)).toMatchObject({ ramTotal: 16, load: [0, 0, 0] });
+    child.stdout.write('{"resultRef":"light:first"}'); child.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(3000);
+    const later = ports.call.mock.calls.filter(c => c[1] === 'beat');
+    expect(later.at(-1)?.[2]).toEqual(expect.arrayContaining(['--usage', '500']));
+    expect(ports.call.mock.calls.some(c => c[1] === 'leave')).toBe(false);
+    second.stdout.write('{"resultRef":"light:second"}'); second.emit('close', 0);
+    expect(await result).toMatchObject({ slots: 2, attempts: [{ completed: true }, { completed: true }] });
+  });
+
   it('runs a claimed pack and returns only its bounded artifact reference', async () => {
     const { result } = await start();
     expect(ports.spawn).toHaveBeenCalledWith('/reviewed/runner', ['run'], expect.objectContaining({ detached: true, shell: false }));

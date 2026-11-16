@@ -14,6 +14,7 @@ import { wasteRiskBriefLines } from './planner-waste.js';
 import { planWriteBudget, writeBudgetBriefLines, writeBudgetLanesFromStatus, type WriteBudgetLaneInput } from './planner-write-budget.js';
 import { realSupplyBriefLines, type RealSupplyV1 } from './planner-real-supply.js';
 import { readSource, type Source } from './runs-parked-queue.js';
+import { isStatusAsk } from './status-ask.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 /** Rendered byte budget for the MASON INBOX section; newest complete orders win. */
@@ -50,6 +51,8 @@ export interface PlannerBriefOptions {
   orderCoverage?: () => Promise<OrderTraceV1>;
   /** Optional waste-risk projections; failures render an unavailable section. */
   wasteRisk?: () => Promise<WasteRiskProjection[]>;
+  /** The friction ledger's top open items (RQ-FRICTION-3); absent → no section, a throw → unavailable. */
+  frictionTop?: () => Promise<readonly { id: string; score: number; title: string }[]>;
 }
 const lines = (text: string): string[] => text === '' ? [] : text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 
@@ -144,8 +147,22 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     const picked: string[] = [];
     let used = 0;
     let omitted = 0;
+    let statusCount = 0;
+    let newestStatus = '';
+    const easternTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]!;
+      const channel = INBOX_CHANNEL_LINE.test(entry.heading);
+      const body = [channel ? entry.heading.replace(/^\S+\s+\[src:[^\]]+\]\s+/, '') : '', ...entry.body].join('\n');
+      if (isStatusAsk(body)) {
+        statusCount++;
+        const time = channel
+          ? easternTime.format(new Date(entry.heading.split(/\s/, 1)[0]!))
+          : entry.heading.slice(3, 19);
+        if (time > newestStatus) newestStatus = time;
+        ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
+        continue;
+      }
       let complete = true;
       let rendered = [entry.heading, ...entry.body].join('\n');
       let bytes = Buffer.byteLength(rendered) + 1;
@@ -161,8 +178,9 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       if (complete) ackEntries.unshift([entry.heading, ...entry.body].join('\n'));
     }
     if (omitted) inboxBody.push(`(${omitted} older entr${omitted === 1 ? 'y' : 'ies'} omitted — over the ${INBOX_BUDGET_LABEL} inbox budget)`);
+    if (statusCount) inboxBody.push(`(${statusCount} status ask(s) omitted; the channel auto-answers them: ${newestStatus} ET)`);
     inboxBody.push(...picked);
-    if (!picked.length && !fragment && !inboxCut && !omitted) inboxBody.push('(no entries)');
+    if (!picked.length && !fragment && !inboxCut && !omitted && !statusCount) inboxBody.push('(no entries)');
   }
   const inboxLineCount = inboxBody.reduce((total, part) => total + part.split('\n').length, 0);
   let merges: string[] = [];
@@ -224,6 +242,13 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
       missing.push('order-coverage');
     }
   }
+  let friction: string[] | null = null;
+  if (opts.frictionTop !== undefined) {
+    try {
+      friction = (await opts.frictionTop()).map((item) => `${item.id} score=${item.score} — ${item.title.replace(CONTROL, ' ')}`);
+      if (friction.length === 0) friction = ['(ledger empty: no open friction items — ideate as usual)'];
+    } catch { friction = ['(unavailable: friction ledger read failed)']; missing.push('friction-ledger'); }
+  }
   // eslint-disable-next-line no-control-regex -- tick notes must remain a single printable line.
   const note = opts.note?.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 500);
   const text = scrubSecrets([
@@ -239,11 +264,12 @@ export async function buildPlannerBrief(opts: PlannerBriefOptions = {}) {
     '## RECENT PHANTOM MERGES', mergeText,
     `## IN FLIGHT (ingested in the last ${IN_FLIGHT_WINDOW_HOURS}h, not yet merged on origin/master)`, ...inFlight,
     ...(orderCoverage === null ? [] : ['## ORDER COVERAGE', 'Orders marked UNSERVED have no job citing them; prefer them.', ...orderCoverage]),
+    ...(friction === null ? [] : ['## FRICTION TOP (open friction-ledger items, highest score first — new jobs come from these; a job answering one carries friction_id=<item id> in its body)', ...friction]),
     '## MASON INBOX (newest last)', ...inboxBody,
     '', 'Now write the job files in your current directory, then stop. Output a one-line summary.',
   ].join('\n'));
   await acknowledgeInboxEntries(ackEntries, root, new Date(opts.now ?? Date.now()).toISOString(), opts.inboxAckSenders);
-  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, writeBudget: writeBudgetPlan?.total ?? null, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }) }, missing };
+  return { v: 1 as const, text, bytes: Buffer.byteLength(text), sections: { usedIds: ids.length, usedTitles: recentTitles.length, lanes: laneLines.length, writeBudget: writeBudgetPlan?.total ?? null, inboxLines: inboxLineCount, merges: merges.length, inFlight: inFlight.length, ...(realSupply === null ? {} : { realSupply: realSupply.length }), ...(wasteRisk === null ? {} : { wasteRisk: wasteRisk.length }), ...(orderCoverage === null ? {} : { orderCoverage: orderCoverage.length }), ...(friction === null ? {} : { friction: friction.length }) }, missing };
 }
 
 /** Publish only a prompt the planner's bounded input reader can consume. */

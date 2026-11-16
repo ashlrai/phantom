@@ -4,11 +4,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub-secrets.js';
+import { validRankedContextItem, type RankedContextItem, type RankedContextQuery, rankContext } from './ranked-context.js';
 
 export const contextSections = ['decisions', 'priorities', 'clients', 'people', 'fleet-state'] as const;
 export type ContextSection = typeof contextSections[number];
 export interface ContextEntry {
-  id: string; section: ContextSection; text: string; source: string; createdAt: number; expiresAt?: number;
+  id: string; section: ContextSection; text: string; source: string; createdAt: number; expiresAt?: number; ranked?: RankedContextItem;
 }
 export interface ContextWrite {
   section: ContextSection; text: string; source: string; id?: string; expiresAt?: number;
@@ -33,7 +34,8 @@ function entries(directory: string): ContextEntry[] {
       const row = JSON.parse(line) as ContextEntry & { schema: string };
       if (row.schema !== schema || !safe(row.id, 128) || !safe(row.text, 16000) || !safe(row.source, 256) ||
           contextSection(row.section) !== row.section || !Number.isFinite(row.createdAt) ||
-          (row.expiresAt !== undefined && !Number.isFinite(row.expiresAt))) throw new Error('Invalid company context.');
+          (row.expiresAt !== undefined && !Number.isFinite(row.expiresAt)) ||
+          (row.ranked !== undefined && (!validRankedContextItem(row.ranked) || row.text !== row.ranked.text || row.id !== row.ranked.id))) throw new Error('Invalid company context.');
       return row;
     });
   } catch { throw new Error('Cannot read company context: invalid store.'); }
@@ -69,7 +71,7 @@ export function readCompanyContext(options: { section?: ContextSection; maxToken
   const maxTokens = options.maxTokens ?? 1024;
   if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 16000) throw new Error('Token limit must be 1 to 16000.');
   if (options.section) contextSection(options.section);
-  const rows = entries(directory).filter(row => (!options.section || row.section === options.section) &&
+  const rows = entries(directory).filter(row => !row.ranked && (!options.section || row.section === options.section) &&
     (row.expiresAt === undefined || row.expiresAt > (options.now ?? Date.now())));
   const full = rows.map(row => `[${row.section}] ${row.text} (source: ${row.source})`).join('\n');
   let digest = ''; let bytes = 0;
@@ -79,4 +81,32 @@ export function readCompanyContext(options: { section?: ContextSection; maxToken
     digest += character; bytes += cost;
   }
   return { schema, digest, maxTokens, truncated: digest.length < full.length };
+}
+
+/** Scoped adapter over the existing company context journal. */
+export function companyRankedContextStore(directory = root()) {
+  return {
+    put(item: RankedContextItem): void {
+      if (!validRankedContextItem(item)) throw new Error('Ranked context refused.');
+      const lock = acquireLocalStoreLock(join(directory, '.write.lock'), 10000);
+      if (!lock) throw new Error('Company context is busy. Try again.');
+      try {
+        const rows = entries(directory);
+        if (rows.some(row => row.id === item.id)) throw new Error('Context id already exists.');
+        const row = { schema, id: item.id, section: 'decisions', text: item.text, source: 'ranked-context', createdAt: item.createdAt, ranked: item };
+        const bytes = Buffer.from(`${JSON.stringify(row)}\n`);
+        const fd = openSync(join(directory, 'company.context.v1.jsonl'), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+        try {
+          const stat = fstatSync(fd);
+          if (!stat.isFile() || stat.nlink !== 1 || stat.size + bytes.length > 8 * 1024 * 1024) throw new Error('Company context is too large or invalid.');
+          let offset = 0;
+          while (offset < bytes.length) offset += writeSync(fd, bytes, offset);
+          fsyncSync(fd);
+        } finally { closeSync(fd); }
+      } finally { releaseLocalStoreLock(lock); }
+    },
+    query(query: RankedContextQuery): RankedContextItem[] {
+      return rankContext(entries(directory).flatMap(row => row.ranked ? [row.ranked] : []), query);
+    },
+  };
 }

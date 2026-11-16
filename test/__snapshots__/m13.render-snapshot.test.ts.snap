@@ -2,7 +2,7 @@
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > inbox tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Inbox — Pending Approvals                                                                        
@@ -30,12 +30,12 @@ exports[`renderFrame snapshots — canonical 100x30 dashboard > inbox tab 1`] = 
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > mcp tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Name                                                                               Status    Tools 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -63,12 +63,12 @@ a-very-long-mcp-server-name-that-truncates                                      
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > overview tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ◆ Operator briefing                                                                                
    Needs you: No operator action · fresh evidence within authority                                  
@@ -96,12 +96,12 @@ exports[`renderFrame snapshots — canonical 100x30 dashboard > overview tab 1`]
  ◆ Daemon                                                                                           
    Status: running   Spend today: $0.5000   Pending proposals: 2                                    
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > portfolio tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Portfolio — Org Health                                                                           
@@ -129,12 +129,12 @@ exports[`renderFrame snapshots — canonical 100x30 dashboard > portfolio tab 1`
    Pending: +1   Dirty: -2   Spend: -$0.50   Health: 0   Goals: —                                   
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > pulse tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Activity — 7d Totals                                                                             
@@ -162,12 +162,12 @@ exports[`renderFrame snapshots — canonical 100x30 dashboard > pulse tab 1`] = 
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > runs tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ID           Goal                                                           Status          Tokens 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -195,12 +195,12 @@ run-006       Status outside the known lifecycle                             mys
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > runs tab with the second row selected 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ID           Goal                                                           Status          Tokens 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -228,12 +228,12 @@ run-006       Status outside the known lifecycle                             mys
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — canonical 100x30 dashboard > swarms tab 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ID           Goal                                     Status      Phase         Progress           
 ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ swarm-003     Phaseless swarm renders an em-dash       failed      —          
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — geometry edges > narrow overview (48x20) uses the compact proof layout 1`] = `
@@ -284,7 +284,7 @@ exports[`renderFrame snapshots — geometry edges > narrow overview (48x20) uses
                                                 
  ◆ Activity (7d)                                
    Sessions: 8   Tokens: 42.0k   Cost: $1.23   C
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter d"
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter d"
 `;
 
 exports[`renderFrame snapshots — geometry edges > narrow portfolio (48x20) truncates long objectives and items 1`] = `
@@ -307,12 +307,12 @@ exports[`renderFrame snapshots — geometry edges > narrow portfolio (48x20) tru
      88  Triage the flaky windows lane          
      72  Backfill docs for digest windows       
                                                 
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter d"
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter d"
 `;
 
 exports[`renderFrame snapshots — geometry edges > pulse tab renders the token bar for million-scale usage 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Activity — 7d Totals                                                                             
@@ -340,7 +340,7 @@ exports[`renderFrame snapshots — geometry edges > pulse tab renders the token 
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — geometry edges > tiny frame (32x10) clips the body to the terminal 1`] = `
@@ -353,12 +353,12 @@ exports[`renderFrame snapshots — geometry edges > tiny frame (32x10) clips the
    Autonomous now: Daemon runnin
    Last proof: Observed HH:MM:SS
    Decided autonomous           
- 1-7 tabs  ·  j/k move  ·  r ref"
+ 1-8 tabs  ·  j/k move  ·  r ref"
 `;
 
 exports[`renderFrame snapshots — inbox tab > clear inbox (pending 0) 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Inbox — Pending Approvals                                                                        
@@ -386,12 +386,12 @@ exports[`renderFrame snapshots — inbox tab > clear inbox (pending 0) 1`] = `
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — overview extras > no fleet evidence fails closed to the inspection action 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  ◆ Operator briefing                                                                                
    Needs you: Inspect fleet state                                                                   
@@ -419,12 +419,12 @@ exports[`renderFrame snapshots — overview extras > no fleet evidence fails clo
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — portfolio tab > absent portfolio section degrades to the enrollment hint 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Portfolio                                                                                        
@@ -452,12 +452,12 @@ exports[`renderFrame snapshots — portfolio tab > absent portfolio section degr
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
 exports[`renderFrame snapshots — portfolio tab > empty sub-sources and no prior digest 1`] = `
 " ashlr hub                                                                                  HH:MM:SS
- 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio                           
+ 1:Overview │ 2:Runs │ 3:Swarms │ 4:Pulse │ 5:MCP │ 6:Inbox │ 7:Portfolio │ 8:Sessions              
 ────────────────────────────────────────────────────────────────────────────────────────────────────
                                                                                                     
  ◆ Portfolio — Org Health                                                                           
@@ -485,10 +485,10 @@ exports[`renderFrame snapshots — portfolio tab > empty sub-sources and no prio
                                                                                                     
                                                                                                     
                                                                                                     
- 1-7 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
+ 1-8 tabs  ·  j/k move  ·  r refresh  ·  enter detail  ·  q quit                                    "
 `;
 
-exports[`renderFrame snapshots — raw ANSI pins > active tab is marked with reverse video in the tab bar 1`] = `"[1m[7m 1:Overview [0m[0m[2m│[0m[2m 2:Runs [0m[2m│[0m[2m 3:Swarms [0m[2m│[0m[2m 4:Pulse [0m[2m│[0m[2m 5:MCP [0m[2m│[0m[2m 6:Inbox [0m[2m│[0m[2m 7:Portfolio [0m                          "`;
+exports[`renderFrame snapshots — raw ANSI pins > active tab is marked with reverse video in the tab bar 1`] = `"[1m[7m 1:Overview [0m[0m[2m│[0m[2m 2:Runs [0m[2m│[0m[2m 3:Swarms [0m[2m│[0m[2m 4:Pulse [0m[2m│[0m[2m 5:MCP [0m[2m│[0m[2m 6:Inbox [0m[2m│[0m[2m 7:Portfolio [0m[2m│[0m[2m 8:Sessions [0m             "`;
 
 exports[`renderFrame snapshots — raw ANSI pins > portfolio grade colors: F is red, D is red, and handles stay dim 1`] = `"     [2mphantom[0m  [31mF[0m [2m(41)[0m                                                                                "`;
 

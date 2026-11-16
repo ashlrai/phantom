@@ -54,14 +54,17 @@ const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const EMPTY_KINDS = new Set(['EMPTY_DONE', 'EMPTY', 'SKIPPED-EMPTY', 'DONE-NOOP']);
 const TRACKED = new Set(['LAUNCH', 'PUBLISHED', ...EMPTY_KINDS]);
 
-interface Launch {
+/** One LAUNCH line paired with its first terminal event (PUBLISHED or an empty kind). */
+export interface LaunchOutcome {
   job: string;
   lane: string;
   ms: number;
   endMs?: number;
+  /** `YYYY-MM-DDTHH:MM:SSZ` of the terminal line. */
   endAt?: string;
   empty?: boolean;
 }
+type Launch = LaunchOutcome;
 
 /** Same wall-time-as-UTC convention as parseDispatchEvents: the log's local
  *  timestamps carry no zone, so `...Z` keeps every row on one clock. */
@@ -71,11 +74,12 @@ function eventMs(date: string, clock: string): number {
   return Date.parse(`${date}T${clock}Z`);
 }
 
-export function laneEmptyStreaks(text: string, nowMs: number, windowMinutes = LANE_STREAKS_DEFAULT_MINUTES): LaneEmptyStreaksV1 {
-  const minutes = Number.isFinite(windowMinutes)
-    ? Math.min(LANE_STREAKS_MAX_MINUTES, Math.max(LANE_STREAKS_MIN_MINUTES, Math.floor(windowMinutes)))
-    : LANE_STREAKS_DEFAULT_MINUTES;
-  const cutoff = nowMs - minutes * 60_000;
+/**
+ * Pure: every LAUNCH in [fromMs, toMs] in log order, each paired with the first
+ * terminal after it (FIFO when a job id relaunched). Shared by lane-streaks and
+ * empty-causes so both read the log with one set of rules.
+ */
+export function pairLaunchOutcomes(text: string, fromMs: number, toMs: number): { launches: LaunchOutcome[]; malformedLines: number } {
   const launches = new Map<string, Launch[]>();
   const all: Launch[] = [];
   let malformedLines = 0;
@@ -100,7 +104,7 @@ export function laneEmptyStreaks(text: string, nowMs: number, windowMinutes = LA
         malformedLines++;
         continue;
       }
-      if (ms < cutoff || ms > nowMs) continue;
+      if (ms < fromMs || ms > toMs) continue;
       const launch: Launch = { job: job!, lane: lane!, ms };
       all.push(launch);
       const jobs = launches.get(job!) ?? [];
@@ -120,6 +124,14 @@ export function laneEmptyStreaks(text: string, nowMs: number, windowMinutes = LA
     launch.endAt = `${m[1]}T${m[2]}Z`;
     launch.empty = kind !== 'PUBLISHED';
   }
+  return { launches: all, malformedLines };
+}
+
+export function laneEmptyStreaks(text: string, nowMs: number, windowMinutes = LANE_STREAKS_DEFAULT_MINUTES): LaneEmptyStreaksV1 {
+  const minutes = Number.isFinite(windowMinutes)
+    ? Math.min(LANE_STREAKS_MAX_MINUTES, Math.max(LANE_STREAKS_MIN_MINUTES, Math.floor(windowMinutes)))
+    : LANE_STREAKS_DEFAULT_MINUTES;
+  const { launches: all, malformedLines } = pairLaunchOutcomes(text, nowMs - minutes * 60_000, nowMs);
 
   const byLane = new Map<string, Launch[]>();
   for (const launch of all) {

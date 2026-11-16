@@ -32,10 +32,10 @@ describe('fleet gmail-triage saves the latest result', () => {
     expect(existsSync(gmailTriageLatestPath(runsDir))).toBe(false);
   });
 
-  it('an unwritable runs dir still exits 0 and says so on stderr', async () => {
+  it('an unwritable runs dir exits nonzero and says the shared result was not updated', async () => {
     const blocker = join(root, 'blocker');
     writeFileSync(blocker, 'file');
-    expect(await cmdFleetGmailTriage(['--dir', mailDir, '--runs-dir', join(blocker, 'runs')])).toBe(0);
-    expect(console.error).toHaveBeenCalledWith('Could not save the triage summary.');
+    expect(await cmdFleetGmailTriage(['--dir', mailDir, '--runs-dir', join(blocker, 'runs')])).toBe(1);
+    expect(console.error).toHaveBeenCalledWith('Could not save the triage summary; the shared latest result was not updated.');
   });
 });

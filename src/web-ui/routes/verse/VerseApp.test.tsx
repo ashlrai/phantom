@@ -20,7 +20,7 @@ import { resetResolvedForTest } from './shell/needs-you-actions.js';
 import { activity, approvalNeed, shellFetch, vetoNeed, type ShellFetch } from './shell/shell-fixtures.test-support.js';
 import { refreshActivity, resetActivityForTest } from './shell/useActivity.js';
 import { mockCompactViewport, mockViewport, type ViewportMock } from './shell/viewport.test-support.js';
-import { MissingSection, SECTION_MODULES, VerseApp } from './VerseApp.js';
+import { MissingSection, SECTION_MODULES, PhantomApp } from './VerseApp.js';
 import { getResourcesUi, reloadResourcesUiForTest, RESOURCES_STORAGE_KEY, setResourcesBar, setResourcesSummary } from './resources/resources-store.js';
 import { resetVerseStore } from './verse-store.js';
 import { getDockSnapshot, resetDockStore } from './dock/dock-store.js';
@@ -42,7 +42,7 @@ import {
 function mount() {
   // Shell interaction scenarios start from Chat; Home launch is covered by the store tests.
   if (getVerseUiState().section === 'live') setVerseSection('chat');
-  return render(<ToastProvider><VerseApp /></ToastProvider>);
+  return render(<ToastProvider><PhantomApp /></ToastProvider>);
 }
 
 /**
@@ -810,6 +810,25 @@ describe('announcements and the native bridge', () => {
     expect(await screen.findByText(/That terminal is closed/)).toBeInTheDocument();
   });
 
+  it('the desktop Fleet menu closes overlays and opens the map in the same workbench', async () => {
+    await import('./company/ComputeMap.js');
+    mount();
+    await screen.findByRole('navigation', { name: 'Chats' });
+    key('k', {}, 'KeyK');
+    expect(await screen.findByRole('combobox', { name: 'Search commands' })).toBeInTheDocument();
+    act(() => { window.dispatchEvent(new CustomEvent('ashlr:desktop-command', { detail: { command: 'open-fleet' } })); });
+    expect(getVerseUiState()).toMatchObject({ section: 'fleet', overlay: null });
+    expect(await screen.findByRole('region', { name: 'Fleet compute map' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Search commands' })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Workspaces' }));
+    expect(screen.queryByRole('region', { name: 'Fleet compute map' })).not.toBeInTheDocument();
+    act(() => { window.dispatchEvent(new CustomEvent('ashlr:desktop-command', { detail: { command: 'open-fleet' } })); });
+    expect(await screen.findByRole('region', { name: 'Fleet compute map' })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Workspaces' }));
+    await userEvent.setup().click(within(rail()).getByRole('button', { name: /^Fleet/ }));
+    expect(await screen.findByRole('region', { name: 'Fleet compute map' })).toBeInTheDocument();
+  });
+
   it('the tray’s New chat and the hotkey land in Chat, closing an open palette first (C8)', async () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
@@ -848,5 +867,12 @@ describe('announcements and the native bridge', () => {
     target.scrollIntoView = scrolled;
     act(() => { host.appendChild(target); });
     await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('legacy Verse component names', () => {
+  it('keeps VerseApp resolving to PhantomApp for external importers', async () => {
+    const mod = await import('./VerseApp.js');
+    expect(mod.VerseApp).toBe(mod.PhantomApp);
   });
 });

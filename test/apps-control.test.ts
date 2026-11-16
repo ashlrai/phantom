@@ -76,6 +76,19 @@ describe('createAppControl', () => {
     expect(new Set(d.names())).toEqual(new Set(['computer_list_apps', 'computer_ax_tree', 'computer_ax_press']));
   });
 
+  it('refuses an empty or truncated tree before pressing Quit', async () => {
+    for (const text of [treeText([]), `${treeText(CLEAN)}\ntruncated`]) {
+      const press = vi.fn();
+      const call: ToolCall = async name => {
+        if (name === 'computer_list_apps') return ok(APPS);
+        if (name === 'computer_ax_tree') return ok(text);
+        press(); return ok('pressed');
+      };
+      expect(await createAppControl(call).quit('Notes')).toMatchObject({ ok: false, code: 'unreadable' });
+      expect(press).not.toHaveBeenCalled();
+    }
+  });
+
   it('asks for access once when the chat holds no grant', async () => {
     const d = fakeDesktop('ungranted-then');
     expect((await createAppControl(d.call).quit('Notes')).ok).toBe(true);
@@ -184,8 +197,8 @@ describe('phm apps', () => {
     expect(await cmdApps(['list', '--json'], { ...base(), call: d.call })).toBe(0);
     const out = JSON.parse(lines[0]!);
     expect(out.apps).toEqual([
-      { name: 'Notes', bundleId: null, running: true, frontmost: false },
-      { name: 'Mail', bundleId: null, running: false, frontmost: false },
+      { name: 'Notes', bundleId: null, actions: ['open', 'quit', 'focus', 'status'], mode: 'direct', running: true, frontmost: false },
+      { name: 'Mail', bundleId: null, actions: ['open', 'quit', 'focus', 'status'], mode: 'direct', running: false, frontmost: false },
     ]);
     expect(JSON.stringify(out)).not.toContain('Pages');
   });
@@ -239,6 +252,63 @@ describe('phm apps', () => {
     writeFileSync(allowFile, '{');
     expect(await cmdApps(['list', '--json'], base())).toBe(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ ok: false });
+  });
+
+  it.each(['Devin', 'Codex', 'Claude', 'Cursor', 'Grokbot', 'Messages', 'Safari', 'Chrome'])('supports explicit policies for %s without an implicit enrollment', async name => {
+    allow([{ name, actions: ['status'], mode: 'direct' }]);
+    const d = fakeDesktop();
+    expect(await cmdApps(['status', name, '--json'], { ...base(), call: d.call })).toBe(0);
+    for (const action of ['open', 'focus', 'quit']) {
+      expect(await cmdApps([action, name, '--json'], { ...base(), call: d.call })).toBe(1);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ code: 'action-not-allowed' });
+    }
+    expect(new Set(d.names())).toEqual(new Set(['computer_list_apps']));
+  });
+
+  it.each([
+    ['request', 'quit', 'Notes'], ['quit', 'Phantom'], ['open', 'Phantom'], ['focus', 'Phantom'], ['open', 'Messages'],
+  ])('queues %j without touching the desktop or launcher', async (...args) => {
+    allow(['Notes', { name: 'Phantom', bundleId: 'ai.ashlr.desktop' }, { name: 'Messages', mode: 'request' }]);
+    const d = fakeDesktop();
+    const deps = base();
+    const launcher = { open: vi.fn(), activate: vi.fn() };
+    expect(await cmdApps([...args, '--json'], { ...deps, call: d.call, launcher })).toBe(3);
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ outcome: 'needs-you', code: 'action-requested', logged: true });
+    expect(deps.needsYou).toHaveBeenCalledOnce();
+    expect(d.calls).toEqual([]);
+    expect(launcher.open).not.toHaveBeenCalled();
+    expect(launcher.activate).not.toHaveBeenCalled();
+  });
+
+  it('blocks app writes and requests under KILL or comms pause before any desktop operation', async () => {
+    allow(['Notes']);
+    const d = fakeDesktop();
+    const deps = base();
+    for (const args of [['open', 'Notes'], ['quit', 'Notes'], ['request', 'focus', 'Notes']]) {
+      expect(await cmdApps([...args, '--json'], { ...deps, call: d.call, writesBlocked: () => true })).toBe(1);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ code: 'writes-blocked', logged: true });
+    }
+    expect(d.calls).toEqual([]);
+    expect(deps.needsYou).not.toHaveBeenCalled();
+  });
+
+  it('reports failed escalation accurately and never claims needs-you was queued', async () => {
+    allow(['Notes']);
+    const d = fakeDesktop('error');
+    expect(await cmdApps(['quit', 'Notes', '--json'], { ...base(), call: d.call, needsYou: () => false })).toBe(1);
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ outcome: 'failed', code: 'needs-you-unavailable' });
+    expect(d.names()).not.toContain('computer_ax_press');
+  });
+
+  it.each([
+    { apps: [{ name: 'Cursor', actions: ['type'] }] },
+    { apps: [{ name: 'Cursor', actions: ['quit', 'quit'] }] },
+    { apps: [{ name: 'Cursor', mode: 'allow' }] },
+    { apps: [{ name: 'Cursor', actions: 'quit' }] },
+    { apps: ['Cursor', 'cursor'] },
+    { apps: [{ name: 'Cursor', bundleId: 'com.example.cursor' }, 'com.example.cursor'] },
+  ])('fails closed on invalid or ambiguous policies %j', config => {
+    expect(parseAllowlist(JSON.stringify(config)).ok).toBe(false);
   });
 
   it('keeps newlines in an app name out of the needs-you line', async () => {

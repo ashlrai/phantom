@@ -99,14 +99,15 @@ describe('CapacityStrip', () => {
     } finally {vi.useRealTimers();}
   });
 
-  it('shows credits as a separate fact, never folded into the window', () => {
+  it('shows credits as a separate fact, never folded into the window', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-20T20:00:00.000Z'));
     render(<CapacityStrip seats={[CODEX_CREDITS_SEAT]} />);
-    expect(screen.getByText('2,000 credits available')).toHaveAttribute('title', 'Provider balance: 2,000 credits.');
+    screen.getByText('2,000 credits available').focus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Provider balance: 2,000 credits.');
     expect(screen.getByText('limit reached')).toBeInTheDocument();
   });
 
-  it('rounds separate account titles while preserving the raw provider balances', () => {
+  it('rounds separate account titles while preserving the raw provider balances', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-20T20:00:00.000Z'));
     const seats = ['412.8921985000', '62497.7860000000', '0.000001'].map((balance, index) => ({
       ...CODEX_CREDITS_SEAT, id: `codex-readable-${index}`, accountId: `codex-readable-${index}`,
@@ -116,7 +117,10 @@ describe('CapacityStrip', () => {
     }));
     render(<CapacityStrip seats={seats} />);
     for (const [index, [display, raw]] of [['410', '412.8921985000'], ['62,000', '62497.7860000000'], ['0.000001', '0.000001']].entries()) {
-      expect(screen.getByText(`${display} credits available`)).toHaveAttribute('title', `Provider balance: ${display} credits.`);
+      const credits = screen.getByText(`${display} credits available`);
+      act(() => { credits.focus(); });
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(`Provider balance: ${display} credits.`);
+      act(() => { credits.blur(); });
       expect(seats[index]!.capacity.credits.balance).toBe(raw);
     }
     expect(screen.getAllByText('limit reached')).toHaveLength(3);

@@ -18,6 +18,8 @@ export interface TeammateLatencySummary {
   maxMinutes: number | null;
   withinTarget: number;
   oldestUnanswered: { rowid: number; ageMinutes: number; intent: 'reply' | 'leader' } | null;
+  /** Newest inbound text time in the readable tail (ISO). Not window-limited: it is a contact fact, not a latency stat. Null when no text rows parse. */
+  latestTextAt: string | null;
   sourceState: TeammateSourceState;
 }
 
@@ -34,29 +36,33 @@ export function summarizeTeammateLatency(
 ): TeammateLatencySummary {
   const windowMs = opts.windowMs ?? 24 * HOUR_MS;
   const targetMinutes = opts.targetMinutes ?? 5;
-  // First marker wins: that is when the text was first answered.
-  const answeredAt = new Map<number, number>();
+  // Retain marker times until the inbound timestamp is known.
+  const answeredAt = new Map<number, number[]>();
   for (const r of rows) {
     if (!validRowid(r.answered) || typeof r.at !== 'string') continue;
     const t = Date.parse(r.at);
-    if (Number.isFinite(t) && !answeredAt.has(r.answered)) answeredAt.set(r.answered, t);
+    if (Number.isFinite(t) && t <= opts.now) answeredAt.set(r.answered, [...(answeredAt.get(r.answered) ?? []), t]);
   }
   const latencies: number[] = [];
   let texts = 0, unanswered = 0, ignorable = 0;
   let oldest: TeammateLatencySummary['oldestUnanswered'] = null;
   let oldestAt = Infinity;
+  let latestTextAt: string | null = null;
+  let latestTextMs = -Infinity;
   const seen = new Set<number>();
   for (const r of rows) {
     if (!validRowid(r.rowid) || typeof r.at !== 'string' || typeof r.text !== 'string' || seen.has(r.rowid)) continue;
     const at = Date.parse(r.at);
-    if (!Number.isFinite(at) || opts.now - at > windowMs) continue;
+    if (!Number.isFinite(at) || at > opts.now) continue;
+    if (at > latestTextMs) { latestTextMs = at; latestTextAt = r.at; }
+    if (opts.now - at > windowMs) continue;
     seen.add(r.rowid);
     texts++;
     const intent = classifyTeammateIntent(r.text);
     if (intent === 'ignore') { ignorable++; continue; }
-    const answerAt = answeredAt.get(r.rowid);
+    const answerAt = answeredAt.get(r.rowid)?.filter((t) => t >= at).sort((a, b) => a - b)[0];
     if (answerAt !== undefined) {
-      latencies.push(Math.max(0, answerAt - at) / 60_000);
+      latencies.push((answerAt - at) / 60_000);
     } else {
       unanswered++;
       if (at < oldestAt) {
@@ -81,6 +87,7 @@ export function summarizeTeammateLatency(
     maxMinutes: n === 0 ? null : round1(latencies[n - 1]!),
     withinTarget: latencies.filter((m) => m <= targetMinutes).length,
     oldestUnanswered: oldest,
+    latestTextAt,
     sourceState: opts.sourceState ?? 'healthy',
   };
 }

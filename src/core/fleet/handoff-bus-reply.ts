@@ -104,6 +104,9 @@ export interface HandoffBusReplyOptions {
   spoolDir: string;
   /** Bounded worker runtime in milliseconds, forwarded to the runner unchanged. */
   timeoutMs: number;
+  /** Optional worker directory and programmatic cancellation. */
+  cwd?: string;
+  signal?: AbortSignal;
   argv: readonly string[];
 }
 
@@ -177,6 +180,8 @@ export async function replyHandoffBus(opts: HandoffBusReplyOptions,
       replyId: opts.replyId,
       spoolDir: opts.spoolDir,
       timeoutMs: opts.timeoutMs,
+      cwd: opts.cwd,
+      signal: opts.signal,
       argv: [...opts.argv],
     }, io, options);
     return { workerExit: result.workerExit, delivery: result.delivery, exitCode: result.exitCode };

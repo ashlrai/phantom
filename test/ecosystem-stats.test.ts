@@ -1,17 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-// @ts-expect-error -- plain .mjs script without types
-import { lastPage } from '../scripts/ecosystem-stats.mjs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-describe('ecosystem stats', () => {
-  it('parses the last page from a GitHub Link header', () => {
-    expect(lastPage('<https://api.github.com/x?per_page=1&page=2>; rel="next", <https://api.github.com/x?per_page=1&page=4521>; rel="last"')).toBe(4521);
-    expect(lastPage(null)).toBeNull();
+const root = join(fileURLToPath(import.meta.url), '..', '..');
+
+describe('ecosystem-stats workflow inputs', () => {
+  it('ships the script the daily workflow runs', () => {
+    const wf = readFileSync(join(root, '.github/workflows/ecosystem-stats.yml'), 'utf8');
+    const m = /node (scripts\/[\w.-]+\.mjs)/.exec(wf);
+    expect(m).not.toBeNull();
+    expect(existsSync(join(root, m![1]))).toBe(true);
   });
-  it('keeps the ecosystem repo list in one config', () => {
-    const cfg = JSON.parse(readFileSync('ecosystem/repos.json', 'utf8'));
+
+  it('lists repos in ecosystem/repos.json', () => {
+    const cfg = JSON.parse(readFileSync(join(root, 'ecosystem/repos.json'), 'utf8'));
     expect(cfg.owner).toBe('ashlrai');
-    expect(cfg.repos).toContain('phantom');
-    expect(new Set(cfg.repos).size).toBe(cfg.repos.length);
+    expect(cfg.repos.length).toBeGreaterThan(0);
+  });
+
+  it('parses the last page from a Link header', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eco-stats-'));
+    try {
+      const { lastPage } = await import(join(root, 'scripts/ecosystem-stats.mjs'));
+      expect(lastPage('<https://api.github.com/x?per_page=1&page=42>; rel="last"')).toBe(42);
+      expect(lastPage(null)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

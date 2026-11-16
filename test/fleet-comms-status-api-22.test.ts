@@ -36,6 +36,7 @@ const absentTeammate = {
   maxMinutes: null,
   withinTarget: 0,
   oldestUnanswered: null,
+  latestTextAt: null,
   sourceState: 'missing',
 };
 

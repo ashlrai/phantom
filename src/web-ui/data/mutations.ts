@@ -11,6 +11,7 @@
  * server was started without --allow-dispatch — apiPost maps that code-less
  * 404 to DispatchDisabledError (a 404 carrying a `code` stays an ApiError).
  */
+import type { CreateBotRequest, CreateBotResult } from '../../core/agents/bot-templates.js';
 import { emitAgentDecision } from './agent-decisions.js';
 import { apiPost } from './client.js';
 import { getMutationToken, touchMutationHold } from './auth-store.js';
@@ -69,6 +70,14 @@ export async function rejectProposal(id: string): Promise<void> {
 export async function decideApprovalRequest(id: string, revision: string, decision: 'approve' | 'deny'): Promise<void> {
   await post(`/api/inbox/${encodeURIComponent(id)}/decision`, { revision, decision });
   invalidateProposalViews(id);
+  // The decided proposal leaves the pending-approvals section too.
+  invalidate('approvals');
+}
+
+/** The click is the approval: the server derives the human identity locally and never reads one from here. */
+export async function decideTeamApproval(id: string, decision: 'approve' | 'deny', team?: string): Promise<void> {
+  await post(`/api/approvals/team/${encodeURIComponent(id)}/decision`, team ? { decision, team } : { decision });
+  invalidate('approvals');
 }
 
 export interface OpenTargetRequest {
@@ -89,4 +98,11 @@ export async function setResourcePlanTier(resourceId: string, planTier: string |
 export async function setScheduledAgentEnabled(id: string, enabled: boolean): Promise<void> {
   await post(`/api/verse/automations/${encodeURIComponent(id)}/${enabled ? 'enable' : 'disable'}`, {});
   invalidate('verse-automations');
+}
+
+/** Create a bot from a template. Crons arrive disabled; nothing is sent or dispatched. */
+export async function createBotFromTemplate(request: CreateBotRequest): Promise<CreateBotResult> {
+  const result = await post<CreateBotResult>('/api/bots', request);
+  invalidate('bots');
+  return result;
 }

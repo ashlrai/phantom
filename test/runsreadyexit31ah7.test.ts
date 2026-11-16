@@ -6,7 +6,7 @@ import type { FleetRunsDirState, FleetRunsLane } from '../src/core/fleet/runs-di
 import { readLeaderJournal } from '../src/core/fleet/leader-journal.js';
 import { readFleetQueue } from '../src/core/fleet/runs-parked-queue.js';
 import { cmdFleetRunsRead } from '../src/cli/fleet-runs-read.js';
-import { cmdFleet } from '../src/cli/fleet.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 
 const mocked = vi.hoisted(() => ({ runs: vi.fn() }));
 vi.mock('../src/core/fleet/runs-dir-state.js', async importOriginal => ({

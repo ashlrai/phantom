@@ -80,7 +80,7 @@
   .handle { display: none; }
 }
 
-/* Pinned: the drawer's grid track (VerseApp gives the shell a third column). */
+/* Pinned: the drawer's grid track (PhantomApp gives the shell a third column). */
 .dock {
   grid-column: 3;
   grid-row: 1;

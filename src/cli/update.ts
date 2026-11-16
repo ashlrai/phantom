@@ -493,6 +493,7 @@ function printHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    phm update ${cyan('[--check]')} ${cyan('[--json]')} ${cyan('[--channel git|npm]')} ${cyan('[--yes]')}`);
+  console.log('    phm update why [--json]  Explain desktop update feed status without installing.');
   console.log('    Compatible alias: ashlr update');
   console.log('');
   console.log('  ' + bold('Flags:'));
@@ -520,6 +521,15 @@ function printHelp(): void {
 // ---------------------------------------------------------------------------
 
 export async function cmdUpdate(args: string[]): Promise<number> {
+  if (args[0] === 'why') {
+    if (args.length > 2 || (args.length === 2 && args[1] !== '--json')) {
+      process.stderr.write('usage: phm update why [--json]\n'); return 2;
+    }
+    const { updateWhy } = await import('../core/desktop/update-why.js');
+    const result = await updateWhy();
+    console.log(args.includes('--json') ? JSON.stringify(result) : result.message);
+    return 0;
+  }
   // Help shortcircuit, anywhere: parseUpdateArgs ignores --help/-h as "handled
   // upstream", so `update --yes --help` used to apply the update. --channel's
   // value is git or npm, never a help flag.

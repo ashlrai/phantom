@@ -3,6 +3,7 @@
  *
  * Usage:
  *   ashlr verse [--port N] [--no-open] [--json]
+ *   ashlr console ...                (the Phantom name: same flags, opens /app/)
  *   ashlr verse --remote-config <private-json-file>  (explicit phone gateway)
  *   ashlr verse remote <invite|pending|approve|deny|revoke|devices>
  *
@@ -150,8 +151,11 @@ export function verseStartupTokenFields(remote: boolean, desktopTokenHandoff: bo
   };
 }
 
-export function verseUrlFor(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/verse/`;
+/** `console` is the Phantom name for `verse`; it opens the `/app/` alias. */
+export type VerseCommandName = 'verse' | 'console';
+
+export function verseUrlFor(baseUrl: string, command: VerseCommandName = 'verse'): string {
+  return `${baseUrl.replace(/\/+$/, '')}/${command === 'console' ? 'app' : 'verse'}/`;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +316,12 @@ export async function startVerseBackgroundServices(
 // cmdVerse
 // ---------------------------------------------------------------------------
 
-export async function cmdVerse(args: string[]): Promise<number> {
+/** `phm console`: the Phantom-named alias of `phm verse`; same flags and behaviour. */
+export function cmdConsole(args: string[]): Promise<number> {
+  return cmdVerse(args, 'console');
+}
+
+export async function cmdVerse(args: string[], command: VerseCommandName = 'verse'): Promise<number> {
   if (args[0] === 'remote') {
     const { cmdVerseRemote } = await import('./verse-remote.js');
     return cmdVerseRemote(args.slice(1));
@@ -321,11 +330,11 @@ export async function cmdVerse(args: string[]): Promise<number> {
 
   if ('error' in parsed) {
     if (parsed.code === 0) {
-      printUsage();
+      printUsage(command);
       return 0;
     }
     console.error(red('error: ') + parsed.error);
-    console.error(dim('Run `phm verse --help` for usage.'));
+    console.error(dim(`Run \`phm ${command} --help\` for usage.`));
     return parsed.code;
   }
 
@@ -376,7 +385,7 @@ export async function cmdVerse(args: string[]): Promise<number> {
     }
   }
 
-  const verseUrl = verseUrlFor(handle.url);
+  const verseUrl = verseUrlFor(handle.url, command);
 
   // V3.10 crash handlers: a fatal exception is written to ~/.ashlr/verse/verse.log
   // and every running turn is settled + its process group killed BEFORE the
@@ -568,13 +577,14 @@ export async function cmdVerse(args: string[]): Promise<number> {
 // Usage
 // ---------------------------------------------------------------------------
 
-function printUsage(): void {
+function printUsage(command: VerseCommandName = 'verse'): void {
   console.log('');
-  console.log(bold('  phm verse') + dim(' [--port N] [--no-open] [--json]'));
+  console.log(bold(`  phm ${command}`) + dim(' [--port N] [--no-open] [--json]'));
+  console.log(dim(command === 'console' ? '  Alias: `phm verse` (the original name; same flags).' : '  Alias: `phm console` (the Phantom name; opens /app/).'));
   console.log(dim('  Phantom CLI (ashlr remains compatible)'));
   console.log('');
   console.log('  Open the Phantom console with your connected coding resources.');
-  console.log('  multi-turn agent sessions served by the local dashboard server at /verse/.');
+  console.log('  multi-turn agent sessions served by the local dashboard server at /app/ (/verse/ is the same page).');
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log(`    ${cyan('--port N')}     TCP port to bind on 127.0.0.1 (default ${DEFAULT_PORT})`);
@@ -587,7 +597,7 @@ function printUsage(): void {
   console.log(`    ${cyan('--accounts-idle M')}  Pause polling after M idle minutes (1-720, default ${VERSE_DEFAULT_ACCOUNTS_IDLE_MINUTES})`);
   console.log('');
   console.log('  ' + bold('Notes:'));
-  console.log(`    ${dim('• Equivalent to `phm serve --allow-dispatch --open` pointed at /verse/')}`);
+  console.log(`    ${dim('• Equivalent to `phm serve --allow-dispatch --open` pointed at /app/ (alias of /verse/)')}`);
   console.log(`    ${dim('• Binds 127.0.0.1 ONLY; read + mutation tokens are printed at startup')}`);
   console.log(`    ${dim('• Seats come from ~/.ashlr/account-connections/connections.json + Ollama')}`);
   console.log(`    ${dim('• Account probes are metadata-only: zero tokens and zero paid quota')}`);

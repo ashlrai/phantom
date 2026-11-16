@@ -21,6 +21,39 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
+
+`agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
+`work.post.dispatch: {tier: fast|mid|work|frontier, scope, acceptance}` (4000/2000
+character caps), and `work.result: {jobId, claimKey, queueId, receiptId, outcome,
+reason?}`. Outcomes are `reserved|admitted|complete|failed`; reasons are bounded
+codes. Queue/receipt IDs are `peer-work-<32 hex>` / `pw-<32 hex>`.
+Existing work posts remain coordination-only without a dispatch payload.
+
+`agentnet/work-dispatch.ts` exports
+`consumePeerWork(session: PeerSession, input?: {apply?: boolean; after?: number},
+options?: PeerBusOptions)`. The host-owned private `dispatch.json` beside peer
+bindings supplies enabled state, peer allowlist, repository allowlist, tier ceilings
+and exact permitted paths. See [Agent Bus dispatch](docs/AGENT-BUS.md#bounded-peer-dispatch).
+Results contain status, dryRun, bounded results, and a cursor on success.
+Only authenticated admission receipts qualify; labels and peer status messages
+cannot authorize claims or prove completion. No shell, engine, merge or spending
+is invoked. Queue task strings remain untrusted data under existing worker gates.
+
+`QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
+atomically insert a new READY job and claim it under the existing queue lock.
+The optional synchronous host guard runs under that lock; an existing ID or an
+invalid intake fails without mutation. The two-argument claim contract is unchanged.
+`queue/decompose.ts` exports its existing `promptText(field, value, max): string`
+validator for shared bounded, printable, secret-free queue prompt validation.
+
+`PeerRequest.work?: z.infer<typeof workPostBodySchema>` is accepted only for a
+directed task; its authenticated bus body is `work.post`, with the same enrollment
+and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>`
+and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
+Dispatch is a read-only preview unless apply is exactly true. Results use only
+the local bus and its current comms/participant allowlist, never a Slack send.
+
 ---
 
 ## src/core/types.ts — THE CONTRACT (types only)
@@ -377,3 +410,280 @@ last tick; `generatedAt` is the read time. Recent outcomes are the producer's
 (null at the underlying 50-record cap). No free text, environment,
 credentials, paths, or job contents are returned. Partial source health must be
 checked before interpreting observations as complete.
+
+## Fleet merge-batch action compiler v1
+
+`src/core/fleet/merge-batch-runner.ts` exports these pure signatures and types:
+
+```ts
+const MERGE_BATCH_RUN_SCHEMA: 'fleet.merge-batch-run.v1';
+type MergeBatchRiskTier = 'low' | 'standard' | 'protected' | 'unknown';
+type MergeBatchActionKind = 'enqueue-merge' | 'rebase' | 'close-review' | 'wait';
+function classifyMergeBatchRisk(pr: MergeBatchPr, testsImportingTier1?: ReadonlySet<string>): MergeBatchRiskTier;
+function runMergeBatch(input: MergeBatchRunInput): MergeBatchRun;
+```
+
+`MergeBatchRunInput` requires `plan: MergeBatchPlan` (`fleet.merge-batch.v1`)
+and `prs: readonly MergeBatchPr[]` from the same snapshot. Optional inputs are
+`snapshotComplete: boolean`, `hold: ReadonlySet<string>` (short/full repo or
+`*#number`), `existing: readonly RebasePlanExistingJob[]`, and
+`testsImportingTier1: ReadonlySet<string>`. At most 5,000 PRs and existing jobs
+are accepted; mismatched membership or readiness evidence throws. No clock or
+I/O is used. `generatedAt` comes from the input plan. Snapshot parsing now adds
+`MergeBatchPr.filesComplete?: boolean`; false preserves absent, capped or invalid
+wire file evidence that normalization would otherwise erase.
+`MergeBatchPr.supersededBy?: number` retains explicit merged-replacement evidence
+from hygiene reports for close-review, including reports without file data.
+
+`MergeBatchRun` contains `schema`, `v: 1`, `repo`, `generatedAt`, counts keyed by
+`MergeBatchActionKind`, and `actions` in planned order. Every `MergeBatchAction`
+contains `number`, `batch`, `headSha`, `kind`, `reason`, `ready`, `afterMerged`,
+`riskTier`, `ci: 'targeted' | 'full'`, and `job: MergeBatchRebaseJob | null`.
+Only merge/rebase actions may be ready. Complete file evidence and an exact
+40-hex head are required; merges additionally require non-draft MERGEABLE/CLEAN.
+Dirty, conflicting and behind heads rebase. Known holds and active jobs wait.
+Explicit recut/rebase replacements flag close-review; overlap or title equality
+alone never justifies closure. Existing one-attempt rebase refusals remain.
+
+`MergeBatchRebaseJob` contains `id` (the existing `RQ-REBASE-<short>-<pr>-<head7>`
+convention), full `repo`, `number`, `headRef`, `headSha`, `pool: 'any'`,
+`tier: 'work'`, `status: 'READY' | 'WAITING'`, `afterMerged: number[]`, and
+`securityPinRequired: boolean`. This is structured dispatch input, not an
+already-written queue row. Dependencies name PRs that must **merge**, not jobs
+that merely finish rebasing. Refresh the snapshot and replan after each merge
+or rebase; never dispatch WAITING jobs against the old base. Disjoint file sets
+can act concurrently; each shared file carries its last predecessor, bounding
+the dependency list to fewer than 300 entries per action.
+
+Risk classification checks protected paths (including Tier-1 tests) and pinned
+machinery before docs/test-only detection. `low` recommends targeted CI;
+standard/protected/unknown recommend full CI. This path-only hook grants no
+check bypass: required checks, secret scans, diff-level test-tamper checks,
+Security pins and the scheduled full suite remain governed by existing policy.
+Consumers must revalidate repository/head/base, holds and current coverage
+before execution. Close-review always requires content/evidence review.
+
+`src/cli/fleet-merge-batch-run.ts` exports
+`cmdFleetMergeBatchRun(args: string[], deps?: FleetMergeBatchRunDeps): Promise<number>`.
+Its dependencies extend `FleetMergeBatchDeps` with optional `existing` and `hold`
+injections. `phm fleet merge-batch-run --input open-prs.json --repo ashlrai/phantom --json`
+reads the same bounded snapshots as `fleet merge-batch`; JSON is the default.
+Use a gh open-PR snapshot with `headRefOid`, `mergeable`, `mergeStateStatus`,
+`isDraft`, and `files` for executable recommendations. Reports without those
+fields produce waits. Piped stdin and `<root>/fleet/open-prs.json` also work.
+The CLI reads `<root>/queue/{router-queue.md,ready.tsv,hold-list.txt}` and reports
+queue/hold source health; missing evidence is disclosed, never execution authority.
+It shares the existing read-only queue parser through
+`readRebaseCoverage(queueDir: string, readText: (path: string) => Promise<string>): Promise<CoverageRead>`
+in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' | 'degraded'`
+and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
+report for unusable/incomplete input, and 2 indicates invalid arguments.
+Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
+
+## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
+
+`src/core/fleet/feedback-triage.ts` exports pure `triageFeedback(signal, existing)`:
+`FeedbackSignal {source, text, refs}` becomes an ignored reason or a classified
+`TriageResult {kind, priority, suggestedLane, suggestedTier, dedupeKey, promptSeed}`.
+`feedback-ingest.ts` exports bounded dependency-injected `ingestFeedback`.
+`feedback-cycle.ts` exports `runFeedback` and pure `feedbackDigest`.
+`src/cli/fleet-feedback.ts` exports `cmdFleetFeedback`; scan previews by default,
+apply uses existing drop admission, and digest reports twelve-hour observations.
+No merge, publish, send or scheduler authority is added. The full limits,
+dedupe, protected-scope and failure contract is in the
+[feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
+
+## Fleet chief-of-staff v1
+
+`src/core/fleet/chief-of-staff.ts` exports `FleetSnapshot`, `ChiefOfStaffPlan`,
+`CHIEF_OF_STAFF_SCHEMA = 'fleet.chief-of-staff.v1'`,
+`CHIEF_OF_STAFF_LIMITS: { lanes: 64; jobs: 200; outcomes: 1000; brief: 12000 }`,
+`parseFleetSnapshot(value: unknown): FleetSnapshot` and
+`planChiefOfStaff(snapshot: FleetSnapshot): ChiefOfStaffPlan`.
+`src/cli/fleet-chief-of-staff.ts` exports `FleetChiefOfStaffDeps` (optional
+`read(path): Promise<string>`, `runsDir`, `now(): Date`, `out(text)` and `err(text)`)
+and `cmdFleetChiefOfStaff(args: string[], deps?: FleetChiefOfStaffDeps): Promise<number>`.
+The [v1 schema contract](docs/contracts/CONTRACT-FLEET-CHIEF-OF-STAFF-V1.md)
+defines bounds, deterministic rules, read-only capture and literal advisory
+authority. Core has no I/O or ambient clock; the CLI never applies a plan.
+## Fleet proof artifacts
+
+`fleet.proof.v1` carries bounded claims, evidence provenance, command exits,
+diff statistics, risk classification and a reviewer checklist. The bridge
+publisher captures actual staged Git and runner artifacts before publication;
+`phm fleet proof verify <resultRef>` checks the local digest-bound bundle without
+executing commands. Agent assertions alone never establish proof. See
+[the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
+trust boundary, bounds, redaction and Security-pinned deployment requirements.
+## Bridge publisher diff scope (`contrib/mac/publish.sh`)
+
+The publisher stages only the job's change set, never ambient worktree state.
+Change set = paths whose worktree content differs from the job's fork point
+(`git merge-base BASE HEAD`) plus untracked, non-ignored files that are not
+scratch-shaped (`*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store`).
+An optional manifest `~/.ashlr-runs/<job>.files` (one repo-relative path per
+line, written ops-side from the work claim) is authoritative: only listed paths
+are staged; a malformed manifest aborts (`scope-manifest-invalid`). The index is
+reset to BASE before staging, so a stale fork point cannot re-revert main.
+Excluded paths are reported as `NOTE SCOPE_EXCLUDED`. The integrated-merge
+profile is unchanged. Secret-shape, G1 and protected-path gates are unchanged.
+Live install needs a Security re-pin.
+## Fleet outcome measurement and advisory policy v1
+
+`buildOutcomeMetrics` in `src/core/fleet/outcome-metrics.ts` folds injected job
+events into attempt-cohort lane/model-tier rates, measured USD estimates,
+repo merge velocity, seven-day revert rates and merge-time percentiles.
+Missing evidence stays null; sample counts and event references accompany
+measurements. `suggestOutcomePolicy` returns bounded, evidence-backed
+`PolicySuggestion` advice with `suggestOnly: true`; it never applies changes.
+`generateWeeklySelfReport` produces Markdown for chief-of-staff attachment.
+
+`phm fleet metrics report --hours 24 --json`, `suggest --json` and `weekly`
+read the jobs ledger only. Weekly defaults to 168 hours. The
+[full contract](docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) defines
+cohorts, observation coverage, unknowns, thresholds and exit codes.
+
+## Agent peer mesh
+
+[CONTRACT-AGENTNET-PEERBUS](docs/contracts/CONTRACT-AGENTNET-PEERBUS.md) pins
+session-bound callsigns, team-only peer messages, Slack provisioning drafts,
+the approval-gated broker and bounded chief-of-staff delegation.
+## Persistent specialist identities (RQ-GROK-SPECIALISTS-1)
+
+`src/core/fleet/roster.ts` owns `fleet-specialist-roster.v1`: named identities,
+feature domains, lane/model preferences, relative memory paths, current-job
+metadata and outcome statistics. `src/core/fleet/specialist-memory.ts` appends
+markdown job outcomes and renders bounded, scrubbed context for future prompts.
+`src/cli/fleet-roster.ts` exposes `phm fleet roster list|show|assign|note --json`.
+The live session roster stays separate. Storage, exported functions, failure
+behavior and verification are pinned in
+[the specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md).
+
+## Fleet orchestration cycle (`fleet.orchestration.v1`)
+
+`phm fleet orchestrate [--snapshot <path|auto>] [--top <1..8>] [--apply] [--json]`
+composes chief-of-staff, roster/memory, authenticated peer bus, weekly outcome
+metrics and the owner thread. Default top is three. Preview performs reads only.
+Apply requires fresh (at most 60 seconds old), available fleet evidence and the
+existing host peer session; it never dispatches, merges, edits the queue or applies
+policy. Run the command again to observe subsequent dispatch outcomes and plan
+the next cycle. This command does not install a daemon or change lane execution.
+
+PLAN retains chief-of-staff ordering and attaches weekly metrics suggestions with
+`suggestOnly: true`. DELEGATE chooses idle roster identities with an explicit
+matching lane allowlist, in stable identity order, and includes bounded historical
+memory and relevant outcome advice. Existing peer authentication, audience,
+approval, rate and KILL/pause gates remain binding. EXECUTE belongs to existing
+dispatch; a handoff is no claim or proof of execution. MEASURE reads the jobs
+ledger afresh each cycle; unknown evidence remains unknown. REPORT records one
+bounded leader verdict/brief through `postOwnerNotice` in the desktop owner thread;
+it does not add a transport or send an unsolicited external reply.
+
+`orchestrateFleet` in `src/core/fleet/orchestrate.ts` accepts fixture snapshot/events
+and host options. Apply serializes using the existing roster lock and reserves
+`orchestration.json` receipts before peer sends. Job/lane/queue-time receipts dedup
+retries, including drafts and uncertain delivery; a crash reservation stays visible.
+A later matching finish releases only this loop's current-job metadata, without
+claiming merge/proof acceptance. Undated reused job IDs remain deduplicated. The
+private journal is capped at 2,000 receipts and fails closed at capacity; state
+repair/archival is an operator task. Exit 0 means the cycle completed without
+attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
+Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
+
+## Fleet compute observation (`fleet.compute.v1`)
+
+`GET /api/verse/fleet/control/compute` serves the read-only projection in
+`src/core/fleet/compute-view.ts`: local OS readings, registered node heartbeat
+observations, fenced job placement and dispatcher lane hard caps. All missing
+measurements are null and source failures are explicit. No parameters or writes
+are accepted. Node beats may carry the closed numeric `HostStats` schema defined
+in `src/core/drive/nodes/state.ts`; legacy beats remain valid. This telemetry
+never changes routing authority. See [machine telemetry](docs/MACHINE-TELEMETRY.md#unified-fleet-compute-map).
+
+## Fleet session map (`fleet.sessions.v1`)
+
+`GET /api/verse/fleet/control/sessions` composes the existing
+`GET /api/fleet/sessions` dispatch inventory with `fleet.compute.v1` through
+`src/core/fleet/sessions-view.ts`. It accepts no query parameters or mutations.
+The existing sessions endpoint and its schema remain compatible.
+
+The map projection preserves inventory source states, counts, sessions and
+recent rows unchanged, and adds `computeAt`, `mapSessions` and `mapRecent`. Map
+rows contain `nodeId`, `placement`, `mapState`,
+`branch`, `worktree`, `activity` and `detailSources`, alongside job/lane/model,
+status, elapsed and outcome fields. Counts describe the local
+dispatch inventory; claim-only remote rows are additional observations, with
+unknown lane/model/status and null elapsed time. Placement uses a unique fenced
+node claim or a confirmed local worker process. Conflicting claims or a remote
+claim conflicting with a local process yield null placement. Queue membership
+alone never establishes a node. Map states group launching/running/publishing
+as running, exited as idle (awaiting reap), parked as held, queued as queued,
+and stale/unknown/finished as unknown. No absence establishes idle capacity.
+
+Only local inventory rows receive bounded, scrubbed job details (at most 100,
+eight concurrent readers); omitted evidence stays null and limits set
+`truncated`. Worktree `recorded` means branch metadata exists in the base
+receipt, not that the directory still exists or is clean. Paths are withheld;
+no worktree traversal, provider calls or raw prompt reads occur. Activity is
+the last retained scrubbed log excerpt, capped at 160 characters, with unknown
+activity time; it is not a semantic completion claim. Remote claims never read
+local artifacts with matching job names. Missing sources and telemetry remain
+explicit; the map renders unknown placement and empty inventories without
+seeded sessions. All reads use the existing bounded regular-file readers.
+## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
+
+`src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
+`liveOverride`, `setLiveOverride`, `clearLiveOverride`, `readConfigAudit`,
+`classifyKey`, `validateOverride`, `RESTART_REQUIRED`, `MUTABLE_KEY_PATTERNS`,
+`PINNED_DEFAULTS`, `DynConfigError` and the types `ResolvedConfig`, `LiveEntry`,
+`LiveConfigFile`, `AuditEntry`, `ConfigAuditReport`. `src/cli/fleet-config.ts`
+exports `cmdFleetConfig(args: string[]): Promise<number>`.
+
+Precedence (low to high): pinned defaults < slots.json < budget-overrides.json <
+`queue/live-config.json` < one-shot CLI. Writes are lock + temp + rename; the audit
+line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
+who/when/why. Restart-required keys (security pins, paid-model blocks, credential
+paths, GATES files) are refused by the writer and ignored by the resolver. See
+[docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
+
+## Agent Bus v2 foundation
+
+`src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
+reject ASCII controls including DEL. Claims grant no execution authority.
+
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[])`
+in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+It validates at most 1024 retained receipts in strictly increasing cursor order;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
+provider comes from the post or explicit participant metadata (missing is refused).
+Statuses update only retained jobs from the same routing owner; orphan statuses
+are ignored. Duplicate job posts and malformed work bodies refuse the projection.
+Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+This is a pure retained-snapshot projection, not a historical ledger or identity
+check. It performs no I/O, transport, claim mutation or execution. Existing v1
+journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
+No HTTP feed endpoint is provided by this foundation.
+
+### Unified agent bus (RQ-BUS-UNIFY-1)
+
+`src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
+`agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
+`readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
+`createAgentChannel(input, options?)`, `joinAgentChannel(name, agent, options?)`,
+`leaveAgentChannel(name, agent, options?)`. Results are status objects
+(`created|updated|unchanged`, or `invalid|conflict|full|not-found|unavailable|retryable`
+with a `reason`); they never throw for bad input or storage faults.
+
+`src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
+`sendHandoff` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
+`readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
+Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
+
+`src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
+`detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
+`frameBusInbox(cli, messages)`. Identities are routing names and grant no authority.
+See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).

@@ -460,6 +460,11 @@ installed plist has drifted from config.
       `gpt-5.5`, or `ASHLR_MODEL`). Both defaults are non-elite, so this fails
       closed unless `ASHLR_MODEL` names an elite model.
     - `llama-server` is excluded outright.
+22. **Renewing an expired Claude token is one masked prompt.** Run
+   `phm authority claude-signin` in your own terminal. It reads `claude auth
+   status` (exit code only), then asks for the `claude setup-token` output once,
+   hidden (that command prints a token and accepts none). The value goes straight
+   to custody and is never echoed, logged or read back. Never paste it into a chat.
 
     What stands in for the judge is your test suite: a repo whose tests are
     thin gets thin protection. The post-merge watch and its automatic revert
