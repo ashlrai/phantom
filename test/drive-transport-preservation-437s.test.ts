@@ -19,6 +19,6 @@ it('keeps a DESK tool refusal unsuccessful without trying a session fallback', a
     desk: loopbackDeskCall(origin, 'a'.repeat(43)),
   });
   const result = await adapters.claude({ target: 'claude', action: 'send-prompt', handle: 'desk-claude:test.claude', prompt: 'hello', projectPath: '/' });
-  expect(result).toEqual({ ok: false, error: 'access refused' });
+  expect(result).toEqual({ ok: false, error: 'Claude is not running (or is not granted to this chat). Open it, then ask the operator for access.' });
   expect(routes).toEqual(['/api/verse/agent-tools/mcp']);
 });
