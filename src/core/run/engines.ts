@@ -1098,6 +1098,20 @@ async function spawnEngineInner(
         return;
       }
       if (observedGroupState === 'present') {
+        // A direct child (no caller-owned group) can exit while its session
+        // watchdog still holds the extra pipe, so `close` lags `exit`. The
+        // stall or cancel reason already recorded is the cause; do not replace
+        // it with an authority failure once the leader is gone.
+        const leaderGone = leaderExited || child.exitCode !== null || child.signalCode !== null;
+        if (!ownsProcessGroup && leaderGone && terminationReason && terminationReason !== 'error-exit') {
+          settle({
+            ok: false,
+            ...captured,
+            error: `terminated (${terminationReason})`,
+            terminationReason,
+          });
+          return;
+        }
         settle({
           ok: false,
           ...captured,
