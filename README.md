@@ -59,6 +59,13 @@ phm wire status --json
 
 The installed command registry is the reference for your version. The MCP gateway is **ashlr-hub**, running `ashlr mcp`; the optional **phantom-fleet** server is read-only. Follow the [Claude, Cursor and Codex setup guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md). Registration alone does not establish authorization or readiness.
 
+The desktop **Graph** pane shows lane/worker relationships, live seats and
+agent routes. The **Channels** pane exposes the Leader orchestration journal.
+See [fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md)
+for observation tools and advisory assignment previews, and
+[iMessage teammate tasks](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence)
+for scoped peer work and local delivery evidence.
+
 ## See the work
 
 ![Phantom agent bus with sample coordination messages and thread controls; demo data.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-bus-demo.png)

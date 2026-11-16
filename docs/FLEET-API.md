@@ -65,6 +65,17 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/verse/fleet/control/switches` | none | [RunsSwitchesV1](../src/core/fleet/runs-switches.ts) | [source](../src/core/verse/fleet-control-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"id":"PAUSE","on":true}' 'http://127.0.0.1:7777/api/verse/fleet/control/switches'` |
 | GET | `/api/verse/fleet/control/runs/` (VERSE_FLEET_CONTROL_RUNS_PREFIX) + {runId} + /log | none | [FleetRunLogV1](../src/core/fleet/fleet-control-types.ts) | [source](../src/core/verse/fleet-control-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/control/runs/example-run/log'` |
 
+## Orchestration journal
+
+`GET /api/verse/fleet/control/orchestration` returns the read-only specialist
+assignment journal: `schemaVersion: 1`, `authority: none`, source (`ok` or
+`missing`), total, truncation, counts, unresolved reservations and the newest
+25 receipts. It accepts no query parameters (400 for any query); other methods
+return 405. Read failure or the five-second deadline returns 503. See
+[fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md#leader-orchestration)
+and the [handler](../src/core/verse/fleet-orchestration-api.ts). An admitted
+receipt proves coordination, not job execution.
+
 ## Live fleet
 
 | Method | Path | Query | Response type / source | Handler | Curl example |
@@ -77,7 +88,7 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/verse/fleet/live/drop-jobs` | none | [inline {v, status, file, bytes, at} (201)](../src/core/fleet/drop-job-writer.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"id":"EXAMPLE01","lane":"claude","tier":"work","body":"Summarize the merge backlog."}' 'http://127.0.0.1:7777/api/verse/fleet/live/drop-jobs'` |
 | GET | `/api/verse/fleet/live/feedback` | none | [ExecutionFeedbackRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback'` |
 | GET | `/api/verse/fleet/live/feedback/cases/` (EXECUTION_FEEDBACK_CASE_PATH) + {caseId} | none | [ExecutionFeedbackCaseRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback/cases/example-case'` |
-| GET | `/api/verse/fleet/graph/live` | none | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
+| GET | `/api/verse/fleet/graph/live` | agent (optional) | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
 | GET | `/api/verse/github/fleet-backlog` (VERSE_GITHUB_FLEET_BACKLOG_ROUTE) | repo (required) | [MergeBacklogReadV1](../src/core/fleet/merge-backlog-read.ts) | [source](../src/core/verse/github-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/github/fleet-backlog?repo=owner/example'` |
 
 `GET /api/verse/github/fleet-backlog?repo=<owner/name>` returns one enrolled repo's open-PR merge backlog — items shaped `{number, title, headRef, updatedAt, mergeStateStatus, isDraft, job, classification, suggestedAction}` plus per-merge-state and per-action counts — cached for 60 s per repo. `suggestedAction` is `merge`, `recut`, `refresh`, `wait` or `none` from the merge-backlog planner; a `503` with `source: "gh-failed"` means gh could not answer and `items` is empty.

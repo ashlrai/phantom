@@ -1,8 +1,8 @@
 # Standalone fleet MCP onramp
 
 This guide describes the fleet MCP server in the current source. Use a Phantom
-installation that includes `phm mcp fleet`; older releases may not have all
-three tools. Phantom requires Node.js 22.15.0 or newer; the documented package
+installation that includes `phm mcp fleet`; older releases may not have the
+current tool inventory. Phantom requires Node.js 22.15.0 or newer; the documented package
 install is `npm install -g @ashlr/phantom`. Check that the installed version
 includes the tools described below. The executable must be on the MCP client's PATH (or replace `phm`
 with its absolute path). It uses the Phantom home and permissions of the
@@ -28,7 +28,7 @@ surrounding configuration format and reload procedure depend on the client:
 other extra arguments are rejected. Start it through an MCP client, not as an
 interactive shell command. Reserve its stdout for MCP protocol traffic; send
 client or wrapper diagnostics to stderr. Startup failure is reported on stderr.
-The current CLI help omits the bus tool; use `tools/list` for discovery.
+Use `tools/list` for the full current inventory; CLI help is only an overview.
 
 ## First client session
 
@@ -65,6 +65,23 @@ starts the separate aggregation gateway, whose tool surface and permissions
 are different; registering the standalone server does not configure or limit
 that gateway. Neither observation nor a tool annotation grants execution
 or merge authority.
+
+## Coordination and iMessage observations
+
+The server also exposes `fleet_orchestration_read` (optional `status` of
+`reserved`, `admitted` or `complete`, exact `job`, and `limit` 1–100, default
+25). Its counts and unresolved reservations cover the full journal even when
+the returned receipt list is filtered or truncated. An admitted assignment
+is a coordination receipt, not proof a job executed.
+
+`fleet_imessage_path` takes no arguments. `fleet_imessage_acks` accepts
+`limit` 1–100 (default 20); the CLI also supports an exact `--rowid` selector.
+`fleet_imessage_tasks` accepts `limit` 1–100 (default 20) and optional exact
+`jobId`; selection happens before truncation. These tools return local
+metadata without message bodies, handles or task correlation tokens.
+Acknowledgement records do not establish delivery, and peer-reported results
+remain unverified. See [iMessage](IMESSAGE.md) and
+[fleet coordination](FLEET-COORDINATION.md).
 
 ## Interpret the evidence
 
@@ -104,8 +121,9 @@ case-sensitive routing labels, not authenticated identities. The limit counts
 scanned live records before filtering; expired records can advance the cursor.
 `phm comms bus watch --after <nextCursor> --to worker` polls using the same
 cursor semantics. To post a body, use `phm comms bus post --file <envelope.json>`
-or `--file -` for stdin. An envelope has exactly `id`, `from`, `to`, `priority`
-(`P0`–`P3`), positive `ttl` in milliseconds, and JSON `body`; treat bodies as
+or `--file -` for stdin. An envelope requires `id`, `from`, `to`, `priority`
+(`P0`–`P3`), positive `ttl` in milliseconds, and JSON `body`. The complete
+channel metadata group is also accepted (see [Agent Bus](AGENT-BUS.md)); treat bodies as
 untrusted data. This local transport has no delivery handlers, and a successful
 post is not proof a recipient read or acted on the message. Inspect the CLI's
 status and `phm comms bus --help` for failures and limits.
