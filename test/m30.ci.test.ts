@@ -148,7 +148,7 @@ describe('M30 CI workflow', () => {
     const { jobs } = parse(ciYml) as { jobs: Record<string, Record<string, unknown>> };
     const gate = jobs['merge-gate']!;
     const full = ['ci', 'windows-service-authority'];
-    const keys = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'quick', 'site', 'docs', ...full, 'release-build'];
+    const keys = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'quick', 'fast-gate', 'site', 'docs', ...full, 'release-build'];
     expect(gate.name).toBe('Merge Gate');
     expect(gate.needs).toEqual(keys);
     expect(gate.if).toBe('${{ always() }}');
@@ -179,40 +179,50 @@ describe('M30 CI workflow', () => {
     // Elsewhere (schedule, dispatch, reusable tag push) it is designed not to
     // run, so it must be skipped. authority-drift is advisory, off the gate.
     const fastOk = { ...ok, 'clean-tree': 'success' };
+    // RQ-CI-FASTGATE-2: pull_request and merge_group also require fast-gate.
+    // clean-tree, secret-shape and secret-scan stay required at the same strength.
+    const prOk = { ...fastOk, 'fast-gate': 'success' };
     for (const event of ['pull_request', 'merge_group']) {
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
-        expect(execute(event, 'full', { ...fastOk, 'clean-tree': outcome, quick: 'success' }), `${event} clean-tree ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...fastOk, 'clean-tree': outcome, quick: 'success' }), `${event} docs clean-tree ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...prOk, 'clean-tree': outcome, quick: 'success' }), `${event} clean-tree ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...prOk, 'clean-tree': outcome, quick: 'success' }), `${event} docs clean-tree ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...prOk, 'fast-gate': outcome, quick: 'success' }), `${event} fast-gate ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...prOk, 'fast-gate': outcome, quick: 'success' }), `${event} docs fast-gate ${outcome}`).toThrow();
       }
-      expect(execute(event, 'full', { ...fastOk, quick: 'success' }, 'clean-tree'), `${event} clean-tree missing`).toThrow();
-      // Quick stays advisory: a failed quick with a green clean-tree still passes.
-      expect(execute(event, 'full', { ...fastOk, quick: 'failure' }), `${event} quick failure advisory`).not.toThrow();
+      expect(execute(event, 'full', { ...prOk, quick: 'success' }, 'clean-tree'), `${event} clean-tree missing`).toThrow();
+      expect(execute(event, 'full', { ...prOk, quick: 'success' }, 'fast-gate'), `${event} fast-gate missing`).toThrow();
+      // Quick stays advisory: a failed quick with a green clean-tree and fast-gate still passes.
+      expect(execute(event, 'full', { ...prOk, quick: 'failure' }), `${event} quick failure advisory`).not.toThrow();
     }
     for (const event of ['pull_request', 'merge_group']) {
-      expect(execute(event, 'full', { ...fastOk, quick: 'success' })).not.toThrow();
-      expect(execute(event, 'site', { ...fastOk, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'full', { ...prOk, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'site', { ...prOk, quick: 'success' })).not.toThrow();
       // Quick typecheck is advisory on fast events (Mason 2026-11-13): even a missing result passes.
-      expect(execute(event, 'docs', fastOk)).not.toThrow();
-      expect(execute(event, 'docs', { ...fastOk, quick: 'success' })).not.toThrow();
+      expect(execute(event, 'docs', prOk)).not.toThrow();
+      expect(execute(event, 'docs', { ...prOk, quick: 'success' })).not.toThrow();
       for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
-        expect(execute(event, 'full', { ...fastOk, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...fastOk, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...fastOk, quick: 'success', 'secret-scan': outcome }), `diff scan ${outcome}`).toThrow();
-        expect(execute(event, 'docs', { ...fastOk, quick: 'success', 'secret-scan': outcome }), `docs diff scan ${outcome}`).toThrow();
-        expect(execute(event, 'full', { ...fastOk, quick: outcome }), `quick ${outcome} advisory`).not.toThrow();
-        expect(execute(event, 'docs', { ...fastOk, quick: outcome }), `docs quick ${outcome} advisory`).not.toThrow();
-        expect(execute(event, 'full', { ...fastOk, quick: 'success', classify: outcome })).toThrow();
+        expect(execute(event, 'full', { ...prOk, quick: 'success', 'secret-shape': outcome }), `secret ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...prOk, quick: 'success', 'secret-shape': outcome }), `docs secret ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...prOk, quick: 'success', 'secret-scan': outcome }), `diff scan ${outcome}`).toThrow();
+        expect(execute(event, 'docs', { ...prOk, quick: 'success', 'secret-scan': outcome }), `docs diff scan ${outcome}`).toThrow();
+        expect(execute(event, 'full', { ...prOk, quick: outcome }), `quick ${outcome} advisory`).not.toThrow();
+        expect(execute(event, 'docs', { ...prOk, quick: outcome }), `docs quick ${outcome} advisory`).not.toThrow();
+        expect(execute(event, 'full', { ...prOk, quick: 'success', classify: outcome })).toThrow();
       }
       for (const name of ['site', 'docs', ...full]) {
-        expect(execute(event, 'full', { ...fastOk, quick: 'success', [name]: 'success' }), `${event} ran ${name}`).toThrow();
+        expect(execute(event, 'full', { ...prOk, quick: 'success', [name]: 'success' }), `${event} ran ${name}`).toThrow();
       }
-      for (const name of keys) expect(execute(event, 'full', { ...fastOk, quick: 'success' }, name), `missing ${name}`).toThrow();
-      expect(execute(event, 'bogus', { ...fastOk, quick: 'success' })).toThrow();
+      for (const name of keys) expect(execute(event, 'full', { ...prOk, quick: 'success' }, name), `missing ${name}`).toThrow();
+      expect(execute(event, 'bogus', { ...prOk, quick: 'success' })).toThrow();
     }
     const complete = { ...ok, ci: 'success', 'windows-service-authority': 'success' };
     // clean-tree never runs on the daily/dispatch/tag-push events: skipped is expected, success tolerated, failure refused.
     expect(execute('schedule', 'full', { ...complete, 'clean-tree': 'success' })).not.toThrow();
     for (const outcome of ['failure', 'cancelled']) expect(execute('schedule', 'full', { ...complete, 'clean-tree': outcome }), `schedule clean-tree ${outcome}`).toThrow();
+    // fast-gate is per-PR only: the scheduled full run must skip it.
+    for (const outcome of ['success', 'failure', 'cancelled']) {
+      expect(execute('schedule', 'full', { ...complete, 'fast-gate': outcome }), `schedule fast-gate ${outcome}`).toThrow();
+    }
     for (const event of ['schedule', 'workflow_dispatch']) {
       expect(execute(event, 'full', complete)).not.toThrow();
       expect(execute(event, 'full', { ...complete, quick: 'success' })).toThrow();
@@ -257,6 +267,10 @@ describe('M30 CI workflow', () => {
       expect(execute('push', 'full', { ...ok, 'clean-tree': outcome, quick: 'success' }, undefined, master), `push clean-tree ${outcome}`).toThrow();
     }
     expect(execute('push', 'full', { ...ok, quick: 'success' }, 'clean-tree', master)).toThrow();
+    // fast-gate does not run on a direct master push, so a success there is a failure.
+    for (const outcome of ['success', 'failure', 'cancelled', 'neutral']) {
+      expect(execute('push', 'full', { ...fastOk, quick: 'success', 'fast-gate': outcome }, undefined, master), `push fast-gate ${outcome}`).toThrow();
+    }
     expect(execute('push', 'docs', { ...fastOk, quick: 'success' }, undefined, master)).not.toThrow();
     for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral']) {
       expect(execute('push', 'full', { ...fastOk, quick: outcome }, undefined, master), `push quick ${outcome} advisory`).not.toThrow();
@@ -327,7 +341,7 @@ describe('M30 CI workflow', () => {
     const lanes = ['full', 'site', 'docs'];
     // The fast gate: secret-shape scan, classification, the quick typecheck and
     // the required Merge Gate — Ubuntu runners only.
-    const approvedFast = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'authority-drift', 'quick', 'merge-gate'];
+    const approvedFast = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'authority-drift', 'quick', 'fast-gate', 'merge-gate'];
     for (const [id, job] of Object.entries(jobs)) {
       const oses = runners(job);
       expect(oses.length, `${id} declares no runner`).toBeGreaterThan(0);
@@ -351,7 +365,7 @@ describe('M30 CI workflow', () => {
       for (const lane of lanes) {
         expect(evaluateIf(jobs['merge-gate']!.if, event, lane)).toBe(true);
         expect(evaluateIf(jobs.quick!.if, event, lane)).toBe(true);
-        for (const id of ['clean-tree', 'authority-drift']) expect(evaluateIf(jobs[id]!.if, event, lane), `${event} ${id}`).toBe(true);
+        for (const id of ['clean-tree', 'authority-drift', 'fast-gate']) expect(evaluateIf(jobs[id]!.if, event, lane), `${event} ${id}`).toBe(true);
       }
     }
     // The reusable release call arrives under the caller's TAG push event: `ci`
@@ -361,7 +375,7 @@ describe('M30 CI workflow', () => {
     for (const id of ['ci', 'secret-shape', 'classify', 'merge-gate']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', tagRef), `push ${id}`).toBe(true);
     }
-    for (const id of ['quick', 'clean-tree', 'authority-drift', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
+    for (const id of ['quick', 'clean-tree', 'authority-drift', 'fast-gate', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', tagRef), `push ${id}`).toBe(false);
     }
     // A direct push to master is the opposite shape: the seconds-fast gate
@@ -371,7 +385,7 @@ describe('M30 CI workflow', () => {
     for (const id of ['secret-shape', 'classify', 'quick', 'clean-tree', 'authority-drift', 'merge-gate']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', masterRef), `master push ${id}`).toBe(true);
     }
-    for (const id of ['site', 'docs', 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
+    for (const id of ['fast-gate', 'site', 'docs', 'ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'fixup-queue']) {
       expect(evaluateIf(jobs[id]!.if, 'push', 'full', masterRef), `master push ${id}`).toBe(false);
     }
     // The daily scheduled run and manual dispatch still own the complete matrix.
@@ -379,7 +393,7 @@ describe('M30 CI workflow', () => {
       for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority', 'merge-gate', 'fixup-queue']) {
         expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(true);
       }
-      for (const id of ['quick', 'clean-tree', 'authority-drift']) expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(false);
+      for (const id of ['quick', 'clean-tree', 'authority-drift', 'fast-gate']) expect(evaluateIf(jobs[id]!.if, event, 'full'), `${event} ${id}`).toBe(false);
       // The timer's explicit release mode must never run the nightly suites.
       for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
         expect(evaluateIf(jobs[id]!.if, event, 'full', masterRef, 'true'), `release ${id}`).toBe(false);
@@ -672,6 +686,43 @@ describe('M30 CI workflow', () => {
     expect(JSON.stringify([jobs['clean-tree'], job])).not.toMatch(/secrets\.|id-token|pull_request_target/);
   });
 
+  it('runs typecheck plus affected tests as a blocking fast gate on pull_request and merge_group only', () => {
+    type Step = { name?: string; id?: string; if?: string; run?: string; uses?: string; with?: Record<string, string>; 'continue-on-error'?: unknown };
+    const jobs = parse(ciYml).jobs as Record<string, { name: string; if?: string; needs?: string[]; 'runs-on': string; permissions?: unknown; 'timeout-minutes'?: number; 'continue-on-error'?: unknown; env?: Record<string, string>; steps: Step[] }>;
+    const job = jobs['fast-gate']!;
+    expect(job.name).toBe('Fast gate (typecheck + affected tests)');
+    expect(job['runs-on']).toBe('ubuntu-latest');
+    expect(job.needs).toBeUndefined();
+    expect(job.permissions).toBeUndefined();
+    expect(job['continue-on-error']).toBeUndefined();
+    expect(job['timeout-minutes']).toBeLessThanOrEqual(8);
+    expect(job.if).toBe("github.event_name == 'pull_request' || github.event_name == 'merge_group'");
+    expect(job.env?.ASHLR_CI_BASE_SHA).toBe('${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}');
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.with?.['persist-credentials']).toBe(false);
+    expect(checkout?.with?.ref).toContain('merge_group.head_sha');
+    for (const step of job.steps.filter((entry) => entry.uses)) expect(step.uses, step.uses).toMatch(/@[0-9a-f]{40}\b/);
+    expect(job.steps.some((step) => step.uses?.startsWith('actions/cache/save@'))).toBe(false);
+    const typecheck = job.steps.find((step) => step.name === 'Core no-emit type check');
+    expect(typecheck?.run).toContain('npm run typecheck');
+    expect(typecheck?.if).toBeUndefined();
+    const tests = job.steps.find((step) => step.name === 'Run affected tests');
+    expect(tests?.if).toBe("steps.select.outputs.mode != 'docs'");
+    expect(tests?.run).toContain('node .github/scripts/ci-fast-run.mjs');
+    expect(job.steps.find((step) => step.name === 'Select affected tests')?.run).toContain('node .github/scripts/ci-fast-select.mjs');
+    const restore = job.steps.find((step) => step.name === 'Restore protected-branch compiler state');
+    expect(restore?.with?.key).toContain('master-typecheck-v3-');
+    expect(restore?.with?.['restore-keys']).toContain('-master-');
+    expect(String(restore?.with?.['restore-keys'])).not.toMatch(/master-typecheck-v3-\$\{\{ runner\.os \}\}-$/);
+    // Required on the per-PR gate, and it does not displace the GATE-SPLIT checks.
+    const needs = jobs['merge-gate']!.needs ?? [];
+    for (const id of ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'fast-gate']) {
+      expect(needs).toContain(id);
+    }
+    expect(needs).not.toContain('authority-drift');
+    expect(JSON.stringify(job)).not.toMatch(/secrets\.|id-token|pull_request_target|actions\/cache\/save@/);
+  });
+
   it('executes the real history proof contract for equal and fallback outcomes', async () => {
     // The helper's git/event/api boundaries are injected; every binding inside
     // proveHistoryFastPath itself executes for real. Owned-repo git fixtures
@@ -962,10 +1013,11 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(27);
-    expect(new Set(names).size).toBe(27);
+    expect(names).toHaveLength(28);
+    expect(new Set(names).size).toBe(28);
     expect(names).toContain('Check generated files');
     expect(names).toContain('Check authority drift (hermetic)');
+    expect(names).toContain('Fast gate (typecheck + affected tests)');
     expect(names).toContain('Secret scan (diff)');
     expect(names).toContain('Master full qualification');
     expect(names).toContain('Desktop release smoke');
