@@ -222,6 +222,8 @@ Phantom - every command (phm or ashlr)
     bus send|inbox|ack [--json]                                                                                                                                   Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.
     metrics merges                                                                                                                                                Show hourly merges and median open-to-merge time by lane for the last 24 hours.
     metrics ingest --jobs <file> --status <file>                                                                                                                  Read local lane and tier merge metrics and advisory routing priors; always JSON.
+    metrics loop [--dry-run] [--json]                                                                                                                             Self-awareness loop: merges and opens per hour, idea-to-merged-to-installed minutes, cost per merged PR, capacity per node; writes loop, selection-hint and bets-share files.
+    bets list|launch|score|kill [--json]                                                                                                                          Bets lane ledger: launch scored experiments, run the kill-fast scorer, kill by hand. Append-only metrics/bets.jsonl.
     metrics levers [--window <7d|30d>] [--json]                                                                                                                   Rank three opportunity proxies from local activity and fleet rollups.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
@@ -299,6 +301,7 @@ Phantom - every command (phm or ashlr)
     chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.
     incident report|receipts [--json]                                                          Turn a production signal into one bounded fix job, or send receipts for finished incidents.
     router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
+    router serve|models|pick|config [--json]                                                   Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
     worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                             Show merged pull requests from the jobs ledger.
     library list [--json]                                                                      List leader files. Read-only.
@@ -329,6 +332,7 @@ Phantom - every command (phm or ashlr)
     usage sensors [--json] [--refresh] [--file <snapshot>]                                     Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
     queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     repos rank [proposals] [--json] [--recompute]                                              Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
+    job cost <id> [--json]                                                                     Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
     telemetry [status]                                                                         M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).

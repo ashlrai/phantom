@@ -57,7 +57,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Shared task board: `bus` is the same as `fleet bus`.
   'bus',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
+  'worktrees', 'drive', 'bets', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
   // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
   'trail',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
@@ -107,7 +107,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   land: ['auto', '--repo', '--apply', '--json', '--help'],
   job: ['cost', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'prod', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'prod', 'loop', 'help'],
+  bets: ['list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
