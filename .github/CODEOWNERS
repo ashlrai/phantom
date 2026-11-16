@@ -1039,6 +1039,7 @@
 /test/mirrors-310b.test.ts @masonwyatt23
 /test/model-racing-proposal-types.test.ts @masonwyatt23
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
+/test/node-autoscale-router.test.ts @masonwyatt23
 /test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
 /test/one-ask-best-of-n-winner.test.ts @masonwyatt23
