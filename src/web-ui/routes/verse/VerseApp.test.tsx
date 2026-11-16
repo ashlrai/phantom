@@ -810,6 +810,25 @@ describe('announcements and the native bridge', () => {
     expect(await screen.findByText(/That terminal is closed/)).toBeInTheDocument();
   });
 
+  it('the desktop Fleet menu closes overlays and opens the map in the same workbench', async () => {
+    await import('./company/ComputeMap.js');
+    mount();
+    await screen.findByRole('navigation', { name: 'Chats' });
+    key('k', {}, 'KeyK');
+    expect(await screen.findByRole('combobox', { name: 'Search commands' })).toBeInTheDocument();
+    act(() => { window.dispatchEvent(new CustomEvent('ashlr:desktop-command', { detail: { command: 'open-fleet' } })); });
+    expect(getVerseUiState()).toMatchObject({ section: 'fleet', overlay: null });
+    expect(await screen.findByRole('region', { name: 'Fleet compute map' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Search commands' })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Workspaces' }));
+    expect(screen.queryByRole('region', { name: 'Fleet compute map' })).not.toBeInTheDocument();
+    act(() => { window.dispatchEvent(new CustomEvent('ashlr:desktop-command', { detail: { command: 'open-fleet' } })); });
+    expect(await screen.findByRole('region', { name: 'Fleet compute map' })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Workspaces' }));
+    await userEvent.setup().click(within(rail()).getByRole('button', { name: /^Fleet/ }));
+    expect(await screen.findByRole('region', { name: 'Fleet compute map' })).toBeInTheDocument();
+  });
+
   it('the tray’s New chat and the hotkey land in Chat, closing an open palette first (C8)', async () => {
     mount();
     await screen.findByRole('navigation', { name: 'Chats' });
