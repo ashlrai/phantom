@@ -4,7 +4,9 @@ import type { SlackRequestTraceOptions } from '../core/agents/slack-request-trac
 
 const usage = 'Usage: phm fleet slack-evidence --thread <ts> [--channel <channel-id>] [--max-age-seconds <positive integer>] --json';
 
-export async function cmdFleetSlackEvidence(args: string[], deps: SlackRequestTraceOptions = {}): Promise<number> {
+type Deps = SlackRequestTraceOptions & { readBundle?: typeof readSlackEvidenceBundle };
+
+export async function cmdFleetSlackEvidence(args: string[], deps: Deps = {}): Promise<number> {
   let thread: string | undefined;
   let channelId: string | undefined;
   let json = false;
@@ -35,9 +37,25 @@ export async function cmdFleetSlackEvidence(args: string[], deps: SlackRequestTr
     }
   }
   if (thread === undefined || !json) { console.log(usage); return 2; }
-  const bundle = readSlackEvidenceBundle(thread, { ...deps,
-    ...(channelId !== undefined ? { channelId } : {}),
-    ...(maxAgeSeconds !== undefined ? { maxAgeSeconds } : {}) });
+  const { readBundle = readSlackEvidenceBundle, ...options } = deps;
+  let bundle: ReturnType<typeof readSlackEvidenceBundle>;
+  try {
+    bundle = readBundle(thread, { ...options,
+      ...(channelId !== undefined ? { channelId } : {}),
+      ...(maxAgeSeconds !== undefined ? { maxAgeSeconds } : {}) });
+  } catch {
+    let asOf: string;
+    try { asOf = (deps.now ?? (() => new Date()))().toISOString(); }
+    catch { asOf = new Date(0).toISOString(); }
+    console.log(JSON.stringify({
+      schema: 'phantom.fleet.slack-evidence.v1',
+      scope: 'Local journal and send evidence only; does not prove current runtime reachability, durable task ownership, or execution.',
+      thread, asOf, rows: [],
+      counts: { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 },
+      sources: { journal: 'degraded', sends: 'degraded' }, sourceState: 'unavailable',
+    }));
+    return 1;
+  }
   console.log(JSON.stringify(bundle));
   return (maxAgeSeconds === undefined || bundle.freshness?.verdict === 'fresh') && bundle.sources.journal === 'ok' && bundle.sources.sends === 'ok' && bundle.rows.length > 0 &&
     bundle.rows.every((row) => row.outcome === 'answered' && row.ingress !== 'unknown') ? 0 : 1;
