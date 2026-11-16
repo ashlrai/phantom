@@ -325,7 +325,9 @@
 /test/context-pack-exact-preservation-200s.test.ts @masonwyatt23
 /test/context-pack-preserved-181s.test.ts @masonwyatt23
 /test/core-recut-s1-c212.test.ts @masonwyatt23
+/test/cos-peer-plan-loop.test.ts @masonwyatt23
 /test/count-preferences.test.ts @masonwyatt23
+/test/cross-review-check-gate.test.ts @masonwyatt23
 /test/cross-review-cli.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
