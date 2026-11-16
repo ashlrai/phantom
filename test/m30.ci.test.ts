@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -286,6 +287,7 @@ describe('M30 CI workflow', () => {
         .replace(/\balways\(\)/g, 'true')
         .replace(/\bgithub\.event_name\b/g, 'event')
         .replace(/\bgithub\.ref\b/g, 'ref')
+        .replace(/\bgithub\.event\.schedule\b/g, 'schedule')
         .replace(/\bgithub\.event\.pull_request\.draft\b/g, 'draft')
         .replace(/\bneeds\.classify\.outputs\.lane\b/g, 'lane')
         .replace(/\bneeds\.classify\.outputs\.release_gate\b/g, 'release')
@@ -294,7 +296,7 @@ describe('M30 CI workflow', () => {
       // than fall through to a guessed result.
       expect(expression).not.toMatch(/\$\{\{|\}\}|github\.|needs\.|always|contains|fromJSON/);
       return Boolean(runInNewContext(`(${expression})`, {
-        event, lane, draft: false, ref, release, ready,
+        event, lane, draft: false, ref, release, ready, schedule: '17 */6 * * *',
         startsWith: (value: unknown, prefix: unknown) => String(value).startsWith(String(prefix)),
       }));
     };
@@ -364,6 +366,61 @@ describe('M30 CI workflow', () => {
     }
   });
 
+  it('qualifies the tag full job set on the six-hour schedule with the documented Mac and service delta', () => {
+    const { jobs, on } = parse(ciYml);
+    expect(on.schedule).toContainEqual({ cron: '17 */6 * * *' });
+    const runs = (id: string, event: string, ref: string, schedule = '17 */6 * * *') => {
+      const condition = String(jobs[id].if ?? 'true').replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '')
+        .replaceAll('always()', 'true')
+        .replaceAll('github.event_name', 'event').replaceAll('github.event.schedule', 'schedule')
+        .replaceAll('github.ref', 'ref').replaceAll('needs.classify.outputs.lane', "'full'")
+        .replaceAll('needs.classify.outputs.release_gate', "'false'");
+      return Boolean(runInNewContext(`(${condition})`, { event, ref, schedule }));
+    };
+    const lanes = ['ci', 'site', 'docs', 'ci-shared-macos', 'mac-general', 'mac-isolated',
+      'native-macos-broker-foundation', 'windows-service-authority'];
+    const tag = lanes.filter(id => runs(id, 'push', 'refs/tags/v3.3.2'));
+    const scheduled = lanes.filter(id => runs(id, 'schedule', 'refs/heads/master'));
+    expect(tag).toEqual(['ci']);
+    expect(scheduled).toEqual(['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated',
+      'native-macos-broker-foundation', 'windows-service-authority']);
+    // Both paths use the same ci matrix and steps, including docs and web.
+    // Mac and Windows service are additional scheduled coverage. A reusable
+    // tag push requires no Mac slice; the existing daily rotation is preserved.
+    expect(workflowJob('ci')).toContain('npm run check:docs');
+    expect(workflowJob('ci')).toContain('node .github/scripts/ci-qualification-lane.mjs web');
+    const receipt = jobs['master-full'];
+    expect(receipt.name).toBe('Master full qualification');
+    expect(receipt.permissions).toBeUndefined();
+    expect(receipt.needs.slice().sort()).toEqual(Object.keys(jobs).filter(id =>
+      !['master-full', 'fixup-queue'].includes(id)).sort());
+    expect(runs('master-full', 'schedule', 'refs/heads/master')).toBe(true);
+    expect(runs('master-full', 'schedule', 'refs/heads/master', '0,30 * * * *')).toBe(false);
+    for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
+      expect(runs('master-full', event, 'refs/heads/master')).toBe(false);
+    }
+  });
+
+  it('requires exact scheduled full evidence before auto-tag can mint write authority', () => {
+    const workflow = parse(readFileSync(resolve(repoRoot, '.github/workflows/auto-tag.yml'), 'utf8'));
+    expect(workflow.on.workflow_run).toEqual({ workflows: ['CI'], types: ['completed'], branches: ['master'] });
+    const condition = workflow.jobs.tag.if.replaceAll('github.event_name', 'event')
+      .replaceAll('github.event.workflow_run.conclusion', 'conclusion')
+      .replaceAll('github.event.workflow_run.event', 'source').replaceAll('github.ref', 'ref');
+    for (const conclusion of ['success', 'failure', 'cancelled']) {
+      expect(runInNewContext(condition, { event: 'workflow_run', source: 'schedule', conclusion, ref: '' })).toBe(conclusion === 'success');
+    }
+    const steps = workflow.jobs.tag.steps;
+    const proof = steps.findIndex((step: { id?: string }) => step.id === 'full');
+    expect(steps[proof].run).toBe('node .github/scripts/ci-master-full.mjs require');
+    expect(proof).toBeGreaterThan(steps.findIndex((step: { name?: string }) => step.name === 'Checkout candidate revision'));
+    for (const step of steps.filter((step: { uses?: string; id?: string; name?: string }) =>
+      step.id === 'app' || step.id === 'tag' || step.name?.startsWith('Dispatch release-gate'))) {
+      expect(steps.indexOf(step)).toBeGreaterThan(proof);
+      expect(step.if).toContain("steps.full.outputs.green == 'true'");
+    }
+  });
+
   it('runs both authority drift checks in the required fast job without regeneration or failure suppression', () => {
     const workflow = parse(ciYml);
     const quick = workflow.jobs.quick;
@@ -376,14 +433,28 @@ describe('M30 CI workflow', () => {
       'node_modules/.cache/phantom-backend.tsbuildinfo',
       'node_modules/.cache/phantom-web.tsbuildinfo',
     ]);
-    expect(restore.with['restore-keys']).toBe(restore.with.key.slice(0, restore.with.key.lastIndexOf('-${{') + 1));
-    expect(restore.with.key).toBe("master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}");
+    const prefix = 'master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-';
+    expect(restore.with['restore-keys']).toBe(prefix + 'master-');
+    expect(restore.with.key).toBe(prefix + '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}');
+    const inputs = quick.steps.find((step: { id?: string }) => step.id === 'compiler_inputs');
+    expect(inputs.env.BASE_SHA).toBe('${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}');
+    expect(inputs.run).toContain("execFileSync('git', ['show', `${base}:${file}`])");
+    expect(inputs.run).toContain("['package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json']");
+    const pointer = quick.steps.find((step: { name?: string }) => step.name === 'Publish current-master compiler pointer');
+    expect(pointer.with.key).toBe(prefix + 'master-${{ github.run_id }}-${{ github.run_attempt }}');
+    expect(pointer.uses).toBe('actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809');
     const save = quick.steps.find((step: { name?: string }) => step.name === 'Save protected-branch compiler state');
     expect(save.if).toBe("success() && github.event_name == 'push' && github.ref == 'refs/heads/master'");
+    expect(save.with.key).toBe(prefix + '${{ github.sha }}');
+    expect(pointer.if).toBe(save.if);
+    expect(pointer.with.path).toBe(save.with.path);
     const compiler = quick.steps.find((step: { name?: string }) => step.name === 'Core no-emit type check');
     expect(compiler.if).toBe("steps.history.outputs.equal != 'true'");
     expect(compiler.run).toContain('npm run typecheck\n');
     expect(compiler.run).toContain('$GITHUB_STEP_SUMMARY');
+    expect(compiler.run).toContain('test -s "$graph"');
+    expect(compiler.run).toContain('test "$graph" -nt "$RUNNER_TEMP/compiler-check-start"');
+    expect(compiler.run).toContain('rm -f node_modules/.cache/phantom-{backend,web}.tsbuildinfo');
     expect(compiler['continue-on-error']).toBeUndefined();
     expect(save.with.path).toBe(restore.with.path);
     for (const config of ['tsconfig.json', 'src/web-ui/tsconfig.json']) {
@@ -436,6 +507,33 @@ describe('M30 CI workflow', () => {
     }
   }, 90_000);
 
+  it('writes a real tsgo no-emit graph and rejects a changed candidate on a warm graph', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'phantom-tsgo-graph-'));
+    try {
+      const source = resolve(root, 'candidate.ts');
+      const cache = resolve(root, 'candidate.tsbuildinfo');
+      const config = resolve(root, 'tsconfig.json');
+      writeFileSync(config, JSON.stringify({
+        compilerOptions: { incremental: true, tsBuildInfoFile: cache, noEmit: true, strict: true, types: [], skipLibCheck: true },
+        files: [source],
+      }));
+      const compile = () => spawnSync(resolve(repoRoot, 'node_modules/.bin/tsgo'), ['--noEmit', '-p', config], { encoding: 'utf8' });
+      writeFileSync(source, 'export const candidate: number = 1;\n');
+      expect(compile().status).toBe(0);
+      const initial = readFileSync(cache, 'utf8');
+      expect(initial.length).toBeGreaterThan(0);
+      expect(compile().status).toBe(0);
+      writeFileSync(source, 'export const candidate: number = "type error";\n');
+      const rejected = compile();
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stdout + rejected.stderr).toContain('2322');
+      expect(readFileSync(cache, 'utf8')).not.toBe(initial);
+      expect(existsSync(resolve(root, 'candidate.js'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it('gates only the expensive Quick steps on the proven source-identical flag', () => {
     type Step = { name?: string; id?: string; if?: string; env?: Record<string, string>; run?: string; uses?: string };
     const quick = (parse(ciYml).jobs as Record<string, { steps: Step[] }>).quick;
@@ -464,7 +562,7 @@ describe('M30 CI workflow', () => {
     expect(names.indexOf(proof.name!)).toBeLessThan(names.indexOf('Install dependencies'));
     // Compiler and drift steps require the trusted proof; the selected MCP
     // contract still needs dependencies even for a source-identical candidate.
-    const expensive = ['Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
+    const expensive = ['Hash protected-branch compiler inputs', 'Install dependencies', 'Restore protected-branch compiler state', 'Core no-emit type check', 'Check authority drift (hermetic)'];
     for (const name of expensive) {
       expect(step(name).if, name).toBe(name === 'Install dependencies'
         ? "steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'"
@@ -487,7 +585,7 @@ describe('M30 CI workflow', () => {
     for (const forged of ['True', 'TRUE', '1', 'yes', ' equal']) {
       expect(runs(step('Install dependencies').if!, forged), `forged flag ${forged}`).toBe(true);
     }
-    // Only these four steps may key off the proof output — checkout, setup
+    // Only these five steps may key off the proof output — checkout, setup
     // and protected-branch cache saving must never join the exemption.
     const gated = quick.steps
       .filter((entry) => entry.name !== proof.name && (entry.if ?? '').includes('steps.history'))
@@ -803,9 +901,10 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(24);
-    expect(new Set(names).size).toBe(24);
+    expect(names).toHaveLength(25);
+    expect(new Set(names).size).toBe(25);
     expect(names).toContain('Secret scan (diff)');
+    expect(names).toContain('Master full qualification');
     expect(names).toContain('Desktop release smoke');
     expect(names).toContain('Merge Gate');
     expect(names.filter((name) => name.startsWith('Mac exhaustive ('))).toHaveLength(5);
