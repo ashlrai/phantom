@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MAC = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MAC))
@@ -54,6 +55,7 @@ class ClosedPrune(unittest.TestCase):
         git('init', '-q', '-b', 'main', str(self.repo))
         (self.repo / '.gitignore').write_text('node_modules/\n')
         (self.repo / 'a.txt').write_text('a\n')
+        (self.repo / 'models.ts').write_text('export const models = [];\n')  # source files are not model-weight directories
         git('add', '.', cwd=self.repo)
         git('commit', '-q', '-m', 'seed', cwd=self.repo)
         self.wtroot = root / 'wt'
@@ -112,6 +114,60 @@ class ClosedPrune(unittest.TestCase):
         listed = git('worktree', 'list', '--porcelain', cwd=self.repo).stdout
         self.assertNotIn('RQ-MERGED', listed)
         self.assertIn('refs/heads/codex-bridge/RQ-MERGED', git('branch', '--list', '--format=%(refname)', cwd=self.repo).stdout)
+
+    def test_fresh_terminal_reaps_but_pinned_and_unknown_policy_stay(self):
+        home = self.runs.parent
+        (home / '.ashlr').mkdir()
+        pins = home / '.ashlr/kept-worktrees.json'
+        pins.write_text(json.dumps([str(self.wtroot / 'RQ-MERGED')]))
+        with patch.dict(os.environ, {'HOME': str(home)}):
+            r = self.run_cli('--apply')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse((self.wtroot / 'RQ-CLOSED').exists())  # no hour-long grace after terminal
+            self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+            pins.write_text('{broken')
+            self.assertEqual(json.loads(self.run_cli('--apply').stdout)['held'], {'pins-unavailable': 1})
+            pins.unlink()
+            keep = self.runs / 'queue/keep.txt'
+            keep.unlink(); keep.mkdir()
+            self.assertEqual(json.loads(self.run_cli('--apply').stdout)['held'], {'keep-unavailable': 1})
+            self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+
+    def test_symlink_root_and_retention_change_refuse_removal(self):
+        alias = self.runs.parent / 'alias'; alias.symlink_to(self.wtroot)
+        self.assertEqual(prune.plan(str(alias), str(self.runs), [], '')[1], {'protected-root': 1})
+        rows = [{'event': 'outcome', 'job': 'RQ-MERGED', 'state': 'MERGED'}]
+        items, _ = prune.plan(str(self.wtroot), str(self.runs), rows, '')
+        allowed, original = {'RQ-MERGED'}, prune.git
+        def resolve_then_pin(args):
+            result = original(args)
+            if 'rev-parse' in args: allowed.clear()
+            return result
+        with patch.object(prune, 'git', side_effect=resolve_then_pin):
+            self.assertEqual(prune.apply(items, 1, lambda job: job in allowed)[0], [])
+        self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+
+    def test_protected_ignored_payloads_and_damaged_ledger_are_retained(self):
+        rows = [{'event': 'outcome', 'job': 'RQ-MERGED', 'state': 'MERGED'}]
+        for name in ('models', '.codex-extra', 'Docker', 'Documents', 'weights.gguf'):
+            with self.subTest(name=name):
+                payload = self.wtroot / 'RQ-MERGED/node_modules' / name
+                payload.mkdir()
+                items, held = prune.plan(str(self.wtroot), str(self.runs), rows, '')
+                self.assertEqual(items, [])
+                self.assertEqual(held['protected-payload'], 1)
+                payload.rmdir()
+        with (self.runs / 'metrics/jobs.jsonl').open('a') as f: f.write('{"event":"launch"')
+        self.assertEqual(json.loads(self.run_cli('--apply').stdout)['held'], {'ledger-unavailable': 1})
+        self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+
+    def test_delayed_outcome_cannot_close_a_new_attempt(self):
+        rows = [{'event': 'publish', 'job': 'RQ-X', 'url': 'old'}, {'event': 'launch', 'job': 'RQ-X'},
+                {'event': 'outcome', 'job': 'RQ-X', 'state': 'MERGED', 'url': 'old'}]
+        self.assertEqual(prune.closed_jobs(rows), {})
+        rows += [{'event': 'publish', 'job': 'RQ-X', 'url': 'new'},
+                 {'event': 'outcome', 'job': 'RQ-X', 'state': 'MERGED', 'url': 'new'}]
+        self.assertEqual(prune.closed_jobs(rows), {'RQ-X': 'MERGED'})
 
 
 if __name__ == '__main__':
