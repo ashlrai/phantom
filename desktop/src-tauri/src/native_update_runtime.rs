@@ -2,11 +2,11 @@
 #[cfg(target_os = "macos")]
 mod platform {
     use ashlr_desktop::{
-        native_update_client::{allowed_url, check_due, client, POLL_INTERVAL},
+        native_update_client::{allowed_url, check_due, client, discovery, POLL_INTERVAL},
         native_updates as policy,
     };
     use futures_util::StreamExt;
-    use policy::{Envelope, Phase, UpdateState};
+    use policy::{Phase, UpdateState};
     use serde_json::Value;
     use std::{
         fs,
@@ -20,7 +20,6 @@ mod platform {
     };
     use tauri::{AppHandle, Emitter, Listener, Manager};
 
-    const LATEST_LIMIT: u64 = 256 * 1024;
     const ACK_LIMIT: usize = 64 * 1024;
     const EXPECTED_CURRENT: &str = ".local/share/ashlr/current";
     #[derive(Clone)]
@@ -94,7 +93,6 @@ mod platform {
         app: &AppHandle,
         updates: &Updates,
         epoch: u64,
-        progress: bool,
     ) -> Result<Vec<u8>, &'static str> {
         let request_url = reqwest::Url::parse(url).map_err(|_| "download-unavailable")?;
         if !allowed_url(&request_url) {
@@ -102,7 +100,7 @@ mod platform {
         }
         let response = client
             .get(request_url)
-            .timeout(Duration::from_secs(if progress { 600 } else { 60 }))
+            .timeout(Duration::from_secs(600))
             .send()
             .await
             .map_err(|_| "download-unavailable")?;
@@ -122,17 +120,13 @@ mod platform {
             if i.epoch != epoch || !i.state.enabled {
                 return Err("disabled");
             }
-            if progress {
-                i.state.bytes_received = bytes.len() as u64;
-                if last_report.elapsed() >= Duration::from_millis(200) {
-                    publish(app, &i);
-                    last_report = Instant::now();
-                }
+            i.state.bytes_received = bytes.len() as u64;
+            if last_report.elapsed() >= Duration::from_millis(200) {
+                publish(app, &i);
+                last_report = Instant::now();
             }
         }
-        if progress {
-            publish(app, &lock(&updates.0));
-        }
+        publish(app, &lock(&updates.0));
         Ok(bytes)
     }
     fn current_cli(home: &std::path::Path) -> Result<PathBuf, &'static str> {
@@ -388,24 +382,7 @@ mod platform {
                 // Old/equal unattempted stages are history, never a downgrade or a discovery fence.
             }
             let client = client()?;
-            let raw = fetch(
-                &client,
-                &endpoint,
-                LATEST_LIMIT,
-                &app,
-                &updates,
-                epoch,
-                false,
-            )
-            .await?;
-            let latest: Value = serde_json::from_slice(&raw).map_err(|_| "invalid-manifest")?;
-            let envelope: Envelope = serde_json::from_value(latest["phantom"].clone())
-                .map_err(|_| "invalid-manifest")?;
-            let manifest = policy::verify_compatible_manifest(envelope, &key)
-                .map_err(|_| "invalid-manifest")?;
-            if !policy::discovery_matches(&latest, &manifest) {
-                return Err("invalid-manifest");
-            }
+            let manifest = discovery(&client, &endpoint, &key).await?;
             let next = policy::stable_version(manifest.version()).ok_or("invalid-manifest")?;
             if next <= current && remembered.is_some() {
                 return Err("signed-release-regression");
@@ -473,7 +450,6 @@ mod platform {
                 &app,
                 &updates,
                 epoch,
-                true,
             )
             .await?;
             let home = crate::fleet_ops::home_dir().ok_or("unsafe-stage")?;

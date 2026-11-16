@@ -35,6 +35,6 @@ describe('server update candidate', () => {
 
   it('uses the native version for a staged update', () => {
     const native: DesktopUpdateState = { phase: 'staged', enabled: true, version: '3.29.1', bytesReceived: 0, bytesTotal: null, reason: null };
-    expect(describeUpdateStatus({ ...base, native, server: withCandidate('3.30.0') }).headline).toBe('Update 3.29.1 ready · installs when idle');
+    expect(describeUpdateStatus({ ...base, native, server: withCandidate('3.30.0') }).headline).toBe('Update 3.29.1 ready · checking host admission');
   });
 });
