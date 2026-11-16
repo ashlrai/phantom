@@ -1038,3 +1038,22 @@ and omlx dispatcher pin before installation; never edit the live dispatcher.
 See [Branch gardener](../../docs/BRANCH-GARDENER.md) for org/fork classification,
 protected and active branch guards, dry-run configuration and the six-hour launchd
 template. This is independent of worktree/disk pruning and does not install itself.
+
+## Orphaned MCP server trees
+
+Worktree `.mcp.json` files launch MCP servers through `npm exec`. When a job's
+engine exits first, the npm/sh/node trees are re-parented to launchd and keep
+running. `mcp_reaper.py` measures and removes them:
+
+```
+python3 mcp_reaper.py census --json            # count, npm-exec count, RSS, oldest orphan age
+python3 mcp_reaper.py reap --grace 60 --dry-run
+python3 mcp_reaper.py reap --grace 60          # SIGTERM then SIGKILL, whole group when safe
+```
+
+Only trees whose root has ppid 1 and age above the grace window are signalled,
+so a live job's servers (engine still the ancestor) are never touched. A group
+is signalled only when every member is in the kill set. If `ps` cannot be read
+the tool reports `known=False` and exits 3 without killing anything. It is not
+in `install.sh` `FILES`; wiring it into the dispatcher tick or `launch.sh`
+(pinned files) goes through a Security package.
