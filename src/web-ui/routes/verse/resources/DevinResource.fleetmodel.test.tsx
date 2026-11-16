@@ -1,4 +1,4 @@
-/** Inherited fleet-model display coverage, aligned with current pricing evidence. */
+/** The fleet-model row preserves current pricing evidence without making free claims. */
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
@@ -53,8 +53,11 @@ afterEach(() => {
 const mount = () => render(<ul><DevinResource /></ul>);
 
 describe('DevinResource fleet model', () => {
-  it('rejects stale promotional evidence without changing the dollar estimate', async () => {
-    overview['fleetModel'] = { configured: 'swe-2-flash-max', source: 'config', promo: 'free', laneModels: [] };
+  it.each([
+    { configured: 'swe-2-flash-max', source: 'config', promo: 'free', laneModels: [] },
+    { configured: 'swe-2-flash-max', source: 'config', pricing: 'free', laneModels: [] },
+  ])('rejects unsupported free evidence without changing the dollar estimate: %j', async (invalid) => {
+    overview['fleetModel'] = invalid;
     mount();
     expect(await screen.findByText(/about \$4\.5 for recorded usage/)).toBeTruthy();
     expect(screen.queryByText(/^Fleet model:/)).toBeNull();
@@ -64,7 +67,7 @@ describe('DevinResource fleet model', () => {
   it.each([
     ['not-free', '· not free'],
     ['unknown', '· pricing unknown'],
-  ])('pricing %s renders with the recorded cost estimate', async (pricing, suffix) => {
+  ])('pricing %s renders without claiming free or touching the estimate', async (pricing, suffix) => {
     overview['fleetModel'] = fleetModel({ pricing });
     mount();
     const row = await screen.findByText(`Fleet model: swe-2-flash-max ${suffix}`);
