@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changedPaths } from './ci-changed-paths.mjs';
 import { DOCS_ONLY_PATH_PATTERNS } from './ci-site-lane.mjs';
 import { REAL_IO_TEST_FILES } from '../../test/config/realio-lane-membership.mjs';
 import { SERIAL_CPU_TEST_FILES } from '../../test/config/serial-cpu-lane-membership.mjs';
@@ -69,7 +70,6 @@ export function needsDist(cwd, file) {
 }
 const TEST_FILE = /^test\/(?:[^/]+\/)*[^/]+\.test\.ts$/;
 const SOURCE_FILE = /^(?:src|test)\/.+\.(?:ts|tsx|mjs|js)$/;
-const sha = /^[0-9a-f]{40}$/;
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' });
@@ -173,14 +173,7 @@ export function selectFallback({ cwd }) {
   return { tests: list, shards, node: [] };
 }
 
-export function changedPaths({ base, head, cwd }) {
-  if (!sha.test(base ?? '') || !sha.test(head ?? '')) throw new Error('base and head must be exact commit SHAs');
-  if (git(cwd, ['rev-parse', 'HEAD']).trim() !== head) throw new Error('checkout does not match head');
-  const mergeBase = git(cwd, ['merge-base', base, head]).trim();
-  const out = git(cwd, ['diff', '--name-only', '-z', '--no-renames', mergeBase, head]);
-  if (out && !out.endsWith('\0')) throw new Error('incomplete path list');
-  return out ? out.slice(0, -1).split('\0') : [];
-}
+export { changedPaths };
 
 export function plan({ cwd, paths, graph = null }) {
   const verdict = classifyPaths(paths);

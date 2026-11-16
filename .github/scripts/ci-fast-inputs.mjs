@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { hashParts } from './ci-green-reuse.mjs';
-import { changedPaths } from './ci-fast-select.mjs';
+import { changedPaths } from './ci-changed-paths.mjs';
 import { SCHEMA, affectedProjects, lintFiles } from './ci-dep-graph.mjs';
 
 const CODE = /\.(?:[cm]?[jt]sx?)$/;

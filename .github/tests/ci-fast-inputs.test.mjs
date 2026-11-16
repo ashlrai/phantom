@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { authorityHash, cleanTreeHash, policyRecords, testsHash, typecheckHashes } from '../scripts/ci-fast-inputs.mjs';
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -66,4 +69,20 @@ test('every receipt hash includes the checker, lockfile, package, vitest and tsc
   assert.notEqual(before.tests, after.tests);
   assert.notEqual(before.authority, after.authority);
   assert.notEqual(before.clean, after.clean);
+});
+
+test('authority and clean-tree hashes run from a .github-only sparse tree', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-sparse-hash-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['clone', '-q', '--depth', '1', '--filter=blob:none', '--sparse', `file://${repoRoot}`, dir]);
+  execFileSync('git', ['-C', dir, 'sparse-checkout', 'set', '--no-cone', '.github']);
+  execFileSync('git', ['-C', dir, 'checkout', '-q']);
+  cpSync(join(repoRoot, '.github/scripts'), join(dir, '.github/scripts'), { recursive: true });
+  assert.equal(existsSync(join(dir, 'test/config/realio-lane-membership.mjs')), false);
+  assert.equal(existsSync(join(dir, '.github/scripts/ci-fast-inputs.mjs')), true);
+  for (const command of ['authority', 'clean-tree']) {
+    const result = spawnSync(process.execPath, ['.github/scripts/ci-fast-inputs.mjs', command], { cwd: dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, `${command}\n${result.stderr}`);
+    assert.match(result.stdout, /^hash=[0-9a-f]{64}$/m);
+  }
 });
