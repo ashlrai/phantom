@@ -1,0 +1,190 @@
+{
+  "schema": "mergeq-batch-evidence.v1",
+  "readAt": "2026-11-16T06:18:45.723Z",
+  "source": "api.github.com anonymous public reads",
+  "rulesets": {
+    "ashlrai/ashlr-md": {
+      "id": 24971050,
+      "name": "ashlr: default branch (CI gate)",
+      "enforcement": "active",
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+        "merge_queue"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 10,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 1,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "Check (Linux)"
+      ]
+    },
+    "ashlrai/ashlr-plugin": {
+      "id": 24051756,
+      "name": "ashlr-fleet: default branch",
+      "enforcement": "active",
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+        "merge_queue"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 10,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 1,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "CI Gate"
+      ]
+    },
+    "ashlrai/ashlr-stack": {
+      "id": 24971049,
+      "name": "ashlr: default branch (CI gate)",
+      "enforcement": "active",
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+        "merge_queue"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 10,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 1,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "CI Gate"
+      ]
+    },
+    "ashlrai/lexicon": {
+      "id": 26000075,
+      "name": "ashlr-fleet: default branch merge queue",
+      "enforcement": "active",
+      "rules": [
+        "merge_queue",
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 10,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 1,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "CI Gate"
+      ]
+    },
+    "ashlrai/locus": {
+      "id": 24051762,
+      "name": "ashlr-fleet: default branch",
+      "enforcement": "active",
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+        "merge_queue"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 10,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 1,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "CI Gate"
+      ]
+    },
+    "ashlrai/phantom-secrets": {
+      "id": 24051755,
+      "name": "ashlr-fleet: default branch",
+      "enforcement": "active",
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+        "merge_queue"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 10,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 1,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "CI Gate"
+      ]
+    },
+    "ashlrai/phantom": {
+      "id": 24051754,
+      "name": "ashlr-fleet: default branch",
+      "enforcement": "active",
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks",
+        "merge_queue"
+      ],
+      "merge_queue": {
+        "merge_method": "SQUASH",
+        "max_entries_to_build": 20,
+        "min_entries_to_merge": 1,
+        "max_entries_to_merge": 10,
+        "min_entries_to_merge_wait_minutes": 0,
+        "grouping_strategy": "ALLGREEN",
+        "check_response_timeout_minutes": 15
+      },
+      "required_status_checks": [
+        "Merge Gate"
+      ]
+    }
+  },
+  "phantomMergeGroupCi": {
+    "day": "2026-11-15",
+    "workflow": "CI",
+    "event": "merge_group",
+    "runs": 331,
+    "conclusions": {
+      "failure": 226,
+      "success": 105
+    },
+    "runMinutes": {
+      "p50": 0.75,
+      "p90": 1.03,
+      "max": 1.2
+    }
+  }
+}
