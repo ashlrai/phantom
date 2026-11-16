@@ -1,12 +1,8 @@
 # Agent Bus
 
-Phantom's durable agent bus is a bounded snapshot store at
-`$ASHLR_HOME/fleet/bus-inbox/messages.json` (default
-`~/.ashlr/fleet/bus-inbox/messages.json`) that agents can read by cursor.
-Addresses are routing labels, not identities. HTTP, `phm comms bus` and fleet
-MCP share this store; `phm bus send|inbox|ack` uses a separate mailbox store.
-Writes reclaim expired receipts while preserving a monotonic cursor. Deduplication
-lasts while a receipt is retained; it is not an eternal exactly-once guarantee.
+Phantom's durable agent bus is a bounded, append-only store under `~/.ashlr-runs`
+that any agent can read by cursor; addresses are routing labels, not identities.
+It gives every agent a single shared inbox to read from and write to.
 
 ## Read
 
@@ -23,13 +19,12 @@ not yet been created, and `unavailable` when the store is unhealthy (503).
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
 `--allow-dispatch` and must pass the mutation gate.  Reply codes: 201
 posted, 200 duplicate, 400 invalid, 409 conflict, 507 full, 503
-unavailable or writer contention, 404 when dispatch is off. Responses carry
-`{ v: 1, status, id?, cursor? }` plus an inbox-mirror result on accepted posts.
+unavailable, 404 when dispatch is off.  Responses carry `{ v: 1,
+status, id?, cursor? }`.
 
 ## Envelope fields
 
-Legacy `BusEnvelope` messages carry six required fields:
-
+The `BusEnvelope` carries exactly six wire fields — each is a flat value:
 - `id` sender-assigned message identity; deduplication is a transport responsibility.
 - `from` sender routing label (printable ASCII, 1-128 chars).
 - `to` recipient routing label (printable ASCII, 1-128 chars).
@@ -37,16 +32,7 @@ Legacy `BusEnvelope` messages carry six required fields:
 - `ttl` positive remaining lifetime in milliseconds (safe integer).
 - `body` opaque strict JSON data; no event-kind or payload interpretation.
 
-Channel-aware envelopes add the complete group `channel`, `channel_ref`,
-`sender: {agent_id, vendor, human, team}` and `external`, plus optional
-`origin_bridge`. Partial groups and unknown fields are refused. Channels are
-`bus`, `slack`, `imessage`, `email`, `telegram` and `handoff`. These fields
-are assertions; they do not authenticate a sender or authorize a send. See
-[network channels](AGENT-NETWORK-CHANNELS.md).
-
-Caps: 64 KiB per envelope, depth 32, 1024 retained messages, 1 MiB total,
-100 per read page. Expired records can advance `nextCursor` without appearing
-in `messages`; persist the returned cursor even for an empty page.
+Caps: 1024 messages, 1 MiB total, 100 per read page.
 
 ## Conventions
 
@@ -74,21 +60,11 @@ announcement is evidence, not apply authority.
 
 ## Examples
 
-For a local console on the default port, read from cursor 0 with the current
-read token kept privately in `PHM_READ_TOKEN`:
+Read the latest page (cursor 0, limit 10):
+`curl -H "Authorization: Bearer FAKE-TOKEN" http://localhost:8787/api/verse/agent-bus?after=0&limit=10`
 
-```sh
-curl -fsS -H "X-Ashlr-Token: $PHM_READ_TOKEN" 'http://127.0.0.1:7777/api/verse/agent-bus?after=0&limit=10'
-```
-
-Posting requires dispatch enabled and the mutation token, kept privately in
-`PHM_MUTATION_TOKEN`:
-
-```sh
-curl -fsS -X POST -H "X-Ashlr-Token: $PHM_MUTATION_TOKEN" -H "Content-Type: application/json" \
-  'http://127.0.0.1:7777/api/verse/agent-bus' \
-  -d '{"id":"example-0001","from":"agent","to":"leaders","priority":"P1","ttl":86400000,"body":{"kind":"note","text":"hello"}}'
-```
+Publish an envelope (replace `FAKE-TOKEN` and values with real ones):
+`curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"example-0001","from":"agent","to":"leaders","priority":"P1","ttl":86400000,"body":{"note":"hello"}}'`
 
 ## Superseded or kept
 
@@ -100,7 +76,7 @@ what is on master:
 | #3057 idea | On master | Verdict |
 | --- | --- | --- |
 | Store under `src/core/bus` | `src/core/fleet/bus-inbox.ts`, reached by the `bus` and `handoff` adapters in `src/core/agents/adapters/` | Superseded; a second store is refused |
-| `schema`, `thread`, `createdAt` fields | Six required fields with optional channel metadata; `thread` lives in `note` and `context` bodies; receive time is the cursor row's `receivedAt` | Superseded |
+| `schema`, `thread`, `createdAt` fields | Six-field envelope; `thread` lives in `note` and `context` bodies; receive time is the cursor row's `receivedAt` | Superseded |
 | `from.vendor` and `from.node` | `sender.vendor` (any printable ASCII token) on channel envelopes; `provider` on v2 participants, which also covers `devin`, `cursor-cloud`, `glm` and others | Superseded |
 | `to` as `agent`, `role` or `topic` | `to` is one routing label. Role and topic are label conventions (`leaders`, `teammate.findings`); a label never carries authority | Kept as convention, not as structured fields |
 | Kinds `note`, `ask`, `reply`, `handoff`, `status` | `note`, `context`, `work.post`, `work.status` in the body. A question and its answer are `note` bodies sharing a `thread`. A handoff is an envelope on the `handoff` channel | Superseded |
@@ -111,21 +87,112 @@ what is on master:
 Why structured `to` is not ported: it would add a second address shape next to
 the flat label every adapter, the send gate and the claim table already key on.
 Nothing is blocked without it, because a recipient can already subscribe to a
-label. If a role or topic registry is wanted later, add it in
-`src/core/agents/channel-registry.ts` so it resolves to labels before delivery,
-and preserve the existing required fields and channel metadata group.
+label. The identity and channel registry added later (see
+[Unified bus](#unified-bus-identities-dms-channels-handoffs-and-wake)) follows
+this rule: it resolves names to flat labels before delivery and leaves the wire
+envelope unchanged.
+
+## Unified bus: identities, DMs, channels, handoffs and wake
+
+RQ-BUS-UNIFY-1 makes this store the single bus for every agent, whatever CLI,
+provider or model runs it. It adds names and conventions, not a second store:
+every send below is one `appendBusInbox` post, and every wake is one row in the
+existing wake queue. The model is Grok Bot teammates and SendToAgent: address a
+teammate by name, and raise the priority when it must act now.
+
+**Identity.** `phm agents bus id register <handle>` records an identity in
+`<root>/agent-identities/registry.json` beside `<root>/bus-inbox` (default root
+`$ASHLR_HOME/fleet`, 0600 file in 0700 directories, writer lock, atomic
+replace). The id is `agt_` plus 20 hex characters of SHA-256 over the handle,
+so it is the same on every node and does not change when the agent moves from
+Claude to Codex or from one model to another. Each identity keeps:
+
+- `runtimes`: every `{cli, provider, model}` it has run on, newest refreshed in place;
+- `aliases`: legacy routing labels it still answers to (lane names, v2
+  `participantId`s). An alias belongs to exactly one identity and may not start
+  with `agent:`, `group:`, `dm:` or `handoff:`.
+
+An identity is a routing name, never authentication. It grants no tool, spend,
+send or execution authority; consumers keep their own admission checks.
+
+**Addresses.** The envelope keeps its fields; the unified API fills in the
+channel metadata group (`sender.agent_id` is the `agt_` id, `sender.vendor` the
+latest runtime's provider, `origin_bridge` is `agent-bus`).
+
+| Kind | `to` | `channel` | Body |
+| --- | --- | --- | --- |
+| DM | `agent:<handle>` | `bus` | v2 `note` |
+| Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
+| Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
+
+Channel posts are refused unless the sender is a member
+(`phm agents bus channel create|join|leave`). Because channel addresses are
+bus-group addresses, existing `subscribeGroup` readers see the same posts.
+
+**Priority wake.** P0 always wakes and cannot be turned off. P1 and handoffs
+wake by default (`--no-wake` opts out); P2 and P3 wake only with `--wake`. A
+wake is recorded after the store accepts the post, through `createBusWakeHook`
+into `~/.ashlr-runs/bus/wake-queue.jsonl`, and carries only `id`, `from` and
+`to`. Resending the same id returns `duplicate` from the store and re-attempts
+the wake, which the queue deduplicates, so a failed wake is recovered without
+a second message.
+
+**Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
+posts in the agent's channels (minus its own) and traffic still addressed to its
+aliases, highest priority first. Persist `nextCursor` only after handling the
+page. `--frame <cli>` prints the page as one bounded block marked untrusted
+data, the same for every CLI. `phm agents bus wakes <agent>` lists wake hints
+for the agent and its channels.
+
+**CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
+`codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
+`PHM_AGENT_CLI`, else the runtime markers already used by team approvals, such
+as `CLAUDECODE` or `CODEX_SANDBOX`), maps it to a v2 provider, and records the
+session as a runtime of the `PHM_AGENT_ID` identity. Codex, Devin and Grok name
+their existing engine runner in `src/core/fleet/bus-adapters/`; Claude Code and
+Cursor read their inbox in the live session on wake. Adapters never spawn a
+CLI. `phm agents bus adapters --json` prints the table.
+
+### Migration from existing bus directories
+
+Nothing is moved or rewritten. Each existing directory keeps its role:
+
+| Directory | Role after unification | Action |
+| --- | --- | --- |
+| `$ASHLR_HOME/fleet/bus-inbox/` | The one bus store | None |
+| `$ASHLR_HOME/fleet/agent-identities/` | New: identity and channel registry | Created on first `id register` |
+| `~/.ashlr-runs/bus/wake-queue.jsonl` | Wake hints, same row shape | None |
+| `$ASHLR_HOME/fleet/bus/hops.jsonl` | Hop log for wakes | None |
+| `$ASHLR_HOME/bus-mailbox/` (`phm bus send\|inbox\|ack`) | Per-recipient mailbox with acks, kept for its current users | Do not copy; see below |
+| `~/.ashlr/agentnet/bindings.json` | Slack peer session bindings | None; a callsign is a valid handle |
+
+To move an agent onto the unified bus:
+
+1. Register its identity once per agent: `phm agents bus id register <handle>`,
+   adding `--alias <label>` for every label senders already use (its lane name,
+   v2 `participantId`, `phm bus` mailbox label). Its inbox then includes old
+   traffic without rewriting history.
+2. Set `PHM_AGENT_ID=<handle>` (and `PHM_AGENT_CLI` where no runtime marker
+   exists, as for Devin) in the launcher, and run `phm agents bus id register`
+   from the session to record the runtime.
+3. Turn existing `group:<room>:<topic>` rooms into channels by creating a
+   channel with the room's name; posts to any topic of that room reach its members.
+4. Drain a `phm bus` mailbox with `phm bus inbox --to <label>` and
+   `phm bus ack`, then send new traffic with `phm agents bus dm`. Copying
+   mailbox records into the store is not supported: it would duplicate ids and
+   lose acknowledgment state.
 
 ## Desktop app
 
 The Bus pane in the desktop app includes a Durable bus tab that reads and
-writes the same `$ASHLR_HOME/fleet/bus-inbox/` store the API endpoints target.
+writes the same `~/.ashlr-runs` store the API endpoints target.
 
 ## v2
 
 v2 is the contract every provider implements against: Grok Bot agents, OpenAI
 Dot, codex-cmp, codex-personal, Devin, Cursor cloud agents, Claude, GLM (z.ai),
-Stacksync's agent and local oMLX. It adds meaning to `body`; the six required
-envelope fields, endpoints, auth and caps above remain compatible; v1 bodies stay valid.
+Stacksync's agent and local oMLX. It adds meaning to `body`; the six envelope
+fields, endpoints, auth and caps above are unchanged, and v1 bodies stay valid.
 A body is v2 only when it carries one of the `kind` values below. Schema
 version: `agent-bus.v2`. Source of truth: `src/core/agents/bus-v2-schema.ts`.
 Supersedes the stale proposals in PR #3057 (RQ-BUS-NEUTRAL-1) and PR #1135
@@ -286,6 +353,9 @@ Outside implementers (Dot included) call only the HTTP contract above.
 | Provider send bridges | `src/core/agents/bridges/` |
 | Adapters and fleet bus verbs | `src/cli/fleet-bus-*.ts`, `src/core/fleet/bus-adapters/` |
 | Contract printer | `src/cli/agents-bus-contract.ts` |
+| Identity and channel registry | `src/core/agents/bus-identity.ts` |
+| DM, channel, handoff, inbox and wake API | `src/core/agents/bus-unified.ts`, `src/cli/agents-bus-unified.ts` |
+| CLI session adapters (claude, codex, devin, cursor, grok) | `src/core/agents/bus-cli-adapters.ts` |
 | Webhook relay | not built; an internet-facing relay must verify signed requests and gets its own security review |
 
 Message-id claims, team leases, and bus-board task claims write their leases
