@@ -74,6 +74,9 @@ vi.mock('node:child_process', () => ({
       stdin: null, pid: undefined, unref: vi.fn(),
     });
     queueMicrotask(() => {
+      // EventEmitter throws on 'error' when nothing is listening. The simulated
+      // failure stays an event so an unhandled mock cannot fail the runner.
+      if (child.listenerCount('error') === 0) child.on('error', () => {});
       child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
       child.emit('close', -1, null);
     });

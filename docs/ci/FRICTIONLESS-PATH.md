@@ -158,7 +158,7 @@ gates, and repairing forward. This change activates none of those transitions.
 
 ## Workflow inventory and minute model
 
-All 18 workflow definitions were reviewed. Values below are sums of configured
+The 17 workflow definitions in this table were reviewed. Values below are sums of configured
 job timeout ceilings, **not measured runtime, elapsed latency or billed minutes**.
 Matrix parallelism, cancellations, conditional jobs, warm caches and OS billing
 multipliers prevent treating these caps as spend. No historical runtime data was
@@ -183,7 +183,6 @@ available; actual expected savings remain unmeasured.
 | `publish-canonical-npm.yml` | Manual | 60 |
 | `finalize-github-release.yml` | Manual | 28 |
 | `publish-phantom-registry.yml` | Manual, legacy identity condition | 10 |
-| `promote.yml` | Manual historical promotion | 10 |
 | `release.yml` | Frozen historical v3.3.2 tag | Reusable CI + 90 explicit; two jobs omit explicit caps |
 | `release-desktop.yml` | desktop-v tag | Two platform jobs omit explicit caps |
 
