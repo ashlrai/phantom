@@ -1152,7 +1152,7 @@ describe.skipIf(process.platform === 'win32')('readScorecardTrend', () => {
 describe('ashlr fleet scorecard CLI', () => {
   it('--json includes a selfEvaluation key with the FleetScorecard shape', async () => {
     await recordRealizedMerge(pid(), isoAgo(1 * DAY_MS));
-    const { cmdFleet } = await import('../src/cli/fleet.js');
+    const { cmdFleet } = await import('../src/cli/fleet-entry.js');
     const writes: string[] = [];
     const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
       writes.push(String(chunk));
@@ -1181,7 +1181,7 @@ describe('ashlr fleet scorecard CLI', () => {
   });
 
   it('human-readable mode prints the self-evaluation section without throwing', async () => {
-    const { cmdFleet } = await import('../src/cli/fleet.js');
+    const { cmdFleet } = await import('../src/cli/fleet-entry.js');
     const logs: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.join(' '));

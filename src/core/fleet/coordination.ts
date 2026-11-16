@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from './local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { fsyncDirectory } from '../util/durability.js';
+import { reapExpiredClaims } from './claim-lease-reap.js';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_ROWS = 20_000;
@@ -25,9 +26,15 @@ interface OwnedClaim extends FleetClaim { leaseHash: string }
 type Event =
   | { version: 1; kind: 'claim' | 'handoff'; at: number; claim: OwnedClaim }
   | { version: 1; kind: 'release' | 'reap'; at: number; id: string }
+  | { version: 1; kind: 'reap'; at: number; id: string; owner: string; state: 'RELEASED'; reason: 'lease-expired' }
+  | { version: 1; kind: 'return'; at: number; id: string; agent: string; leaseHash: string; message: FleetMessage }
   | { version: 1; kind: 'post'; at: number; message: FleetMessage }
   | { version: 1; kind: 'assign'; at: number; proposal: FleetAssignment };
-interface State { claims: Map<string, OwnedClaim>; messages: FleetMessage[]; proposals: FleetAssignment[] }
+interface State {
+  claims: Map<string, OwnedClaim>; messages: FleetMessage[]; proposals: FleetAssignment[];
+  /** Released-for-return claims whose receipt is not yet posted; keyed by claim id. */
+  pendingReturns: Map<string, Event & { kind: 'return' }>;
+}
 export type FleetCoordinationResult<T> = { ok: true; value: T } | { ok: false; error: 'invalid-input' | 'unavailable' | 'duplicate' | 'not-owner' | 'not-found' };
 export function fleetCoordinationPath(): string {
   return resolve(process.env['PHANTOM_FLEET_LEDGER_PATH'] ?? join(process.env['ASHLR_HOME'] ?? join(homedir(), '.ashlr'), 'fleet', 'coordination.jsonl'));
@@ -59,6 +66,11 @@ function parseEvent(value: unknown): Event {
   if (!object(value) || value.version !== 1 || !timestamp(value.at)) throw new Error('Invalid ledger');
   if ((value.kind === 'claim' || value.kind === 'handoff') && exact(value, ['version', 'kind', 'at', 'claim']) && claimShape(value.claim)) return value as unknown as Event;
   if ((value.kind === 'release' || value.kind === 'reap') && exact(value, ['version', 'kind', 'at', 'id']) && ident(value.id)) return value as unknown as Event;
+  if (value.kind === 'reap' && exact(value, ['version', 'kind', 'at', 'id', 'owner', 'state', 'reason'])
+    && ident(value.id) && ident(value.owner) && value.state === 'RELEASED' && value.reason === 'lease-expired') return value as unknown as Event;
+  if (value.kind === 'return' && exact(value, ['version', 'kind', 'at', 'id', 'agent', 'leaseHash', 'message'])
+    && ident(value.id) && ident(value.agent) && typeof value.leaseHash === 'string' && /^[a-f0-9]{64}$/.test(value.leaseHash)
+    && messageShape(value.message)) return value as unknown as Event;
   if (value.kind === 'post' && exact(value, ['version', 'kind', 'at', 'message']) && messageShape(value.message)) return value as unknown as Event;
   if (value.kind === 'assign' && exact(value, ['version', 'kind', 'at', 'proposal']) && assignmentShape(value.proposal)) return value as unknown as Event;
   throw new Error('Invalid ledger');
@@ -90,10 +102,11 @@ function readEvents(path: string, allowMissing = false): { events: Event[]; stat
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 function replay(events: Event[]): State {
-  const state: State = { claims: new Map(), messages: [], proposals: [] };
+  const state: State = { claims: new Map(), messages: [], proposals: [], pendingReturns: new Map() };
   for (const event of events) {
     if (event.kind === 'claim' || event.kind === 'handoff') state.claims.set(event.claim.id, event.claim);
     else if (event.kind === 'release' || event.kind === 'reap') state.claims.delete(event.id);
+    else if (event.kind === 'return') { state.claims.delete(event.id); state.pendingReturns.set(event.id, event); }
     else if (event.kind === 'post') state.messages.push(event.message);
     else if (event.kind === 'assign') state.proposals.push(event.proposal);
   }
@@ -102,6 +115,7 @@ function replay(events: Event[]): State {
 function stateEvents(state: State): Event[] {
   return [
     ...[...state.claims.values()].map((claim): Event => ({ version: 1, kind: 'claim', at: claim.claimedAt, claim })),
+    ...[...state.pendingReturns.values()].filter(pending => !state.messages.some(m => m.id === pending.message.id)),
     ...state.messages.map((message): Event => ({ version: 1, kind: 'post', at: message.at, message })),
     ...state.proposals.map((proposal): Event => ({ version: 1, kind: 'assign', at: proposal.at, proposal })),
   ];
@@ -154,15 +168,20 @@ function cleanClaim(claim: OwnedClaim): FleetClaim {
 export function readFleetBoard(options: FleetCoordinationOptions = {}): FleetBoard {
   const now = options.now ?? Date.now();
   try {
-    const state = replay(readEvents(options.path ?? fleetCoordinationPath()).events);
+    let state = replay(readEvents(options.path ?? fleetCoordinationPath()).events);
     const claims = [...state.claims.values()];
-    return { schema: 'fleet.coordination.v1', state: 'known', claims: claims.filter(c => c.expiresAt > now).map(cleanClaim),
+    if (claims.some(claim => claim.expiresAt <= now)) {
+      const reaped = mutate({ ...options, now }, current => ({ ok: true, value: { event: null, value: current } }));
+      if (!reaped.ok) throw new Error('Expiry release unavailable');
+      state = reaped.value;
+    }
+    return { schema: 'fleet.coordination.v1', state: 'known', claims: [...state.claims.values()].filter(c => c.expiresAt > now).map(cleanClaim),
       messages: state.messages.filter(m => m.expiresAt > now).map(m => ({ ...m, id: scrubSecrets(m.id), from: scrubSecrets(m.from), to: scrubSecrets(m.to), body: scrubSecrets(m.body) })),
       proposals: state.proposals.filter(p => p.expiresAt > now).map(p => ({ ...p, id: scrubSecrets(p.id), repo: scrubSecrets(p.repo), task: scrubSecrets(p.task), to: scrubSecrets(p.to) })),
       expiredClaims: claims.filter(c => c.expiresAt <= now).length };
   } catch { return { schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null }; }
 }
-function mutate<T>(options: FleetCoordinationOptions, operation: (state: State, now: number) => FleetCoordinationResult<{ event: Event; value: T }>): FleetCoordinationResult<T> {
+function mutate<T>(options: FleetCoordinationOptions, operation: (state: State, now: number) => FleetCoordinationResult<{ event: Event | null; value: T }>): FleetCoordinationResult<T> {
   const path = resolve(options.path ?? fleetCoordinationPath());
   const now = options.now ?? Date.now();
   let lock: ReturnType<typeof acquireLocalStoreLock> = null;
@@ -175,20 +194,27 @@ function mutate<T>(options: FleetCoordinationOptions, operation: (state: State, 
     const ledger = readEvents(path, true);
     const state = replay(ledger.events);
     const reaped: Event[] = [];
-    for (const claim of state.claims.values()) if (claim.expiresAt <= now) { state.claims.delete(claim.id); reaped.push({ version: 1, kind: 'reap', at: now, id: claim.id }); }
+    const { keep, released } = reapExpiredClaims([...state.claims.values()], now, 0);
+    state.claims = new Map(keep.map(claim => [claim.id, claim]));
+    for (const claim of released) reaped.push({ version: 1, kind: 'reap', at: now, id: claim.id,
+      owner: claim.owner, state: claim.state, reason: claim.reason });
     state.messages = state.messages.filter(message => message.expiresAt > now);
     state.proposals = state.proposals.filter(proposal => proposal.expiresAt > now);
+    for (const pending of state.pendingReturns.values()) if (pending.message.expiresAt <= now) state.pendingReturns.delete(pending.id);
     const result = operation(state, now);
     if (!result.ok) return result;
-    const bytes = encodeEvents([...reaped, result.value.event]);
+    const pending = [...reaped, ...(result.value.event ? [result.value.event] : [])];
+    if (pending.length === 0) return { ok: true, value: result.value.value };
+    const bytes = encodeEvents(pending);
     if (!ownsLocalStoreLock(lock)) return { ok: false, error: 'unavailable' };
-    if (ledger.stat && (ledger.events.length + reaped.length + 1 >= MAX_ROWS * 0.8 || ledger.stat.size + bytes.length >= MAX_BYTES * 0.8)) {
+    if (ledger.stat && (ledger.events.length + pending.length >= MAX_ROWS * 0.8 || ledger.stat.size + bytes.length >= MAX_BYTES * 0.8)) {
       // Replay the mutation too: releases and handoffs can free capacity even
       // when all remaining history was live. Expired data never survives compaction.
-      compactLedger(path, ledger.stat, stateEvents(replay([...stateEvents(state), result.value.event])), lock);
+      compactLedger(path, ledger.stat, [...stateEvents(replay([...stateEvents(state), ...pending])),
+        ...(result.value.event === null ? reaped : [])], lock);
       return { ok: true, value: result.value.value };
     }
-    if (ledger.events.length + reaped.length + 1 > MAX_ROWS) return { ok: false, error: 'unavailable' };
+    if (ledger.events.length + pending.length > MAX_ROWS) return { ok: false, error: 'unavailable' };
     fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
     const stat = privateFile(fd);
     if (ledger.stat) {
@@ -223,6 +249,38 @@ export function releaseFleetClaim(input: { id: string; agent: string; lease: str
     if (!claim) return { ok: false, error: 'not-found' };
     if (claim.agent !== input.agent || claim.leaseHash !== hash(input.lease)) return { ok: false, error: 'not-owner' };
     return { ok: true, value: { event: { version: 1, kind: 'release', at: now, id: claim.id }, value: { released: claim.id } } };
+  });
+}
+/** Owner-validated release plus result intent as one durable 'return'
+ * record. 'intended' callers then publish the receipt (retriable). A retry
+ * without the live claim resolves the stored intent — the recorded
+ * agent+leaseHash proves ownership — and reposts the exact receipt once.
+ * The intent never lands in `messages`, so a failed publish leaves no
+ * half-visible result. */
+export function concludeFleetClaim(input: {
+  id: string; agent: string; lease: string;
+  message?: { id: string; from: string; to: string; body: string; ttlMs?: number };
+}, options: FleetCoordinationOptions = {}): FleetCoordinationResult<{ outcome: 'intended' | 'resolved' | 'existing'; message: FleetMessage }> {
+  const intent = input.message;
+  const ttl = intent?.ttlMs ?? FLEET_CLAIM_TTL_MS;
+  if (!ident(input.id) || !ident(input.agent) || !text(input.lease, 128)
+    || (intent !== undefined && (!ident(intent.id) || !ident(intent.from) || !ident(intent.to) || !text(intent.body, 4000) || !ttlValid(ttl))))
+    return { ok: false, error: 'invalid-input' };
+  return mutate<{ outcome: 'intended' | 'resolved' | 'existing'; message: FleetMessage }>(options, (state, now) => {
+    const claim = state.claims.get(input.id);
+    if (!claim) {
+      const pending = state.pendingReturns.get(input.id);
+      if (!pending) return { ok: false, error: 'not-found' };
+      if (pending.agent !== input.agent || pending.leaseHash !== hash(input.lease)) return { ok: false, error: 'not-owner' };
+      const posted = state.messages.find(message => message.id === pending.message.id);
+      if (posted) return { ok: true, value: { event: null, value: { outcome: 'existing', message: posted } } };
+      return { ok: true, value: { event: { version: 1, kind: 'post', at: now, message: pending.message }, value: { outcome: 'resolved', message: pending.message } } };
+    }
+    if (claim.agent !== input.agent || claim.leaseHash !== hash(input.lease)) return { ok: false, error: 'not-owner' };
+    if (!intent) return { ok: false, error: 'invalid-input' };
+    if (state.messages.some(message => message.id === intent.id)) return { ok: false, error: 'duplicate' };
+    const message: FleetMessage = { id: intent.id, from: intent.from, to: intent.to, body: intent.body, at: now, expiresAt: now + ttl };
+    return { ok: true, value: { event: { version: 1, kind: 'return', at: now, id: claim.id, agent: claim.agent, leaseHash: claim.leaseHash, message }, value: { outcome: 'intended', message } } };
   });
 }
 export function handoffFleetClaim(input: { id: string; agent: string; lease: string; to: string; ttlMs?: number }, options: FleetCoordinationOptions = {}): FleetCoordinationResult<{ claim: FleetClaim; lease: string }> {

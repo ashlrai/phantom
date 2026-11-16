@@ -2,6 +2,7 @@ import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js'
 import { nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
+import { isHostStats, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -26,6 +27,7 @@ export interface NodeProfile {
 
 /** Self-reported on each heartbeat. `auth` is the node's own local login status, never a token. */
 export interface NodeReport {
+  hostStats?: HostStats;
   usage?: number;
   slots?: number;
   auth?: NodeAuth;
@@ -46,6 +48,8 @@ export interface JobView {
   requires: string[];
   pack?: string;
   secrets: string[];
+  /** Accepted completion's executor identity; no result body or fencing token. */
+  completedBy?: string;
 }
 
 export interface NodeView {
@@ -143,6 +147,7 @@ export class DriveNodes implements QueueV1 {
    * this node after the old leader expires; a stale session must rejoin first.
    */
   heartbeat(session: NodeSession, report?: NodeReport): { leader: LeaderLease | null } | null {
+    if (report?.hostStats !== undefined && !isHostStats(report.hostStats)) throw new Error('Invalid host stats');
     if (report?.usage !== undefined && !(Number.isSafeInteger(report.usage) && report.usage >= 0 && report.usage <= 1000)) {
       throw new Error('Invalid drive usage (integer permille 0-1000)');
     }
@@ -157,6 +162,7 @@ export class DriveNodes implements QueueV1 {
       if (report?.usage !== undefined) node.usage = report.usage;
       if (report?.slots !== undefined) node.slots = report.slots;
       if (report?.auth !== undefined) node.auth = report.auth;
+      if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {
         state.leader = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
       } else if (sameSession(previous, session)) {
@@ -227,7 +233,8 @@ export class DriveNodes implements QueueV1 {
 
   private jobView(job: NonNullable<NodesState['jobs'][number]>): JobView {
     return { id: job.id, owner: job.owner!, state: job.state, requires: [...(job.requires ?? [])],
-      ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])] };
+      ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])],
+      ...(job.state === 'completed' && job.claim ? { completedBy: job.claim.nodeId } : {}) };
   }
 
   /** The only read surface for a node or its operator: everything is filtered to the caller's

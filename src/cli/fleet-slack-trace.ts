@@ -1,12 +1,12 @@
-import { isSlackTs } from '../core/agents/slack-network.js';
+import { isSlackChannelId, isSlackTs } from '../core/agents/slack-network.js';
 import { readSlackRequestTrace, type SlackRequestTraceOptions } from '../core/agents/slack-request-trace.js';
 
-const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--json]';
+const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack channel id>] [--json]';
 
 /**
  * Read-only per-request trace: ingress receipt to same-thread reply outcome.
- * Exit 0 only when every traced request is answered and neither source is
- * degraded; ids and timestamps only, never text, author ids or paths.
+ * Exit 0 requires both sources ok and at least one request, all answered;
+ * ids and timestamps only, never text, author ids or paths.
  */
 export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTraceOptions = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -15,32 +15,59 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
   }
   let json = false;
   let thread: string | undefined;
+  let channelId: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json') {
       json = true;
     } else if (arg === '--thread') {
       const value = args[++i];
-      if (!isSlackTs(value)) {
+      if (thread !== undefined || !isSlackTs(value)) {
         console.error(usage);
         return 2;
       }
       thread = value;
+    } else if (arg === '--channel') {
+      const value = args[++i];
+      if (channelId !== undefined || !isSlackChannelId(value)) {
+        console.error(usage);
+        return 2;
+      }
+      channelId = value;
     } else {
       console.error(usage);
       return 2;
     }
   }
-  const trace = readSlackRequestTrace({ ...deps, ...(thread !== undefined ? { thread } : {}) });
+  const collected = readSlackRequestTrace({ ...deps, ...(thread !== undefined ? { thread } : {}) });
+  const rows = channelId === undefined ? collected.rows : collected.rows.filter((row) => row.channelId === channelId);
+  const counts = { total: rows.length, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
+  for (const row of rows) {
+    if (row.outcome === 'answered') counts.answered++;
+    else if (row.outcome === 'uncertain') counts.uncertain++;
+    else if (row.outcome === 'bus-failed') counts.busFailed++;
+    else counts.unanswered++;
+  }
+  const selectedThread = thread ?? deps.thread;
+  const scope = 'Bounded local persisted journal and send evidence only; does not prove current runtime reachability.';
+  const trace = {
+    ...collected, rows, counts, scope,
+    collectionScope: {
+      ...(selectedThread !== undefined ? { thread: selectedThread } : {}),
+      ...(channelId !== undefined ? { channelId } : {}),
+    },
+  };
   if (json) {
     console.log(JSON.stringify(trace));
   } else {
-    console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends})`);
+    console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends}) ` +
+      `scope: channel=${channelId ?? 'all'} thread=${selectedThread ?? 'all'}; ${scope}`);
+    if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
         `${row.outcome.toUpperCase()}${row.replyTs !== undefined ? ` reply=${row.replyTs}` : ''}`);
     }
   }
-  const clean = trace.sources.journal !== 'degraded' && trace.sources.sends !== 'degraded';
-  return clean && trace.rows.every((row) => row.outcome === 'answered') ? 0 : 1;
+  const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
+  return clean && trace.rows.length > 0 && trace.rows.every((row) => row.outcome === 'answered') ? 0 : 1;
 }

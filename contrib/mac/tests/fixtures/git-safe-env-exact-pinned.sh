@@ -13,7 +13,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 GS_ROOT_DEFAULT="$HOME/Projects/ashlrai"
 gs_rp(){ ( cd -P -- "$1" 2>/dev/null && pwd -P ); }
 GS_REPOS='phantom|phantom-secrets|ashlr-plugin|locus|lexicon|ashlr-md|ashlr-stack'   # rev3: same 7 as reap-merged REPOS
-GS_URL_REPOS="$GS_REPOS|ashlar-landing|measurably"   # rev4.2: remote.*.url only; push and publish stay on the 7 (publish.sh NAME allowlist)
+GS_URL_REPOS="$GS_REPOS|ashlr-landing|measurably"   # rev4.2: remote.*.url only; push and publish stay on the 7 (publish.sh NAME allowlist)
 GS_GIT_FIXED=/usr/bin/git   # rev2 S3: the ONLY git ever executed. Never /opt/homebrew, never PATH.
 gs_init(){ # any argument is ignored (rev2 S3). Sanitizes the environment of the current shell.
   unset GS_ALLOW_HOOKSPATH   # G1 amendment 2026-10-28: no caller can inherit the opt-in

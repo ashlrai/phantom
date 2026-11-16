@@ -2946,3 +2946,7 @@ The [autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) connects durable
 execution, measured engineering yield and self-improving harness research to a
 staged acceptance roadmap. Proposed architecture is separate from commissioned
 runtime behavior.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

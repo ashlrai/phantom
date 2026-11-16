@@ -17,3 +17,11 @@ it('shows unavailable when the ledger cannot be read', async () => {
   render(<SectionVisibilityProvider visible><EmptyJobsPanel /></SectionVisibilityProvider>);
   expect(await screen.findByText('Job reasons are unavailable.')).toBeInTheDocument();
 });
+
+it.each([{}, { schema: 'jobs.empty.v1', total: 1, topCauses: [null] },
+  { schema: 'jobs.empty.v1', total: 0, topCauses: [], reasons: {} }])('isolates an incompatible response from the rest of Fleet: %j', async value => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(value)));
+  render(<SectionVisibilityProvider visible><EmptyJobsPanel /></SectionVisibilityProvider>);
+  expect(await screen.findByText('Job reasons are unavailable.')).toBeInTheDocument();
+  expect(screen.queryByText('No empty jobs in this period.')).not.toBeInTheDocument();
+});

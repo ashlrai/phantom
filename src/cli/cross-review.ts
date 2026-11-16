@@ -34,6 +34,7 @@ function printDecision(decision: CrossReviewDecision, review: CrossReviewRecord 
     process.stdout.write(`review: ${review.outcome}${who}${review.reasons.length ? ` (${review.reasons.join(', ')})` : ''}\n`);
   }
   process.stdout.write(`decision: ${decision.action} [${decision.codes.join(', ')}] ${decision.prUrl}\n`);
+  if (decision.checkStatus) process.stdout.write(`checks: ${decision.checkStatus}${decision.checkDetail ? ` — ${decision.checkDetail}` : ''}\n`);
   if (decision.matchHeadCommit) process.stdout.write(`match-head-commit: ${decision.matchHeadCommit}\n`);
 }
 

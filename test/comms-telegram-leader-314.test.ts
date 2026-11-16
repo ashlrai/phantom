@@ -255,6 +255,51 @@ describe('escapeTelegramHtml / splitTelegramText', () => {
     expect(chunks.join('')).toBe(text);
   });
 
+  it.each([false, true])('preserves empty input and blank lines (html=%s)', (html) => {
+    for (const text of ['', '\n', '\nhello\n\n']) {
+      expect(splitTelegramText(text, { html })).toEqual([text]);
+    }
+  });
+
+  it('keeps HTML entities and emoji whole at small wire limits', () => {
+    const text = '<>&"🚀'.repeat(12);
+    const chunks = splitTelegramText(text, { max: 16 });
+    expect(chunks.join('')).toBe(escapeTelegramHtml(text));
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(16);
+      expect(chunk).not.toMatch(/&[^;]*$/);
+      expect(chunk).not.toMatch(/[\uD800-\uDBFF]$/);
+    }
+  });
+
+  it('degrades oversized HTML through the same escaped plain-text splitter', () => {
+    const text = '<>&"🚀'.repeat(12);
+    const html = `<b>${escapeTelegramHtml(text)}</b>`;
+    expect(splitTelegramText(html, { html: true, max: 16 }))
+      .toEqual(splitTelegramText(text, { max: 16 }));
+  });
+
+  it('retains blank lines when oversized markup has no visible text', () => {
+    const markup = `<b ${' '.repeat(30)}></b>`;
+    expect(splitTelegramText(markup, { html: true, max: 16 })).toEqual(['']);
+    expect(splitTelegramText(`before\n${markup}\nafter`, { html: true, max: 16 }))
+      .toEqual(['before\n\nafter']);
+  });
+
+  it.each([
+    [Number.NaN, TELEGRAM_MAX_MESSAGE],
+    [Number.POSITIVE_INFINITY, TELEGRAM_MAX_MESSAGE],
+    [Number.NEGATIVE_INFINITY, 16],
+    [0, 16],
+    [16.9, 16],
+    [10000, TELEGRAM_MAX_MESSAGE],
+  ])('normalizes max=%s to a bounded integer of %s', (max, expected) => {
+    const chunks = splitTelegramText('x'.repeat(TELEGRAM_MAX_MESSAGE + 1), { max });
+    expect(chunks[0]).toHaveLength(expected);
+    expect(chunks.join('')).toBe('x'.repeat(TELEGRAM_MAX_MESSAGE + 1));
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(expected);
+  });
+
   it('html mode keeps caller markup and splits only on line boundaries', () => {
     const lines = Array.from({ length: 400 }, (_, i) => `<b>row ${i}</b> value`);
     const chunks = splitTelegramText(lines.join('\n'), { html: true });

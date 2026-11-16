@@ -1,0 +1,354 @@
+/**
+ * core/fleet/claim-execution-evidence.ts: one read-only join between the
+ * advisory coordination ledger and the live worker process table. A claim
+ * says who CLAIMED a task; this report says whether a worker is actually
+ * RUNNING it, turning "ASSIGNED" into "RUNNING (pid, lane, age)" or an
+ * honest "CLAIMED, no live worker".
+ *
+ * A claim names a job when its id (checked first) or its task text carries
+ * an `RQ-…` token. A worker matches a named job when `worker.job` equals the
+ * token exactly (case-sensitive) and both repos have valid identities. Bare
+ * launcher names match the repo part of `owner/repo`; two qualified names
+ * must match in full. Only a
+ * record satisfying the process reader's contract — a positive safe-integer
+ * pid, string job/repo/lane/tier and a null-or-non-negative-safe-integer
+ * ageSeconds — is usable live-worker evidence: malformed matching records
+ * never win selection and, when nothing usable matches, turn the row
+ * UNKNOWN rather than a dishonest CLAIMED_NO_WORKER. Among several usable
+ * matching workers the youngest ageSeconds wins; a first match is kept on
+ * ties.
+ *
+ * Rows cover only temporally qualified live claims, newest `claimedAt`
+ * first, capped at 50. A claim qualifies only when both timestamps are
+ * epoch milliseconds the coordination ledger itself would write (safe
+ * non-negative integers within the Date-representable range), `claimedAt`
+ * sits at or before the observation, and `expiresAt` falls strictly after
+ * both `claimedAt` and the observation — the same liveness policy the
+ * claims section of fleet-recheck applies, minus its presentation fields.
+ * A claim failing this is not live evidence: it is dropped before the row
+ * cap and displaces no valid claim, and it can never produce RUNNING or
+ * CLAIMED_NO_WORKER; when at least one claim is dropped this way the report
+ * carries the fixed sanitized reason 'claim timestamps invalid'. A sane
+ * interval that simply expired still drops silently, as before. A row is
+ * RUNNING only when the process table read healthy
+ * AND a usable worker matches; CLAIMED_NO_WORKER when none does; UNKNOWN
+ * when the process table is unavailable or malformed, the claim names no
+ * job id, or every matching worker record is malformed. A RUNNING row
+ * always carries the worker's real pid — a malformed pid is never emitted.
+ * When the board is missing or unreadable the report carries no rows at all.
+ *
+ * Process snapshot freshness: `sourceState: 'healthy'` alone is not proof of
+ * a current observation — a retained snapshot keeps that state forever. At
+ * the join clock a healthy snapshot is usable evidence only when its
+ * `generatedAt` parses to a finite instant that is not ahead of `nowMs` and
+ * no older than PROCESS_SNAPSHOT_MAX_AGE_MS. A missing/invalid stamp, a
+ * future stamp, or a stale one marks the process table unavailable for this
+ * join: every row is UNKNOWN (never RUNNING or CLAIMED_NO_WORKER) with a
+ * fixed sanitized reason, while ledger evidence, row cap, counts, schema
+ * and authority=none are unchanged. The check is stateless — a later fresh
+ * healthy observation recovers on the very next read.
+ *
+ * Identity labels (claimId, agent, repo, jobId, lane, tier) pass the
+ * surface-owner safe-token rule plus a scrubSecrets equality check; a label
+ * that fails is reported as 'UNKNOWN'. Claim task text never leaves this
+ * module. Both readers are injectable and each sits in its own try/catch, so
+ * a throwing reader degrades only its own source. Pure read: no writes, no
+ * locks, no network, never throws, grants no authority.
+ */
+import { readFleetBoard, type FleetBoard } from './coordination.js';
+import { listLiveWorkers, type LiveWorker, type LiveWorkersSnapshot } from './runs-live-workers.js';
+import { scrubSecrets } from '../util/scrub.js';
+
+export const CLAIM_EXECUTION_SCHEMA = 'fleet.claim-execution.v1';
+/**
+ * Bounded freshness policy for the process snapshot at the join clock.
+ * `listLiveWorkers` stamps `generatedAt` before its bounded `ps` read (5 s
+ * timeout), so a legitimate fresh snapshot is at most a few seconds old when
+ * the join runs; 60 s is generous headroom for slow reads and clock jitter
+ * while still rejecting a retained snapshot as stale process evidence.
+ */
+export const PROCESS_SNAPSHOT_MAX_AGE_MS = 60_000;
+const UNKNOWN = 'UNKNOWN';
+const MAX_ROWS = 50;
+const JOB_ID_RE = /^RQ-[A-Z0-9][A-Z0-9-]{2,80}$/;
+/**
+ * A maximal run of job-token characters. `-` is token-internal, so `\b` cannot
+ * delimit it: an overlength token would match a shorter prefix ending at an
+ * internal hyphen. The run is matched whole, then JOB_ID_RE validates the
+ * supported shape and length; the lookahead keeps a run glued to a longer
+ * word (letters, digits, `_` or `-`) from counting as a token.
+ */
+const JOB_ID_RUN_RE = /\bRQ-[A-Z0-9][A-Z0-9-]*(?![A-Za-z0-9_-])/g;
+const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const REPO_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+
+export type ClaimExecutionState = 'RUNNING' | 'CLAIMED_NO_WORKER' | 'UNKNOWN';
+
+export interface ClaimExecutionRow {
+  claimId: string;
+  agent: string;
+  repo: string;
+  jobId: string | null;
+  state: ClaimExecutionState;
+  worker: { pid: number; lane: string; tier: string; ageSeconds: number | null } | null;
+  expiresInSeconds: number;
+}
+
+export interface ClaimExecutionReport {
+  schema: typeof CLAIM_EXECUTION_SCHEMA;
+  authority: 'none';
+  asOf: string;
+  ledger: 'known' | 'unavailable';
+  processes: 'healthy' | 'unavailable';
+  rows: ClaimExecutionRow[];
+  counts: { running: number; claimedNoWorker: number; unknown: number };
+  reasons: string[];
+}
+
+export interface ClaimExecutionDeps {
+  /** Coordination board reader; defaults to readFleetBoard. */
+  board?: (o?: { now?: number }) => FleetBoard;
+  /** Live worker snapshot reader; defaults to listLiveWorkers. */
+  workers?: () => Promise<LiveWorkersSnapshot>;
+  /** Clock; defaults to Date.now. */
+  now?: () => number;
+}
+
+const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+
+/** Largest epoch-millisecond instant `Date` can represent (±8.64e15 ms). */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+
+/**
+ * An epoch-millisecond timestamp the coordination ledger itself writes:
+ * `timestamp()` in coordination.ts accepts safe non-negative integers, and
+ * the Date-representable bound keeps out-of-range values from qualifying.
+ */
+const epochMs = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_EPOCH_MS;
+
+/**
+ * Bounded temporal qualification before a claim can contribute live
+ * execution evidence. Returns 'live' only when both timestamps are valid
+ * epoch milliseconds, `claimedAt` is at or before the observation, and
+ * `expiresAt` is strictly after both `claimedAt` and the observation.
+ * 'expired' is a sane interval that simply ended (dropped silently, as
+ * before); anything else — missing, nonfinite, out-of-range, reversed or
+ * future-dated times — is 'invalid' and earns the fixed sanitized reason.
+ */
+const temporallyQualified = (claim: ClaimLike, nowMs: number): 'live' | 'expired' | 'invalid' => {
+  if (!epochMs(claim.claimedAt) || !epochMs(claim.expiresAt) || claim.expiresAt <= claim.claimedAt || claim.claimedAt > nowMs) {
+    return 'invalid';
+  }
+  return claim.expiresAt > nowMs ? 'live' : 'expired';
+};
+
+const iso = (n: unknown): string =>
+  new Date(finite(n) && n >= 0 && n <= MAX_EPOCH_MS ? n : 0).toISOString();
+
+const text = (s: unknown): string => (typeof s === 'string' ? s : '');
+
+/** Identity labels are single safe tokens; '/' is allowed for repos only. */
+const label = (value: unknown, allowSlash = false): string => {
+  const v = text(value);
+  return (allowSlash ? REPO_LABEL_RE : LABEL_RE).test(v) && scrubSecrets(v) === v ? v : UNKNOWN;
+};
+
+/** Accept a bare repository or one owner/repository pair, without unsafe labels. */
+const repository = (value: unknown): string[] | null => {
+  const v = text(value);
+  const parts = v.split('/');
+  return v.length <= 128 && parts.length <= 2 && parts.every(part => LABEL_RE.test(part)) &&
+    scrubSecrets(v) === v ? parts : null;
+};
+
+/** Loose claim shape so an injected or future-schema row can never throw here. */
+interface ClaimLike { id: unknown; agent: unknown; repo: unknown; task: unknown; claimedAt: unknown; expiresAt: unknown }
+const claimLike = (v: unknown): v is ClaimLike => v !== null && typeof v === 'object';
+
+/** The first whole supported `RQ-…` token in claim.id, then claim.task; null when neither names one. */
+function jobIdOf(claim: { id: unknown; task: unknown }): string | null {
+  for (const source of [claim.id, claim.task]) {
+    for (const match of text(source).matchAll(JOB_ID_RUN_RE)) {
+      const token = match[0].replace(/-+$/, '');
+      if (JOB_ID_RE.test(token)) return token;
+    }
+  }
+  return null;
+}
+
+const ageOf = (worker: LiveWorker): number =>
+  finite(worker.ageSeconds) ? worker.ageSeconds : Number.POSITIVE_INFINITY;
+
+/**
+ * The process reader's contract, applied to one matching record:
+ * `listLiveWorkers` only ever emits a positive safe-integer pid, string
+ * job/repo/lane/tier and a null-or-non-negative-safe-integer ageSeconds, so
+ * a record failing this could not have come from a healthy process table
+ * and is not usable live-worker evidence.
+ */
+const usableWorkerEvidence = (worker: LiveWorker): boolean =>
+  Number.isSafeInteger(worker.pid) && worker.pid > 0 &&
+  typeof worker.job === 'string' &&
+  typeof worker.repo === 'string' && typeof worker.lane === 'string' && typeof worker.tier === 'string' &&
+  (worker.ageSeconds === null || (Number.isSafeInteger(worker.ageSeconds) && worker.ageSeconds >= 0));
+
+const STALE_GENERATED_AT = 'process snapshot: missing or invalid generatedAt';
+const FUTURE_GENERATED_AT = 'process snapshot: generatedAt ahead of observation clock';
+const OLD_GENERATED_AT = 'process snapshot: older than freshness bound';
+
+/**
+ * Freshness verdict for a nominally healthy snapshot at the join clock.
+ * Returns the fixed sanitized reason the process table is unusable, or null
+ * when `generatedAt` is a parseable instant at or before `nowMs` and within
+ * PROCESS_SNAPSHOT_MAX_AGE_MS of it. Raw stamp text never leaves here.
+ */
+function processSnapshotReason(snapshot: LiveWorkersSnapshot, nowMs: number): string | null {
+  const generatedAt: unknown = snapshot.generatedAt;
+  const generatedMs = typeof generatedAt === 'string' ? Date.parse(generatedAt) : Number.NaN;
+  if (!Number.isFinite(generatedMs) || !finite(nowMs)) return STALE_GENERATED_AT;
+  if (generatedMs > nowMs) return FUTURE_GENERATED_AT;
+  if (nowMs - generatedMs > PROCESS_SNAPSHOT_MAX_AGE_MS) return OLD_GENERATED_AT;
+  return null;
+}
+
+interface WorkerMatch {
+  /** Youngest usable matching worker; null when none is usable. */
+  best: LiveWorker | null;
+  /** True when at least one nominally matching record was malformed. */
+  malformedMatch: boolean;
+  invalidRepository: boolean;
+}
+
+/**
+ * First usable matching worker, ties broken by youngest ageSeconds.
+ * Malformed matching records never win but are still reported so the caller
+ * can answer UNKNOWN instead of claiming a healthy absence.
+ */
+function workerFor(jobId: string, claimRepo: string, workers: unknown[]): WorkerMatch {
+  const claimIdentity = repository(claimRepo);
+  let best: LiveWorker | null = null;
+  let malformedMatch = false;
+  let invalidRepository = false;
+  for (const candidate of workers) {
+    if (candidate === null || typeof candidate !== 'object') continue;
+    const worker = candidate as LiveWorker;
+    if (worker.job !== jobId) continue;
+    const workerIdentity = repository(worker.repo);
+    if (claimIdentity === null || workerIdentity === null) {
+      invalidRepository = true;
+      continue;
+    }
+    if (claimIdentity[claimIdentity.length - 1] !== workerIdentity[workerIdentity.length - 1] ||
+        (claimIdentity.length === 2 && workerIdentity.length === 2 && claimIdentity[0] !== workerIdentity[0])) continue;
+    if (!usableWorkerEvidence(worker)) {
+      malformedMatch = true;
+      continue;
+    }
+    if (best === null || ageOf(worker) < ageOf(best)) best = worker;
+  }
+  return { best, malformedMatch, invalidRepository };
+}
+
+/**
+ * Pure join of a board snapshot with a process snapshot. Either input may be
+ * null (its reader failed); a null or non-'known' board yields an empty
+ * ledger and a null, non-'healthy' or stale/future-stamped snapshot marks
+ * every row UNKNOWN.
+ */
+export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorkersSnapshot | null, nowMs: number): ClaimExecutionReport {
+  const reasons = new Set<string>();
+  const counts = { running: 0, claimedNoWorker: 0, unknown: 0 };
+  const rows: ClaimExecutionRow[] = [];
+  const healthySnapshot = workers !== null && workers.sourceState === 'healthy' ? workers : null;
+  const freshnessReason = healthySnapshot === null ? null : processSnapshotReason(healthySnapshot, nowMs);
+  const processes: ClaimExecutionReport['processes'] =
+    healthySnapshot !== null && freshnessReason === null ? 'healthy' : 'unavailable';
+  const processReason = freshnessReason ?? 'process table: unavailable';
+  const ledgerKnown = board !== null && board.state === 'known';
+  if (!ledgerKnown) reasons.add('coordination ledger: missing or unreadable');
+  if (ledgerKnown) {
+    const workerList: unknown[] | null =
+      processes === 'healthy' ? (Array.isArray(workers!.workers) ? workers!.workers : null) : null;
+    let invalidClaims = 0;
+    const live = ((Array.isArray(board!.claims) ? board!.claims : []) as unknown[])
+      .filter(claimLike)
+      .filter(claim => {
+        const verdict = temporallyQualified(claim, nowMs);
+        if (verdict === 'invalid') invalidClaims += 1;
+        return verdict === 'live';
+      })
+      .sort((a, b) => (finite(b.claimedAt) ? b.claimedAt : 0) - (finite(a.claimedAt) ? a.claimedAt : 0))
+      .slice(0, MAX_ROWS);
+    if (invalidClaims > 0) reasons.add('claim timestamps invalid');
+    for (const claim of live) {
+      const expiresAt = finite(claim.expiresAt) ? claim.expiresAt : nowMs;
+      const jobId = jobIdOf(claim);
+      const row: ClaimExecutionRow = {
+        claimId: label(claim.id), agent: label(claim.agent), repo: repository(claim.repo) === null ? UNKNOWN : label(claim.repo, true),
+        jobId: jobId === null ? null : label(jobId), state: 'UNKNOWN', worker: null,
+        expiresInSeconds: Math.floor((expiresAt - nowMs) / 1000),
+      };
+      if (processes !== 'healthy') {
+        reasons.add(processReason);
+      } else if (workerList === null) {
+        reasons.add('process table: malformed worker list');
+      } else if (jobId === null) {
+        reasons.add('claim names no job id');
+      } else if (repository(claim.repo) === null) {
+        reasons.add('repository identity invalid');
+      } else {
+        const { best: match, malformedMatch, invalidRepository } = workerFor(jobId, text(claim.repo), workerList);
+        if (match !== null) {
+          row.state = 'RUNNING';
+          row.worker = {
+            pid: match.pid,
+            lane: label(match.lane), tier: label(match.tier),
+            ageSeconds: finite(match.ageSeconds) ? match.ageSeconds : null,
+          };
+        } else if (invalidRepository) {
+          reasons.add('repository identity invalid');
+        } else if (malformedMatch) {
+          reasons.add('matching worker evidence malformed');
+        } else {
+          row.state = 'CLAIMED_NO_WORKER';
+        }
+      }
+      counts[row.state === 'RUNNING' ? 'running' : row.state === 'CLAIMED_NO_WORKER' ? 'claimedNoWorker' : 'unknown']++;
+      rows.push(row);
+    }
+  }
+  return {
+    schema: CLAIM_EXECUTION_SCHEMA, authority: 'none', asOf: iso(nowMs),
+    ledger: ledgerKnown ? 'known' : 'unavailable', processes,
+    rows, counts, reasons: [...reasons],
+  };
+}
+
+/**
+ * One bounded claim-execution snapshot. Each reader is isolated in its own
+ * try/catch — a throwing board reader marks only the ledger unavailable and
+ * a throwing workers reader only the process table — so the report never
+ * throws and never carries exception text.
+ */
+export async function readClaimExecution(deps: ClaimExecutionDeps = {}): Promise<ClaimExecutionReport> {
+  // The process snapshot stamps generatedAt while its reader runs, so the
+  // observation clock is sampled only after that read settles — a clock taken
+  // before it would see the stamp as future-dated and fail closed.
+  let workers: LiveWorkersSnapshot | null = null;
+  try {
+    workers = (await (deps.workers ?? listLiveWorkers)()) ?? null;
+  } catch { /* a throwing reader degrades only its own source */ }
+  let now: number;
+  try {
+    now = (deps.now ?? Date.now)();
+  } catch {
+    now = Date.now();
+  }
+  if (!finite(now)) now = Date.now();
+  let board: FleetBoard | null = null;
+  try {
+    board = (deps.board ?? readFleetBoard)({ now }) ?? null;
+  } catch { /* an unreadable ledger is reported, never thrown */ }
+  return joinClaimExecution(board, workers, now);
+}
