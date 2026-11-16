@@ -290,6 +290,7 @@ describe('M30 CI workflow', () => {
       .map(([name, job]) => [name, (job as { permissions: unknown }).permissions]);
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
+      ['release-suites', { contents: 'read' }],
     ]);
     // Release-gate dispatches share one group per tag so a second train queues
     // behind the first (#4592); every other run keeps its PR or run_id group.
@@ -431,7 +432,7 @@ describe('M30 CI workflow', () => {
     expect(receipt.name).toBe('Master full qualification');
     expect(receipt.permissions).toBeUndefined();
     expect(receipt.needs.slice().sort()).toEqual(Object.keys(jobs).filter(id =>
-      !['master-full', 'fixup-queue'].includes(id)).sort());
+      !['master-full', 'fixup-queue', 'release-suites'].includes(id)).sort());
     expect(runs('master-full', 'schedule', 'refs/heads/master')).toBe(true);
     expect(runs('master-full', 'schedule', 'refs/heads/master', '0,30 * * * *')).toBe(false);
     for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
@@ -439,7 +440,7 @@ describe('M30 CI workflow', () => {
     }
   });
 
-  it('requires exact scheduled full evidence before auto-tag can mint write authority', () => {
+  it('requires the release gate (scheduled full by default) before auto-tag can mint write authority', () => {
     const workflow = parse(readFileSync(resolve(repoRoot, '.github/workflows/auto-tag.yml'), 'utf8'));
     expect(workflow.on.workflow_run).toEqual({ workflows: ['CI'], types: ['completed'], branches: ['master'] });
     const condition = workflow.jobs.tag.if.replaceAll('github.event_name', 'event')
@@ -458,7 +459,8 @@ describe('M30 CI workflow', () => {
     expect(runInNewContext(trigger, { event: 'schedule', source: undefined })).toBe('schedule');
     const steps = workflow.jobs.tag.steps;
     const proof = steps.findIndex((step: { id?: string }) => step.id === 'full');
-    expect(steps[proof].run).toBe('node .github/scripts/ci-master-full.mjs require');
+    expect(steps[proof].run).toBe('node .github/scripts/ci-release-gate.mjs require');
+    expect(steps[proof].env.RELEASE_GATE_MODE).toBe('${{ vars.RELEASE_GATE_MODE }}');
     expect(proof).toBeGreaterThan(steps.findIndex((step: { name?: string }) => step.name === 'Checkout candidate revision'));
     for (const step of steps.filter((step: { uses?: string; id?: string; name?: string }) =>
       step.id === 'app' || step.id === 'tag' || step.name?.startsWith('Dispatch release-gate'))) {
@@ -1013,8 +1015,9 @@ describe('M30 CI workflow', () => {
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(28);
-    expect(new Set(names).size).toBe(28);
+    expect(names).toHaveLength(29);
+    expect(new Set(names).size).toBe(29);
+    expect(names).toContain('Release suites (build + signing path)');
     expect(names).toContain('Check generated files');
     expect(names).toContain('Check authority drift (hermetic)');
     expect(names).toContain('Fast gate (typecheck + affected tests)');
