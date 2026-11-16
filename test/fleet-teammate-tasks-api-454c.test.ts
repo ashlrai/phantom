@@ -42,7 +42,8 @@ it('projects durable work states, counts all tasks, and caps unsorted rows at th
   const tasks = Array.from({ length: 55 }, (_, i) => task(i, 'queued'));
   tasks.push(task(55, 'sending'), task(56, 'pending'), task(57, 'replied'),
     task(58, 'replied', 'BLOCKED'), task(59, 'replied', 'FAILED'), task(60, 'expired'), task(61, 'cancelled'));
-  const api = createFleetTeammateTasksApi(() => report([...tasks.slice(15), ...tasks.slice(0, 15)]));
+  // Master's binding seam: an empty evidence map degrades every row to an unavailable, unconfirmed state.
+  const api = createFleetTeammateTasksApi(() => report([...tasks.slice(15), ...tasks.slice(0, 15)]), undefined, () => new Map());
   expect(await call(api, '/unrelated')).toBe(false);
   expect(send).not.toHaveBeenCalled();
   expect(await call(api)).toBe(true);
@@ -55,18 +56,20 @@ it('projects durable work states, counts all tasks, and caps unsorted rows at th
   expect(body.rows.map((row: { jobId: string }) => row.jobId)).toEqual(Array.from({ length: 50 }, (_, i) => `RQ-FAKE-${61 - i}`));
   const byId = (i: number) => body.rows.find((row: { jobId: string }) => row.jobId === `RQ-FAKE-${i}`);
   expect([61, 60, 59, 58, 57, 56, 55, 54].map(i => byId(i).workState))
-    .toEqual(['CANCELLED', 'UNKNOWN', 'BLOCKED', 'BLOCKED', 'REPORTED_DONE', 'RUNNING', 'ASSIGNED', 'ASSIGNED']);
+    .toEqual(['CANCELLED', 'UNKNOWN', 'BLOCKED', 'BLOCKED', 'REPORTED_DONE', 'UNCONFIRMED', 'UNCONFIRMED', 'UNCONFIRMED']);
   expect(byId(57)).toEqual({
     jobId: 'RQ-FAKE-57', peer: 'dot', kind: 'report', repo: 'ashlrai/phantom', prRefs: [1],
     workState: 'REPORTED_DONE', deadline: '2026-11-16T00:00:00.000Z',
     createdAt: new Date(epoch + 57).toISOString(),
+    queueBinding: 'unavailable', queueClaim: null, executionVerified: false,
   });
-  expect(byId(56).workState).toBe('RUNNING');
-  expect(byId(54).workState).toBe('ASSIGNED');
+  expect(byId(56).workState).toBe('UNCONFIRMED');
+  expect(byId(54).workState).toBe('UNCONFIRMED');
   const json = JSON.stringify(body);
   for (const value of Object.values(privateFields)) expect(json).not.toContain(value);
   for (const row of body.rows) expect(Object.keys(row).sort()).toEqual([
     'jobId', 'peer', 'kind', 'repo', 'prRefs', 'workState', 'deadline', 'createdAt',
+    'queueBinding', 'queueClaim', 'executionVerified',
   ].sort());
 });
 
