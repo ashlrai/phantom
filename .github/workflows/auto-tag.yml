@@ -1,6 +1,8 @@
 # Auto-tag: create v<version> and its draft GitHub release when the version in
 # package.json on master is untagged and every required check for that exact
-# commit is green and its latest six-hour scheduled full CI is green. A missing
+# commit is green and its release gate is green (RELEASE_GATE_MODE: 'full' =
+# latest six-hour scheduled full CI green, the default; 'split' = release-relevant
+# suites green on the exact SHA, see RELEASE-GATE-SPLIT-1). A missing
 # tag is owed even when the bump landed earlier, so this heals a stranded release instead of waiting for the next bump.
 # Tags and releases are created only here, with the ashlr-release GitHub App
 # token. The release starts as a draft: releases/latest keeps resolving to the
@@ -162,12 +164,19 @@ jobs:
           ref: ${{ env.SHA }}
           persist-credentials: false
 
-      # Fail closed before minting write authority. Exact SHA only: descendants
-      # wait for their own scheduled full, even if a required fast check is green.
-      - name: Require scheduled full green on this exact commit
+      # Fail closed before minting write authority. RELEASE-GATE-SPLIT-1:
+      # RELEASE_GATE_MODE unset or 'full' keeps the scheduled-full requirement
+      # (ci-master-full.mjs, unchanged). 'split' requires the release-relevant
+      # suites green on this exact SHA (build, typecheck, fast gate, desktop
+      # release smoke, signing path); the six-hour full suite then files P0
+      # fix-forward lines instead of blocking. Step id stays 'full' so every
+      # later step keeps its existing guard.
+      - name: Require release gate on this exact commit
         id: full
         if: steps.checks.outputs.green == 'true'
-        run: node .github/scripts/ci-master-full.mjs require
+        env:
+          RELEASE_GATE_MODE: ${{ vars.RELEASE_GATE_MODE }}
+        run: node .github/scripts/ci-release-gate.mjs require
 
       - name: Mint ashlr-release App token (contents write, this repo only)
         id: app
