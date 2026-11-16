@@ -122,8 +122,8 @@ it('preserves bus-failed and unknown-ingress exit failures', async () => {
   expect(await cmdFleetSlackEvidence(['--thread', thread, '--channel', channelA, '--max-age-seconds', '60', '--json'], deps)).toBe(1);
   const bundle = JSON.parse(String(log.mock.calls[0]![0]));
   expect(bundle.rows.map((row: { ingress: string; outcome: string }) => ({ ingress: row.ingress, outcome: row.outcome }))).toEqual([
-    { ingress: 'failed', outcome: 'bus-failed' }, { ingress: 'unknown', outcome: 'answered' },
+    { ingress: 'failed', outcome: 'bus-failed' }, { ingress: 'unknown', outcome: 'unanswered' },
   ]);
-  expect(bundle.counts).toEqual({ total: 2, answered: 1, uncertain: 0, busFailed: 1, unanswered: 0 });
+  expect(bundle.counts).toEqual({ total: 2, answered: 0, uncertain: 0, busFailed: 1, unanswered: 1 });
   expect(bundle.freshness.verdict).toBe('fresh');
 });
