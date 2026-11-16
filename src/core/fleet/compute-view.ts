@@ -1,4 +1,5 @@
 /** Read-only compute projection. Registry mirrors remain evidence, never authority. */
+import { readLaunchVitals, type LaunchVitals } from './launch-vitals.js';
 import { hostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
@@ -19,6 +20,7 @@ export interface FleetCompute {
   schema: 'fleet.compute.v1'; generatedAt: string; localNodeId: string; truncated: boolean;
   nodes: ComputeNode[]; sources: Record<string, 'loaded' | 'unavailable' | 'invalid'>;
   operations?: { publishes24h: number | null; admission: { admit: boolean | null; gateReason: string | null; warnings: string[] | null; observedAt: string | null } };
+  launchVitals?: LaunchVitals;
   dispatcherAt: string | null;
   lanes: Record<string, { hardCap: number | null; quotaOk: boolean | null }>;
 }
@@ -98,6 +100,7 @@ export async function readFleetCompute(options: {
       warnings: Array.isArray(admission.warnings) ? admission.warnings.filter((v): v is string => typeof v === 'string').slice(0, 32).map(clean) : null,
       observedAt: typeof stamp === 'string' && Number.isFinite(Date.parse(stamp)) ? stamp : null },
   };
-  return { schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
+  const launchVitals = await readLaunchVitals(runs);
+  return { launchVitals, schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
     nodes: [...nodes.values()], sources, operations, dispatcherAt: typeof tick === 'string' && Number.isFinite(Date.parse(tick)) ? tick : null, lanes };
 }

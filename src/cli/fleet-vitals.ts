@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { readSource } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { readLaunchCosts } from '../core/fleet/launch-cost.js';
+import { readLaunchVitals, type LaunchVitals } from '../core/fleet/launch-vitals.js';
 
 const number = z.number().finite();
 const diskSchema = z.object({
@@ -29,16 +31,40 @@ export async function readFleetVitals(root = join(homedir(), '.ashlr-runs'), now
   } catch { return report; }
 }
 
+/** Disk contract (above) is unchanged; launch evidence is additive and carries its own state. */
+export interface HostVitals extends FleetVitals {
+  launch: LaunchVitals;
+  launchCost: Awaited<ReturnType<typeof readLaunchCosts>>;
+}
+export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<HostVitals> {
+  const [disk, launch, launchCost] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root)]);
+  return { ...disk, launch, launchCost };
+}
+
+const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue and first-minute launch cost. Missing readings are unknown.';
 export async function cmdFleetVitals(args: string[]): Promise<number> {
-  const usage = 'Usage: phm fleet vitals [--json]\nDisk sizes and change since the previous host sample. Missing readings are unknown.';
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(usage); return 2; }
-  const report = sanitizePublicJson(await readFleetVitals()) as FleetVitals;
-  if (args.includes('--json')) console.log(JSON.stringify(report));
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
+  let root = join(homedir(), '.ashlr-runs'), json = false;
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (seen.has(arg) || !['--json', '--runs-dir'].includes(arg)) { console.error(USAGE); return 2; }
+    seen.add(arg);
+    if (arg === '--json') json = true;
+    else if (args[i + 1] && !args[i + 1]!.startsWith('-')) root = args[++i]!;
+    else { console.error(USAGE); return 2; }
+  }
+  const report = sanitizePublicJson(await readHostVitals(root)) as HostVitals;
+  if (json) console.log(JSON.stringify(report));
   else {
     console.log(`Disk growth: ${report.status}; free ${report.disk?.free_gb ?? 'unknown'} GB`);
     for (const row of report.disk?.directories ?? [])
       console.log(`${row.path}: ${row.size_gb ?? 'unknown'} GB; change ${row.delta_gb ?? 'unknown'} GB`);
+    console.log(`Launch queue: ${report.launch.queued ?? 'unknown'} queued; reason ${report.launch.reason ?? 'unknown'}`);
+    for (const lane of report.launch.lanes) console.log(`${lane.lane}: ${lane.running ?? 'unknown'} running of ${lane.target ?? 'unknown'} target; ${lane.queued ?? 'unknown'} queued`);
+    console.log(`Launch cost: ${report.launchCost.state} (source ${report.launchCost.source})`);
+    for (const r of report.launchCost.launches)
+      console.log(`${r.launchId} / ${r.lane}: ${r.status}; peak processes ${r.peakProcesses ?? 'unknown'}; mean CPU ${r.meanCpuPercentOneCore ?? 'unknown'}%; peak CPU ${r.peakCpuPercentOneCore ?? 'unknown'}%; ${r.sampledSeconds}/60s sampled`);
   }
   return 0;
 }
