@@ -446,15 +446,19 @@ describe('M30 CI workflow', () => {
     const condition = workflow.jobs.tag.if.replaceAll('github.event_name', 'event')
       .replaceAll('github.event.workflow_run.conclusion', 'conclusion')
       .replaceAll('github.event.workflow_run.event', 'source').replaceAll('github.ref', 'ref');
-    for (const conclusion of ['success', 'failure', 'cancelled']) {
-      expect(runInNewContext(condition, { event: 'workflow_run', source: 'schedule', conclusion, ref: '' })).toBe(conclusion === 'success');
+    for (const source of ['schedule', 'workflow_dispatch', 'push']) {
+      for (const conclusion of ['success', 'failure', 'cancelled']) {
+        expect(runInNewContext(condition, { event: 'workflow_run', source, conclusion, ref: '' })).toBe(conclusion === 'success');
+      }
     }
+    expect(runInNewContext(condition, { event: 'workflow_run', source: 'pull_request', conclusion: 'success', ref: '' })).toBe(false);
     // Push-sourced workflow_run holds quietly (no own scheduled full yet);
     // schedule-sourced workflow_run stays fail-closed.
     const trigger = workflow.jobs.tag.env.TRIGGER.replace(/^\$\{\{|\}\}$/g, '')
       .replaceAll('github.event_name', 'event').replaceAll('github.event.workflow_run.event', 'source');
     expect(runInNewContext(trigger, { event: 'workflow_run', source: 'push' })).toBe('push');
     expect(runInNewContext(trigger, { event: 'workflow_run', source: 'schedule' })).toBe('workflow_run');
+    expect(runInNewContext(trigger, { event: 'workflow_run', source: 'workflow_dispatch' })).toBe('push');
     expect(runInNewContext(trigger, { event: 'push', source: undefined })).toBe('push');
     expect(runInNewContext(trigger, { event: 'schedule', source: undefined })).toBe('schedule');
     const steps = workflow.jobs.tag.steps;
