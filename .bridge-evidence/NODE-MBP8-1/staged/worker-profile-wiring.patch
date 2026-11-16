@@ -1,0 +1,27 @@
+--- a/src/core/drive/nodes/worker.ts
++++ b/src/core/drive/nodes/worker.ts
+@@ -8,6 +8,8 @@
+ import { callPool, type PoolConfig } from './pool-host.js';
+ import { isHostStats, validId } from './state.js';
+ import { readNodeCapacity } from './capacity.js';
++import { nodeProfile, profileCaps, readProfileCapacity } from './profiles.js';
++import { nodeProfile, profileCaps, readProfileCapacity } from './profiles.js';
+ import { localPhmVersion, versionCap } from './phm-version.js';
+ import { lightRecipe, restockLight } from './light.js';
+ import { probeLocalAuth } from './auth-probe.js';
+@@ -43,11 +45,13 @@
+   await checkDriveExecutable(runner);
+   if (nodeStopped()) return { held: 'host-paused' };
+   if (light && (config.node !== 'muse' || config.owner !== 'ashlr')) return { held: 'light-owner-node-mismatch' };
+-  const capacityNow = () => readNodeCapacity(light);
++  // A declared profile (e.g. mbp8) bounds slots and strips local-model caps; no profile keeps today's behaviour.
++  const profile = light ? undefined : nodeProfile(config.node);
++  const capacityNow = () => profile ? readProfileCapacity(profile) : readNodeCapacity(light);
+   const capacity = capacityNow();
+   if (capacity.held) return { held: capacity.held, capacity };
+   const auth = light ? probeLocalAuth() : undefined;
+-  const lanes = light ? ['light', 'comms', ...(auth === 'ok' ? ['gh'] : [])] : probeNodeLanes();
++  const lanes = light ? ['light', 'comms', ...(auth === 'ok' ? ['gh'] : [])] : profile ? profileCaps(profile, probeNodeLanes()) : probeNodeLanes();
+   if (!lanes.length) return { held: 'no-local-provider-login' };
+   const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...lanes, versionCap(localPhmVersion())].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
+   const session = joined.result['session'];

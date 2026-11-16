@@ -23,6 +23,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
+ *   GET /api/bots/templates    -> starter bot templates; GET /api/bots -> bots created from them
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -30,6 +31,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *   POST /api/open             -> openInEditor/openInFinder for an enrolled repo path (M100)
  *   POST /api/fleet/pause      -> engage the fleet kill switch
  *   POST /api/fleet/resume     -> clear the fleet kill switch
+ *   POST /api/bots             -> create a bot from a template (profile, doctrine, memory seed, disabled crons)
  *   POST /api/daemon/service/repair -> fail closed pending signed repair authority
  *
  * SECURITY:
@@ -90,6 +92,7 @@ import {
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { buildNodesSnapshot } from '../nodes/view.js';
+import type { NodeProfile } from '../drive/nodes/profiles.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -1323,6 +1326,12 @@ export async function handleApi(
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
     mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
+    /**
+     * Injected by server.ts so the Tier-1 import closure does not absorb the bot template
+     * store or the live node capacity readers (test/authority-tier1-closure-310b.test.ts).
+     */
+    botTemplatesApi?: (req: IncomingMessage, res: ServerResponse, ctx: { token: string; allowDispatch: boolean }) => Promise<boolean>;
+    nodeProfiles?: readonly NodeProfile[];
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1336,6 +1345,7 @@ export async function handleApi(
 
   try {
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
+    if (path.startsWith('/api/bots') && ctx.botTemplatesApi && await ctx.botTemplatesApi(req, res, ctx)) return true;
     if (path === '/api/usage/spend' && method === 'GET') {
       const { readUsageSpend } = await import('../usage/spend.js');
       sendJson(res, 200, await readUsageSpend());
@@ -2394,7 +2404,7 @@ export async function handleApi(
     // and secret-free by construction (src/core/nodes/view.ts); same read class
     // as /api/control.
     if (path === '/api/nodes' && method === 'GET') {
-      sendJson(res, 200, buildNodesSnapshot());
+      sendJson(res, 200, buildNodesSnapshot({ profiles: ctx.nodeProfiles ?? [] }));
       return true;
     }
 

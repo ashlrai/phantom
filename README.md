@@ -46,7 +46,7 @@ Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the 
 
 Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-This source tree targets version 3.30.33; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.35; check canonical release availability and exact matching assets before installation.
 The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
 ### Connect your coding agent
@@ -58,6 +58,13 @@ phm wire status --json
 ```
 
 The installed command registry is the reference for your version. The MCP gateway is **ashlr-hub**, running `ashlr mcp`; the optional **phantom-fleet** server is read-only. Follow the [Claude, Cursor and Codex setup guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md). Registration alone does not establish authorization or readiness.
+
+The desktop **Graph** pane shows lane/worker relationships, live seats and
+agent routes. The **Channels** pane exposes the Leader orchestration journal.
+See [fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md)
+for observation tools and advisory assignment previews, and
+[iMessage teammate tasks](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence)
+for scoped peer work and local delivery evidence.
 
 ## See the work
 
@@ -148,7 +155,7 @@ effect on Phantom. Rows exclude task content, owner, and credentials.
 
 Companions install separately. Each has its own capabilities and authorization boundaries.
 
-The repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. Registration does not prove readiness; see the [toolchain guide](docs/AGENT-TOOLCHAIN.md) for limits and approvals.
+The repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. Registration does not prove readiness; see the [toolchain guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md) for limits and approvals.
 
 | Project | Purpose |
 | --- | --- |

@@ -56,6 +56,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          filter: blob:none
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -87,6 +88,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          filter: blob:none
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -158,8 +160,27 @@ jobs:
       - name: Install dependencies
         if: steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Hash protected-branch compiler inputs
+        id: compiler_inputs
+        if: steps.history.outputs.equal != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { appendFileSync } from 'node:fs';
+          const base = process.env.BASE_SHA;
+          if (!/^[0-9a-f]{40}$/.test(base)) throw new Error('Invalid protected base SHA');
+          const hash = createHash('sha256');
+          for (const file of ['package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json']) {
+            hash.update(file + '\0');
+            hash.update(execFileSync('git', ['show', `${base}:${file}`]));
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `hash=${hash.digest('hex')}\n`);
+          NODE
       - name: Restore protected-branch compiler state
-        # Read the protected base's incremental graph; tsc still validates the
+        # Read the protected base's incremental graph; tsgo still validates the
         # candidate below. Only a successful master push saves compiler state.
         if: steps.history.outputs.equal != 'true'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -167,15 +188,40 @@ jobs:
           path: |
             node_modules/.cache/phantom-backend.tsbuildinfo
             node_modules/.cache/phantom-web.tsbuildinfo
-          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-          restore-keys: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-
+          key: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+          # Only master publishes this family. Most-recent creation is the
+          # current completed master graph, never a candidate/queue artifact.
+          restore-keys: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-master-
       - name: Core no-emit type check
         if: steps.history.outputs.equal != 'true'
         # Both projects enable incremental/no-emit checking in their tsconfig.
         # Keep this step name stable for release evidence consumers.
         run: |
           started=$SECONDS
+          touch "$RUNNER_TEMP/compiler-check-start"
           npm run typecheck
+          # An unchanged graph may legitimately retain its mtime. On master,
+          # rebuild that case before publishing so no restored bytes are merely
+          # relabelled as this SHA. Candidates keep the warm no-emit path.
+          if [ "$GITHUB_EVENT_NAME:$GITHUB_REF" = 'push:refs/heads/master' ]; then
+            rebuild=no
+            for graph in node_modules/.cache/phantom-{backend,web}.tsbuildinfo; do
+              if [ ! "$graph" -nt "$RUNNER_TEMP/compiler-check-start" ]; then rebuild=yes; fi
+            done
+            if [ "$rebuild" = yes ]; then
+              rm -f node_modules/.cache/phantom-{backend,web}.tsbuildinfo
+              npm run typecheck
+            fi
+          fi
+          for graph in node_modules/.cache/phantom-{backend,web}.tsbuildinfo; do
+            test -s "$graph"
+            if [ "$GITHUB_EVENT_NAME:$GITHUB_REF" = 'push:refs/heads/master' ]; then
+              test "$graph" -nt "$RUNNER_TEMP/compiler-check-start"
+            fi
+            updated=no
+            if [ "$graph" -nt "$RUNNER_TEMP/compiler-check-start" ]; then updated=yes; fi
+            echo "$graph: $(wc -c < "$graph") bytes; updated=$updated (tsgo incremental no-emit)" >> "$GITHUB_STEP_SUMMARY"
+          done
           elapsed=$((SECONDS - started))
           echo "Incremental backend + web typecheck: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
       - name: Save protected-branch compiler state
@@ -185,7 +231,17 @@ jobs:
           path: |
             node_modules/.cache/phantom-backend.tsbuildinfo
             node_modules/.cache/phantom-web.tsbuildinfo
-          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.sha }}
+          key: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-${{ github.sha }}
+      - name: Publish current-master compiler pointer
+        # Immutable generations avoid delete/write permission. Restore searches
+        # only this master-only prefix when the exact base has not saved yet.
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-master-${{ github.run_id }}-${{ github.run_attempt }}
       # Full authority shards are deferred; drift must still fail the required gate.
       - name: Check authority drift (hermetic)
         if: steps.history.outputs.equal != 'true'
@@ -1210,6 +1266,37 @@ jobs:
           }
           console.log(`Merge Gate passed: ${fast ? 'fast' : 'full'} ${lane} CI`);
           NODE
+
+  master-full:
+    # Independent of Merge Gate's fast branch. Only the six-hour master run
+    # produces this receipt; half-hour release preparation is never evidence.
+    name: Master full qualification
+    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
+    if: ${{ always() && github.event_name == 'schedule' && github.event.schedule == '17 */6 * * *' && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact full revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record full result and first failing range
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FULL_NEEDS: ${{ toJSON(needs) }}
+          FULL_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          node --test .github/tests/ci-master-full.test.mjs
+          node .github/scripts/ci-master-full.mjs record
+      - name: Upload master full receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: master-full-${{ github.run_id }}-${{ github.run_attempt }}
+          path: master-full.json
+          if-no-files-found: error
+          retention-days: 30
 
   fixup-queue:
     # Daily red run -> READY FIXUP lines for the router queue (fix-forward owner:

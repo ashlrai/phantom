@@ -325,7 +325,9 @@
 /test/context-pack-exact-preservation-200s.test.ts @masonwyatt23
 /test/context-pack-preserved-181s.test.ts @masonwyatt23
 /test/core-recut-s1-c212.test.ts @masonwyatt23
+/test/cos-peer-plan-loop.test.ts @masonwyatt23
 /test/count-preferences.test.ts @masonwyatt23
+/test/cross-review-check-gate.test.ts @masonwyatt23
 /test/cross-review-cli.test.ts @masonwyatt23
 /test/custody-client-310b.test.ts @masonwyatt23
 /test/custody-helper-contract-310b.test.ts @masonwyatt23
@@ -438,6 +440,7 @@
 /test/fleet-live-api-310b.test.ts @masonwyatt23
 /test/fleet-local-gate.test.ts @masonwyatt23
 /test/fleet-merge-age.test.ts @masonwyatt23
+/test/fleet-merge-arm-conflict.test.ts @masonwyatt23
 /test/fleet-merge-batch-runner.test.ts @masonwyatt23
 /test/fleet-merge-delay.test.ts @masonwyatt23
 /test/fleet-merge-latency.test.ts @masonwyatt23
@@ -1027,6 +1030,7 @@
 /test/merge-plan-original-preservation-202s.test.ts @masonwyatt23
 /test/merge-plan-owner-preservation-304s.test.ts @masonwyatt23
 /test/merge-plan-preservation-167.test.ts @masonwyatt23
+/test/merge-queue-loop.test.ts @masonwyatt23
 /test/merge-temp-worktree-reaper.test.ts @masonwyatt23
 /test/metrics-boundary.test.ts @masonwyatt23
 /test/metrics-pillar.test.ts @masonwyatt23
@@ -1036,6 +1040,7 @@
 /test/mirrors-310b.test.ts @masonwyatt23
 /test/model-racing-proposal-types.test.ts @masonwyatt23
 /test/native-locus-metadata-scope.test.ts @masonwyatt23
+/test/node-autoscale-router.test.ts @masonwyatt23
 /test/node-router.test.ts @masonwyatt23
 /test/north-star-measured-leverage.test.ts @masonwyatt23
 /test/one-ask-best-of-n-winner.test.ts @masonwyatt23

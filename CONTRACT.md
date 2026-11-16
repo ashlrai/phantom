@@ -21,6 +21,39 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
+
+`agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
+`work.post.dispatch: {tier: fast|mid|work|frontier, scope, acceptance}` (4000/2000
+character caps), and `work.result: {jobId, claimKey, queueId, receiptId, outcome,
+reason?}`. Outcomes are `reserved|admitted|complete|failed`; reasons are bounded
+codes. Queue/receipt IDs are `peer-work-<32 hex>` / `pw-<32 hex>`.
+Existing work posts remain coordination-only without a dispatch payload.
+
+`agentnet/work-dispatch.ts` exports
+`consumePeerWork(session: PeerSession, input?: {apply?: boolean; after?: number},
+options?: PeerBusOptions)`. The host-owned private `dispatch.json` beside peer
+bindings supplies enabled state, peer allowlist, repository allowlist, tier ceilings
+and exact permitted paths. See [Agent Bus dispatch](docs/AGENT-BUS.md#bounded-peer-dispatch).
+Results contain status, dryRun, bounded results, and a cursor on success.
+Only authenticated admission receipts qualify; labels and peer status messages
+cannot authorize claims or prove completion. No shell, engine, merge or spending
+is invoked. Queue task strings remain untrusted data under existing worker gates.
+
+`QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
+atomically insert a new READY job and claim it under the existing queue lock.
+The optional synchronous host guard runs under that lock; an existing ID or an
+invalid intake fails without mutation. The two-argument claim contract is unchanged.
+`queue/decompose.ts` exports its existing `promptText(field, value, max): string`
+validator for shared bounded, printable, secret-free queue prompt validation.
+
+`PeerRequest.work?: z.infer<typeof workPostBodySchema>` is accepted only for a
+directed task; its authenticated bus body is `work.post`, with the same enrollment
+and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>`
+and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
+Dispatch is a read-only preview unless apply is exactly true. Results use only
+the local bus and its current comms/participant allowlist, never a Slack send.
+
 ---
 
 ## src/core/types.ts — THE CONTRACT (types only)
@@ -482,6 +515,19 @@ publisher captures actual staged Git and runner artifacts before publication;
 executing commands. Agent assertions alone never establish proof. See
 [the fleet proof contract](docs/contracts/CONTRACT-FLEET-PROOF-V1.md) for schema,
 trust boundary, bounds, redaction and Security-pinned deployment requirements.
+## Bridge publisher diff scope (`contrib/mac/publish.sh`)
+
+The publisher stages only the job's change set, never ambient worktree state.
+Change set = paths whose worktree content differs from the job's fork point
+(`git merge-base BASE HEAD`) plus untracked, non-ignored files that are not
+scratch-shaped (`*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store`).
+An optional manifest `~/.ashlr-runs/<job>.files` (one repo-relative path per
+line, written ops-side from the work claim) is authoritative: only listed paths
+are staged; a malformed manifest aborts (`scope-manifest-invalid`). The index is
+reset to BASE before staging, so a stale fork point cannot re-revert main.
+Excluded paths are reported as `NOTE SCOPE_EXCLUDED`. The integrated-merge
+profile is unchanged. Secret-shape, G1 and protected-path gates are unchanged.
+Live install needs a Security re-pin.
 ## Fleet outcome measurement and advisory policy v1
 
 `buildOutcomeMetrics` in `src/core/fleet/outcome-metrics.ts` folds injected job
@@ -599,3 +645,45 @@ line in `queue/live-config-audit.jsonl` (`fleet.config.audit.v1`) records
 who/when/why. Restart-required keys (security pins, paid-model blocks, credential
 paths, GATES files) are refused by the writer and ignored by the resolver. See
 [docs/FLEET-CONFIG.md](docs/FLEET-CONFIG.md).
+
+## Agent Bus v2 foundation
+
+`src/core/agents/bus-v2-schema.ts` owns the `agent-bus.v2` body, participant,
+claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
+Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
+reject ASCII controls including DEL. Claims grant no execution authority.
+
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[])`
+in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
+`{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
+It validates at most 1024 retained receipts in strictly increasing cursor order;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
+provider comes from the post or explicit participant metadata (missing is refused).
+Statuses update only retained jobs from the same routing owner; orphan statuses
+are ignored. Duplicate job posts and malformed work bodies refuse the projection.
+Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+This is a pure retained-snapshot projection, not a historical ledger or identity
+check. It performs no I/O, transport, claim mutation or execution. Existing v1
+journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
+No HTTP feed endpoint is provided by this foundation.
+
+### Unified agent bus (RQ-BUS-UNIFY-1)
+
+`src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
+`agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
+`readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
+`createAgentChannel(input, options?)`, `joinAgentChannel(name, agent, options?)`,
+`leaveAgentChannel(name, agent, options?)`. Results are status objects
+(`created|updated|unchanged`, or `invalid|conflict|full|not-found|unavailable|retryable`
+with a `reason`); they never throw for bad input or storage faults.
+
+`src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
+`sendHandoff` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
+`readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
+Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
+
+`src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
+`detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
+`frameBusInbox(cli, messages)`. Identities are routing names and grant no authority.
+See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
