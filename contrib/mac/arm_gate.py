@@ -12,9 +12,11 @@ Nothing here weakens or bypasses a check: it only withholds arming that cannot s
 Classification (grounded in .github/workflows/ci.yml merge-gate on master):
   HARD      Merge Gate, Secret-shape scan, Secret scan (diff), Classify PR site lane, Check generated files,
             Fast gate (typecheck + affected tests): Merge Gate requires these on pull_request.
-  RELEVANT  Quick typecheck: Merge Gate treats it as advisory, but a red Quick has landed red masters, so it blocks ARMING
-            (not merging). Any other non-ignored, non-skipped check is also relevant.
-  IGNORED   Perf budget (advisory), CodeRabbit, Vercel Preview Comments, Check authority drift (hermetic): advisory or third party.
+  RELEVANT  Quick typecheck and Check authority drift (hermetic): Merge Gate treats both as advisory (the in-repo "Mason
+            directive 2026-11-13" for Quick is repo text and unverified), but they are quality checks that run on every PR.
+            Live data: neither failed on the last 15 master commits or the last 25 merged PR heads, so blocking ARMING on
+            them costs nothing in practice and only delays. Any other non-ignored check is also relevant.
+  IGNORED   Perf budget (advisory), CodeRabbit, Vercel Preview Comments: advisory or third party.
 """
 import argparse
 import json
@@ -26,7 +28,7 @@ from pathlib import Path
 
 HARD = ("Merge Gate", "Secret-shape scan", "Secret scan (diff)", "Classify PR site lane",
         "Check generated files", "Fast gate (typecheck + affected tests)")
-IGNORED = ("perf budget", "coderabbit", "vercel", "check authority drift")
+IGNORED = ("perf budget", "coderabbit", "vercel")
 RED = {"failure", "timed_out", "cancelled", "action_required", "stale", "startup_failure"}
 OK = {"success", "neutral", "skipped"}
 

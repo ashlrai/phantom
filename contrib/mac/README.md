@@ -1104,3 +1104,35 @@ with `file://` sources and never touch the network or the live queue:
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_grokbot_changelog_watch.py -v
 ```
+
+## Arm gate (RQ-ARM-CI-GATE-1)
+
+`publish.sh` arms auto-merge only when `arm_gate.py` reports SAFE for the PR head: the six Merge Gate
+hard-required checks completed with success, and nothing relevant is red (failure, timed_out, cancelled,
+action_required, stale). Quick typecheck and authority drift are advisory in Merge Gate but still block arming. Perf
+budget, CodeRabbit and Vercel are ignored. RED is left unarmed for leader review. PENDING or UNKNOWN waits up to
+`ARM_GATE_WAIT` seconds (default 180), then writes a record in `~/.ashlr-runs/arm-deferred` with an
+`ARM_GATE_DEFER_S` deadline (default 3600). It never arms on a guess.
+
+Deferred records need a consumer. `arm_gate.py sweep --dir ~/.ashlr-runs/arm-deferred [--apply]` re-checks each
+record. It arms with `gh pr merge --auto --match-head-commit <sha>` only on SAFE, only while the PR is still open on the
+same head and not already armed, and at most `--max-arms` (default 3) per run. It drops records on RED, expiry or a
+changed head. Without `--apply` it only prints `WOULD_ARM`. The host needs `gh` signed in for the fleet account.
+
+Install (arm_gate.py ships with `install.sh`; a plain bin install is not enough to run the sweep):
+
+```sh
+contrib/mac/install.sh --dry-run          # review, then run without --dry-run
+mkdir -p ~/.ashlr-runs/arm-deferred ~/.ashlr-runs/logs
+sed -e "s|__PYTHON3__|/usr/bin/python3|" -e "s|__RUNS__|$HOME/.ashlr-runs|g" \
+    -e "s|__INTERVAL__|300|" -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    contrib/mac/com.ashlr.arm-gate-sweep.plist.in > ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+```
+
+Without launchd, a dispatchd tick or any fleet work-order can run the same `arm_gate.py sweep` command. Live files are
+sha-pinned by Security: re-pin publish.sh and arm_gate.py after install. Fixture tests use a fake `gh`:
+
+```sh
+python3 -B -m unittest contrib/mac/tests/test_arm_gate.py -v
+```

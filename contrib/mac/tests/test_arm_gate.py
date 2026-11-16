@@ -83,7 +83,15 @@ class ArmGateTests(unittest.TestCase):
 
     def test_failed_advisory_and_third_party_do_not_block(self):
         r = self.swap(self.swap(ALL_GREEN, "Perf budget (advisory, non-required)", "completed", "failure"), "CodeRabbit", "completed", "failure")
-        self.rows(r + [("Check authority drift (hermetic)", "completed", "failure")])
+        self.rows(r + [("Vercel Preview Comments", "completed", "failure")])
+        self.assertEqual(self.check(), (0, "SAFE"))
+
+    def test_red_authority_drift_blocks_arming(self):
+        self.rows(ALL_GREEN + [("Check authority drift (hermetic)", "completed", "failure")])
+        self.assertEqual(self.check()[0], 1)
+
+    def test_skipped_quick_and_drift_are_fine(self):
+        self.rows(self.swap(ALL_GREEN, "Quick typecheck", "completed", "skipped") + [("Check authority drift (hermetic)", "completed", "skipped")])
         self.assertEqual(self.check(), (0, "SAFE"))
 
     def test_pending_hard_check_is_pending_not_safe(self):
