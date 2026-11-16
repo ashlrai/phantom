@@ -1,0 +1,197 @@
+#!/usr/bin/env node
+/* global process, console */
+// Fast-gate test selection (RQ-CI-FASTGATE-1). Pure policy plus a thin git CLI.
+//
+// The fast gate must finish in about a minute, so it runs a bounded set of
+// tests instead of `vitest related`: a transitive related run from one core
+// file (src/core/authority/protected-paths.ts) was still running after eight
+// minutes locally. Selection is: changed test files, name-matched tests, and
+// tests that import a changed module directly, capped at MAX_RELATED_TESTS.
+// The exhaustive import graph stays on the master schedule.
+//
+// Modes: docs (typecheck only), related (selected tests), fallback (a bounded
+// broader set, used when a global input changed or selection failed). Nothing
+// ever skips tests silently: every uncertain input resolves to fallback.
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DOCS_ONLY_PATH_PATTERNS } from './ci-site-lane.mjs';
+import { REAL_IO_TEST_FILES } from '../../test/config/realio-lane-membership.mjs';
+import { SERIAL_CPU_TEST_FILES } from '../../test/config/serial-cpu-lane-membership.mjs';
+
+export const MAX_RELATED_TESTS = 25;
+export const FALLBACK_SHARDS = 3;
+export const FALLBACK_TESTS_PER_SHARD = 40;
+
+// Global inputs: a change here can alter every test, so selection by import
+// edge is meaningless. These mirror the globalInputs of ci-impact-policy.
+const GLOBAL_INPUT = [
+  /^package(?:-lock)?\.json$/,
+  /^tsconfig[^/]*\.json$/,
+  /^src\/web-ui\/tsconfig[^/]*\.json$/,
+  /^vite(?:st)?\.config[^/]*$/,
+  /^vitest\.config[^/]*$/,
+  /^test\/setup\//,
+  /^test\/config\//,
+  /^scripts\/test-ci[^/]*\.mjs$/,
+];
+
+// Tier-1 and security paths. A change here always adds the named tests, so the
+// gate never runs fewer of them than the advisory quick job does today.
+export const TIER1_TESTS = Object.freeze([
+  'test/authority-codeowners-310b.test.ts',
+  'test/authority-tier1-closure-310b.test.ts',
+]);
+const TIER1_PATH = [
+  /^\.github\/CODEOWNERS$/,
+  /^src\/core\/authority\//,
+  /^test\/authority-[^/]*310b[^/]*\.test\.ts$/,
+  /^\.github\/tests\/secret-shape\//,
+];
+
+// Slow lanes stay out of the derived and fallback sets: real-io suites spawn git,
+// npm and daemons (a 34-file related run measured over two minutes locally) and
+// serial-cpu suites run one at a time. Tests that need a built dist/ cannot run
+// without a build. All of them keep running in the master full suites.
+const SLOW = new Set([...REAL_IO_TEST_FILES, ...SERIAL_CPU_TEST_FILES]);
+export function needsDist(cwd, file) {
+  try { return /require-built-dist/.test(readFileSync(resolve(cwd, file), 'utf8')); } catch { return false; }
+}
+const TEST_FILE = /^test\/(?:[^/]+\/)*[^/]+\.test\.ts$/;
+const SOURCE_FILE = /^(?:src|test)\/.+\.(?:ts|tsx|mjs|js)$/;
+const sha = /^[0-9a-f]{40}$/;
+
+function git(cwd, args) {
+  return execFileSync('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' });
+}
+
+export function isDocsOnly(paths) {
+  return paths.length > 0 && paths.every((p) => DOCS_ONLY_PATH_PATTERNS.some((re) => re.test(p)));
+}
+
+export function classifyPaths(paths) {
+  if (paths.length === 0) return { mode: 'docs', reason: 'empty diff' };
+  if (isDocsOnly(paths)) return { mode: 'docs', reason: 'docs-only diff' };
+  const global = paths.find((p) => GLOBAL_INPUT.some((re) => re.test(p)));
+  if (global) return { mode: 'fallback', reason: `global input changed: ${global}` };
+  return { mode: 'related', reason: 'changed sources' };
+}
+
+// Extra named tests for workflow and script edits, computed from paths only.
+export function domainTests(paths, existing) {
+  const tests = new Set();
+  const node = new Set();
+  if (paths.some((p) => TIER1_PATH.some((re) => re.test(p)))) for (const t of TIER1_TESTS) tests.add(t);
+  if (paths.includes('.github/workflows/ci.yml') && existing.has('test/m30.ci.test.ts')) tests.add('test/m30.ci.test.ts');
+  for (const p of paths) {
+    const m = /^\.github\/(?:scripts\/([^/]+)\.mjs|tests\/([^/]+)\.test\.mjs)$/.exec(p);
+    const stem = m?.[1] ?? m?.[2];
+    if (stem && existing.has(`.github/tests/${stem}.test.mjs`)) node.add(`.github/tests/${stem}.test.mjs`);
+  }
+  return { tests: [...tests], node: [...node] };
+}
+
+// Direct importers of a module, found without building a graph: any test file
+// whose text names the module path or an exact `/<stem>.js` specifier.
+function importersOf(cwd, path, testFiles) {
+  const noExt = path.replace(/\.(?:ts|tsx|mjs|js)$/, '');
+  const stem = noExt.split('/').pop();
+  const needles = [`${noExt}.js`, `${noExt}.ts`, `/${stem}.js'`, `/${stem}.js"`];
+  const hits = new Set();
+  for (const needle of needles) {
+    let out = '';
+    try {
+      out = git(cwd, ['grep', '-l', '-F', '-e', needle, '--', 'test']);
+    } catch (e) {
+      if (e.status !== 1) throw e; // 1 = no match
+    }
+    for (const f of out.split('\n')) if (testFiles.has(f)) hits.add(f);
+  }
+  return hits;
+}
+
+export function selectRelated({ cwd, paths }) {
+  const testFiles = new Set(git(cwd, ['ls-files', '-z', '--', 'test']).split('\0').filter((f) => TEST_FILE.test(f)));
+  const existing = new Set(git(cwd, ['ls-files', '-z', '--', '.github/tests', 'test']).split('\0'));
+  const alive = paths.filter((p) => existing.has(p) || git(cwd, ['ls-files', '--', p]).trim() !== '');
+  const ranked = [];
+  const deferred = [];
+  const add = (f, derived = false) => {
+    if (!testFiles.has(f) || ranked.includes(f) || deferred.includes(f)) return;
+    if (needsDist(cwd, f) || (derived && SLOW.has(f) && !TIER1_TESTS.includes(f))) { deferred.push(f); return; }
+    ranked.push(f);
+  };
+  for (const p of alive) if (TEST_FILE.test(p)) add(p); // changed tests first
+  const domain = domainTests(paths, existing);
+  for (const t of domain.tests) add(t); // named Tier-1 tests are never capped away
+  const pinned = ranked.length;
+  const sources = alive.filter((p) => SOURCE_FILE.test(p) && !TEST_FILE.test(p));
+  for (const p of sources) {
+    const stem = p.replace(/\.(?:ts|tsx|mjs|js)$/, '').split('/').pop();
+    for (const f of testFiles) if (f.endsWith(`/${stem}.test.ts`)) add(f, true); // name-matched
+  }
+  const importers = new Set();
+  for (const p of sources) for (const f of importersOf(cwd, p, testFiles)) importers.add(f);
+  for (const f of [...importers].sort()) add(f, true);
+  const cap = Math.max(MAX_RELATED_TESTS, pinned);
+  return { tests: ranked.slice(0, cap), capped: Math.max(0, ranked.length - cap), deferred, node: domain.node };
+}
+
+// Bounded broader set: every Tier-1 test plus an even, deterministic spread of
+// the repository's test files, split round-robin so shards have equal counts.
+export function selectFallback({ cwd }) {
+  const all = git(cwd, ['ls-files', '-z', '--', 'test']).split('\0')
+    .filter((f) => TEST_FILE.test(f) && !SLOW.has(f) && !needsDist(cwd, f)).sort();
+  const budget = FALLBACK_SHARDS * FALLBACK_TESTS_PER_SHARD;
+  const step = Math.max(1, Math.ceil(all.length / budget));
+  const picked = new Set(TIER1_TESTS.filter((t) => all.includes(t)));
+  for (let i = 0; i < all.length && picked.size < budget; i += step) picked.add(all[i]);
+  const list = [...picked].sort();
+  const shards = Array.from({ length: FALLBACK_SHARDS }, () => []);
+  list.forEach((f, i) => shards[i % FALLBACK_SHARDS].push(f));
+  return { tests: list, shards, node: [] };
+}
+
+export function changedPaths({ base, head, cwd }) {
+  if (!sha.test(base ?? '') || !sha.test(head ?? '')) throw new Error('base and head must be exact commit SHAs');
+  if (git(cwd, ['rev-parse', 'HEAD']).trim() !== head) throw new Error('checkout does not match head');
+  const mergeBase = git(cwd, ['merge-base', base, head]).trim();
+  const out = git(cwd, ['diff', '--name-only', '-z', '--no-renames', mergeBase, head]);
+  if (out && !out.endsWith('\0')) throw new Error('incomplete path list');
+  return out ? out.slice(0, -1).split('\0') : [];
+}
+
+export function plan({ cwd, paths }) {
+  const verdict = classifyPaths(paths);
+  if (verdict.mode === 'docs') return { ...verdict, tests: [], node: [], shards: [], capped: 0 };
+  if (verdict.mode === 'fallback') return { ...verdict, ...selectFallback({ cwd }), capped: 0 };
+  const sel = selectRelated({ cwd, paths });
+  if (sel.tests.length === 0 && sel.node.length === 0) {
+    // Code changed but nothing maps to a test: never skip, run the bounded set.
+    return { mode: 'fallback', reason: 'no test maps to the changed paths', ...selectFallback({ cwd }), capped: 0 };
+  }
+  return { ...verdict, ...sel, shards: [] };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const cwd = process.cwd();
+  let result;
+  try {
+    const paths = changedPaths({ base: process.env.ASHLR_CI_BASE_SHA, head: process.env.ASHLR_CI_HEAD_SHA, cwd });
+    result = { paths, ...plan({ cwd, paths }) };
+  } catch (error) {
+    // Selection errors fall back to the bounded broader set, never to no tests.
+    console.error(`fast-gate selection failed (${error.message}); using fallback`);
+    result = { paths: [], mode: 'fallback', reason: `selection error: ${error.message}`, ...selectFallback({ cwd }), capped: 0 };
+  }
+  const out = process.env.RUNNER_TEMP ?? '.';
+  writeFileSync(resolve(out, 'fast-gate-plan.json'), JSON.stringify(result, null, 2));
+  const count = result.tests.length + result.node.length;
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `mode=${result.mode}\ncount=${count}\n`);
+  const note = `Fast gate selection: ${result.mode} (${result.reason}), ${result.tests.length} vitest + ${result.node.length} node test files` +
+    (result.capped ? `, ${result.capped} more omitted by the cap` : '') +
+    (result.deferred?.length ? `, ${result.deferred.length} slow or dist-bound files left to the master full suites` : '');
+  console.log(note);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${note}\n`);
+}
