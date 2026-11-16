@@ -160,7 +160,8 @@ describe('tailnet backend reason sanitization', () => {
     
     const result = readTailnetPeers(deps({ exec: () => raw }));
     // Should handle non-string backend state gracefully  
-    expect(result.reasons).toContain('tailscale backend not running: 123');
+    expect(result.reasons).toContain('tailscale backend not running: unknown');
+    expect(JSON.stringify(result)).not.toContain('123');
   });
 
   it('should return correct results when transitioning from non-running -> running -> non-running state', () => {
