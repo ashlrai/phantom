@@ -42,6 +42,12 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Add the read-only `fleet_session_handoff` MCP tool for a job's latest handoff checkpoint ([#5988](https://github.com/ashlrai/phantom/pull/5988)), and a node runs line in the status digest ([#5991](https://github.com/ashlrai/phantom/pull/5991)).
 - Add `phm node run-once`, the `phm-node-worker/v1` runner for the multi-Mac compute pool ([#5806](https://github.com/ashlrai/phantom/pull/5806)). See `docs/NODES.md`.
 - Add `phm fleet roster` to list, show, assign and annotate specialists ([#5820](https://github.com/ashlrai/phantom/pull/5820)). See `docs/contracts/CONTRACT-SPECIALIST-ROSTER.md`.
+- Add the unified agent bus: one `agt_` identity per handle across providers, direct messages, member-only channels, handoffs and wake hints on the single local bus, with `phm agents bus id|dm|channel|handoff|inbox|wakes|adapters` ([#6232](https://github.com/ashlrai/phantom/pull/6232)). Identities are routing names and grant no authority. See `docs/AGENT-BUS.md`.
+- Add bounded peer dispatch: `phm agentnet peers post` sends a directed work proposal and `phm agentnet peers dispatch` consumes at most eight per pass, previewing unless `--apply` is given ([#6144](https://github.com/ashlrai/phantom/pull/6144)). It claims work for existing queue workers and does not launch an executor.
+- Add `phm node capacity`, where each node measures its own memory, CPU and swap headroom and reports how many more sessions of each agent harness it can start, and `phm node route` to place jobs by (node, provider, model) ([#6235](https://github.com/ashlrai/phantom/pull/6235)). See `docs/NODE-ROUTER.md`.
+- Add `phm fleet claim-bind` to record which Slack thread a claim came from, so `phm fleet claim-notices` posts its ASSIGNED, RELEASED, BLOCKED and VERIFIED notices back into that thread and drops them when no binding exists ([#6163](https://github.com/ashlrai/phantom/pull/6163)).
+- Add `phm fleet work-feed`, a read-only bus v2 work feed with `--status` and `--json` ([#6156](https://github.com/ashlrai/phantom/pull/6156)).
+- Check for signed desktop releases at startup and every 15 minutes, download them in the background when Automatic updates is on, and install them on a normal Quit once authority is Stop and no execution lease is held. `phm app update status --json` reports `current` for verifying a publication ([#6224](https://github.com/ashlrai/phantom/pull/6224)). See `DESKTOP.md`.
 
 ### Fixes
 
@@ -51,6 +57,7 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Run the dependency audit on every master push so release signing is not blocked, and bump `hono` and `@hono/node-server` to clear it ([#5535](https://github.com/ashlrai/phantom/pull/5535), [#5532](https://github.com/ashlrai/phantom/pull/5532)).
 - Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
 - Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
+- Fix release auto-tag to admit a green full CI run on an ancestor commit and a manual full dispatch, to treat a missing current-version tag ref as not yet tagged, and to send the enqueue GraphQL variable it names ([#6304](https://github.com/ashlrai/phantom/pull/6304), [#6300](https://github.com/ashlrai/phantom/pull/6300), [#6299](https://github.com/ashlrai/phantom/pull/6299)).
 
 ## [3.30.35] - 2026-11-16
 
