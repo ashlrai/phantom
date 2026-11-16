@@ -35,6 +35,13 @@ test('affected projects follow the graph and fail closed on an unknown module', 
   assert.equal(affectedProjects(['package-lock.json'], graph), 'both');
   assert.equal(affectedProjects(['README.md'], null), 'none');
   assert.equal(affectedProjects(['src/a.ts'], null), 'both');
+  const unresolved = updateGraph(null, [
+    { path: 'src/a.ts', hash: '1', text: "import { missing } from './missing.js';\n" },
+    { path: 'src/web-ui/app.ts', hash: '3', text: 'export const app = 1;\n' },
+  ]).graph;
+  assert.equal(unresolved.unknown, true);
+  assert.equal(affectedProjects(['src/a.ts'], unresolved), 'both');
+  assert.equal(affectedProjects(['docs/guide.md'], unresolved), 'both');
 });
 
 test('lint selection adds direct importers of a changed module', () => {

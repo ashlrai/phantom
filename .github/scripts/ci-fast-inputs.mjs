@@ -52,7 +52,25 @@ function pathOf(line) {
   return line.slice(line.indexOf(' ') + 1);
 }
 
+export const POLICY_FILES = Object.freeze([
+  '.github/workflows/ci.yml',
+  'package-lock.json',
+  'package.json',
+  'tsconfig.json',
+  'src/web-ui/tsconfig.json',
+  'vitest.config.ts',
+  'vitest.config.mock-compat.ts',
+  'vitest.config.web.ts',
+]);
+
+export function policyRecords(cwd) {
+  const lines = POLICY_FILES.map((path) => `${blob(cwd, path)} ${path}`);
+  lines.push(...records(cwd, '.github/scripts'));
+  return lines.sort();
+}
+
 function webClosure(graph, webLines, backendLines) {
+  if (graph?.unknown) return null;
   const backendFiles = backendLines.map(pathOf).filter((path) => CODE.test(path));
   if (!graph?.files || backendFiles.some((path) => !graph.files[path])) return null;
   const seen = new Set(webLines.map(pathOf));
@@ -83,14 +101,36 @@ export function typecheckHashes(cwd, graph) {
   const webLines = closure
     ? src.filter((line) => closure.has(pathOf(line)) || !CODE.test(pathOf(line)))
     : src;
+  const policy = policyRecords(cwd);
   return {
-    backend: hashParts(['backend', ...backend, lock, pkg, rootConfig]),
-    web: hashParts(['web', ...webLines, lock, pkg, webConfig]),
+    backend: hashParts(['backend', ...backend, lock, pkg, rootConfig, ...policy]),
+    web: hashParts(['web', ...webLines, lock, pkg, webConfig, ...policy]),
   };
 }
 
 export function testsHash(cwd, planBytes) {
-  return hashParts(['fast-tests', planBytes, ...records(cwd, 'src'), ...records(cwd, 'test')]);
+  return hashParts(['fast-tests', planBytes, ...records(cwd, 'src'), ...records(cwd, 'test'), ...policyRecords(cwd)]);
+}
+
+export function authorityHash(cwd) {
+  return hashParts([
+    'authority-drift',
+    blob(cwd, 'src'),
+    blob(cwd, 'test'),
+    blob(cwd, 'scripts'),
+    blob(cwd, '.github/CODEOWNERS'),
+    ...policyRecords(cwd),
+  ]);
+}
+
+export function cleanTreeHash(cwd) {
+  return hashParts([
+    'clean-tree',
+    blob(cwd, 'docs'),
+    blob(cwd, 'scripts/generate-docs-llms.mjs'),
+    blob(cwd, 'scripts/lib/docs-pages.mjs'),
+    ...policyRecords(cwd),
+  ]);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -121,12 +161,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       const planPath = process.argv[3];
       if (!planPath) throw new Error('tests needs the plan file');
       output('hash', testsHash(cwd, readFileSync(planPath)));
+    } else if (command === 'authority') {
+      output('hash', authorityHash(cwd));
+    } else if (command === 'clean-tree') {
+      output('hash', cleanTreeHash(cwd));
     } else if (command === 'paths') {
       const prefix = process.argv[3];
       if (!prefix) throw new Error('paths needs a tree prefix');
       output('hash', hashParts(records(cwd, prefix)));
     } else {
-      throw new Error('usage: ci-fast-inputs.mjs plan|changed|typecheck|tests <plan>|paths <prefix>');
+      throw new Error('usage: ci-fast-inputs.mjs plan|changed|typecheck|tests <plan>|authority|clean-tree|paths <prefix>');
     }
   } catch (error) {
     console.error(error.message);

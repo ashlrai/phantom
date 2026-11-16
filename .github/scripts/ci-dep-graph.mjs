@@ -49,9 +49,34 @@ export function normalizeGraph(value) {
   const files = {};
   for (const [path, node] of Object.entries(value.files)) {
     if (!node || typeof node.hash !== 'string' || !Array.isArray(node.imports)) continue;
-    files[path] = { hash: node.hash, imports: node.imports.filter((item) => typeof item === 'string') };
+    const unresolved = Array.isArray(node.unresolved) ? node.unresolved.filter((item) => typeof item === 'string') : [];
+    files[path] = {
+      hash: node.hash,
+      imports: node.imports.filter((item) => typeof item === 'string'),
+      ...(unresolved.length ? { unresolved } : {}),
+    };
   }
-  return { schema: SCHEMA, files };
+  return { schema: SCHEMA, files, ...(Object.values(files).some((node) => node.unresolved?.length) ? { unknown: true } : {}) };
+}
+
+const ASSET = /\.(?:css|scss|sass|less|svg|png|gif|webp|jpe?g|woff2?|mp3|mp4)$/i;
+
+function importEdges(text, from, files) {
+  const imports = [];
+  const unresolved = [];
+  for (const spec of parseImports(text)) {
+    if (!spec.startsWith('.')) continue;
+    const bare = spec.split('?')[0].split('#')[0];
+    if (ASSET.test(bare)) continue;
+    const target = resolveSpecifier(from, bare, files);
+    if (target && target !== from) imports.push(target);
+    else if (!target) unresolved.push(spec);
+  }
+  if (/import\s*\(\s*`[^`]*\.\.?\/[^`]*`/.test(text)) unresolved.push('dynamic');
+  for (const match of text.matchAll(/\/\/\/\s*<reference\s+path="(\.[^"]+)"/g)) {
+    if (!resolveSpecifier(from, match[1], files)) unresolved.push(match[1]);
+  }
+  return { imports, unresolved };
 }
 
 /**
@@ -66,19 +91,24 @@ export function updateGraph(previous, listing) {
   for (const entry of listing) {
     const old = prior.files[entry.path];
     if (old && old.hash === entry.hash) {
-      files[entry.path] = { hash: entry.hash, imports: old.imports.filter((item) => available.has(item)) };
+      files[entry.path] = {
+        hash: entry.hash,
+        imports: old.imports.filter((item) => available.has(item)),
+        ...(old.unresolved?.length ? { unresolved: old.unresolved } : {}),
+      };
       continue;
     }
     if (typeof entry.text !== 'string') throw new Error(`missing text for changed graph file ${entry.path}`);
     reparsed += 1;
-    const imports = [];
-    for (const spec of parseImports(entry.text)) {
-      const target = resolveSpecifier(entry.path, spec, available);
-      if (target && target !== entry.path) imports.push(target);
-    }
-    files[entry.path] = { hash: entry.hash, imports };
+    const edges = importEdges(entry.text, entry.path, available);
+    files[entry.path] = {
+      hash: entry.hash,
+      imports: edges.imports,
+      ...(entry.path.startsWith('src/') && edges.unresolved.length ? { unresolved: edges.unresolved } : {}),
+    };
   }
-  return { graph: { schema: SCHEMA, files }, reparsed };
+  const unknown = Object.values(files).some((node) => node.unresolved?.length);
+  return { graph: { schema: SCHEMA, files, ...(unknown ? { unknown: true } : {}) }, reparsed };
 }
 
 const TYPE_CONFIG = new Set(['package.json', 'package-lock.json', 'tsconfig.json']);
@@ -94,6 +124,7 @@ export function affectedProjects(changed, graph) {
   if (changed.some((path) => TYPE_CONFIG.has(path))) return 'both';
   const known = graph?.schema === SCHEMA ? graph : null;
   if (!known) return changed.some((path) => path.startsWith('src/') || path.startsWith('package') || path.endsWith('tsconfig.json')) ? 'both' : 'none';
+  if (known.unknown) return 'both';
   let web = changed.some((path) => path === 'src/web-ui/tsconfig.json');
   let backend = false;
   const reverse = new Map();

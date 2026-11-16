@@ -4,9 +4,16 @@
 // Deepen first. Unshallow is the last resort. Exit 1 if the range is still
 // missing so a secret scan cannot shrink to a shorter diff.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SHA = /^[0-9a-f]{40}$/;
+const ZERO = '0'.repeat(40);
+
+export function usableSha(value) {
+  return SHA.test(value ?? '') && value !== ZERO;
+}
 
 function runGit(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -30,14 +37,72 @@ export function parentExists(cwd, head, git = runGit) {
   }
 }
 
+export function shallowCommits(cwd, git = runGit) {
+  let gitPath;
+  try {
+    gitPath = git(cwd, ['rev-parse', '--git-path', 'shallow']);
+  } catch {
+    return [];
+  }
+  const file = isAbsolute(gitPath) ? gitPath : resolve(cwd, gitPath);
+  try {
+    return readFileSync(file, 'utf8').split('\n').map((line) => line.trim()).filter((line) => SHA.test(line));
+  } catch {
+    return [];
+  }
+}
+
+/** Commits in base..head whose parents were not fetched. An empty base has no range. */
+export function shallowInRange(cwd, base, head, git = runGit) {
+  if (!usableSha(base) || !usableSha(head)) return [];
+  const boundaries = new Set(shallowCommits(cwd, git));
+  if (boundaries.size === 0) return [];
+  let listed;
+  try {
+    listed = git(cwd, ['rev-list', `${base}..${head}`]);
+  } catch {
+    return ['unreadable'];
+  }
+  return listed.split('\n').map((line) => line.trim()).filter((line) => boundaries.has(line));
+}
+
+/**
+ * Push and merge-group bases are exact. An all-zero before is unset.
+ * Anything else refuses rather than substituting HEAD~1.
+ */
+export function resolveScanBase({ event, prBase, mgBase, pushBefore }) {
+  if (event === 'pull_request') {
+    if (!usableSha(prBase)) throw new Error('pull request base is missing');
+    return prBase;
+  }
+  if (event === 'merge_group') {
+    if (!usableSha(mgBase)) throw new Error('merge group base is missing');
+    return mgBase;
+  }
+  if (event === 'push') {
+    if (!usableSha(pushBefore)) throw new Error('push before is missing');
+    return pushBefore;
+  }
+  throw new Error('secret scan range is incomplete');
+}
+
+function settle(cwd, base, head, git, deepened) {
+  if (!usableSha(base)) return { deepened, unshallowed: false };
+  if (shallowInRange(cwd, base, head, git).length === 0) return { deepened, unshallowed: false };
+  git(cwd, ['fetch', '--no-tags', '--filter=blob:none', '--unshallow', 'origin']);
+  if (shallowInRange(cwd, base, head, git).length) throw new Error('commit range still shallow after unshallow');
+  return { deepened, unshallowed: true };
+}
+
 /**
  * @param {{ cwd?: string, base?: string, head: string, baseRef?: string, git?: typeof runGit }} input
- * base may be empty on push and schedule events; then only HEAD^1 is required.
+ * An all-zero or empty base only requires HEAD^1. A real base must be a
+ * complete base..head range: shallow commits inside it are unshallowed or fail.
  */
 export function ensureRange({ cwd = process.cwd(), base = '', head, baseRef = '', git = runGit }) {
-  if (!SHA.test(head)) throw new Error('head must be an exact commit SHA');
-  const wantBase = SHA.test(base);
-  if (wantBase && mergeBase(cwd, base, head, git)) return { deepened: 0, unshallowed: false };
+  if (!usableSha(head)) throw new Error('head must be an exact commit SHA');
+  const wantBase = usableSha(base);
+  if (wantBase && mergeBase(cwd, base, head, git)) return settle(cwd, base, head, git, 0);
   if (!wantBase && parentExists(cwd, head, git)) return { deepened: 0, unshallowed: false };
   const stripped = String(baseRef).replace(/^refs\/heads\//, '');
   const ref = stripped && !stripped.includes('..') && !stripped.startsWith('-') && !stripped.includes(' ') ? stripped : '';
@@ -48,22 +113,33 @@ export function ensureRange({ cwd = process.cwd(), base = '', head, baseRef = ''
   };
   try { fetchBase(); } catch { /* a later deepen or unshallow still has to find the range */ }
   for (const step of [50, 100, 200]) {
-    if (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git)) return { deepened, unshallowed: false };
+    if (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git)) return settle(cwd, base, head, git, deepened);
     git(cwd, ['fetch', '--no-tags', '--filter=blob:none', `--deepen=${step}`, 'origin']);
     deepened += step;
   }
-  if (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git)) return { deepened, unshallowed: false };
+  if (wantBase ? mergeBase(cwd, base, head, git) : parentExists(cwd, head, git)) return settle(cwd, base, head, git, deepened);
   git(cwd, ['fetch', '--no-tags', '--filter=blob:none', '--unshallow', 'origin']);
   if (wantBase ? !mergeBase(cwd, base, head, git) : !parentExists(cwd, head, git)) {
     throw new Error('commit range unavailable after unshallow');
   }
-  return { deepened, unshallowed: true };
+  return settle(cwd, base, head, git, deepened);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
+    if (process.argv[2] === 'scan-base') {
+      const base = resolveScanBase({
+        event: process.env.EVENT_NAME,
+        prBase: process.env.PR_BASE,
+        mgBase: process.env.MG_BASE,
+        pushBefore: process.env.PUSH_BEFORE,
+      });
+      process.stdout.write(`${base}\n`);
+      process.exit(0);
+    }
+    const rawBase = process.env.BASE_SHA ?? '';
     const result = ensureRange({
-      base: process.env.BASE_SHA ?? '',
+      base: usableSha(rawBase) ? rawBase : '',
       head: process.env.HEAD_SHA ?? process.env.GITHUB_SHA ?? '',
       baseRef: process.env.BASE_REF ?? '',
     });

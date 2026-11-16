@@ -60,7 +60,13 @@ function token(kind) {
     case 'google': return `AIza${body(35, 'abc')}`;
     case 'npm': return `npm_${body(36, 'abc')}`;
     case 'jwt': return `eyJ${body(12, 'abc')}.eyJ${body(12, 'abc')}.${body(12, 'abc')}`;
-    case 'url_cred': return 'https://user:pass@example.invalid/path';
+    case 'url_cred': {
+      const scheme = 'https://';
+      const user = 'us' + 'er';
+      const secret = 'pa' + 'ss';
+      const host = 'example.invalid';
+      return `${scheme}${user}:${secret}@${host}/path`;
+    }
     default: throw new Error(`unknown kind ${kind}`);
   }
 }
@@ -96,7 +102,16 @@ test('every pattern fixture fails, including outside the fixture allowlist', () 
   assert.equal(scan(removed).status, 0);
 });
 
-test('the hosted secret jobs still scan the candidate diff with the same tools', () => {
+test('the strength fixture source does not itself match the diff scan', () => {
+  const text = readFileSync(new URL(import.meta.url), 'utf8');
+  const added = text.split('\n').map((line) => `+${line}`).join('\n');
+  const wrapped = `diff --git a/.github/tests/secret-shape-strength.test.mjs b/.github/tests/secret-shape-strength.test.mjs\n+++ b/.github/tests/secret-shape-strength.test.mjs\n@@ -0,0 +1 @@\n${added}\n`;
+  const result = scan(wrapped);
+  assert.equal(result.status, 0, result.stdout);
+  assert.equal(scan(diff('src/app.ts', token('url_cred'))).status, 1);
+});
+
+test('the hosted secret jobs always scan and never reuse a receipt', () => {
   const shape = workflow.slice(workflow.indexOf('name: Secret-shape scan'), workflow.indexOf('name: Quick typecheck'));
   const scanJob = workflow.slice(workflow.indexOf('name: Secret scan (diff)'), workflow.indexOf('name: Merge Gate'));
   assert.match(shape, /perl \.github\/tests\/secret-shape\/scrub\.pl --check --allow-fixtures/);
@@ -105,4 +120,11 @@ test('the hosted secret jobs still scan the candidate diff with the same tools',
   assert.match(scanJob, /pull_request\) base="\$\(git merge-base "\$PR_BASE" "\$HEAD_SHA"\)"/);
   assert.doesNotMatch(scanJob, /gitleaks detect/);
   assert.match(scanJob, /rm -f \.gitleaks\.toml \.gitleaksignore/);
+  assert.doesNotMatch(shape, /ci-green-reuse/);
+  assert.doesNotMatch(scanJob, /ci-green-reuse/);
+  assert.doesNotMatch(shape, /shape_reuse/);
+  assert.doesNotMatch(scanJob, /scan_reuse/);
+  assert.doesNotMatch(`${shape}\n${scanJob}`, /~1/);
+  assert.match(scanJob, /secret scan refused an incomplete commit range/);
+  assert.match(scanJob, /github\.event\.before/);
 });

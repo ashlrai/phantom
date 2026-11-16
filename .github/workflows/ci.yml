@@ -67,55 +67,37 @@ jobs:
           persist-credentials: false
       - name: Fetch the candidate range
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
         run: node .github/scripts/ci-fetch-range.mjs
       - name: Prove secret-shape strength
         run: node --test .github/tests/secret-shape-strength.test.mjs
-      - name: Hash the candidate diff
-        id: shape_hash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          if [ -z "${BASE_SHA}" ]; then BASE_SHA="$(git rev-parse "${HEAD_SHA}^1")"; fi
-          base="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
-          git diff --no-color --no-ext-diff "${base}" "${HEAD_SHA}" > "${RUNNER_TEMP}/candidate.diff"
-          node .github/scripts/ci-green-reuse.mjs hash -- "@${RUNNER_TEMP}/candidate.diff" @.github/tests/secret-shape/scrub.pl
-      - name: Restore secret-shape green result
-        id: shape_cache
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ runner.temp }}/ci-green/secret-shape.json
-          key: phantom-ci-green-v1-secret-shape-${{ steps.shape_hash.outputs.hash }}
-      - name: Decide secret-shape reuse
-        id: shape_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job secret-shape --hash "${{ steps.shape_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/secret-shape.json"
       - name: Scan candidate diff (fail closed)
-        if: steps.shape_reuse.outputs.reuse != 'true'
         env:
           SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
-          if [ -z "${BASE_SHA}" ]; then BASE_SHA="$(git rev-parse "${HEAD_SHA}^1")"; fi
+          if [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            echo "secret-shape base is missing" >&2
+            exit 1
+          fi
+          if [ -z "${BASE_SHA}" ]; then
+            if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+              git fetch --no-tags --filter=blob:none --unshallow origin
+            fi
+            if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+              echo "secret-shape base is missing" >&2
+              exit 1
+            fi
+            BASE_SHA="$(git rev-parse "${HEAD_SHA}^")"
+          fi
           base="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
           git diff --no-color --no-ext-diff "${base}" "${HEAD_SHA}" > "${RUNNER_TEMP}/candidate.diff"
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
-      - name: Record secret-shape green result
-        if: steps.shape_reuse.outputs.reuse != 'true'
-        run: node .github/scripts/ci-green-reuse.mjs write --job secret-shape --hash "${{ steps.shape_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/secret-shape.json"
-      - name: Save secret-shape green result
-        if: steps.shape_reuse.outputs.reuse != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ runner.temp }}/ci-green/secret-shape.json
-          key: phantom-ci-green-v1-secret-shape-${{ steps.shape_hash.outputs.hash }}
 
   quick:
     # Per-PR, merge-queue and master-push typecheck (advisory on fast events).
@@ -230,10 +212,14 @@ jobs:
           key: phantom-ci-green-v1-typecheck-web-${{ steps.inputs.outputs.web }}
       - name: Decide backend typecheck reuse
         id: backend_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "${{ runner.temp }}/ci-green/typecheck-backend.json"
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.backend }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-backend --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
       - name: Decide web typecheck reuse
         id: web_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "${{ runner.temp }}/ci-green/typecheck-web.json"
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.web }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
       - name: Materialize the full tree
         if: github.event_name == 'push' || steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || steps.inputs.outputs.lint_count != '0'
         run: git sparse-checkout disable
@@ -284,22 +270,28 @@ jobs:
         # Keep this step name stable for release evidence consumers.
         # A proven green receipt for one project skips that project. A miss,
         # an unknown project split, or a master push runs the full check.
+        env:
+          BACKEND_REUSE: ${{ steps.backend_reuse.outputs.reuse }}
+          WEB_REUSE: ${{ steps.web_reuse.outputs.reuse }}
+          PROJECTS: ${{ steps.inputs.outputs.projects }}
+          BACKEND_HASH: ${{ steps.inputs.outputs.backend }}
+          WEB_HASH: ${{ steps.inputs.outputs.web }}
         run: |
           started=$SECONDS
           touch "$RUNNER_TEMP/compiler-check-start"
           mode=full
           if [ "$GITHUB_EVENT_NAME" != push ]; then
-            if [ "${{ steps.backend_reuse.outputs.reuse }}" = true ] && [ "${{ steps.inputs.outputs.projects }}" = web ]; then mode=web; fi
-            if [ "${{ steps.web_reuse.outputs.reuse }}" = true ] && [ "${{ steps.inputs.outputs.projects }}" = backend ]; then mode=backend; fi
+            if [ "$BACKEND_REUSE" = true ] && [ "$PROJECTS" = web ]; then mode=web; fi
+            if [ "$WEB_REUSE" = true ] && [ "$PROJECTS" = backend ]; then mode=backend; fi
           fi
           case "$mode" in
             web)
               npm run typecheck:web
-              node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+              node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
               ;;
             backend)
               npx --no-install tsgo --noEmit
-              node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+              node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
               ;;
             *)
           npm run typecheck
@@ -327,8 +319,8 @@ jobs:
           done
           elapsed=$((SECONDS - started))
           echo "Incremental backend + web typecheck: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
-          node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
-          node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+          node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+          node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
               ;;
           esac
       - name: Lint affected files
@@ -402,9 +394,7 @@ jobs:
           persist-credentials: false
       - name: Hash generated-file inputs
         id: clean_hash
-        run: |
-          set -euo pipefail
-          node .github/scripts/ci-green-reuse.mjs hash -- "$(git rev-parse HEAD:docs)" "$(git rev-parse HEAD:scripts/generate-docs-llms.mjs)" "$(git rev-parse HEAD:scripts/lib/docs-pages.mjs)"
+        run: node .github/scripts/ci-fast-inputs.mjs clean-tree
       - name: Restore generated-files green result
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -412,7 +402,9 @@ jobs:
           key: phantom-ci-green-v1-clean-tree-${{ steps.clean_hash.outputs.hash }}
       - name: Decide generated-files reuse
         id: clean_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job clean-tree --hash "${{ steps.clean_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/clean-tree.json"
+        env:
+          RECEIPT_HASH: ${{ steps.clean_hash.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
       - name: Set up Node.js 22
         if: steps.clean_reuse.outputs.reuse != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -423,9 +415,11 @@ jobs:
       # docs/llms.txt. No auto-commit and no path exemptions. A proven green
       # receipt for the same docs tree skips the generator; a miss runs it.
       - name: Check generated files
+        env:
+          RECEIPT_HASH: ${{ steps.clean_hash.outputs.hash }}
         run: |
           set -euo pipefail
-          if node .github/scripts/ci-green-reuse.mjs verify --job clean-tree --hash "${{ steps.clean_hash.outputs.hash }}" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"; then
+          if node .github/scripts/ci-green-reuse.mjs verify --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"; then
             echo "reused a prior green generated-files result"
           else
             node scripts/generate-docs-llms.mjs
@@ -434,7 +428,7 @@ jobs:
               printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
               exit 1
             fi
-            node .github/scripts/ci-green-reuse.mjs write --job clean-tree --hash "${{ steps.clean_hash.outputs.hash }}" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
+            node .github/scripts/ci-green-reuse.mjs write --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
           fi
       - name: Save generated-files green result
         if: steps.clean_reuse.outputs.reuse != 'true'
@@ -465,9 +459,7 @@ jobs:
           persist-credentials: false
       - name: Hash authority drift inputs
         id: drift_hash
-        run: |
-          set -euo pipefail
-          node .github/scripts/ci-green-reuse.mjs hash -- "$(git rev-parse HEAD:src)" "$(git rev-parse HEAD:test)" "$(git rev-parse HEAD:scripts)" "$(git rev-parse HEAD:.github/CODEOWNERS)"
+        run: node .github/scripts/ci-fast-inputs.mjs authority
       - name: Restore authority drift green result
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -475,7 +467,9 @@ jobs:
           key: phantom-ci-green-v1-authority-drift-${{ steps.drift_hash.outputs.hash }}
       - name: Decide authority drift reuse
         id: drift_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job authority-drift --hash "${{ steps.drift_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/authority-drift.json"
+        env:
+          RECEIPT_HASH: ${{ steps.drift_hash.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job authority-drift --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/authority-drift.json"
       - name: Materialize the full tree
         if: steps.drift_reuse.outputs.reuse != 'true'
         run: git sparse-checkout disable
@@ -498,7 +492,9 @@ jobs:
           test/authority-tier1-closure-310b.test.ts
       - name: Record authority drift green result
         if: steps.drift_reuse.outputs.reuse != 'true'
-        run: node .github/scripts/ci-green-reuse.mjs write --job authority-drift --hash "${{ steps.drift_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/authority-drift.json"
+        env:
+          RECEIPT_HASH: ${{ steps.drift_hash.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs write --job authority-drift --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/authority-drift.json"
       - name: Save authority drift green result
         if: steps.drift_reuse.outputs.reuse != 'true'
         continue-on-error: true
@@ -585,13 +581,19 @@ jobs:
           key: phantom-ci-green-v1-fast-tests-${{ steps.inputs.outputs.hash }}
       - name: Decide backend typecheck reuse
         id: backend_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "${{ runner.temp }}/ci-green/typecheck-backend.json"
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.backend }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-backend --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
       - name: Decide web typecheck reuse
         id: web_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "${{ runner.temp }}/ci-green/typecheck-web.json"
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.web }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
       - name: Decide affected-test reuse
         id: tests_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job fast-tests --hash "${{ steps.inputs.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/fast-tests.json"
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job fast-tests --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"
       - name: Materialize the full tree
         if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || (steps.select.outputs.mode != 'docs' && steps.tests_reuse.outputs.reuse != 'true')
         run: git sparse-checkout disable
@@ -637,50 +639,58 @@ jobs:
         # Keep this step name stable for release evidence consumers.
         # Both receipts must match or the real check runs. One matching
         # receipt can limit the run to the other project.
+        env:
+          BACKEND_REUSE: ${{ steps.backend_reuse.outputs.reuse }}
+          WEB_REUSE: ${{ steps.web_reuse.outputs.reuse }}
+          PROJECTS: ${{ steps.inputs.outputs.projects }}
+          BACKEND_HASH: ${{ steps.inputs.outputs.backend }}
+          WEB_HASH: ${{ steps.inputs.outputs.web }}
         run: |
           started=$SECONDS
-          if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json" \
-            && node .github/scripts/ci-green-reuse.mjs verify --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"; then
+          if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json" \
+            && node .github/scripts/ci-green-reuse.mjs verify --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"; then
             echo "Reused prior green typecheck results" >> "$GITHUB_STEP_SUMMARY"
           else
-            case "${{ steps.inputs.outputs.projects }}" in
+            case "$PROJECTS" in
               web)
-                if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"; then
+                if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"; then
                   npm run typecheck:web
-                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
                 else
                   npm run typecheck
-                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
-                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
                 fi
                 ;;
               backend)
-                if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"; then
+                if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"; then
                   npx --no-install tsgo --noEmit
-                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
                 else
                   npm run typecheck
-                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
-                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
                 fi
                 ;;
               *)
                 npm run typecheck
-                node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "${{ steps.inputs.outputs.backend }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
-                node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "${{ steps.inputs.outputs.web }}" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
                 ;;
             esac
           fi
           echo "Incremental backend + web typecheck: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
       - name: Run affected tests
         if: steps.select.outputs.mode != 'docs'
+        env:
+          TESTS_HASH: ${{ steps.inputs.outputs.hash }}
         run: |
           started=$SECONDS
-          if node .github/scripts/ci-green-reuse.mjs verify --job fast-tests --hash "${{ steps.inputs.outputs.hash }}" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"; then
+          if node .github/scripts/ci-green-reuse.mjs verify --job fast-tests --hash "$TESTS_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"; then
             echo "reused a prior green affected-test result"
           else
             node .github/scripts/ci-fast-run.mjs
-            node .github/scripts/ci-green-reuse.mjs write --job fast-tests --hash "${{ steps.inputs.outputs.hash }}" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"
+            node .github/scripts/ci-green-reuse.mjs write --job fast-tests --hash "$TESTS_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"
           fi
           echo "Affected tests: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
       - name: Save backend typecheck receipt
@@ -1646,41 +1656,11 @@ jobs:
           persist-credentials: false
       - name: Fetch the candidate range
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
         run: node .github/scripts/ci-fetch-range.mjs
-      - name: Hash the scanned commit range
-        id: scan_hash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          MG_BASE: ${{ github.event.merge_group.base_sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          GITLEAKS_VERSION: 8.30.0
-          GITLEAKS_SHA256: 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
-        run: |
-          set -euo pipefail
-          case "$EVENT_NAME" in
-            pull_request) base="$(git merge-base "$PR_BASE" "$HEAD_SHA")" ;;
-            merge_group) base="$MG_BASE" ;;
-            push) base="$PUSH_BEFORE" ;;
-            *) base="" ;;
-          esac
-          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then base="${HEAD_SHA}~1"; fi
-          git rev-list "${base}..${HEAD_SHA}" > "$RUNNER_TEMP/scan-commits.txt"
-          node .github/scripts/ci-green-reuse.mjs hash -- "@$RUNNER_TEMP/scan-commits.txt" "$GITLEAKS_VERSION" "$GITLEAKS_SHA256"
-      - name: Restore secret-scan green result
-        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ runner.temp }}/ci-green/secret-scan.json
-          key: phantom-ci-green-v1-secret-scan-${{ steps.scan_hash.outputs.hash }}
-      - name: Decide secret-scan reuse
-        id: scan_reuse
-        run: node .github/scripts/ci-green-reuse.mjs announce --job secret-scan --hash "${{ steps.scan_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/secret-scan.json"
       - name: Install pinned Gitleaks
-        if: steps.scan_reuse.outputs.reuse != 'true'
         env:
           GITLEAKS_VERSION: 8.30.0
           GITLEAKS_SHA256: 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
@@ -1695,7 +1675,6 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" version
       - name: Scan the commits this event adds
-        if: steps.scan_reuse.outputs.reuse != 'true'
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -1705,26 +1684,27 @@ jobs:
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) base="$(git merge-base "$PR_BASE" "$HEAD_SHA")" ;;
-            merge_group) base="$MG_BASE" ;;
-            push) base="$PUSH_BEFORE" ;;
-            *) base="" ;;
+            pull_request) base="$(git merge-base "$PR_BASE" "$HEAD_SHA")" || base="" ;;
+            merge_group|push) base="$(node .github/scripts/ci-fetch-range.mjs scan-base)" || base="" ;;
+            *)
+              if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+                git fetch --no-tags --filter=blob:none --unshallow origin
+              fi
+              if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+                base=""
+              else
+                base="$(git rev-parse "${HEAD_SHA}^" 2>/dev/null || true)"
+              fi
+              ;;
           esac
-          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then base="${HEAD_SHA}~1"; fi
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "secret scan refused an incomplete commit range" >&2
+            exit 1
+          fi
           # A PR must not allowlist its own leak: ignore any repo-supplied config.
           rm -f .gitleaks.toml .gitleaksignore
           echo "scanning ${base}..${HEAD_SHA}"
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
-      - name: Record secret-scan green result
-        if: steps.scan_reuse.outputs.reuse != 'true'
-        run: node .github/scripts/ci-green-reuse.mjs write --job secret-scan --hash "${{ steps.scan_hash.outputs.hash }}" --receipt "${{ runner.temp }}/ci-green/secret-scan.json"
-      - name: Save secret-scan green result
-        if: steps.scan_reuse.outputs.reuse != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: ${{ runner.temp }}/ci-green/secret-scan.json
-          key: phantom-ci-green-v1-secret-scan-${{ steps.scan_hash.outputs.hash }}
 
   merge-gate:
     # One stable required check. PR and merge_group: Secret-shape scan, Secret
