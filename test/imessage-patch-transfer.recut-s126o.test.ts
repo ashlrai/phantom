@@ -60,7 +60,7 @@ let previousHome: string | undefined;
 const imsgDir = () => join(runsDir, 'imessage');
 const watermarkPath = () => join(imsgDir(), 'findings-bridge.json');
 const busEnvelopes = () => {
-  const page = listBusInboxAfter(0, 100, { root: busRoot });
+  const page = listBusInboxAfter(0, 100, { root: busRoot, now: () => NOW.getTime() });
   return page.status === 'ok' ? page.messages.map((m) => m.envelope) : [];
 };
 
