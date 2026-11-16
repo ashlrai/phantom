@@ -70,7 +70,7 @@ describe('fleet_slack_evidence channelId over MCP', () => {
   it('advertises optional channelId alongside thread and maxAgeSeconds', async () => {
     const tool = (await (await connect()).listTools()).tools.find(t => t.name === 'fleet_slack_evidence');
     expect(tool?.inputSchema).toMatchObject({ required: ['thread'], additionalProperties: false });
-    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(['thread', 'channelId', 'maxAgeSeconds']);
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(['thread', 'channelId', 'messageTs', 'maxAgeSeconds']);
     expect(tool?.inputSchema.properties?.channelId).toMatchObject({ type: 'string' });
     expect(tool?.description).toContain('channelId');
   });

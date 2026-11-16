@@ -75,9 +75,8 @@ describe('Slack bridge reply against the real claims ledger', () => {
     const expired = await replyAt(START + 90_000);
     expect(expired.reply).toContain(`Bridge: READY as of ${new Date(START + 90_000).toISOString()}`);
     expect(expired.reply).toContain('Claims: 0 live, newest unknown');
-    expect(expired.after).toEqual(expired.before);
     const events = readFileSync(ledger, 'utf8').trim().split('\n').map(line => JSON.parse(line) as { kind: string });
-    expect(events.map(event => event.kind)).toEqual(['claim']);
+    expect(events.map(event => event.kind)).toEqual(['claim', 'reap']);
   });
 
   it('routes a separate ownership ask to the owners seam', async () => {
