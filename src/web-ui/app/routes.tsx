@@ -46,6 +46,7 @@ const SecurityView = lazy(() => import('../routes/control/security/SecurityView.
 const GoalsView = lazy(() => import('../routes/goals/GoalsView.js').then((module) => ({ default: module.GoalsView })));
 const InboxView = lazy(() => import('../routes/inbox/InboxView.js').then((module) => ({ default: module.InboxView })));
 const ApprovalsView = lazy(() => import('../routes/approvals/ApprovalsView.js').then((module) => ({ default: module.ApprovalsView })));
+const BotsView = lazy(() => import('../routes/bots/BotsView.js').then((module) => ({ default: module.BotsView })));
 const AgentOsView = lazy(() => import('../routes/agent-os/AgentOsView.js').then((module) => ({ default: module.AgentOsView })));
 const ConnectView = lazy(() => import('../routes/connect/ConnectView.js').then((module) => ({ default: module.ConnectView })));
 const UniverseView = lazy(() => import('../routes/universe/UniverseView.js').then((module) => ({ default: module.UniverseView })));
@@ -76,6 +77,7 @@ export function AppRoutes() {
         <Route path="/overview" element={<FleetDashboardView />} />
         <Route path="/approvals" element={<ApprovalsView />} />
         <Route path="/agent-os" element={<AgentOsView />} />
+        <Route path="/bots" element={<BotsView />} />
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/show" element={<ShowView />} />
         <Route path="/journal" element={<JournalView />} />
