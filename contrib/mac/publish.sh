@@ -307,7 +307,10 @@ elif [ -z "$SENS" ] && [ -z "$G1T" ]; then
     elif [ $AGRC != 0 ]; then
       python3 -I -B "$R/bin/arm_gate.py" defer --dir "$R/arm-deferred" --repo "$REPO" --pr "$URL" --sha "$HEADSHA" --job "$J" --deadline-s "${ARM_GATE_DEFER_S:-3600}" >/dev/null 2>&1 \
         && echo "NOTE AUTO_MERGE deferred ($AG); arm_gate.py sweep re-evaluates" || echo "NOTE AUTO_MERGE not armed: gate not SAFE ($AG) and deferral unavailable; leader review"
-    elif ! python3 -I -B "$R/bin/arm_gate.py" check --repo "$REPO" --sha "$HEADSHA" >/dev/null 2>&1; then echo "NOTE AUTO_MERGE not armed: final pre-arm re-check was no longer SAFE (late rerun or new check); leader review"
+    elif AG=$(python3 -I -B "$R/bin/arm_gate.py" check --repo "$REPO" --sha "$HEADSHA" 2>&1); AGRC=$?; [ $AGRC != 0 ]; then   # final pre-arm re-check (late rerun / new check)
+      if [ $AGRC = 1 ]; then echo "NOTE AUTO_MERGE skipped ci-red on final re-check ($AG); leader review"
+      else python3 -I -B "$R/bin/arm_gate.py" defer --dir "$R/arm-deferred" --repo "$REPO" --pr "$URL" --sha "$HEADSHA" --job "$J" --deadline-s "${ARM_GATE_DEFER_S:-3600}" >/dev/null 2>&1 \
+        && echo "NOTE AUTO_MERGE deferred after final re-check ($AG); arm_gate.py sweep re-evaluates" || echo "NOTE AUTO_MERGE not armed: final re-check not SAFE ($AG) and deferral unavailable; leader review"; fi
     elif ME=$(gh pr merge "$URL" --repo $REPO --auto --match-head-commit "$HEADSHA" 2>&1 >/dev/null); then echo "AUTO_MERGE on"
     elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash --match-head-commit "$HEADSHA" >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
     else echo "NOTE AUTO_MERGE skipped-or-failed"; fi

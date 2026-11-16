@@ -186,6 +186,59 @@ class ArmGateTests(unittest.TestCase):
             self.assertIn('--match-head-commit "$HEADSHA"', l)
         self.assertIn('PR head unknown', block)
         self.assertLess(block.index('final pre-arm re-check'), block.index('gh pr merge "$URL"'))
+        final = block.split('final pre-arm re-check', 1)[1].split('gh pr merge "$URL"', 1)[0]
+        self.assertIn('[ $AGRC = 1 ]', final)
+        self.assertIn('arm_gate.py" defer', final)  # recoverable verdict is deferred, RED refuses
+
+
+class PublishBlockBehavior(unittest.TestCase):
+    """Runs the real arming block of publish.sh with a fake gh and a scripted arm_gate.py."""
+    HEAD = "c" * 40
+
+    def run_block(self, check_rcs, heads=None, pr_view_fail=False):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d); (d / "bin").mkdir(); (d / "fakebin").mkdir()
+            (d / "rcs").write_text("\n".join(map(str, check_rcs)))
+            (d / "heads").write_text("\n".join(heads or [self.HEAD, self.HEAD]))
+            (d / "bin" / "arm_gate.py").write_text(
+                "import sys,os\nd=os.environ['T']\nif sys.argv[1]=='check':\n"
+                " l=open(d+'/rcs').read().split();v=l.pop(0) if l else '0';open(d+'/rcs','w').write(' '.join(l));print('V'+v);sys.exit(int(v))\n"
+                "open(d+'/defer','a').write(' '.join(sys.argv[1:])+'\\n')\n")
+            gh = d / "fakebin" / "gh"
+            gh.write_text("#!/bin/bash\nd=$T\nif [ \"$1 $2\" = 'pr view' ]; then [ -e $d/viewfail ] && exit 1; l=($(cat $d/heads)); echo ${l[0]}; printf '%s ' ${l[@]:1} > $d/heads; exit 0; fi\n"
+                          "echo \"$*\" >> $d/merge\n")
+            gh.chmod(0o755)
+            if pr_view_fail:
+                (d / "viewfail").write_text("1")
+            start = PUBLISH.index('elif [ -z "$SENS" ] && [ -z "$G1T" ]; then')
+            end = PUBLISH.index('echo "RESULT PR', start)
+            script = 'JUDGE_OK=1; SENS=""; G1T=""; J=job1; URL=u; REPO=o/r; R=%s\nif false; then :\n%s\nfi\n' % (d, PUBLISH[start:end])
+            r = subprocess.run(["bash", "-c", script], env=dict(os.environ, PATH=f"{d / 'fakebin'}:{os.environ['PATH']}", T=str(d), ARM_GATE_WAIT="0"),
+                               capture_output=True, text=True, timeout=30)
+            rd = lambda n: (d / n).read_text() if (d / n).exists() else ""
+            return r.stdout + r.stderr, rd("merge"), rd("defer")
+
+    def test_safe_arms_with_pin(self):
+        out, merge, defer = self.run_block([0, 0])
+        self.assertIn("AUTO_MERGE on", out); self.assertIn("--match-head-commit " + self.HEAD, merge); self.assertEqual(defer, "")
+
+    def test_final_recheck_pending_defers_and_does_not_arm(self):
+        out, merge, defer = self.run_block([0, 2])
+        self.assertIn("deferred after final re-check", out); self.assertEqual(merge, ""); self.assertIn("defer", defer)
+
+    def test_final_recheck_red_refuses_without_deferral(self):
+        out, merge, defer = self.run_block([0, 1])
+        self.assertIn("final re-check", out); self.assertEqual(merge, ""); self.assertEqual(defer, "")
+
+    def test_first_check_pending_defers(self):
+        out, merge, defer = self.run_block([2])
+        self.assertEqual(merge, ""); self.assertIn("defer", defer)
+
+    def test_head_change_refuses_and_unknown_head_refuses(self):
+        out, merge, defer = self.run_block([0, 0], heads=[self.HEAD, "d" * 40])
+        self.assertIn("head changed", out); self.assertEqual((merge, defer), ("", ""))
+        out, merge, defer = self.run_block([0, 0], pr_view_fail=True)
+        self.assertIn("head unknown", out); self.assertEqual((merge, defer), ("", ""))
 
 
 if __name__ == "__main__":
