@@ -31,6 +31,27 @@ afterEach(() => {
 });
 
 describe('FleetSection — live', () => {
+  it('opens on the live compute map and keeps other lenses available without a disclosure step', async () => {
+    await Promise.all([import('../fleet/FleetWorld.js'), import('../company/ComputeMap.js')]);
+    const { posted, fetchMock } = stubSurfaceFetch({ kind: 'live' });
+    render(<FleetSection />);
+    const map = await screen.findByRole('region', { name: 'Fleet compute map' });
+    expect(screen.getByRole('radio', { name: 'Compute & agents' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('button', { name: 'Explore agent world' })).not.toBeInTheDocument();
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map(([input]) => String(input));
+      expect(urls).toContain('/api/verse/fleet/control/compute');
+      expect(urls).toContain('/api/verse/fleet/control/sessions');
+    });
+    const user = userEvent.setup();
+    await user.click(within(map).getByRole('button', { name: '3D' }));
+    expect(within(map).getByRole('button', { name: '3D' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('radio', { name: 'Workspaces' }));
+    expect(screen.getByRole('radio', { name: 'Workspaces' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('region', { name: 'Fleet compute map' })).not.toBeInTheDocument();
+    expect(posted).toEqual([]);
+  });
+
   it('shows the outcome editor in Fleet without creating work on mount', async () => {
     // Qualify the editor after its real lazy module is ready, not Vite's cold transform time.
     await import('../fleet/OutcomesPanel.js');
