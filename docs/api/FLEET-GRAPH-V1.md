@@ -35,6 +35,20 @@ path could not be read). A missing or invalid source is a state, not an
 error: the response is still `200`, carrying whatever projected, with
 `complete: false` and the corresponding `issues` entries.
 
+## Dedicated live route
+
+`GET /api/verse/fleet/graph/live` returns the same registry and live join
+without requiring `live=1`. Its only accepted query key is optional `agent`:
+`?agent=<agentId>` returns that agent, its direct `routes-to` targets and the
+matching edges, plus `scope: {kind: "agent", agentId}`. Source issues and
+completeness still describe the full input graph. A valid but unknown agent
+returns 404 (`agent-not-found`); malformed, duplicate or unsupported query
+parameters return 400 (`VERSE_INVALID`); other methods return 405.
+
+The desktop Graph pane reads this route for live seats and agent routes.
+See [fleet coordination](../FLEET-COORDINATION.md#fleet-graph). This route is
+separate from the router topology printed by `phm fleet graph --json`.
+
 ## Inputs
 
 The route reads the same evidence the graph pipeline already reads:
