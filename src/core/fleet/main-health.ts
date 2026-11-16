@@ -76,6 +76,31 @@ export function parseMainGuardianStatus(text: string, nowMs: number): Omit<Fleet
   };
 }
 
+/** An empty worker finish is no longer an active repair, and never proves CI green. */
+function emptyFixJobs(text: string, jobs: Set<string>, now: number): Set<string> {
+  const attempts = new Map<string, { launch: number; finish: number; empty: boolean; published: number; invalid: boolean }>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return new Set();
+      row = value as Record<string, unknown>;
+    } catch { return new Set(); } // Incomplete evidence cannot retire an active job.
+    if (typeof row.job !== 'string' || !jobs.has(row.job) || !['launch', 'claim', 'finish', 'publish', 'outcome'].includes(String(row.event))) continue;
+    const attempt = attempts.get(row.job) ?? { launch: -Infinity, finish: -Infinity, empty: false, published: -Infinity, invalid: false };
+    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
+    if (!Number.isFinite(at) || at > now) attempt.invalid = true;
+    else if (row.event === 'launch' || row.event === 'claim') attempt.launch = Math.max(attempt.launch, at);
+    else if (row.event === 'finish') {
+      if (at > attempt.finish) { attempt.finish = at; attempt.empty = row.empty === true; }
+      else if (at === attempt.finish) attempt.empty = attempt.empty && row.empty === true;
+    } else attempt.published = Math.max(attempt.published, at);
+    attempts.set(row.job, attempt);
+  }
+  return new Set([...attempts].filter(([, a]) => !a.invalid && a.empty && a.finish > a.launch && a.published < a.launch).map(([job]) => job));
+}
+
 export async function readFleetMainHealth(opts: { runsDir?: string; now?: () => number } = {}): Promise<FleetMainHealthV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
@@ -86,5 +111,16 @@ export async function readFleetMainHealth(opts: { runsDir?: string; now?: () => 
   if (source.state !== 'healthy') {
     return { v: 1, generatedAt: new Date(now).toISOString(), source: 'unavailable', statusAt: null, stale: true, guardianOff: off, red: 0, repos: [] };
   }
-  return { ...parseMainGuardianStatus(source.text, now), source: 'ok', guardianOff: off };
+  const report = parseMainGuardianStatus(source.text, now);
+  const jobs = new Set(report.repos.filter(repo => repo.state === 'red').flatMap(repo => repo.fixJobs));
+  if (jobs.size) {
+    const ledger = await readSource(join(root, 'metrics', 'jobs.jsonl'), 256 * 1024, true);
+    if (ledger.state === 'healthy') {
+      const empty = emptyFixJobs(ledger.text, jobs, now);
+      for (const repo of report.repos) {
+        if (repo.state === 'red') repo.fixJobs = repo.fixJobs.filter(job => !empty.has(job));
+      }
+    }
+  }
+  return { ...report, source: 'ok', guardianOff: off };
 }

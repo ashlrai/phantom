@@ -606,6 +606,7 @@
 /test/knowledge-index-vector-31q.test.ts @masonwyatt23
 /test/l1-core-fixes-310.test.ts @masonwyatt23
 /test/l1-seat-threading-310.test.ts @masonwyatt23
+/test/lane-route-eligibility.test.ts @masonwyatt23
 /test/leader-api-310b.test.ts @masonwyatt23
 /test/leader-apply-310b.test.ts @masonwyatt23
 /test/leader-ceo-failover.test.ts @masonwyatt23
