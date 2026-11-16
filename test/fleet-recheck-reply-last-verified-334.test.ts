@@ -57,7 +57,9 @@ describe('formatRecheckReply last verified line', () => {
     const lines = formatRecheckReply(await readFleetRecheck(deps([done]))).split('\n');
     const i = lines.findIndex(l => l.startsWith('Task: none'));
     expect(i).toBeGreaterThan(-1);
-    expect(lines[i + 1]).toBe(LINE);
+    // Peers follows Orders (absent here), and Last verified follows Peers.
+    expect(lines[i + 1]).toBe('Peers: none in 24h');
+    expect(lines[i + 2]).toBe(LINE);
     expect(lines[lines.length - 1]).toMatch(/^BLOCKED on:/);
   });
 
@@ -83,12 +85,20 @@ describe('formatRecheckReply last verified line', () => {
   it('drops the line, not the verdict, when over the cap', async () => {
     const base = await readFleetRecheck(deps([]));
     const blocked = (n: number): FleetRecheck => ({ ...base, overall: { ...base.overall, state: 'BLOCKED', missing: ['m'.repeat(n)] } });
-    // Size the reason so the reply fits only without the evidence line.
-    // The Computers line is dropped first, so size against the reply without it.
-    const room = 880 - formatRecheckReply(blocked(0)).split('\n').filter(l => !l.startsWith('Computers:')).join('\n').length;
-    const v = withLast(blocked(room), 'agent-alpha');
-    expect(formatRecheckReply(blocked(room)).length).toBeLessThanOrEqual(900);
-    const reply = formatRecheckReply(v);
+    // Computers, Pool and Peers drop before Last verified. Find a reason
+    // length where those are already gone, so the extra line is what drops
+    // and the reply matches the verdict without it.
+    let room = -1;
+    for (let n = 0; n < 900; n++) {
+      const plain = formatRecheckReply(blocked(n));
+      const extra = formatRecheckReply(withLast(blocked(n), 'agent-alpha'));
+      if (plain.length <= 900 && extra === plain && !plain.includes('Last verified') && !plain.includes('…')) {
+        room = n;
+        break;
+      }
+    }
+    expect(room).toBeGreaterThanOrEqual(0);
+    const reply = formatRecheckReply(withLast(blocked(room), 'agent-alpha'));
     expect(reply).toBe(formatRecheckReply(blocked(room)));
     expect(reply).not.toContain('Last verified');
     expect(reply.split('\n')[0]).toMatch(/^Phantom recheck BLOCKED/);
