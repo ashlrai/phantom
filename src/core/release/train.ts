@@ -704,7 +704,7 @@ export async function observeTrain(
       if (record(item?.app)?.id !== 15368) continue;
       actions += 1;
       if (item?.status !== 'completed') pending += 1;
-      else if (item.conclusion !== 'success') failing += 1;
+      else if (item.conclusion !== 'success' && item.conclusion !== 'skipped') failing += 1;
     }
     if (actions === 0) failing += 1;
     pullChecks = { pending, failing };

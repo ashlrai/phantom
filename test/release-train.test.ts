@@ -534,4 +534,44 @@ describe('release train', () => {
     expect(unpaged.candidateCi).toBe('unknown');
     expect(buildTrain(unpaged).writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
   });
+
+  it('does not count skipped path-filtered checks as release PR failures', async () => {
+    const pullSha = 'c'.repeat(40);
+    const pkg = { encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.27' })).toString('base64') };
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      [`repos/ashlrai/phantom/commits/${sha}`]: { sha, commit: { message: 'merge', committer: { date: '2026-11-09T01:00:00Z' } } },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg,
+      'repos/ashlrai/phantom/git/ref/tags/v3.30.27': { ref: 'refs/tags/v3.30.27', object: { type: 'commit', sha: head } },
+      [`repos/ashlrai/phantom/commits/${head}`]: { sha: head, commit: { message, committer: { date: '2026-11-09T02:30:00.000Z' } } },
+      [`repos/ashlrai/phantom/compare/${head}...${sha}`]: { status: 'ahead', ahead_by: 2 },
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.27', commit: { sha: head } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [{ number: 9, title: 'chore(master): release 3.30.28', head: { ref: 'release-please--master' } }],
+      'repos/ashlrai/phantom/pulls/9': {
+        number: 9, title: 'chore(master): release 3.30.28', state: 'open', merged_at: null,
+        node_id: 'PR_kwDO_test', mergeable: true, mergeable_state: 'clean',
+        head: { ref: 'release-please--master', sha: pullSha },
+      },
+      [`repos/ashlrai/phantom/commits/${pullSha}/check-runs?filter=latest&per_page=100`]: { total_count: 0, check_runs: [] },
+      'registry/npm/@ashlr/phantom/3.30.27': null,
+      ...greenCi(head),
+    };
+    const observe = (checkRuns: Record<string, unknown>[]) => observeTrain(async (path) => {
+      if (path === `repos/ashlrai/phantom/commits/${pullSha}/check-runs?filter=latest&per_page=100`) {
+        return { total_count: checkRuns.length, check_runs: checkRuns };
+      }
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (!Object.hasOwn(data, path)) throw new Error(`unexpected ${path}`);
+      return data[path];
+    }, '2026-11-09T06:00:00.000Z', 30, { fleet: 'inactive', autorun: 'inactive' });
+    const actions = (name: string, status: string, conclusion: string | null) => ({ name, status, conclusion, app: { id: 15368 } });
+    const skipped = observe([actions('Merge Gate', 'completed', 'success'), actions('Docs PR', 'completed', 'skipped'), actions('Mac exhaustive', 'completed', 'skipped')]);
+    await expect(skipped).resolves.toMatchObject({ openReleasePr: { number: 9 }, pullChecks: { pending: 0, failing: 0 } });
+    const pending = observe([actions('Merge Gate', 'in_progress', null), actions('Docs PR', 'completed', 'skipped')]);
+    await expect(pending).resolves.toMatchObject({ pullChecks: { pending: 1, failing: 0 } });
+    const failing = observe([actions('Merge Gate', 'completed', 'success'), actions('Dependency audit', 'completed', 'failure'), actions('Docs PR', 'completed', 'skipped')]);
+    await expect(failing).resolves.toMatchObject({ pullChecks: { pending: 0, failing: 1 } });
+  });
 });
