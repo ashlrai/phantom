@@ -117,6 +117,14 @@ function semanticIssues(reg: CapsRegistry): CapsIssue[] {
     if (s.engine !== undefined && !Object.hasOwn(BUILTIN_ENGINE_REGISTRY, s.engine)) {
       add(`${at}.engine`, `Engine "${s.engine}" is not in run/engine-registry.ts; the registry never invents engines.`);
     }
+    if (s.dispatch === 'engine' && (!s.engine || s.hostedOnly)) add(`${at}.dispatch`, 'Engine dispatch requires an engine and a directly reachable surface.');
+    if (s.dispatch === 'engine' && s.engine && Object.hasOwn(BUILTIN_ENGINE_REGISTRY, s.engine)) {
+      const kind = BUILTIN_ENGINE_REGISTRY[s.engine]!.kind;
+      if ((s.kind === 'local-runtime' && kind !== 'api-model') || (s.kind === 'cli' && kind !== 'cli-agent') || !['cli', 'local-runtime'].includes(s.kind)) {
+        add(`${at}.dispatch`, 'Engine transport must match the surface kind (CLI or local runtime).');
+      }
+    }
+    if (s.dispatch === 'hosted' && !s.hostedOnly) add(`${at}.dispatch`, 'Hosted dispatch requires a hosted-only surface.');
     if (s.kind === 'local-runtime' && !s.network) add(`${at}.network`, 'Local model surfaces must declare bind 127.0.0.1, keyForwarding false and an egress allowlist reference.');
     if (s.kind !== 'local-runtime' && s.network) add(`${at}.network`, 'Only local-runtime surfaces declare a loopback network policy.');
     if (s.network && !egressIds.has(s.network.egressAllowlistRef)) add(`${at}.network.egressAllowlistRef`, `Egress allowlist "${s.network.egressAllowlistRef}" is not defined.`);

@@ -250,6 +250,7 @@
 /test/activation-readiness-package.test.ts @masonwyatt23
 /test/activation-readiness-windows.test.ts @masonwyatt23
 /test/active-memory.test.ts @masonwyatt23
+/test/adapter-neutral-dispatch.test.ts @masonwyatt23
 /test/adaptive-throughput.test.ts @masonwyatt23
 /test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
