@@ -1038,3 +1038,69 @@ and omlx dispatcher pin before installation; never edit the live dispatcher.
 See [Branch gardener](../../docs/BRANCH-GARDENER.md) for org/fork classification,
 protected and active branch guards, dry-run configuration and the six-hour launchd
 template. This is independent of worktree/disk pruning and does not install itself.
+
+## Orphaned MCP server trees
+
+Worktree `.mcp.json` files launch MCP servers through `npm exec`. When a job's
+engine exits first, the npm/sh/node trees are re-parented to launchd and keep
+running. `mcp_reaper.py` measures and removes them:
+
+```
+python3 mcp_reaper.py census --json            # count, npm-exec count, RSS, oldest orphan age
+python3 mcp_reaper.py reap --grace 60 --dry-run
+python3 mcp_reaper.py reap --grace 60          # SIGTERM then SIGKILL, whole group when safe
+```
+
+Only trees whose root has ppid 1 and age above the grace window are signalled,
+so a live job's servers (engine still the ancestor) are never touched. A group
+is signalled only when every member is in the kill set. If `ps` cannot be read
+the tool reports `known=False` and exits 3 without killing anything. It is not
+in `install.sh` `FILES`; wiring it into the dispatcher tick or `launch.sh`
+(pinned files) goes through a Security package.
+
+## Grok Bot changelog watch (RQ-GROKBOT-CHANGELOG-WATCH-1)
+
+`grokbot_changelog_watch.py` is one deterministic daily tick: no LLM turn, no
+credentials, no cookies, public GETs only. It reads the Grok Bot changelog RSS
+feed (`https://x.ai/changelog/bot/rss.xml`, falling back to the changelog HTML
+page when the feed is unreachable) and the public docs pages under
+`https://docs.x.ai/grok-bot` (the Mintlify `.md` variant of each page linked
+from the section index). Each new `(url, heading)` pair is filed as a draft
+queue prompt `RQ-GROKBOT-IDEA-<hash>.md` under
+`~/.ashlr-runs/staged/changelog-ideas/` plus a line in `index.jsonl`; drafts are
+staged for review and are never appended to `queue/ready.tsv`.
+
+Dedupe is by URL + heading (sha256 of `url + "\n" + normalized heading`),
+persisted in `seen.json`. The first run against an empty state seeds the
+seen-set and files nothing, so the backlog is not flooded with the existing
+docs surface; later runs file only genuinely new changelog releases and docs
+headings. A heading whose body changes under the same URL+heading is treated
+as already seen. Mintlify boilerplate headings (`Related pages`, `On this
+page`, `Previous`, `Next`) are skipped. `--max N` caps filings per run
+(default 20); overflow stays unseen for the next tick. `--dry-run` reports the
+plan without writing state or prompts; `--json` prints a summary object.
+Fetch failures are per-source fail-closed: a source that cannot be read
+contributes no candidates, and the run exits nonzero only when every source
+fails. All URLs are overridable via `GROKBOT_WATCH_CHANGELOG_RSS`,
+`GROKBOT_WATCH_CHANGELOG_PAGE`, `GROKBOT_WATCH_DOCS_INDEX` and
+`GROKBOT_WATCH_STATE_DIR` so tests never touch the network.
+
+launchd install sketch (substitute the deployed paths; staged, not loaded):
+
+```sh
+sed -e "s|__PYTHON3__|/usr/bin/python3|" \
+    -e "s|__SCRIPT__|/path/to/mac-bridge/grokbot_changelog_watch.py|" \
+    -e "s|__LOG_DIR__|$HOME/.ashlr-runs/logs|" \
+    -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    contrib/mac/com.ashlr.grokbot-changelog-watch.plist.in \
+    > ~/Library/LaunchAgents/com.ashlr.grokbot-changelog-watch.plist
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.grokbot-changelog-watch.plist
+```
+
+Repo copy for the Mac host; installing it next to the pinned `bin/` scripts
+requires Security review and re-pin. Fixture tests run under a temporary HOME
+with `file://` sources and never touch the network or the live queue:
+
+```sh
+HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_grokbot_changelog_watch.py -v
+```
