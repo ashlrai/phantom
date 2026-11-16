@@ -10,6 +10,7 @@ import { privateDirectory } from '../../universe/artifacts.js';
 import { fsyncDirectory } from '../../util/durability.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { scrubSecrets } from '../../util/scrub.js';
+import { assertPermitted, endpointPermitted } from '../../policy/local-only.js';
 import { localLanePlan } from './local-model-caps.js';
 import { callPool, readPoolConfig, type PoolConfig } from './pool-host.js';
 import { validCap, validId } from './state.js';
@@ -85,6 +86,7 @@ async function omlxChat(signal: AbortSignal): Promise<number> {
   const model = plan.model.repo.split('/').at(-1);
   return new Promise((resolve, reject) => {
     // A fresh direct agent avoids environment-proxy configuration on the global agent.
+    assertPermitted(endpointPermitted(OMLX_URL));
     const request = httpRequest(OMLX_URL, { method: 'POST', agent: false, signal,
       headers: { 'content-type': 'application/json' } }, response => {
       const chunks: Buffer[] = [];

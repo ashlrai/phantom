@@ -15,18 +15,11 @@ import {
   planNotifications,
   readBoardNotifySent,
   sendNotifications,
-  type BoardNotice,
   type BoardSnapshotItem,
 } from '../src/core/fleet/work-board-notify.js';
 
 const TS_A = 'T0FAKEWS/C0FAKECH/1700000000.000338';
 const AT = '2026-11-13T22:30:00.000Z';
-
-const notice = (over: Partial<BoardNotice> = {}): BoardNotice => ({
-  itemId: 'req-recovery-1', state: 'BLOCKED', asOf: AT, delta: 'fake-digest-1', detail: 'fake-dep', source: 'bus-reply:rb-recovery',
-  text: `BLOCKED req-recovery-1 as of ${AT} — fake-dep (source: bus-reply:rb-recovery)`,
-  sourceChannel: 'slack', sourceThread: TS_A, ...over,
-});
 
 const snap = (over: Partial<BoardSnapshotItem>): BoardSnapshotItem => ({
   id: 'req-recovery-1', state: 'RECEIVED', asOf: AT, source: 'receivedAt',
@@ -74,34 +67,32 @@ describe('ledger recovery from sent.jsonl append failure', () => {
     // Should return unavailable due to ledger append failure - this is the key test part
     expect(results1[0]).toMatchObject({ status: 'unavailable', reason: 'ledger-append-failed' });
     
-    // The key assertion: since the ledger append failed, no record was written 
+    // The append failed, so the ledger is still missing. A missing ledger is an empty sent set, not an unreadable one.
     const sentSet = readBoardNotifySent(ledgerPath);
-    expect(sentSet).toBe(null);
+    expect(sentSet).toEqual(new Set());
     
     // Recovery simulation: create a working directory
     const recoveryDir = join(dir, 'recovered');
     rmSync(recoveryDir, { recursive: true, force: true });
     
-    // Second pass - same notice but with recovered ledger path
-    const successAppend = vi.fn();
-    const results2 = await sendNotifications(plan1.notices, { 
-      senders: { slack: successfulSender }, 
-      ledgerPath: recoveryDir, 
-      appendLedger: successAppend
+    // Second pass - same notice but with a recovered ledger file.
+    const recoveredLedger = boardNotifyLedgerPath(recoveryDir);
+    const results2 = await sendNotifications(plan1.notices, {
+      senders: { slack: successfulSender },
+      ledgerPath: recoveredLedger,
     });
     
     // This should succeed now that the path works
-    expect(successAppend).toHaveBeenCalledTimes(1);
     expect(results2[0]).toMatchObject({ status: 'sent' });
     
     // Third pass - verify idempotent behavior
-    const plan3 = planNotifications(diffBoard(prev, next), readBoardNotifySent(recoveryDir)!);
+    const plan3 = planNotifications(diffBoard(prev, next), readBoardNotifySent(recoveredLedger)!);
     expect(plan3.notices).toEqual([]); // No more notices to send since it's already recorded
     
     // If we replay with the same path, no new calls should happen
     const duplicateSender = vi.fn();
-    const results3 = await sendNotifications(plan3.notices, { 
-      senders: { slack: duplicateSender }, 
+    await sendNotifications(plan3.notices, {
+      senders: { slack: duplicateSender },
       ledgerPath: recoveryDir,
     });
     
