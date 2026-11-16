@@ -198,7 +198,7 @@ describe('operator documentation navigation', () => {
     }
   });
 
-  it.each(['fleet-health.md', 'VERIFY-CHANGE.md'])(
+  it.each(['fleet-health.md', 'VERIFY-CHANGE.md', 'ROUTING.md'])(
     'links the source-only %s guide from the packaged documentation index', (guide) => {
       const root = packagedDocumentation();
       const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
