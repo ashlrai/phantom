@@ -46,13 +46,13 @@ it.each([
   ['journal missing', undefined, { sent }, [], 1, 'missing', 'ok', undefined],
   ['sends missing', ingested, undefined, [], 1, 'ok', 'missing', 'unanswered'],
   ['empty stores', '', {}, [], 1, 'ok', 'ok', undefined],
-  ['ignored only', JSON.stringify({ ...request, decision: 'ignored' }), { sent }, [], 1, 'ok', 'ok', undefined],
+  ['ignored only', `${JSON.stringify({ ...request, decision: 'ignored' })}\n`, { sent }, [], 1, 'ok', 'ok', undefined],
   ['unmatched thread', ingested, { sent }, ['--thread', '1731002000.000100'], 1, 'ok', 'ok', undefined],
   ['degraded journal with answered row', ingested + 'invalid\n', { sent }, [], 1, 'degraded', 'ok', 'answered'],
   ['degraded sends with answered row', ingested, { sent, invalid: {} }, [], 1, 'ok', 'degraded', 'answered'],
   ['unanswered', ingested, {}, [], 1, 'ok', 'ok', 'unanswered'],
   ['uncertain', ingested, { attempt: { ...sent, state: 'attempted' } }, [], 1, 'ok', 'ok', 'uncertain'],
-  ['bus failed', JSON.stringify({ ...request, bus: 'failed' }), {}, [], 1, 'ok', 'ok', 'bus-failed'],
+  ['bus failed', `${JSON.stringify({ ...request, bus: 'failed' })}\n`, {}, [], 1, 'ok', 'ok', 'bus-failed'],
 ] as const)('%s requires durable matching evidence', async (_name, journal, messages, args, code, journalState, sendsState, outcome) => {
   const deps = fixture(journal, messages);
   const before = snapshot(deps.root);
@@ -60,7 +60,7 @@ it.each([
   expect(await cmdFleetSlackTrace([...args, '--json'], deps)).toBe(code);
   expect(log).toHaveBeenCalledTimes(1);
   const trace = JSON.parse(String(log.mock.calls[0]![0]));
-  expect(Object.keys(trace).sort()).toEqual(['asOf', 'counts', 'rows', 'sources']);
+  expect(Object.keys(trace).sort()).toEqual(['asOf', 'collectionScope', 'counts', 'rows', 'scope', 'sources']);
   expect(trace.asOf).toBe(now().toISOString());
   expect(trace.sources).toEqual({ journal: journalState, sends: sendsState });
   expect(trace.rows.map((row: { outcome: string }) => row.outcome)).toEqual(outcome ? [outcome] : []);
@@ -85,7 +85,7 @@ it('explains absent evidence in human output without claiming work', async () =>
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetSlackTrace([], deps)).toBe(1);
   expect(log.mock.calls.map(([line]) => line)).toEqual([
-    `slack trace as of ${now().toISOString()} (journal=missing sends=missing)`,
+    `slack trace as of ${now().toISOString()} (journal=missing sends=missing) scope: channel=all thread=all; Bounded local persisted journal and send evidence only; does not prove current runtime reachability.`,
     'No matching request evidence; verification unsuccessful.',
   ]);
   expect(snapshot(deps.root)).toEqual(before);

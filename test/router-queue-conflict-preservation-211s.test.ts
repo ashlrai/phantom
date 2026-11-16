@@ -139,7 +139,12 @@ describe('conflicting-head recut queue', () => {
     enqueueRouterFollowup({ ...merge, prUrl: PR2 });
     completeRouterJob(enqueueRouterFollowup({ ...merge, prUrl: PR2 }).jobId);
     const state = JSON.parse(load('state.json'));
-    expect(state.receipts).toEqual([legacy, done]);
+    expect(state.receipts).toHaveLength(2);
+    expect(state.receipts[0]).toMatchObject({ ...legacy, completedAt: null });
+    expect(typeof state.receipts[0].enqueuedAt).toBe('string');
+    expect(state.receipts[1]).toMatchObject(done);
+    expect(typeof state.receipts[1].enqueuedAt).toBe('string');
+    expect(typeof state.receipts[1].completedAt).toBe('string');
     expect(readRouterQueue().map((j) => j.jobId)).toEqual([first.jobId]);
     expect(JSON.parse(rowJson()[1]!)).toMatchObject({ mergeSha: MERGE_SHA });
     // A recut for a third PR coexists with the legacy receipts.
