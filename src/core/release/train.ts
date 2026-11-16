@@ -173,7 +173,7 @@ export interface TrainState {
   stages: Record<string, StageTiming>;
 }
 
-export const ENQUEUE_PULL_REQUEST = 'mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{position state}}}';
+export const ENQUEUE_PULL_REQUEST = 'mutation($pullRequestId:ID!){enqueuePullRequest(input:{pullRequestId:$pullRequestId}){mergeQueueEntry{position state}}}';
 const PULL_NODE = /^PR_[A-Za-z0-9_-]+$/;
 export type ReleaseWrite =
   | { method: 'PATCH'; path: string; body: { name: string; body: string; draft: true; prerelease: false } }
