@@ -1267,6 +1267,37 @@ jobs:
           console.log(`Merge Gate passed: ${fast ? 'fast' : 'full'} ${lane} CI`);
           NODE
 
+  master-full:
+    # Independent of Merge Gate's fast branch. Only the six-hour master run
+    # produces this receipt; half-hour release preparation is never evidence.
+    name: Master full qualification
+    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
+    if: ${{ always() && github.event_name == 'schedule' && github.event.schedule == '17 */6 * * *' && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact full revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record full result and first failing range
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FULL_NEEDS: ${{ toJSON(needs) }}
+          FULL_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          node --test .github/tests/ci-master-full.test.mjs
+          node .github/scripts/ci-master-full.mjs record
+      - name: Upload master full receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: master-full-${{ github.run_id }}-${{ github.run_attempt }}
+          path: master-full.json
+          if-no-files-found: error
+          retention-days: 30
+
   fixup-queue:
     # Daily red run -> READY FIXUP lines for the router queue (fix-forward owner:
     # ci-efficiency). One line per failed job from the needs context only: no

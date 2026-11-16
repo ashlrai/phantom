@@ -1,0 +1,10 @@
+FAIL: test_launch_complete_and_reap (test_omlx.OmlxTests.test_launch_complete_and_reap)
+Ran 121 tests in 493.073s
+FAILED (failures=1)
+note: the one failure, test_omlx.OmlxTests.test_launch_complete_and_reap, fails identically on unmodified master (checked with the change stashed).
+modules run: test_dispatchd test_tick_budget test_install test_postrun_pr test_batching test_omlx (HOME=temp dir)
+the full contrib/mac/tests discovery exceeded the 10 min tool limit and was not completed.
+ contrib/mac/dispatchd.py          | 26 ++++++++++++++++++++++++--
+ contrib/mac/install.sh            |  2 +-
+ contrib/mac/tests/test_install.py |  2 +-
+ 3 files changed, 26 insertions(+), 4 deletions(-)
