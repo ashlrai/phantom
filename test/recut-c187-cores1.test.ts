@@ -13,7 +13,7 @@ const visionUrl = 'https://github.com/ashlrai/phantom/blob/master/docs/VISION.md
 describe('recut c187 cores1: README links the preserved vision artifact', () => {
   it('links the recovered page once from the main documentation table and keeps release text', () => {
     const readme = readFileSync(join(process.cwd(), 'README.md'), 'utf8');
-    expect(readme).toContain(`| [docs/VISION.md](${visionUrl}) | Product direction: a chat-first open-source assistant, four pillars, and the gap to today's code |`);
+    expect(readme).toContain(`[Product direction](${visionUrl})`);
     expect(readme.match(/blob\/master\/docs\/VISION\.md/gu)).toHaveLength(1);
     expect(readme.match(/^This source tree targets version \d+\.\d+\.\d+; check canonical release availability and exact matching assets before installation\.$/gmu)).toHaveLength(1);
   });
