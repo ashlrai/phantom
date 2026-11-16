@@ -321,6 +321,12 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
   if (paneId) openPaneInChat(paneId, sessionId);
 }
 
+/** Pointer navigation to Fleet shares the menu's map target, including repeat visits. */
+function navigateSection(section: VerseSectionId): void {
+  if (section === 'fleet') executeCatalogCommand('surface.fleet', { via: 'button' });
+  else setVerseSection(section);
+}
+
 // The landing pane pulls in the pane registry, which stays out of first paint.
 const HomeSurface = lazy(() => import('./shell/HomeSurface.js').then((m) => ({ default: m.HomeSurface })));
 const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
@@ -429,7 +435,7 @@ export function PhantomApp() {
         // land in the composer: an open palette or shortcuts sheet would keep
         // focus (and every key) for itself. The drawer opener, the theme and
         // Settings leave overlays alone — open-needs-you REPLACES the overlay.
-        if (command.name === 'new-chat' || command.name === 'focus-composer') closeVerseOverlay();
+        if (command.name === 'new-chat' || command.name === 'focus-composer' || command.name === 'open-fleet') closeVerseOverlay();
         executeCatalogCommand(command.commandId, { via: 'menu' });
       }),
     [],
@@ -525,7 +531,7 @@ export function PhantomApp() {
   const selectCompactNav = (id: CompactNavId) => {
     closeVerseOverlay();
     if (id === 'needs-you') { openVerseOverlay('needs-you'); return; }
-    if (id === 'fleet') { setVerseSection('fleet'); return; }
+    if (id === 'fleet') { navigateSection('fleet'); return; }
     setHomeChoice(id);
     setVerseSection('live');
   };
@@ -580,7 +586,7 @@ export function PhantomApp() {
                     aria-current={active ? 'page' : undefined}
                     data-section={entry.id}
                     aria-label={`${entry.label}${badge?.spoken ?? ''}`}
-                    onClick={() => setVerseSection(entry.id)}
+                    onClick={() => navigateSection(entry.id)}
                   >
                     <span className={styles.railIcon}>
                       {IconComponent ? <IconComponent /> : null}
@@ -658,7 +664,7 @@ export function PhantomApp() {
           {WORK_MODES.map((mode) => (
             <button key={mode.id} type="button" className={styles.workMode}
               aria-pressed={workModeForSection(ui.section) === mode.id} title={mode.description}
-              onClick={() => setVerseSection(mode.section)}>
+              onClick={() => navigateSection(mode.section)}>
               {mode.label}
             </button>
           ))}

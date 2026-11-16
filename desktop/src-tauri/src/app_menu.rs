@@ -25,6 +25,7 @@ use crate::shell_contract;
 
 /// Menu item ids handled by [`handle_menu_event`].
 pub const ID_SETTINGS: &str = "app.settings";
+pub const ID_FLEET: &str = "view.fleet";
 pub const ID_RELOAD: &str = "view.reload";
 pub const ID_TOGGLE_THEME: &str = "view.toggle-theme";
 pub const ID_ZOOM_IN: &str = "view.zoom-in";
@@ -124,6 +125,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "View",
         true,
         &[
+            // Leave CmdOrCtrl+2 with the web catalog, like the other surface keys.
+            &MenuItemBuilder::with_id(ID_FLEET, "Fleet").build(app)?,
+            &PredefinedMenuItem::separator(app)?,
             &MenuItemBuilder::with_id(ID_RELOAD, "Reload")
                 .accelerator("CmdOrCtrl+R")
                 .build(app)?,
@@ -169,6 +173,13 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str, main_window_l
     };
 
     match id {
+        ID_FLEET => {
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = window.eval(shell_contract::command_script(
+                shell_contract::COMMAND_OPEN_FLEET,
+            ));
+        }
         ID_SETTINGS => {
             let _ = window.show();
             let _ = window.set_focus();

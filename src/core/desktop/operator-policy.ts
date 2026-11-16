@@ -83,7 +83,7 @@ export const OPERATOR_ROSTER: readonly OperatorRosterApp[] = [
   { id: 'devin', names: DESKTOP_APP_PROFILES.devin.names, bundleIds: DESKTOP_APP_PROFILES.devin.bundleIds },
   { id: 'codex', names: DESKTOP_APP_PROFILES.codex.names, bundleIds: DESKTOP_APP_PROFILES.codex.bundleIds },
   { id: 'claude', names: DESKTOP_APP_PROFILES.claude.names, bundleIds: DESKTOP_APP_PROFILES.claude.bundleIds },
-  { id: 'grok', names: ['Grok', 'Grok Bot'], bundleIds: ['ai.x.grok', 'com.xai.grok'] },
+  { id: 'grok', names: ['Grok', 'Grok Bot'], bundleIds: ['ai.x.grok', 'com.xai.grok', 'com.anysphere.sand'] },
   { id: 'cursor', names: ['Cursor'], bundleIds: ['com.todesktop.230313mzl4w4u92'] },
 ];
 
