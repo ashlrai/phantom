@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { FULL_CRON } from '../scripts/ci-master-full.mjs';
 import {
   CLOUD_CAP, SUMMARY_TITLE, affectedFromPaths, buildPreflightReport, chooseRunList,
-  coveredByExistingRun, fixupLine, interpretRun, isRunnableTest, mergeRuns, planSummary,
+  coveredByExistingRun, fixupLine, interpretRun, isRunnableTest, loadHistory, mergeRuns, planSummary,
   planTestIssues, preflightLineId, redsFromVitestReport, releaseOwed, repoTestPath, testPathsInText,
 } from '../scripts/preflight-fixer.mjs';
 
@@ -174,4 +174,11 @@ test('preflight writes issues and labels only', () => {
   assert.ok(writes.length >= 3);
   for (const write of writes) assert.match(write[2] ?? '', /\/(?:issues|labels)/);
   assert.doesNotMatch(source, /git tag|tag-github-release/);
+});
+
+test('plan degrades to fallback selection when CI history is unavailable', async () => {
+  const failing = async () => { throw new Error('CI metadata unavailable; refusing unverified full evidence'); };
+  assert.deepEqual(await loadHistory('ashlrai/phantom', failing), []);
+  const history = [{ id: 1, qualified: true }];
+  assert.equal(await loadHistory('ashlrai/phantom', async () => history), history);
 });

@@ -319,6 +319,13 @@ function runUrl() {
   return `https://github.com/ashlrai/phantom/actions/runs/${id}`;
 }
 
+export async function loadHistory(repo, read = fullHistory) {
+  try { return await read({ repo }); } catch (error) {
+    console.log(`CI history unavailable (${error?.message ?? 'unknown'}); using fallback selection`);
+    return [];
+  }
+}
+
 async function planMain(cwd) {
   requireProducerEnvironment(process.env);
   const cause = process.env.PREFLIGHT_CAUSE ?? '';
@@ -340,7 +347,9 @@ async function planMain(cwd) {
       return;
     }
   }
-  const history = await fullHistory({ repo: process.env.GITHUB_REPOSITORY });
+  // Advisory run: a transient CI metadata failure must not fail the job. Without
+  // history there is no known green base, so the fallback selection runs.
+  const history = await loadHistory(process.env.GITHUB_REPOSITORY);
   const latest = history[0] ?? null;
   const green = history.find((run) => run.qualified) ?? null;
   let changed = [];
