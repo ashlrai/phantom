@@ -133,6 +133,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Preview or remove finished job worktrees | [Worktree prune](https://github.com/ashlrai/phantom/blob/master/docs/WORKTREE-PRUNE.md) |
 | Reclaim rebuildable disk bytes by class, or install the daily maintenance job | [Standing disk maintenance](DISK-MAINT.md) |
+| Act on Eng Ops incident files for a stuck release, a launchd loop, a stalled lane, or outside load | [Autofix](https://github.com/ashlrai/phantom/blob/master/docs/AUTOFIX.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Understand the signed desktop updater feed and its published-state verification | [Desktop update channel](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-UPDATE-CHANNEL.md) |
 | Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-RELEASE-CONTRACTS.md) |
