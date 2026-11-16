@@ -120,7 +120,11 @@ function importersOf(cwd, path, testFiles) {
   return hits;
 }
 
-export function selectRelated({ cwd, paths, graph = null }) {
+// `cap` defaults to the fast-gate budget. Preflight passes a larger cap; the
+// fast gate keeps MAX_RELATED_TESTS. Changed tests and named Tier-1 tests are
+// pinned and are never cut below that count. When `graph` covers every changed
+// source, its direct importers are used; otherwise git grep is.
+export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = null }) {
   const testFiles = new Set(git(cwd, ['ls-files', '-z', '--', 'test']).split('\0').filter((f) => TEST_FILE.test(f)));
   const existing = new Set(git(cwd, ['ls-files', '-z', '--', '.github/tests', 'test']).split('\0'));
   const alive = paths.filter((p) => existing.has(p) || git(cwd, ['ls-files', '--', p]).trim() !== '');
@@ -150,8 +154,8 @@ export function selectRelated({ cwd, paths, graph = null }) {
     for (const p of sources) for (const f of importersOf(cwd, p, testFiles)) importers.add(f);
   }
   for (const f of [...importers].sort()) add(f, true);
-  const cap = Math.max(MAX_RELATED_TESTS, pinned);
-  return { tests: ranked.slice(0, cap), capped: Math.max(0, ranked.length - cap), deferred, node: domain.node };
+  const limit = Math.max(cap, pinned);
+  return { tests: ranked.slice(0, limit), capped: Math.max(0, ranked.length - limit), deferred, node: domain.node };
 }
 
 // Bounded broader set: every Tier-1 test plus an even, deterministic spread of
