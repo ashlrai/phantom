@@ -191,18 +191,34 @@ export function estimateLane(lane: SelfLane, state: LaneState | undefined, rows:
   const asOf = Date.parse(state.asOf);
   if (!Number.isFinite(asOf) || asOf > nowMs) return null;
   const resetMs = state.resetAt ? Date.parse(state.resetAt) : NaN;
-  if (Number.isFinite(resetMs) && nowMs >= resetMs) return null;
-  const basePct = state.pctUsed;
-  const { units, unmeasured } = consumed(lane, rows, asOf, nowMs);
+  const expired = Number.isFinite(resetMs) && nowMs >= resetMs;
+  let from = asOf;
+  let resetAt = state.resetAt;
+  if (expired) {
+    // A passed reset opens a new window. Fixed schedules roll forward by whole
+    // periods; lanes without one (Devin) keep the percent at the new-window
+    // usage and report the next reset as unknown.
+    if (spec.periodMs === null) {
+      resetAt = null;
+      from = resetMs;
+    } else {
+      let next = resetMs;
+      for (let guard = 0; nowMs >= next && guard < 1000; guard += 1) next += spec.periodMs;
+      resetAt = isoOf(next);
+      from = next - spec.periodMs;
+    }
+  }
+  const carry = expired ? 0 : state.pctUsed;
+  const { units, unmeasured } = consumed(lane, rows, from, nowMs);
   let pct: number | null;
-  if (units === 0) pct = basePct;
-  else if (state.unitsPerPct && state.unitsPerPct > 0) pct = basePct + units / state.unitsPerPct;
+  if (units === 0) pct = carry;
+  else if (state.unitsPerPct && state.unitsPerPct > 0) pct = carry + units / state.unitsPerPct;
   else pct = null;
   const used = pct === null ? null : clampPct(pct);
   const credits = state.limit !== null && used !== null ? Math.max(0, Math.round(state.limit * (1 - used / 100) * 100) / 100) : null;
   const hours = (nowMs - asOf) / HOUR;
-  const burn = used !== null && hours > 0 ? Math.max(0, Math.round((used - state.pctUsed) / hours * 100) / 100) : null;
-  return { ...base, weekly_used_pct: used, credits_remaining: credits, reset_at: state.resetAt,
+  const burn = !expired && used !== null && hours > 0 ? Math.max(0, Math.round((used - state.pctUsed) / hours * 100) / 100) : null;
+  return { ...base, weekly_used_pct: used, credits_remaining: credits, reset_at: resetAt,
     source: 'estimate:phantom-accounting+last-reading', burn_pct_per_hour: burn, ...(unmeasured ? { unmeasured_jobs: unmeasured } : {}) };
 }
 
