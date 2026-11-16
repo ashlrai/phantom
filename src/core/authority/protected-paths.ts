@@ -374,6 +374,12 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
     patterns: ['src/core/comms-agent/'],
     why: 'Comms send policy decides what may leave the machine',
   },
+  {
+    id: 'real-home',
+    scope: 'self-repo',
+    patterns: ['src/core/real-home.ts', 'test/real-home-child.test.ts'],
+    why: 'Account home for KILL, pause and send policy; a relocated HOME must not retarget it',
+  },
 ];
 
 /** Every rule, first match wins (all-repo rules first: their reasons are the more specific ones). */
