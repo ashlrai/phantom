@@ -57,6 +57,14 @@ enforced; the PR merges only when they pass on their own. Rows report
 `needs-person` rows carry the classifier reason. `retry_requested` is also a
 `--record` type so another writer can share the same bound.
 
+Before arming, `merge-retry` lists the repo's open PRs once per run and skips a
+candidate that shares a file with another armed, non-draft PR
+(`predicted-conflict`): the armed PR lands first, so this arm would be dropped
+again and burn a retry. The skip records nothing and spends no retry. This is
+file-overlap prediction, not a measured Git conflict; a failed listing, a PR
+missing from it, or a file list at the 100-file `gh` cap stays unknown and
+still arms.
+
 A failed submission appends one `retry_failed` event instead — transient
 failures retry on a later run without spending a retry, while three distinct
 failed submissions mark the drop `request-failed` and stop automatic retries
