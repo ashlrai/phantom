@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AshlrConfig } from '../src/core/types.js';
 const runner = vi.hoisted(() => vi.fn());
@@ -46,6 +46,17 @@ describe('approved teammate transport', () => {
     expect(runner).not.toHaveBeenCalled();
     runner.mockImplementation((_file, _args, _options, cb) => cb(new Error('timeout'), '', ''));
     expect(await sendApprovedTeammateMessage('reply', sender, cfg, { configDir, loadConfig: () => cfg })).toBe('uncertain');
+  });
+  it('suppresses every teammate send while the KILL sentinel is armed', async () => {
+    const sentinel = join(homedir(), '.ashlr', 'KILL');
+    mkdirSync(join(homedir(), '.ashlr'), { recursive: true });
+    writeFileSync(sentinel, 'halt', { mode: 0o600 });
+    try {
+      expect(approvedTeammateHandle(sender, cfg, { configDir, loadConfig: () => cfg })).toBeNull();
+      expect(await sendApprovedTeammateMessage('reply', sender, cfg, { configDir, loadConfig: () => cfg })).toBe('refused');
+      expect(runner).not.toHaveBeenCalled();
+    } finally { unlinkSync(sentinel); }
+    expect(approvedTeammateHandle(sender, cfg, { configDir, loadConfig: () => cfg })).toBe(agent);
   });
   it('re-reads live configuration and refuses a peer revoked during generation', async () => {
     expect(approvedTeammateHandle(sender, cfg, { configDir })).toBe(agent);

@@ -156,6 +156,53 @@ receipt for an exact outgoing message match and its sent/delivered flags. Keep
 that evidence tied to the actual responsible native app and source revision;
 a foreground CLI result does not establish desktop background operation.
 
+## Fleet teammate tasks and evidence
+
+Fleet-originated tasks use a separate durable task journal. Inspect configured
+peers and existing tasks without sending:
+
+```sh
+phm fleet imessage-tasks peers --json
+phm fleet imessage-tasks list --json
+```
+
+`imessage-tasks enqueue` requires `--peer dot|instinct`, `--job`,
+`--kind research|triage|report|rebase`, bounded `--scope`, `--repo owner/name`,
+`--format` and a future ISO `--deadline`; optional repeated `--pr` values
+name PR numbers. Enqueue previews by default. `--apply` reserves the task
+and an exclusive CLAIMED queue job owned by `imsg:<peer>`; it does not send.
+`imessage-tasks dispatch` also previews by default; its `--apply` uses the
+approved teammate transport, reconciles uncertain sends, and accepts only
+a matching task result from the expected peer after the outgoing receipt.
+Peer results remain unverified evidence even when the local queue marks DONE.
+
+`imessage-tasks cancel --job <id>` previews withdrawal. With `--apply` it
+withdraws only a provably unsent, unexpired queued task and settles its local
+claim as BLOCKED. Sending, pending, expired and replied tasks refuse; cancellation
+does not assert a remote stop. `teammate-tasks` exposes the older
+enqueue/dispatch/list/peers interface; prefer `imessage-tasks` for bounded
+receipts that omit private task correlation tokens.
+
+Counts and metadata readers help distinguish configuration, intake and delivery:
+
+```sh
+phm fleet imessage-path --json
+phm fleet imessage-acks --limit 20 --json
+phm fleet imessage-acks --rowid 123 --json
+phm fleet teammates --json
+phm fleet teammate-latency --window-hours 24 --target-minutes 5 --json
+```
+
+`imessage-path` reports bounded local path evidence; its legacy owner-only
+transport and unsupported-collaborator states do not assess the separate
+teammate task transport described above. `imessage-acks` reads the
+acknowledgement journal; no match in its bounded tail does not prove a message
+was never ingested, and recorded-not-sent is not delivery. `teammates` shows
+declared counterparts and masked handles with observed text times. Latency
+summarizes recorded replies and unanswered age; missing sources remain unknown.
+The read-only fleet MCP equivalents are in the
+[fleet MCP onramp](FLEET-MCP-ONRAMP.md#coordination-and-imessage-observations).
+
 ## Check it
 
 ```bash
@@ -186,10 +233,12 @@ tagged `[src:imessage]`. Replies the Leader writes for you (entries in
 can be texted back to that same handle, once each.
 
 ```bash
-phm imessage replies --json   # dry run by default: counts what is waiting, sends nothing
+phm imessage replies --json   # sends when comms.leaderRepliesSend is true
 ```
 
-To send for real, set `comms.leaderRepliesSend` to `true` in `~/.ashlr/config.json`.
+With `comms.leaderRepliesSend` unset or false, this is a dry run. Setting it to
+`true` in `~/.ashlr/config.json` enables sending on this command and on
+`poll --apply`; `--json` selects output format and does not force a dry run.
 Replies go only to `comms.imessageHandle`, never to anyone else. Each reply is
 recorded by hash in `~/.ashlr-runs/imessage/leader-sent.jsonl` (mode 0600), so it
 is never sent twice. The first live pass marks existing replies as already seen,

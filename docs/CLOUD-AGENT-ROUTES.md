@@ -49,6 +49,7 @@ On the host, these CLI reads are also supported (use `--json`):
 | `ashlr fleet work-board` | The bus work board and availability indicators. |
 | `ashlr fleet order-state` | Inbox order classifications from order-trace and live evidence. |
 | `ashlr fleet runtime-identity` | Sanitized runtime identity and version/freshness evidence. |
+| `ashlr fleet runtime` | Runtime identity plus coordination ledger state (active claims, newest return age) in one sanitized snapshot with one `asOf`. |
 | `ashlr fleet bridge-check` | The same READY or BLOCKED reachability verdict (`--json`); exits 0 when READY, 3 when BLOCKED. |
 | `ashlr fleet peer-ledger` | Peer bus rate-limit, capacity and hop budget (`--json`, or `--from-agent` with `--target` for one exact pair). |
 | `ashlr fleet tailnet-peers` | Sanitized tailnet peer evidence. |
