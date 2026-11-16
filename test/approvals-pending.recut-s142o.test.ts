@@ -115,13 +115,16 @@ describe('readPendingProposals', () => {
   });
 
   it('scrubs secret-shaped strings out of every free-text field', () => {
-    // Password-shaped prose — redacted by scrubSecrets but ignored by the
-    // diff secret scan, which only matches key=value/key:value assignments.
+    // Password-shaped prose is redacted by scrubSecrets. The JSON api_key
+    // shape from the rebased branch is covered too. Neither value may survive.
     makeProposal({ title: 'rotate password kT8w2Zp9xQ now', summary: 'see password kT8w2Zp9xQ' });
+    makeProposal({ title: 'rotate {"api_key":"12345678secret"} now', summary: 'see {"api_key":"12345678secret"}' });
     const section = readPendingProposals();
     const wire = JSON.stringify(section);
     expect(wire).not.toContain('kT8w2Zp9xQ');
+    expect(wire).not.toContain('12345678secret');
     expect(section.items[0]!.title).toContain('[REDACTED]');
+    expect(section.items[1]!.title).toContain('[REDACTED]');
   });
 });
 
