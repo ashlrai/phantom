@@ -17,6 +17,7 @@
 
 import { cmdUsageSensors } from './usage-sensors.js';
 import { cmdUsageLive } from './usage-live.js';
+import { cmdUsageResourceLive } from './usage-resource-live.js';
 import { makeColors, isTty } from './ui.js';
 
 const { bold, dim, cyan, green, yellow, red } = makeColors(isTty());
@@ -198,6 +199,7 @@ export async function cmdUsage(args: string[]): Promise<number> {
   }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
   if (args[0] === 'live') return cmdUsageLive(args.slice(1));
+  if (args[0] === 'resource-live') return cmdUsageResourceLive(args.slice(1));
   if (args[0] === 'validate') {
     if ((args.length !== 2 && args.length !== 3) || !args[1] || args[1].startsWith('-') ||
         (args.length === 3 && args[2] !== '--json')) {
@@ -273,6 +275,8 @@ function printUsage(): void {
   console.log('  --refresh uses official APIs and CLIs only.');
   console.log('  phm usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]');
   console.log('  tracks usage, resets and alerts at 80 and 95 percent; --browser reads the usage pages.');
+  console.log('  phm usage resource-live [--json] [--watch] [--force] [--show] [--browser [--headed]] [--runs-dir <abs>]');
+  console.log('  writes state/resource-live.json: every allowance with source and observed time, plus the burn-down order.');
   console.log('  Reading a snapshot automatically refreshes stale Codex personal usage');
   console.log('  when its pool home is configured; the snapshot is not rewritten.');
   console.log('  Codex refresh uses PHANTOM_SENSOR_CODEX_CMP_HOME and');

@@ -687,3 +687,10 @@ Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `frameBusInbox(cli, messages)`. Identities are routing names and grant no authority.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
+
+`fleet.specialist-identity.v1` adds a read-only identity/outcome projection over
+specialist roster metadata, orchestration assignments and real jobs.jsonl rows.
+Optional role, capabilities, machine/lane affinity and peer mappings persist in
+roster v1. Legacy counters never supply measured outcomes; missing evidence is
+explicit and peer mappings confer no authority. See the
+[specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).

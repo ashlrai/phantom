@@ -5,7 +5,8 @@ from source `c13cdc4c37b425e21d1c5138183196b394ee017e`. It is historical referen
 not current release instructions. Use [Releasing Phantom](RELEASING.md) for
 the commissioned canonical path. Do not replay completed publication effects.
 
-The body below is unchanged; its SHA256 is `6df3f0d204c501eba917d0052c4a7f070ad2bb755e912d111d4a9f54e16547dc`.
+The body below is the historical record after the retired admission workflow
+filename was removed. Its SHA256 is `5d3f545a87d9759c2a5b0a7b2e9c6569dde69ccdfa7831d5d4d2203900e62f36`.
 
 > **Verified distribution state — 2026-09-05 UTC:** `@ashlr/hub@3.3.2` is the
 > accepted npm production version. Both npm dist-tags, `latest` and `candidate`,
@@ -418,7 +419,7 @@ post-effect receipt currently binds that mutation to the admission artifact.
 That auditability gap does not authorize a repeat promotion and should be
 closed by a credential-free post-promotion observation receipt.
 
-Before the completed dispatch of `.github/workflows/promote.yml`, a repository
+Before that completed admission dispatch, a repository
 administrator configured the `npm-production-promotion` environment with all
 of these controls:
 
@@ -430,21 +431,21 @@ of these controls:
 - no environment secrets.
 
 This is an explicit single-owner production gate, not independent or
-two-person approval. Another maintainer or automation may dispatch the
-observation workflow, but only `masonwyatt23` can approve the protected job.
+two-person approval. Another maintainer or automation could dispatch the
+observation, but only `masonwyatt23` could approve the protected job.
 
-The workflow was dispatched from protected `master` with the successful release
+Admission was dispatched from protected `master` with the successful release
 run ID, exact 3.3.2 candidate SRI, acceptance-receipt SHA-256, canonical
 `acceptance_observed_at`, and the explicit acceptance confirmation. The
-acceptance digest and timestamp are human attestations: the workflow does not
+acceptance digest and timestamp are human attestations: admission did not
 retrieve the acceptance receipt, and neither value grants release, npm,
 installation, activation, provider, credential, or spend authority. The
 timestamp must not be in the future and must be no more than 24 hours old both
 when admission begins and when its receipt is created.
 
-The workflow is observation-only. It has no npm credentials, OIDC permission,
-or executable npm mutation command and cannot promote the package. Its only
-writes are a bounded GitHub receipt artifact and bounded job summary. Any
+The admission was observation-only. It had no npm credentials, OIDC permission,
+or executable npm mutation command and could not promote the package. Its only
+writes were a bounded GitHub receipt artifact and bounded job summary. Any
 rerun, expired acceptance, or drift in the source SHA, protected branch,
 release/tag identity, candidate integrity or dist-tags, quarantined 3.3.0
 integrity/tag identity, failed v3.3.1 tag/run/npm/GitHub-Release absence,
@@ -510,8 +511,8 @@ After both npm dist-tags resolved to the accepted 3.3.2 package, PR #340 merged
 the one-shot stable-finalization lane to protected `master` at
 `1a7d44efe7a8383513fea4dbfa6746fdeb9fa93d`. Workflow run `33937472105`,
 attempt 1, then completed successfully from that exact commit. Do not rerun the
-completed finalization or repurpose the observation-only `promote.yml`: the
-latter has no mutation authority by design.
+completed finalization. The retired observation-only admission had no
+mutation authority by design.
 
 The dedicated `github-stable-release-finalization` environment, ID
 `21286317607`, was verified with protected branches only, no custom branch

@@ -57,7 +57,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Shared task board: `bus` is the same as `fleet bus`.
   'bus',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
+  'worktrees', 'drive', 'bets', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
   // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
   'trail',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
@@ -66,6 +66,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // Eng Ops incident auto-fix (RQ-SELF-AWARE-AUTOFIX-1).
+  'autofix',
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
   'worklog', 'library',
@@ -81,6 +83,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
+  autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
@@ -88,7 +91,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   radar: ['list', 'run', 'diff', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
-  usage: ['sensors', 'live', 'validate', '--json', '--refresh', '--file', '--watch', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--help'],
+  usage: ['sensors', 'live', 'resource-live', 'validate', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--help'],
   observe: ['session', '--json', '--human-steps', '--bottlenecks', '--prs', '--days', '--claim-minutes', '--help'],
   budget: ['show', 'add', 'get', 'set', '--json', '--provider', '--period', '--usd', '--bucket', '--remaining', '--reset-at', '--at', '--source', '--input', '--help'],
   world: ['get', '--json', '--refresh', '--help'],
@@ -107,10 +110,12 @@ const SUBCOMMANDS: Record<string, string[]> = {
   land: ['auto', '--repo', '--apply', '--json', '--help'],
   job: ['cost', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'prod', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'prod', 'loop', 'help'],
+  bets: ['list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
+  router: ['rank', 'serve', 'models', 'pick', 'config'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
   verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],

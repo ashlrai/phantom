@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import {
   classifyPaths, plan, changedPaths, selectRelated, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
 } from '../scripts/ci-fast-select.mjs';
-import { failedTestFiles } from '../scripts/ci-fast-run.mjs';
+import { failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
 import { prNumber, related, attribute } from '../scripts/ci-fast-attribute.mjs';
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -124,6 +125,13 @@ test('changedPaths uses the merge-base diff and rejects a mismatched checkout', 
   assert.throws(() => changedPaths({ base: 'main', head, cwd: dir }), /exact commit SHAs/);
 });
 
+test('fallback shards share the runner instead of each taking every CPU', () => {
+  assert.equal(shardWorkers(4, 3), 1);
+  assert.equal(shardWorkers(16, 3), 5);
+  assert.equal(shardWorkers(2, 3), 1);
+  assert.equal(shardWorkers(8, 0), 8);
+});
+
 test('failed test files parse from vitest and node output', () => {
   const log = ' FAIL  |unit| test/a.test.ts > suite > case\nAssertionError\n × test/b.test.ts 12ms\n✗ .github/tests/c.test.mjs\n FAIL  |real-io| test/a.test.ts > other\n';
   assert.deepEqual(failedTestFiles(log), ['.github/tests/c.test.mjs', 'test/a.test.ts', 'test/b.test.ts']);
@@ -141,6 +149,57 @@ test('an explicit cap can keep more than the fast-gate maximum', (t) => {
   assert.equal(wide.tests.length, 30);
   assert.ok(capped.capped > 0);
   assert.equal(wide.capped, 0);
+});
+
+function fastGateSparsePatterns() {
+  const yml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../workflows/ci.yml'), 'utf8');
+  const start = yml.indexOf('\n  fast-gate:\n');
+  assert.ok(start > 0, 'fast-gate job');
+  const rest = yml.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[a-z0-9-]+:\n/);
+  const job = next < 0 ? rest : rest.slice(0, next + 1);
+  const marker = 'sparse-checkout: |';
+  const at = job.indexOf(marker);
+  assert.ok(at > 0, 'fast-gate sparse-checkout');
+  const patterns = [];
+  for (const line of job.slice(at + marker.length).split('\n').slice(1)) {
+    if (line.trim() === '') continue;
+    if (line.search(/\S/) < 12) break;
+    patterns.push(line.trim());
+  }
+  return patterns;
+}
+
+function coveredBySparse(file, patterns) {
+  return patterns.some((pattern) => file === pattern || file.startsWith(`${pattern}/`));
+}
+
+function relativeSpecifiers(text) {
+  return [...text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)['"](\.[^'"]+)['"]/g)].map((match) => match[1]);
+}
+
+test('a warm sparse checkout covers every import of ci-fast-select', () => {
+  // Runs while fast-gate is still sparse. A restored graph does not expand it.
+  // The select step runs while the fast-gate sparse checkout is still on.
+  // A restored dependency graph does not expand it, so every relative import
+  // has to be inside that list or the step cannot load the module.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const patterns = fastGateSparsePatterns();
+  const missing = [];
+  const seen = new Set();
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    if (!coveredBySparse(file, patterns)) missing.push(file);
+    const text = readFileSync(join(repoRoot, file), 'utf8');
+    for (const spec of relativeSpecifiers(text)) {
+      const next = normalize(join(dirname(file), spec)).replaceAll('\\', '/');
+      walk(next);
+    }
+  };
+  walk('.github/scripts/ci-fast-select.mjs');
+  assert.deepEqual(missing, []);
+  assert.ok(patterns.includes('test/config'));
 });
 
 test('merge group attribution maps a failing test to the PR whose commit touched its source', (t) => {

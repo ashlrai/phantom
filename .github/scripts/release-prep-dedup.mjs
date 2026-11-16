@@ -31,12 +31,47 @@ export function releasePrepDecision({ checks, runs }) {
   return { dispatch: true, reason: 'needed' };
 }
 
-function githubJson(path) {
-  assert.match(path, /^repos\/ashlrai\/phantom\/(?:commits\/[a-f0-9]{40}\/check-runs|actions\/workflows\/ci\.yml\/runs)\?/);
-  const text = execFileSync('gh', ['api', '--hostname', 'github.com', path], {
-    encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return JSON.parse(text);
+export function rateLimitDelay(status, headers, body, attempt, now = Date.now()) {
+  if (status !== 429 && !(status === 403 && (/rate limit/i.test(body) || headers['x-ratelimit-remaining'] === '0' || headers['retry-after']))) return null;
+  const retry = headers['retry-after'];
+  const retryMs = retry ? (/^\d+$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - now)) : 0;
+  const reset = Number(headers['x-ratelimit-reset']);
+  const resetMs = headers['x-ratelimit-remaining'] === '0' && Number.isFinite(reset) ? Math.max(0, reset * 1000 - now + 1000) : 0;
+  return Math.max(1000 * 2 ** (attempt - 1), Number.isFinite(retryMs) ? retryMs : 0, resetMs);
+}
+
+// One shared budget covers all inventory requests in this invocation.
+let waited = 0;
+export function githubJson(path, invoke = execFileSync, sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
+  assert.match(path, /^repos\/ashlrai\/phantom\/(?:commits\/[a-f0-9]{40}\/check-runs\?|actions\/workflows\/ci\.yml\/runs\?|commits\/master$)/);
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    let response;
+    try {
+      response = invoke('gh', ['api', '--include', '--hostname', 'github.com', path], {
+        encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      response = String(error.stdout ?? '');
+      if (!response.startsWith('HTTP/')) throw new Error('GitHub API request failed');
+    }
+    const separator = response.indexOf('\r\n\r\n') >= 0 ? '\r\n\r\n' : '\n\n';
+    const split = response.indexOf(separator);
+    assert.ok(split >= 0, 'invalid GitHub API response');
+    const lines = response.slice(0, split).split(/\r?\n/);
+    const status = Number(lines[0].match(/^HTTP\/\S+\s+(\d+)/)?.[1]);
+    const headers = Object.fromEntries(lines.slice(1).map((line) => {
+      const colon = line.indexOf(':');
+      return [line.slice(0, colon).toLowerCase(), line.slice(colon + 1).trim()];
+    }));
+    const body = response.slice(split + separator.length);
+    if (status >= 200 && status < 300) return JSON.parse(body);
+    const delay = rateLimitDelay(status, headers, body, attempt);
+    if (delay === null) throw new Error(`GitHub API request failed (HTTP ${status})`);
+    if (attempt === 4 || waited + delay >= 180_000) throw new Error(`GitHub API rate limit persisted after ${attempt} attempt(s); retry budget exhausted`);
+    waited += delay;
+    sleep(delay);
+  }
+
 }
 
 export function readReleasePrep(repo, sha, read = githubJson) {
@@ -59,8 +94,9 @@ export function readReleasePrep(repo, sha, read = githubJson) {
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     assert.equal(process.env.REPO, 'ashlrai/phantom');
-    assert.match(process.env.SHA ?? '', SHA);
-    const decision = readReleasePrep(process.env.REPO, process.env.SHA);
+    const sha = githubJson(`repos/${process.env.REPO}/commits/master`).sha;
+    assert.match(sha ?? '', SHA);
+    const decision = readReleasePrep(process.env.REPO, sha);
     appendFileSync(process.env.GITHUB_OUTPUT, `dispatch=${decision.dispatch}\n`);
     process.stdout.write(`${JSON.stringify(decision)}\n`);
   } catch (error) {

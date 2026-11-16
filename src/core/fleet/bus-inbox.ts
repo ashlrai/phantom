@@ -44,6 +44,9 @@ function missing(path: string): boolean {
   try { lstatSync(path); return false; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true; throw new Error('Unavailable'); }
 }
+/** Shared with sibling bus ledgers (bus-transport-file.ts): exact-private path
+ * check that throws, and an ENOENT-only absence probe that throws otherwise. */
+export { privatePath as assertPrivateBusPath, missing as busPathMissing };
 /** Snapshot version 2 keeps a monotonic high-water cursor beside sparse rows. */
 const BUS_INBOX_SNAPSHOT_VERSION = 2;
 interface BusInboxStore {

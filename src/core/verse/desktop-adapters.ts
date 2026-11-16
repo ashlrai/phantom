@@ -176,7 +176,7 @@ export interface DesktopAppAdapterOptions {
 
 export type TreeRead = { ok: true; entries: AxEntry[]; truncated?: boolean } | { ok: false; error: string };
 
-async function readTree(call: ToolCall, bundle: string, maxDepth: number): Promise<TreeRead> {
+export async function readTree(call: ToolCall, bundle: string, maxDepth: number): Promise<TreeRead> {
   const res = await call('computer_ax_tree', { app: bundle, max_depth: maxDepth });
   if (res.isError) return { ok: false, error: toText(res).slice(0, 300) };
   return { ok: true, entries: parseAxTree(toText(res)), truncated: /\btruncated\b/.test(toText(res)) };

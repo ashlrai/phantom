@@ -153,6 +153,9 @@ export interface QueueTimeline {
   repo: string; pr: number; enqueued_at: string | null; eligible_at: string | null; merged_at: string | null;
   blocked: { at: string; reason: BlockerReason }[];
   enqueue_to_eligible_s: number | null; eligible_to_merge_s: number | null;
+  /** Readiness may precede admission; queued-first PRs have zero admission wait. */
+  ready_to_queue_s: number | null; ready_in_queue_s: number | null;
+  dominant_delay: 'queue_admission' | 'queue_execution' | null;
   /** Current queue dwell for an open PR with exactly one timed enqueue. */
   current_dwell_s: number | null;
   wait_by_reason_s: Partial<Record<BlockerReason, number>> | null;
@@ -221,6 +224,20 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
   const valid = enqueued_at && eligible_at && merged_at && Date.parse(enqueued_at) <= Date.parse(eligible_at)
     && Date.parse(eligible_at) <= Date.parse(merged_at)
     && blocked.every(b => Date.parse(b.at) >= Date.parse(enqueued_at) && Date.parse(b.at) < Date.parse(eligible_at));
+  // Readiness-to-merge does not depend on observing enqueue. Do not attribute
+  // one readiness episode across reblocking, conflicts, closure or head changes.
+  const readyEvents = eligible_at ? events.filter(e => eventTime(e) >= Date.parse(eligible_at)) : [];
+  const priorHead = eligible_at ? events.filter(e => e.head_sha && eventTime(e) <= Date.parse(eligible_at)).at(-1)?.head_sha : undefined;
+  const heads = [priorHead, ...readyEvents.map(e => e.head_sha)].filter((head): head is string => !!head);
+  const readyValid = eligible_at && merged_at && Date.parse(eligible_at) <= Date.parse(merged_at)
+    && !events.some(e => e.type === 'closed')
+    && !readyEvents.some(e => e.type === 'blocked' || e.type === 'conflict')
+    && !readyEvents.some(e => e.type === 'check_observed' && e.required === true && e.conclusion === 'failure')
+    && new Set(heads.map(head => head.toLowerCase())).size <= 1;
+  const readyToMerge = readyValid ? gap(Date.parse(eligible_at!), Date.parse(merged_at!)) : null;
+  const admission = readyValid && enqueued_at && Date.parse(enqueued_at) <= Date.parse(merged_at!)
+    ? Math.max(0, Math.round((Date.parse(enqueued_at) - Date.parse(eligible_at!)) / 1000)) : null;
+  const execution = admission !== null && readyToMerge !== null ? readyToMerge - admission : null;
   // A blocker starts an interval and the next blocker or eligibility ends it.
   // Without an observation at enqueue, the preceding time has no known reason.
   const wait: Partial<Record<BlockerReason, number>> = {};
@@ -242,7 +259,9 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
     current_dwell_s: enqueued_at && !events.some(e => e.type === 'merged' || e.type === 'closed')
       ? gap(Date.parse(enqueued_at), now) : null,
     enqueue_to_eligible_s: valid ? gap(Date.parse(enqueued_at!), Date.parse(eligible_at!)) : null,
-    eligible_to_merge_s: valid ? gap(Date.parse(eligible_at!), Date.parse(merged_at!)) : null };
+    eligible_to_merge_s: readyToMerge, ready_to_queue_s: admission, ready_in_queue_s: execution,
+    dominant_delay: admission === null || execution === null || admission === execution ? null
+      : admission > execution ? 'queue_admission' : 'queue_execution' };
 }
 
 /** Append one validated observation; never runs a merge or changes checks. */
@@ -427,7 +446,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
     line('Waiting to join the queue', r.opened_to_queue),
     line('Queue to merge', r.queue_to_merge),
     ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.`),
-    ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
+    ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; ready before queue ${secs(t.ready_to_queue_s)}, ready in queue ${secs(t.ready_in_queue_s)}; dominant ready delay: ${t.dominant_delay?.replace('_', ' ') ?? 'unknown'}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
     stateTimeLine(r.queue_state_time!),
     line('Open to merge', r.total),
     `Pending auto-merge: ${r.pending_auto_merge!.length} (${r.pending_auto_merge!.filter(p => p.stalled).length} stalled after ${r.stalled_after_s}s, ${r.pending_auto_merge!.filter(p => p.stalled === null).length} unknown waits).`,

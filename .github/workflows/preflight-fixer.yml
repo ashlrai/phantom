@@ -1,20 +1,16 @@
 # Predicted-reds preflight for the six-hour full suite.
 # The full suite cron is 17 */6 (00:17, 06:17, 12:17, 18:17 UTC). This workflow
-# starts at 37 5,11,17,23, which is 40 minutes earlier, and again when Auto-tag
-# is requested while master still owes a published release. It runs only the
-# predicted set on a GitHub-hosted runner. It does not change Merge Gate, the
-# secret-shape or clean-tree gates, signing, tags, drafts, or the release
-# workflows.
+# starts at 37 5,11,17,23, which is 40 minutes earlier. Auto-tag starts the
+# same workflow with workflow_dispatch on master when it runs. It runs only
+# the predicted set on a GitHub-hosted
+# runner. It does not change Merge Gate, the secret-shape or clean-tree gates,
+# signing, tags, drafts, or the release workflows.
 name: Preflight fixer
 
 on:
   schedule:
     - cron: "37 5,11,17,23 * * *"
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Auto-tag"]
-    types: [requested]
-    branches: [master]
 
 permissions: {}
 
@@ -26,10 +22,7 @@ jobs:
   preflight:
     if: >-
       github.repository == 'ashlrai/phantom' &&
-      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master') &&
-      (github.event_name != 'workflow_run' ||
-        (github.event.workflow_run.head_repository.full_name == github.repository &&
-         github.event.workflow_run.head_branch == 'master'))
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master')
     name: Preflight predicted tests
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -43,7 +36,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: master
-          fetch-depth: 0
+          fetch-depth: 40
           persist-credentials: false
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

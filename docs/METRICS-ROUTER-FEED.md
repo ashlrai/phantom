@@ -166,3 +166,8 @@ fleet share sums feature, fleet and fix over all observed merges, including
 unknowns in the denominator; it is a known minimum when classifications are
 missing. Missing ledgers and empty windows return null shares. The report
 reflects available ledger and export evidence, not proof of complete coverage.
+
+## Self-awareness loop and bets lane
+
+`phm metrics loop` and `phm bets` (loop report, selection hints, bets share and
+the kill-fast ledger) are documented in [BETS-LANE.md](BETS-LANE.md).

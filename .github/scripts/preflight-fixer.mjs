@@ -18,8 +18,8 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { fullHistory } from './ci-master-full.mjs';
 import { failedTestFiles } from './ci-fast-run.mjs';
+import { boundedHistory, ensureCommitReachable, gitRunner } from './preflight-history.mjs';
 import {
   changedPaths, classifyPaths, needsDist, selectFallback, selectRelated,
 } from './ci-fast-select.mjs';
@@ -30,7 +30,7 @@ export const LABEL = 'p0-fix-forward';
 export const SUMMARY_TITLE = '[P0 fix-forward] preflight predicted reds';
 export const CLOUD_CAP = 40;
 export const REPO = 'ashlrai/phantom';
-const CAUSES = new Set(['schedule', 'workflow_dispatch', 'workflow_run']);
+const CAUSES = new Set(['schedule', 'workflow_dispatch']);
 const RUNNABLE = /^(?:test\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts|\.github\/tests\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.mjs)$/;
 
 export function isRunnableTest(file) {
@@ -319,12 +319,21 @@ function runUrl() {
   return `https://github.com/ashlrai/phantom/actions/runs/${id}`;
 }
 
+export async function loadHistory(repo, api = apiGet) {
+  try { return await boundedHistory({ repo, api }); } catch (error) {
+    console.log(`CI history unavailable (${error?.message ?? 'unknown'}); using fallback selection`);
+    return { latest: null, green: null, evidence: [], capped: true };
+  }
+}
+
 async function planMain(cwd) {
   requireProducerEnvironment(process.env);
   const cause = process.env.PREFLIGHT_CAUSE ?? '';
-  assert.ok(CAUSES.has(cause), 'PREFLIGHT_CAUSE must be schedule, workflow_dispatch, or workflow_run');
+  assert.ok(CAUSES.has(cause), 'PREFLIGHT_CAUSE must be schedule or workflow_dispatch');
   const head = headSha(cwd);
-  if (cause === 'workflow_run') {
+  // A dispatch from Auto-tag is workflow_dispatch. Skip unless a published
+  // release is still owed, and do not stack another run for the same SHA.
+  if (cause === 'workflow_dispatch') {
     const owed = await owedRelease(cwd);
     const covered = owed && coveredByExistingRun({
       runs: recentPreflightRuns(head), selfId: Number(process.env.GITHUB_RUN_ID), headSha: head, now: Date.now(),
@@ -338,9 +347,11 @@ async function planMain(cwd) {
       return;
     }
   }
-  const history = await fullHistory({ repo: process.env.GITHUB_REPOSITORY });
-  const latest = history[0] ?? null;
-  const green = history.find((run) => run.qualified) ?? null;
+  // Advisory run: a transient CI metadata failure must not fail the job. Without
+  // history there is no known green base, so the fallback selection runs.
+  const history = await loadHistory(process.env.GITHUB_REPOSITORY);
+  const latest = history.latest ?? null;
+  const green = history.green ?? null;
   let changed = [];
   let selection;
   if (!green) {
@@ -348,6 +359,8 @@ async function planMain(cwd) {
     selection = { mode: 'fallback', reason: 'no prior green full run', tests: picked.tests, node: picked.node, deferred: [] };
   } else {
     try {
+      const reach = ensureCommitReachable({ git: gitRunner(cwd), sha: green.head_sha });
+      console.log(`preflight base: ${reach.mode} deepens=${reach.deepens} unshallow=${reach.unshallow}`);
       changed = changedPaths({ base: green.head_sha, head, cwd });
       selection = affectedFromPaths({ cwd, paths: changed });
     } catch {

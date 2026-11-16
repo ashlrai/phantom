@@ -173,7 +173,8 @@ export function classifyMergeQueuePr(
   // The queue tests each entry against the latest base itself, so a green
   // BEHIND PR is enqueued as is; updating it first would only restart CI.
   if (green && repo.mergeQueue) {
-    if (pr.autoMerge) return 'queued';
+    // Auto-merge can remain armed without queue membership. Only inMergeQueue
+    // above proves admission; retry through the same head-pinned, bounded path.
     return pr.filesTruncated || pr.files.some(securityPinnedPath) ? 'pinned' : 'enqueue';
   }
   if (pr.mergeState === 'BEHIND') {

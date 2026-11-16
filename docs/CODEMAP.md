@@ -81,6 +81,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/ask/`
 - `src/core/ask-flow/`
 - `src/core/authority/`
+- `src/core/autofix/`
 - `src/core/automations/`
 - `src/core/autonomy/`
 - `src/core/autopilot/`
@@ -156,6 +157,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router-gateway/`
 - `src/core/routines/`
 - `src/core/routing/`
 - `src/core/routing-eval/`

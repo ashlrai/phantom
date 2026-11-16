@@ -22,7 +22,7 @@
  * ledger can never masquerade as a release flood. The ledger stores
  * dedupeKey + timestamp only — never message text, tokens or thread
  * contents. Labels grant no authority. */
-import { appendFileSync, chmodSync } from 'node:fs';
+import { appendFileSync, chmodSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { planClaimThreadNotices, type ClaimThreadBinding, type ClaimThreadNotice,
   type ClaimThreadSnapshot } from './claim-thread-notice.js';
@@ -46,8 +46,10 @@ export interface ClaimNoticeSendDeps {
   readPrevSnapshot: () => ClaimThreadSnapshot | null;
   /** Persist the snapshot for the next diff; called only on a clean pass. */
   writePrevSnapshot: (snapshot: ClaimThreadSnapshot) => void;
-  /** claimId+repo → exact source thread bindings. */
-  readBindings: () => readonly ClaimThreadBinding[];
+  /** claimId+repo → exact source thread bindings. `null` means the durable
+   * bindings are unreadable (not merely empty): the pass retains the pending
+   * transition instead of planning against an untrusted empty set. */
+  readBindings: () => readonly ClaimThreadBinding[] | null;
   /** Delivered dedupeKeys; `null` means the ledger cannot be trusted (refuse). */
   readSentLedger: () => ReadonlySet<string> | null;
   /** Ledger one delivered dedupeKey (timestamped row, no text). */
@@ -70,7 +72,7 @@ export interface ClaimNoticeDelivery {
 }
 
 export interface ClaimNoticePassResult {
-  status: 'completed' | 'dry-run' | 'board-unavailable' | 'ledger-unavailable';
+  status: 'completed' | 'dry-run' | 'board-unavailable' | 'ledger-unavailable' | 'bindings-unavailable';
   reason?: string;
   /** True when there was no usable prior 'known' snapshot to diff against. */
   baselined: boolean;
@@ -99,7 +101,13 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
     state: 'known', claims: board.claims, messages: board.messages, asOf: now,
   };
   const baselined = prev.state !== 'known';
-  const notices = planClaimThreadNotices(prev, next, deps.readBindings(), now);
+  // Unreadable bindings must not look like "no bindings": planning against []
+  // would drop the transition and then advance prev past it. Halt with prev,
+  // ledger and sends untouched so the transition replans after repair.
+  let bindings: readonly ClaimThreadBinding[] | null;
+  try { bindings = deps.readBindings(); } catch { bindings = null; }
+  if (bindings === null) return empty('bindings-unavailable', 'claim-bindings-unreadable');
+  const notices = planClaimThreadNotices(prev, next, bindings, now);
   const delivery = (notice: ClaimThreadNotice, result: ClaimNoticeDelivery['result'],
     extra: Partial<ClaimNoticeDelivery> = {}): ClaimNoticeDelivery =>
     ({ threadKey: notice.threadKey, state: notice.state, dedupeKey: notice.dedupeKey,
@@ -236,12 +244,21 @@ export function readClaimNoticeSent(sentPath: string): Set<string> | null {
 }
 
 /** claimId+repo → thread bindings, last row wins per pair so a corrected
- * binding supersedes rather than colliding. Invalid rows are skipped;
- * an absent, unreadable, or over-budget file binds nothing (the planner drops every
- * notice instead of guessing a thread). */
-export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBinding[] {
+ * binding supersedes rather than colliding. Invalid rows are skipped.
+ * `null` = the durable file exists but cannot be trusted (over the byte or
+ * distinct-row budget, or present yet unopenable: a directory, symlink or
+ * unreadable file). A genuinely ABSENT or empty file is a known-empty set
+ * (`[]`): nothing was ever bound, so ordinary unbound work is dropped by the
+ * planner rather than stranded, and no destination is invented. */
+export function readClaimThreadBindingsState(bindingsPath: string): ClaimThreadBinding[] | null {
   const read = readPrivateFileCapped(bindingsPath, BINDINGS_MAX_BYTES);
-  if (read === null || read.truncated) return [];
+  if (read === null) {
+    try { lstatSync(bindingsPath); } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null;
+    }
+    return null;
+  }
+  if (read.truncated) return null;
   const bindings = new Map<string, ClaimThreadBinding>();
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
@@ -257,10 +274,16 @@ export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBindin
         ...(row.head !== undefined ? { head: row.head as string } : {}),
       };
       bindings.set(JSON.stringify([binding.claimId, binding.repo]), binding);
-      if (bindings.size > SNAPSHOT_MAX_ROWS) return [];
+      if (bindings.size > SNAPSHOT_MAX_ROWS) return null;
     } catch { /* skip a torn line */ }
   }
   return [...bindings.values()];
+}
+
+/** Compatibility reader: unavailable collapses to `[]` (binds nothing). The
+ * sender uses {@link readClaimThreadBindingsState} so it can tell the two apart. */
+export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBinding[] {
+  return readClaimThreadBindingsState(bindingsPath) ?? [];
 }
 
 const claimShape = (v: unknown): boolean => record(v)
@@ -309,7 +332,7 @@ export function claimNoticeFileDeps(root = claimNoticeDir()): Pick<ClaimNoticeSe
   return {
     readPrevSnapshot: () => readClaimNoticePrev(paths.prev),
     writePrevSnapshot: snapshot => writeClaimNoticePrev(paths.prev, snapshot),
-    readBindings: () => readClaimThreadBindings(paths.bindings),
+    readBindings: () => readClaimThreadBindingsState(paths.bindings),
     readSentLedger: () => readClaimNoticeSent(paths.sent),
     appendSentLedger: (dedupeKey, at) => appendClaimNoticeSent(paths.sent, dedupeKey, at),
   };

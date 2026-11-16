@@ -76,7 +76,7 @@ const MAX_COVERED_LIST = 200;
 const POOL_RE = /^[a-z][a-z-]{0,30}$/;
 const PRIORITY_RE = /^P[0-3]$/;
 /** Statuses that mean a queue row/line still occupies the work. */
-const ACTIVE_STATUS = /^(?:READY|CLAIMED|RUNNING|STARTING|DISPATCHED|WORKING|IN-PROGRESS|PARKED(?:-|$)|HOLD-SECURITY)/;
+const ACTIVE_STATUS = /^(?:(?:READY|QUEUED|WAITING|CLAIMED|RUNNING|STARTING|DISPATCHED|WORKING|IN-PROGRESS|PR-OPEN|PUBLISHING|PUBLISH_UNKNOWN|HOLD-SECURITY)$|PARKED(?:-|$))/;
 /** Any rebase-flavoured job id: queuegen's, this planner's, and the hand-run PH batches. */
 const REBASE_JOB_ID = /^RQ-REBASE[A-Za-z0-9]*-/;
 /**
@@ -245,7 +245,7 @@ const escapeRe = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g,
 
 /** RQ-REBASE-<short>-<pr>-… ids cover exactly <pr>. */
 function singleJobPr(id: string, repoShort: string): number | null {
-  const match = new RegExp(`^RQ-REBASE-${escapeRe(repoShort)}-(\\d{1,7})-`, 'i').exec(id);
+  const match = new RegExp(`^RQ-REBASE-${escapeRe(repoShort)}-(\\d{1,7})(?:-|$)`, 'i').exec(id);
   return match ? Number(match[1]) : null;
 }
 
@@ -287,7 +287,7 @@ export function coveredPrNumbers(existing: readonly RebasePlanExistingJob[], rep
   for (const job of existing) {
     const id = job.id ?? '';
     if (!ACTIVE_STATUS.test(job.status.toUpperCase())) continue;
-    if (job.repo !== null && job.repo !== undefined && job.repo !== short) continue;
+    if (job.repo && job.repo.toLowerCase() !== (job.repo.includes('/') ? repo : short).toLowerCase()) continue;
     if (RECUT_JOB_ID.test(id)) {
       const origin = recutJobPr(id, short);
       if (origin !== null) covered.add(origin);
@@ -300,6 +300,15 @@ export function coveredPrNumbers(existing: readonly RebasePlanExistingJob[], rep
     for (const pr of textRefs(job.text)) covered.add(pr);
   }
   return covered;
+}
+
+/** Shared scheduler evidence: live work holds a PR; terminal failures permit a fresh attempt. */
+export function rebaseWorkState(jobs: readonly RebasePlanExistingJob[], repos: readonly string[]) {
+  return {
+    active: new Set(repos.flatMap(repo => [...coveredPrNumbers(jobs, repo)].map(pr => `${repo}#${pr}`))),
+    failed: new Set(jobs.filter(job => /^(FAILED|CANCELLED)$/.test(job.status.toUpperCase()))
+      .flatMap(job => job.id === null ? [] : [job.id])),
+  };
 }
 
 // ---------------------------------------------------------------------------
