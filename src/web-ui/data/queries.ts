@@ -6,6 +6,7 @@
  * so caching, de-dupe, and SSE-driven refresh are automatic.
  */
 import { apiGet } from './client.js';
+import type { BotManifest, BotTemplateSummary } from '../../core/agents/bot-templates.js';
 import type { UniverseGraph } from '../../core/universe/graph-types.js';
 import type {
   AgentOsSnapshotResponse,
@@ -441,4 +442,14 @@ export function modelsQuery(window: ModelStatsWindow): QueryDef<ModelStatsReadRe
 export const portfolioQuery: QueryDef<PortfolioSummary | null> = {
   key: 'portfolio',
   fetch: (signal) => apiGet<PortfolioSummary | null>('/api/portfolio', signal),
+};
+
+export const botTemplatesQuery: QueryDef<{ templates: BotTemplateSummary[] }> = {
+  key: 'bot-templates',
+  fetch: (signal) => apiGet<{ templates: BotTemplateSummary[] }>('/api/bots/templates', signal),
+};
+
+export const botsQuery: QueryDef<{ bots: BotManifest[] }> = {
+  key: 'bots',
+  fetch: (signal) => apiGet<{ bots: BotManifest[] }>('/api/bots', signal),
 };
