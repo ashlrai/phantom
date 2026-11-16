@@ -1109,7 +1109,7 @@ HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_grokbot_changelo
 
 `publish.sh` arms auto-merge only when `arm_gate.py` reports SAFE for the PR head: the six Merge Gate
 hard-required checks completed with success, and nothing relevant is red (failure, timed_out, cancelled,
-action_required, stale). Quick typecheck and authority drift are advisory in Merge Gate but still block arming. Perf
+action_required, stale). Quick typecheck and authority drift are advisory in Merge Gate but must be present and not red to arm (skipped counts). Perf
 budget, CodeRabbit and Vercel are ignored. RED is left unarmed for leader review. PENDING or UNKNOWN waits up to
 `ARM_GATE_WAIT` seconds (default 180), then writes a record in `~/.ashlr-runs/arm-deferred` with an
 `ARM_GATE_DEFER_S` deadline (default 3600). It never arms on a guess.

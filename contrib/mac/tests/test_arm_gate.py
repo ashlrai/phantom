@@ -32,7 +32,7 @@ ALL_GREEN = [("Merge Gate", "completed", "success"), ("Secret-shape scan", "comp
              ("Secret scan (diff)", "completed", "success"), ("Classify PR site lane", "completed", "success"),
              ("Check generated files", "completed", "success"),
              ("Fast gate (typecheck + affected tests)", "completed", "success"),
-             ("Quick typecheck", "completed", "success"), ("CodeRabbit", "completed", "neutral"),
+             ("Quick typecheck", "completed", "success"), ("Check authority drift (hermetic)", "completed", "success"), ("CodeRabbit", "completed", "neutral"),
              ("Perf budget (advisory, non-required)", "in_progress", "")]
 
 
@@ -87,12 +87,19 @@ class ArmGateTests(unittest.TestCase):
         self.assertEqual(self.check(), (0, "SAFE"))
 
     def test_red_authority_drift_blocks_arming(self):
-        self.rows(ALL_GREEN + [("Check authority drift (hermetic)", "completed", "failure")])
+        self.rows(self.swap(ALL_GREEN, "Check authority drift (hermetic)", "completed", "failure"))
         self.assertEqual(self.check()[0], 1)
 
     def test_skipped_quick_and_drift_are_fine(self):
-        self.rows(self.swap(ALL_GREEN, "Quick typecheck", "completed", "skipped") + [("Check authority drift (hermetic)", "completed", "skipped")])
+        self.rows(self.swap(self.swap(ALL_GREEN, "Quick typecheck", "completed", "skipped"), "Check authority drift (hermetic)", "completed", "skipped"))
         self.assertEqual(self.check(), (0, "SAFE"))
+
+    def test_missing_or_running_quick_or_drift_is_pending_not_safe(self):
+        for name in ("Quick typecheck", "Check authority drift (hermetic)"):
+            self.rows([x for x in ALL_GREEN if x[0] != name])
+            self.assertEqual(self.check()[0], 2, name)
+            self.rows(self.swap(ALL_GREEN, name, "in_progress", ""))
+            self.assertEqual(self.check()[0], 2, name)
 
     def test_pending_hard_check_is_pending_not_safe(self):
         self.rows(self.swap(ALL_GREEN, "Merge Gate", "in_progress", ""))
@@ -166,9 +173,19 @@ class ArmGateTests(unittest.TestCase):
 
     def test_publish_arms_only_on_safe_verdict(self):
         block = PUBLISH.split('AG=$(python3 -I -B "$R/bin/arm_gate.py" check', 1)[1].split('echo "RESULT PR', 1)[0]
-        self.assertIn('[ $AGRC = 1 ]', block)
-        self.assertIn('elif [ $AGRC != 0 ]', block)
-        self.assertLess(block.index('elif [ $AGRC != 0 ]'), block.index('gh pr merge "$URL" --repo $REPO --auto'))
+        self.assertLess(block.index('elif [ $AGRC = 1 ]'), block.index('gh pr merge "$URL"'))
+        self.assertLess(block.index('elif [ $AGRC != 0 ]'), block.index('gh pr merge "$URL"'))
+        self.assertLess(block.index('"$HEAD2" != "$HEADSHA"'), block.index('gh pr merge "$URL"'))
+
+    def test_publish_pins_every_arm_and_never_guesses_head(self):
+        self.assertNotIn('IMSHA:-$SHA', PUBLISH.split('RQ-ARM-CI-GATE-1', 1)[1].split('echo "RESULT PR', 1)[0])
+        block = PUBLISH.split('RQ-ARM-CI-GATE-1', 1)[1].split('echo "RESULT PR', 1)[0]
+        merges = [l for l in block.splitlines() if 'gh pr merge' in l]
+        self.assertEqual(len(merges), 2)
+        for l in merges:
+            self.assertIn('--match-head-commit "$HEADSHA"', l)
+        self.assertIn('PR head unknown', block)
+        self.assertLess(block.index('final pre-arm re-check'), block.index('gh pr merge "$URL"'))
 
 
 if __name__ == "__main__":

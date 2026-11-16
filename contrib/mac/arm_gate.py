@@ -15,7 +15,7 @@ Classification (grounded in .github/workflows/ci.yml merge-gate on master):
   RELEVANT  Quick typecheck and Check authority drift (hermetic): Merge Gate treats both as advisory (the in-repo "Mason
             directive 2026-11-13" for Quick is repo text and unverified), but they are quality checks that run on every PR.
             Live data: neither failed on the last 15 master commits or the last 25 merged PR heads, so blocking ARMING on
-            them costs nothing in practice and only delays. Any other non-ignored check is also relevant.
+            them costs nothing in practice and only delays. They must also be PRESENT (a missing row is PENDING, not safe); skipped counts as present. Any other non-ignored check is also relevant.
   IGNORED   Perf budget (advisory), CodeRabbit, Vercel Preview Comments: advisory or third party.
 """
 import argparse
@@ -28,6 +28,7 @@ from pathlib import Path
 
 HARD = ("Merge Gate", "Secret-shape scan", "Secret scan (diff)", "Classify PR site lane",
         "Check generated files", "Fast gate (typecheck + affected tests)")
+EXPECTED = ("Quick typecheck", "Check authority drift (hermetic)")  # must be present and completed; skipped is a legitimate conclusion
 IGNORED = ("perf budget", "coderabbit", "vercel")
 RED = {"failure", "timed_out", "cancelled", "action_required", "stale", "startup_failure"}
 OK = {"success", "neutral", "skipped"}
@@ -72,6 +73,10 @@ def classify(rows):
     for name in HARD:
         got = rows.get(name)
         if got is None or got[0] != "completed" or got[1] != "success":
+            pending.append(name)
+    for name in EXPECTED:
+        got = rows.get(name)
+        if got is None or got[0] != "completed":
             pending.append(name)
     if pending:
         return "PENDING", sorted(set(pending))
