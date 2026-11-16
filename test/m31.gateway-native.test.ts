@@ -18,6 +18,7 @@ import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { probeServer } from '../src/core/mcp-gateway.js';
+import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
 import { listNativeTools } from '../src/core/mcp-native.js';
 import type { McpServerSpec } from '../src/core/types.js';
 
@@ -121,6 +122,7 @@ describe('gateway serves native tools', () => {
       await client.connect(transport, { timeout: 20_000 });
       const listed = await client.listTools({}, { timeout: 20_000 });
       const tools = listed.tools.map((tool) => tool.name);
+      registerFleetNativeTools();
       const expected = listNativeTools().map((tool) => tool.name);
       for (const name of expected) expect(tools).toContain(name);
       // tmp HOME discovers no downstream servers — only natives are present.
