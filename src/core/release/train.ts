@@ -151,6 +151,10 @@ export interface TrainObservation {
   audit: { runId: number; attempt: number } | null;
   npmPublished: boolean | null;
   npmAt: string | null;
+  /** Public npm provenance for this version. Absent means finalize is not dispatched. */
+  npmPublish?: { runId: number; attempt: number; integrity: string } | null;
+  /** A finalize run is queued, waiting, or in progress. */
+  finalizePending?: boolean;
   docsSynced: boolean;
   /** Parsed `version` from the updater endpoint, or null when it was not read. */
   feedVersion: string | null;
@@ -390,7 +394,7 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
+  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -408,6 +412,18 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
     if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
+    if (write.path.endsWith('/finalize-github-release.yml/dispatches')) {
+      const inputs = body.inputs as Record<string, string>;
+      const keys = Object.keys(inputs).sort();
+      if (body.ref !== 'master' || keys.join(',') !== 'candidate_integrity,candidate_sha,confirm_stable_finalization,publish_run_attempt,publish_run_id,version') {
+        throw new Error('refusing finalize dispatch');
+      }
+      if (inputs.version === '3.30.34' || inputs.confirm_stable_finalization !== 'true') throw new Error('refusing finalize dispatch');
+      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(inputs.version ?? '')) throw new Error('refusing finalize dispatch');
+      if (!/^[1-9]\d*$/.test(inputs.publish_run_id ?? '') || !/^[1-9]\d*$/.test(inputs.publish_run_attempt ?? '')) throw new Error('refusing finalize dispatch');
+      if (!/^[a-f0-9]{40}$/.test(inputs.candidate_sha ?? '')) throw new Error('refusing finalize dispatch');
+      if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(inputs.candidate_integrity ?? '')) throw new Error('refusing finalize dispatch');
+    }
     return;
   }
   throw new Error('refusing release write');
@@ -519,7 +535,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const superseded: string[] = [];
   const writes: ReleaseWrite[] = [];
   for (const row of input.releases) {
-    if (row.draft !== true) continue;
+    if (row.draft !== true || row.tag_name === 'v3.30.34') continue;
     const older = versionOf(row.tag_name);
     const current = versionOf(headTag.name);
     if (!older || !current || compareVersion(older, current) >= 0) continue;
@@ -579,6 +595,17 @@ export function buildTrain(input: TrainObservation): TrainPlan {
         attestor_run_id: String(input.attest.runId), attestor_run_attempt: String(input.attest.attempt),
         attested_artifact_id: String(input.attest.artifactId), version,
         audit_run_id: String(input.audit.runId), audit_run_attempt: String(input.audit.attempt),
+      } },
+    });
+  }
+  const stocked = signed && names.includes('latest.json');
+  if (row?.draft === true && stocked && publishable && input.npmPublished === true && input.npmPublish
+    && input.finalizePending !== true && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
+    writes.push({
+      method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/dispatches`,
+      body: { ref: 'master', inputs: {
+        version, publish_run_id: String(input.npmPublish.runId), publish_run_attempt: String(input.npmPublish.attempt),
+        candidate_sha: headTag.sha, candidate_integrity: input.npmPublish.integrity, confirm_stable_finalization: 'true',
       } },
     });
   }
@@ -815,6 +842,26 @@ export async function observeTrain(
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
   const npmRecord = record(npm);
+  const integrity = text(record(npmRecord?.dist)?.integrity) ?? '';
+  let npmPublish: TrainObservation['npmPublish'] = null;
+  if (/^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity)) {
+    try {
+      const parsed = publishRunFromAttestation(await read(`registry/attestations/@ashlr/phantom/${version}`));
+      if (parsed) npmPublish = { ...parsed, integrity };
+    } catch {
+      npmPublish = null;
+    }
+  }
+  let finalizePending = false;
+  if (npmPublish) {
+    try {
+      const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=20`));
+      const rows = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
+      finalizePending = rows.some((row) => record(row)?.status !== 'completed');
+    } catch {
+      finalizePending = true;
+    }
+  }
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
   const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
   // Only a candidate that can never build needs master's gate: see fixForwardDue.
@@ -828,6 +875,8 @@ export async function observeTrain(
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
+    npmPublish,
+    finalizePending,
     docsSynced,
     feedVersion: await publishedFeedVersion(read, releases, head?.tag ?? null),
   };
@@ -996,6 +1045,34 @@ export function readReleaseState(path: string): TrainState {
   return parsed as TrainState;
 }
 
+export function publishRunFromAttestation(body: unknown): { runId: number; attempt: number } | null {
+  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : [];
+  for (const row of rows) {
+    const payload = text(record(record(record(row)?.bundle)?.dsseEnvelope)?.payload);
+    if (!payload || payload.length > 200_000) continue;
+    let decoded: unknown;
+    try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { continue; }
+    const found: { path?: string; event?: string; invocation?: string } = {};
+    const walk = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      if (Array.isArray(value)) { for (const item of value) walk(item); return; }
+      const item = value as Record<string, unknown>;
+      if (item.path === '.github/workflows/publish-canonical-npm.yml') found.path = item.path;
+      if (item.event_name === 'workflow_dispatch') found.event = item.event_name;
+      if (typeof item.invocationId === 'string') found.invocation = item.invocationId;
+      for (const child of Object.values(item)) walk(child);
+    };
+    walk(decoded);
+    const match = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/.exec(found.invocation ?? '');
+    if (found.path && found.event && match) {
+      const runId = Number(match[1]);
+      const attempt = Number(match[2]);
+      if (Number.isSafeInteger(runId) && Number.isSafeInteger(attempt)) return { runId, attempt };
+    }
+  }
+  return null;
+}
+
 /** Argv and stdin for one `gh api` call. A body is sent only with `--input -`. */
 export function releaseGithubCall(method: string, path: string, body?: unknown): { args: string[]; input?: string } {
   const args = ['api', '--hostname', 'github.com', '--method', method];
@@ -1003,7 +1080,7 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
-export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
+export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
 
 /** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
  *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
@@ -1053,6 +1130,13 @@ async function githubRead(path: string): Promise<unknown> {
     const spec = path.slice('registry/npm/'.length);
     const response = await fetch(`https://registry.npmjs.org/${spec}`, { redirect: 'error' });
     if (response.status === 404) return null;
+    if (!response.ok) throw new Error('registry read failed');
+    return response.json() as Promise<unknown>;
+  }
+  if (path.startsWith('registry/attestations/@ashlr/phantom/')) {
+    const version = path.slice('registry/attestations/@ashlr/phantom/'.length);
+    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error('registry read failed');
+    const response = await fetch(`https://registry.npmjs.org/-/npm/v1/attestations/@ashlr%2fphantom@${version}`, { redirect: 'error' });
     if (!response.ok) throw new Error('registry read failed');
     return response.json() as Promise<unknown>;
   }
