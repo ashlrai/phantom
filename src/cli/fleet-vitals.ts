@@ -61,6 +61,7 @@ export async function cmdFleetVitals(args: string[]): Promise<number> {
     for (const row of report.disk?.directories ?? [])
       console.log(`${row.path}: ${row.size_gb ?? 'unknown'} GB; change ${row.delta_gb ?? 'unknown'} GB`);
     console.log(`Launch queue: ${report.launch.queued ?? 'unknown'} queued; reason ${report.launch.reason ?? 'unknown'}`);
+    console.log(`Next launch window: ${report.launch.nextWindowSeconds === null ? 'unknown' : `${report.launch.nextWindowSeconds} seconds`}`);
     for (const lane of report.launch.lanes) console.log(`${lane.lane}: ${lane.running ?? 'unknown'} running of ${lane.target ?? 'unknown'} target; ${lane.queued ?? 'unknown'} queued`);
     console.log(`Launch cost: ${report.launchCost.state} (source ${report.launchCost.source})`);
     for (const r of report.launchCost.launches)
