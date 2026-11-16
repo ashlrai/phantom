@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { AshlrConfig } from '../types.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { QueueStore } from '../queue/store.js';
+import type { QueueJob } from '../queue/schema.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
@@ -92,8 +93,28 @@ async function locked<T>(options: TeammateTaskOptions, operation: () => Promise<
   if (held.state !== 'acquired') throw new Error('Teammate tasks busy');
   try { return await operation(); } finally { releaseLocalStoreLock(held.lock); }
 }
-const owner = (task: Task) => `imsg:${task.peer}`;
-const acceptance = (task: Task) => `RESULT ${task.jobId} ${task.token}; peer report only, independent verification required`;
+const owner = (task: { peer: string }) => `imsg:${task.peer}`;
+const acceptance = (task: { jobId: string; token: string }) => `RESULT ${task.jobId} ${task.token}; peer report only, independent verification required`;
+/** The queue identity fields a teammate task reserves; internal evidence, never serialized publicly. */
+export interface TeammateTaskQueueIdentity {
+  jobId: string; peer: string; repo: string; scope: string; token: string;
+}
+/**
+ * The exact queue-job identity syncQueue enforces on write, shared with the
+ * read-only fleet MCP binding projection so both prove the same tuple: a
+ * same-id/owner/repo row carrying a different scope or RESULT token is not
+ * this task. Scope and token must never enter public output.
+ */
+export function teammateQueueJobMatchesIdentity(job: QueueJob, identity: TeammateTaskQueueIdentity): boolean {
+  return job.acceptance === acceptance(identity) && job.claims.at(-1)?.owner === owner(identity)
+    && job.repo === identity.repo && job.scope === identity.scope;
+}
+/** Internal jobId → reserved-identity index for the fleet MCP binding read; never serialized. */
+export function teammateTaskQueueIdentities(options: TeammateTaskOptions = {}): Map<string, TeammateTaskQueueIdentity> {
+  return new Map(load(options).tasks.map(task => [task.jobId, {
+    jobId: task.jobId, peer: task.peer, repo: task.repo, scope: task.scope, token: task.token,
+  }]));
+}
 /** A claim is reserved at insertion, so a lane hint cannot hand this task to a local executor. */
 async function syncQueue(task: Task, options: TeammateTaskOptions): Promise<void> {
   const queue = new QueueStore(join(paths(options).runs, 'queue'));
@@ -104,8 +125,7 @@ async function syncQueue(task: Task, options: TeammateTaskOptions): Promise<void
     // QueueStore owns wall-clock claim/finish times; the injected task clock only
     // governs transport deadlines, cooldowns and evidence timestamps.
     needs: ['imessage'], exclusive: true, claims: [{ owner: owner(task), claimedAt: new Date().toISOString() }] });
-  if (job.acceptance !== acceptance(task) || job.claims.at(-1)?.owner !== owner(task)
-    || job.repo !== task.repo || job.scope !== task.scope) throw new Error('Teammate queue claim conflict');
+  if (!teammateQueueJobMatchesIdentity(job, task)) throw new Error('Teammate queue claim conflict');
   const terminal = ['replied', 'expired', 'cancelled'].includes(task.state);
   const reason = task.state === 'cancelled' ? WITHDRAWAL : task.state === 'expired' ? 'Teammate deadline elapsed; remote execution is unknown'
     : task.result?.status !== 'DONE' ? `Teammate reported ${task.result?.status}; review private result` : undefined;
@@ -175,8 +195,8 @@ export async function cancelTeammateTask(jobId: string, options: TeammateTaskOpt
     } catch { throw new Error('Teammate launch evidence unavailable'); }
     if (launched) return { schema: SCHEMA, state: 'refused', reason: 'Cancellation cannot prove a remote stop' };
     const job = (await new QueueStore(join(paths(options).runs, 'queue')).read()).jobs.find(job => job.id === jobId);
-    if (!job || job.acceptance !== acceptance(task) || job.repo !== task.repo || job.scope !== task.scope
-      || job.claims.at(-1)?.owner !== owner(task) || !(job.status === 'CLAIMED' && !job.claims.at(-1)?.finishedAt
+    if (!job || !teammateQueueJobMatchesIdentity(job, task)
+      || !(job.status === 'CLAIMED' && !job.claims.at(-1)?.finishedAt
         || task.state === 'cancelled' && job.status === 'BLOCKED' && job.blockedReason === WITHDRAWAL && job.claims.at(-1)?.finishedAt)) {
       return { schema: SCHEMA, state: 'refused', reason: 'Teammate queue claim changed' };
     }
