@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.34 |
-| Latest dated changelog release (2026-11-16) | 3.30.34 |
+| Source package | 3.30.35 |
+| Latest dated changelog release (2026-11-16) | 3.30.35 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -51,6 +51,80 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Run the dependency audit on every master push so release signing is not blocked, and bump `hono` and `@hono/node-server` to clear it ([#5535](https://github.com/ashlrai/phantom/pull/5535), [#5532](https://github.com/ashlrai/phantom/pull/5532)).
 - Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
 - Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
+
+## [3.30.35] - 2026-11-16
+
+
+### Fixes
+
+* **desktop:** match write allowlist to installed app bundle ids ([#6213](https://github.com/ashlrai/phantom/issues/6213)) ([97df142](https://github.com/ashlrai/phantom/commit/97df142fcf65c41e604a6b47f55faf00d548eda6))
+
+
+### Changes
+
+* **FIXUP-CI-phantom-ci-815859:** FIXUP-CI-phantom-ci-815859 ([#6290](https://github.com/ashlrai/phantom/issues/6290)) ([7d212b8](https://github.com/ashlrai/phantom/commit/7d212b80e00ab3396a0790c31ba5bfc8ec5307f1))
+* **FIXUP-CI-phantom-ci-978022:** FIXUP-CI-phantom-ci-978022 ([#6267](https://github.com/ashlrai/phantom/issues/6267)) ([a739560](https://github.com/ashlrai/phantom/commit/a739560e4605cb2966eeaeb024f6816769b8c00d))
+* **RQ-APP-AUTOUPDATE-1:** RQ-APP-AUTOUPDATE-1 ([#6224](https://github.com/ashlrai/phantom/issues/6224)) ([b6f9c4e](https://github.com/ashlrai/phantom/commit/b6f9c4e0a472953e7236336bad4e2123a61f3296))
+* **RQ-APP-DIRECT-BOX-1:** RQ-APP-DIRECT-BOX-1: desktop direct box + live panels ([#6240](https://github.com/ashlrai/phantom/issues/6240)) ([0ebf1da](https://github.com/ashlrai/phantom/commit/0ebf1da818ded1af33fc21f2c828dcf525a135b7))
+* **RQ-APP-ORG-GROKUI-1A:** RQ-APP-ORG-GROKUI-1A: Org view ([#6223](https://github.com/ashlrai/phantom/issues/6223)) ([752c47c](https://github.com/ashlrai/phantom/commit/752c47c6334c627db48c9a7d621a2d128071aa58))
+* **RQ-BOT-TEMPLATES-1:** RQ-BOT-TEMPLATES-1: bots from templates ([#6228](https://github.com/ashlrai/phantom/issues/6228)) ([bab0318](https://github.com/ashlrai/phantom/commit/bab0318670b7853daf12c3412341484659b52874))
+* RQ-CI-MASTER-FULL-1 ([#6268](https://github.com/ashlrai/phantom/issues/6268)) ([94a14dc](https://github.com/ashlrai/phantom/commit/94a14dc3d33ee79f29dc98f9a494f6c8be6319be))
+* **RQ-DISPATCHD-POSTRUN-PR-1:** RQ-DISPATCHD-POSTRUN-PR-1 ([#6266](https://github.com/ashlrai/phantom/issues/6266)) ([8bfe657](https://github.com/ashlrai/phantom/commit/8bfe657a2ad45458100275174898b4d8fd520546))
+* **RQ-GROK-DOCS-TRUTH-1:** RQ-GROK-DOCS-TRUTH-1 ([#6214](https://github.com/ashlrai/phantom/issues/6214)) ([b459279](https://github.com/ashlrai/phantom/commit/b45927987fa446291738979ee1b2deb591f05820))
+* **RQ-GROK-ORCH-AUDIT-1:** RQ-GROK-ORCH-AUDIT-1 — orchestration loop audit ([#6234](https://github.com/ashlrai/phantom/issues/6234)) ([5599a11](https://github.com/ashlrai/phantom/commit/5599a114c1ba2e1a449ffcb3929b4edbf04a02ef))
+* **RQ-GROK-SEC-AUDIT-1:** RQ-GROK-SEC-AUDIT-1 — Security posture audit of today's auto ([#6215](https://github.com/ashlrai/phantom/issues/6215)) ([2c6bc30](https://github.com/ashlrai/phantom/commit/2c6bc30c9279fca49417774e6418a8624141a05e))
+* **RQ-GROKBOT-CHANGELOG-WATCH-1:** BRIDGE_NOTES - RQ-GROKBOT-CHANGELOG-WATCH-1 ([#6255](https://github.com/ashlrai/phantom/issues/6255)) ([0dead77](https://github.com/ashlrai/phantom/commit/0dead773e0de6465021e0d220d881091c35b112c))
+* **RQ-MCP-PERJOB-1:** RQ-MCP-PERJOB-1 notes ([#6216](https://github.com/ashlrai/phantom/issues/6216)) ([f6152c6](https://github.com/ashlrai/phantom/commit/f6152c6df7b74873aa0441510c5903cf8af68435))
+* **RQ-MERGEQ-BATCH-1:** BRIDGE_NOTES: RQ-MERGEQ-BATCH-1 (merge-queue throughput, 7 r ([#6250](https://github.com/ashlrai/phantom/issues/6250)) ([7e6d005](https://github.com/ashlrai/phantom/commit/7e6d005749a0c8d69b018c4e36a243bcdd68672e))
+* **RQ-NODE-AUTOSCALE-1:** RQ-NODE-AUTOSCALE-1: generic node autoscaling and (node, pro ([#6235](https://github.com/ashlrai/phantom/issues/6235)) ([677ba7e](https://github.com/ashlrai/phantom/commit/677ba7e793b5b293ad4577b39402774a7b0df78d))
+* **RQ-NODE-MBP8-1:** RQ-NODE-MBP8-1: second MacBook Pro (8 GB) node profile ([#6222](https://github.com/ashlrai/phantom/issues/6222)) ([45191e1](https://github.com/ashlrai/phantom/commit/45191e1d4f8ee34b2b4b5e02a213532e5520f982))
+* **RQ-PH-AUTHDRIFT-ROOT-1:** BRIDGE_NOTES: RQ-PH-AUTHDRIFT-ROOT-1 ([#6262](https://github.com/ashlrai/phantom/issues/6262)) ([bc2bf3a](https://github.com/ashlrai/phantom/commit/bc2bf3a99c5db20296f5e439206417168d273561))
+* **RQ-PH-V33034-REDNOTE-1:** RQ-PH-V33034-REDNOTE-1 ([#6260](https://github.com/ashlrai/phantom/issues/6260)) ([18b658b](https://github.com/ashlrai/phantom/commit/18b658b9d70a5ce87e1b1f50e12ce75c35562c6e))
+* **RQ-PHX-CLOUDROUTESRUNTIME379:** Bridge Notes for RQ-PHX-CLOUDROUTESRUNTIME379 ([#6217](https://github.com/ashlrai/phantom/issues/6217)) ([763d40d](https://github.com/ashlrai/phantom/commit/763d40dcccd2773271b9b40ab98d54652a8b964f))
+* **RQ-PHX-IMSGALIASWITHDRAW462S:** RQ-PHX-IMSGALIASWITHDRAW462S ([#6254](https://github.com/ashlrai/phantom/issues/6254)) ([0a3038d](https://github.com/ashlrai/phantom/commit/0a3038d50bab1e2603525498244c256c0996b940))
+* **RQ-PHX-IMSGCLIEXACT466S:** RQ-PHX-IMSGCLIEXACT466S ([#6272](https://github.com/ashlrai/phantom/issues/6272)) ([2211f51](https://github.com/ashlrai/phantom/commit/2211f51025272733733961b22cfe52c873d206a7))
+* **RQ-PHX-MCPCLAIMIDENTITY465S:** BRIDGE_NOTES — RQ-PHX-MCPCLAIMIDENTITY465S ([#6275](https://github.com/ashlrai/phantom/issues/6275)) ([9ee3328](https://github.com/ashlrai/phantom/commit/9ee3328782f688b253425f1cd2e7a7980af7d7c4))
+* **RQ-PHX-RECUTFLEETCLIC462:** BRIDGE_NOTES — RQ-PHX-RECUTFLEETCLIC462 (FLEETCLI bucket) ([#6258](https://github.com/ashlrai/phantom/issues/6258)) ([90b73cf](https://github.com/ashlrai/phantom/commit/90b73cf85350b65869cdab076f3d042a866a535f))
+* **RQ-PHX-RECUTLEADERC465:** BRIDGE_NOTES — RQ-PHX-RECUTLEADERC465 (bucket: LEADER) ([#6270](https://github.com/ashlrai/phantom/issues/6270)) ([70bbbc0](https://github.com/ashlrai/phantom/commit/70bbbc07dbc958ef5db46adc5b1f2cdb3710f3b0))
+* **RQ-PHX-RECUTMCPC460:** BRIDGE_NOTES — RQ-PHX-RECUTMCPC460 (MCP bucket) ([#6253](https://github.com/ashlrai/phantom/issues/6253)) ([9e125be](https://github.com/ashlrai/phantom/commit/9e125be892221068f803bd1825cf778488f09ef3))
+* **RQ-PHX-RECUTTESTONLYC462:** RQ-PHX-RECUTTESTONLYC462 ([#6251](https://github.com/ashlrai/phantom/issues/6251)) ([7b5c063](https://github.com/ashlrai/phantom/commit/7b5c063a3b8e9747c292edb07de47ed5f21dbd0a))
+* **RQ-PHX-REDTESTFIXC460:** BRIDGE_NOTES — RQ-PHX-REDTESTFIXC460 ([#6257](https://github.com/ashlrai/phantom/issues/6257)) ([0a0fca3](https://github.com/ashlrai/phantom/commit/0a0fca3d04ec2d9f21cde5656c9750802c651ed2))
+* **RQ-PHX-REDTESTFIXC468:** RQ-PHX-REDTESTFIXC468 ([#6278](https://github.com/ashlrai/phantom/issues/6278)) ([b84374e](https://github.com/ashlrai/phantom/commit/b84374e992222408e8be3679ee0e60013082abbc))
+* **RQ-PHX-REDTYPEFIXC459:** BRIDGE_NOTES — RQ-PHX-REDTYPEFIXC459 ([#6276](https://github.com/ashlrai/phantom/issues/6276)) ([2e14b74](https://github.com/ashlrai/phantom/commit/2e14b741afb84ceffd01923709b5fe3bc8b6b4bb))
+* **RQ-PHX-SLACKBUSRETRYRECOVERY467S:** Slack bus retry disk recovery ([#6274](https://github.com/ashlrai/phantom/issues/6274)) ([186235e](https://github.com/ashlrai/phantom/commit/186235e902b6cfca940f13b4488c2d267c9e6c92))
+* **RQ-PHX-SLACKDISKDEGRADED469S:** BRIDGE_NOTES — RQ-PHX-SLACKDISKDEGRADED469S ([#6285](https://github.com/ashlrai/phantom/issues/6285)) ([ebb4d11](https://github.com/ashlrai/phantom/commit/ebb4d11449341d4cbd9a55efac9031ebc6886085))
+* **RQ-PHX-SLACKHTTPDISKLOSS471S:** Goal: Qualify the desktop Slack evidence HTTP route when dur ([#6284](https://github.com/ashlrai/phantom/issues/6284)) ([4f2568d](https://github.com/ashlrai/phantom/commit/4f2568dcb6fcc02826c5cbae58efd5f38260a8ad))
+* **RQ-PHX-SLACKMCPDISKLOSS470S:** Bridge notes ([#6280](https://github.com/ashlrai/phantom/issues/6280)) ([7e30461](https://github.com/ashlrai/phantom/commit/7e30461239c3722977c7e5466f7d884967e4f7e6))
+* **RQ-PHX-SLACKMCPDISKPROOF461S:** RQ-PHX-SLACKMCPDISKPROOF461S ([#6249](https://github.com/ashlrai/phantom/issues/6249)) ([48d668f](https://github.com/ashlrai/phantom/commit/48d668f4daf055bd953004682adcf7e99e1b8255))
+* **RQ-PHX-SLACKREQUESTDISKROUNDTRIP459S:** BRIDGE_NOTES — RQ-PHX-SLACKREQUESTDISKROUNDTRIP459S ([#6244](https://github.com/ashlrai/phantom/issues/6244)) ([c45bc65](https://github.com/ashlrai/phantom/commit/c45bc65b78afe7371594011365bb13c4836e174e))
+* **RQ-PHX-SLACKSIBLINGDISK472S:** RQ-PHX-SLACKSIBLINGDISK472S ([#6286](https://github.com/ashlrai/phantom/issues/6286)) ([8513623](https://github.com/ashlrai/phantom/commit/8513623a57f9e287d8cce47553417c8e4f860596))
+* **RQ-PHX-SLACKTRACEEXACT463S:** RQ-PHX-SLACKTRACEEXACT463S ([#6261](https://github.com/ashlrai/phantom/issues/6261)) ([1b56d2a](https://github.com/ashlrai/phantom/commit/1b56d2ac2bfce4bf4630bf85d6ceb21655f1ef53))
+* **RQ-PHX-SLACKTRACEFAILURE466S:** BRIDGE_NOTES — RQ-PHX-SLACKTRACEFAILURE466S ([#6271](https://github.com/ashlrai/phantom/issues/6271)) ([cd2c85a](https://github.com/ashlrai/phantom/commit/cd2c85a008a491a9519c5b121b6c6272fdf6d642))
+* **RQ-PHX-SLACKUNKNOWNALLOCATION461S:** RQ-PHX-SLACKUNKNOWNALLOCATION461S ([#6245](https://github.com/ashlrai/phantom/issues/6245)) ([6ba5947](https://github.com/ashlrai/phantom/commit/6ba5947e2ccf327601d5a61601a59fc075de8554))
+* **RQ-PHX-SLACKUNKNOWNDISK463S:** RQ-PHX-SLACKUNKNOWNDISK463S ([#6263](https://github.com/ashlrai/phantom/issues/6263)) ([1214247](https://github.com/ashlrai/phantom/commit/1214247c4cb4eedc30194954a0413d15d27a92fc))
+* **RQ-PHX-TASKCLAIMDRIFTPROOF468S:** RQ-PHX-TASKCLAIMDRIFTPROOF468S ([#6277](https://github.com/ashlrai/phantom/issues/6277)) ([dc530f5](https://github.com/ashlrai/phantom/commit/dc530f59383e77aeea8bd11d17e873ed20f18c4e))
+* **RQ-PHX-TASKMCPHEALTH473S:** RQ-PHX-TASKMCPHEALTH473S ([#6287](https://github.com/ashlrai/phantom/issues/6287)) ([8ba54fd](https://github.com/ashlrai/phantom/commit/8ba54fdab209ddd747bd187d44f5c2d5c3db953e))
+* **RQ-PHX-TASKSETTLEMENTRECOVERY468S:** BRIDGE_NOTES — RQ-PHX-TASKSETTLEMENTRECOVERY468S ([#6282](https://github.com/ashlrai/phantom/issues/6282)) ([917872c](https://github.com/ashlrai/phantom/commit/917872cf5c717c434880becefe202f0281967acd))
+* **RQ-PHX-TEAMTASKAPIBINDING473S:** BRIDGE_NOTES — RQ-PHX-TEAMTASKAPIBINDING473S ([#6288](https://github.com/ashlrai/phantom/issues/6288)) ([617f72e](https://github.com/ashlrai/phantom/commit/617f72ed0967037e9850809c19b649f3bebc666f))
+* **RQ-PHX-TEAMTASKAPIEXACT471S:** RQ-PHX-TEAMTASKAPIEXACT471S ([#6283](https://github.com/ashlrai/phantom/issues/6283)) ([5f7ded1](https://github.com/ashlrai/phantom/commit/5f7ded13bae0988052426dedc7697b3dafad1fe6))
+* **RQ-PHX-TEAMTASKCLIALIAS458S:** RQ-PHX-TEAMTASKCLIALIAS458S: teammate-tasks delegates to cmd ([#6237](https://github.com/ashlrai/phantom/issues/6237)) ([2126b26](https://github.com/ashlrai/phantom/commit/2126b26f5686538c16c64823f208a316084ff130))
+* **RQ-PHX-TEAMTASKDISKUNAVAILABLE469S:** Source SHA: b84374e992222408e8be3679ee0e60013082abbc (origin ([#6279](https://github.com/ashlrai/phantom/issues/6279)) ([95f1a70](https://github.com/ashlrai/phantom/commit/95f1a702346c430ad3edd70de29637dbed7c272a))
+* **RQ-PHX-WITHDRAWAPIDISK464S:** BRIDGE_NOTES — RQ-PHX-WITHDRAWAPIDISK464S ([#6265](https://github.com/ashlrai/phantom/issues/6265)) ([ee00abf](https://github.com/ashlrai/phantom/commit/ee00abfec2b006e838f25a314e8e6b2d3a62b2d5))
+* **RQ-PHX-WITHDRAWRECEIPT458S:** RQ-PHX-WITHDRAWRECEIPT458S ([#6247](https://github.com/ashlrai/phantom/issues/6247)) ([9db8c95](https://github.com/ashlrai/phantom/commit/9db8c95685485019e6e6da432a0698609cba245e))
+* **RQ-PR-CLEAR-1B:** RQ-PR-CLEAR-1B ([#6218](https://github.com/ashlrai/phantom/issues/6218)) ([85869cf](https://github.com/ashlrai/phantom/commit/85869cf3989099c8eb2b0363fcc698bcd2ba4166))
+* RQ-REBASE-PHANTOM-3961 ([#6230](https://github.com/ashlrai/phantom/issues/6230)) ([25ce32d](https://github.com/ashlrai/phantom/commit/25ce32d03c87664b3d5c2574ddbf568ef18f3bb1))
+* **RQ-RECOVER-NOV10-COMMITS-1:** BRIDGE_NOTES: RQ-RECOVER-NOV10-COMMITS-1 ([#6252](https://github.com/ashlrai/phantom/issues/6252)) ([2b680df](https://github.com/ashlrai/phantom/commit/2b680df0fce2b1a131c5cb9dc6a95a5613fea188))
+* **RQ-RELEASE-BUILD-STALL-1:** RQ-RELEASE-BUILD-STALL-1 ([#6239](https://github.com/ashlrai/phantom/issues/6239)) ([2a6d016](https://github.com/ashlrai/phantom/commit/2a6d016b90b6ab915d30ee7500e6cfa85509c2fd))
+* **RQ-RELEASE-FIXFORWARD-1:** RQ-RELEASE-FIXFORWARD-1: fix the release train forward past ([#6256](https://github.com/ashlrai/phantom/issues/6256)) ([281d213](https://github.com/ashlrai/phantom/commit/281d2139d6a2a545701110d5b98c555e9119f07d))
+* **RQ-RELEASE-UNSTICK-1:** BRIDGE_NOTES — RQ-RELEASE-UNSTICK-1 ([#6233](https://github.com/ashlrai/phantom/issues/6233)) ([b109dc6](https://github.com/ashlrai/phantom/commit/b109dc6c9c87758c9432761a24374dff752172d8))
+* **RQ-REPO-OWNERS-1:** RQ-REPO-OWNERS-1 ([#6241](https://github.com/ashlrai/phantom/issues/6241)) ([9483457](https://github.com/ashlrai/phantom/commit/9483457d43fe0772b556af0cade406c58bd6f73f))
+* **RQ-SLACK-SYNC-1:** RQ-SLACK-SYNC-1 ([#6221](https://github.com/ashlrai/phantom/issues/6221)) ([4cc853a](https://github.com/ashlrai/phantom/commit/4cc853a13e2beaf9493df28150ce8be4bc057216))
+* **RQ-USAGE-READER-AUDIT-1:** BRIDGE_NOTES — RQ-USAGE-READER-AUDIT-1 ([#6243](https://github.com/ashlrai/phantom/issues/6243)) ([eb9c12d](https://github.com/ashlrai/phantom/commit/eb9c12d35ab10d3e906c0d1986f5a0e3d410fb93))
+
+
+### Documentation
+
+* regenerate llms.txt (master Quick 'Check generated files' red) ([#6219](https://github.com/ashlrai/phantom/issues/6219)) ([b7759cf](https://github.com/ashlrai/phantom/commit/b7759cfb56d17d82891b018aabf50643a628b76e))
 
 ## [3.30.34] - 2026-11-16
 
