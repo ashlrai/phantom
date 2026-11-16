@@ -90,7 +90,7 @@ test('advisory patch applies and preserves secret gates, actions and permissions
       const fast = ['pull_request', 'merge_group', 'push'].includes(event);
       const full = !fast || (event !== 'push' && risk === 'full');
       const jobs = Object.fromEntries(gate.needs.map(name => [name, { result: 'skipped' }]));
-      for (const name of ['secret-shape', 'secret-scan', 'classify', ...(fast ? ['quick'] : []), ...(full ? ['ci'] : []),
+      for (const name of ['secret-shape', 'secret-scan', 'classify', ...(fast ? ['quick'] : []), ...(['pull_request', 'merge_group'].includes(event) ? ['fast-gate'] : []), ...(full ? ['ci'] : []),
         ...(full && schedule !== '17 * * * *' ? platform : [])]) jobs[name].result = 'success';
       jobs.classify.outputs = { risk, lane: 'full', release_gate: 'false' };
       if (risk) for (const name of ['ci', ...platform]) {

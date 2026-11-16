@@ -58,7 +58,7 @@ Keep `pull_request`, `merge_group` and direct `master` push triggers. Required q
 
 ## Concrete workflow proposal
 
-The [patch](ci-rightsizing.patch) changes only `ci.yml`. It introduces no permissions, secret references, action dependencies, privileged triggers or credential persistence. Both secret jobs and release-build are byte-for-byte unchanged. The stable Merge Gate requires `quick` on fast events and every full platform job on full-risk candidates; missing, skipped, cancelled and failed required results fail it. Existing reusable push/tag platform deferrals remain explicit.
+The [patch](ci-rightsizing.patch) changes only `ci.yml`. It introduces no permissions, secret references, action dependencies, privileged triggers or credential persistence. Both secret jobs and release-build are byte-for-byte unchanged. The stable Merge Gate requires `quick` on fast events (plus `fast-gate` on pull_request and merge_group, RQ-CI-FASTGATE-1) and every full platform job on full-risk candidates; missing, skipped, cancelled and failed required results fail it. Existing reusable push/tag platform deferrals remain explicit.
 
 The hourly schedule at `17 * * * *` runs the existing `ci` matrix (including its Windows portability leg). The daily `47 3 * * *` run adds all Mac lanes and Windows service authority, with Mac rotation disabled for schedules. Manual slice selection remains diagnostic; only an unsliced run proves complete platform coverage. The half-hour release-preparation schedule is preserved. Direct master pushes retain quick verification and the release consumers' exact-commit gate.
 

@@ -23,7 +23,7 @@
 -  # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
 +  # Tier-1 candidates and daily runs require all platforms; dispatch can select a slice.
    workflow_dispatch:
-@@ -75,5 +73,4 @@
+@@ -76,5 +74,4 @@
    quick:
 -    # Per-PR, merge-queue and master-push typecheck plus authority drift checks.
 -    # Start alongside classification so the longest fast job has no serial wait.
@@ -31,16 +31,16 @@
 +    # Blocking smoke follows risk selection; hosted types remain on full risk
 +    # and master pushes. Docs/tests smoke relies on pre-push type verification.
      # A push event whose ref is a TAG is the reusable M33 verify call — it keeps
-@@ -82,2 +79,3 @@
+@@ -83,2 +80,3 @@
      name: Quick typecheck
 +    needs: classify
      if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
-@@ -126,3 +124,3 @@
+@@ -128,3 +126,3 @@
          id: history
 -        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
 +        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.risk != 'smoke'
          env:
-@@ -158,4 +156,15 @@
+@@ -160,4 +158,15 @@
        - name: Install dependencies
 -        if: steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'
          run: npm ci --ignore-scripts --no-audit --no-fund
@@ -56,26 +56,26 @@
 +            .split('\0').filter(p => /\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/.test(p));
 +          if (files.length) execFileSync('node_modules/.bin/eslint', ['--no-warn-ignored', '--', ...files.map(p => './' + p)], {stdio: 'inherit'});
 +          NODE
-       - name: Restore protected-branch compiler state
-@@ -163,3 +172,3 @@
+       # PR and merge_group typecheck moved to the blocking fast-gate job
+@@ -168,3 +177,3 @@
          # candidate below. Only a successful master push saves compiler state.
--        if: steps.history.outputs.equal != 'true'
-+        if: steps.history.outputs.equal != 'true' && needs.classify.outputs.risk != 'smoke'
+-        if: github.event_name == 'push' && steps.history.outputs.equal != 'true'
++        if: github.event_name == 'push' && steps.history.outputs.equal != 'true' && needs.classify.outputs.risk != 'smoke'
          uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
-@@ -172,3 +181,3 @@
+@@ -177,3 +186,3 @@
        - name: Core no-emit type check
--        if: steps.history.outputs.equal != 'true'
-+        if: steps.history.outputs.equal != 'true' && needs.classify.outputs.risk != 'smoke'
+-        if: github.event_name == 'push' && steps.history.outputs.equal != 'true'
++        if: github.event_name == 'push' && steps.history.outputs.equal != 'true' && needs.classify.outputs.risk != 'smoke'
          # Both projects enable incremental/no-emit checking in their tsconfig.
-@@ -190,3 +199,2 @@
+@@ -195,3 +204,2 @@
        - name: Check authority drift (hermetic)
 -        if: steps.history.outputs.equal != 'true'
          run: >-
-@@ -205,2 +213,3 @@
+@@ -280,2 +288,3 @@
        lane: ${{ steps.lane.outputs.lane }}
 +      risk: ${{ steps.risk.outputs.risk }}
        release_gate: ${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}
-@@ -217,2 +226,16 @@
+@@ -292,2 +301,16 @@
            persist-credentials: false
 +      - name: Select risk from trusted base
 +        id: risk
@@ -92,7 +92,7 @@
 +            *) echo "risk=full" >> "$GITHUB_OUTPUT" ;;
 +          esac
        - name: Bind candidate source
-@@ -232,3 +255,9 @@
+@@ -307,3 +330,9 @@
            MAC_SHARD_INPUT: ${{ github.event.inputs.mac_shard }}
 -        run: node .github/scripts/ci-mac-rotation.mjs plan
 +        run: |
@@ -103,7 +103,7 @@
 +            node .github/scripts/ci-mac-rotation.mjs plan
 +          fi
  
-@@ -307,5 +336,5 @@
+@@ -382,5 +411,5 @@
      needs: classify
 -    # Direct master pushes take the seconds-fast gate only; a push event whose
 -    # ref is a tag is the reusable M33 verify call and keeps the full matrix.
@@ -112,57 +112,57 @@
 +    # Direct master pushes retain their exact-commit quick gate.
 +    if: needs.classify.outputs.risk != 'smoke' && !(github.event_name == 'push' && github.ref == 'refs/heads/master') && needs.classify.outputs.release_gate != 'true'
      # Node 22.15 is the hard minimum — install.sh and CONTRIBUTING.md both enforce it.
-@@ -649,3 +678,3 @@
+@@ -724,3 +753,3 @@
      needs: classify
 -    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
 +    if: needs.classify.outputs.risk != 'smoke' && github.event_name != 'push' && (github.event_name != 'schedule' || github.event.schedule == '47 3 * * *') && needs.classify.outputs.release_gate != 'true'
      name: CI (Node 22, ${{ matrix.label }})
-@@ -693,3 +722,3 @@
+@@ -768,3 +797,3 @@
      # push that follows the queue still runs it.
 -    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
 +    if: needs.classify.outputs.risk != 'smoke' && github.event_name != 'push' && (github.event_name != 'schedule' || github.event.schedule == '47 3 * * *') && needs.classify.outputs.release_gate != 'true'
      name: Mac exhaustive (${{ matrix.shard }}/4)
-@@ -778,3 +807,3 @@
+@@ -853,3 +882,3 @@
      needs: classify
 -    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
 +    if: needs.classify.outputs.risk != 'smoke' && github.event_name != 'push' && (github.event_name != 'schedule' || github.event.schedule == '47 3 * * *') && needs.classify.outputs.release_gate != 'true'
      name: Mac exhaustive (isolated)
-@@ -860,3 +889,3 @@
+@@ -935,3 +964,3 @@
      needs: classify
 -    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
 +    if: needs.classify.outputs.risk != 'smoke' && github.event_name != 'push' && (github.event_name != 'schedule' || github.event.schedule == '47 3 * * *') && needs.classify.outputs.release_gate != 'true'
      runs-on: macos-latest
-@@ -1050,3 +1079,3 @@
+@@ -1125,3 +1154,3 @@
      needs: classify
 -    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
 +    if: needs.classify.outputs.risk != 'smoke' && github.event_name != 'push' && (github.event_name != 'schedule' || github.event.schedule == '47 3 * * *') && needs.classify.outputs.release_gate != 'true'
      name: Windows service authority (Server 2022)
-@@ -1139,10 +1168,7 @@
+@@ -1214,10 +1243,7 @@
    merge-gate:
--    # One stable required check. PR and merge_group: Secret-shape scan, Classify
--    # and Quick typecheck must pass, and every full lane must
--    # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
+-    # One stable required check. PR and merge_group: Secret-shape scan, Secret
+-    # scan, Classify and the Fast gate must pass, Quick typecheck is advisory,
+-    # and every full lane must be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
 -    # selected full lanes. Exact dependency keys; anything skipped, cancelled or
 -    # missing that should have run is a failure.
 +    # Stable required check: smoke for unowned docs/tests, full for protected
 +    # or unqualified source candidates. Only explicitly deferred jobs may skip.
      name: Merge Gate
 -    # macOS lanes are not needed: they never run on PR or merge_group (waiver).
--    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, windows-service-authority, release-build]
-+    # Full-risk candidates require every platform; smoke requires quick and both secret gates.
-+    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, release-build]
+-    needs: [secret-shape, secret-scan, classify, quick, fast-gate, site, docs, ci, windows-service-authority, release-build]
++    # Full-risk candidates require every platform; smoke requires quick, the fast gate and both secret gates.
++    needs: [secret-shape, secret-scan, classify, quick, fast-gate, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, release-build]
      if: ${{ always() }}
-@@ -1155,2 +1181,3 @@
+@@ -1230,2 +1256,3 @@
            REF: ${{ github.ref }}
 +          SCHEDULE: ${{ github.event.schedule }}
            GATE_NEEDS: ${{ toJSON(needs) }}
-@@ -1159,3 +1186,4 @@
+@@ -1234,3 +1261,4 @@
            const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
 -          const full = ['ci', 'windows-service-authority'];
 +          const platforms = ['ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority'];
 +          const full = ['ci', ...platforms];
-           const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
-@@ -1188,14 +1216,10 @@
+           const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'fast-gate', 'site', 'docs', ...full, 'release-build'];
+@@ -1263,17 +1291,10 @@
            const selected = lane === 'full' ? full : [lane];
 -          // PR and merge queue: the independent quick check runs for every lane.
 -          // Mason directive 2026-11-13: quick typecheck is advisory on fast events —
@@ -170,9 +170,12 @@
 -          // stale branch) does not block the merge. The daily full lane and
 -          // main-guardian remain the correctness floor. Secret-shape, secret-scan
 -          // and classify stay hard requirements.
--          const chosen = release ? ['release-build'] : fast ? [] : selected;
+-          // The blocking fast gate (typecheck plus affected tests) runs on PR and
+-          // merge_group only; master pushes and every other event skip it.
+-          const fastGate = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
+-          const chosen = release ? ['release-build'] : fastGate ? ['fast-gate'] : fast ? [] : selected;
 -          const advisory = fast && !release ? ['quick'] : [];
--          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
+-          const excluded = ['quick', 'fast-gate', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
 -          // A reusable workflow_call runs under the caller's push event: the Windows
 -          // service lane is deferred there, so it must be skipped, never failed.
 -          const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
@@ -180,14 +183,14 @@
 +          const risk = jobs.classify.outputs?.risk;
 +          if (!['smoke', 'full'].includes(risk)) throw new Error('Missing CI risk');
 +          const chosen = release ? ['release-build'] : fast
-+            ? ['quick', ...(candidate && risk === 'full' ? full : [])] : selected;
++            ? ['quick', ...(candidate ? ['fast-gate'] : []), ...(candidate && risk === 'full' ? full : [])] : selected;
 +          const deferred = process.env.EVENT_NAME === 'push' ||
 +            (process.env.EVENT_NAME === 'schedule' && process.env.SCHEDULE === '17 * * * *') ? platforms : [];
-+          const excluded = ['quick', ...lanes].filter(name => !chosen.includes(name));
++          const excluded = ['quick', 'fast-gate', ...lanes].filter(name => !chosen.includes(name));
            for (const name of chosen) {
-@@ -1203,5 +1227,2 @@
-             if (outcome(name) !== 'success') throw new Error(`${lane} CI required job ${name} concluded ${outcome(name) ?? 'missing'}`);
--          }
+@@ -1282,5 +1303,2 @@
+           }
 -          for (const name of advisory) {
 -            if (outcome(name) !== 'skipped' && outcome(name) !== 'success') console.log(`ADVISORY ${name} concluded ${outcome(name) ?? 'missing'} — not blocking (fast lane)`);
-           }
+-          }
+           for (const name of excluded) {

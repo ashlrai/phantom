@@ -160,10 +160,13 @@ jobs:
       - name: Install dependencies
         if: steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
+      # PR and merge_group typecheck moved to the blocking fast-gate job
+      # (RQ-CI-FASTGATE-1). Master pushes keep it here: this job is the compiler
+      # cache producer and the release evidence reads these step names.
       - name: Restore protected-branch compiler state
         # Read the protected base's incremental graph; tsc still validates the
         # candidate below. Only a successful master push saves compiler state.
-        if: steps.history.outputs.equal != 'true'
+        if: github.event_name == 'push' && steps.history.outputs.equal != 'true'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: |
@@ -172,7 +175,7 @@ jobs:
           key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
           restore-keys: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-
       - name: Core no-emit type check
-        if: steps.history.outputs.equal != 'true'
+        if: github.event_name == 'push' && steps.history.outputs.equal != 'true'
         # Both projects enable incremental/no-emit checking in their tsconfig.
         # Keep this step name stable for release evidence consumers.
         run: |
@@ -199,6 +202,76 @@ jobs:
         if: steps.mcp_selection.outputs.mcp_output == 'true'
         run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
 
+  fast-gate:
+    # Blocking fast gate on PR and merge_group (RQ-CI-FASTGATE-1): typecheck plus
+    # the tests the changed paths select, nothing else. Runs beside quick with no
+    # needs. Selection is bounded (.github/scripts/ci-fast-select.mjs); the full
+    # suites stay on the master schedule. Docs-only diffs typecheck and run zero
+    # tests. merge_group failures write an attribution report, nothing more.
+    name: Fast gate (typecheck + affected tests)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # PR: base..head. merge_group: the whole batch, base_sha..head_sha.
+      ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: blob:none
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Select affected tests
+        id: select
+        run: |
+          node --test .github/tests/ci-fast-select.test.mjs
+          node .github/scripts/ci-fast-select.mjs
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Restore protected-branch compiler state
+        # Prefer the exact protected base sha, then the newest entry for the same
+        # lockfile and tsconfig hash, then the newest entry of any hash (tsc
+        # rechecks what the changed inputs invalidate). Other cache families are
+        # untouched; only a successful master push saves compiler state.
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          restore-keys: |
+            master-typecheck-v2-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json') }}-
+            master-typecheck-v2-${{ runner.os }}-
+      - name: Core no-emit type check
+        # Keep this step name stable for release evidence consumers.
+        run: |
+          started=$SECONDS
+          npm run typecheck
+          elapsed=$((SECONDS - started))
+          echo "Incremental backend + web typecheck: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run affected tests
+        if: steps.select.outputs.mode != 'docs'
+        run: node .github/scripts/ci-fast-run.mjs
+      - name: Attribute merge group failure
+        if: failure() && github.event_name == 'merge_group'
+        run: node .github/scripts/ci-fast-attribute.mjs
+      - name: Upload merge group attribution
+        if: failure() && github.event_name == 'merge_group'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: merge-group-attribution
+          path: merge-group-attribution.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   classify:
     name: Classify PR site lane
     runs-on: ubuntu-latest
@@ -224,7 +297,7 @@ jobs:
       - name: Classify exact ecosystem-only PR
         id: lane
         env:
-          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
       - name: Select daily Mac rotation
@@ -1139,14 +1212,14 @@ jobs:
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
 
   merge-gate:
-    # One stable required check. PR and merge_group: Secret-shape scan, Classify
-    # and Quick typecheck must pass, and every full lane must
-    # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
+    # One stable required check. PR and merge_group: Secret-shape scan, Secret
+    # scan, Classify and the Fast gate must pass, Quick typecheck is advisory,
+    # and every full lane must be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
     # selected full lanes. Exact dependency keys; anything skipped, cancelled or
     # missing that should have run is a failure.
     name: Merge Gate
     # macOS lanes are not needed: they never run on PR or merge_group (waiver).
-    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, windows-service-authority, release-build]
+    needs: [secret-shape, secret-scan, classify, quick, fast-gate, site, docs, ci, windows-service-authority, release-build]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1160,7 +1233,7 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'windows-service-authority'];
-          const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
+          const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'fast-gate', 'site', 'docs', ...full, 'release-build'];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -1194,9 +1267,12 @@ jobs:
           // stale branch) does not block the merge. The daily full lane and
           // main-guardian remain the correctness floor. Secret-shape, secret-scan
           // and classify stay hard requirements.
-          const chosen = release ? ['release-build'] : fast ? [] : selected;
+          // The blocking fast gate (typecheck plus affected tests) runs on PR and
+          // merge_group only; master pushes and every other event skip it.
+          const fastGate = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
+          const chosen = release ? ['release-build'] : fastGate ? ['fast-gate'] : fast ? [] : selected;
           const advisory = fast && !release ? ['quick'] : [];
-          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
+          const excluded = ['quick', 'fast-gate', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
           const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
