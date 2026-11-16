@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- STAGED, NOT INSTALLED (RQ-NODE-AUTOSCALE-1). Local sampler only: no network, no listener.
+     Replace __PHM__ with the absolute path of the reviewed phm build and __HOME__ with the node's home. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.ashlr.node-capacity</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PHM__</string><string>node</string><string>capacity</string>
+    <string>--out</string><string>__HOME__/.ashlr-runs/metrics/node-capacity.json</string>
+    <string>--json</string>
+  </array>
+  <key>StartInterval</key><integer>60</integer>
+  <key>RunAtLoad</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>__HOME__/.ashlr-runs/logs/node-capacity.err</string>
+</dict>
+</plist>
