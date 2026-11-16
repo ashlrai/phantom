@@ -113,7 +113,7 @@ export async function readFleetOrderState(deps: FleetOrderStateDeps = {}): Promi
   try {
     trace = await bounded(() => read({ now: () => nowMs }), timeoutMs);
   } catch {
-    return { v: 1, asOf: nowIso, sources: 'unavailable', live: 'unavailable', orders: [] };
+    return { v: 1, asOf: nowIso, sources: 'unavailable', live: 'unavailable', lanes: 'unavailable', orders: [] };
   }
   let live: LiveJobIds | undefined;
   let liveState: 'healthy' | 'unavailable';

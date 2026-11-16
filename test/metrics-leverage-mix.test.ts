@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildLeverageMix, classifyLeverage } from '../src/core/metrics/leverage-mix.js';
 import { renderDashboard } from '../src/core/metrics/dashboard.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 import { rollup } from '../src/core/metrics/scoring.js';
+import * as taskCheck from '../src/cli/fleet-task-check.js';
 
 const fixtures = [
   { paths: ['test/a.test.ts'], job: 'RQ-FIX', expected: 'test-only' },
@@ -41,5 +42,39 @@ describe('merged PR leverage mix', () => {
     expect(buildLeverageMix(null, prs, now).total).toBeNull();
     expect(buildLeverageMix('', null, now).improvedShare).toBeNull();
     expect(buildLeverageMix(JSON.stringify({ event: 'outcome', state: 'MERGED', ts: '2026-11-09T11:00:00Z', job: 'RQ-OTHER' }), null, now).improvedShare).toBeNull();
+  });
+});
+
+describe('merges metrics CLI', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    { ledger: null, known: false, text: 'Merge metrics: unknown' },
+    { ledger: '', known: true, text: 'No merges in the last 24 hours' },
+    { ledger: 'merged', known: true, text: 'work: 1 merges' },
+  ])('reports $text in text and JSON', async ({ ledger, known, text }) => {
+    const row = JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-FIX', lane: 'work', ts: new Date().toISOString() });
+    const read = vi.spyOn(taskCheck, 'readTaskCheckJobs').mockResolvedValue(ledger === 'merged' ? row : ledger);
+    const io = { out: vi.fn(), err: vi.fn() };
+    expect(await cmdMetrics(['merges'], io)).toBe(0);
+    expect(io.out).toHaveBeenCalledExactlyOnceWith(text);
+    io.out.mockClear();
+    expect(await cmdMetrics(['merges', '--json'], io)).toBe(0);
+    expect(io.out).toHaveBeenCalledTimes(1);
+    const report = JSON.parse(io.out.mock.calls[0]![0]);
+    expect(report).toMatchObject({ schema: 'metrics.merges.v1', known, windowHours: 24 });
+    expect(report.lanes?.length ?? null).toBe(ledger === null ? null : ledger === '' ? 0 : 1);
+    if (ledger === 'merged') expect(report.lanes[0].buckets.reduce((sum: number, bucket: { merges: number }) => sum + bucket.merges, 0)).toBe(1);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(io.err).not.toHaveBeenCalled();
+  });
+
+  it('rejects extra merge arguments before reading the ledger', async () => {
+    const read = vi.spyOn(taskCheck, 'readTaskCheckJobs');
+    const io = { out: vi.fn(), err: vi.fn() };
+    expect(await cmdMetrics(['merges', '--bad'], io)).toBe(2);
+    expect(io.err).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('Usage: phm metrics'));
+    expect(io.out).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
   });
 });

@@ -4,13 +4,15 @@
  * reader that throws or reports itself unavailable becomes an "unknown" fact.
  */
 import { readInstalledBundleVersion, versionNewer } from '../app-update-status.js';
+import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
 import { gatherBriefFacts, type BriefFacts } from '../comms/leader-brief.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
-import type { Fact, StatusDigestInput, StatusDigestWorkClaims } from './status-digest.js';
+import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
+import type { Fact, StatusDigestInput, StatusDigestPeers, StatusDigestWorkClaims } from './status-digest.js';
 
 export interface StatusDigestSources {
   installedVersion: () => string | null;
@@ -22,6 +24,10 @@ export interface StatusDigestSources {
   inbox: (runsDir: string) => Promise<{ sourceState: string; entries: InboxEntry[] }>;
   /** Read-only bus claims table snapshot; gather counts it against nowMs. Override with undefined to drop the claims line. */
   workClaims?: (nowMs: number) => BusWorkClaimsInspection;
+  /** Read-only peer bus ledger; a throw becomes an unknown Peers line. */
+  peers?: (nowMs: number) => PeerLedgerReport;
+  /** Read-only node runner results on this computer; a throw becomes an unknown Node runs line. */
+  nodeRuns?: (nowMs: number) => NodeResultsSummary;
 }
 
 const HOUR = 3_600_000;
@@ -42,7 +48,36 @@ const defaults: StatusDigestSources = {
   needs: runsDir => readNeedsMason({ runsDir }),
   inbox: runsDir => readInboxEntries({ runsDir, limit: 200 }),
   workClaims: () => inspectBusWorkClaims(),
+  peers: nowMs => readPeerLedger({ now: () => nowMs }),
+  nodeRuns: nowMs => readNodeResults({ nowMs }),
 };
+
+function gatherNodeRuns(read: ((nowMs: number) => NodeResultsSummary) | undefined, nowMs: number): NodeResultsSummary | undefined {
+  if (read === undefined) return undefined;
+  try { return read(nowMs); } catch {
+    return { v: 1, authority: 'none', status: 'unavailable', asOf: new Date(nowMs).toISOString(), windowMs: 0, inWindow: 0, newest: null, unreadable: 0, truncated: false, reason: 'reader-failed' };
+  }
+}
+
+/** Maps the peer ledger to the digest shape; tightest is the first pair with no budget left (the ledger sorts by remaining). */
+export function summarizePeerLedger(report: PeerLedgerReport): StatusDigestPeers {
+  const limited = report.pairs.filter(pair => pair.remaining === 0);
+  const first = limited[0];
+  return {
+    status: report.status,
+    rateLimited: limited.length,
+    tightest: first ? `${first.fromAgent} → ${first.target}` : null,
+    nearCap: report.origins.filter(origin => origin.nearCap).length,
+    ...(report.reason ? { reason: report.reason } : {}),
+  };
+}
+
+function gatherPeers(read: ((nowMs: number) => PeerLedgerReport) | undefined, nowMs: number): StatusDigestPeers | undefined {
+  if (read === undefined) return undefined;
+  try { return summarizePeerLedger(read(nowMs)); } catch {
+    return { status: 'unavailable', reason: 'peer ledger reader failed', rateLimited: 0, tightest: null, nearCap: 0 };
+  }
+}
 
 /** Counts the snapshot at nowMs: 'missing' → null, 'unavailable' → throw (the caller's fact() keeps the reason). */
 function countWorkClaims(inspection: BusWorkClaimsInspection, nowMs: number): StatusDigestWorkClaims | null {
@@ -115,5 +150,5 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   }
 
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs) };
 }

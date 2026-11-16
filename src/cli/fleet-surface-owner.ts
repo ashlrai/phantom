@@ -6,16 +6,15 @@
  * claims coordinate only and grant no authority. See
  * src/core/fleet/surface-owner.ts.
  */
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { readFleetBoard } from '../core/fleet/coordination.js';
 import { readSurfaceOwner, SURFACES, type SurfaceOwnerDeps } from '../core/fleet/surface-owner.js';
+import { gitSurfaceLog } from '../core/fleet/surface-owner-git-log.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const exec = promisify(execFile);
 const usage = `Usage: ashlr fleet surface-owner (${Object.keys(SURFACES).join('|')}) [--json]`;
+const HISTORY_BUDGET_MS = 5_000;
 
-export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDeps = {}): Promise<number> {
+export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDeps & { historyBudgetMs?: number } = {}): Promise<number> {
   let surface: string | undefined;
   let json = false;
   const seen = new Set<string>();
@@ -27,23 +26,26 @@ export async function cmdFleetSurfaceOwner(args: string[], deps: SurfaceOwnerDep
     return 2;
   }
   if (surface === undefined || !Object.hasOwn(SURFACES, surface)) { console.error(usage); return 2; }
+  const budget = deps.historyBudgetMs;
+  const deadline = performance.now() + (budget !== undefined && Number.isFinite(budget) && budget >= 0 ? budget : HISTORY_BUDGET_MS);
+  const log = deps.log ?? gitSurfaceLog;
+  const boundedLog: NonNullable<SurfaceOwnerDeps['log']> = async (...params) => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error('history deadline exceeded');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => log!(...params)),
+        new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('history deadline exceeded')), remaining); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const report = await readSurfaceOwner(surface, {
     now: deps.now,
     board: deps.board ?? readFleetBoard,
-    log: deps.log ?? (async (file, count) => {
-      const { stdout } = await exec('git', ['--literal-pathspecs', 'log', `-n${count * 3}`, '--format=%h%x09%cI%x09%s', 'origin/master', '--', file],
-        { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-      return Promise.all(stdout.split('\n').filter(Boolean).map(async line => {
-        const [sha = '', date = '', ...subject] = line.split('\t');
-        let filesChanged: number | null = null;
-        try {
-          const { stdout: names } = await exec('git', ['show', '--format=', '--name-only', '-z', sha],
-            { encoding: 'utf8', timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
-          filesChanged = names.split('\0').filter(Boolean).length;
-        } catch { /* Unknown counts preserve existing behavior. */ }
-        return { sha, date, subject: subject.join('\t'), filesChanged };
-      }));
-    }),
+    log: boundedLog,
   });
   const safe = sanitizePublicJson(report) as NonNullable<typeof report>;
   if (json) {
