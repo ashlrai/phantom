@@ -14,7 +14,7 @@ export const FLEET_CLAIM_TTL_MS = 60 * 60_000;
 const MAX_TTL_MS = 7 * 24 * FLEET_CLAIM_TTL_MS;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REPO = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
-export interface FleetCoordinationOptions { path?: string; now?: number }
+export interface FleetCoordinationOptions { path?: string; now?: number; reap?: boolean }
 export interface FleetClaim { id: string; repo: string; task: string; agent: string; claimedAt: number; expiresAt: number }
 export interface FleetMessage { id: string; from: string; to: string; body: string; at: number; expiresAt: number }
 export interface FleetAssignment { id: string; repo: string; task: string; to: string; at: number; expiresAt: number; executionAuthorized: false }
@@ -170,7 +170,9 @@ export function readFleetBoard(options: FleetCoordinationOptions = {}): FleetBoa
   try {
     let state = replay(readEvents(options.path ?? fleetCoordinationPath()).events);
     const claims = [...state.claims.values()];
-    if (claims.some(claim => claim.expiresAt <= now)) {
+    // The board command records expiry. A caller that only projects evidence
+    // (bridge check) passes reap: false so a read does not append a ledger row.
+    if (options.reap !== false && claims.some(claim => claim.expiresAt <= now)) {
       const reaped = mutate({ ...options, now }, current => ({ ok: true, value: { event: null, value: current } }));
       if (!reaped.ok) throw new Error('Expiry release unavailable');
       state = reaped.value;
