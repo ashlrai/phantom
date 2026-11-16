@@ -98,6 +98,56 @@ export function judgeRequiredChecks(
   return pending ? 'pending' : 'green';
 }
 
+export interface FinalizeRunRecord {
+  status: string;
+  conclusion: string | null;
+  createdAt: string | null;
+  version: string | null;
+  sha: string | null;
+}
+
+export const FINALIZE_ATTEMPT_CAP = 2;
+export const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+
+/** `finalize <version> <sha>` is the only attributed title. Anything else is unreadable. */
+export function finalizeRunIdentity(title: string | null): { version: string; sha: string } | null {
+  const match = /^finalize ((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)) ([a-f0-9]{40})$/.exec(title ?? '');
+  if (!match) return null;
+  return { version: match[1]!, sha: match[2]! };
+}
+
+/**
+ * At most two finalize runs for one version and sha. A failure in the last
+ * hour blocks the next try. An unattributed run newer than the candidate
+ * counts against that pair, so a title-less failure cannot retry every tick.
+ */
+export function finalizeRetryDecision(input: {
+  now: string;
+  version: string;
+  sha: string;
+  since: string | null;
+  runs: readonly FinalizeRunRecord[];
+}): { dispatch: boolean; reason: string } {
+  const nowMs = Date.parse(input.now);
+  const sinceMs = input.since === null ? Number.NEGATIVE_INFINITY : Date.parse(input.since);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(sinceMs)) return { dispatch: false, reason: 'finalize-clock' };
+  const relevant = input.runs.filter((run) => {
+    if (run.version !== null && run.sha !== null) return run.version === input.version && run.sha === input.sha;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    return Number.isFinite(at) && at >= sinceMs;
+  });
+  if (relevant.some((run) => run.status !== 'completed')) return { dispatch: false, reason: 'finalize-in-progress' };
+  if (relevant.length >= FINALIZE_ATTEMPT_CAP) return { dispatch: false, reason: 'finalize-attempt-cap' };
+  const cooling = relevant.some((run) => {
+    if (run.conclusion === 'success' || run.conclusion === 'skipped') return false;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    if (!Number.isFinite(at) || at > nowMs) return true;
+    return nowMs - at < FINALIZE_FAILURE_COOLDOWN_MS;
+  });
+  if (cooling) return { dispatch: false, reason: 'finalize-failure-cooldown' };
+  return { dispatch: true, reason: 'finalize-allowed' };
+}
+
 export interface ReleaseAsset { name: string; created_at: string | null }
 export interface ReleaseRow {
   id: number;
@@ -155,6 +205,12 @@ export interface TrainObservation {
   npmPublish?: { runId: number; attempt: number; integrity: string } | null;
   /** A finalize run is queued, waiting, or in progress. */
   finalizePending?: boolean;
+  /**
+   * Recent finalize runs. `version` and `sha` are null when the run cannot
+   * be attributed; those still count against the current candidate when they
+   * are newer than its commit.
+   */
+  finalizeRuns?: readonly FinalizeRunRecord[];
   docsSynced: boolean;
   /** Parsed `version` from the updater endpoint, or null when it was not read. */
   feedVersion: string | null;
@@ -599,8 +655,11 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     });
   }
   const stocked = signed && names.includes('latest.json');
+  const finalizeRetry = finalizeRetryDecision({
+    now: input.now, version, sha: headTag.sha, since: input.head.committedAt, runs: input.finalizeRuns ?? [],
+  });
   if (row?.draft === true && stocked && publishable && input.npmPublished === true && input.npmPublish
-    && input.finalizePending !== true && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
+    && input.finalizePending !== true && finalizeRetry.dispatch && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/dispatches`,
       body: { ref: 'master', inputs: {
@@ -853,11 +912,23 @@ export async function observeTrain(
     }
   }
   let finalizePending = false;
+  let finalizeRuns: FinalizeRunRecord[] = [];
   if (npmPublish) {
     try {
       const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=20`));
       const rows = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
-      finalizePending = rows.some((row) => record(row)?.status !== 'completed');
+      finalizeRuns = rows.map((row) => {
+        const item = record(row);
+        const identity = finalizeRunIdentity(text(item?.display_title) ?? text(item?.name));
+        return {
+          status: text(item?.status) ?? '',
+          conclusion: text(item?.conclusion),
+          createdAt: text(item?.created_at),
+          version: identity?.version ?? null,
+          sha: identity?.sha ?? null,
+        };
+      });
+      finalizePending = finalizeRuns.some((run) => run.status !== 'completed');
     } catch {
       finalizePending = true;
     }
@@ -877,6 +948,7 @@ export async function observeTrain(
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
     npmPublish,
     finalizePending,
+    finalizeRuns,
     docsSynced,
     feedVersion: await publishedFeedVersion(read, releases, head?.tag ?? null),
   };
@@ -1045,32 +1117,43 @@ export function readReleaseState(path: string): TrainState {
   return parsed as TrainState;
 }
 
+const PUBLISH_WORKFLOW = '.github/workflows/publish-canonical-npm.yml';
+const PUBLISH_INVOCATION = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/;
+
+/** Path, event and run id must all sit on this one predicate. A partial object is not a match. */
+function onePredicate(node: Record<string, unknown> | null): { runId: number; attempt: number } | null {
+  if (!node) return null;
+  const build = record(node.buildDefinition);
+  const workflow = record(record(build?.externalParameters)?.workflow);
+  const github = record(record(build?.internalParameters)?.github);
+  const invocation = text(record(record(node.runDetails)?.metadata)?.invocationId);
+  const path = text(workflow?.path);
+  const event = text(github?.event_name);
+  if (path !== PUBLISH_WORKFLOW || event !== 'workflow_dispatch' || !invocation) return null;
+  const match = PUBLISH_INVOCATION.exec(invocation);
+  if (!match) return null;
+  const runId = Number(match[1]);
+  const attempt = Number(match[2]);
+  if (!Number.isSafeInteger(runId) || !Number.isSafeInteger(attempt)) return null;
+  return { runId, attempt };
+}
+
 export function publishRunFromAttestation(body: unknown): { runId: number; attempt: number } | null {
-  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : [];
-  for (const row of rows) {
-    const payload = text(record(record(record(row)?.bundle)?.dsseEnvelope)?.payload);
-    if (!payload || payload.length > 200_000) continue;
-    let decoded: unknown;
-    try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { continue; }
-    const found: { path?: string; event?: string; invocation?: string } = {};
-    const walk = (value: unknown): void => {
-      if (!value || typeof value !== 'object') return;
-      if (Array.isArray(value)) { for (const item of value) walk(item); return; }
-      const item = value as Record<string, unknown>;
-      if (item.path === '.github/workflows/publish-canonical-npm.yml') found.path = item.path;
-      if (item.event_name === 'workflow_dispatch') found.event = item.event_name;
-      if (typeof item.invocationId === 'string') found.invocation = item.invocationId;
-      for (const child of Object.values(item)) walk(child);
-    };
-    walk(decoded);
-    const match = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/.exec(found.invocation ?? '');
-    if (found.path && found.event && match) {
-      const runId = Number(match[1]);
-      const attempt = Number(match[2]);
-      if (Number.isSafeInteger(runId) && Number.isSafeInteger(attempt)) return { runId, attempt };
-    }
+  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : null;
+  if (!rows || rows.length !== 1) return null;
+  const payload = text(record(record(record(rows[0])?.bundle)?.dsseEnvelope)?.payload);
+  if (!payload || payload.length > 200_000) return null;
+  let decoded: unknown;
+  try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { return null; }
+  const statement = record(decoded);
+  if (!statement) return null;
+  const candidates = [record(statement.predicate), record(statement.buildDefinition) ? statement : null];
+  if (Array.isArray(statement.subject)) {
+    for (const entry of statement.subject) candidates.push(record(entry));
   }
-  return null;
+  const found = candidates.map(onePredicate).filter((item): item is { runId: number; attempt: number } => item !== null);
+  if (found.length !== 1) return null;
+  return found[0]!;
 }
 
 /** Argv and stdin for one `gh api` call. A body is sent only with `--input -`. */
