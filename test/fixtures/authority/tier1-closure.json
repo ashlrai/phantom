@@ -738,6 +738,7 @@
     "src/core/fleet/operator-glance.ts",
     "src/core/fleet/operator-proof.ts",
     "src/core/fleet/orchestration-journal.ts",
+    "src/core/fleet/order-blocked-notice.ts",
     "src/core/fleet/order-lane-blocker.ts",
     "src/core/fleet/order-merge-notice.ts",
     "src/core/fleet/order-queued-lanes.ts",
