@@ -666,3 +666,24 @@ This is a pure retained-snapshot projection, not a historical ledger or identity
 check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
 No HTTP feed endpoint is provided by this foundation.
+
+### Unified agent bus (RQ-BUS-UNIFY-1)
+
+`src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
+`agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
+`readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
+`createAgentChannel(input, options?)`, `joinAgentChannel(name, agent, options?)`,
+`leaveAgentChannel(name, agent, options?)`. Results are status objects
+(`created|updated|unchanged`, or `invalid|conflict|full|not-found|unavailable|retryable`
+with a `reason`); they never throw for bad input or storage faults.
+
+`src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
+`sendHandoff` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
+`readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
+Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
+
+`src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
+`detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
+`frameBusInbox(cli, messages)`. Identities are routing names and grant no authority.
+See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
