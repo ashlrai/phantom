@@ -1,0 +1,205 @@
+/**
+ * (node, provider, model) router (RQ-NODE-AUTOSCALE-1, unit 1C).
+ *
+ * Pure and deterministic. For each job it scores every feasible placement by
+ * expected merged PRs per token and per minute:
+ *
+ *   p           = (merged + 1) / (attempts + 2)         learned lane merge rate, Laplace prior
+ *   perMTok     = p / tokensPerJob * 1e6                outcome per million tokens
+ *   perHour     = p / (minutesPerJob + overhead) * 60   outcome per wall hour
+ *   score       = (perMTok / best perMTok)^w * (perHour / best perHour)^(1 - w)
+ *
+ * Feasibility comes only from measured node capacity: a placement must fit the
+ * node's remaining memory headroom (and CPU headroom when known) using the
+ * measured footprint of that harness. Cloud harnesses therefore cost a node
+ * only their local CLI plus MCP footprint, never a whole-host memory backoff.
+ * Node-wide integrity gates (kernel pressure, swap growth) still block a node.
+ */
+import { HARNESS_ADAPTERS } from './harness-adapters.js';
+import type { HarnessFootprint, NodeCapacityDoc } from './capacity-model.js';
+
+export interface HarnessModelCost {
+  provider: string;
+  model: string;
+  /** Harness adapter id whose local footprint a session costs. */
+  harness: string;
+  /** Measured median tokens per job for this (provider, model). */
+  tokensPerJob: number;
+  /** Measured median wall minutes per job. */
+  minutesPerJob: number;
+  /** Runs on a local model: the node must serve it already, or have room for `modelBytes` to load it. */
+  local?: boolean;
+  /** Resident bytes of the local model weights (file size of the served quantisation). */
+  modelBytes?: number;
+}
+
+export interface LaneOutcomes { attempts: number; merged: number }
+
+export interface RouteNode {
+  doc: NodeCapacityDoc;
+  /** Providers whose CLI is installed and signed in on this node; absent means any. */
+  providers?: string[];
+  /** Local models currently served on the node. */
+  localModels?: string[];
+  /** Extra wall minutes to start work there (sync, network); 0 for this host. */
+  overheadMinutes?: number;
+}
+
+export interface RouteJob {
+  id: string;
+  /** Restrict providers or models; absent means any. */
+  providers?: string[];
+  models?: string[];
+  /** 0 = only minutes matter, 1 = only tokens matter. Default 0.5. */
+  tokenWeight?: number;
+}
+
+export interface RouterInput {
+  nodes: RouteNode[];
+  costs: HarnessModelCost[];
+  /** Keyed by provider (lane). */
+  outcomes: Record<string, LaneOutcomes>;
+  jobs: RouteJob[];
+  nowMs: number;
+  /** Providers out of included usage; never routed (no spend). */
+  exhausted?: string[];
+  /** Capacity documents older than this are stale. Default 120 s. */
+  maxAgeMs?: number;
+}
+
+export interface Placement {
+  jobId: string;
+  nodeId: string | null;
+  provider: string | null;
+  model: string | null;
+  score: number | null;
+  mergeRate: number | null;
+  mergesPerMTok: number | null;
+  mergesPerHour: number | null;
+  footprint: 'node' | 'fleet' | null;
+  /** When unplaced: why each node or candidate was rejected (counts). */
+  rejected?: Record<string, number>;
+}
+
+export const ROUTER_DEFAULTS = Object.freeze({ maxAgeMs: 120_000, tokenWeight: 0.5 });
+
+const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+
+export function mergeRate(o: LaneOutcomes | undefined): number {
+  const attempts = o && Number.isSafeInteger(o.attempts) && o.attempts >= 0 ? o.attempts : 0;
+  const merged = o && Number.isSafeInteger(o.merged) && o.merged >= 0 ? Math.min(o.merged, attempts) : 0;
+  return (merged + 1) / (attempts + 2);
+}
+
+/** Largest measured session footprint of each harness on any node: the stand-in for a node that has not run it yet. */
+export function fleetFootprints(docs: NodeCapacityDoc[]): Record<string, HarnessFootprint> {
+  const out: Record<string, HarnessFootprint> = {};
+  for (const doc of [...docs].sort((a, b) => a.node.localeCompare(b.node))) {
+    for (const [id, fp] of Object.entries(doc.per_harness_footprint)) {
+      const cur = out[id];
+      if (!cur || fp.mem_bytes_max > cur.mem_bytes_max ||
+          (fp.mem_bytes_max === cur.mem_bytes_max && (fp.cpu_cores_per_session ?? 0) > (cur.cpu_cores_per_session ?? 0))) out[id] = fp;
+    }
+  }
+  return out;
+}
+
+interface NodeState {
+  node: RouteNode;
+  /** Local models served now or loaded by an earlier placement in this plan. */
+  loaded: Set<string>;
+  bytes: number;
+  cores: number | null;
+  blocked: string | null;
+}
+
+function nodeStates(input: RouterInput): NodeState[] {
+  const maxAge = input.maxAgeMs ?? ROUTER_DEFAULTS.maxAgeMs;
+  return [...input.nodes].sort((a, b) => a.doc.node.localeCompare(b.doc.node)).map(node => {
+    const age = input.nowMs - Date.parse(node.doc.measured_at);
+    const limits = Object.values(node.doc.basis?.limiting ?? {});
+    const blocked = !finite(age) || age < -60_000 || age > maxAge ? 'stale'
+      : limits.includes('pressure') ? 'pressure'
+      : limits.includes('swap-growth') ? 'swap-growth'
+      : node.doc.mem_free.headroom_bytes === null ? 'unmeasured' : null;
+    return { node, loaded: new Set(node.localModels ?? []), bytes: node.doc.mem_free.headroom_bytes ?? 0, cores: node.doc.cpu.headroom_cores, blocked };
+  });
+}
+
+/** Plan every job in order; each placement consumes the node's measured headroom. */
+export function planAutoscaleRoutes(input: RouterInput): Placement[] {
+  const states = nodeStates(input);
+  const fleet = fleetFootprints(input.nodes.map(n => n.doc));
+  const exhausted = new Set(input.exhausted ?? []);
+  const known = new Set(HARNESS_ADAPTERS.map(a => a.id));
+  const costs = input.costs.filter(c => known.has(c.harness) && finite(c.tokensPerJob) && c.tokensPerJob > 0 &&
+    finite(c.minutesPerJob) && c.minutesPerJob > 0)
+    .sort((a, b) => a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
+  const plan: Placement[] = [];
+  for (const job of input.jobs) {
+    const rejected: Record<string, number> = {};
+    const reject = (why: string) => { rejected[why] = (rejected[why] ?? 0) + 1; };
+    type Cand = { state: NodeState; cost: HarnessModelCost; fp: HarnessFootprint; fpSource: 'node' | 'fleet'; load: number; p: number; perMTok: number; perHour: number };
+    const cands: Cand[] = [];
+    for (const cost of costs) {
+      if (job.providers && !job.providers.includes(cost.provider)) continue;
+      if (job.models && !job.models.includes(cost.model)) continue;
+      if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
+      for (const state of states) {
+        if (state.blocked) { reject(`node-${state.blocked}`); continue; }
+        if (state.node.providers && !state.node.providers.includes(cost.provider)) { reject('provider-not-on-node'); continue; }
+        // An unserved local model needs room for its weights; without a size it cannot be placed.
+        const load = cost.local && !state.loaded.has(cost.model) ? cost.modelBytes : 0;
+        if (!finite(load) || load < 0) { reject('model-not-served'); continue; }
+        const own = state.node.doc.per_harness_footprint[cost.harness];
+        const fp = own ?? fleet[cost.harness];
+        if (!fp) { reject('footprint-unmeasured'); continue; }
+        if (fp.mem_bytes_max + load > state.bytes) { reject('memory'); continue; }
+        if (state.cores !== null && fp.cpu_cores_per_session !== null && fp.cpu_cores_per_session > state.cores) { reject('cpu'); continue; }
+        const p = mergeRate(input.outcomes[cost.provider]);
+        cands.push({ state, cost, fp, fpSource: own ? 'node' : 'fleet', load, p,
+          perMTok: p / cost.tokensPerJob * 1e6, perHour: p / (cost.minutesPerJob + Math.max(0, state.node.overheadMinutes ?? 0)) * 60 });
+      }
+    }
+    if (!cands.length) {
+      plan.push({ jobId: job.id, nodeId: null, provider: null, model: null, score: null, mergeRate: null,
+        mergesPerMTok: null, mergesPerHour: null, footprint: null, rejected });
+      continue;
+    }
+    const w = finite(job.tokenWeight) ? Math.max(0, Math.min(1, job.tokenWeight)) : ROUTER_DEFAULTS.tokenWeight;
+    const bestTok = Math.max(...cands.map(c => c.perMTok)), bestHour = Math.max(...cands.map(c => c.perHour));
+    let best: Cand | null = null, bestScore = -1;
+    for (const c of cands) {
+      const score = (c.perMTok / bestTok) ** w * (c.perHour / bestHour) ** (1 - w);
+      // Strictly greater keeps the first candidate in (provider, model, node) order on ties.
+      if (score > bestScore + 1e-12) { best = c; bestScore = score; }
+    }
+    best!.state.bytes -= best!.fp.mem_bytes_max + best!.load;
+    if (best!.cost.local) best!.state.loaded.add(best!.cost.model);
+    if (best!.state.cores !== null && best!.fp.cpu_cores_per_session !== null) best!.state.cores -= best!.fp.cpu_cores_per_session;
+    const r = (n: number) => Math.round(n * 1e4) / 1e4;
+    plan.push({ jobId: job.id, nodeId: best!.state.node.doc.node, provider: best!.cost.provider, model: best!.cost.model,
+      score: r(bestScore), mergeRate: r(best!.p), mergesPerMTok: r(best!.perMTok), mergesPerHour: r(best!.perHour), footprint: best!.fpSource });
+  }
+  return plan;
+}
+
+/**
+ * Fleet-wide additional sessions per harness right now: the number a lane
+ * controller should use instead of a whole-host memory backoff. Null when no
+ * fresh node has a measured answer for that harness.
+ */
+export function fleetRunnable(docs: NodeCapacityDoc[], nowMs: number, maxAgeMs = ROUTER_DEFAULTS.maxAgeMs): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const adapter of HARNESS_ADAPTERS) {
+    let sum: number | null = null;
+    for (const doc of docs) {
+      const age = nowMs - Date.parse(doc.measured_at);
+      if (!finite(age) || age < -60_000 || age > maxAgeMs) continue;
+      const n = doc.agents_runnable_now[adapter.id];
+      if (Number.isSafeInteger(n)) sum = (sum ?? 0) + (n as number);
+    }
+    out[adapter.id] = sum;
+  }
+  return out;
+}
