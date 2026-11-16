@@ -111,8 +111,9 @@ source health, revision and observation time so stale state stays visible.
 **Current gap.** [queue.v1](../QUEUE.md) is dispatch-neutral but requires a
 `pool`; its local claims record owner/time and have no automatic reclaim.
 `DONE` is operator-reported, not merge evidence. The Markdown queue, ready.tsv
-and scheduler views coexist. [Bus v2](../AGENT-BUS.md#v2) already unifies resource
-claims, but its proposed work-feed projection is not implemented. A queue read
+and scheduler views coexist. [Bus v2](../AGENT-BUS.md#v2) unifies resource
+claims. The local work-feed projection is implemented (`projectBusWorkFeed`,
+`phm fleet work-feed`); HTTP work-feed endpoints are not. A queue read
 is not a dispatch lease. Hard-coded lane ownership strands otherwise feasible work.
 
 **Target.** A work item describes capability requirements, repo/path scope,
