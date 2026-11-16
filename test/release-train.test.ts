@@ -8,11 +8,14 @@ import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isMissingTagRef, isReleasePleaseCommit,
-  successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation,
+  successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation, finalizeRetryDecision,
+  finalizeRunIdentity, listFinalizeRuns, finalizeRunsQuery,
+  RELEASE_GATE_RECEIPT, releaseGateReceipt,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
+import { RELEASE_GATE } from '../.github/scripts/ci-release-gate.mjs';
 
 const sha = 'a'.repeat(40);
 const head = 'b'.repeat(40);
@@ -455,6 +458,97 @@ describe('release train', () => {
     expect(refusePublishIfSuccessorConflict(first.writes, ready)).toEqual(first.writes);
   });
 
+  it('admits a tagged sha from its package version and release-gate receipt', () => {
+    expect([...RELEASE_GATE_RECEIPT]).toEqual([...RELEASE_GATE]);
+    const runs = RELEASE_GATE_RECEIPT.map(([name]) => ({ name, status: 'completed', conclusion: 'success', appId: 15368 }));
+    expect(releaseGateReceipt(runs)).toBe('green');
+    expect(releaseGateReceipt(runs.map((run) => run.name === 'Merge Gate' ? { ...run, conclusion: 'skipped' } : run))).toBe('red');
+    expect(releaseGateReceipt(runs.flatMap((run) => run.name === 'Desktop release smoke'
+      ? [run, { ...run, conclusion: 'skipped' }] : [run]))).toBe('green');
+    expect(releaseGateReceipt(runs.filter((run) => run.name !== 'Release suites (build + signing path)'))).toBe('pending');
+    const tagged = 'e'.repeat(40);
+    const older = 'f'.repeat(40);
+    const headRow = {
+      tag: 'v3.30.35', sha: tagged,
+      message: 'ci(release): RELEASE-GATE-SPLIT-3 accept push-scoped checks (#6365)\n',
+      packageVersion: '3.30.35', releaseGate: 'green' as const,
+      ancestry: 'ancestor' as const, committedAt: '2026-11-16T18:26:53Z',
+    };
+    const plan = buildTrain(observation({
+      masterVersion: '3.30.35',
+      tags: [{ name: 'v3.30.35', sha: tagged }, { name: 'v3.30.34', sha: older }],
+      head: headRow,
+      releases: [
+        { id: 35, tag_name: 'v3.30.35', draft: true, name: 'Phantom 3.30.35', body: 'notes', created_at: '2026-11-16T18:30:00Z', assets: [] },
+        { id: 34, tag_name: 'v3.30.34', draft: true, name: 'Phantom 3.30.34', body: 'held', created_at: '2026-11-15T00:00:00Z', assets: [] },
+      ],
+    }));
+    expect(plan.exitCode).toBe(0);
+    expect(plan.state).toMatchObject({ tag: 'v3.30.35', sha: tagged, version: '3.30.35' });
+    expect(JSON.stringify(plan.writes)).not.toContain('releases/34');
+    expect(JSON.stringify(plan.writes)).not.toContain('git/refs');
+    expect(JSON.stringify(plan.writes)).not.toContain('v3.30.34');
+    const dispatch = plan.writes.find((write) => write.path.endsWith('/ci.yml/dispatches'));
+    expect(dispatch && dispatch.method === 'POST' && 'ref' in dispatch.body && dispatch.body.ref).toBe('v3.30.35');
+    const held = buildTrain(observation({
+      masterVersion: '3.30.35',
+      tags: [{ name: 'v3.30.35', sha: tagged }],
+      head: { ...headRow, releaseGate: 'pending' },
+      releases: [],
+    }));
+    expect(held.exitCode).toBe(1);
+    expect(held.state.reason).toContain('release_message_mismatch: tag=v3.30.35');
+    expect(held.writes).toEqual([]);
+  });
+
+  it('selects a newer tagged sha over v3.30.34 when the receipt is green', async () => {
+    const tagged = 'e'.repeat(40);
+    const older = 'f'.repeat(40);
+    const version = '3.30.35';
+    const pkg = (value: string) => ({ encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: value })).toString('base64') });
+    const names = RELEASE_GATE_RECEIPT.map(([name]) => name);
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      [`repos/ashlrai/phantom/commits/${sha}`]: { sha, commit: { message: 'merge', committer: { date: '2026-11-16T19:00:00Z' } } },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg(version),
+      [`repos/ashlrai/phantom/contents/package.json?ref=${tagged}`]: pkg(version),
+      [`repos/ashlrai/phantom/contents/package.json?ref=${older}`]: pkg('3.30.34'),
+      'repos/ashlrai/phantom/git/ref/tags/v3.30.35': { ref: 'refs/tags/v3.30.35', object: { type: 'commit', sha: tagged } },
+      [`repos/ashlrai/phantom/commits/${tagged}`]: { sha: tagged, commit: { message: 'ci(release): RELEASE-GATE-SPLIT-3 accept push-scoped checks (#6365)\n', committer: { date: '2026-11-16T18:26:53Z' } } },
+      [`repos/ashlrai/phantom/commits/${older}`]: { sha: older, commit: { message: 'chore(master): release 3.30.34 (#1)\n', committer: { date: '2026-11-15T00:00:00Z' } } },
+      [`repos/ashlrai/phantom/compare/${tagged}...${sha}`]: { status: 'ahead', ahead_by: 2 },
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.35', commit: { sha: tagged } }, { name: 'v3.30.34', commit: { sha: older } }],
+      [`repos/ashlrai/phantom/commits?sha=${tagged}&per_page=30`]: [{ commit: { message: 'ci(release): RELEASE-GATE-SPLIT-3 accept push-scoped checks (#6365)' } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [
+        { id: 35, tag_name: 'v3.30.35', draft: true, name: 'Phantom 3.30.35', body: 'notes', created_at: '2026-11-16T18:30:00Z', assets: [] },
+        { id: 34, tag_name: 'v3.30.34', draft: true, name: 'Phantom 3.30.34', body: 'held', created_at: '2026-11-15T00:00:00Z', assets: [] },
+      ],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [],
+      [`repos/ashlrai/phantom/actions/workflows/ci.yml/runs?head_sha=${tagged}&per_page=20`]: { total_count: 0, workflow_runs: [] },
+      [`repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/runs?head_sha=${tagged}&status=success&per_page=5`]: { total_count: 0, workflow_runs: [] },
+      'registry/npm/@ashlr/phantom/3.30.35': null,
+      ...greenCi(tagged),
+      [`repos/ashlrai/phantom/commits/${tagged}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
+        total_count: names.length,
+        check_runs: names.map((name) => ({ name, status: 'completed', conclusion: 'success', app: { id: 15368 } })),
+      },
+    };
+    const observed = await observeTrain(async (path) => {
+      if (Object.hasOwn(data, path)) return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (path.startsWith('registry/')) return null;
+      throw new Error(`unexpected ${path}`);
+    }, '2026-11-16T19:10:00.000Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+    expect(observed.head).toMatchObject({ tag: 'v3.30.35', sha: tagged, packageVersion: '3.30.35', releaseGate: 'green' });
+    expect(observed.skippedTags ?? []).toEqual([]);
+    const plan = buildTrain(observed);
+    expect(plan.state).toMatchObject({ tag: 'v3.30.35', sha: tagged, version: '3.30.35' });
+    expect(JSON.stringify(plan.writes)).not.toContain('releases/34');
+    expect(JSON.stringify(plan.writes)).not.toContain('v3.30.34');
+    expect(JSON.stringify(plan.writes)).not.toContain('git/refs');
+  });
+
   it('admits a tag on a later merge when the release-please commit is its ancestor', () => {
     const later = { tag: 'v3.30.27', sha: head, message: 'bridge(RQ-X): notes (#1)\n', ancestry: 'ancestor' as const, committedAt: null };
     expect(buildTrain(observation({ head: later })).state.reason).toContain('candidate-refused');
@@ -663,6 +757,101 @@ describe('release train', () => {
     })).toString('base64');
     expect(publishRunFromAttestation({ attestations: [{ bundle: { dsseEnvelope: { payload } } }] })).toEqual({ runId: 44, attempt: 1 });
     expect(publishRunFromAttestation({ attestations: [] })).toBeNull();
+    const split = Buffer.from(JSON.stringify({
+      predicate: {
+        buildDefinition: {
+          externalParameters: { workflow: { path: '.github/workflows/publish-canonical-npm.yml' } },
+          internalParameters: { github: { event_name: 'workflow_dispatch' } },
+        },
+      },
+      elsewhere: { runDetails: { metadata: { invocationId: 'https://github.com/ashlrai/phantom/actions/runs/44/attempts/1' } } },
+    })).toString('base64');
+    expect(publishRunFromAttestation({ attestations: [{ bundle: { dsseEnvelope: { payload: split } } }] })).toBeNull();
+    const wrong = Buffer.from(JSON.stringify({
+      predicate: {
+        buildDefinition: {
+          externalParameters: { workflow: { path: '.github/workflows/ci.yml' } },
+          internalParameters: { github: { event_name: 'workflow_dispatch' } },
+        },
+        runDetails: { metadata: { invocationId: 'https://github.com/ashlrai/phantom/actions/runs/44/attempts/1' } },
+      },
+    })).toString('base64');
+    expect(publishRunFromAttestation({ attestations: [{ bundle: { dsseEnvelope: { payload: wrong } } }] })).toBeNull();
+  });
+
+  it('caps finalize retries for one version and sha', () => {
+    const integrity = 'sha512-Z9STmExvd1DbX+gD466UJ2pxrpTAJ5KioHOtO2r5UlOPOFrAgqoM92gjl6hugOQmoX2N9KaFU9sY38OAA76bBA==';
+    const assets = [
+      'ashlr-phantom-3.30.27.tgz', 'ashlr-phantom-3.30.27.tgz.sig',
+      'Phantom_3.30.27_aarch64.app.tar.gz', 'Phantom_3.30.27_aarch64.app.tar.gz.sig',
+      'manifest.json', 'manifest.json.sig', 'latest.json',
+    ].map((name) => ({ name, created_at: '2026-11-09T03:30:00.000Z' }));
+    const base = {
+      build: { runId: 11, attempt: 2, artifactId: 101, completedAt: '2026-11-09T03:00:00.000Z' },
+      attest: { runId: 22, attempt: 1, artifactId: 202, completedAt: '2026-11-09T03:10:00.000Z' },
+      audit: { runId: 33, attempt: 1 },
+      npmPublished: true as const,
+      npmPublish: { runId: 44, attempt: 1, integrity },
+      releases: [{ id: 3, tag_name: 'v3.30.27', draft: true, name: 'Phantom 3.30.27', body: 'notes', created_at: '2026-11-09T02:36:49Z', assets }],
+    };
+    const dispatched = (runs: TrainObservation['finalizeRuns']) => buildTrain(observation({ ...base, finalizeRuns: runs }))
+      .writes.some((write) => write.path.endsWith('/finalize-github-release.yml/dispatches'));
+    expect(dispatched([])).toBe(true);
+    const recent = { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: '3.30.27', sha: head };
+    expect(dispatched([recent])).toBe(false);
+    expect(finalizeRetryDecision({
+      now: '2026-11-09T06:00:00.000Z', version: '3.30.27', sha: head, since: '2026-11-09T02:30:00.000Z',
+      runs: [{ ...recent, createdAt: '2026-11-09T04:00:00.000Z' }],
+    }).dispatch).toBe(true);
+    expect(dispatched([
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T03:00:00.000Z', version: '3.30.27', sha: head },
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T04:30:00.000Z', version: '3.30.27', sha: head },
+    ])).toBe(false);
+    expect(dispatched([
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: null, sha: null },
+    ])).toBe(false);
+    expect(dispatched([
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T01:00:00.000Z', version: null, sha: null },
+      { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: '9.9.9', sha: 'c'.repeat(40) },
+    ])).toBe(true);
+    const titled = `finalize 3.30.27 ${head}`;
+    expect(finalizeRunIdentity(titled)).toEqual({ version: '3.30.27', sha: head });
+    expect(finalizeRunIdentity('Finalize GitHub stable release')).toBeNull();
+    expect(readFileSync(new URL('../.github/workflows/finalize-github-release.yml', import.meta.url), 'utf8'))
+      .toContain('run-name: finalize ${{ inputs.version }} ${{ inputs.candidate_sha }}');
+    const other = (createdAt: string) => ({ status: 'completed', conclusion: 'failure', createdAt, version: '3.30.36', sha: head });
+    expect(dispatched([
+      other('2026-11-09T03:00:00.000Z'),
+      other('2026-11-09T04:30:00.000Z'),
+    ])).toBe(true);
+  });
+
+  it('reads every finalize run in the last day so another version cannot hide the cap', async () => {
+    const now = '2026-11-09T06:00:00.000Z';
+    const since = '2026-11-08T06:00:00.000Z';
+    expect(finalizeRunsQuery(now, 1)).toContain(`created=${encodeURIComponent(`>=${since}`)}`);
+    expect(finalizeRunsQuery(now, 1)).toContain('per_page=100&page=1');
+    const noise = Array.from({ length: 100 }, (_, index) => ({
+      display_title: `finalize 3.30.36 ${'c'.repeat(40)}`,
+      status: 'completed', conclusion: 'failure', created_at: '2026-11-09T04:00:00.000Z', id: index,
+    }));
+    const buried = [
+      { display_title: `finalize 3.30.27 ${head}`, status: 'completed', conclusion: 'failure', created_at: '2026-11-09T03:00:00.000Z' },
+      { display_title: `finalize 3.30.27 ${head}`, status: 'completed', conclusion: 'failure', created_at: '2026-11-09T04:30:00.000Z' },
+    ];
+    const runs = await listFinalizeRuns(async (path) => {
+      if (path === finalizeRunsQuery(now, 1)) return { total_count: 102, workflow_runs: noise };
+      if (path === finalizeRunsQuery(now, 2)) return { total_count: 102, workflow_runs: buried };
+      throw new Error(`unexpected ${path}`);
+    }, now);
+    expect(runs.filter((run) => run.version === '3.30.27')).toHaveLength(2);
+    expect(finalizeRetryDecision({ now, version: '3.30.27', sha: head, since: '2026-11-09T02:30:00.000Z', runs }).dispatch).toBe(false);
+    expect(finalizeRetryDecision({ now, version: '3.30.36', sha: 'c'.repeat(40), since: '2026-11-09T02:30:00.000Z', runs }).reason).toBe('finalize-attempt-cap');
+    await expect(listFinalizeRuns(async (path) => {
+      const page = Number(new URL(`https://example.test/?${path.split('?')[1] ?? ''}`).searchParams.get('page'));
+      if (page >= 1 && page <= 10) return { total_count: 1000, workflow_runs: noise };
+      throw new Error(`unexpected ${path}`);
+    }, now)).rejects.toThrow(/incomplete finalize run inventory/);
   });
 
   it('rejects writes outside the sanctioned release paths', () => {

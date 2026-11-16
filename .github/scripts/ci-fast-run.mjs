@@ -6,6 +6,7 @@
 // attribution. No reruns: a failure fails the job.
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
@@ -18,6 +19,13 @@ export function failedTestFiles(log) {
     if (m) found.add(m[1]);
   }
   return [...found].sort();
+}
+
+// Fallback shards run at once. Each one must take a share of the machine,
+// not all of it: three shards at full width is 12 forks on a 4-vCPU runner,
+// and suites that pass alone then hit the 5000 ms timeout.
+export function shardWorkers(cpus, shards) {
+  return Math.max(1, Math.floor(cpus / Math.max(1, shards)));
 }
 
 function run(command, args) {
@@ -53,7 +61,9 @@ export async function main(planPath, outPath) {
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
   const jobs = [];
   if (plan.mode === 'fallback') {
-    for (const shard of plan.shards) if (shard.length) jobs.push(run(process.execPath, ['scripts/test-ci.mjs', ...shard]));
+    const live = plan.shards.filter((shard) => shard.length);
+    const workers = shardWorkers(availableParallelism(), live.length);
+    for (const shard of live) jobs.push(run(process.execPath, ['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard]));
   } else if (plan.tests.length) {
     jobs.push(run(process.execPath, ['scripts/test-ci.mjs', ...plan.tests]));
   }

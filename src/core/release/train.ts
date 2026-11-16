@@ -98,6 +98,97 @@ export function judgeRequiredChecks(
   return pending ? 'pending' : 'green';
 }
 
+export interface FinalizeRunRecord {
+  status: string;
+  conclusion: string | null;
+  createdAt: string | null;
+  version: string | null;
+  sha: string | null;
+}
+
+export const FINALIZE_ATTEMPT_CAP = 2;
+export const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+
+/** Matches `run-name` on finalize-github-release.yml. Anything else is unreadable. */
+export function finalizeRunIdentity(title: string | null): { version: string; sha: string } | null {
+  const match = /^finalize ((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)) ([a-f0-9]{40})$/.exec(title ?? '');
+  if (!match) return null;
+  return { version: match[1]!, sha: match[2]! };
+}
+
+/**
+ * At most two finalize runs for one version and sha. A failure in the last
+ * hour blocks the next try. An unattributed run newer than the candidate
+ * counts against that pair, so a title-less failure cannot retry every tick.
+ */
+export function finalizeRetryDecision(input: {
+  now: string;
+  version: string;
+  sha: string;
+  since: string | null;
+  runs: readonly FinalizeRunRecord[];
+}): { dispatch: boolean; reason: string } {
+  const nowMs = Date.parse(input.now);
+  const sinceMs = input.since === null ? Number.NEGATIVE_INFINITY : Date.parse(input.since);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(sinceMs)) return { dispatch: false, reason: 'finalize-clock' };
+  const relevant = input.runs.filter((run) => {
+    if (run.version !== null && run.sha !== null) return run.version === input.version && run.sha === input.sha;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    return Number.isFinite(at) && at >= sinceMs;
+  });
+  if (relevant.some((run) => run.status !== 'completed')) return { dispatch: false, reason: 'finalize-in-progress' };
+  if (relevant.length >= FINALIZE_ATTEMPT_CAP) return { dispatch: false, reason: 'finalize-attempt-cap' };
+  const cooling = relevant.some((run) => {
+    if (run.conclusion === 'success' || run.conclusion === 'skipped') return false;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    if (!Number.isFinite(at) || at > nowMs) return true;
+    return nowMs - at < FINALIZE_FAILURE_COOLDOWN_MS;
+  });
+  if (cooling) return { dispatch: false, reason: 'finalize-failure-cooldown' };
+  return { dispatch: true, reason: 'finalize-allowed' };
+}
+
+export const FINALIZE_HISTORY_MS = 24 * 60 * 60 * 1000;
+const FINALIZE_RUN_PAGE_SIZE = 100;
+const FINALIZE_RUN_PAGE_CAP = 10;
+
+/** One page of finalize runs created in the last 24 hours. */
+export function finalizeRunsQuery(now: string, page: number): string {
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs) || !Number.isInteger(page) || page < 1) throw new Error('finalize-clock');
+  const created = new Date(nowMs - FINALIZE_HISTORY_MS).toISOString();
+  return `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=${FINALIZE_RUN_PAGE_SIZE}&page=${page}&created=${encodeURIComponent(`>=${created}`)}`;
+}
+
+function finalizeRunRecord(row: unknown): FinalizeRunRecord {
+  const item = record(row);
+  const identity = finalizeRunIdentity(text(item?.display_title) ?? text(item?.name));
+  return {
+    status: text(item?.status) ?? '',
+    conclusion: text(item?.conclusion),
+    createdAt: text(item?.created_at),
+    version: identity?.version ?? null,
+    sha: identity?.sha ?? null,
+  };
+}
+
+/** Every finalize run in the last 24 hours. A truncated window throws, so the cap cannot reset by falling off the first page. */
+export async function listFinalizeRuns(read: (path: string) => Promise<unknown>, now: string): Promise<FinalizeRunRecord[]> {
+  const runs: FinalizeRunRecord[] = [];
+  for (let page = 1; page <= FINALIZE_RUN_PAGE_CAP; page += 1) {
+    const listed = record(await read(finalizeRunsQuery(now, page)));
+    if (!listed || !Array.isArray(listed.workflow_runs)) throw new Error('incomplete finalize run inventory');
+    const rows = listed.workflow_runs;
+    runs.push(...rows.map(finalizeRunRecord));
+    const total = listed.total_count;
+    if (typeof total === 'number' && rows.length < FINALIZE_RUN_PAGE_SIZE && total !== runs.length) {
+      throw new Error('incomplete finalize run inventory');
+    }
+    if (rows.length < FINALIZE_RUN_PAGE_SIZE) return runs;
+  }
+  throw new Error('incomplete finalize run inventory');
+}
+
 export interface ReleaseAsset { name: string; created_at: string | null }
 export interface ReleaseRow {
   id: number;
@@ -123,8 +214,15 @@ export interface TrainObservation {
    * be a later merge than the release-please commit (two merges a second apart).
    * It carries that release commit's message when it is an ancestor of the tag
    * and package.json at the tag still carries the tag version.
+   * packageVersion and releaseGate identify that same tagged SHA when the
+   * subject is not a release-please line: package.json equals the tag and the
+   * release-gate receipt on that SHA is green.
    */
-  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; compareStatus?: string; committedAt: string | null } | null;
+  head: {
+    tag: string; sha: string; message: string; releaseMessage?: string;
+    packageVersion?: string | null; releaseGate?: ReleaseGateReceipt;
+    ancestry: Ancestry; compareStatus?: string; committedAt: string | null;
+  } | null;
   skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
   openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
@@ -155,6 +253,12 @@ export interface TrainObservation {
   npmPublish?: { runId: number; attempt: number; integrity: string } | null;
   /** A finalize run is queued, waiting, or in progress. */
   finalizePending?: boolean;
+  /**
+   * Recent finalize runs. `version` and `sha` are null when the run cannot
+   * be attributed; those still count against the current candidate when they
+   * are newer than its commit.
+   */
+  finalizeRuns?: readonly FinalizeRunRecord[];
   docsSynced: boolean;
   /** Parsed `version` from the updater endpoint, or null when it was not read. */
   feedVersion: string | null;
@@ -317,6 +421,38 @@ export function isReleasePleaseCommit(message: string, version: string): boolean
   const match = RELEASE_SUBJECT.exec(message);
   if (!match) return false;
   return `${match[1]}.${match[2]}.${match[3]}` === version;
+}
+
+/** Same names and all/any rules as ci-release-gate.mjs. A receipt is those check runs on one SHA. */
+export const RELEASE_GATE_RECEIPT = Object.freeze([
+  ['Merge Gate', 'all'],
+  ['Secret-shape scan', 'all'],
+  ['Secret scan (diff)', 'all'],
+  ['Check generated files', 'any'],
+  ['Check authority drift (hermetic)', 'any'],
+  ['Quick typecheck', 'any'],
+  ['Fast gate (typecheck + affected tests)', 'any'],
+  ['Desktop release smoke', 'any'],
+  ['Release suites (build + signing path)', 'any'],
+] as const);
+
+export type ReleaseGateReceipt = 'green' | 'red' | 'pending' | 'unknown';
+
+/** Green only when every receipt row is present. Missing or running is pending. A bad conclusion is red. */
+export function releaseGateReceipt(
+  runs: readonly { name: string; status: string; conclusion: string | null; appId: number }[],
+): ReleaseGateReceipt {
+  let pending = false;
+  for (const [name, rule] of RELEASE_GATE_RECEIPT) {
+    const rows = runs.filter((run) => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (rows.length === 0) { pending = true; continue; }
+    if (rows.some((run) => run.status !== 'completed')) { pending = true; continue; }
+    const conclusions = rows.map((run) => run.conclusion ?? 'none');
+    if (conclusions.some((conclusion) => conclusion !== 'success' && conclusion !== 'skipped')) return 'red';
+    if (rule === 'all' && conclusions.includes('skipped')) return 'red';
+    if (rule === 'any' && !conclusions.includes('success')) pending = true;
+  }
+  return pending ? 'pending' : 'green';
 }
 
 function releaseMismatch(tag: string, message: string): string {
@@ -515,9 +651,15 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
   const version = headTag.name.slice(1);
+  const subjectAdmitted = isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version);
+  // The tagged SHA is the release when its package.json version is the tag and
+  // the release-gate receipt on that SHA is green. The commit subject is not
+  // an input to the receipt, digest, or attestation checks, which stay bound
+  // to this SHA.
+  const receiptAdmitted = input.head.packageVersion === version && input.head.releaseGate === 'green';
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
-    && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
+    && (subjectAdmitted || receiptAdmitted);
   if (!admitted) {
     const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
       ? `compare_not_ahead: ${input.head.compareStatus ?? input.head.ancestry}`
@@ -599,8 +741,11 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     });
   }
   const stocked = signed && names.includes('latest.json');
+  const finalizeRetry = finalizeRetryDecision({
+    now: input.now, version, sha: headTag.sha, since: input.head.committedAt, runs: input.finalizeRuns ?? [],
+  });
   if (row?.draft === true && stocked && publishable && input.npmPublished === true && input.npmPublish
-    && input.finalizePending !== true && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
+    && input.finalizePending !== true && finalizeRetry.dispatch && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/dispatches`,
       body: { ref: 'master', inputs: {
@@ -697,6 +842,47 @@ async function pages(read: (path: string) => Promise<unknown>, path: string): Pr
   throw new Error('incomplete release inventory');
 }
 
+async function packageVersionAt(read: (path: string) => Promise<unknown>, sha: string): Promise<string | null> {
+  try {
+    const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${sha}`));
+    if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
+    const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
+    if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) return null;
+    return pkg.version;
+  } catch {
+    return null;
+  }
+}
+
+async function releaseGateFor(read: (path: string) => Promise<unknown>, sha: string): Promise<ReleaseGateReceipt> {
+  try {
+    const collected: { name: string; status: string; conclusion: string | null; appId: number }[] = [];
+    let total: number | null = null;
+    for (let page = 1; page <= 10; page += 1) {
+      const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+      const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+      const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+      if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+      if (total === null) total = pageTotal;
+      else if (pageTotal !== total) return 'unknown';
+      for (const row of batch) {
+        const item = record(row);
+        collected.push({
+          name: text(item?.name) ?? '',
+          status: text(item?.status) ?? '',
+          conclusion: text(item?.conclusion),
+          appId: Number(record(item?.app)?.id),
+        });
+      }
+      if (batch.length < 100) break;
+    }
+    if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
+    return releaseGateReceipt(collected);
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, tag: { name: string; sha: string }): Promise<string | null> {
   const version = tag.name.slice(1);
   const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${tag.sha}`));
@@ -767,11 +953,16 @@ export async function observeTrain(
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
     const candidate: NonNullable<TrainObservation['head']> = { tag: newest.name, sha: newest.sha, message, ancestry, compareStatus: status ?? 'unknown', committedAt };
-    if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
+    const version = newest.name.slice(1);
+    if (!isReleasePleaseCommit(message, version)) {
       const releaseMessage = await ancestorReleaseMessage(read, newest);
       if (releaseMessage) candidate.releaseMessage = releaseMessage;
     }
-    if (isReleasePleaseCommit(message, newest.name.slice(1)) || candidate.releaseMessage) {
+    candidate.packageVersion = await packageVersionAt(read, newest.sha);
+    if (candidate.packageVersion === version) candidate.releaseGate = await releaseGateFor(read, newest.sha);
+    const subject = isReleasePleaseCommit(message, version) || candidate.releaseMessage !== undefined;
+    const receipt = candidate.packageVersion === version && candidate.releaseGate === 'green';
+    if (subject || receipt) {
       head = candidate;
       break;
     }
@@ -853,11 +1044,11 @@ export async function observeTrain(
     }
   }
   let finalizePending = false;
+  let finalizeRuns: FinalizeRunRecord[] = [];
   if (npmPublish) {
     try {
-      const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=20`));
-      const rows = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
-      finalizePending = rows.some((row) => record(row)?.status !== 'completed');
+      finalizeRuns = await listFinalizeRuns(read, now);
+      finalizePending = finalizeRuns.some((run) => run.status !== 'completed');
     } catch {
       finalizePending = true;
     }
@@ -877,6 +1068,7 @@ export async function observeTrain(
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
     npmPublish,
     finalizePending,
+    finalizeRuns,
     docsSynced,
     feedVersion: await publishedFeedVersion(read, releases, head?.tag ?? null),
   };
@@ -1045,32 +1237,43 @@ export function readReleaseState(path: string): TrainState {
   return parsed as TrainState;
 }
 
+const PUBLISH_WORKFLOW = '.github/workflows/publish-canonical-npm.yml';
+const PUBLISH_INVOCATION = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/;
+
+/** Path, event and run id must all sit on this one predicate. A partial object is not a match. */
+function onePredicate(node: Record<string, unknown> | null): { runId: number; attempt: number } | null {
+  if (!node) return null;
+  const build = record(node.buildDefinition);
+  const workflow = record(record(build?.externalParameters)?.workflow);
+  const github = record(record(build?.internalParameters)?.github);
+  const invocation = text(record(record(node.runDetails)?.metadata)?.invocationId);
+  const path = text(workflow?.path);
+  const event = text(github?.event_name);
+  if (path !== PUBLISH_WORKFLOW || event !== 'workflow_dispatch' || !invocation) return null;
+  const match = PUBLISH_INVOCATION.exec(invocation);
+  if (!match) return null;
+  const runId = Number(match[1]);
+  const attempt = Number(match[2]);
+  if (!Number.isSafeInteger(runId) || !Number.isSafeInteger(attempt)) return null;
+  return { runId, attempt };
+}
+
 export function publishRunFromAttestation(body: unknown): { runId: number; attempt: number } | null {
-  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : [];
-  for (const row of rows) {
-    const payload = text(record(record(record(row)?.bundle)?.dsseEnvelope)?.payload);
-    if (!payload || payload.length > 200_000) continue;
-    let decoded: unknown;
-    try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { continue; }
-    const found: { path?: string; event?: string; invocation?: string } = {};
-    const walk = (value: unknown): void => {
-      if (!value || typeof value !== 'object') return;
-      if (Array.isArray(value)) { for (const item of value) walk(item); return; }
-      const item = value as Record<string, unknown>;
-      if (item.path === '.github/workflows/publish-canonical-npm.yml') found.path = item.path;
-      if (item.event_name === 'workflow_dispatch') found.event = item.event_name;
-      if (typeof item.invocationId === 'string') found.invocation = item.invocationId;
-      for (const child of Object.values(item)) walk(child);
-    };
-    walk(decoded);
-    const match = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/.exec(found.invocation ?? '');
-    if (found.path && found.event && match) {
-      const runId = Number(match[1]);
-      const attempt = Number(match[2]);
-      if (Number.isSafeInteger(runId) && Number.isSafeInteger(attempt)) return { runId, attempt };
-    }
+  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : null;
+  if (!rows || rows.length !== 1) return null;
+  const payload = text(record(record(record(rows[0])?.bundle)?.dsseEnvelope)?.payload);
+  if (!payload || payload.length > 200_000) return null;
+  let decoded: unknown;
+  try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { return null; }
+  const statement = record(decoded);
+  if (!statement) return null;
+  const candidates = [record(statement.predicate), record(statement.buildDefinition) ? statement : null];
+  if (Array.isArray(statement.subject)) {
+    for (const entry of statement.subject) candidates.push(record(entry));
   }
-  return null;
+  const found = candidates.map(onePredicate).filter((item): item is { runId: number; attempt: number } => item !== null);
+  if (found.length !== 1) return null;
+  return found[0]!;
 }
 
 /** Argv and stdin for one `gh api` call. A body is sent only with `--input -`. */

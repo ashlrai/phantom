@@ -9,7 +9,7 @@ import process from 'node:process';
 import {
   classifyPaths, plan, changedPaths, selectRelated, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
 } from '../scripts/ci-fast-select.mjs';
-import { failedTestFiles } from '../scripts/ci-fast-run.mjs';
+import { failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
 import { prNumber, related, attribute } from '../scripts/ci-fast-attribute.mjs';
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -123,6 +123,13 @@ test('changedPaths uses the merge-base diff and rejects a mismatched checkout', 
   assert.deepEqual(changedPaths({ base, head, cwd: dir }), ['b.txt']);
   assert.throws(() => changedPaths({ base, head: base, cwd: dir }), /checkout does not match head/);
   assert.throws(() => changedPaths({ base: 'main', head, cwd: dir }), /exact commit SHAs/);
+});
+
+test('fallback shards share the runner instead of each taking every CPU', () => {
+  assert.equal(shardWorkers(4, 3), 1);
+  assert.equal(shardWorkers(16, 3), 5);
+  assert.equal(shardWorkers(2, 3), 1);
+  assert.equal(shardWorkers(8, 0), 8);
 });
 
 test('failed test files parse from vitest and node output', () => {

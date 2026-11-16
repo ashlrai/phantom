@@ -2206,6 +2206,7 @@ async function main(): Promise<void> {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
             ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
+            ['phm metrics loop [--dry-run] [--json]', 'Self-awareness loop: throughput, loop times, cost, capacity per node'],
             ['phm metrics prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL] [--json]', 'Read bridge PR publication evidence'],
           ]);
           process.exitCode = 0;
@@ -2595,6 +2596,12 @@ async function main(): Promise<void> {
       case 'disk': {
         const { cmdDisk } = await import('./disk.js');
         process.exitCode = await cmdDisk(rest);
+        break;
+      }
+
+      case 'autofix': {
+        const { cmdAutofix } = await import('./autofix.js');
+        process.exitCode = await cmdAutofix(rest);
         break;
       }
 
@@ -3229,6 +3236,12 @@ async function main(): Promise<void> {
       case 'wb': {
         const { cmdWb } = await import('./wb.js');
         process.exitCode = await cmdWb(rest);
+        break;
+      }
+
+      case 'bets': {
+        const { cmdBets } = await import('./bets.js');
+        process.exitCode = await cmdBets(rest);
         break;
       }
 

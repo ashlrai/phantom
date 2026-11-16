@@ -59,6 +59,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
 - Fix release auto-tag to admit a green full CI run on an ancestor commit and a manual full dispatch, to treat a missing current-version tag ref as not yet tagged, and to send the enqueue GraphQL variable it names ([#6304](https://github.com/ashlrai/phantom/pull/6304), [#6300](https://github.com/ashlrai/phantom/pull/6300), [#6299](https://github.com/ashlrai/phantom/pull/6299)).
 
+### Removed
+
+- Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
 ## [3.30.35] - 2026-11-16
 
 
@@ -1988,7 +1992,7 @@ show that the package is published to npm.
   retired: `scripts/run-signed-release-canary.mjs` and
   `scripts/verify-signed-release-canary-receipt.mjs` are removed, so the
   `release:canary` manifest alias now fails until owner-lane cleanup removes
-  it and the frozen `v3.3.2` `release.yml`/`promote.yml` workflows. The
+  it and the frozen `v3.3.2` release workflows. The
   commissioned `publish-canonical-npm.yml` trusted-publishing workflow is the
   one sanctioned npm release path.
 - The manual `npm pack`/`npm publish` release instructions formerly in

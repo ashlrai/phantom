@@ -11,8 +11,8 @@
 > Both qualification profiles require exact-source hosted CI, independent Audit and trusted attestation
 > remain prerequisites. Native desktop finalization, signed asset publication,
 > installation and resident activation are separate steps. The frozen
-> `release.yml` and `promote.yml` procedures in the archive describe the historical
-> 3.3.2 lane; they are not the current publisher. Publication does not activate
+> `release.yml` procedure in the archive describes the historical
+> 3.3.2 lane; it is not the current publisher. Publication does not activate
 > provider credentials, spending permissions or resident autonomy.
 
 <a id="current-canonical-source-candidate"></a>
@@ -34,7 +34,7 @@ preserved only as immutable historical evidence.
 The artifact installer remains a separate maintenance operation. Existing legacy
 local-production policy receipts do not admit the canonical profile. Public
 registry acceptance and installed startup acceptance remain separate. The [historical release archive](RELEASING-HISTORICAL.md) preserves earlier
-receipts and procedures unchanged; its instructions are not the current lane.
+receipts and procedures; its instructions are not the current lane.
 
 ## Keep candidate metadata consistent
 
@@ -57,12 +57,14 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   the exhaustive platform suites and the existing seven-day Mac rotation.
   Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
   `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
-  Forty minutes before each of those full runs (`37 5,11,17,23 * * *`), and
-  when Auto-tag is requested while the master version still owes a published
-  release, [Preflight fixer](../.github/workflows/preflight-fixer.yml) runs the
-  affected tests since the last green full run plus test paths named by open
-  `p0-fix-forward` issues. A second Auto-tag request for the same master SHA
-  inside six hours does not start another run. It uploads `preflight-reds.json`
+  Forty minutes before each of those full runs (`37 5,11,17,23 * * *`),
+  [Preflight fixer](../.github/workflows/preflight-fixer.yml) runs the affected
+  tests since the last green full run plus test paths named by open
+  `p0-fix-forward` issues. Auto-tag starts that same workflow with
+  `workflow_dispatch` on master. The fixer has no `workflow_run` trigger. A
+  dispatch skips unless master still owes a published release, and a second
+  dispatch for the same SHA inside six hours does not run the suite again.
+  It uploads `preflight-reds.json`
   and updates one `p0-fix-forward` issue. Each failing test also gets its own
   issue with a stable `RQ-PREFLIGHT-<test>` line in the RQ-FIXUP shape, so a
   lane can pick it up before the scheduled run. The weekly
@@ -71,7 +73,7 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   commit to `published_at` in
   [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
   The committed file is the baseline; each weekly run uploads a fresh copy.
-- At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
+- On manual dispatch with `release_gate=true` (release-prep.yml once per master SHA, and Auto-tag on a tag): reuse a
   completed successful **push** CI run for the exact master SHA. The unsigned
   combined `Desktop release smoke` job reuses an immutable artifact for that
   source when available, otherwise builds once with cached compiler inputs.
@@ -192,13 +194,20 @@ What runs without a per-release approval:
   tags. A green open release PR for the next patch is still enqueued only
   after its own checks are green. The Release PR workflow independently
   checks green master, cadence and version carriers.
+- Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
+  release gate is green. The train treats that tagged SHA as the candidate
+  when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
+  release-gate receipt is green. The commit subject is not required. Receipt,
+  digest, and attestation checks stay bound to that SHA. `v3.30.34` is never
+  patched, published, deleted, or moved, including when a newer candidate is
+  selected.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
   candidate. The ref is the tag when the tag is behind master, and `master`
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
-  the candidate rather than a newer master HEAD. The half-hour schedule on
-  master is unchanged.
+  the candidate rather than a newer master HEAD. There is no half-hour
+  schedule; release-prep and Auto-tag dispatch `release_gate=true`.
 - A candidate whose master push CI run concluded red can never build:
   release-build reuses only a green exact-source push run. When that
   candidate has no build, master is strictly past it and still carries its
