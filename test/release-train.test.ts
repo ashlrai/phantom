@@ -9,6 +9,7 @@ import {
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
   enqueueReleasePullRequest, hostedTrainGate, isMissingTagRef, isReleasePleaseCommit,
   successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation, finalizeRetryDecision,
+  finalizeRunIdentity, listFinalizeRuns, finalizeRunsQuery,
   markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
   TRAIN_SCHEMA, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
@@ -720,6 +721,44 @@ describe('release train', () => {
       { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T01:00:00.000Z', version: null, sha: null },
       { status: 'completed', conclusion: 'failure', createdAt: '2026-11-09T05:30:00.000Z', version: '9.9.9', sha: 'c'.repeat(40) },
     ])).toBe(true);
+    const titled = `finalize 3.30.27 ${head}`;
+    expect(finalizeRunIdentity(titled)).toEqual({ version: '3.30.27', sha: head });
+    expect(finalizeRunIdentity('Finalize GitHub stable release')).toBeNull();
+    expect(readFileSync(new URL('../.github/workflows/finalize-github-release.yml', import.meta.url), 'utf8'))
+      .toContain('run-name: finalize ${{ inputs.version }} ${{ inputs.candidate_sha }}');
+    const other = (createdAt: string) => ({ status: 'completed', conclusion: 'failure', createdAt, version: '3.30.36', sha: head });
+    expect(dispatched([
+      other('2026-11-09T03:00:00.000Z'),
+      other('2026-11-09T04:30:00.000Z'),
+    ])).toBe(true);
+  });
+
+  it('reads every finalize run in the last day so another version cannot hide the cap', async () => {
+    const now = '2026-11-09T06:00:00.000Z';
+    const since = '2026-11-08T06:00:00.000Z';
+    expect(finalizeRunsQuery(now, 1)).toContain(`created=${encodeURIComponent(`>=${since}`)}`);
+    expect(finalizeRunsQuery(now, 1)).toContain('per_page=100&page=1');
+    const noise = Array.from({ length: 100 }, (_, index) => ({
+      display_title: `finalize 3.30.36 ${'c'.repeat(40)}`,
+      status: 'completed', conclusion: 'failure', created_at: '2026-11-09T04:00:00.000Z', id: index,
+    }));
+    const buried = [
+      { display_title: `finalize 3.30.27 ${head}`, status: 'completed', conclusion: 'failure', created_at: '2026-11-09T03:00:00.000Z' },
+      { display_title: `finalize 3.30.27 ${head}`, status: 'completed', conclusion: 'failure', created_at: '2026-11-09T04:30:00.000Z' },
+    ];
+    const runs = await listFinalizeRuns(async (path) => {
+      if (path === finalizeRunsQuery(now, 1)) return { total_count: 102, workflow_runs: noise };
+      if (path === finalizeRunsQuery(now, 2)) return { total_count: 102, workflow_runs: buried };
+      throw new Error(`unexpected ${path}`);
+    }, now);
+    expect(runs.filter((run) => run.version === '3.30.27')).toHaveLength(2);
+    expect(finalizeRetryDecision({ now, version: '3.30.27', sha: head, since: '2026-11-09T02:30:00.000Z', runs }).dispatch).toBe(false);
+    expect(finalizeRetryDecision({ now, version: '3.30.36', sha: 'c'.repeat(40), since: '2026-11-09T02:30:00.000Z', runs }).reason).toBe('finalize-attempt-cap');
+    await expect(listFinalizeRuns(async (path) => {
+      const page = Number(new URL(`https://example.test/?${path.split('?')[1] ?? ''}`).searchParams.get('page'));
+      if (page >= 1 && page <= 10) return { total_count: 1000, workflow_runs: noise };
+      throw new Error(`unexpected ${path}`);
+    }, now)).rejects.toThrow(/incomplete finalize run inventory/);
   });
 
   it('rejects writes outside the sanctioned release paths', () => {

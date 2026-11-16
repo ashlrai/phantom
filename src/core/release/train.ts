@@ -109,7 +109,7 @@ export interface FinalizeRunRecord {
 export const FINALIZE_ATTEMPT_CAP = 2;
 export const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
 
-/** `finalize <version> <sha>` is the only attributed title. Anything else is unreadable. */
+/** Matches `run-name` on finalize-github-release.yml. Anything else is unreadable. */
 export function finalizeRunIdentity(title: string | null): { version: string; sha: string } | null {
   const match = /^finalize ((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)) ([a-f0-9]{40})$/.exec(title ?? '');
   if (!match) return null;
@@ -146,6 +146,47 @@ export function finalizeRetryDecision(input: {
   });
   if (cooling) return { dispatch: false, reason: 'finalize-failure-cooldown' };
   return { dispatch: true, reason: 'finalize-allowed' };
+}
+
+export const FINALIZE_HISTORY_MS = 24 * 60 * 60 * 1000;
+const FINALIZE_RUN_PAGE_SIZE = 100;
+const FINALIZE_RUN_PAGE_CAP = 10;
+
+/** One page of finalize runs created in the last 24 hours. */
+export function finalizeRunsQuery(now: string, page: number): string {
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs) || !Number.isInteger(page) || page < 1) throw new Error('finalize-clock');
+  const created = new Date(nowMs - FINALIZE_HISTORY_MS).toISOString();
+  return `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=${FINALIZE_RUN_PAGE_SIZE}&page=${page}&created=${encodeURIComponent(`>=${created}`)}`;
+}
+
+function finalizeRunRecord(row: unknown): FinalizeRunRecord {
+  const item = record(row);
+  const identity = finalizeRunIdentity(text(item?.display_title) ?? text(item?.name));
+  return {
+    status: text(item?.status) ?? '',
+    conclusion: text(item?.conclusion),
+    createdAt: text(item?.created_at),
+    version: identity?.version ?? null,
+    sha: identity?.sha ?? null,
+  };
+}
+
+/** Every finalize run in the last 24 hours. A truncated window throws, so the cap cannot reset by falling off the first page. */
+export async function listFinalizeRuns(read: (path: string) => Promise<unknown>, now: string): Promise<FinalizeRunRecord[]> {
+  const runs: FinalizeRunRecord[] = [];
+  for (let page = 1; page <= FINALIZE_RUN_PAGE_CAP; page += 1) {
+    const listed = record(await read(finalizeRunsQuery(now, page)));
+    const rows = listed && Array.isArray(listed.workflow_runs) ? listed.workflow_runs : null;
+    if (!rows) throw new Error('incomplete finalize run inventory');
+    runs.push(...rows.map(finalizeRunRecord));
+    const total = listed.total_count;
+    if (typeof total === 'number' && rows.length < FINALIZE_RUN_PAGE_SIZE && total !== runs.length) {
+      throw new Error('incomplete finalize run inventory');
+    }
+    if (rows.length < FINALIZE_RUN_PAGE_SIZE) return runs;
+  }
+  throw new Error('incomplete finalize run inventory');
 }
 
 export interface ReleaseAsset { name: string; created_at: string | null }
@@ -915,19 +956,7 @@ export async function observeTrain(
   let finalizeRuns: FinalizeRunRecord[] = [];
   if (npmPublish) {
     try {
-      const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=20`));
-      const rows = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
-      finalizeRuns = rows.map((row) => {
-        const item = record(row);
-        const identity = finalizeRunIdentity(text(item?.display_title) ?? text(item?.name));
-        return {
-          status: text(item?.status) ?? '',
-          conclusion: text(item?.conclusion),
-          createdAt: text(item?.created_at),
-          version: identity?.version ?? null,
-          sha: identity?.sha ?? null,
-        };
-      });
+      finalizeRuns = await listFinalizeRuns(read, now);
       finalizePending = finalizeRuns.some((run) => run.status !== 'completed');
     } catch {
       finalizePending = true;
