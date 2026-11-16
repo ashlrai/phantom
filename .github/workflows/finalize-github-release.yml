@@ -1,6 +1,7 @@
 # Finalizes only an existing, completely stocked, signed Phantom draft.
 # No npm mutation, release creation, asset upload, tag or runtime authority.
 name: Finalize GitHub stable release
+run-name: finalize ${{ inputs.version }} ${{ inputs.candidate_sha }}
 
 on:
   workflow_dispatch:
