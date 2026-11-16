@@ -163,7 +163,7 @@ describe('runMergeQueueCycle', () => {
     expect(row.id).toBe(drainKey(REPO, 2, sha('c')));
     expect(row.prompt).toContain('merge conflict (DIRTY)');
     expect(row.prompt).toContain('Never force-push');
-    expect(fake.logs.at(-1)).toMatch(/^MERGEQ_CYCLE enqueued=1 rebased=1 drained=1/);
+    expect(fake.logs.at(-1)).toMatch(/^MERGEQ_CYCLE enqueued=1 rebased=1 resolved=0 drained=1/);
   });
 
   it('dry run classifies without mutating, appending or saving state', () => {
@@ -183,6 +183,35 @@ describe('runMergeQueueCycle', () => {
     const fake = makeIo({ snapshots: only([conflict]), queueIds: new Set([drainKey(REPO, 9, sha('d'))]) });
     expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).drained).toBe(0);
     expect(fake.lines).toEqual([]);
+  });
+
+  it('resolves a conflict mechanically before spending an agent lane', () => {
+    const fake = makeIo({ snapshots: only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]) });
+    const resolved: number[] = [];
+    fake.io.resolveConflict = (_repo, p) => { resolved.push(p.number); return 'resolved'; };
+    const summary = runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(resolved).toEqual([9]);
+    expect(summary).toMatchObject({ resolved: 1, drained: 0 });
+    expect(fake.lines).toEqual([]);
+  });
+
+  it('falls back to the lane on a real conflict or a resolver throw, and spends the resolve budget once', () => {
+    let at = NOW;
+    const fake = makeIo({ snapshots: only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]), now: () => at });
+    let calls = 0;
+    fake.io.resolveConflict = () => { calls++; if (calls === 1) throw new Error('boom'); return 'real'; };
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).toMatchObject({ resolved: 0, drained: 1 });
+    expect(JSON.parse(fake.lines[0]!).id).toBe(drainKey(REPO, 9, sha('d')));
+    at += 20 * MIN;
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(calls).toBe(1); // already drained for this head: no second resolve, no second line
+    expect(fake.lines).toHaveLength(1);
+  });
+
+  it('dry-run never resolves', () => {
+    const fake = makeIo({ snapshots: only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]) });
+    fake.io.resolveConflict = () => { throw new Error('must not run'); };
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO], dryRun: true }).resolved).toBe(0);
   });
 
   it('a new head after a conflict drain gets its own line, the same head never twice', () => {
