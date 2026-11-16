@@ -123,8 +123,9 @@ jobs:
           # RQ-PH-GATE-SPLIT-1: Merge Gate does not cover the advisory authority
           # drift job, and a failed generated-files job once let a tag through.
           # Both split jobs must also be completed + success on this exact sha,
-          # with the same rules as every discovered check (skipped is not green,
-          # missing or running waits within the bounded loop, then no tag).
+          # with the same rules as every discovered check (skipped is not green
+          # unless the same name also has a success run on this sha, missing or
+          # running waits within the bounded loop, then no tag).
           required=$( { printf '%s\n' "$required" "Check generated files" "Check authority drift (hermetic)"; } | sort -u )
           # One evaluation pass. Check runs: only GitHub Actions (app id
           # $ACTIONS_APP_ID) counts, and EVERY latest run with the required name
@@ -140,6 +141,11 @@ jobs:
                   if [ "$status" != completed ]; then echo "pending: $name ($status)"; pending=1
                   elif [ "$conclusion" = success ]; then echo "green: $name"
                   elif [ "$conclusion" = skipped ] && [ -n "$SKIP_OK" ] && [ "$name" = "$SKIP_OK" ]; then echo "skipped by design on push: $name"
+                  # RELEASE-GATE-SPLIT-3: a dispatched release prep on this
+                  # master SHA reports these push/PR-scoped jobs as skipped.
+                  # A skipped run is accepted only when another latest run of
+                  # the same name on this exact SHA is completed + success.
+                  elif [ "$conclusion" = skipped ] && awk -F'	' 'BEGIN{f=1} $2=="completed" && $3=="success"{f=0} END{exit f}' <<<"$rows"; then echo "skipped on another event, green run present: $name"
                   else echo "::error::not green: $name ($conclusion)"; bad=1; fi
                 done <<<"$rows"
                 continue
