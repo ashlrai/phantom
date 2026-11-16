@@ -52,10 +52,19 @@ function assertRunBlocksClean(text) {
   }
 }
 
+test('preflight workflow rejects workflow_run', () => {
+  assert.doesNotMatch(workflow, /workflow_run/);
+  assert.match(workflow, /^ {2}schedule:/m);
+  assert.match(workflow, /^ {2}workflow_dispatch:/m);
+  const autoTag = readFileSync(join(here, '../workflows/auto-tag.yml'), 'utf8');
+  const start = autoTag.slice(autoTag.indexOf('Start preflight fixer on master'));
+  assert.match(start, /preflight-fixer\.yml\/dispatches/);
+  assert.match(start, /\{"ref":"master"\}/);
+  assert.doesNotMatch(start.split('\n').slice(0, 12).join('\n'), /\$\{\{/);
+});
+
 test('workflow stays least privilege and does not interpolate the event into run', () => {
   assert.match(workflow, /^permissions: \{\}$/m);
-  assert.match(workflow, /workflows: \["Auto-tag"\]/);
-  assert.match(workflow, /types: \[requested\]/);
   assert.doesNotMatch(workflow, /secrets\.|persist-credentials:\s*true|release-train|release-desktop/);
   assertRunBlocksClean(workflow);
   assert.doesNotMatch(workflow, /\$\{\{\s*github\.event[.\s]/);
