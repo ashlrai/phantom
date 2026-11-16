@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
   { usage: 'phm app restart --json', description: 'Report held restart: UI-owned sessions, PTYs and computer-use workers require runtime migration. Does not restart or replace the app. Exit 1 held, 2 usage.', safety: 'read', jsonShape: '{schema: phantom-app-restart/v1, state: held, restarted: false, reason, blockers}' },
   { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
   { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
@@ -1094,6 +1095,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
+  { cmd: 'queue batches [--runs <directory>] [--json]', desc: 'Show each batch line’s PR, empty reason, failure or unknown result.', topic: 'observability' },
   { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
   { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },

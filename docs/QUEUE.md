@@ -601,3 +601,32 @@ Run `phm jobs retry-empty --dry-run` to preview READY lines for empty jobs from
  permanently, including if the queue line is later removed. Keep that directory
  when moving the queue. A crash between recording a receipt and writing the
  queue can leave a job unqueued; inspect the queue before manual recovery.
+
+## Batch session results
+
+Run `phm queue batches` to see one plain summary of batch sessions, or
+`phm queue batches --json` for the typed `phantom.queue-batches.v1` report.
+`phm queue --json` also returns this report. Use `--runs <directory>` with
+`batches` to inspect a fixture or another local runs directory.
+This is read-only. The same report backs both forms.
+
+The dispatcher already groups related READY lines in one repository into bounded
+sessions. `batch-sessions.json` sets `max_lines` (up to 10); every line retains its
+own lease, worktree, subagent, tests and PR through the normal guarded publisher.
+Failed lines retry individually. See [batch operation](../contrib/mac/README.md#adaptive-concurrency-and-batching)
+for configuration and exclusions.
+
+Each report session has `id`, `repo`, `area` and one `outcomes` entry per member:
+`job`, `outcome` (`pr`, `empty`, `failed`, `unknown`), `pr`, `reason` and
+`autoMerge` (`armed`, `off`, `unknown`). Checklist reasons persist in the batch
+manifest and task outcome journal. A worker's `done` alone never proves a PR.
+PRs and empty results require the matching per-line publisher handoff and a
+receipt newer than the session; `AUTO_MERGE on|off` supplies auto-merge evidence.
+Reasons are scrubbed before display. The report never returns worker prompts.
+
+Gaps: local receipts do not verify current GitHub state. Missing, stale or
+unreadable receipts remain unknown. Unavailable manifests return `totals: null`;
+invalid manifests or more than 1000 files mark the report partial, with counts
+only for readable sessions. Old sessions whose handoff markers were superseded
+may have unknown publication results. These changes require Security review and
+re-pinning before dispatcher installation; no live cutover is part of this change.
