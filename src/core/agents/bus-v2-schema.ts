@@ -20,7 +20,7 @@ export const WORK_STATUSES = [
   'queued', 'running', 'idle', 'rescheduled', 'blocked', 'done', 'failed', 'terminated',
 ] as const;
 export const BODY_KINDS = [
-  'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.release', 'wake',
+  'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.result', 'work.release', 'wake',
 ] as const;
 
 /** Same shape as v1 routing labels: printable ASCII, 1-128 chars. */
@@ -180,6 +180,15 @@ export const contextBodySchema = z.object({
 export const workPostBodySchema = z.object({
   kind: z.literal('work.post'), jobId, title: z.string().min(1).max(256), provider: providerSchema.optional(),
   repo: repoSlug, claimKeys: z.array(claimKeySchema).max(16),
+  dispatch: z.object({ tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+    scope: text.max(4000), acceptance: text.max(2000) }).strict().optional(),
+}).strict();
+export const workResultBodySchema = z.object({
+  kind: z.literal('work.result'), jobId, claimKey: claimKeySchema,
+  queueId: z.string().regex(/^peer-work-[a-f0-9]{32}$/),
+  receiptId: z.string().regex(/^pw-[a-f0-9]{32}$/),
+  outcome: z.enum(['reserved', 'admitted', 'complete', 'failed']),
+  reason: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
 }).strict();
 export const workClaimBodySchema = z.discriminatedUnion('op', [
   z.object({ kind: z.literal('work.claim'), op: z.literal('acquire'), jobId: jobId.optional(),
@@ -201,7 +210,7 @@ export const wakeBodySchema = z.object({
 /** Validates `envelope.body` for v2 messages. v1 bodies without a v2 kind stay valid v1 bodies. */
 export const busBodySchema = z.union([
   noteBodySchema, contextBodySchema, workPostBodySchema, workClaimBodySchema,
-  workStatusBodySchema, workReleaseBodySchema, wakeBodySchema,
+  workStatusBodySchema, workResultBodySchema, workReleaseBodySchema, wakeBodySchema,
 ]);
 export type BusBody = z.infer<typeof busBodySchema>;
 

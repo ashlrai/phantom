@@ -37,6 +37,17 @@ export function ClaimNoticesBody({ view, nowMs }: { view: ClaimNoticesView; nowM
           <p className={styles.preview}>{row.text}</p>
         </li>)}
       </ul>
+      {view.unbound.state === 'unknown' && <p className={styles.notice} role="status">Unbound claims: unknown</p>}
+      {view.unbound.state === 'known' && view.unbound.total > 0 && <>
+        <p className={styles.notice} role="status">{view.unbound.total} live claims have no Slack thread; their notices are dropped</p>
+        <ul className={styles.list} aria-label="Claims with no Slack thread">
+          {view.unbound.rows.map((row, i) => <li className={styles.row} key={`unbound-${i}`}>
+            <div className={styles.meta}><strong>{row.claimId}</strong><span>{row.repo}</span><span>{row.agent}</span>
+              <time dateTime={new Date(row.claimedAt).toISOString()}>{formatRelative(new Date(row.claimedAt).toISOString(), nowMs)}</time></div>
+            <code>{`ashlr fleet claim-bind ${row.claimId} --repo ${row.repo} --thread <threadKey>`}</code>
+          </li>)}
+        </ul>
+      </>}
       <p className={styles.message}>Posted means a durable bus note was written, not that Slack delivered it.</p>
     </>}
   </section>;
