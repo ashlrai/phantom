@@ -105,8 +105,6 @@ export function FleetSection() {
   // One Touch ID sheet for Start's grant step, the blocker and "Edit scope".
   const grantFlow = useGrantFlow(actions);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [worldOpen, setWorldOpen] = useState(false);
-  const worldId = useId();
   const advancedId = useId();
   const live = fleet.data?.value ?? null;
   const off = useAutonomyOff();
@@ -131,6 +129,11 @@ export function FleetSection() {
       actions={fleet.status === 'refreshing' ? <RefreshIndicator /> : null}
       lead={
         <>
+          <div id={anchorId('fleet-map')}>
+            <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the fleet map…</p>}>
+              <FleetWorld initialLens="compute" agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
+            </Suspense>
+          </div>
           <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading outcomes…</p>}>
             <OutcomesPanel actions={actions} />
           </Suspense>
@@ -178,14 +181,6 @@ export function FleetSection() {
         </Cell>
       ) : null}
       <Cell span={12}>
-        <Button size="sm" variant="ghost" aria-expanded={worldOpen} aria-controls={worldId} onClick={() => setWorldOpen(open => !open)}>
-          {worldOpen ? 'Close agent world' : 'Explore agent world'}
-        </Button>
-        <div id={worldId}>
-          {worldOpen ? <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the agent world…</p>}>
-            <FleetWorld agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />
-          </Suspense> : null}
-        </div>
         <ResourcePanel />
         <div id="fleet-working-runs"><SteerPanel live={live} actions={actions} now={now} /></div>
         <Suspense fallback={<p className={styles.muted}>Loading allowance controls…</p>}>

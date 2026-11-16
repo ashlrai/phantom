@@ -49,10 +49,12 @@ let closedBundles = [
 let writableBundles = [
     "ai.cognition.devin",
     "com.cognition.devin",
+    "com.exafunction.windsurf",
     "com.openai.codex",
     "com.anthropic.claudefordesktop",
     "ai.x.grok",
     "com.xai.grok",
+    "com.anysphere.sand",
     "com.todesktop.230313mzl4w4u92",
 ]
 

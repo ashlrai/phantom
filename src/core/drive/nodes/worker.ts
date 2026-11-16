@@ -8,6 +8,7 @@ import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps
 import { callPool, type PoolConfig } from './pool-host.js';
 import { isHostStats, validId } from './state.js';
 import { readNodeCapacity } from './capacity.js';
+import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
 import type { JobView } from './index.js';
@@ -48,7 +49,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
   const auth = light ? probeLocalAuth() : undefined;
   const lanes = light ? ['light', 'comms', ...(auth === 'ok' ? ['gh'] : [])] : probeNodeLanes();
   if (!lanes.length) return { held: 'no-local-provider-login' };
-  const joined = callPool(config, 'join', ['--node', config.node, '--caps', lanes.join(','), '--slots', String(capacity.slots)]);
+  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...lanes, versionCap(localPhmVersion())].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];

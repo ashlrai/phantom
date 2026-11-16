@@ -31,6 +31,7 @@ import {
   type MergeEventReader,
   type RetryableQueueFailure,
 } from './fleet-merge-latency.js';
+import { parseArmSnapshot, predictArmConflict, type ArmSnapshotRow } from '../core/fleet/merge-arm-conflict.js';
 import { PHANTOM_PR_HOLDS } from './fleet-merge-recover.js';
 
 const USAGE = 'Usage: phm fleet merge-retry [--events <file>] [--apply] [--json]\n' +
@@ -43,6 +44,7 @@ export const MAX_REQUESTS_PER_RUN = 3;
 const FIELDS = 'number,state,headRefOid,isDraft,mergeStateStatus,autoMergeRequest';
 /** mergeStateStatus values merge-recover also treats as safe to arm auto-merge on. */
 const READY_STATES = new Set(['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS']);
+const LIST_FIELDS = 'number,isDraft,autoMergeRequest,files';
 const HOLD_REPO = 'ashlrai/phantom';
 
 interface LivePr {
@@ -97,7 +99,7 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
       'A retry requests plain GitHub auto-merge on the live head; it merges only when required checks and reviews pass on their own.',
       'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. Each apply appends one retry_requested event per requested PR, or one retry_failed event per failed submission.',
       `Bounds: ${MAX_QUEUE_RETRIES} retries and ${MAX_QUEUE_RETRIES} distinct failed submissions per PR total, ${MAX_REQUESTS_PER_RUN} requests per run. Held PRs are never retried.`,
-      'Actions: request-auto-merge (dry run), auto-merge-requested, already-armed, already-requested, conflict, draft, merged, closed, not-ready, held, capped, failed, needs-person.',
+      'Actions: request-auto-merge (dry run), auto-merge-requested, already-armed, already-requested, conflict, predicted-conflict, draft, merged, closed, not-ready, held, capped, failed, needs-person.',
       'Needs-person reasons: unattributed, already-requested, too-many-retries, request-failed.',
       'Exit: 0 ok, 1 unreadable ledger or a failed request, 2 bad arguments.',
     ].join('\n'));
@@ -122,6 +124,18 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
   const latency = await fleetMergeLatency(deps.read ?? readMergeEvents(path), now);
   const rows: MergeRetryRow[] = [];
   let failed = false, attempted = 0;
+  // One open-PR snapshot per repo per run, fetched lazily; unusable stays null (unknown).
+  const snapshots = new Map<string, Promise<ArmSnapshotRow[] | null>>();
+  const snapshotFor = (repo: string) => {
+    let found = snapshots.get(repo);
+    if (!found) {
+      found = gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '300', '--json', LIST_FIELDS])
+        .then(result => (result.ok ? parseArmSnapshot(JSON.parse(result.stdout)) : null))
+        .catch(() => null);
+      snapshots.set(repo, found);
+    }
+    return found;
+  };
   if (latency.known) {
     const retries = latency.queue_retries!;
     for (const candidate of retries.retryable) {
@@ -131,7 +145,7 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
       if (!apply) { rows.push({ ...base, action: 'request-auto-merge' }); continue; }
       const action = attempted >= MAX_REQUESTS_PER_RUN
         ? 'capped'
-        : await retryOne(candidate, gh, record, now);
+        : await retryOne(candidate, gh, record, now, snapshotFor);
       if (action === 'auto-merge-requested' || action === 'failed') attempted += 1;
       if (action === 'failed') failed = true;
       rows.push({ ...base, action });
@@ -150,7 +164,8 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
   return !latency.known || failed ? 1 : 0;
 }
 
-async function retryOne(candidate: RetryableQueueFailure, gh: CloudGh, record: RetryRecorder, now: number): Promise<string> {
+async function retryOne(candidate: RetryableQueueFailure, gh: CloudGh, record: RetryRecorder, now: number,
+  snapshotFor: (repo: string) => Promise<ArmSnapshotRow[] | null>): Promise<string> {
   const { repo, pr } = candidate;
   if (repo === HOLD_REPO && PHANTOM_PR_HOLDS.has(pr)) return 'held';
   let current: LivePr;
@@ -166,6 +181,9 @@ async function retryOne(candidate: RetryableQueueFailure, gh: CloudGh, record: R
   if (current.isDraft) return 'draft';
   if (current.mergeStateStatus === 'DIRTY') return 'conflict';
   if (!READY_STATES.has(current.mergeStateStatus)) return 'not-ready';
+  // Overlap with an already-armed PR means it lands first and this arm would be
+  // dropped again; skip without spending a retry. Unknown evidence still arms.
+  if (predictArmConflict(pr, await snapshotFor(repo)).state === 'predicted-conflict') return 'predicted-conflict';
   // A failed submission is recorded so a permanently failing PR stops being
   // retried after the bound; a failed state read above records nothing — it
   // was never a submission attempt and retries for free on a later run.
