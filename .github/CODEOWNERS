@@ -284,6 +284,7 @@
 /test/authority-standing-grant-310b.test.ts @masonwyatt23
 /test/authority-surface-310b.test.ts @masonwyatt23
 /test/authority-tier1-closure-310b.test.ts @masonwyatt23
+/test/auto-tag-gate-split.test.ts @masonwyatt23
 /test/automerge-canary-host-cancellation.test.ts @masonwyatt23
 /test/automerge-canary-ladder.test.ts @masonwyatt23
 /test/automerge-canary-shadow-report.test.ts @masonwyatt23

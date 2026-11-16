@@ -14,7 +14,7 @@ export const FULL_REQUIRED = Object.freeze([
   'mac-general', 'mac-isolated', 'native-macos-broker-foundation',
   'windows-service-authority', 'merge-gate',
 ]);
-export const FULL_SKIPPED = Object.freeze(['quick', 'site', 'docs', 'release-build']);
+export const FULL_SKIPPED = Object.freeze(['quick', 'clean-tree', 'authority-drift', 'site', 'docs', 'release-build']);
 const CLASSIFY_JOB = 'Classify PR site lane';
 const RELEASE_JOB = 'Desktop release smoke';
 const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
