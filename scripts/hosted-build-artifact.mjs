@@ -504,7 +504,10 @@ export function verifyPushCi({ repository, revision, runId, runAttempt, read }) 
   const required = [
     ['Secret-shape scan', ['Scan candidate diff (fail closed)']],
     ['Secret scan (diff)', ['Scan the commits this event adds']],
-    ['Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)']],
+    ['Quick typecheck', ['Core no-emit type check']],
+    // RQ-PH-GATE-SPLIT-1: split out of Quick; a sha is not release-green unless both succeeded.
+    ['Check generated files', ['Check generated files']],
+    ['Check authority drift (hermetic)', ['Check authority drift (hermetic)']],
     ['Classify PR site lane', ['Bind candidate source']],
     ['Merge Gate', ['Require selected CI lane']],
   ];
