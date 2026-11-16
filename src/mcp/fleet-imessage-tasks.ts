@@ -29,6 +29,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { listTeammateTasks, type TeammateTaskOptions } from '../core/comms/imessage-teammate-tasks.js';
 import { imessageStateDir } from '../core/integrations/imessage.js';
+import { QueueStore } from '../core/queue/store.js';
+import type { QueueJob } from '../core/queue/schema.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
 export const MAX_FLEET_IMESSAGE_TASKS = 100;
@@ -55,6 +57,9 @@ export interface FleetImessageTaskReceipt {
   /** Local ledger state verbatim: queued | sending | pending | replied | expired. */
   state: string;
   claimKey: string;
+  /** Binding is independent of ledger state; finished is historical, never an active assignment. */
+  queueBinding: 'bound' | 'missing' | 'conflicting' | 'unavailable';
+  queueClaim: 'active' | 'finished' | null;
   createdAt: number;
   attemptedAt?: number;
   deadline: string;
@@ -78,6 +83,7 @@ export interface FleetImessageTasksReport {
   sourceState: FleetImessageSourceState;
   /** Filesystem presence of teammate-tasks.json at the server-owned root. */
   ledgerState: FleetImessageLedgerState;
+  queueState: 'ok' | 'unavailable';
   /** Scope marker: local persisted evidence, peer results stay unverified. */
   coverage: 'local-evidence-only-peer-reported-results-unverified';
   /** Projected rows; null when the collector could not run. */
@@ -122,7 +128,14 @@ function probeLedger(runsDir: string): FleetImessageLedgerState {
 }
 
 /** Whitelist projection: the collector's token and private fields never cross. */
-function projectTask(task: ListedTask): FleetImessageTaskReceipt {
+function projectTask(task: ListedTask, jobs: QueueJob[] | null): FleetImessageTaskReceipt {
+  const job = jobs?.find(candidate => candidate.id === task.jobId);
+  const claim = job?.claims.at(-1);
+  // Only consistent active or finished claims establish a binding; this does not prove execution or verification.
+  const active = job?.status === 'CLAIMED' && claim && !claim.finishedAt;
+  const finished = job && ['DONE', 'BLOCKED'].includes(job.status) && claim?.finishedAt;
+  const binding = jobs === null ? 'unavailable' : !job ? 'missing' :
+    claim?.owner === task.resource && job.repo === task.repo && (active || finished) ? 'bound' : 'conflicting';
   const receipt = task.receipt;
   const result = task.result;
   return {
@@ -131,6 +144,8 @@ function projectTask(task: ListedTask): FleetImessageTaskReceipt {
     resource: task.resource,
     state: task.state,
     claimKey: task.claimKey,
+    queueBinding: binding,
+    queueClaim: binding === 'bound' ? (active ? 'active' : 'finished') : null,
     createdAt: task.createdAt,
     ...(task.attemptedAt === undefined ? {} : { attemptedAt: task.attemptedAt }),
     deadline: task.deadline,
@@ -165,20 +180,24 @@ export async function readFleetImessageTasks(
     coverage: 'local-evidence-only-peer-reported-results-unverified' as const,
   };
   const ledgerState = probeLedger(runsDir);
+  let jobs: QueueJob[] | null = null;
+  try { jobs = (await new QueueStore(join(runsDir, 'queue')).read()).jobs; } catch { /* Unknown is not an empty queue. */ }
+  const queueState = jobs === null ? 'unavailable' as const : 'ok' as const;
   let tasks: ListedTask[];
   try {
     const collected = (deps.listTasks ?? listTeammateTasks)({ runsDir });
     if (!collected || !Array.isArray(collected.tasks)) throw new Error('invalid collector report');
     tasks = collected.tasks;
   } catch {
-    return { ...base, sourceState: 'unavailable', ledgerState, matched: null, tasks: null };
+    return { ...base, sourceState: 'unavailable', ledgerState, queueState, matched: null, tasks: null };
   }
   const matchedTasks = input.jobId === undefined ? tasks : tasks.filter(task => task.jobId === input.jobId);
   return {
     ...base,
     sourceState: 'ok',
     ledgerState,
+    queueState,
     matched: input.jobId === undefined ? null : matchedTasks.length > 0,
-    tasks: matchedTasks.slice(-input.limit).map(projectTask),
+    tasks: matchedTasks.slice(-input.limit).map(task => projectTask(task, jobs)),
   };
 }
