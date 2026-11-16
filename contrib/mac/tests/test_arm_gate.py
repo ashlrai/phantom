@@ -1,0 +1,167 @@
+"""RQ-ARM-CI-GATE-1: arm_gate.py verdicts, bounded deferral and sweep, using a fake gh."""
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+MAC = Path(__file__).resolve().parents[1]
+GATE = MAC / "arm_gate.py"
+PUBLISH = (MAC / "publish.sh").read_text()
+
+FAKE = r'''#!/usr/bin/env python3
+import json, os, sys
+d = os.environ["FAKE_DIR"]
+a = sys.argv[1:]
+open(d + "/calls.log", "a").write(" ".join(a) + "\n")
+if a[0] == "api":
+    if os.path.exists(d + "/api_fail"):
+        sys.exit(1)
+    sys.stdout.write(open(d + "/rows.tsv").read())
+elif a[:2] == ["pr", "view"]:
+    sys.stdout.write(open(d + "/pr.json").read())
+elif a[:2] == ["pr", "merge"]:
+    sys.exit(1 if os.path.exists(d + "/merge_fail") else 0)
+'''
+
+ALL_GREEN = [("Merge Gate", "completed", "success"), ("Secret-shape scan", "completed", "success"),
+             ("Secret scan (diff)", "completed", "success"), ("Classify PR site lane", "completed", "success"),
+             ("Check generated files", "completed", "success"),
+             ("Fast gate (typecheck + affected tests)", "completed", "success"),
+             ("Quick typecheck", "completed", "success"), ("CodeRabbit", "completed", "neutral"),
+             ("Perf budget (advisory, non-required)", "in_progress", "")]
+
+
+class ArmGateTests(unittest.TestCase):
+    def setUp(self):
+        t = tempfile.TemporaryDirectory(); self.addCleanup(t.cleanup)
+        self.root = Path(t.name)
+        (self.root / "bin").mkdir()
+        gh = self.root / "bin" / "gh"; gh.write_text(FAKE); gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
+        self.env = dict(os.environ, PATH=f"{self.root / 'bin'}:{os.environ['PATH']}", FAKE_DIR=str(self.root))
+
+    def rows(self, rows):
+        lines = []
+        for i, (n, s, c) in enumerate(rows, 1):
+            lines.append(f"{i}\t{n}\t{s}\t{c}")
+        (self.root / "rows.tsv").write_text("\n".join(lines) + "\n")
+
+    def run_gate(self, *args):
+        r = subprocess.run([sys.executable, str(GATE), *args], env=self.env, capture_output=True, text=True, timeout=30)
+        return r.returncode, r.stdout.strip()
+
+    def check(self, wait="0"):
+        return self.run_gate("check", "--repo", "o/r", "--sha", "a" * 40, "--wait", wait, "--poll", "1")
+
+    def swap(self, rows, name, status, conclusion):
+        return [(n, status, conclusion) if n == name else (n, s, c) for n, s, c in rows]
+
+    def test_all_hard_green_is_safe_even_with_advisory_running(self):
+        self.rows(ALL_GREEN)
+        self.assertEqual(self.check(), (0, "SAFE"))
+
+    def test_failed_scan_and_gate_is_red_and_named(self):
+        r = self.swap(self.swap(ALL_GREEN, "Secret scan (diff)", "completed", "failure"), "Merge Gate", "completed", "failure")
+        self.rows(r)
+        rc, out = self.check()
+        self.assertEqual(rc, 1)
+        self.assertIn("Secret scan (diff)", out)
+        self.assertIn("Merge Gate", out)
+
+    def test_cancelled_timed_out_and_action_required_are_red_not_safe(self):
+        for c in ("cancelled", "timed_out", "action_required"):
+            self.rows(self.swap(ALL_GREEN, "Fast gate (typecheck + affected tests)", "completed", c))
+            self.assertEqual(self.check()[0], 1, c)
+
+    def test_red_quick_blocks_arming(self):
+        self.rows(self.swap(ALL_GREEN, "Quick typecheck", "completed", "failure"))
+        self.assertEqual(self.check()[0], 1)
+
+    def test_failed_advisory_and_third_party_do_not_block(self):
+        r = self.swap(self.swap(ALL_GREEN, "Perf budget (advisory, non-required)", "completed", "failure"), "CodeRabbit", "completed", "failure")
+        self.rows(r + [("Check authority drift (hermetic)", "completed", "failure")])
+        self.assertEqual(self.check(), (0, "SAFE"))
+
+    def test_pending_hard_check_is_pending_not_safe(self):
+        self.rows(self.swap(ALL_GREEN, "Merge Gate", "in_progress", ""))
+        rc, out = self.check()
+        self.assertEqual(rc, 2)
+        self.assertTrue(out.startswith("PENDING"))
+
+    def test_missing_hard_check_is_pending_not_safe(self):
+        self.rows([x for x in ALL_GREEN if x[0] != "Secret scan (diff)"])
+        self.assertEqual(self.check()[0], 2)
+
+    def test_unreadable_checks_are_unknown_not_safe(self):
+        (self.root / "api_fail").write_text("1")
+        self.assertEqual(self.check(), (2, "UNKNOWN"))
+
+    def test_rerun_uses_newest_run_per_name(self):
+        rows = [("Secret scan (diff)", "completed", "failure")] + ALL_GREEN  # ids ascend: the later green rerun wins
+        self.rows(rows)
+        self.assertEqual(self.check(), (0, "SAFE"))
+
+    def test_wait_is_bounded_and_ends_pending(self):
+        self.rows(self.swap(ALL_GREEN, "Merge Gate", "in_progress", ""))
+        t = time.time(); rc, _ = self.check(wait="2")
+        self.assertEqual(rc, 2)
+        self.assertLess(time.time() - t, 15)
+
+    def test_red_found_while_waiting_returns_red(self):
+        self.rows(self.swap(ALL_GREEN, "Secret scan (diff)", "completed", "failure"))
+        self.assertEqual(self.check(wait="5")[0], 1)
+
+    def defer(self, deadline="3600", job="J1"):
+        (self.root / "pr.json").write_text(json.dumps({"state": "OPEN", "headRefOid": "a" * 40, "autoMergeRequest": None}))
+        return self.run_gate("defer", "--dir", str(self.root / "d"), "--repo", "o/r", "--pr", "https://github.com/o/r/pull/9",
+                             "--sha", "a" * 40, "--job", job, "--deadline-s", deadline)
+
+    def sweep(self, apply=True):
+        a = ["sweep", "--dir", str(self.root / "d")] + (["--apply"] if apply else [])
+        return self.run_gate(*a)
+
+    def merge_calls(self):
+        log = (self.root / "calls.log").read_text() if (self.root / "calls.log").exists() else ""
+        return [l for l in log.splitlines() if l.startswith("pr merge")]
+
+    def test_sweep_keeps_pending_then_arms_head_pinned_when_safe(self):
+        self.defer()
+        self.rows(self.swap(ALL_GREEN, "Merge Gate", "in_progress", ""))
+        self.assertIn("KEEP J1.json PENDING", self.sweep()[1]); self.assertEqual(self.merge_calls(), [])
+        self.rows(ALL_GREEN)
+        self.assertIn("ARMED J1.json", self.sweep()[1])
+        self.assertEqual(len(self.merge_calls()), 1)
+        self.assertIn("--match-head-commit " + "a" * 40, self.merge_calls()[0])
+        self.assertFalse((self.root / "d" / "J1.json").exists())
+
+    def test_sweep_drops_red_without_arming(self):
+        self.defer(); self.rows(self.swap(ALL_GREEN, "Secret scan (diff)", "completed", "failure"))
+        self.assertIn("DROP J1.json red", self.sweep()[1]); self.assertEqual(self.merge_calls(), [])
+
+    def test_sweep_drops_expired_and_changed_head(self):
+        self.defer(deadline="-5"); self.rows(ALL_GREEN)
+        self.assertIn("expired", self.sweep()[1]); self.assertEqual(self.merge_calls(), [])
+        self.defer(job="J2")
+        (self.root / "pr.json").write_text(json.dumps({"state": "OPEN", "headRefOid": "b" * 40, "autoMergeRequest": None}))
+        self.assertIn("head changed", self.sweep()[1]); self.assertEqual(self.merge_calls(), [])
+
+    def test_sweep_dry_run_and_failed_arm_keep_record(self):
+        self.defer(); self.rows(ALL_GREEN)
+        self.assertIn("WOULD_ARM", self.sweep(apply=False)[1]); self.assertEqual(self.merge_calls(), [])
+        (self.root / "merge_fail").write_text("1")
+        self.assertIn("KEEP J1.json arm-failed", self.sweep()[1])
+        self.assertTrue((self.root / "d" / "J1.json").exists())
+
+    def test_publish_arms_only_on_safe_verdict(self):
+        block = PUBLISH.split('AG=$(python3 -I -B "$R/bin/arm_gate.py" check', 1)[1].split('echo "RESULT PR', 1)[0]
+        self.assertIn('[ $AGRC = 1 ]', block)
+        self.assertIn('elif [ $AGRC != 0 ]', block)
+        self.assertLess(block.index('elif [ $AGRC != 0 ]'), block.index('gh pr merge "$URL" --repo $REPO --auto'))
+
+
+if __name__ == "__main__":
+    unittest.main()
