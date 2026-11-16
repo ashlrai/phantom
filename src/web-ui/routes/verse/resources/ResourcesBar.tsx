@@ -49,6 +49,7 @@ import { devinConsumptionEvidence, devinUsageEvidence, formatAcu } from '../devi
 import { DEVIN_POLL_MS, devinQuery } from '../devin/devin-queries.js';
 import { closeResources, openResources, setResourcesCompact, useResourcesUi } from './resources-store.js';
 import { WorldLaneRows } from './WorldLaneRows.js';
+import { NodeProfileRows } from './NodeProfileRows.js';
 import { moveResource, orderedResources, useResourceOrder } from './resource-order.js';
 import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
@@ -697,6 +698,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
       <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
+      <NodeProfileRows enabled={resources.bar} />
       {providerView && expanded ? <Suspense fallback={null}>
         <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
           classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}
