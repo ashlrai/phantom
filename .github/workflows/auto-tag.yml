@@ -46,7 +46,7 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -59,11 +59,15 @@ jobs:
       BRANCH: master
       VERSION_FILE: package.json
       SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      # RELEASE-GATE-SPLIT-2: a dispatched master CI run (release_gate=true
+      # release prep, or a manual full) also re-evaluates its exact head SHA;
+      # GitHub rarely fires the half-hour schedule, so release prep is mostly
+      # dispatched. It holds quietly like a push when the gate is not green.
       # A workflow_run for a push-event CI run evaluates a fresh master commit
       # that cannot have its own scheduled full yet, so it holds quietly like a
       # direct push. Only schedule-sourced workflow_run, schedule and dispatch
       # fail closed (the scheduled full re-evaluates the held commit).
-      TRIGGER: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && 'push' || github.event_name }}
+      TRIGGER: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') && 'push' || github.event_name }}
       # Required checks designed to report skipped on push to master (PR-only
       # jobs). Only these may be skipped; everything else must be success.
       SKIP_OK: ""
