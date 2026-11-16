@@ -83,6 +83,15 @@ A newer attempt, a published PR, or uncertain evidence retains the assignment;
 only the guardian's observed CI state establishes recovery. This is read-only:
 it does not retry jobs, bypass the kill switch, or change dispatch policy.
 
+Each red repo in `ashlr fleet main-health --json` also carries `emptyAttempts`
+(empty fix attempts for that failure since its last published fix or non-empty
+finish; duplicate ledger rows count once) and `retryHold`. At two empty
+attempts with no other active repair, `retryHold` is `true`: do not enqueue
+the same fix again. Needs-you then says the branch is red after N empty
+attempts and to fix or revert by hand. Counts are per repo, so one repo's
+empty attempts never hold another's. `bin/main-guardian.py` is unchanged;
+dispatchers read `retryHold` instead of guessing.
+
 `guardian-stuck` reads `guardian/state.json` under `ASHLR_RUNS_DIR` (or
 `~/.ashlr-runs` by default). It exits 1 for stuck entries or unread/invalid
 state, 0 when none are found, and 2 for invalid arguments. Revert status is
