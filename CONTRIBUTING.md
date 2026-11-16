@@ -217,7 +217,11 @@ Hosted Darwin runs print numeric capacity observations after the worker policy:
 raw free/available memory, VM free/inactive/speculative/purgeable pages and kernel
 pressure stay separate; diagnostic values never change admission or worker count.
 
-Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
+Pull requests and merge-queue commits run the Tier-1 set and tests reached by the
+diff (`Affected tests (N/3)`, Ubuntu only); see
+[Agent operations](docs/AGENT-OPERATIONS.md). The full workflow runs every six
+hours on master and on release candidates. Hosted CI includes exhaustive Ubuntu
+shards, named Windows portability contracts,
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
