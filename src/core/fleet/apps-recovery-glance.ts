@@ -1,6 +1,11 @@
 /** One incident from the newest retained recovery invocation; no live probes. */
-import type { readAppsRecoveryInvocations } from './apps-recovery-invocations.js';
+import { readAppsRecoveryInvocations } from './apps-recovery-invocations.js';
 import { appsRecoveryVerdict } from './apps-recovery-verdict.js';
+
+/** Read the apps-watch bus and format one incident. Callers outside the Tier-1 closure pass this into the operator glance. */
+export function loadAppsRecoveryIncident(busRoot: string, nowMs: number): string | null {
+  return appsRecoveryIncident(readAppsRecoveryInvocations(busRoot), nowMs);
+}
 
 export function appsRecoveryIncident(
   projection: ReturnType<typeof readAppsRecoveryInvocations>, now: number, maxAgeMs = 30 * 60_000,

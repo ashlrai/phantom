@@ -10,7 +10,10 @@ const AS_OF = '2026-11-15T00:00:00.000Z';
 function fixture(overrides: FleetBridgeCheckDeps = {}): FleetBridgeCheckDeps {
   return {
     runtime: async () => ({ lastFleetStateRead: { ageSeconds: 30 } }),
-    claims: () => ({ state: 'known', claims: [{ claimedAt: '2026-11-14T23:59:00.000Z' }] }),
+    claims: () => ({ state: 'known', claims: [{
+      id: 'claim-fake-1', repo: 'ashlrai/phantom', task: 'fake task', agent: 'fake-agent',
+      claimedAt: '2026-11-14T23:59:00.000Z', expiresAt: '2026-11-15T00:01:00.000Z', expiresInSeconds: 120,
+    }] }),
     peers: () => ({ status: 'ok' }),
     now: () => NOW,
     ...overrides,
