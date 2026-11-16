@@ -536,6 +536,7 @@
     "src/core/drive/nodes/local-store.ts",
     "src/core/drive/nodes/pool-host.ts",
     "src/core/drive/nodes/pool.ts",
+    "src/core/drive/nodes/profile-registry.ts",
     "src/core/drive/nodes/router.ts",
     "src/core/drive/nodes/ssh.ts",
     "src/core/drive/nodes/state.ts",

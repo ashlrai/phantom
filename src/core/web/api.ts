@@ -90,7 +90,7 @@ import {
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { buildNodesSnapshot } from '../nodes/view.js';
-import { NODE_PROFILES } from '../drive/nodes/profiles.js';
+import { NODE_PROFILES } from '../drive/nodes/profile-registry.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.

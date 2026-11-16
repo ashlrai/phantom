@@ -1,6 +1,6 @@
 import { formatAge } from '../core/nodes/age.js';
 import { buildNodesSnapshot } from '../core/nodes/view.js';
-import { NODE_PROFILES } from '../core/drive/nodes/profiles.js';
+import { NODE_PROFILES } from '../core/drive/nodes/profile-registry.js';
 
 export function cmdFleetNodes(args: string[]): number {
   const json = args.includes('--json');

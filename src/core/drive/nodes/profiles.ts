@@ -2,40 +2,11 @@ import { statfsSync } from 'node:fs';
 import { homedir, platform, totalmem } from 'node:os';
 import { readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
 import { assessNodeCapacity, nodeRamSlots, type NodeCapacity } from './capacity.js';
+import { NODE_PROFILES, type NodeProfile } from './profile-registry.js';
 
-const GIB = 1024 ** 3;
-
-/**
- * Declared per-host node profile. Static data: a profile never grants authority, joins a node or
- * opens a port. It only bounds what a host may advertise and gives the roster a name to show when
- * the host has not joined or has gone quiet. Reachability is tailnet-only by policy; `tailnetIp`
- * is informational and nothing in this module connects to it.
- */
-export interface NodeProfile {
-  /** Registry node id passed to `phm node join --node`. */
-  id: string;
-  label: string;
-  hostname: string;
-  tailnetIp: string;
-  owners: readonly string[];
-  /** Physical RAM the profile was sized for; sizing still uses the live `totalmem()`. */
-  ramBytes: number;
-  /** Hard ceiling on concurrent CLI agents regardless of free RAM. */
-  maxCliAgents: number;
-  /** When false the node never advertises local model lanes (oMLX or other). */
-  localModels: boolean;
-  /** Admission needs at least this much unallocated RAM (percent of physical) ... */
-  memoryFloorPercent: number;
-  /** ... and no more than this much swap in use (GiB). */
-  maxSwapGb: number;
-}
-
-export const NODE_PROFILES: readonly NodeProfile[] = [
-  {
-    id: 'mbp8', label: 'MacBook Pro (8 GB)', hostname: 'masons-macbook-pro', tailnetIp: '100.89.122.8',
-    owners: ['ashlr'], ramBytes: 8 * GIB, maxCliAgents: 2, localModels: false, memoryFloorPercent: 15, maxSwapGb: 2,
-  },
-];
+// Public surface preserved: existing importers of profiles.js keep working.
+export { NODE_PROFILES } from './profile-registry.js';
+export type { NodeProfile } from './profile-registry.js';
 
 export function nodeProfile(id: string, profiles: readonly NodeProfile[] = NODE_PROFILES): NodeProfile | undefined {
   return profiles.find(p => p.id === id);
