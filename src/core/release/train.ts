@@ -247,6 +247,8 @@ export interface TrainObservation {
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
+  /** A tag-ref or master audit for this SHA is queued or running. */
+  auditPending?: boolean;
   npmPublished: boolean | null;
   npmAt: string | null;
   /** Public npm provenance for this version. Absent means finalize is not dispatched. */
@@ -530,7 +532,7 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
+  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -548,6 +550,9 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
     if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
+    if (write.path.endsWith('/dependency-audit.yml/dispatches') && (!/^v\d+\.\d+\.\d+$/.test(body.ref ?? '') || Object.keys(body.inputs).length !== 0)) {
+      throw new Error('refusing audit dispatch');
+    }
     if (write.path.endsWith('/finalize-github-release.yml/dispatches')) {
       const inputs = body.inputs as Record<string, string>;
       const keys = Object.keys(inputs).sort();
@@ -710,6 +715,16 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // same SHA when they match, but github.ref_name must be the tag so the
   // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
   const ref = headTag.name;
+  // The Mac autorun looks up the dependency audit by the release SHA. A master
+  // push audit is not a tag-ref run, so dispatch the audit on the tag itself
+  // as soon as this candidate is admitted. Empty inputs keep the audit workflow
+  // on its own steps. GITHUB_TOKEN sends it; the release App has no actions right.
+  if (!input.audit && !input.auditPending && publishable) {
+    writes.push({
+      method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/dispatches`,
+      body: { ref, inputs: {} },
+    });
+  }
   if (!input.build && !input.buildPending && publishable && !input.pushCiRed && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
@@ -1029,7 +1044,7 @@ export async function observeTrain(
   }
   const version = head ? head.tag.slice(1) : masterVersion;
   const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
-  const audit = head ? await auditRun(read, head.sha) : null;
+  const audited = head ? await auditRun(read, head.sha) : { audit: null, pending: false };
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
   const npmRecord = record(npm);
@@ -1063,7 +1078,7 @@ export async function observeTrain(
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
     openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed,
     ...(masterCi ? { masterCi } : {}),
-    attest: attested.attest, attestPending: attested.pending, audit,
+    attest: attested.attest, attestPending: attested.pending, audit: audited.audit, auditPending: audited.pending,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
     npmPublish,
@@ -1190,16 +1205,24 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
   return { build: null, pending, pushCiRed: pushRed && !pushGreen };
 }
 
-async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
-  const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/runs?head_sha=${sha}&status=success&per_page=5`));
+export function admitAuditRun(run: Record<string, unknown> | null, sha: string): boolean {
+  if (!run || run.head_sha !== sha || run.path !== '.github/workflows/dependency-audit.yml') return false;
+  return run.head_branch === 'master' || (typeof run.head_branch === 'string' && /^v\d+\.\d+\.\d+$/.test(run.head_branch));
+}
+
+async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<{ audit: TrainObservation['audit']; pending: boolean }> {
+  const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/runs?head_sha=${sha}&per_page=10`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
+  let pending = false;
   for (const row of runs) {
     const run = record(row);
-    if (run?.head_sha !== sha || run.conclusion !== 'success' || run.head_branch !== 'master') continue;
-    if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) continue;
-    return { runId: Number(run.id), attempt: Number(run.run_attempt) };
+    if (!admitAuditRun(run, sha)) continue;
+    if (run?.status === 'queued' || run?.status === 'in_progress' || run?.status === 'waiting') pending = true;
+    if (run?.status !== 'completed' || run?.conclusion !== 'success') continue;
+    if (!Number.isSafeInteger(run?.id) || !Number.isSafeInteger(run?.run_attempt)) continue;
+    return { audit: { runId: Number(run.id), attempt: Number(run.run_attempt) }, pending };
   }
-  return null;
+  return { audit: null, pending };
 }
 
 async function attestRun(read: (path: string) => Promise<unknown>, ciRun: number, ciAttempt: number): Promise<{ attest: TrainObservation['attest']; pending: boolean }> {
@@ -1283,7 +1306,7 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
-export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
+export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
 
 /** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
  *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint

@@ -111,6 +111,15 @@ if matches:
  a=matches[0]; assert a.get("expired") is False and re.fullmatch(r"sha256:[a-f0-9]{64}",a.get("digest",""))
  w=a["workflow_run"]; assert type(w.get("id")) is int and w["id"]==int(run) and w.get("head_sha")==sha and w.get("repository_id")==1263526319 and w.get("head_repository_id")==1263526319
  print(a["id"],a["name"])' "$@"; }
+valid_audit(){ /usr/bin/python3 -I -c 'import json,sys,re
+r=json.load(sys.stdin); run,attempt,sha,tag=sys.argv[1:]
+assert type(r.get("id")) is int and r["id"]==int(run) and type(r.get("run_attempt")) is int and r["run_attempt"]==int(attempt)
+assert r.get("path")==".github/workflows/dependency-audit.yml" and r.get("head_sha")==sha
+assert r.get("head_branch")==tag or r.get("head_branch")=="master"
+assert re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag)
+assert r.get("status")=="completed" and r.get("conclusion")=="success"
+for key in ("repository","head_repository"):
+ assert r[key].get("id")==1263526319 and r[key].get("full_name")=="ashlrai/phantom"' "$@"; }
 valid_run(){ /usr/bin/python3 -I -c 'import json,sys
 r=json.load(sys.stdin); run,attempt,sha,workflow=sys.argv[1:5]
 assert type(r.get("id")) is int and r["id"]==int(run) and type(r.get("run_attempt")) is int and r["run_attempt"]==int(attempt)
@@ -199,7 +208,7 @@ read -r CART _ <<< "$CBINDING"
 AUD=$(G "repos/$REPO/actions/workflows/dependency-audit.yml/runs?head_sha=$HEAD&status=success&per_page=1") || { log "read audit failed"; exit 0; }
 read -r AU UA < <(echo "$AUD" | J workflow_runs.0.id workflow_runs.0.run_attempt | paste -sd' ' -)
 [[ "${AU:-}" =~ ^[1-9][0-9]*$ ]] && [[ "${UA:-}" =~ ^[1-9][0-9]*$ ]] || { log "audit absent; will look again"; continue; }
-G "repos/$REPO/actions/runs/$AU" | valid_run "$AU" "$UA" "$HEAD" dependency-audit 2>/dev/null || { log "audit changed or invalid; held"; exit 0; }
+G "repos/$REPO/actions/runs/$AU" | valid_audit "$AU" "$UA" "$HEAD" "$TAG" 2>/dev/null || { log "audit changed or invalid; held"; exit 0; }
 DONE=$D/sha-$HEAD
 TRIES=$DONE.tries
 if [ -f "$DONE.rc" ]; then
