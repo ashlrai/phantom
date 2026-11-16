@@ -1015,6 +1015,7 @@
 /test/merge-autopilot.test.ts @masonwyatt23
 /test/merge-backlog-hot-files.test.ts @masonwyatt23
 /test/merge-backlog-read.test.ts @masonwyatt23
+/test/merge-bisect.test.ts @masonwyatt23
 /test/merge-cockpit-exact-206s.test.ts @masonwyatt23
 /test/merge-cockpit-owner-qualification-302s.test.ts @masonwyatt23
 /test/merge-cockpit-recovery-132.test.ts @masonwyatt23
