@@ -56,6 +56,26 @@ const TIER1_PATH = [
 // serial-cpu suites run one at a time. Tests that need a built dist/ cannot run
 // without a build. All of them keep running in the master full suites.
 const SLOW = new Set([...REAL_IO_TEST_FILES, ...SERIAL_CPU_TEST_FILES]);
+const distBoundCache = new Map();
+
+function distBoundFiles(cwd) {
+  if (distBoundCache.has(cwd)) return distBoundCache.get(cwd);
+  let out = '';
+  try {
+    // One search of the commit. Per-file `git show` on a sparse checkout
+    // fetches every test blob on its own and stalls the warm select step.
+    out = git(cwd, ['grep', '-l', '-F', 'require-built-dist', 'HEAD', '--', 'test']);
+  } catch (error) {
+    if (error.status !== 1) {
+      distBoundCache.set(cwd, null);
+      return null;
+    }
+  }
+  const files = new Set(out.split('\n').filter(Boolean));
+  distBoundCache.set(cwd, files);
+  return files;
+}
+
 export function needsDist(cwd, file) {
   let text = '';
   try {
@@ -161,8 +181,9 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
 // Bounded broader set: every Tier-1 test plus an even, deterministic spread of
 // the repository's test files, split round-robin so shards have equal counts.
 export function selectFallback({ cwd }) {
+  const dist = distBoundFiles(cwd);
   const all = git(cwd, ['ls-files', '-z', '--', 'test']).split('\0')
-    .filter((f) => TEST_FILE.test(f) && !SLOW.has(f) && !needsDist(cwd, f)).sort();
+    .filter((f) => TEST_FILE.test(f) && !SLOW.has(f) && (dist ? !dist.has(f) : !needsDist(cwd, f))).sort();
   const budget = FALLBACK_SHARDS * FALLBACK_TESTS_PER_SHARD;
   const step = Math.max(1, Math.ceil(all.length / budget));
   const picked = new Set(TIER1_TESTS.filter((t) => all.includes(t)));

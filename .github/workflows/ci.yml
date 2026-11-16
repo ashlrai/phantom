@@ -572,7 +572,7 @@ jobs:
         env:
           CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
         run: |
-          node --test .github/tests/ci-fast-select.test.mjs
+          node --test --test-name-pattern "warm sparse checkout" .github/tests/ci-fast-select.test.mjs
           node .github/scripts/ci-fast-select.mjs
       - name: Hash typecheck and affected tests
         id: inputs
