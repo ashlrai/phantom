@@ -892,6 +892,9 @@ export async function readFleetRecheck(deps: FleetRecheckDeps = {}): Promise<Fle
   if (deps.readOrders === undefined) {
     d.readOrders = () => readOrderTrace({ now: () => nowMs });
   }
+  if (deps.readPeers === undefined) {
+    d.readPeers = () => readPeerLedger({ now: () => nowMs });
+  }
 
   const claimsRead = attempt(d.readFleetBoard);
   if (deps.readOwners === undefined) {
