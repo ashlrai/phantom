@@ -30,6 +30,10 @@ on:
   push:
     branches: [master]
     paths: ["package.json"]
+  # Desktop release smoke and Release suites are jobs in CI. This fires when
+  # that run completes and evaluates the gate for workflow_run.head_sha.
+  # Release prep starts that CI run on the master push and again every five
+  # minutes, deduped per sha, so a missed push is retried without a second build.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -40,13 +44,15 @@ on:
 
 permissions: {}
 
+# One evaluation per commit. A second completion for the same sha waits, then
+# the version step no-ops once the tag and its release both exist.
 concurrency:
-  group: auto-tag-${{ github.repository }}
+  group: auto-tag-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
   tag:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == 'ashlrai/phantom' && github.event.workflow_run.head_branch == 'master' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -68,8 +74,11 @@ jobs:
       # direct push. Only schedule-sourced workflow_run, schedule and dispatch
       # fail closed (the scheduled full re-evaluates the held commit).
       TRIGGER: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') && 'push' || github.event_name }}
-      # Required checks designed to report skipped on push to master (PR-only
-      # jobs). Only these may be skipped; everything else must be success.
+      # SKIP_OK is unused (empty). A skipped required check is red, except
+      # Check generated files, Check authority drift (hermetic) and Quick
+      # typecheck, which may be skipped only when another latest run of the
+      # same exact name on this SHA is completed + success. Merge Gate,
+      # Secret-shape scan and Secret scan (diff) always treat skipped as red.
       SKIP_OK: ""
       ACTIONS_APP_ID: "15368"   # GitHub Actions; other apps' same-named runs never count
     steps:
@@ -123,8 +132,10 @@ jobs:
           # RQ-PH-GATE-SPLIT-1: Merge Gate does not cover the advisory authority
           # drift job, and a failed generated-files job once let a tag through.
           # Both split jobs must also be completed + success on this exact sha,
-          # with the same rules as every discovered check (skipped is not green,
-          # missing or running waits within the bounded loop, then no tag).
+          # with the same rules as every discovered check (skipped is red,
+          # except Check generated files, Check authority drift (hermetic)
+          # and Quick typecheck when a same-sha success run exists; missing
+          # or running waits within the bounded loop, then no tag).
           required=$( { printf '%s\n' "$required" "Check generated files" "Check authority drift (hermetic)"; } | sort -u )
           # One evaluation pass. Check runs: only GitHub Actions (app id
           # $ACTIONS_APP_ID) counts, and EVERY latest run with the required name
@@ -140,6 +151,22 @@ jobs:
                   if [ "$status" != completed ]; then echo "pending: $name ($status)"; pending=1
                   elif [ "$conclusion" = success ]; then echo "green: $name"
                   elif [ "$conclusion" = skipped ] && [ -n "$SKIP_OK" ] && [ "$name" = "$SKIP_OK" ]; then echo "skipped by design on push: $name"
+                  # RELEASE-GATE-SPLIT-3: a dispatched release prep on this
+                  # master SHA reports these push/PR-scoped jobs as skipped.
+                  # A skipped run is accepted only for an exact-name case on
+                  # Check generated files, Check authority drift (hermetic)
+                  # and Quick typecheck, and only when another latest run of
+                  # the same name on this exact SHA is completed + success.
+                  # Every other required name, including Merge Gate,
+                  # Secret-shape scan and Secret scan (diff), treats skipped as red.
+                  elif [ "$conclusion" = skipped ]; then
+                    case "$name" in
+                      "Check generated files"|"Check authority drift (hermetic)"|"Quick typecheck")
+                        if awk -F'	' 'BEGIN{f=1} $2=="completed" && $3=="success"{f=0} END{exit f}' <<<"$rows"; then echo "skipped on another event, green run present: $name"
+                        else echo "::error::not green: $name ($conclusion)"; bad=1; fi ;;
+                      *)
+                        echo "::error::not green: $name ($conclusion)"; bad=1 ;;
+                    esac
                   else echo "::error::not green: $name ($conclusion)"; bad=1; fi
                 done <<<"$rows"
                 continue

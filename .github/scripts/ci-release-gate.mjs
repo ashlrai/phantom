@@ -26,9 +26,11 @@ export const RELEASE_GATE = Object.freeze([
   ['Merge Gate', 'all'],
   ['Secret-shape scan', 'all'],
   ['Secret scan (diff)', 'all'],
-  ['Check generated files', 'all'],
-  ['Check authority drift (hermetic)', 'all'],
-  ['Quick typecheck', 'all'],
+  // RELEASE-GATE-SPLIT-3: push/PR-scoped jobs; a dispatched release prep on
+  // the same master SHA reports them skipped, so they need one success.
+  ['Check generated files', 'any'],
+  ['Check authority drift (hermetic)', 'any'],
+  ['Quick typecheck', 'any'],
   ['Fast gate (typecheck + affected tests)', 'any'],
   ['Desktop release smoke', 'any'],
   ['Release suites (build + signing path)', 'any'],

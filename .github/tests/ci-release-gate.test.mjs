@@ -61,6 +61,20 @@ test('only GitHub Actions check runs count, other apps cannot satisfy a gate', (
   assert.equal(evaluateReleaseGate(forged).green, false);
 });
 
+test('release prep on the same SHA (push-scoped jobs skipped) stays green', () => {
+  const prep = green().concat(['Check generated files', 'Check authority drift (hermetic)', 'Quick typecheck']
+    .map(name => run(name, 'skipped')));
+  assert.equal(evaluateReleaseGate(prep).green, true);
+  const onlySkipped = green().filter(r => r.name !== 'Quick typecheck').concat(run('Quick typecheck', 'skipped'));
+  assert.equal(evaluateReleaseGate(onlySkipped).green, false);
+});
+
+test('always-run security floor checks still treat skipped as red', () => {
+  for (const name of ['Merge Gate', 'Secret-shape scan', 'Secret scan (diff)']) {
+    assert.ok(evaluateReleaseGate(green().concat(run(name, 'skipped'))).bad.length === 1, name);
+  }
+});
+
 test('neutral, cancelled and timed_out are red', () => {
   for (const conclusion of ['neutral', 'cancelled', 'timed_out', 'action_required', null]) {
     const runs = green().filter(r => r.name !== 'Quick typecheck').concat(run('Quick typecheck', conclusion));
