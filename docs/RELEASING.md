@@ -184,6 +184,18 @@ What runs without a per-release approval:
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
   the candidate rather than a newer master HEAD. The half-hour schedule on
   master is unchanged.
+- A candidate whose master push CI run concluded red can never build:
+  release-build reuses only a green exact-source push run. When that
+  candidate has no build, master is strictly past it and still carries its
+  version, and the required checks (the fast Merge Gate) on master HEAD are
+  green, the train fixes forward. The plan lists the candidate in
+  `skippedTags` and `superseded`, sets `advance` to the next patch at master
+  HEAD with reason `candidate-push-ci-red`, and its next step is
+  `release-pr`. It then enqueues a green release PR for exactly that patch,
+  or dispatches the Release PR workflow, which re-checks green master and
+  cadence itself. That run writes nothing to the skipped tag or its draft.
+  The new tag then proceeds through build, attest, npm, feed, docs and
+  finalize as usual.
 - When that build artifact exists, the train dispatches
   `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
   run, attempt, and artifact ids. The publisher's own admission still runs.
