@@ -14,7 +14,7 @@ import styles from './fleet-org.module.css';
 
 const POLL_MS = 10_000;
 
-const rosterQuery: QueryDef<unknown> = { key: 'verse-fleet-agent-roster', fetch: signal => apiGet<unknown>(VERSE_AGENT_ROSTER_PATH, signal) };
+export const rosterQuery: QueryDef<unknown> = { key: 'verse-fleet-agent-roster', fetch: signal => apiGet<unknown>(VERSE_AGENT_ROSTER_PATH, signal) };
 const seatsQuery: QueryDef<readonly VerseSeat[] | null> = {
   key: 'verse-org-seats',
   fetch: async signal => {
