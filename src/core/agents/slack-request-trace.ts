@@ -4,7 +4,9 @@
  * ingress receipt (journal `bus` outcome) with the send-store evidence and
  * report one outcome -- BUS-FAILED when the bus append failed, ANSWERED by a same-thread `sent` receipt, UNCERTAIN
  * when a timestamped `attempted` send could follow the request, else UNANSWERED. bus=failed rows keep their reply
- * evidence but never compete for the one-to-one successful-answer allocation. Message text, author ids and paths are
+ * evidence but never compete for the one-to-one successful-answer allocation. Only posted/duplicate ingress competes;
+ * unknown ingress stays visible as UNANSWERED (or UNCERTAIN with a timestamped attempt), without replyTs: transport
+ * evidence cannot prove durable receipt. Counts and outcome schema stay unchanged. Message text, author ids and paths are
  * never read or repeated; the output is ids and timestamps only.
  */
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
@@ -72,12 +74,14 @@ export function traceSlackRequests(input: {
       ingress: entry.bus ?? 'unknown',
     });
   }
-  // bus=failed rows never enter the successful-answer allocation: a failed
-  // append must not consume the one receipt a later successful request needs.
-  // They are bound separately below only to retain reply evidence.
+  // Only durable ingress competes for successful answers. Failed rows are
+  // bound separately to retain evidence; unknown rows hold no reply allocation.
   const bindableIndexes: number[] = [];
   const failedIndexes: number[] = [];
-  pending.forEach((p, i) => (p.ingress === 'failed' ? failedIndexes : bindableIndexes).push(i));
+  pending.forEach((p, i) => {
+    if (p.ingress === 'failed') failedIndexes.push(i);
+    else if (p.ingress === 'posted' || p.ingress === 'duplicate') bindableIndexes.push(i);
+  });
   const binding = bindSlackReplies({
     requests: bindableIndexes.map((i) => pending[i]!.req), receipts, now,
   });
