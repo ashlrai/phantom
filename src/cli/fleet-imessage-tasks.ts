@@ -24,7 +24,7 @@ const envelope = z.object({
   scope: text(1200), format: text(300),
   repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/).max(200)
     .refine(value => scrubSecrets(value) === value),
-  deadline: z.string().datetime({ offset: true }).refine(value => Date.parse(value) > Date.now()),
+  deadline: z.string().datetime({ offset: true }),
   prRefs: z.array(z.number().int().positive().safe()).max(20).optional(),
 });
 
@@ -58,6 +58,8 @@ export interface FleetImessageTasksDeps {
   peers?: typeof teammateTaskPeers;
   config?: typeof loadConfigReadOnlyStrict;
   output?: (text: string) => void;
+  /** Observation clock. Deadline checks use this instead of the wall clock. */
+  now?: () => number;
 }
 
 export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageTasksDeps = {}): Promise<number> {
@@ -97,7 +99,9 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
         return Number(value);
       });
       if (prRefs && new Set(prRefs).size !== prRefs.length) throw new Error('Duplicate PR');
-      if (!envelope.safeParse({ jobId, scope, repo, format, deadline, prRefs }).success) throw new Error('Invalid envelope');
+      const nowMs = deps.now?.() ?? Date.now();
+      const parsedEnvelope = envelope.safeParse({ jobId, scope, repo, format, deadline, prRefs });
+      if (!parsedEnvelope.success || !Number.isFinite(nowMs) || Date.parse(deadline) <= nowMs) throw new Error('Invalid envelope');
       parsed = true;
       result = await (deps.enqueue ?? enqueueTeammateTask)({ jobId, peer, kind, scope, repo, format, deadline, ...(prRefs ? { prRefs } : {}) },
         (deps.config ?? loadConfigReadOnlyStrict)(), { apply: values.apply === true });
