@@ -13,7 +13,7 @@ export const nodesQuery: QueryDef<NodesSnapshot> = {
 };
 
 // Node health includes down, which the shared run-status palette does not map.
-const NODE_TONE: Record<string, Tone> = { ready: 'success', stale: 'warning', down: 'danger', unknown: 'unknown' };
+const NODE_TONE: Record<string, Tone> = { ready: 'success', stale: 'warning', down: 'danger', unknown: 'unknown', offline: 'danger' };
 
 /** Nodes that joined this fleet. Same projection as `phm fleet nodes --json`; no credentials are ever in it. */
 export function NodesPanel() {
@@ -51,7 +51,8 @@ export function NodesPanel() {
                   {snap.nodes.map((n) => (
                     <tr key={n.id}>
                       <th scope="row">{n.id}{n.leader ? <span className={styles.leader} title="Holds the fleet lease"> ★ leader</span> : null}
-                        {n.owners.length ? <small>{n.owners.join(', ')}</small> : null}</th>
+                        {n.owners.length ? <small>{n.owners.join(', ')}</small> : null}
+                        {n.profile ? <small>{n.profile.label}: max {n.profile.maxCliAgents} agents{n.profile.localModels ? '' : ', no local models'}</small> : null}</th>
                       <td>{n.role}</td>
                       <td><StatusBadge status={n.status} tone={NODE_TONE[n.status]} /></td>
                       <td>{n.heartbeatAgeMs === null ? 'no heartbeat' : `${formatAge(n.heartbeatAgeMs)} ago`}</td>
