@@ -148,6 +148,16 @@ test('the only mutation is one rerun of the failed jobs', () => {
   assert.throws(() => mutationRequest('other/repo', { kind: 'rerun', runId: 1 }));
 });
 
+test('recovery workflow rejects workflow_run', () => {
+  const workflow = readFileSync(new URL('../workflows/unrelated-pr-recover.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(workflow, /workflow_run/);
+  assert.match(workflow, /^ {2}schedule:/m);
+  assert.match(workflow, /^ {2}workflow_dispatch:/m);
+  assert.match(workflow, /cron: '\*\/20 \* \* \* \*'/);
+  assert.doesNotMatch(workflow, /contents: write/);
+  assert.doesNotMatch(workflow, /pull-requests: write/);
+});
+
 test('the workflow and script stay on REST and off protected gates', () => {
   const source = readFileSync(new URL('../scripts/ci-unrelated-recover.mjs', import.meta.url), 'utf8');
   const workflow = readFileSync(new URL('../workflows/unrelated-pr-recover.yml', import.meta.url), 'utf8');
@@ -158,7 +168,8 @@ test('the workflow and script stay on REST and off protected gates', () => {
     assert.equal(/\bforce\b/i.test(text), false);
   }
   assert.match(workflow, /schedule:/);
-  assert.match(workflow, /workflow_run:/);
+  assert.match(workflow, /^ {2}workflow_dispatch:/m);
+  assert.doesNotMatch(workflow, /workflow_run/);
   assert.match(workflow, /github\.token/);
   assert.doesNotMatch(workflow, /secrets\./);
   assert.doesNotMatch(workflow, /pull_request_target/);
