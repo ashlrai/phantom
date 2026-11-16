@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
   'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
