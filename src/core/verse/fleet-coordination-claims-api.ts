@@ -7,7 +7,7 @@ import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { readFleetBoard, type FleetBoard } from '../fleet/coordination.js';
 import {
-  VERSE_FLEET_COORDINATION_CLAIM_PATH, VERSE_FLEET_COORDINATION_RETURN_PATH, handleFleetCoordinationMutateApi,
+  VERSE_FLEET_COORDINATION_BIND_PATH, VERSE_FLEET_COORDINATION_CLAIM_PATH, VERSE_FLEET_COORDINATION_RETURN_PATH, handleFleetCoordinationMutateApi,
 } from './fleet-coordination-mutate-api.js';
 import { VERSE_FLEET_COORDINATION_RETURNS_PATH, handleFleetCoordinationReturnsApi } from './fleet-coordination-returns-api.js';
 
@@ -42,7 +42,8 @@ export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsAp
   const mutate = deps.mutate ?? handleFleetCoordinationMutateApi;
   const returns = deps.returns ?? handleFleetCoordinationReturnsApi;
   return async (ctx, req, res, path, method) => {
-    if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH || path === VERSE_FLEET_COORDINATION_RETURN_PATH) {
+    if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH || path === VERSE_FLEET_COORDINATION_RETURN_PATH
+      || path === VERSE_FLEET_COORDINATION_BIND_PATH) {
       return mutate(ctx, req, res, path, method);
     }
     if (path === VERSE_FLEET_COORDINATION_RETURNS_PATH) return returns(ctx, req, res, path, method);
