@@ -159,9 +159,7 @@ describe('fleet recheck orders evidence', () => {
     const i = lines.findIndex(l => l.startsWith('Task:'));
     expect(i).toBeGreaterThan(-1);
     expect(lines[i + 1]).toBe(
-      'Orders 24h: 1 VERIFIED, 1 ASSIGNED, 1 RECEIVED'
-      + ' · orders: live workers unavailable, RUNNING not checked; orders: lane holds unavailable, BLOCKED not checked'
-      + ` · as of ${ISO} (order-trace)`,
+      `Orders 24h: 1 VERIFIED, 1 ASSIGNED, 1 RECEIVED · orders: live workers unavailable, RUNNING not checked; orders: lane holds unavailable, BLOCKED not checked · as of ${ISO} (order-trace)`,
     );
   });
 

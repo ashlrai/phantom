@@ -110,7 +110,7 @@ export function formatRecheckReply(r: FleetRecheck): string {
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
     ...(withComputers && computers !== null ? [computers] : []),
-    ...(withComputers && withPool ? [pool] : []),
+    ...(withPool ? [pool] : []),
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
@@ -129,8 +129,8 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
-  // Drop optional evidence in this order, keeping the verdict line whole:
-  // Peers, coverage, Owners, Orders, Pool, Computers, Running job, Last verified.
+  // Drop order is the contract in the file header: Peers, coverage, Owners,
+  // Orders, Pool, Computers, Running job, then Last verified.
   let text = build(true, true, true, true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true, false);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, false, false);
