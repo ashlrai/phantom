@@ -10,6 +10,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { stripVTControlCharacters } from 'node:util';
 import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
 
 /** Never report more peers than this; the rest are summarized in reasons[]. */
@@ -17,6 +18,36 @@ export const TAILNET_PEER_LIMIT = 64;
 const TEXT_CAP = 120;
 /** Tailscale's zero-value LastSeen: a never-seen peer, reported as unknown. */
 const ZERO_LAST_SEEN_MS = Date.parse('0001-01-01T00:00:00Z');
+/** Named Tailscale states that may appear in a reason. Anything else is unknown. */
+const EXPLICIT_BACKEND_STATES = ['Stopped', 'Starting', 'NeedsLogin', 'NoState', 'UnknownState'];
+
+/**
+ * Classify BackendState. Only exact "Running" trusts Online=true. An absent,
+ * blank, or non-string state keeps peer identity but reports connectivity
+ * unknown. A path, home, or address collapses to "[ip]". A known state, or a
+ * control-stripped string that starts with one, is named; other text is not.
+ */
+function classifyBackendState(state: unknown, home: string): { running: boolean; suffix: string | null; dropOnline: boolean } {
+  if (state === 'Running') return { running: true, suffix: null, dropOnline: false };
+  if (typeof state !== 'string') return { running: false, suffix: UNKNOWN, dropOnline: false };
+  const stripped = [...stripVTControlCharacters(state)].filter((ch) => {
+    const code = ch.charCodeAt(0);
+    return code > 0x1f && code !== 0x7f;
+  }).join('');
+  const sanitized = sanitizeIdentityText(stripped, home).slice(0, TEXT_CAP).trim();
+  if (sanitized === '' || sanitized === 'Running') {
+    return sanitized === 'Running'
+      ? { running: true, suffix: null, dropOnline: false }
+      : { running: false, suffix: UNKNOWN, dropOnline: false };
+  }
+  if (sanitized.includes('~') || sanitized.includes('/') || sanitized.includes('\\') || sanitized.includes('[ip]')) {
+    return { running: false, suffix: '[ip]', dropOnline: true };
+  }
+  if (EXPLICIT_BACKEND_STATES.some(known => sanitized === known || sanitized.startsWith(known))) {
+    return { running: false, suffix: sanitized, dropOnline: true };
+  }
+  return { running: false, suffix: UNKNOWN, dropOnline: false };
+}
 
 export interface TailnetPeersDeps {
   now(): Date;
@@ -103,18 +134,11 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
   result.self = clean(status.Self?.HostName, home) ?? UNKNOWN;
 
   // Only an exact "Running" proves the backend live enough to trust peer
-  // Online flags. An explicit non-empty string keeps the sanitized state in
-  // the reason — the `tailscale backend not running:` convention pool-reach
-  // matches on. An absent, blank or non-string state is a fixed bounded
-  // "unknown": the raw value is never reported.
-  const backendState = status.BackendState;
-  const backendRunning = backendState === 'Running';
-  const backendStateText = typeof backendState === 'string'
-    ? sanitizeIdentityText(backendState.trim(), home).slice(0, TEXT_CAP).trim()
-    : '';
-  if (!backendRunning) {
-    reasons.push(`tailscale backend not running: ${backendStateText === '' ? UNKNOWN : backendStateText}`);
-  }
+  // Online flags. Reasons stay on the `tailscale backend not running:` prefix
+  // pool-reach matches, and never echo a path, address, or arbitrary state.
+  const backend = classifyBackendState(status.BackendState, home);
+  const backendRunning = backend.running;
+  if (backend.suffix !== null) reasons.push(`tailscale backend not running: ${backend.suffix}`);
 
   const peerMap = status.Peer;
   if (typeof peerMap !== 'object' || peerMap === null || Array.isArray(peerMap)) {
@@ -131,8 +155,8 @@ export function parseTailnetStatus(raw: string, now: Date, home: string): Tailne
       // (existing stopped behavior), while an absent, blank or malformed state
       // keeps the identity/lastSeen evidence but reports connectivity unknown.
       if (!backendRunning && peer.online === true) {
-        if (backendStateText === '') peer.online = UNKNOWN;
-        else continue;
+        if (backend.dropOnline) continue;
+        peer.online = UNKNOWN;
       }
       peers.push(peer);
     }

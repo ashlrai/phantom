@@ -14,16 +14,17 @@ const SAMPLE_REPLY = `Phantom recheck VERIFIED · as of ${ISO} · source fleet-r
 Runtime: fake-host · 1 · fleet state 1s (VERIFIED)
 Computers: 0 online, 0 offline · self fake-self · seen: none · as of ${ISO} (tailnet evidence, not a claim)
 Pool: not configured
-Claims: 1 live, top: fake-agent/fake/repo (VERIFIED)
+Claims: 1 live, top: fake-agent/ashlrai/phantom (VERIFIED)
 Bridge: slack LIVE, imessage LIVE (VERIFIED)
 Owners: slack-bridge UNKNOWN (no live claim) · imessage-bridge UNKNOWN (no live claim) · dot-handoff fake-agent (claim)
 Task: fake-task RUNNING · owner fake-worker · claim bus-claim:fake-task:1:${MS} (VERIFIED)
 Orders 24h: none
+Peers: none in 24h
 ${CLOSING}`;
 const board = (agents: string[] = []): FleetBoard => ({
   schema: 'fleet.coordination.v1', state: 'known', messages: [], proposals: [], expiredClaims: 0,
   claims: agents.map((agent, i) => ({
-    id: `fake-claim-${i}`, agent, repo: 'fake/repo', task: 'fake dot-handoff maintenance',
+    id: `fake-claim-${i}`, agent, repo: 'ashlrai/phantom', task: 'fake dot-handoff maintenance',
     claimedAt: MS - 1000, expiresAt: MS + 60_000,
   })),
 });
