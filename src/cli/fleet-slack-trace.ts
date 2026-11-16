@@ -11,7 +11,10 @@ const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack 
  * evidence only; it never proves RUNNING/VERIFIED task execution. Output is
  * ids and timestamps only, never text, author ids or paths.
  */
-export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTraceOptions = {}): Promise<number> {
+export async function cmdFleetSlackTrace(
+  args: string[],
+  deps: SlackRequestTraceOptions & { readTrace?: typeof readSlackRequestTrace } = {},
+): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`${usage}\nTrace each ingested Slack request from its journal receipt to its reply outcome.`);
     return 0;
@@ -54,7 +57,32 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
     console.error(usage);
     return 2;
   }
-  const collected = readSlackRequestTrace({ ...deps, ...(thread !== undefined ? { thread } : {}) });
+  const { readTrace = readSlackRequestTrace, ...readOptions } = deps;
+  const selectedThread = thread ?? deps.thread;
+  const scope = 'Bounded local persisted journal and send evidence only; does not prove current runtime reachability.';
+  const collectionScope = {
+    ...(selectedThread !== undefined ? { thread: selectedThread } : {}),
+    ...(channelId !== undefined ? { channelId } : {}),
+    ...(message !== undefined ? { messageTs: message } : {}),
+  };
+  let collected: ReturnType<typeof readSlackRequestTrace>;
+  try {
+    collected = readTrace({ ...readOptions, ...(thread !== undefined ? { thread } : {}) });
+  } catch {
+    // Fixed shape only: never echo the thrown value (may carry paths or message text).
+    let asOf: string;
+    try { asOf = (deps.now ?? (() => new Date()))().toISOString(); }
+    catch { asOf = new Date(0).toISOString(); }
+    const counts = { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
+    const sources = { journal: 'degraded', sends: 'degraded' } as const;
+    if (json) {
+      console.log(JSON.stringify({ asOf, rows: [], counts, sources, sourceState: 'unavailable', scope, collectionScope }));
+    } else {
+      console.log(`slack trace evidence unavailable: persisted trace collection failed (journal=degraded sends=degraded) ` +
+        `as of ${asOf} (collection time, not a runtime probe); ${scope} This is not a healthy no-match.`);
+    }
+    return 1;
+  }
   const rows = collected.rows.filter((row) =>
     (channelId === undefined || row.channelId === channelId) && (message === undefined || row.messageTs === message));
   const counts = { total: rows.length, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
@@ -64,16 +92,7 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
     else if (row.outcome === 'bus-failed') counts.busFailed++;
     else counts.unanswered++;
   }
-  const selectedThread = thread ?? deps.thread;
-  const scope = 'Bounded local persisted journal and send evidence only; does not prove current runtime reachability.';
-  const trace = {
-    ...collected, rows, counts, scope,
-    collectionScope: {
-      ...(selectedThread !== undefined ? { thread: selectedThread } : {}),
-      ...(channelId !== undefined ? { channelId } : {}),
-      ...(message !== undefined ? { messageTs: message } : {}),
-    },
-  };
+  const trace = { ...collected, rows, counts, scope, collectionScope };
   if (json) {
     console.log(JSON.stringify(trace));
   } else {
