@@ -21,7 +21,7 @@ function setup(kind = 'build') {
   const job = (name, steps, labels = ['macos-15']) => ({ id: 200, run_id: 30, head_sha: revision, name, labels, status: 'completed', conclusion: 'success', steps: steps.map(name => step(name)) });
   const jobs = kind === 'build' ? [job('Prepare unsigned desktop release', ['Reuse successful push CI and existing prepared artifact', 'Upload immutable release input', 'Build unsigned desktop and original package once'])]
     : kind === 'attest' ? [job('Desktop release smoke', ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff'])]
-      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Secret scan (diff)', ['Scan the commits this event adds'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
+      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Secret scan (diff)', ['Scan the commits this event adds'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check'], ['ubuntu-latest']), job('Check generated files', ['Check generated files'], ['ubuntu-latest']), job('Check authority drift (hermetic)', ['Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
   if (kind === 'build') jobs[0].steps.push(step('Download existing immutable build', 'skipped'));
   const jobResponse = { total_count: jobs.length, jobs };
   let freshRun = run;
@@ -64,6 +64,21 @@ test('excludes the currently executing build when looking for reusable input', (
   assert.equal(f.select({ excludeRunId: '31' }).run, 30);
   assert.equal(f.select(), null);
 });
+
+// RQ-PH-GATE-SPLIT-1: a sha is not release-green unless the two split-out jobs
+// (and their single named step) succeeded in the exact master push CI run.
+for (const name of ['Check generated files', 'Check authority drift (hermetic)']) {
+  for (const mutate of [
+    ['missing', jobs => jobs.filter(job => job.name !== name)],
+    ['failed', jobs => jobs.map(job => job.name === name ? { ...job, conclusion: 'failure' } : job)],
+    ['skipped', jobs => jobs.map(job => job.name === name ? { ...job, conclusion: 'skipped' } : job)],
+    ['step skipped', jobs => jobs.map(job => job.name === name ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job)],
+  ]) test(`push CI evidence is refused when ${name} is ${mutate[0]}`, () => {
+    const f = setup('push'); f.jobs.splice(0, f.jobs.length, ...mutate[1](f.jobs.map(job => ({ ...job }))));
+    f.jobResponse.jobs = f.jobs; f.jobResponse.total_count = f.jobs.length;
+    assert.throws(() => f.select());
+  });
+}
 
 for (const state of [{ status: 'in_progress', conclusion: null }, { status: 'completed', conclusion: 'failure' }]) {
   test(`latest ${state.status}/${state.conclusion} run cannot be masked by older green evidence`, () => {
