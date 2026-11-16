@@ -243,6 +243,10 @@
 /test/fixtures/memory/** @masonwyatt23
 /vitest.config* @masonwyatt23
 /vitest.workspace* @masonwyatt23
+# action-classes: Publish and merge action-class registry; an unlisted class must fail closed
+/contrib/mac/action_classes.py @masonwyatt23
+/contrib/mac/action-classes.json @masonwyatt23
+/contrib/mac/tests/test_action_classes.py @masonwyatt23
 # comms-agent: Comms send policy decides what may leave the machine
 /src/core/comms-agent/ @masonwyatt23
 # real-home: Account home for KILL, pause and send policy; a relocated HOME must not retarget it
@@ -260,6 +264,7 @@
 /test/amplify.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
+/test/authority-action-classes.test.ts @masonwyatt23
 /test/authority-api-310b.test.ts @masonwyatt23
 /test/authority-capability-310b.test.ts @masonwyatt23
 /test/authority-clamp-310b.test.ts @masonwyatt23
