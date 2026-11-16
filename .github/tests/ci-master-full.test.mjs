@@ -67,6 +67,21 @@ test('half-hour release preparation cannot qualify a SHA or hide a red full', as
   await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([run(22)], { 22: [check('skipped')] }) }));
 });
 
+test('in-flight half-hour release preparation does not mask the latest full', async () => {
+  const classify = { name: 'Classify PR site lane', status: 'completed', conclusion: 'success' };
+  const pending = { status: 'in_progress', conclusion: null };
+  for (const release of [{ name: 'Desktop release smoke', status: 'in_progress', conclusion: null }, { name: 'Desktop release smoke', conclusion: 'success' }]) {
+    const api = fixture([run(22, previous, pending), run(20)], { 22: [classify, release, check('skipped')] });
+    assert.equal((await requireFullGreen({ repo, candidate, api })).id, 20);
+  }
+  // A full run reports the release job skipped, so an in-flight full still blocks.
+  const full = fixture([run(22, previous, pending), run(20)], { 22: [classify, { name: 'Desktop release smoke', conclusion: 'skipped' }] });
+  await assert.rejects(requireFullGreen({ repo, candidate, api: full }), /missing, red or pending/);
+  // Before classify finishes the shape is unknown, so never fall back.
+  const early = fixture([run(22, previous, pending), run(20)], { 22: [{ ...classify, status: 'in_progress', conclusion: null }, { name: 'Desktop release smoke', conclusion: null }] });
+  await assert.rejects(requireFullGreen({ repo, candidate, api: early }), /missing, red or pending/);
+});
+
 test('reruns use the exact latest attempt and incomplete/duplicate jobs fail closed', async () => {
   const calls = [];
   const api = fixture([run(20, candidate, { run_attempt: 2 })], { 20: [check('failure')] }, calls);

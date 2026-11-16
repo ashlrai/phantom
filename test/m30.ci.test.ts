@@ -410,6 +410,14 @@ describe('M30 CI workflow', () => {
     for (const conclusion of ['success', 'failure', 'cancelled']) {
       expect(runInNewContext(condition, { event: 'workflow_run', source: 'schedule', conclusion, ref: '' })).toBe(conclusion === 'success');
     }
+    // Push-sourced workflow_run holds quietly (no own scheduled full yet);
+    // schedule-sourced workflow_run stays fail-closed.
+    const trigger = workflow.jobs.tag.env.TRIGGER.replace(/^\$\{\{|\}\}$/g, '')
+      .replaceAll('github.event_name', 'event').replaceAll('github.event.workflow_run.event', 'source');
+    expect(runInNewContext(trigger, { event: 'workflow_run', source: 'push' })).toBe('push');
+    expect(runInNewContext(trigger, { event: 'workflow_run', source: 'schedule' })).toBe('workflow_run');
+    expect(runInNewContext(trigger, { event: 'push', source: undefined })).toBe('push');
+    expect(runInNewContext(trigger, { event: 'schedule', source: undefined })).toBe('schedule');
     const steps = workflow.jobs.tag.steps;
     const proof = steps.findIndex((step: { id?: string }) => step.id === 'full');
     expect(steps[proof].run).toBe('node .github/scripts/ci-master-full.mjs require');

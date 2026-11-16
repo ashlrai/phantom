@@ -15,6 +15,8 @@ export const FULL_REQUIRED = Object.freeze([
   'windows-service-authority', 'merge-gate',
 ]);
 export const FULL_SKIPPED = Object.freeze(['quick', 'site', 'docs', 'release-build']);
+const CLASSIFY_JOB = 'Classify PR site lane';
+const RELEASE_JOB = 'Desktop release smoke';
 const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
 const positive = value => Number.isSafeInteger(value) && value > 0;
 
@@ -69,6 +71,12 @@ export async function fullHistory({ repo, api = githubRead, excludeRun = 0, late
       assert.ok(checks.length <= 1, 'duplicate full qualification checks');
       const check = checks[0];
       const matrixRan = jobs.jobs.some(job => job.name?.startsWith('CI (Node 22,') && job.conclusion !== 'skipped');
+      // A half-hour release-prep run is never full evidence, even while it is
+      // still running: once classify succeeded, only that lane schedules the
+      // release smoke job (a full run reports it skipped). Without this an
+      // in-flight release-prep run masked the last full and blocked every tag.
+      const classified = jobs.jobs.some(job => job.name === CLASSIFY_JOB && job.conclusion === 'success');
+      if (classified && jobs.jobs.some(job => job.name === RELEASE_JOB && job.conclusion !== 'skipped')) continue;
       // A still-starting run could be the next full attempt. Never fall back to
       // older green evidence while its shape or result remains unknown.
       if (check?.conclusion === 'skipped' && !matrixRan && run.status === 'completed') continue;
