@@ -147,6 +147,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
 
 export async function appendInboxEntry(text: string, opts: InboxAppendOptions = {}): Promise<InboxAppendResult> {
   const clean = normaliseText(text);
+  if (!clean) return { ok: false, reason: 'empty' };
   if (isFlagOnlyInboxText(clean)) return { ok: false, reason: 'flag-only' };
   // Long messages become attachments, but only within a bound on what is stored.
   if (clean.length > INBOX_ATTACH_MAX_CHARS || text.length > INBOX_ATTACH_MAX_CHARS) return { ok: false, reason: 'too-long' };
