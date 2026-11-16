@@ -383,6 +383,20 @@ error bodies carry rejection codes only (`invalid-document`,
 not claimable; promotion to READY is the operator act `phm queue promote <id>`,
 and no ready.tsv or dispatchd wiring is implied.
 
+## Specialist coordination and teammate reservations
+
+The [orchestration cycle](FLEET-COORDINATION.md#leader-orchestration) proposes
+specialist assignments from existing queue and outcome evidence. Applying it
+records advisory peer messages and a journal; the existing dispatcher still
+claims and executes jobs. A journal status of `admitted` is not execution proof.
+
+[iMessage teammate tasks](IMESSAGE.md#fleet-teammate-tasks-and-evidence) reserve
+an exclusive CLAIMED job for `imsg:<peer>` when enqueue is applied. They do not
+enter the ordinary READY worker pool. A matching peer DONE result settles the
+local claim, while BLOCKED/FAILED, expiry or an allowed unsent withdrawal
+settles it as BLOCKED. These are local bookkeeping outcomes; independently
+verify peer-reported work before relying on a completion claim.
+
 ## Storage and failure behavior
 
 Every mutation and mirror export acquires `queue.v1.lock` with exclusive file
