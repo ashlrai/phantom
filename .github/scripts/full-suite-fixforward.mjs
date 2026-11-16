@@ -2,6 +2,7 @@
 // planning functions are exported for tests; main() does the API calls.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import console from 'node:console';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { requireProducerEnvironment } from './github-repository-binding.mjs';

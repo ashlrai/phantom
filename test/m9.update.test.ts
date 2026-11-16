@@ -41,6 +41,11 @@ vi.mock('node:child_process', () => ({
   spawnSync: mockSpawnSync,
   execFileSync: mockExecFileSync,
 }));
+// This suite tests update sequencing. Secrets' custody transport has its own contracts.
+vi.mock('../src/core/integrations/secrets.js', () => ({
+  credentialSpawnSync: mockSpawnSync,
+  credentialExecFileSync: mockExecFileSync,
+}));
 
 vi.mock('../src/core/daemon/service.js', () => ({
   serviceStatus: (...args: unknown[]) => mockServiceStatus(...args),
@@ -102,6 +107,7 @@ function _freshRepoDir(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const d of createdDirs.splice(0)) {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
   }
@@ -173,6 +179,7 @@ function mockHappyPath(): void {
 let cmdUpdate: (args: string[]) => Promise<number>;
 
 beforeEach(async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{"version":"3.30.40"}')));
   mockHappyPath();
   mockServiceStatus.mockReset();
   mockServiceStatus.mockReturnValue({
@@ -243,6 +250,7 @@ describe('cmdUpdate — installed service release gate', () => {
   it.each([
     ['git', ['--channel', 'git']],
     ['npm', ['--channel', 'npm', '--yes']],
+    ['release', ['--channel', 'release', '--yes']],
   ] as const)('blocks the %s mutation channel before replacing code', async (_channel, args) => {
     const code = await cmdUpdate([...args]);
 
@@ -256,6 +264,7 @@ describe('cmdUpdate — installed service release gate', () => {
     expect(stdoutBuf).not.toContain('admitted one-shot workflows');
     expect(mockSpawnSync).not.toHaveBeenCalled();
     expect(mockExecFileSync).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('reports the degraded installed-service gate in JSON', async () => {
@@ -272,7 +281,7 @@ describe('cmdUpdate — installed service release gate', () => {
     expect(String(parsed.message)).toContain('No code was replaced');
   });
 
-  it.each(['git', 'npm'] as const)(
+  it.each(['git', 'npm', 'release'] as const)(
     'blocks the %s channel when registration evidence is unknown',
     async (channel) => {
       mockServiceStatus.mockReturnValue({
@@ -284,7 +293,7 @@ describe('cmdUpdate — installed service release gate', () => {
         serviceFilePath: '/tmp/ai.ashlr.daemon.plist',
       });
 
-      const code = await cmdUpdate(['--channel', channel, ...(channel === 'npm' ? ['--yes'] : [])]);
+      const code = await cmdUpdate(['--channel', channel, '--yes']);
 
       expect(code).toBe(1);
       expect(stdoutBuf).toContain('registration could not be proven absent');
@@ -378,7 +387,8 @@ describe('cmdUpdate — installed service release gate', () => {
 
       expect(code).toBe(0);
       expect(stdoutBuf).not.toContain('Update blocked by resident service restriction');
-      expect(mockSpawnSync).toHaveBeenCalled();
+      if (channel === 'git') expect(mockSpawnSync).toHaveBeenCalled();
+      else expect(fetch).toHaveBeenCalledWith('https://registry.npmjs.org/%40ashlr%2Fphantom/latest', expect.objectContaining({ credentials: 'omit' }));
     },
   );
 
