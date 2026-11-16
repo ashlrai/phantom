@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
+import { apiPost } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { formatAge, formatRelative } from '../autonomy/format.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -14,7 +17,22 @@ export function TeammateTasksCard({ visible, nowMs }: { visible: boolean; nowMs:
   if (read.data === undefined) {
     return <p className={styles.message} role="status">{read.status === 'error' ? 'Teammate tasks are unavailable.' : 'Reading teammate tasks…'}</p>;
   }
-  return <TeammateTasksBody view={read.data} nowMs={nowMs} />;
+  return <TeammateTasksBody view={read.data} nowMs={nowMs} onWithdraw={async (jobId) => { try { return await withdrawTeammateTask(jobId); } finally { refetch(); } }} />;
+}
+
+type WithdrawResult = { state: string; reason?: string };
+
+/** Withdraws the local reservation only; core refuses unless nothing was sent. */
+async function withdrawTeammateTask(jobId: string): Promise<WithdrawResult> {
+  const token = getMutationToken();
+  if (!token) return { state: 'unavailable' };
+  try {
+    const out = await apiPost<{ state?: unknown; reason?: unknown } | null>('/api/verse/fleet/control/teammate-tasks/withdraw', { jobId }, token);
+    touchMutationHold();
+    return typeof out?.state === 'string' ? { state: out.state, ...(typeof out.reason === 'string' ? { reason: out.reason } : {}) } : { state: 'unavailable' };
+  } catch {
+    return { state: 'unavailable' };
+  }
 }
 
 // Nothing in this ledger is independently verified, so "done" is always peer-reported.
@@ -32,7 +50,25 @@ function deadlineText(row: TeammateTaskRow, nowMs: number): string {
   return ACTIVE.has(row.workState) ? `${text} (overdue)` : text;
 }
 
-export function TeammateTasksBody({ view, nowMs }: { view: TeammateTasksView; nowMs: number }) {
+function WithdrawCell({ jobId, onWithdraw }: { jobId: string; onWithdraw: (jobId: string) => Promise<WithdrawResult> }) {
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState('');
+  const click = async () => {
+    if (!window.confirm(`Withdraw unsent task ${jobId}? This only cancels the local reservation.`)) return;
+    setBusy(true);
+    try {
+      const r = await onWithdraw(jobId);
+      setOutcome(r.state === 'cancelled' ? 'Withdrawn' : r.state === 'refused' ? `Refused: ${r.reason ?? 'not withdrawable'}` : 'Unavailable');
+    } catch { setOutcome('Unavailable'); }
+    finally { setBusy(false); }
+  };
+  return <>
+    <button type="button" disabled={busy} onClick={() => { void click(); }}>Withdraw</button>
+    {outcome && <span role="status"> {outcome}</span>}
+  </>;
+}
+
+export function TeammateTasksBody({ view, nowMs, onWithdraw }: { view: TeammateTasksView; nowMs: number; onWithdraw?: (jobId: string) => Promise<WithdrawResult> }) {
   const when = (iso: string) => Number.isFinite(Date.parse(iso)) ? formatRelative(iso, nowMs) : 'unknown';
   const c = view.counts;
   return <section className={styles.root} aria-label="Teammate tasks" data-testid="teammate-tasks">
@@ -44,13 +80,14 @@ export function TeammateTasksBody({ view, nowMs }: { view: TeammateTasksView; no
     {!view.complete && <p className={styles.notice} role="status">Some tasks could not be read.</p>}
     {view.truncated && <p className={styles.message}>Showing the newest {view.rows.length} tasks.</p>}
     {view.rows.length === 0 ? <p className={styles.message}>No tasks handed to teammates.</p> : <table aria-label="Teammate task rows">
-      <thead><tr><th>Peer</th><th>Job</th><th>Kind</th><th>Repo/PRs</th><th>Work state</th><th>Since</th><th>Deadline</th></tr></thead>
+      <thead><tr><th>Peer</th><th>Job</th><th>Kind</th><th>Repo/PRs</th><th>Work state</th><th>Since</th><th>Deadline</th><th>Action</th></tr></thead>
       <tbody>{view.rows.map((row) => <tr key={row.jobId}>
         <td>{row.peer}</td><td>{row.jobId}</td><td>{row.kind || '—'}</td>
         <td>{row.repo || '—'}{row.prRefs.length > 0 && ` ${row.prRefs.map((n) => `#${n}`).join(' ')}`}</td>
         <td><span className={styles.healthBadge}>{LABELS[row.workState]}</span></td>
         <td><time dateTime={row.createdAt}>{when(row.createdAt)}</time></td>
         <td>{deadlineText(row, nowMs)}</td>
+        <td>{row.workState === 'ASSIGNED' && onWithdraw ? <WithdrawCell jobId={row.jobId} onWithdraw={onWithdraw} /> : '—'}</td>
       </tr>)}</tbody>
     </table>}
   </section>;
