@@ -4,8 +4,6 @@
 // Deepen first. Unshallow is the last resort. Exit 1 if the range is still
 // missing so a secret scan cannot shrink to a shorter diff.
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -37,33 +35,21 @@ export function parentExists(cwd, head, git = runGit) {
   }
 }
 
-export function shallowCommits(cwd, git = runGit) {
-  let gitPath;
-  try {
-    gitPath = git(cwd, ['rev-parse', '--git-path', 'shallow']);
-  } catch {
-    return [];
-  }
-  const file = isAbsolute(gitPath) ? gitPath : resolve(cwd, gitPath);
-  try {
-    return readFileSync(file, 'utf8').split('\n').map((line) => line.trim()).filter((line) => SHA.test(line));
-  } catch {
-    return [];
-  }
-}
-
-/** Commits in base..head whose parents were not fetched. An empty base has no range. */
+/**
+ * Commits in base..head whose parent was not fetched. Membership in
+ * .git/shallow is not enough: a deepen can leave a commit listed there
+ * after its parent is already present, and unshallowing that range
+ * downloads history the diff does not need. A missing parent is a real hole.
+ */
 export function shallowInRange(cwd, base, head, git = runGit) {
   if (!usableSha(base) || !usableSha(head)) return [];
-  const boundaries = new Set(shallowCommits(cwd, git));
-  if (boundaries.size === 0) return [];
   let listed;
   try {
     listed = git(cwd, ['rev-list', `${base}..${head}`]);
   } catch {
     return ['unreadable'];
   }
-  return listed.split('\n').map((line) => line.trim()).filter((line) => boundaries.has(line));
+  return listed.split('\n').map((line) => line.trim()).filter((line) => SHA.test(line) && !parentExists(cwd, line, git));
 }
 
 /**

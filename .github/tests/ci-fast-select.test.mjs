@@ -149,7 +149,7 @@ function fastGateSparsePatterns() {
   const start = yml.indexOf('\n  fast-gate:\n');
   assert.ok(start > 0, 'fast-gate job');
   const rest = yml.slice(start + 1);
-  const next = rest.slice(1).search(/\n  [a-z0-9-]+:\n/);
+  const next = rest.slice(1).search(/\n {2}[a-z0-9-]+:\n/);
   const job = next < 0 ? rest : rest.slice(0, next + 1);
   const marker = 'sparse-checkout: |';
   const at = job.indexOf(marker);

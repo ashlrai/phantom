@@ -79,6 +79,22 @@ test('a short candidate history deepens before the base ref window is fetched', 
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('a commit whose parent is present does not force an unshallow', () => {
+  const calls = [];
+  const head = 'e'.repeat(40);
+  const git = (cwd, args) => {
+    calls.push(args.join(' '));
+    if (args[0] === 'merge-base') return 'a'.repeat(40);
+    if (args[0] === 'rev-list') return `${head}\n`;
+    if (args[0] === 'rev-parse' && args.includes('--verify')) return 'a'.repeat(40);
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const settled = ensureRange({ cwd: '/tmp/unused', base: 'b'.repeat(40), head: 'c'.repeat(40), git });
+  assert.equal(settled.unshallowed, false);
+  assert.equal(calls.some((call) => call.includes('--unshallow')), false);
+  assert.deepEqual(shallowInRange('/tmp/unused', 'b'.repeat(40), 'c'.repeat(40), git), []);
+});
+
 test('push and merge-group bases are exact and an all-zero before is refused', () => {
   const before = 'b'.repeat(40);
   const pr = 'c'.repeat(40);
