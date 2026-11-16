@@ -177,8 +177,8 @@ export async function listFinalizeRuns(read: (path: string) => Promise<unknown>,
   const runs: FinalizeRunRecord[] = [];
   for (let page = 1; page <= FINALIZE_RUN_PAGE_CAP; page += 1) {
     const listed = record(await read(finalizeRunsQuery(now, page)));
-    const rows = listed && Array.isArray(listed.workflow_runs) ? listed.workflow_runs : null;
-    if (!rows) throw new Error('incomplete finalize run inventory');
+    if (!listed || !Array.isArray(listed.workflow_runs)) throw new Error('incomplete finalize run inventory');
+    const rows = listed.workflow_runs;
     runs.push(...rows.map(finalizeRunRecord));
     const total = listed.total_count;
     if (typeof total === 'number' && rows.length < FINALIZE_RUN_PAGE_SIZE && total !== runs.length) {
