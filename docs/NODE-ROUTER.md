@@ -73,6 +73,33 @@ so a primary on an older build still accepts the join). `phm node self-update
 restarts a node. A node showing `unreported` predates this or has not rejoined.
 Update primary and backup first, then workers.
 
+## Measured capacity and (node, provider, model) routing
+
+Nodes have no per-node lane configuration. Each node measures itself and reports
+how many more agent sessions of each harness it can start now:
+
+```bash
+phm node capacity --out ~/.ashlr-runs/metrics/node-capacity.json --json
+```
+
+The document (`phantom.node-capacity.v1`) carries `node`, `measured_at`, `cpu`,
+`mem_free`, `swap`, `per_harness_footprint`, `agents_runnable_now` and `basis`.
+A harness session is the vendor CLI plus every child it spawns (MCP servers,
+tool runners), measured with `ps`, or with `pgrep` and `footprint` where `ps` is
+denied. Memory headroom is the memory above memguard's raise line (30% free).
+CPU headroom is 85% of cores minus busy cores. Kernel pressure above normal,
+or swapouts at memguard's growth rate, stop every harness on that node. A cloud
+CLI therefore costs a node only its own measured footprint. A whole-host
+backoff only happens when one of those gates is hit. A harness never seen on
+the node reports `null` (unknown), never a guess. The previous document supplies swap growth and footprints
+learned in the last 7 days.
+
+`phm node route` scores each job's feasible placements by learned lane merge
+rate per token and per minute, using one or more capacity documents, a
+cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
+and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
+never launches work. Providers passed with `--exhausted` are never routed.
+
 ## Limits
 
 State is a private local directory (`~/.ashlr/nodes`, or `$ASHLR_HOME/nodes`)

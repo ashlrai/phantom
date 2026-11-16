@@ -14,10 +14,29 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 
 export const VERSE_FLEET_TEAMMATE_TASK_WITHDRAW_PATH = '/api/verse/fleet/control/teammate-tasks/withdraw';
 
-type Cancel = (jobId: string, opts: { apply: true }) => Promise<{ state: string; reason?: unknown }> | { state: string; reason?: unknown };
+type Cancel = (jobId: string, opts: { apply: true }) => unknown;
 
 const JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
-const REASON_CAP = 200;
+const UNAVAILABLE = { code: 'unavailable', error: 'teammate task withdraw unavailable' };
+
+function publicReceipt(result: unknown, jobId: string) {
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) return null;
+  const { state, reason } = result as Record<string, unknown>;
+  switch (state) {
+    case 'cancelled':
+    case 'planned':
+      return { v: 1, jobId, state };
+    case 'refused':
+      return { v: 1, jobId, state, reason: reason === 'Cancellation cannot prove a remote stop'
+        ? 'Cancellation cannot prove a remote stop' : reason === 'Teammate queue claim changed'
+          ? 'Teammate queue claim changed' : 'Teammate task withdrawal refused' };
+    case 'unavailable':
+      return { v: 1, jobId, state, reason: reason === 'Teammate task not found'
+        ? 'Teammate task not found' : 'Teammate task withdraw unavailable' };
+    default:
+      return null;
+  }
+}
 
 function sendInvalid(res: ServerResponse, message: string): void {
   sendJson(res, 400, { code: 'VERSE_INVALID', error: message });
@@ -53,7 +72,7 @@ async function readMutationBody(ctx: Parameters<ApiModule>[0], req: IncomingMess
 /** One withdraw at a time: a double-click must not interleave two ledger rewrites. */
 let inFlight: Promise<unknown> | null = null;
 
-export function createFleetTeammateTaskWithdrawApi(cancel: Cancel = cancelTeammateTask as Cancel): ApiModule {
+export function createFleetTeammateTaskWithdrawApi(cancel: Cancel = cancelTeammateTask): ApiModule {
   return async (ctx, req, res, path, method) => {
     if (path !== VERSE_FLEET_TEAMMATE_TASK_WITHDRAW_PATH) return false;
     if (method !== 'POST') {
@@ -76,13 +95,11 @@ export function createFleetTeammateTaskWithdrawApi(cancel: Cancel = cancelTeamma
     const run = Promise.resolve().then(() => cancel(jobId, { apply: true }));
     inFlight = run;
     try {
-      const result = await run;
-      const out: { v: 1; jobId: string; state: string; reason?: string } = { v: 1, jobId, state: String(result.state) };
-      if (typeof result.reason === 'string') out.reason = result.reason.slice(0, REASON_CAP);
-      sendJson(res, 200, out);
+      const out = publicReceipt(await run, jobId);
+      sendJson(res, !out || out.state === 'unavailable' ? 503 : 200, out ?? UNAVAILABLE);
     } catch (error) {
       if (error instanceof Error && error.message === 'Teammate tasks busy') sendJson(res, 409, { code: 'busy' });
-      else sendJson(res, 503, { code: 'unavailable', error: 'teammate task withdraw unavailable' });
+      else sendJson(res, 503, UNAVAILABLE);
     } finally {
       inFlight = null;
     }
