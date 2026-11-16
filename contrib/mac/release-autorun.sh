@@ -2,7 +2,10 @@
 # The live Mac copy is Security-pinned. Changes land only through a Security pin.
 # RELEASE-AUTORUN rev2 private selection proposal (GATES v4, Security 2026-11-04). launchd ai.ashlr.release-autorun, every 10 min, OUTSIDE every lane sandbox.
 # Finds the newest ready current-source successful attest-ci-build run on ashlrai/phantom, derives all release-sign.sh evidence by GET-only API reads,
-# and runs bin/release-sign.sh once per sha when that sha is the target of a v* tag. Never retries after rc=14 (or 0/5/16).
+# and runs bin/release-sign.sh when that sha is the target of a v* tag.
+# Signer stdout and stderr are scrubbed into sha-<sha>.log.
+# rc 0, 5 and 16 stay final. Any other rc is retried up to 3 times, then rc 14 writes NEEDS-MASON.
+# v3.30.34 is superseded by the next version: this pass skips it and never edits, publishes, deletes, or moves that draft or tag.
 # Until ~/.ashlr-runs/release-sign/keychain-allowed exists (Masbot creates it after Mason clicks Always Allow once), it only writes
 # NEEDS-MASON-<tag> with the exact command and starts nothing. Kill switch: ~/.ashlr-runs/RELEASE_AUTORUN_OFF.
 # rev2: after selection, each completed successful signing outcome gets a bounded GET-only published-state proof —
@@ -86,13 +89,32 @@ h=sys.argv[1]; tags=[t["name"] for t in json.load(sys.stdin) if t["commit"]["sha
 assert len(tags)<=1
 print(tags[0] if tags else "")' "$HEAD") || { log "tag inventory invalid; held"; exit 0; }
 [ -n "$TAG" ] || { log "attest $AR/$AA: source carries no visible v* tag; will look again"; continue; }
+if [ "$TAG" = v3.30.34 ]; then log "skip v3.30.34 superseded; not edited, published, deleted, or moved"; continue; fi
 AUD=$(G "repos/$REPO/actions/workflows/dependency-audit.yml/runs?head_sha=$HEAD&status=success&per_page=1") || { log "read audit failed"; exit 0; }
 read -r AU UA < <(echo "$AUD" | J workflow_runs.0.id workflow_runs.0.run_attempt | paste -sd' ' -)
 [[ "${AU:-}" =~ ^[1-9][0-9]*$ ]] && [[ "${UA:-}" =~ ^[1-9][0-9]*$ ]] || { log "audit absent; will look again"; continue; }
 G "repos/$REPO/actions/runs/$AU" | valid_run "$AU" "$UA" "$HEAD" dependency-audit 2>/dev/null || { log "audit changed or invalid; held"; exit 0; }
 DONE=$D/sha-$HEAD
-[ -f "$DONE.rc" ] && continue   # every completed outcome remains final, including failures
-[ ! -e "$DONE.started" ] && [ ! -L "$DONE.started" ] || { log "signing outcome uncertain; held"; exit 0; }
+TRIES=$DONE.tries
+if [ -f "$DONE.rc" ]; then
+  prev=$(tr -d '[:space:]' < "$DONE.rc")
+  case "$prev" in
+    0|5|16) continue ;;
+  esac
+  n=1
+  if [ -f "$TRIES" ]; then n=$(tr -d '[:space:]' < "$TRIES"); fi
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || n=1
+  if [ "$n" -ge 3 ]; then
+    log "retry exhausted $TAG ${HEAD:0:12} rc=$prev"
+    if [ "$prev" = 14 ] && [ ! -f "$ST/NEEDS-MASON-$TAG-rc14" ]; then
+      printf 'NEEDS-MASON %s: publish failed (rc=14) after 3 attempts. Inspect the draft release, then rm %s.rc and %s.tries to allow another run.\n' "$TAG" "$DONE" "$DONE" > "$ST/NEEDS-MASON-$TAG-rc14"
+    fi
+    continue
+  fi
+else
+  [ ! -e "$DONE.started" ] && [ ! -L "$DONE.started" ] || { log "signing outcome uncertain; held"; exit 0; }
+  n=0
+fi
 FRESH=$(G "repos/$REPO/commits/master" | J sha) || { log "fresh master read failed"; exit 0; }
 [ "$FRESH" = "$M" ] || { log "master moved; no signing intent created"; exit 0; }
 CMD=("$RS" --tag "$TAG" --head-sha "$HEAD" --ci-run "$CI" --ci-attempt "$CA" --artifact-id "$CART" --bundle-artifact-id "$BART" \
@@ -102,12 +124,19 @@ if [ ! -f "$ST/keychain-allowed" ]; then
   [ -f "$M" ] || { printf 'NEEDS-MASON %s sha %s\nFirst signing run needs Mason at the Mac for the one Always Allow click.\nRun from his Terminal:\n/bin/bash %s\nThen Masbot: touch %s/keychain-allowed\n' "$TAG" "$HEAD" "${CMD[*]}" "$ST" > "$M"; log "NEEDS-MASON $TAG ${HEAD:0:12} (keychain-allowed absent)"; }
   exit 0
 fi
-log "START $TAG ${HEAD:0:12} ci=$CI/$CA attest=$AR/$AA audit=$AU/$UA"
+log "START $TAG ${HEAD:0:12} ci=$CI/$CA attest=$AR/$AA audit=$AU/$UA attempt=$((n+1))"
 : > "$DONE.started"
-TMPDIR=/private/tmp /bin/bash "${CMD[@]}" >/dev/null 2>&1; rc=$?
-echo $rc > "$DONE.rc"; touch "$D/attest-$AR-$AA.seen"
+LOGF=$D/sha-$HEAD.log
+set -o pipefail
+TMPDIR=/private/tmp /bin/bash "${CMD[@]}" 2>&1 | /usr/bin/perl "$SCRUB" >> "$LOGF"
+rc=$?
+set +o pipefail
+echo $rc > "$DONE.rc"; echo $((n+1)) > "$TRIES"
+if [ "$rc" = 0 ] || [ "$rc" = 5 ] || [ "$rc" = 16 ] || [ "$((n+1))" -ge 3 ]; then touch "$D/attest-$AR-$AA.seen"; fi
 log "END $TAG ${HEAD:0:12} rc=$rc"
-[ $rc = 14 ] && printf 'NEEDS-MASON %s: publish failed (rc=14). Not retried. Inspect the draft release, then rm %s.rc to allow one manual rerun.\n' "$TAG" "$DONE" > "$ST/NEEDS-MASON-$TAG-rc14"
+if [ "$rc" = 14 ] && [ "$((n+1))" -ge 3 ]; then
+  printf 'NEEDS-MASON %s: publish failed (rc=14) after 3 attempts. Inspect the draft release, then rm %s.rc and %s.tries to allow another run.\n' "$TAG" "$DONE" "$DONE" > "$ST/NEEDS-MASON-$TAG-rc14"
+fi
 exit 0
 done <<< "$CANDIDATES"
 # rev2 update-channel verification: pending completed signing outcomes only.
@@ -138,6 +167,7 @@ h=sys.argv[1]; tags=[t["name"] for t in json.load(sys.stdin) if t["commit"]["sha
 assert len(tags)<=1
 print(tags[0] if tags else "")' "$FSHA" 2>/dev/null) || { log "feed ${FSHA:0:12}: tag inventory invalid; will look again"; continue; }
   [ -n "$FTAG" ] || continue   # the signed sha carries no visible v* tag; look again
+  if [ "$FTAG" = v3.30.34 ]; then log "skip v3.30.34 feed; not edited, published, deleted, or moved"; continue; fi
   FV=${FTAG#v}
   REL=$(G "repos/$REPO/releases/tags/$FTAG") || { log "feed $FTAG ${FSHA:0:12}: release not public yet; will look again"; continue; }
   RELF=$D/feed-$FSHA.rel.json; printf '%s' "$REL" > "$RELF"
