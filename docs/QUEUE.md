@@ -318,6 +318,32 @@ The same empty-streak rule guards relaunch at the dispatcher: see
 [`contrib/mac/README.md`](../contrib/mac/README.md) for launch-precheck
 code 14.
 
+### Merge-queue throughput loop
+
+`merge-queue-loop` ([`merge-queue-loop.ts`](../src/core/drive/merge-queue-loop.ts),
+run by `node scripts/merge-queue-loop.mjs cycle [--dry-run]`) makes one pass
+over the fleet PRs of the seven approved repos. A green, mergeable PR is
+added to the default branch's GitHub merge queue (`enqueuePullRequest` with
+`expectedHeadOid`, so a moved head is refused); the queue still runs every
+required check on the merge group. A BEHIND PR gets `updatePullRequestBranch`
+with the MERGE method (a base merge commit, never a rewrite or force-push) only
+where it helps: in a repo without a merge queue, or when its head reports no
+checks at all; the queue tests against the latest base itself. A conflicting PR gets one fix-forward line per head
+under the same `RQ-DRAIN-<repo>-<pr>-<sha7>` id refix-loop uses, so the two
+never double-append. Red checks stay with refix-loop. Repos without a merge
+queue are never auto-enqueued, and PRs touching Security-pinned paths (or with
+a truncated file list) are reported as `pinned`, not enqueued. Each action is
+written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
+per cycle.
+
+`node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE ...`
+counts merged PRs per UTC day from each clone's first-parent history
+([`merged-per-day.ts`](../src/core/drive/merged-per-day.ts)) and appends
+`fleet.merged-per-day.v1` rows to `~/.ashlr-runs/metrics/merged-per-day.jsonl`.
+A row is `verified` only when the ref tip closes the day, first-parent dates
+are ordered and no PR repeats; a shallow clone that stops inside the day is
+reported as `history-short`, not as a low count.
+
 ### Stage delegation (bottleneck-only)
 
 Router/leader policy: frontier lanes plan and verify; cheap lanes implement;
