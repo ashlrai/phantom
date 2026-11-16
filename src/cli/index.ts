@@ -3268,6 +3268,7 @@ async function main(): Promise<void> {
           printCoreUsage('usage', 'Usage readings.', [
             ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
             ['phm usage validate', 'Validate a usage reading'],
+            ['phm usage resource-live [--json] [--watch] [--show]', 'Read every allowance and write state/resource-live.json'],
           ]);
           process.exitCode = 0;
           break;
