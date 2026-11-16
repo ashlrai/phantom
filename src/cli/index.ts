@@ -2599,6 +2599,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'autofix': {
+        const { cmdAutofix } = await import('./autofix.js');
+        process.exitCode = await cmdAutofix(rest);
+        break;
+      }
+
       case 'disk-maint': {
         const { cmdDiskMaint } = await import('./disk-maint.js');
         process.exitCode = await cmdDiskMaint(rest);

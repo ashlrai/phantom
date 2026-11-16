@@ -77,6 +77,7 @@ Approval cards record consent and do not collect credentials.
 - [Drive](DRIVE.md): Mac queue supervisor. Serial ticks, worker reaping, and READY job admission.
 - [Daemon tick phases](daemon-tick-phases.md): Bounded resident tick stages — per-phase status/duration/error and tick outcomes via `phm daemon status --json | jq .tick.phases`.
 - [Disk maintenance](DISK-MAINT.md): `phm disk-maint [--apply] [--json]` reclaims rebuildable bytes by class; `phm disk-maint schedule` installs the daily job. Dry run by default; the protect-list (`~/.codex*`, model weights, Docker, client trees, secrets) is unconditional.
+- [Autofix](AUTOFIX.md): `phm autofix [--apply] [--dry-run] [--json]` reads Eng Ops incident filenames and applies the fixed prefix table. Dry run unless `--apply`. Refuses when `~/.ashlr/KILL` exists.
 - [Hub reference](HUB-REFERENCE.md): Universe, resource pools, and the legacy fleet. Compatibility identifiers stay.
 - [Console layout](CONSOLE-LAYOUT.md): One set of width breakpoints for the web console. Compact phone, laptop, and wide-monitor views of the same live state.
 

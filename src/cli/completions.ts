@@ -66,6 +66,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
+  // Eng Ops incident auto-fix (RQ-SELF-AWARE-AUTOFIX-1).
+  'autofix',
   // Changed-file tests and the fleet event feed.
   'test', 'check', 'feed',
   'worklog', 'library',
@@ -81,6 +83,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
+  autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],
   desktop: ['install', 'list-apps', 'windows', 'focus', 'read', 'scroll', 'type', 'click', 'screenshot', 'doctor', '--json', '--app', '--window', '--text', '--x', '--y', '--dx', '--dy', '--ref', '--help'],
   'desktop-update': ['inspect', 'apply', '--help'],
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
