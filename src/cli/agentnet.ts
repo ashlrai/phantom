@@ -1,11 +1,12 @@
 import { readPeerInbox, sendPeerMessage, type PeerBusOptions } from '../core/agentnet/peer-bus.js';
 import { listPeers, proposeSlackAction, type PeerSession } from '../core/agentnet/slack-identities.js';
 import { consumePeerWork } from '../core/agentnet/work-dispatch.js';
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 const usage = 'phm agentnet peers list|read|send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]\nphm agentnet peers post <to> <work-post-json> [--json]\nphm agentnet peers dispatch [--after <cursor>] [--apply] [--json]\nphm agentnet channels propose <name> [--apply] [--json]\nphm agentnet identity register <callsign> [--json]';
 export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, session: PeerSession = {
-  lane: process.env.PHM_AGENTNET_LANE ?? '', sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: process.env.PHM_AGENTNET_SESSION_TOKEN ?? '',
+  lane: process.env.PHM_AGENTNET_LANE ?? '', sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: readEnvironmentCredential('PHM_AGENTNET_SESSION_TOKEN') ?? '',
 }): Promise<number> {
-  if (!args.length || args.includes('--help')) { console.log(usage); return 0; }
+  if (!args.length || args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
   const positional: string[] = []; let after: number | undefined; let apply = false, replyTo: string | undefined, threadId: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;

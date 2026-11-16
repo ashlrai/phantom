@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { buildDoctorReport, pollInboundSince, readCursor } from '../core/integrations/imessage.js';
 import { ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
+import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
 import { sendLeaderReplies } from '../core/comms/imessage-leader-replies.js';
 import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
 import type { AshlrConfig } from '../core/types.js';
@@ -58,7 +59,7 @@ export async function cmdIMessage(args: string[]): Promise<number> {
     if (command === 'poll') {
       if (!cfg) throw new Error('config unreadable');
       if (values.apply) {
-        const r = await ingestIMessages(cfg);
+        const r = await ingestIMessages(cfg, { statusReply: ownerStatusReply() });
         await sendLeaderReplies(cfg); // best effort; dry run unless comms.leaderRepliesSend is true
         const f = r.findings;
         const mirror = f === null || (f.posted === 0 && f.pending === 0 && f.announced === 0) ? '' : `, findings +${f.posted}${f.announced > 0 ? `, patches +${f.announced}` : ''}${f.pending > 0 ? ` (${f.pending} pending)` : ''}`;

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { appsRecoveryIncident } from '../src/core/fleet/apps-recovery-glance.js';
+import { appsRecoveryIncident, loadAppsRecoveryIncident } from '../src/core/fleet/apps-recovery-glance.js';
 import type { readAppsRecoveryInvocations } from '../src/core/fleet/apps-recovery-invocations.js';
 import { createAppsWatchPublisher } from '../src/core/fleet/apps-watch-bus.js';
 import { FLEET_APPS } from '../src/core/verse/fleet-apps-api.js';
@@ -58,7 +58,7 @@ describe('apps recovery incident', () => {
         cycles: 3, recoveries: 0, consecutiveFailures: 3, totalFailedCycles: 3,
         lastObservedState: [{ app: 'Codex', observedRunning: false }] })).toBe(true);
       writeFileSync(join(root, 'NEEDS-MASON.md'), 'First incident\nSecond incident\nThird incident\n');
-      const glance = await readOperatorGlance({ runsDir: root, busRoot, now: () => new Date() });
+      const glance = await readOperatorGlance({ runsDir: root, busRoot, now: () => new Date(), loadRecovery: loadAppsRecoveryIncident });
       expect(glance.incidents).toEqual(['App recovery failed: Codex', 'First incident', 'Second incident']);
       expect(formatOperatorGlance(glance)).toContain('App recovery failed: Codex');
     } finally { rmSync(root, { recursive: true, force: true }); }
