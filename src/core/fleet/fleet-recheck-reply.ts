@@ -131,10 +131,9 @@ export function formatRecheckReply(r: FleetRecheck): string {
   ].join('\n');
   let text = build(true, true, true, true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(false, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(false, true, true, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, false, true);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, false);
+  if (text.length > REPLY_MAX) text = build(true, true, true, false, false, false);
   if (text.length > REPLY_MAX) text = build(false, true, true, false);
   if (text.length > REPLY_MAX) text = build(false, true, false, false);
   if (text.length > REPLY_MAX) text = build(false, false, false, false);

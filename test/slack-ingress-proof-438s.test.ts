@@ -11,7 +11,7 @@ const channel = 'C0FAKE0001';
 const thread = '1731000000.000100';
 const replyTs = '1731000050.000100';
 const entry: SlackObservation = {
-  at: '2025-11-07T17:00:00.000Z', decision: 'ingested', bus: 'failed',
+  at: '2024-11-07T17:00:00.000Z', decision: 'ingested', bus: 'failed',
   channelId: channel, threadTs: thread, messageTs: '1731000010.000100',
 };
 const sent: SentReceipt = { channel, thread, state: 'sent', ts: replyTs };
@@ -56,6 +56,7 @@ describe('Slack ingress proof', () => {
   it('preserves unknown ingress in the pure join', () => {
     const { bus: _bus, ...unknown } = entry;
     const trace = traceSlackRequests({ entries: [unknown], receipts: [sent], now });
-    expect(trace.rows[0]).toMatchObject({ ingress: 'unknown', outcome: 'answered', replyTs });
+    expect(trace.rows[0]).toMatchObject({ ingress: 'unknown', outcome: 'unanswered' });
+    expect(trace.rows[0]?.replyTs).toBeUndefined();
   });
 });
