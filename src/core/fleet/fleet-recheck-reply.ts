@@ -133,6 +133,9 @@ export function formatRecheckReply(r: FleetRecheck): string {
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, false, true);
   if (text.length > REPLY_MAX) text = build(true, true, true, true, true, false);
+  // Pool is the first optional evidence line to drop. Computers stays until
+  // the reply is still over budget without Pool.
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, false, false);
   if (text.length > REPLY_MAX) text = build(true, true, true, false, false, false);
   if (text.length > REPLY_MAX) text = build(false, true, true, false);
   if (text.length > REPLY_MAX) text = build(false, true, false, false);
