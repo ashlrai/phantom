@@ -27,12 +27,18 @@ export interface BatchLineOutcome {
   job: string; outcome: 'pr' | 'empty' | 'failed' | 'unknown';
   pr: string | null; reason: string | null; autoMerge: 'armed' | 'off' | 'unknown';
 }
+export interface EmptyPrefixReport {
+  windowHours: 24; evidence: 'available' | 'partial' | 'unknown';
+  total: number | null; malformedLines: number | null;
+  top: Array<{ prefix: string; count: number }>;
+}
 export interface QueueBatchReport {
   schema: 'phantom.queue-batches.v1'; evidence: 'available' | 'partial' | 'unknown';
   sessions: Array<{ id: string; repo: string; area: string; outcomes: BatchLineOutcome[] }>;
   totals: { sessions: number; lines: number; pr: number; empty: number; failed: number; unknown: number } | null;
   gaps: string[];
   ranking: z.infer<typeof rankingSchema> | null;
+  emptyPrefixes: EmptyPrefixReport;
 }
 
 /** Bound each read and refuse symlinks/devices; receipts are evidence, never executable input. */
@@ -51,6 +57,37 @@ async function snapshot(path: string, cap: number): Promise<{ text: string; modi
     if (size > cap) throw new Error('Evidence exceeds read limit');
     return { text: bytes.subarray(0, size).toString('utf8'), modified: stat.mtimeMs };
   } finally { await file.close(); }
+}
+
+/** Count finish rows, not job identities: retries consume separate launches. */
+async function readEmptyPrefixes(root: string, now: number): Promise<EmptyPrefixReport> {
+  const report: EmptyPrefixReport = { windowHours: 24, evidence: 'unknown', total: null, malformedLines: null, top: [] };
+  let text: string;
+  try { text = (await snapshot(join(root, 'metrics', 'jobs.jsonl'), 16 * 1024 * 1024)).text; }
+  catch { return report; }
+  const groups = new Map<string, number>();
+  report.total = 0; report.malformedLines = 0; report.evidence = 'available';
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error();
+      if (row.event !== 'finish') continue;
+      const job = id.parse(row.job ?? row.job_id ?? row.jobId ?? row.id);
+      const stamp = row.ts ?? row.timestamp ?? row.at;
+      const at = typeof stamp === 'string' && /(?:Z|[+-]\d{2}:?\d{2})$/.test(stamp) ? Date.parse(stamp) : NaN;
+      if (!Number.isFinite(at)) throw new Error();
+      if (at < now - 86400000 || at > now) continue;
+      if (typeof row.empty !== 'boolean') throw new Error();
+      if (!row.empty) continue;
+      // Strip generated filler counters / incident hashes; retain lane and task family.
+      const prefix = job.replace(/A\d{6,}Q8$/, 'A').replace(/-(?:[a-f0-9]{8,}|\d+)(?:-\d+)?$/i, '');
+      groups.set(prefix, (groups.get(prefix) ?? 0) + 1); report.total++;
+    } catch { report.malformedLines++; report.evidence = 'partial'; }
+  }
+  report.top = [...groups].map(([prefix, count]) => ({ prefix, count }))
+    .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix)).slice(0, 5);
+  return report;
 }
 
 async function lineOutcome(root: string, manifest: Manifest, job: string): Promise<BatchLineOutcome> {
@@ -90,6 +127,7 @@ async function lineOutcome(root: string, manifest: Manifest, job: string): Promi
 /** Read the dispatcher's existing per-line manifests; no launch, publication or GitHub calls. */
 export async function readQueueBatches(root = join(homedir(), '.ashlr-runs')): Promise<QueueBatchReport> {
   const report: QueueBatchReport = { schema: 'phantom.queue-batches.v1', evidence: 'available', sessions: [], totals: null, ranking: null,
+    emptyPrefixes: await readEmptyPrefixes(root, Date.now()),
     gaps: ['Publication and auto-merge reflect local receipts; missing evidence is unknown, not live GitHub state.'] };
   try {
     const ranking = rankingSchema.parse(JSON.parse((await snapshot(join(root, 'queue', 'ranking.json'), 4 * 1024 * 1024)).text));

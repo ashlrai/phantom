@@ -7,7 +7,8 @@ import work_market
 import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime, timezone
 from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
-                             attempt_identity, empty_reason, read_attempts, with_prompt)
+                             attempt_identity, empty_reason, read_attempts, with_prompt,
+                             admission_history, terminal_target)
 import queue_gate
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 # Separate fixed read-only slice: never copy a ready.tsv job into the node queue.
@@ -163,7 +164,7 @@ merged = set(); completed = set(); recent_outcomes = {}
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
     except Exception: continue
-    if not isinstance(d, dict): continue
+    if not isinstance(d, dict) or d.get("launched") is False: continue
     job = d.get("job")
     stamp = d.get("ts", d.get("timestamp", d.get("at")))
     try:
@@ -186,7 +187,7 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
 # a later copy. Missing or ambiguous history never proves completion.
 completed_groups = set(); group_outcomes = {}
 for raw in lines:
-    m = re.match(r"^- (?:READY|CLAIMED|DONE|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+    m = re.match(r"^- (?:READY|CLAIMED|DONE(?:-NOOP)?|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
     if m:
         group = single_case_group(*m.groups())
         if group and m.group(1) in recent_outcomes:
@@ -258,6 +259,7 @@ skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked =
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
 empty_attempts = read_attempts(R); empty_bases = {}
+_, terminal_prs = admission_history(empty_attempts, time.time())
 def empty_gate(j, repo, prompt):
     if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
     base = empty_bases[repo]
@@ -408,9 +410,8 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
             pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
             print("LOCAL_FIT %s: %s; fallback=%s" % (j, reason, pool), file=sys.stderr)
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
-    prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
+    prp |= {(rm.group(1), n) for n in re.findall(r"(?i)(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
-    if (rm.group(1), j) in completed or (None, j) in completed: skip(j, "already-merged"); continue
     deps = []
     for a in re.findall(r"after ([^,]+)", attrs):
         for d in re.split(r"\s+and\s+|,\s*", a.strip()):
@@ -432,15 +433,20 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
+    if j in checked: skip(j, "dup-line"); continue
     key = park_key(raw, ""); task_keys[j] = key
+    quality_group = single_case_group(j, attrs, text)
+    # Local terminal evidence retires stale producer work before any network precheck.
+    reason = ("already-merged" if (rm.group(1), j) in completed or (None, j) in completed
+              else terminal_target(j, rm.group(1), f"{j} ({attrs}): {text}", terminal_prs))
+    if not reason and quality_group and quality_group in completed_groups: reason = "acceptance-already-merged"
+    if reason:
+        checked.add(j); park_state.pop(j, None)
+        done.append((i, j, (10, reason), rm.group(1))); skip(j, reason); continue
     if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
     if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
     # A target PR identifies the same repair; a file alone does not.
     if prp & seen_pr: skip(j, "dup-pr"); continue
-    if j in checked: skip(j, "dup-line"); continue
-    quality_group = single_case_group(j, attrs, text)
-    if quality_group and quality_group in completed_groups:
-        skip(j, "acceptance-already-merged"); continue
     if quality_group and quality_group in empty_groups:
         skip(j, "recent-empty-streak"); continue
     if quality_group and quality_group in quality_groups:
@@ -467,7 +473,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
         park(park_state, j, key, ts, pc[0], pc[1]); skip(j, "precheck-parked"); continue
     park_state.pop(j, None)
     if pc:
-        done.append((i, j, pc)); skip(j, "done-noop"); continue
+        done.append((i, j, pc, rm.group(1))); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
     picked_specs[j] = spec
     if quality_group: quality_groups.add(quality_group)
@@ -496,7 +502,7 @@ for j, repo, l, tier, pf, p, i in ([] if "--json" in sys.argv else out): print((
 for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY " if DRY else "") + "UNPARK\t%s\tdeps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
-    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, *_ in done], "skips": skips,
                       "jobs": [{"job": j, "repo": repo, "tier": tier, "requirements": picked_specs[j]} for j, repo, _l, tier, *_tail in out],
                       "scope_budgets": SCOPE_BUDGETS,
                       "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
@@ -625,16 +631,20 @@ for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock n
     lines[i] = re.sub(r"^- READY ", "- CLAIMED %s dispatchd %s " % (HM, l), lines[i], count=1)
 for j, repo, l, tier, pf, p, i, deps in dep_out:
     lines[i] = re.sub(r"^- READY ", "- CLAIMED %s restock-parked-dep %s " % (HM, l), lines[i], count=1)
-for i, j, pc in done:
+if done: os.makedirs(R + '/metrics', exist_ok=True)
+for i, j, pc, repo in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
+    with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+        stream.write(json.dumps(dict(event='outcome', state='DONE-NOOP', job=j, repo=repo, launched=False,
+                                     reason=pc[1], ts=datetime.now(timezone.utc).isoformat())) + '\n')
 for j, wait in rate_unpark: ev("UNPARK %s reason=MERGERATE observed_wait_seconds=%d" % (j, wait))
 for j, ids, _old, _new in unparks:
     ev("UNPARK %s deps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in dep_out:
     ev("PARKED-DEP %s deps=%s" % (j, ",".join(deps)))
 if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really queues, expired entries dropped
-    for _, j, _pc in done:
+    for _, j, *_ in done:
         e = noops.get(j, {})
         n = e.get("n", 0) if e.get("key") == task_keys[j] else 0
         noops[j] = {"n": n + 1, "at": ts, "key": task_keys[j]}
