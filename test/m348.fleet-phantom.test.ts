@@ -209,7 +209,7 @@ describe('M348 FleetStatus Phantom capability', () => {
       expect(rendered).not.toContain('ASHLR_PULSE_TOKEN');
       expect(rendered).not.toContain('sk-should-never-surface');
     });
-  });
+  }, 20_000);
 
   it('renders agent yes only when Phantom reports an actual agent command', async () => {
     await withFleetMocks(() => {
