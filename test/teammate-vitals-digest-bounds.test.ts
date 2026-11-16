@@ -86,6 +86,7 @@ describe('fleet vitals digest bounded reads', () => {
 
   it('strips URL query strings and fragments from the digest and context', () => {
     expect(stripUrlQueries('see https://example.com/a/b?token=abc123#frag done')).toBe('see https://example.com/a/b done');
+    expect(stripUrlQueries('see git+ssh://example.com/repo?token=hidden#frag done')).toBe('see git+ssh://example.com/repo done');
     put(runsDir, 'queue/status.json', JSON.stringify({
       lanes: { claude: { running: 1, target: 2 } },
       publishes_24h: 2,
@@ -106,6 +107,17 @@ describe('fleet vitals digest bounded reads', () => {
     for (const marker of ['zzzQUERYzzz', 'zzzSIGzzz', 'zzzEVENTzzz', 'zzzTAILzzz']) {
       expect(context).not.toContain(marker);
     }
+  });
+
+  it('removes URL secrets before truncating a log tail through a URL', () => {
+    put(runsDir, 'dispatchd.log', `prefix custom://example.com/${'x'.repeat(3600)}?token=boundarySecret#fragment end\n`);
+    const digest = fleetVitalsDigest(runsDir);
+    expect(digest).not.toContain('boundarySecret');
+    expect(digest).not.toContain('fragment');
+    expect(digest).not.toContain('x'.repeat(100));
+    expect(digest).toContain('end');
+    put(runsDir, 'dispatchd.log', `custom://example.com/${'x'.repeat(TAIL_MAX_READ_BYTES)}?token=boundarySecret`);
+    expect(fleetVitalsDigest(runsDir)).not.toContain('boundarySecret');
   });
 });
 
