@@ -133,6 +133,19 @@ export interface TrainObservation {
   candidateCi: CandidateCi;
   build: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   buildPending: boolean;
+  /**
+   * The master push CI run for `head.sha` finished without success (for example
+   * a red advisory Quick typecheck, which leaves Merge Gate green). The desktop
+   * release-build job reuses only a green exact-source push run, so a
+   * dispatched CI run can never produce the build artifact for this SHA.
+   */
+  pushCiRed?: boolean;
+  /**
+   * Required CI (the fast Merge Gate) on `masterSha`. Read only when the
+   * candidate is stuck on `pushCiRed` with no build and master is strictly past
+   * it. Green lets the train fix forward from master instead of waiting forever.
+   */
+  masterCi?: CandidateCi;
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
@@ -269,6 +282,33 @@ export function refusePublishIfSuccessorConflict(writes: ReleaseWrite[], observe
   return writes.filter((write) => !write.path.endsWith('/publish-canonical-npm.yml/dispatches'));
 }
 
+type OpenReleasePr = TrainObservation['openReleasePr'];
+
+/** A green, mergeable, unqueued release-please PR for exactly `version`. */
+function readyReleasePr(pr: OpenReleasePr, checks: TrainObservation['pullChecks'], version: string): NonNullable<OpenReleasePr> | null {
+  const ready = pr !== null && checks !== null && pr.state === 'OPEN' && !pr.queued && pr.version === version
+    && pr.headRef.startsWith('release-please--') && SHA.test(pr.headSha) && pr.mergeable === 'MERGEABLE'
+    && checks.failing === 0 && checks.pending === 0;
+  return ready ? pr : null;
+}
+
+/**
+ * Fix forward past a candidate that can never build. Its master push CI ended
+ * red, so release-build has no green exact-source run to reuse and every
+ * dispatched CI run ends without an artifact (v3.30.34, push run 43807308941).
+ * When master has moved strictly past it, still carries that version, and the
+ * required fast gate on master HEAD is green, the next patch is cut from
+ * master. The candidate is only listed as skipped and superseded in the plan;
+ * its tag and draft are never written.
+ */
+export function fixForwardDue(input: TrainObservation, candidate: { name: string; sha: string }): boolean {
+  return input.pushCiRed === true && !input.build && !input.buildPending
+    && input.head?.ancestry === 'ancestor' && input.masterSha !== candidate.sha
+    && input.masterVersion === candidate.name.slice(1)
+    && input.masterCi === 'green' && input.npmPublished !== true
+    && !input.releases.some((row) => row.tag_name === candidate.name && row.draft === false);
+}
+
 export function isReleasePleaseCommit(message: string, version: string): boolean {
   const match = RELEASE_SUBJECT.exec(message);
   if (!match) return false;
@@ -373,6 +413,66 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
   throw new Error('refusing release write');
 }
 
+const RELEASE_PR_DISPATCH = `repos/${REPOSITORY}/actions/workflows/release-please.yml/dispatches`;
+
+/**
+ * Plan the next patch from green master after `fixForwardDue`. The only writes
+ * are the sanctioned Release PR ones: enqueue a green release PR for exactly
+ * `successor`, or ask the Release PR workflow (which re-checks green master
+ * and cadence itself) to cut one. No PATCH is planned, so the skipped
+ * candidate's draft and every older draft stay untouched in this run.
+ */
+function fixForward(input: TrainObservation, candidate: { name: string; sha: string }, successor: string, cadenceDue: boolean): TrainPlan {
+  const pr = input.openReleasePr;
+  const writes: ReleaseWrite[] = [];
+  let releasePr: string;
+  const ready = readyReleasePr(pr, input.pullChecks, successor);
+  if (ready) {
+    if (cadenceDue) writes.push(enqueueReleasePullRequest(ready.nodeId));
+    releasePr = cadenceDue ? 'release-pr-enqueued' : 'release-cadence-wait';
+  } else if (pr && pr.state === 'OPEN' && pr.version === successor) {
+    releasePr = pr.queued ? 'release-pr-queued' : 'release-pr-checks-pending';
+  } else if (cadenceDue) {
+    writes.push({ method: 'POST', path: RELEASE_PR_DISPATCH, body: { ref: 'master', inputs: {} } });
+    releasePr = 'release-pr-dispatched';
+  } else {
+    releasePr = 'release-cadence-wait';
+  }
+  for (const write of writes) assertReleaseWrite(write);
+  const reason = 'candidate-push-ci-red';
+  const skipped = { tag: candidate.name, reason: `${reason}: tag=${candidate.name} sha=${candidate.sha} superseded_by=v${successor} master=${input.masterSha}` };
+  const pending = (why?: string) => ({ status: 'pending' as const, ...(why ? { reason: why } : {}) });
+  const steps: TrainState['steps'] = {
+    kill: { status: 'complete' },
+    admit: { status: 'complete' },
+    supersede: { status: 'complete' },
+    'release-pr': pending(releasePr),
+    merge: pending(),
+    tag: pending('auto-tag'),
+    build: pending(),
+    attest: pending(),
+    sign: pending('mac-release-autorun'),
+    notarize: pending('mac-release-autorun'),
+    npm: pending(),
+    feed: pending(),
+    docs: pending(),
+    website: pending('phantom-secrets'),
+    finalize: pending(),
+  };
+  return {
+    exitCode: 0,
+    writes,
+    state: {
+      schema: TRAIN_SCHEMA, stopped: false, reason: 'fix-forward-from-master',
+      version: successor, tag: `v${successor}`, sha: input.masterSha, next: 'release-pr',
+      advance: { action: 'advance-from-master', version: successor, sha: input.masterSha, reason },
+      superseded: [candidate.name],
+      skippedTags: [...(input.skippedTags ?? []), skipped],
+      website: WEBSITE_HOOK, steps, stages: emptyStages(null),
+    },
+  };
+}
+
 export function buildTrain(input: TrainObservation): TrainPlan {
   const kill = releaseKillDecision(input.fleetKill, input.autorunOff);
   const minutes = cappedCadenceMinutes(input.cadenceMinutes);
@@ -436,10 +536,9 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   if (successorTagConflict(input.masterVersion, input.tags)) return stopped('duplicate_tag');
   const pr = input.openReleasePr;
   const checks = input.pullChecks;
-  if (cadenceDue && pr && checks && pr.state === 'OPEN' && !pr.queued && pr.version === expected && pr.headRef.startsWith('release-please--')
-    && SHA.test(pr.headSha) && pr.mergeable === 'MERGEABLE' && checks.failing === 0 && checks.pending === 0) {
-    writes.push(enqueueReleasePullRequest(pr.nodeId));
-  }
+  if (fixForwardDue(input, headTag)) return fixForward(input, headTag, expected, cadenceDue);
+  const ready = cadenceDue ? readyReleasePr(pr, checks, expected) : null;
+  if (ready) writes.push(enqueueReleasePullRequest(ready.nodeId));
 
   const row = input.releases.find((release) => release.tag_name === headTag.name) ?? null;
   const names = row?.assets.map((asset) => asset.name) ?? [];
@@ -453,7 +552,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // same SHA when they match, but github.ref_name must be the tag so the
   // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
   const ref = headTag.name;
-  if (!input.build && !input.buildPending && publishable && !(row?.draft === false && input.npmPublished === true)) {
+  if (!input.build && !input.buildPending && publishable && !input.pushCiRed && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
       // ci.yml types release_gate as boolean. The dispatch API stores inputs as
@@ -493,7 +592,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
       writes: [],
       state: {
         schema: TRAIN_SCHEMA, stopped: true, reason: 'feed-version-mismatch', version, tag: headTag.name, sha: headTag.sha,
-        next: 'feed', superseded, website: WEBSITE_HOOK,
+        next: 'feed', superseded, skippedTags: input.skippedTags ?? [], website: WEBSITE_HOOK,
         steps: { feed: { status: 'pending', reason: 'feed-version-mismatch' } },
         stages: emptyStages(input.head.committedAt),
       },
@@ -509,7 +608,8 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     supersede: { status: writes.some((write) => write.method === 'PATCH') ? 'pending' : 'complete' },
     build: {
       status: input.build ? 'complete' : 'pending',
-      ...(!input.build && !publishable ? { reason: input.candidateCi === 'pending' ? 'candidate-ci-pending' : 'candidate-ci-unknown' } : {}),
+      ...(!input.build && !publishable ? { reason: input.candidateCi === 'pending' ? 'candidate-ci-pending' : 'candidate-ci-unknown' }
+        : !input.build && input.pushCiRed ? { reason: 'candidate-push-ci-red' } : {}),
     },
     attest: { status: input.attest ? 'complete' : 'pending' },
     sign: { status: signed ? 'complete' : 'pending', reason: signed ? 'signed-release-assets' : 'mac-release-autorun' },
@@ -704,23 +804,27 @@ export async function observeTrain(
       if (record(item?.app)?.id !== 15368) continue;
       actions += 1;
       if (item?.status !== 'completed') pending += 1;
-      else if (item.conclusion !== 'success') failing += 1;
+      else if (item.conclusion !== 'success' && item.conclusion !== 'skipped') failing += 1;
     }
     if (actions === 0) failing += 1;
     pullChecks = { pending, failing };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
-  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false };
+  const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
   const audit = head ? await auditRun(read, head.sha) : null;
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
   const npmRecord = record(npm);
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
   const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
+  // Only a candidate that can never build needs master's gate: see fixForwardDue.
+  const masterCi = head && found.pushCiRed && !found.build && !found.pending && head.sha !== masterSha
+    ? await requiredCi(read, masterSha) : undefined;
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
-    openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending,
+    openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed,
+    ...(masterCi ? { masterCi } : {}),
     attest: attested.attest, attestPending: attested.pending, audit,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
@@ -816,14 +920,19 @@ export function admitCiRun(run: Record<string, unknown>, sha: string, tag: strin
   return run.head_branch === 'master' || run.head_branch === tag;
 }
 
-async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean }> {
+async function successfulRun(read: (path: string) => Promise<unknown>, workflow: string, sha: string, tag: string): Promise<{ build: TrainObservation['build']; pending: boolean; pushCiRed: boolean }> {
   const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
   if (!Number.isInteger(listed?.total_count) || Number(listed?.total_count) > 20 && runs.length === 20) throw new Error('incomplete build inventory');
   let pending = false;
+  let pushRed = false; let pushGreen = false;
   for (const row of runs) {
     const run = record(row);
     if (!run || run.head_sha !== sha) continue;
+    if (run.event === 'push' && run.head_branch === 'master' && run.path === '.github/workflows/ci.yml') {
+      if (run.status === 'completed' && run.conclusion === 'success') pushGreen = true;
+      else if (run.status === 'completed') pushRed = true;
+    }
     if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') pending = true;
     if (!admitCiRun(run, sha, tag)) continue;
     if (run.status !== 'completed' || run.conclusion !== 'success') continue;
@@ -835,9 +944,9 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
     const name = `ashlr-build-${Number(id)}-${Number(attempt)}`;
     const match = rows.map(record).find((artifact) => artifact?.name === name && artifact.expired !== true);
     if (!match || !Number.isSafeInteger(match.id)) continue;
-    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending };
+    return { build: { runId: Number(id), attempt: Number(attempt), artifactId: Number(match.id), completedAt: text(run.updated_at) }, pending, pushCiRed: false };
   }
-  return { build: null, pending };
+  return { build: null, pending, pushCiRed: pushRed && !pushGreen };
 }
 
 async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
@@ -992,7 +1101,6 @@ async function main(): Promise<number> {
     }
     if (writes.some((write) => write.method === 'PATCH')) state = markWritesApplied(state);
   }
-  state = { ...state, skippedTags: observed.skippedTags ?? [] };
   const json = `${JSON.stringify(state, null, 2)}\n`;
   if (process.env.GITHUB_STEP_SUMMARY) {
     const { appendFileSync } = await import('node:fs');
