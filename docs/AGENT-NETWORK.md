@@ -188,9 +188,11 @@ truncated session counts are lower bounds, and missing evidence stays unknown.
 Quota `used_frac` is derived from observed remaining percent; reset-pending
 readings are unknown rather than fresh quota.
 
-Specialist callsigns and per-agent memory freshness are not exposed in this
-checkout, so the roster falls back to lanes. The chief-of-staff brief remains
-pending; the existing mission is shown separately. Channel assignments show
+The Company view uses a lane roster; it does not display specialist callsigns
+or per-agent memory freshness. Its chief-of-staff brief panel remains pending;
+the existing mission is shown separately. Specialist assignments are available
+separately in the Channels pane's Leader orchestration journal (see
+[fleet coordination](FLEET-COORDINATION.md)). Channel assignments show
 recorded owners and channel references, not proven Slack membership or current
 reachability. Unread counts and channel-creation proposals stay unknown because
 the existing JSON endpoints do not expose them. Unexpired bus messages are

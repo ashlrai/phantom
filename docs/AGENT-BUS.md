@@ -1,8 +1,12 @@
 # Agent Bus
 
-Phantom's durable agent bus is a bounded, append-only store under `~/.ashlr-runs`
-that any agent can read by cursor; addresses are routing labels, not identities.
-It gives every agent a single shared inbox to read from and write to.
+Phantom's durable agent bus is a bounded snapshot store at
+`$ASHLR_HOME/fleet/bus-inbox/messages.json` (default
+`~/.ashlr/fleet/bus-inbox/messages.json`) that agents can read by cursor.
+Addresses are routing labels, not identities. HTTP, `phm comms bus` and fleet
+MCP share this store; `phm bus send|inbox|ack` uses a separate mailbox store.
+Writes reclaim expired receipts while preserving a monotonic cursor. Deduplication
+lasts while a receipt is retained; it is not an eternal exactly-once guarantee.
 
 ## Read
 
@@ -19,12 +23,13 @@ not yet been created, and `unavailable` when the store is unhealthy (503).
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
 `--allow-dispatch` and must pass the mutation gate.  Reply codes: 201
 posted, 200 duplicate, 400 invalid, 409 conflict, 507 full, 503
-unavailable, 404 when dispatch is off.  Responses carry `{ v: 1,
-status, id?, cursor? }`.
+unavailable or writer contention, 404 when dispatch is off. Responses carry
+`{ v: 1, status, id?, cursor? }` plus an inbox-mirror result on accepted posts.
 
 ## Envelope fields
 
-The `BusEnvelope` carries exactly six wire fields — each is a flat value:
+Legacy `BusEnvelope` messages carry six required fields:
+
 - `id` sender-assigned message identity; deduplication is a transport responsibility.
 - `from` sender routing label (printable ASCII, 1-128 chars).
 - `to` recipient routing label (printable ASCII, 1-128 chars).
@@ -32,7 +37,16 @@ The `BusEnvelope` carries exactly six wire fields — each is a flat value:
 - `ttl` positive remaining lifetime in milliseconds (safe integer).
 - `body` opaque strict JSON data; no event-kind or payload interpretation.
 
-Caps: 1024 messages, 1 MiB total, 100 per read page.
+Channel-aware envelopes add the complete group `channel`, `channel_ref`,
+`sender: {agent_id, vendor, human, team}` and `external`, plus optional
+`origin_bridge`. Partial groups and unknown fields are refused. Channels are
+`bus`, `slack`, `imessage`, `email`, `telegram` and `handoff`. These fields
+are assertions; they do not authenticate a sender or authorize a send. See
+[network channels](AGENT-NETWORK-CHANNELS.md).
+
+Caps: 64 KiB per envelope, depth 32, 1024 retained messages, 1 MiB total,
+100 per read page. Expired records can advance `nextCursor` without appearing
+in `messages`; persist the returned cursor even for an empty page.
 
 ## Conventions
 
@@ -60,11 +74,21 @@ announcement is evidence, not apply authority.
 
 ## Examples
 
-Read the latest page (cursor 0, limit 10):
-`curl -H "Authorization: Bearer FAKE-TOKEN" http://localhost:8787/api/verse/agent-bus?after=0&limit=10`
+For a local console on the default port, read from cursor 0 with the current
+read token kept privately in `PHM_READ_TOKEN`:
 
-Publish an envelope (replace `FAKE-TOKEN` and values with real ones):
-`curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"example-0001","from":"agent","to":"leaders","priority":"P1","ttl":86400000,"body":{"note":"hello"}}'`
+```sh
+curl -fsS -H "X-Ashlr-Token: $PHM_READ_TOKEN" 'http://127.0.0.1:7777/api/verse/agent-bus?after=0&limit=10'
+```
+
+Posting requires dispatch enabled and the mutation token, kept privately in
+`PHM_MUTATION_TOKEN`:
+
+```sh
+curl -fsS -X POST -H "X-Ashlr-Token: $PHM_MUTATION_TOKEN" -H "Content-Type: application/json" \
+  'http://127.0.0.1:7777/api/verse/agent-bus' \
+  -d '{"id":"example-0001","from":"agent","to":"leaders","priority":"P1","ttl":86400000,"body":{"kind":"note","text":"hello"}}'
+```
 
 ## Superseded or kept
 
@@ -76,7 +100,7 @@ what is on master:
 | #3057 idea | On master | Verdict |
 | --- | --- | --- |
 | Store under `src/core/bus` | `src/core/fleet/bus-inbox.ts`, reached by the `bus` and `handoff` adapters in `src/core/agents/adapters/` | Superseded; a second store is refused |
-| `schema`, `thread`, `createdAt` fields | Six-field envelope; `thread` lives in `note` and `context` bodies; receive time is the cursor row's `receivedAt` | Superseded |
+| `schema`, `thread`, `createdAt` fields | Six required fields with optional channel metadata; `thread` lives in `note` and `context` bodies; receive time is the cursor row's `receivedAt` | Superseded |
 | `from.vendor` and `from.node` | `sender.vendor` (any printable ASCII token) on channel envelopes; `provider` on v2 participants, which also covers `devin`, `cursor-cloud`, `glm` and others | Superseded |
 | `to` as `agent`, `role` or `topic` | `to` is one routing label. Role and topic are label conventions (`leaders`, `teammate.findings`); a label never carries authority | Kept as convention, not as structured fields |
 | Kinds `note`, `ask`, `reply`, `handoff`, `status` | `note`, `context`, `work.post`, `work.status` in the body. A question and its answer are `note` bodies sharing a `thread`. A handoff is an envelope on the `handoff` channel | Superseded |
@@ -89,19 +113,19 @@ the flat label every adapter, the send gate and the claim table already key on.
 Nothing is blocked without it, because a recipient can already subscribe to a
 label. If a role or topic registry is wanted later, add it in
 `src/core/agents/channel-registry.ts` so it resolves to labels before delivery,
-and leave the wire envelope at six fields.
+and preserve the existing required fields and channel metadata group.
 
 ## Desktop app
 
 The Bus pane in the desktop app includes a Durable bus tab that reads and
-writes the same `~/.ashlr-runs` store the API endpoints target.
+writes the same `$ASHLR_HOME/fleet/bus-inbox/` store the API endpoints target.
 
 ## v2
 
 v2 is the contract every provider implements against: Grok Bot agents, OpenAI
 Dot, codex-cmp, codex-personal, Devin, Cursor cloud agents, Claude, GLM (z.ai),
-Stacksync's agent and local oMLX. It adds meaning to `body`; the six envelope
-fields, endpoints, auth and caps above are unchanged, and v1 bodies stay valid.
+Stacksync's agent and local oMLX. It adds meaning to `body`; the six required
+envelope fields, endpoints, auth and caps above remain compatible; v1 bodies stay valid.
 A body is v2 only when it carries one of the `kind` values below. Schema
 version: `agent-bus.v2`. Source of truth: `src/core/agents/bus-v2-schema.ts`.
 Supersedes the stale proposals in PR #3057 (RQ-BUS-NEUTRAL-1) and PR #1135

@@ -60,6 +60,9 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Measure fleet outcomes and review weekly policy suggestions | [Fleet outcome metrics](https://github.com/ashlrai/phantom/blob/master/docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) |
 | Explain empty jobs | [Empty jobs](https://github.com/ashlrai/phantom/blob/master/docs/EMPTY-JOBS.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
+| Inspect fleet graphs, agent routes and advisory specialist assignments | [Fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md) |
+| Read fleet observations through a standalone MCP server | [Fleet MCP onramp](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MCP-ONRAMP.md) |
+| Inspect iMessage intake, teammate tasks and acknowledgement evidence | [iMessage](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Move ops-side fleet machinery into the repo deploy pipeline | [Machinery-as-code migration](https://github.com/ashlrai/phantom/blob/master/docs/MACHINERY-MIGRATION.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |

@@ -26,11 +26,13 @@ snapshot carries no repo; an envelope `repo` wins over the flag.
 
 ## What the plan means
 
-Two open PRs conflict only when they share a file, so the file→PR index forms
-an overlap graph. Its connected components are the batches:
+The planner predicts conflict from shared files; it does not compute Git
+conflicts. The file→PR index forms an overlap graph whose connected
+components are the batches:
 
 - `independent` batches hold a single PR touching files nobody else touches —
-  they merge in any order, concurrently, with any other batch.
+  the file-overlap model permits any order across batches; Git and required
+  checks still decide actual mergeability.
 - `serial` batches must serialize: merging one member moves main under every
   member that shares a file with it.
 
