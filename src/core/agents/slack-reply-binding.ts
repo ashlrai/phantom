@@ -97,7 +97,7 @@ export function bindSlackReplies(input: {
       // Conflicting thread associations (including top-level) prove no answer;
       // attempts never establish or override this evidence. This is reconciliation
       // of supplied receipts, not independent proof of live Slack delivery.
-      const key = `${row.channel}:${canonicalTs(row.ts)}`;
+      const key = `${row.channel}:${row.thread ?? ''}:${canonicalTs(row.ts)}`;
       const kept = physical.get(key);
       if (kept) {
         if (kept.thread !== row.thread) kept.conflicted = true;
@@ -120,12 +120,9 @@ export function bindSlackReplies(input: {
   }
   for (const request of validRequests.sort(compareRequests)) {
     const thread = threads.get(`${request.channelId}:${request.threadTs}`);
-    const receivedMs = Date.parse(request.at);
-    // Slack timestamps are nonnegative; dates before the epoch impose no lower bound.
-    const received = receivedMs < 0 ? '0.0' :
-      `${Math.floor(receivedMs / 1_000)}.${String(receivedMs % 1_000).padStart(3, '0')}`;
-    const index = thread?.replies.findIndex((ts) =>
-      compareTs(ts, request.messageTs) > 0 && compareTs(ts, received) >= 0) ?? -1;
+    // A reply answers the request when it is strictly after that message's
+    // Slack ts. request.at is an ISO instant and is not on the Slack clock.
+    const index = thread?.replies.findIndex((ts) => compareTs(ts, request.messageTs) > 0) ?? -1;
     if (thread && index >= 0) {
       const [replyTs] = thread.replies.splice(index, 1);
       result.answered.push({ channelId: request.channelId, threadTs: request.threadTs,
