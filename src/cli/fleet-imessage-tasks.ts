@@ -27,6 +27,28 @@ const envelope = z.object({
   prRefs: z.array(z.number().int().positive().safe()).max(20).optional(),
 });
 
+// CLI receipts are an explicit contract, independent of the private ledger view.
+// Strip unknown keys at every level, including inside receipts and results.
+const taskReceipt = z.object({
+  jobId: z.string(), peer: z.string(), resource: z.string(), state: z.string(),
+  claimKey: z.string(), kind: z.string().optional(), repo: z.string().optional(),
+  prRefs: z.array(z.number().int()).optional(), createdAt: z.number(),
+  attemptedAt: z.number().optional(), deadline: z.string(),
+  receipt: z.object({
+    rowid: z.number(), sent: z.boolean(), delivered: z.boolean(), error: z.number(),
+  }).nullish(),
+  result: z.object({
+    rowid: z.number(), status: z.string(), at: z.number(), evidence: z.string(),
+  }).nullish(),
+});
+const taskReport = z.object({
+  schema: z.string().optional(), state: z.string().optional(), ok: z.boolean().optional(),
+  dryRun: z.boolean().optional(), approved: z.boolean().optional(),
+  error: z.string().optional(), reason: z.string().optional(),
+  sent: z.number().optional(), replied: z.number().optional(), pending: z.number().optional(),
+  task: taskReceipt.optional(), tasks: z.array(taskReceipt).optional(),
+});
+
 export interface FleetImessageTasksDeps {
   enqueue?: typeof enqueueTeammateTask;
   cancel?: typeof cancelTeammateTask;
@@ -87,7 +109,13 @@ export async function cmdFleetImessageTasks(args: string[], deps: FleetImessageT
         : command === 'peers' ? await (deps.peers ?? teammateTaskPeers)()
         : await (deps.dispatch ?? runTeammateTasks)((deps.config ?? loadConfigReadOnlyStrict)(), { apply: values.apply === true });
     }
-    output(JSON.stringify(result, null, json ? undefined : 2));
+    // Peers retain their distinct owner declarations and peer-reported observations.
+    const visible = command === 'peers' ? result : {
+      ...taskReport.parse(result),
+      coverage: 'local-evidence-only-peer-reported-results-unverified',
+      claimKeyEvidence: 'label-only-queue-binding-unverified',
+    };
+    output(JSON.stringify(visible, null, json ? undefined : 2));
     const report = result as { state?: string; ok?: boolean };
     return report.ok === false || ['error', 'unavailable', 'refused'].includes(report.state ?? '') ? 1 : 0;
   } catch {
