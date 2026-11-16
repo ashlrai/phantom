@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync, appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -33,7 +33,7 @@ function fixture() {
     });
     process.stdin.on('end', () => process.exit(0));`);
   const spec = { name: 'stub', command: process.execPath, args: [script], source: 'test' };
-  const entry = (changed = false) => `import { startGateway } from ${JSON.stringify(gatewayUrl)};
+  const entry = (changed = false, lazy = false) => `import { startGateway } from ${JSON.stringify(gatewayUrl)};
     import { sessionChildPids } from ${JSON.stringify(registryUrl)};
     import { appendFileSync } from 'node:fs';
     const write = process.stderr.write.bind(process.stderr);
@@ -41,15 +41,15 @@ function fixture() {
       if (String(chunk).includes('gateway ready')) appendFileSync(${JSON.stringify(counts)}, sessionChildPids('mcp:stub').length + '\\n');
       return write(chunk, ...args);
     };
-    await startGateway({ servers: [${JSON.stringify({ ...spec, args: changed ? [script, 'changed'] : [script] })}] }, 2000);`;
+    await startGateway({ servers: [${JSON.stringify({ ...spec, args: changed ? [script, 'changed'] : [script] })}] }, 2000, { lazy: ${lazy} });`;
   const env = { PATH: process.env.PATH!, HOME: home, ASHLR_HOME: join(home, '.ashlr'), ASHLR_NO_HEAL: '1' };
-  return { home, script, fail, entry, env, counts: () => readFileSync(counts, 'utf8').trim().split('\n').map(Number), starts: () => readFileSync(log, 'utf8').trim().split('\n').length };
+  return { home, script, fail, entry, env, counts: () => readFileSync(counts, 'utf8').trim().split('\n').map(Number), starts: () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').length : 0 };
 }
-async function open(f: ReturnType<typeof fixture>, changed = false) {
+async function open(f: ReturnType<typeof fixture>, changed = false, lazy = false) {
   const client = new Client({ name: 'test', version: '1' });
   clients.push(client);
   const transport = new StdioClientTransport({ command: process.execPath,
-    args: ['--import', 'tsx', '--input-type=module', '-e', f.entry(changed)], env: f.env, stderr: 'pipe' });
+    args: ['--import', 'tsx', '--input-type=module', '-e', f.entry(changed, lazy)], env: f.env, stderr: 'pipe' });
   let stderr = '';
   transport.stderr?.on('data', chunk => { stderr += String(chunk); });
   try { await client.connect(transport); }
@@ -70,6 +70,30 @@ afterEach(async () => {
   await Promise.all(clients.splice(0).map(client => client.close()));
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
+it('starts three cold jobs with no downstreams and activates only the requested server on first use', async () => {
+  const f = fixture();
+  const jobs = await Promise.all(Array.from({ length: 3 }, () => open(f, false, true)));
+  const inventories = await Promise.all(jobs.map(job => job.listTools()));
+  expect(inventories.every(r => r.tools.some(t => t.name === 'ashlr__discover'))).toBe(true);
+  expect(f.starts()).toBe(0);
+  expect(f.counts()).toEqual([0, 0, 0]);
+  const client = jobs[0]!;
+  await expect(client.callTool({ name: 'ashlr__discover', arguments: { server: 'absent' } })).rejects.toThrow();
+  expect(f.starts()).toBe(0);
+  const results = await Promise.all(Array.from({ length: 5 }, () => client.callTool({ name: 'ashlr__discover', arguments: { server: 'stub' } })));
+  expect(results.every(r => !r.isError)).toBe(true);
+  expect(f.starts()).toBe(1);
+  expect((await client.listTools()).tools.some(t => t.name === 'stub__echo')).toBe(true);
+  expect((await client.callTool({ name: 'stub__echo' })).isError).not.toBe(true);
+}, 60_000);
+it('checks policy before cold discovery can start a server', async () => {
+  const f = fixture();
+  const policy = join(f.home, 'policy.yml');
+  writeFileSync(policy, 'policies: [{name: deny-discovery, tools: {ashlr__discover: deny}}]');
+  const client = await open({ ...f, env: { ...f.env, ...{ ASHLR_MCP_POLICY: policy } } }, false, true);
+  expect((await client.callTool({ name: 'ashlr__discover', arguments: { server: 'stub' } })).isError).toBe(true);
+  expect(f.starts()).toBe(0);
+}, 60_000);
 it('lists cached tools without spawning and shares the first connection across concurrent calls', async () => {
   const f = fixture();
   await prime(f);

@@ -106,6 +106,7 @@ describe('mcp <verb> --help never runs the verb', () => {
     [['install', 'claude', '-h']],
     // `run` starts the stdio aggregation gateway.
     [['run', '--help']],
+    [['run', '--lazy', '--help']],
   ])('mcp %j prints usage and touches nothing', async (args) => {
     await expect(cmdMcp(args)).resolves.toBe(0);
     expect(stdout).toContain('Subcommands:');
@@ -122,6 +123,13 @@ describe('mcp <verb> --help never runs the verb', () => {
     await expect(cmdMcp(['list'])).resolves.toBe(0);
     expect(effects.discoverMcpServers).toHaveBeenCalled();
     expect(effects.registerNativeTools).toHaveBeenCalled();
+  });
+  it('passes explicit lazy startup to the gateway', async () => {
+    vi.useFakeTimers();
+    try {
+      expect(await cmdMcp(['run', '--lazy'])).toBe(0);
+      expect(effects.startGateway).toHaveBeenCalledWith({ servers: [] }, undefined, { lazy: true });
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
   });
 });
 

@@ -436,6 +436,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'verbs': () => import('./fleet-verbs.js'),
   'verdict': () => import('./fleet-verdict.js'),
   'vision-lint': () => import('./fleet-vision-lint.js'),
+  'vitals': () => import('./fleet-vitals.js'),
   'wait-jobs': () => import('./fleet-wait-jobs.js'),
   'waiting': () => import('./fleet-waiting.js'),
   'waste': () => import('./fleet-waste.js'),
