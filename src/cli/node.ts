@@ -37,6 +37,9 @@ export async function cmdNode(args: string[]): Promise<number> {
       (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
   }
+  if (args[0] === 'self-update' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-self-update.js')).cmdNodeSelfUpdate(args.slice(1));
+  }
   if (args[0] === 'lanes' && !args.includes('--help') && !args.includes('-h')) {
     const extra = args.slice(1).filter(a => a !== '--json');
     if (extra.length || args.slice(1).filter(a => a === '--json').length > 1) {
@@ -70,7 +73,8 @@ phm node light restock [--apply] --json (bounded muse slice; preview by default)
 phm node light status --json (observed completions)
 phm node light run (fixed recipe runner stdin protocol)
 phm node rpc --json (SSH stdin endpoint)
-phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)`);
+phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)
+phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)`);
     return 0;
   }
   if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));
