@@ -12,6 +12,8 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-bus` | Bus | `mod+alt+b` | `src/web-ui/routes/verse/fleet-bus/fleet-bus.pane.tsx` |
 | `fleet-capacity` | Capacity | — | `src/web-ui/routes/verse/fleet-capacity/fleet-capacity.pane.tsx` |
 | `fleet-channels` | Channels | — | `src/web-ui/routes/verse/fleet-channels/fleet-channels.pane.tsx` |
+| `fleet-compute` | Fleet compute | none | `src/web-ui/routes/verse/company/compute.pane.tsx` |
+| `fleet-direct` | Direct | none | `src/web-ui/routes/verse/fleet-direct/fleet-direct.pane.tsx` |
 | `fleet-dispatch` | Dispatch | — | `src/web-ui/routes/verse/fleet-dispatch/fleet-dispatch.pane.tsx` |
 | `fleet-events` | Fleet events | `mod+alt+e` | `src/web-ui/routes/verse/fleet-events/fleet-events.pane.tsx` |
 | `fleet-forum` | Forum | none | `src/web-ui/routes/verse/fleet-forum/fleet-forum.pane.tsx` |
@@ -25,6 +27,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-metrics` | Metrics | — | `src/web-ui/routes/verse/fleet-metrics/fleet-metrics.pane.tsx` |
 | `fleet-mission` | Mission | `mod+alt+k` | `src/web-ui/routes/verse/fleet-mission/fleet-mission.pane.tsx` |
 | `fleet-observe` | Observe | `mod+alt+v` | `src/web-ui/routes/verse/fleet-observe/fleet-observe.pane.tsx` |
+| `fleet-org` | Org | none | `src/web-ui/routes/verse/fleet-org/fleet-org.pane.tsx` |
 | `fleet-outcomes` | Outcomes | — | `src/web-ui/routes/verse/fleet-outcomes/fleet-outcomes.pane.tsx` |
 | `fleet-queue` | Queue | `mod+alt+q` | `src/web-ui/routes/verse/fleet-queue/fleet-queue.pane.tsx` |
 | `fleet-releases` | Releases | — | `src/web-ui/routes/verse/fleet-releases/fleet-releases.pane.tsx` |

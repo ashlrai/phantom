@@ -18,7 +18,7 @@ const CONFIG: PoolConfig = {
 };
 
 function statusBody(peers: Record<string, unknown>, self: unknown = 'mac-self'): string {
-  return JSON.stringify({ Self: { HostName: self }, Peer: peers });
+  return JSON.stringify({ BackendState: 'Running', Self: { HostName: self }, Peer: peers });
 }
 
 function peersDeps(over: Partial<TailnetPeersDeps> = {}): TailnetPeersDeps {

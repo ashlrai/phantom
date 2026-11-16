@@ -1,6 +1,8 @@
 # Auto-tag: create v<version> and its draft GitHub release when the version in
 # package.json on master is untagged and every required check for that exact
-# commit is green and its latest six-hour scheduled full CI is green. A missing
+# commit is green and its release gate is green (RELEASE_GATE_MODE: 'full' =
+# latest six-hour scheduled full CI green, the default; 'split' = release-relevant
+# suites green on the exact SHA, see RELEASE-GATE-SPLIT-1). A missing
 # tag is owed even when the bump landed earlier, so this heals a stranded release instead of waiting for the next bump.
 # Tags and releases are created only here, with the ashlr-release GitHub App
 # token. The release starts as a draft: releases/latest keeps resolving to the
@@ -44,7 +46,7 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -57,11 +59,15 @@ jobs:
       BRANCH: master
       VERSION_FILE: package.json
       SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      # RELEASE-GATE-SPLIT-2: a dispatched master CI run (release_gate=true
+      # release prep, or a manual full) also re-evaluates its exact head SHA;
+      # GitHub rarely fires the half-hour schedule, so release prep is mostly
+      # dispatched. It holds quietly like a push when the gate is not green.
       # A workflow_run for a push-event CI run evaluates a fresh master commit
       # that cannot have its own scheduled full yet, so it holds quietly like a
       # direct push. Only schedule-sourced workflow_run, schedule and dispatch
       # fail closed (the scheduled full re-evaluates the held commit).
-      TRIGGER: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && 'push' || github.event_name }}
+      TRIGGER: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') && 'push' || github.event_name }}
       # Required checks designed to report skipped on push to master (PR-only
       # jobs). Only these may be skipped; everything else must be success.
       SKIP_OK: ""
@@ -162,12 +168,19 @@ jobs:
           ref: ${{ env.SHA }}
           persist-credentials: false
 
-      # Fail closed before minting write authority. Exact SHA only: descendants
-      # wait for their own scheduled full, even if a required fast check is green.
-      - name: Require scheduled full green on this exact commit
+      # Fail closed before minting write authority. RELEASE-GATE-SPLIT-1:
+      # RELEASE_GATE_MODE unset or 'full' keeps the scheduled-full requirement
+      # (ci-master-full.mjs, unchanged). 'split' requires the release-relevant
+      # suites green on this exact SHA (build, typecheck, fast gate, desktop
+      # release smoke, signing path); the six-hour full suite then files P0
+      # fix-forward lines instead of blocking. Step id stays 'full' so every
+      # later step keeps its existing guard.
+      - name: Require release gate on this exact commit
         id: full
         if: steps.checks.outputs.green == 'true'
-        run: node .github/scripts/ci-master-full.mjs require
+        env:
+          RELEASE_GATE_MODE: ${{ vars.RELEASE_GATE_MODE }}
+        run: node .github/scripts/ci-release-gate.mjs require
 
       - name: Mint ashlr-release App token (contents write, this repo only)
         id: app

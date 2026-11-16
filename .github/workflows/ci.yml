@@ -1681,3 +1681,34 @@ jobs:
       - name: Finish bounded release smoke phase
         if: steps.eligible.outputs.ready == 'true'
         run: node .github/scripts/release-smoke-phase.mjs finish
+
+  release-suites:
+    # RELEASE-GATE-SPLIT-1: release-relevant suites on the exact release-prep
+    # SHA. Runs only beside a Desktop release smoke that actually smoked
+    # (ready == 'true'); otherwise it is skipped and Auto-tag holds. Not in
+    # Merge Gate needs, so merge-queue required checks are unchanged. Hermetic:
+    # no secrets, no signing identity, no notarization; the signing-path tests
+    # exercise fail-closed verification code only. Auto-tag reads this check
+    # by name when RELEASE_GATE_MODE == 'split'. The suite list lives in
+    # .github/scripts/ci-release-suites.mjs.
+    name: Release suites (build + signing path)
+    needs: [secret-shape, classify, release-build]
+    if: needs.classify.outputs.release_gate == 'true' && needs.release-build.outputs.ready == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact release candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build, release contracts, signing path, release scripts
+        run: node .github/scripts/ci-release-suites.mjs
