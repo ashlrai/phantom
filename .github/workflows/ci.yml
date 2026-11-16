@@ -1965,6 +1965,9 @@ jobs:
       # Lockfile-keyed, never commit-keyed: an exact hit restores and skips the
       # post-job save, so runs stop re-uploading and evicting each other's
       # entries. A Cargo.lock change falls back to the toolchain prefix.
+      # Node modules are restored by setup-node (cache: npm) above. This
+      # entry keeps the Rust toolchain and Electron download caches warm so a
+      # tag build does not refetch them. The key changed with the path list.
       - name: Cache native compiler inputs
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1972,9 +1975,16 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/db/
+            ~/.rustup/toolchains/
+            ~/.cache/electron/
+            ~/.cache/electron-builder/
+            ~/Library/Caches/electron/
+            ~/Library/Caches/electron-builder/
             ${{ steps.tree.outputs.root }}/desktop/src-tauri/target/
-          key: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
-          restore-keys: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
+          key: release-native-v3-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-native-v3-${{ runner.os }}-${{ runner.arch }}-1.97.1-
+            release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
       - name: Install pinned build tools
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         timeout-minutes: 5

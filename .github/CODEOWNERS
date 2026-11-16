@@ -245,6 +245,9 @@
 /vitest.workspace* @masonwyatt23
 # comms-agent: Comms send policy decides what may leave the machine
 /src/core/comms-agent/ @masonwyatt23
+# real-home: Account home for KILL, pause and send policy; a relocated HOME must not retarget it
+/src/core/real-home.ts @masonwyatt23
+/test/real-home-child.test.ts @masonwyatt23
 # tier1-test: this test guards Tier-1 authority code; weakening it would weaken the gate it tests
 # (every test G1 holds by name, safety suite or Tier-1 import; test/authority-codeowners-310b.test.ts regenerates this list)
 /test/activation-readiness-package.test.ts @masonwyatt23
