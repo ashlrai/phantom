@@ -153,7 +153,8 @@ export async function createBotFromTemplate(req: CreateBotRequest, opts: { home?
   const template = getBotTemplate(req.templateId) ?? (() => { throw new BotTemplateError('Unknown bot template.', 404); })();
   if (typeof req.id !== 'string' || !BOT_ID_PATTERN.test(req.id)) throw new BotTemplateError('Bot id must be 2-24 characters: lowercase letters, digits and dashes, starting with a letter.');
   const name = (req.name ?? template.name).trim();
-  if (name.length < 1 || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) throw new BotTemplateError('Name must be 1-80 printable characters.');
+  const nonPrintable = [...name].some((ch) => { const code = ch.charCodeAt(0); return code <= 0x1f || code === 0x7f; });
+  if (name.length < 1 || name.length > 80 || nonPrintable) throw new BotTemplateError('Name must be 1-80 printable characters.');
   try { assertMetadata(name); } catch { throw new BotTemplateError('Secret-shaped names are refused.'); }
   const id = req.id;
 
