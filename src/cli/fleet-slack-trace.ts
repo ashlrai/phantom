@@ -1,7 +1,7 @@
 import { isSlackChannelId, isSlackTs } from '../core/agents/slack-network.js';
 import { readSlackRequestTrace, type SlackRequestTraceOptions } from '../core/agents/slack-request-trace.js';
 
-const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack channel id>] [--json]';
+const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack channel id>] [--message <ts>] [--json]';
 
 /**
  * Read-only per-request trace: ingress receipt to same-thread reply outcome.
@@ -16,6 +16,7 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
   let json = false;
   let thread: string | undefined;
   let channelId: string | undefined;
+  let message: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json') {
@@ -34,13 +35,25 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
         return 2;
       }
       channelId = value;
+    } else if (arg === '--message') {
+      const value = args[++i];
+      if (message !== undefined || !isSlackTs(value)) {
+        console.error(usage);
+        return 2;
+      }
+      message = value;
     } else {
       console.error(usage);
       return 2;
     }
   }
+  if (message !== undefined && (thread === undefined || channelId === undefined)) {
+    console.error(usage);
+    return 2;
+  }
   const collected = readSlackRequestTrace({ ...deps, ...(thread !== undefined ? { thread } : {}) });
-  const rows = channelId === undefined ? collected.rows : collected.rows.filter((row) => row.channelId === channelId);
+  const rows = collected.rows.filter((row) =>
+    (channelId === undefined || row.channelId === channelId) && (message === undefined || row.messageTs === message));
   const counts = { total: rows.length, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
   for (const row of rows) {
     if (row.outcome === 'answered') counts.answered++;
@@ -55,13 +68,15 @@ export async function cmdFleetSlackTrace(args: string[], deps: SlackRequestTrace
     collectionScope: {
       ...(selectedThread !== undefined ? { thread: selectedThread } : {}),
       ...(channelId !== undefined ? { channelId } : {}),
+      ...(message !== undefined ? { messageTs: message } : {}),
     },
   };
   if (json) {
     console.log(JSON.stringify(trace));
   } else {
     console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends}) ` +
-      `scope: channel=${channelId ?? 'all'} thread=${selectedThread ?? 'all'}; ${scope}`);
+      `scope: channel=${channelId ?? 'all'} thread=${selectedThread ?? 'all'}` +
+      `${message !== undefined ? ` message=${message}` : ''}; ${scope}`);
     if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
