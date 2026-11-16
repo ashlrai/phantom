@@ -10,6 +10,7 @@ import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+import { proveReuse } from './ci-green-reuse.mjs';
 
 export function failedTestFiles(log) {
   const found = new Set();
@@ -39,7 +40,24 @@ function run(command, args) {
   });
 }
 
+function reusedPriorGreen() {
+  const receipt = process.env.CI_GREEN_RECEIPT;
+  const hash = process.env.CI_GREEN_HASH;
+  const job = process.env.CI_GREEN_JOB;
+  if (!receipt || !hash || !job) return false;
+  try {
+    return proveReuse(readFileSync(receipt, 'utf8'), job, hash);
+  } catch {
+    return false;
+  }
+}
+
 export async function main(planPath, outPath) {
+  if (reusedPriorGreen()) {
+    writeFileSync(outPath, JSON.stringify({ failed: [], ok: true, reused: true }, null, 2));
+    console.log('reused a prior green affected-test result');
+    return 0;
+  }
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
   const jobs = [];
   if (plan.mode === 'fallback') {
