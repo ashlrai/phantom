@@ -231,6 +231,8 @@ Phantom - every command (phm or ashlr)
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    devin land --session <id> [--repo phantom] [--apply]                                                                                                          Land a Devin session's attached bundle + pr.md through the pinned fork-only publish.sh, then arm auto-merge unless publish.sh withheld it (dry run by default).
+    devin autoland [--apply] [--cap N] [--json]                                                                                                                  Land finished sessions owned by the connected key; pause/resume controls resident passes.
     routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
@@ -412,6 +414,7 @@ Phantom - every command (phm or ashlr)
     serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
     console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
     verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    settings appearance get|set     Read or change the app theme, accent (hex), density and fontSize: get [--json], set <key> <value> [--json]. A running desktop or phone app applies it live.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).

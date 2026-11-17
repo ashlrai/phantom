@@ -10435,6 +10435,9 @@ async function runDaemonInEnrollmentScope(
   // Stopped in the shutdown block below (see startResidentCapacityPublisher).
   const residentPublisherRun = { dryRun: opts.dryRun, once: opts.once, standing: standing !== null };
   await startResidentCapacityPublisher(activationCfg, residentPublisherRun);
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).ensureDevinAutolandTimer(); } catch { /* Optional resident maintenance. */ }
+  }
 
   // Refresh independently of dispatch ticks; a slow GitHub call cannot overlap itself.
   let factsBusy = false;
@@ -11231,6 +11234,9 @@ async function runDaemonInEnrollmentScope(
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
   if (!opts.dryRun) await stopResidentCapacityPublisher();
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).stopDevinAutolandTimer(); } catch { /* Nothing to stop. */ }
+  }
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,
     scheduledCutoffCapture,
