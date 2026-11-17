@@ -62,6 +62,7 @@ def gate_limit(name, default):
     except ValueError: return default
 GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 2.0)
 GATE_PROCS_MAX = gate_limit("GATE_PROCS_MAX", 2500); GATE_WORKTREES_MAX = gate_limit("GATE_WORKTREES_MAX", 40)
+GATE_WORKTREES_PER_CPU = gate_limit("GATE_WORKTREES_PER_CPU", 4)   # live-worktree warning: max(floor, per-cpu x ncpu)
 GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 2); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
 GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
 GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
@@ -1317,6 +1318,7 @@ def admission_gate():
     growth = max(0, swap_gb - min(v[1] for v in samples)) if samples and swap_gb is not None else 0
     if swap_gb is not None: samples.append([NOW, swap_gb])
     load_max = GATE_LOAD_PER_CPU * ncpu
+    wts_max = int(max(GATE_WORKTREES_MAX, GATE_WORKTREES_PER_CPU * ncpu))
     if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f (%g x ncpu)" % (load1, load_max, GATE_LOAD_PER_CPU))
     if g["off_switch_ignored"]: g["warnings"].append("LOADGATE_OFF present and ignored")
     if procs > GATE_PROCS_MAX: g["warnings"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
@@ -1328,8 +1330,8 @@ def admission_gate():
     g.update(memory_pressure=pressure, pressure_min=GATE_PRESSURE_MIN, swap_gb=swap_gb, swap_growth_gb=growth,
              swap_growth_max_gb=GATE_SWAP_GROWTH_GB, swap_window_s=GATE_SWAP_WINDOW_S, swap_samples=samples,
              disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, claim_limit=MAX_LAUNCH_PER_TICK,
-             procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
-    if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
+             procs_max=GATE_PROCS_MAX, worktrees_max=wts_max, tick_max_s=GATE_TICK_MAX_S)
+    if wts > wts_max: g["warnings"].append("worktrees %d > %d" % (wts, wts_max))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
     g.update(load5=_l5, load15=_l15)
@@ -1626,7 +1628,7 @@ _FC_PREV = FC_STATE["level"]
 BUS = fc.build_readings(NOW, load=(GATE["load1"], GATE.get("load5"), GATE.get("load15")), ncpu=GATE["ncpu"], mem_free_pct=free,
     memory_pressure=GATE["memory_pressure"], swap_gb=GATE["swap_gb"], swap_growth_gb=GATE["swap_growth_gb"] if GATE["swap_gb"] is not None else None,
     swap_window_s=GATE_SWAP_WINDOW_S, procs=GATE["procs"], worktrees=GATE["worktrees"], disk_free_gb=disk_free_gb, disk_gate=DISK_GATE,
-    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE_WORKTREES_MAX},
+    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE["worktrees_max"]},
     queue_by_lane=qdepth, queue_by_tier=fc.tier_depth([l for l in lines if not parked_row(l)], TIERS),
     quota=fc.lane_quota(_BUDGET_OV, LANES), merge=fc.merge_stats(JOBS_RAW, NOW), holds=sorted(hold))
 FC_WOULD_LEVEL, FC_STATE, FC_WHY = fc.shed_level(BUS, FC_STATE, NOW)
@@ -1882,6 +1884,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         def solo(c):
+            if c[2] == "devin":
+                selected = market_models.get("devin." + c[3]) or market_models.get("devin")
+                # A batch must not replace a free selected model with a differently priced model.
+                if selected and batch_sessions.model_for("devin", c[3], rd(c[4]), BS_CFG)[0] != selected: return True
             return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}), market_specs[c[0]].get("max_tier"))
         if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
@@ -1892,12 +1898,22 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                                   and work_market.serves_repo(market_view.get(l, {}), f[1]))
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
+    market_allowance = dict(_BUDGET_OV)
+    market_allowance["devin"] = dict(weekly_acu=work_market.read_devin_allowance(H, os.environ.get("ASHLR_HOME")))
     market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
                                         hold, market_models, BUS["quota"], JOBS_RAW,
-                                        jload(Q + "/adaptive.json", {}), NOW)
+                                        jload(Q + "/adaptive.json", {}), NOW, allowance=market_allowance)
     # Fresh use-it-all evidence that a window is going to waste outranks a preserve default this tick.
     for _l in LANES:
-        if waste_risk(UIA.get(_l), _l) or pace_behind(UIA.get(_l)) is True: market_view[_l]["posture"] = "burn"
+        _waste = waste_risk(UIA.get(_l), _l)
+        if market_view[_l]["cost_class"] == "included" and (_waste or pace_behind(UIA.get(_l)) is True):
+            market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
+    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view["devin"]["target"] > 0:
+        market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
+            l: dict(posture=v["posture"], posture_reason=v["posture_reason"],
+                    projected_unused_pct=v["spend_down"]["projected_unused_pct"],
+                    hours_to_reset=v["spend_down"]["hours_to_reset"], cost_class=v["cost_class"],
+                    **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v}) for l, v in market_view.items()}})
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
@@ -1923,6 +1939,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         spec = market_specs[j]
         view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
+        # Cost is model/tier-specific and every claim reserves another session cap.
+        view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
+                                         market_models, BUS["quota"], JOBS_RAW, now=NOW,
+                                         allowance=market_allowance, tier=tier))
         blocked = empty_retry_blocks(claim_identity(j, repo, pf), empty_attempts, NOW)
         if blocked:
             spec = dict(spec, needs=sorted(set(spec["needs"]) | {"gh"}))
@@ -2061,6 +2081,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
         boost = waste_boost(UIA.get(lane), lane, tier, view[lane], spec.get("max_tier")) if not batch else None
+        if boost and lane == "devin" and (market_models.get("devin." + boost[0]) or market_models.get("devin")) != (market_models.get("devin." + tier) or market_models.get("devin")):
+            boost = None   # The cost receipt binds the selected model, not a differently priced tier.
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
         requested_tier = tier
         if boost: tier = boost[0]

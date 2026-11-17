@@ -1,5 +1,17 @@
 # Resource readings and credit balances
 
+## Lane history
+
+`phm usage history --lane devin --json` reads full-resolution measured points;
+`--lane` accepts an allowance id, dispatch lane or sensor lane. `--runs-dir <abs>`
+selects another runs directory. Missing history is an empty successful result.
+The private `state/resource-live-history.json` keeps seven days, up to 2016 points
+per allowance, skipping observations less than five minutes apart. Unverified
+polls add nothing. Devin weekly readings feed the `devin` allowance automatically.
+The Resources rail selects the last real point per hour and leaves gaps unconnected.
+Burn requires at least fifteen minutes of contiguous measurements within six hours
+in one reset window; a decrease or gap over thirty minutes breaks the window.
+
 Phantom keeps each account's subscription windows, native credit units, captured dollar balances, and operator estimates separate. The resource sidebar uses the same live capacity model as the resource drawer. Refreshing a reading does not renew its original observation or expiration.
 
 Summary counts describe accounts **with current usage** and accounts whose usage is
@@ -193,6 +205,65 @@ arguments or configuration. Unknown usage remains ineligible; publishing does
 not guarantee a seat qualifies. Resident daemons start the publisher at startup
 and check every minute outside tick dispatch, sampling at most every five minutes.
 `ASHLR_DAEMON_CAPACITY_PUBLISHER=0` disables automatic daemon publication.
+
+The Resources rail reads `<runs>/state/resource-live.json`, not `capacity.json`.
+Each resident publisher cycle also refreshes that sidecar with bounded sources.
+Evidence order is official API reports where supported, official native CLI
+readings (including the capacity snapshot), own-call metadata, then opted-in
+visible-page fallback. A fresh direct CLI reading wins over the snapshot.
+Original `observed_at` timestamps survive publication; `publishedAt` is never
+usage evidence. Readings expire after 15 minutes or an earlier native deadline.
+Unknown usage and resets stay null. Sidecar confidence is `high` for official,
+`medium` for own-call, `low` for visible-window/operator-entry, and null for
+unverified readings; confidence is not spending authority.
+
+Configure `usage.liveSources` in `~/.ashlr/config.json`:
+
+```json
+{
+  "usage": { "liveSources": {
+    "codexPersonalHome": "/absolute/pool-personal",
+    "codexCmpHome": "/absolute/pool-company",
+    "accountsRoot": "/absolute/accounts",
+    "codexSeatMap": { "personal-seat-id": "codex-personal", "company-seat-id": "codex-cmp" },
+    "anthropicCost": { "adminKeyHandle": "ANTHROPIC_ADMIN_KEY", "creditUsd": 50, "windowStart": "2026-11-01T00:00:00Z" },
+    "operatorPageFallback": false
+  } }
+}
+```
+
+Seat IDs come from configured native accounts; labels never infer billing
+identity. Multiple matching seats are ambiguous and stay unknown. Claude uses
+the single Claude seat's `seven_day` window; Codex uses the most-used native
+account window. Pool homes must pass the existing isolated-home checks.
+`PHANTOM_SENSOR_CODEX_PERSONAL_HOME`, `PHANTOM_SENSOR_CODEX_CMP_HOME` and
+`PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT` override the corresponding config paths.
+
+Anthropic's [cost report](https://platform.claude.com/docs/en/api/beta/organization/cost_report/retrieve)
+is an admin-key, organization-wide USD cost report, not a credit-balance API.
+The configured handle is an environment-variable name served by Phantom Secrets;
+only the isolated `phantom exec` worker accesses it. Configure the binding in
+Secrets, never a key value in Phantom config. Amounts are reported in decimal
+cents and converted to USD; all pages must validate. Daily granularity requires
+a UTC-midnight window start; the request includes today's bucket through the
+next midnight. The observation clock is captured before launching custody,
+so worker startup never advances the tick's freshness clock. Costs are compared with the owner-entered included
+credit; missing/invalid credit config stays unverified. Provider reporting can
+lag, and Priority Tier costs are excluded by this endpoint. The legacy endpoint
+is retained as requested; Anthropic recommends its analytics API for new clients.
+This is advisory cost evidence, not promotion attribution or permission to spend.
+
+Codex personal/CMP are ChatGPT plans: OpenAI organization costs do not measure
+their subscription allowance, so their official source is `codex-app-server`.
+Claude native evidence is `claude-usage`; admin costs are `anthropic-admin-cost`.
+Cursor has no supported resource-live source. Grok already has a native account
+probe and separate runway/app/manual evidence; no new Cursor/Grok CLI reader is
+introduced here, and missing evidence is never filled from another product.
+
+`operatorPageFallback` is absent/false by default. Enabling it adds only the
+desktop-operator reader interface and a null-returning stub; it does not launch
+a browser, read credentials, or invent usage. The existing explicit usage-browser
+CLI opt-in remains separate. No desktop-operator session adapter is shipped here.
 
 ```sh
 phm capacity publish --json

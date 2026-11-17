@@ -1,4 +1,79 @@
+# Frontier CLI discovery and daemon health
+
+`src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
+execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
+It rejects empty names and names containing `/`, searches PATH before common
+tool directories, `~/.npm-global/bin`, and the Node executable directory, and
+uses file metadata only (regular file with any execute bit). Options default to
+process PATH, HOME, and execPath. Returned paths are absolute. Engine discovery
+and absolute spawn-path resolution retain `which`/`where` first, then use this
+fallback; this does not change service PATH or admission policy.
+
+`src/core/daemon/guard-health.ts` exports `diagnoseFrontierClients(inventory,
+lookup?)`; the injected lookup now returns the executable resolution above or
+null rather than a boolean. Unavailable diagnoses retain `binaryOnPath` and add
+nullable `binaryPath`, nullable `binarySource`, and `cause`: `binary-not-found`,
+`auth-or-seat-not-admitted`, `policy-refused`, `resource-unavailable`,
+`not-selected`, `non-loopback-refused`, `probe-timeout`, or `unavailable`.
+Policy/resource/selection/refusal inventory reasons take precedence over binary
+absence. Admission is inferred, never authenticated by this metadata lookup.
+The health CLI bounds inventory discovery to 30 seconds; a timeout supplies a
+sanitized frontier error and null resolved inventory, preserving unknown health
+semantics and never itself recommending restart. See
+[daemon revival](docs/DAEMON-REVIVE.md).
+
+# Resident off-tick jobs
+
+`buildBacklog` scans up to `BACKLOG_REPO_CONCURRENCY` (4) repositories at once,
+aggregating scanner results in input repository order before existing ranking
+and snapshot persistence. Scanner bounds and observation ordering are unchanged.
+
+`runTickPhase` accepts `detached?: boolean`: detached phases retain deadline,
+abort and grace semantics but do not consume the tick budget, update progress,
+or append to its ledger. `recordTickPhase(record)` appends metadata to an open
+ledger. `DaemonTickPhaseStatus` includes `off-tick`, excluded from tick outcomes;
+`DaemonTickPhase.offTick` carries run identity and previous settled metadata.
+`launchOffTickJob(name, run, opts)` synchronously records an off-tick launch or
+existing run. Jobs are single-flight until both bounded and inner work settle.
+`offTickJobsSnapshot()` returns metadata only; `cancelOffTickJobs(graceMs?)`
+aborts running jobs and bounds shutdown waiting.
+Resident non-once ticks enable `offTickMaintenance` (ignored for dry runs):
+self-heal and ancillary run single-flight in the background, and auto-merge
+precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
+
 # Advisory routing pairing
+
+`explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
+256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
+following). Its `lanes` map contains `posture`, `postureReason`, nullable
+`projectedUnusedPct` and nullable `hoursToReset`. The newest `work-market.v1`
+posture event wins, falling back to the newest route decision's ranking inputs
+only when no posture event exists. Missing or invalid evidence returns null.
+Lane evidence may also include `costClass`, `costClassReason`, `zeroCost`, and
+`allowance` with nullable numeric `used`, `limit`, `in_flight`, `reserve`,
+`session_cap` and `headroom` ACUs, projected from `work-market.v1` receipts.
+Devin's effective class is `included` only within measured weekly allowance
+after reservations and reserve with room for one session, or for an unexpired
+selected Lightning/Flash free preview (`zeroCost: true`); otherwise `metered`.
+Unknown usage stays null. See [queue cost evidence](docs/QUEUE.md#resource-posture-the-lane-is-a-hint).
+
+`run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
+model classifications and their capability order. `ModelEntry.modeTier` is
+required and excludes fusion (a composition). `RouteRequest.mode?` requests a
+minimum model class, independently of queue `tier_hint`; unknown models need
+`models.json["mode.<model>"]`. `RouteDecision.mode_tier` is the selected class
+or null. `RouteReport` includes `requested_mode` and nullable capacity evidence.
+`decideRoute(raw, sources, {backends?, signal?, nowMs?})` returns a
+`RouteReport` or, for fusion, `route.pairing.v1` with `mode_tier: fusion`.
+Fusion assigns ultra judgment and lite/normal implementation through
+`decidePairing`. Assignments add nullable `model` and `mode_tier`.
+`RouteSources` adds optional `capacity` and `request` snapshots, loaded from
+`queue/route-capacity.json` and `queue/route-request.json`. `explainRoutes`
+adds nullable `decision`, recomputed without model calls from those snapshots.
+Among eligible lanes: closest future reset with positive allowance, then
+zero marginal cost, then cheapest known marginal cost; unknown cost sorts last.
+`ResetCalendarPool.costPerMTok?` is nonnegative marginal USD/M tokens, not
+subscription sticker price. Reset-calendar lanes now sort by reset before pace.
 
 `decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
 is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
@@ -8,6 +83,16 @@ implementation escalates only for an explicit implementation bottleneck.
 `queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
 
 # Phantom — shared core contract (M1/M2 baseline)
+
+Resource-live sources accept optional `usage.liveSources` configuration (see
+[resource evidence](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity)).
+`ResourceLiveReading.confidence` is `high | medium | low | null`, derived from
+the source tier; old sidecars without it remain readable. Observations may
+carry `stale_after`, which can shorten but never extend the 15-minute TTL.
+`DaemonCapacityPublisherDeps.refreshResourceLive?(cfg)` refreshes the rail after
+a publisher cycle; production wiring is daemon-only and disabled in tests.
+`OperatorUsagePageReader.read(provider, usageUrl)` returns a nullable observation;
+the shipped implementation always returns null and is opt-in only.
 
 This is the binding interface for Phantom's original index, launcher and
 identity modules (the package was formerly named ashlr-hub). Do not change these
@@ -624,6 +709,18 @@ repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
 
+## Per-lane measured history
+
+`resource-live/store.ts` exports `resourceHistoryPath`, `readResourceHistoryFile`,
+`parseResourceHistory`, `appendResourceHistory`; `history.ts` exports
+`summarizeHistory`, `projectLaneHistory`, `readLaneHistory`. Types:
+`ResourceHistoryPoint`, `ResourceHistoryFile`, `LaneHistory`, `RESOURCE_HISTORY_SCHEMA`.
+The private `<runs>/state/resource-live-history.json` (`resource-live.history.v1`)
+stores seven days, at most 2016 points per allowance, spaced at least five minutes.
+`ResourceLiveFeed.history` and `loadSensorReport().history` carry lane-keyed history;
+`WorldProjectInput.laneHistory` projects optional `WorldModel.sensors.lanes[].history`
+with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHistory`.
+
 ## Devin weekly capacity
 
 `src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
@@ -766,3 +863,18 @@ Optional role, capabilities, machine/lane affinity and peer mappings persist in
 roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
+
+`fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
+`readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
+Read-only lists of the plugins and skills fleet agents have: Phantom plugins and
+Claude Code installed plugins; Claude Code, Codex and learned skills. Each row has
+`name`, `source`, `agents` (plain words), `enabled` (boolean or `'unknown'`) and
+`lastUsed` (`'unknown'`; no usage record exists yet). Each source reports
+`read`, `none` or `unknown`; an unreadable source adds no rows. Served by
+`phm plugins list --all --json`, `phm skills list --all --json` and
+`GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
+
+`src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
+`subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
+`publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
+first-paint consumers observe it without importing pane definitions or shortcuts.

@@ -185,6 +185,7 @@ export async function deliverSlackLeaderMessage(identity: TeamIdentity, message:
   const result = await deliverSlackEnvelope({ ...message, to: route.topic,
     body: { kind: 'note', text: body.text, thread: message.channel_ref! } }, {
     ...policy, call, signal, runsDir: options.runsDir, busRoot: options.busRoot, leaderRequestId: typeof body.requestId === 'string' ? body.requestId : undefined,
+    plainReply: options.statusReply !== undefined && body.text === `Leader: ${options.statusReply.fallback}`,
     stateRoot: options.runsDir ? join(options.runsDir, 'slack-transport') : undefined,
     readPolicy: () => {
       const current = readLeaderNetworkConfig(options);

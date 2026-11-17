@@ -3,6 +3,7 @@ import type { FleetLiveSnapshotV1 } from '../../../../core/fleet/fleet-types.js'
 import { fleetOrgMap, type FleetMapNode } from '../../../../core/fleet/org-map.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { JobDetailSheet } from './JobDetailSheet.js';
 import { fleetOrgMapQuery } from './org-map-query.js';
 import styles from './org-map.module.css';
@@ -17,10 +18,10 @@ export function OrgMap({ live }: { live: FleetLiveSnapshotV1 | null }) {
   const nodes = new Map(map.nodes.map(node => [node.id, node]));
   const lanes = map.nodes.filter(node => node.kind === 'lane');
   const messages = map.edges.filter(edge => edge.kind === 'message');
-  const badge = (node: FleetMapNode) => <small className={styles.logo}>{node.provider || 'unknown'}</small>;
+  const badge = (node: FleetMapNode) => <small className={styles.logo}><ProviderBadge of={node.provider} /></small>;
   return <section className={styles.map} aria-labelledby="org-map-title">
     <h2 id="org-map-title">Fleet map</h2>
-    <p>Leader, lanes and jobs. Select a job to open its details.</p>
+    <p>Leader, lanes and jobs, each with the provider behind it. Select a job to open its details.</p>
     {read.status === 'error' ? <p role="status">Map refresh failed. Showing the last available view; it may be stale.</p> : !read.data ? <p role="status">Loading the full map. Showing available fleet records.</p> : null}
     {map.sources.fleet === 'unknown' && <p>Fleet state unknown.</p>}
     <p>Sessions: {map.sources.sessions}. Messages: {map.sources.messages}. Updated: {map.generatedAt ?? 'unknown'}.</p>
@@ -39,7 +40,7 @@ export function OrgMap({ live }: { live: FleetLiveSnapshotV1 | null }) {
     <div className={styles.support} aria-label="Guardian and channels">{map.nodes.filter(node => node.kind === 'guardian' || node.kind === 'channel').map(node => <div key={node.id}><strong>{node.label}</strong>{badge(node)}<small>{node.status}</small></div>)}</div>
     <section aria-label="Agent messages"><h3>Messages in the last {map.messageWindowMinutes} minutes</h3>
       {map.sources.messages !== 'available' ? <p>Agent messages unknown.</p> : messages.length ? <ul className={styles.messages}>{messages.map(edge => <li key={edge.id}>
-        {nodes.get(edge.from)?.label ?? 'unknown'} <span aria-label="sent to">→</span> {nodes.get(edge.to)?.label ?? 'unknown'}: {edge.count ?? 'unknown'} messages
+        <ProviderBadge of={edge.provider} iconOnly /> {nodes.get(edge.from)?.label ?? 'unknown'} <span aria-label="sent to">→</span> {nodes.get(edge.to)?.label ?? 'unknown'}: {edge.count ?? 'unknown'} messages
       </li>)}</ul> : <p>No messages reported in this window.</p>}
       {map.unmappedMessages != null && map.unmappedMessages > 0 && <p>{map.unmappedMessages} messages could not be matched to this map.</p>}
     </section>

@@ -476,3 +476,5 @@ are not authenticated identities. Broadcasts to `leaders`, human/external
 messages and self-messages are excluded. The local bus retains and expires
 messages, so these links are not a complete history; A2A events are not yet
 included. A missing or unreadable bus reports unknown edges, not an empty list.
+
+Group-chat projection: [Agent group chat](AGENT-CHAT.md) documents the scoped CLI and local read API.

@@ -11,7 +11,11 @@
  *  - No secrets in output — VerifyCommandResult.output is already scrubbed.
  *  - Flag-gated: cfg.foundry?.selfHeal defaults TRUE (fix-forward posture).
  *    Set to false to disable.
- *  - Bounded: each repo is time-boxed (timeoutMs per command, default 120 s).
+ *  - Bounded: each repo is time-boxed (timeoutMs per command, default 90 s),
+ *    each repo gets a per-item budget, and a cycle stops starting repos when
+ *    its wall-clock budget runs out. A persisted cursor resumes the next cycle
+ *    at the first repo this one did not reach, so a large enrollment is
+ *    covered over several ticks instead of timing out every tick.
  *  - Proposal-only: proposeHeal returns a WorkItem for the backlog; nothing
  *    is applied or merged here.
  */
@@ -116,10 +120,22 @@ function selfHealId(repo: string, breakageKind: string): string {
  * - Time-boxed per command (default 90 s; short to keep the cycle snappy).
  * - Never throws.
  */
+export interface DetectBreakageOptions {
+  signal?: AbortSignal;
+  /**
+   * Wall-clock budget for this repo's whole check. Each command's timeout is
+   * capped at what is left of it; a repo that runs out is reported unverified
+   * (`untrusted-verify-result`), never green.
+   */
+  budgetMs?: number;
+  /** Test seam for the budget clock. */
+  now?: () => number;
+}
+
 export async function detectBreakage(
   repoDir: string,
   cfg?: Pick<AshlrConfig, 'foundry'>,
-  opts?: { signal?: AbortSignal },
+  opts?: DetectBreakageOptions,
 ): Promise<BreakageResult> {
   try {
     const commands = detectVerifyCommands(repoDir, 'quick');
@@ -133,15 +149,28 @@ export async function detectBreakage(
       cfg?.foundry?.timeoutMs ?? 90_000,
       90_000,
     );
+    const now = opts?.now ?? Date.now;
+    const deadlineAtMs = typeof opts?.budgetMs === 'number' && Number.isFinite(opts.budgetMs)
+      ? now() + Math.max(0, opts.budgetMs)
+      : Number.POSITIVE_INFINITY;
     const clearedKinds = new Set<'build' | 'test'>();
 
     for (const vc of commands) {
       if (opts?.signal?.aborted) {
         return { broken: false, verified: false, reason: 'detect-error' };
       }
+      const remainingMs = deadlineAtMs - now();
+      if (remainingMs < 1_000) {
+        return {
+          broken: false,
+          verified: false,
+          clearedKinds: Array.from(clearedKinds),
+          reason: 'untrusted-verify-result',
+        };
+      }
       const kind = kindOf(vc.kind);
       const result = await runVerifyCommandAsync(vc, repoDir, cfg as AshlrConfig ?? {} as AshlrConfig, {
-        timeoutMs,
+        timeoutMs: Math.max(1_000, Math.min(timeoutMs, Math.floor(remainingMs))),
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
       if (!result.ok) {
@@ -235,6 +264,55 @@ export interface SelfHealCycleResult {
   checked: number;
   broken: string[];
   healItems: WorkItem[];
+  /** Repos this cycle did not reach because its budget ran out; the cursor resumes at them. */
+  deferred?: number;
+  /** True when the cycle stopped on its wall-clock budget rather than finishing the list. */
+  budgetExhausted?: boolean;
+}
+
+/**
+ * Wall-clock budget for one self-heal cycle. The daemon runs self-heal inside
+ * the 5-minute maintenance phase (TICK_PHASE_MAINTENANCE_MS); the cycle stops
+ * starting repos well before that deadline so the phase settles `ok`.
+ */
+export const SELF_HEAL_CYCLE_BUDGET_MS = 4 * 60_000;
+/** Per-repo (per-item) budget: one slow repo cannot consume the whole cycle. */
+export const SELF_HEAL_REPO_BUDGET_MS = 2 * 60_000;
+/** A repo is not started with less than this left in the cycle budget. */
+export const SELF_HEAL_MIN_REPO_BUDGET_MS = 15_000;
+
+function selfHealCursorPath(): string {
+  return join(homedir(), '.ashlr', 'self-heal-cursor.json');
+}
+
+/** The last repo a cycle finished checking, or null. Never throws. */
+export function readSelfHealCursor(): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(selfHealCursorPath(), 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const last = (parsed as Record<string, unknown>).lastChecked;
+    return typeof last === 'string' && last.length > 0 ? last : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSelfHealCursor(lastChecked: string): void {
+  try {
+    const dir = join(homedir(), '.ashlr');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeJsonAtomic(selfHealCursorPath(), { v: 1, lastChecked, at: new Date().toISOString() });
+  } catch {
+    // Best-effort: a lost cursor restarts the rotation at the first repo.
+  }
+}
+
+/** Rotate `repos` to start just after the cursor's repo, so every cycle makes forward progress. */
+function rotateFromCursor(repos: string[], lastChecked: string | null): string[] {
+  if (lastChecked === null) return repos;
+  const index = repos.indexOf(lastChecked);
+  if (index < 0) return repos;
+  return [...repos.slice(index + 1), ...repos.slice(0, index + 1)];
 }
 
 /** Absolute path to the self-heal queue file under ~/.ashlr/. */
@@ -641,19 +719,40 @@ function uniqueEnrolledTargets(repos: string[], enrolled: string[]): string[] {
 
 async function runSelfHealCycleForRepoList(
   repos: string[],
-  cfg?: Pick<AshlrConfig, 'foundry'>,
-  authority?: OutwardMutationFence,
-  signal?: AbortSignal,
+  cfg: Pick<AshlrConfig, 'foundry'> | undefined,
+  authority: OutwardMutationFence | undefined,
+  opts: SelfHealCycleOptions,
 ): Promise<SelfHealCycleResult> {
+  const { signal } = opts;
+  const now = opts.now ?? Date.now;
+  const cycleBudgetMs = opts.budgetMs ?? SELF_HEAL_CYCLE_BUDGET_MS;
+  const repoBudgetMs = opts.perRepoBudgetMs ?? SELF_HEAL_REPO_BUDGET_MS;
+  const cycleDeadlineMs = now() + Math.max(0, cycleBudgetMs);
   const broken: string[] = [];
   const healItems: WorkItem[] = [];
   const authorized = (repo: string): boolean =>
     ownsOutwardMutationFence(authority) && !killSwitchOn() && isEnrolled(repo) && !signal?.aborted;
 
-  for (const repo of repos) {
+  const ordered = rotateFromCursor(repos, readSelfHealCursor());
+  let checked = 0;
+  let budgetExhausted = false;
+  for (const repo of ordered) {
+    const remainingMs = cycleDeadlineMs - now();
+    if (remainingMs < SELF_HEAL_MIN_REPO_BUDGET_MS) {
+      budgetExhausted = true;
+      break;
+    }
+    if (signal?.aborted) break;
+    checked++;
     try {
       if (!authorized(repo)) continue;
-      const result = await detectBreakage(repo, cfg, signal ? { signal } : undefined);
+      const result = await detectBreakage(repo, cfg, {
+        ...(signal ? { signal } : {}),
+        budgetMs: Math.min(repoBudgetMs, remainingMs),
+        now,
+      });
+      // The cursor names the last repo reached, so the next cycle starts after it.
+      if (!signal?.aborted) writeSelfHealCursor(repo);
       if (!authorized(repo)) continue;
       if (result.broken) {
         pruneStaleSelfHealItems(repo, undefined, () => authorized(repo));
@@ -672,7 +771,14 @@ async function runSelfHealCycleForRepoList(
     }
   }
 
-  return { checked: repos.length, broken, healItems };
+  const deferred = ordered.length - checked;
+  return {
+    checked,
+    broken,
+    healItems,
+    ...(deferred > 0 ? { deferred } : {}),
+    ...(budgetExhausted ? { budgetExhausted } : {}),
+  };
 }
 
 export interface SelfHealCycleOptions {
@@ -684,6 +790,12 @@ export interface SelfHealCycleOptions {
    * killed by the verify runner's own teardown).
    */
   signal?: AbortSignal;
+  /** Wall-clock budget for the whole cycle (default SELF_HEAL_CYCLE_BUDGET_MS). */
+  budgetMs?: number;
+  /** Per-repo budget (default SELF_HEAL_REPO_BUDGET_MS). */
+  perRepoBudgetMs?: number;
+  /** Test seam for the budget clock. */
+  now?: () => number;
 }
 
 function selfHealAuthority(
@@ -719,7 +831,7 @@ export async function runSelfHealCycleForRepos(
       targets.every((repo) => isEnrolled(repo));
     pruneInvalidSelfHealItemsForRepos(targets, enrolled, authorizedTargets);
     if (!authorizedTargets()) return { checked: 0, broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(targets, cfg, authority, opts.signal);
+    return await runSelfHealCycleForRepoList(targets, cfg, authority, opts);
   } catch {
     return { checked: 0, broken: [], healItems: [] };
   } finally {
@@ -733,7 +845,8 @@ export async function runSelfHealCycleForRepos(
  *
  * - Flag-gated: skipped entirely when cfg.foundry?.selfHeal === false.
  * - Default is TRUE (fix-forward posture).
- * - Bounded: repos processed sequentially (avoids overwhelming the machine).
+ * - Bounded: repos processed sequentially (avoids overwhelming the machine),
+ *   within the cycle budget; the cursor resumes the next cycle where this one stopped.
  * - Never throws.
  */
 export async function runSelfHealCycle(
@@ -758,7 +871,7 @@ export async function runSelfHealCycle(
       ownsOutwardMutationFence(lifecycle?.authority) && !killSwitchOn();
     pruneInvalidSelfHealItems(repos, authorizedCycle);
     if (!authorizedCycle()) return { checked: 0, broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(repos, cfg, authority, opts.signal);
+    return await runSelfHealCycleForRepoList(repos, cfg, authority, opts);
   } catch {
     return { checked: 0, broken: [], healItems: [] };
   } finally {

@@ -76,7 +76,7 @@ Phantom - every command (phm or ashlr)
     docs --agent [--json]                                                                                          Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).
     check [--base <ref>] [--json]                                                                                  Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
-    plugins init|list|info|enable|disable                                                                          Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.
+    plugins init|list|info|enable|disable                                                                          Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes. list --all adds Claude Code plugins (the Plugins pane).
     x <name> [args...]                                                                                             Run an enabled plugin's command.
     help [<topic>|--all|--search <term>]                                                                           Topic-grouped help; --all prints every command; --search <term> filters.
     version                                                                                                        Print the installed ashlr version (aliases: --version, -v).
@@ -100,6 +100,7 @@ Phantom - every command (phm or ashlr)
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
     eval checkpoints --file <fixture.json> [--json]                       Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.
     skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
+    skills list --all [--json]                                            Every skill fleet agents have: Claude Code, Codex and learned (the Skills pane).
     eval prompts --dataset <jobs.jsonl>                                   Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.
     skills audit <pack-path> [--json]                                     Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.
 
@@ -249,7 +250,8 @@ Phantom - every command (phm or ashlr)
     imessage doctor|poll [--apply] [--json]                                                                                                                       iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.
     director                                                                                                                                                      Retired - the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.
     invent                                                                                                                                                        Generative backlog invention - propose novel high-value work items.
-    ideas [--json]                                                                                                                                                List recorded fleet ideas; read-only, no execution or dispatch.
+    ideas list [--human]                                                                                                                                          Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage). JSON by default; unreadable signals show as unknown.
+    ideas queue <id> [--json]                                                                                                                                     Queue one idea from `ideas list` as a job; the same idea queues once.
     universe <demo|init|run|status|archive>                                                                                                                       Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.
     universe console --root <absolute> [--port N] [--json]                                                                                                        Foreground read-only Universe console on loopback; explicit root, ephemeral port by default, no service activation.
     universe graph <id> [--node <node-id>]                                                                                                                        Read-only experiment evidence graph: trace selected parents, feedback, campaigns, and local branch receipts.
@@ -334,6 +336,7 @@ Phantom - every command (phm or ashlr)
     usage                                                                                      Frontier usage table: per-engine calls/tokens/cost + window state.
     usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]                Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.
     usage resource-live [--json] [--watch] [--force] [--show] [--browser]                      Read every allowance and write state/resource-live.json: readings with source and observed time, the burn-down spend order, and a reset decision draft for Mason. Unverified readings are null.
+    usage history --lane <id> [--json] [--runs-dir <abs>]                                      Read seven days of measured per-lane allowance history.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                     Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
     queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     queue batches [--runs <directory>] [--json]                                                Show each batch line’s PR, empty reason, failure or unknown result.
@@ -412,6 +415,7 @@ Phantom - every command (phm or ashlr)
     serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
     console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
     verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    settings appearance get|set     Read or change the app theme, accent (hex), density and fontSize: get [--json], set <key> <value> [--json]. A running desktop or phone app applies it live.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).

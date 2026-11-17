@@ -85,6 +85,8 @@ it('does not list the phone command when the route is absent', async () => {
   missing = true;
   await searchPhone();
   await waitFor(() => expect(getQuerySnapshot(palettePhoneQuery.key).data).toEqual({ kind: 'notInBuild' }));
-  expect(screen.getByText('Nothing matches “phone”.')).toBeInTheDocument();
+  expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
+    'Open pane: Dispatch', 'Open pane: Checks',
+  ]);
   expect(screen.queryByRole('option', { name: /Copy phone URL|Open phone URL/ })).not.toBeInTheDocument();
 });
