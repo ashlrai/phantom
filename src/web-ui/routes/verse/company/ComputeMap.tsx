@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FleetSessionMap } from '../../../../core/fleet/sessions-view.js';
 import type { ComputeNode, FleetCompute } from '../../../../core/fleet/compute-view.js';
+import type { ComputeHost } from '../../../../core/fleet/compute-hosts.js';
 import { apiGet } from '../../../data/client.js';
 import { fleetLanesQuery, type QueryDef } from '../../../data/queries.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -47,6 +48,25 @@ function CoreSparks({ history, current }: { history?: CoreHistory; current: bool
       return <div key={core}><small>CPU {core + 1}: {value == null ? 'unknown · awaiting delta' : `${value.toFixed(0)}%`}</small>
         <svg viewBox="0 0 96 32" role="img" aria-label={`CPU ${core + 1} history`}><path d={d} fill="none" stroke="currentColor" /></svg></div>;
     })}</div></details>;
+}
+
+/** Workers grouped per physical Mac. Sums come from advertised slots of live workers only; unknown stays unknown. */
+function PoolHosts({ data, now }: { data: FleetCompute; now: number }) {
+  const hosts: ComputeHost[] = data.hosts ?? [], totals = data.pool;
+  if (!totals) return <p>Node-pool host rollup unavailable from this server.</p>;
+  return <section className={styles.hosts} aria-label="Node pool hosts">
+    <h3>Node-pool hosts</h3>
+    <p>{totals.hosts} hosts · {totals.liveWorkers} live workers · live slots {shown(totals.liveSlots)} / RAM-budget slots {totals.ramSlots}
+      {totals.oversubscribedHosts ? ` · ${totals.oversubscribedHosts} oversubscribed` : ''}
+      {totals.unplacedNodes ? ` · ${totals.unplacedNodes} nodes without host telemetry (host unknown)` : ''}</p>
+    <div className={styles.hostRows}>{hosts.map(h => <article key={h.id} className={styles.host} data-over={h.oversubscribed === null ? 'unknown' : String(h.oversubscribed)}>
+      <h4>{h.nodeIds.join(' + ')}</h4>
+      <small>{h.inferred ? 'Workers grouped by matching RAM, CPUs and boot time' : 'Single worker'} · {gib(h.ramTotal)} · {h.cores} CPUs · telemetry {recordedAt(h.observedAt, now)}</small>
+      <span>{h.liveWorkers}/{h.nodeIds.length} workers live · live slots {shown(h.liveSlots)} · RAM-budget slots {h.ramSlots} · claims {h.claims}</span>
+      <strong>{h.oversubscribed === null ? 'Oversubscription unknown' : h.oversubscribed ? `OVERSUBSCRIBED · ${h.liveSlots} advertised vs ${h.ramSlots} RAM-budget` : 'Within RAM budget'}</strong>
+      <span>Caps: {h.caps.length ? h.caps.join(', ') : 'none reported'}{h.heldWorkers ? ` · ${h.heldWorkers} held (0 slots; reason not recorded)` : ''}</span>
+    </article>)}</div>
+  </section>;
 }
 
 function Token({ session, selected, choose }: { session: MapSession; selected: boolean; choose: () => void }) {
@@ -155,6 +175,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
       <small>Reset {l.credit.resetAt ?? 'unknown'} · {recordedAt(l.credit.observedAt, now)}</small>
     </article>) ?? <p>Lane quota: no data</p>}</div>
+    {data && <PoolHosts data={data} now={now} />}
     {mode === '3D' && <ComputeScene3D nodes={nodes} jobs={jobs} now={now3d} heat={heat} yaw={yaw} tilt={tilt} zoom={zoom}
       selection={selection} onSelect={select} onOrbit={(y, t) => { setYaw(y); setTilt(t); }} />}
     <details className={styles.viewport} open={mode === '2D' || undefined}>
@@ -171,7 +192,8 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
             <p>RAM {gib(s?.ramUsed)} / {gib(s?.ramTotal)} · Pressure {n.pressure ?? 'unknown'}</p>
             <p>Disk free {gib(s?.diskFree)} · Uptime {s ? `${Math.floor(s.uptimeSeconds / 3600)}h` : 'unknown'}</p>
             <CoreSparks history={history[n.id]} current={current} />
-            <div className={styles.capacity}><span>Load ceiling (2 × CPU): {shown(ceiling)} · Slots {shown(n.slots)} · RAM slot ceiling {shown(n.ramSlots)}</span>
+            <div className={styles.capacity}><span>Load ceiling (2 × CPU): {shown(ceiling)} · Slots {shown(n.slots)}{n.slots === 0 && n.state === 'ready' ? ' (held; reason not recorded)' : ''} · RAM slot ceiling {shown(n.ramSlots)}</span>
+              <span>Caps: {n.caps?.length ? n.caps.join(', ') : 'unknown'}</span>
               <span>Memguard {n.memguardPaused === null ? 'unknown' : n.memguardPaused ? 'paused' : 'clear'}</span>
               {ratio === null ? <p>Headroom unknown · no fresh load reading</p> : <><meter aria-label={`${n.id} load versus ceiling`} min={0} max={1} value={Math.min(1, ratio)} /><small>{(ratio * 100).toFixed(0)}% of load ceiling · advisory; memory/slot gates remain independent</small></>}
             </div>
