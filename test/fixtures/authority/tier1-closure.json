@@ -479,6 +479,7 @@
     "src/core/daemon/state.ts",
     "src/core/daemon/tick-deadline.ts",
     "src/core/daemon/tick-hooks.ts",
+    "src/core/daemon/tick-loop.ts",
     "src/core/daemon/tick-phases.ts",
     "src/core/daemon/tick-progress.ts",
     "src/core/daemon/windows-file-authority.ts",

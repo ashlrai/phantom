@@ -128,7 +128,8 @@ is recorded as `local_mid_cap` in `admission.json`.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
-`GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
+`GATE_WORKTREES_MAX=40` (floor), `GATE_WORKTREES_PER_CPU=4` (the live-worktree
+warning fires above max(floor, per-cpu × ncpu)), `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
 `dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
 swap samples and the `admit` or `stop` decision. Signal fixtures
