@@ -6,6 +6,7 @@ import { realHome } from '../real-home.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
 import { leaderInboxAppender, leaderNetworkSources, noteUnifiedOwner, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
+import { recordSlackObservation } from './slack-journal.js';
 import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
@@ -101,6 +102,15 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
     sender: { agent_id: 'mason', vendor: 'phantom', human: true, team: true },
   }, verifiedSender: identity, receivedAt, ...(deferInbox ? { inboxAlreadyRecorded: true } : {}) });
+  // Owner routing bypasses peer ingress; retain its receipt in the same trace.
+  const messageRef = body && typeof body === 'object' && !Array.isArray(body) && Array.isArray(body.refs)
+    && typeof body.refs[0] === 'string' ? parseSlackThreadRef(body.refs[0]) : undefined;
+  if (messageRef && messageRef.teamId === ref.teamId && messageRef.channelId === ref.channelId &&
+      message.id === `slack-${ref.teamId}-${ref.channelId}-${messageRef.rootTs}` && result.status !== 'duplicate') {
+    recordSlackObservation({ at: new Date(receivedAt).toISOString(), decision: 'ingested',
+      channelId: ref.channelId, threadTs: ref.rootTs, messageTs: messageRef.rootTs,
+      bus: result.status === 'accepted' ? 'posted' : 'failed' }, { runsDir });
+  }
   let statusAnswer: Promise<SlackStatusAnswer> | undefined;
   if (statusAsk && result.requestId && result.status !== 'duplicate') {
     // Detached so the socket ack is not held behind the brief read or the post;
@@ -168,7 +178,7 @@ export async function deliverSlackLeaderMessage(identity: TeamIdentity, message:
   });
   const result = await deliverSlackEnvelope({ ...message, to: route.topic,
     body: { kind: 'note', text: body.text, thread: message.channel_ref! } }, {
-    ...policy, call, signal,
+    ...policy, call, signal, runsDir: options.runsDir, busRoot: options.busRoot, leaderRequestId: typeof body.requestId === 'string' ? body.requestId : undefined,
     stateRoot: options.runsDir ? join(options.runsDir, 'slack-transport') : undefined,
     readPolicy: () => {
       const current = readLeaderNetworkConfig(options);

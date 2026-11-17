@@ -6,8 +6,15 @@
  * secret itself stays in Phantom Secrets custody and is resolved by the
  * security-reviewed poster at request time.
  */
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { ashlrHome } from '../cloud/store.js';
+import { listWorkBoard, type WorkBoardItem } from '../comms/work-board.js';
+import { readPrivateFileCapped } from '../verse/preferences.js';
+import { scrubSecrets } from '../util/scrub.js';
 import {
-  loadAgentNetworkConfig, loadCommsConfirmation, slackChannelForTopic, slackThreadRef,
+  loadAgentNetworkConfig, loadCommsConfirmation, slackChannelForTopic, slackThreadRef, parseSlackThreadRef,
   type AgentNetworkConfig, type SlackBridgeConfig,
 } from './slack-network.js';
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
@@ -58,6 +65,7 @@ export interface SlackBridgeStatus {
     futureDated: number;
     unansweredSample: { channelId: string; threadTs: string; messageTs: string; at: string }[];
   };
+  work: SlackWorkStatus;
   ready: boolean;
   /** Offline configuration does not establish a connected bot or receive route. */
   transport: { health: 'unknown'; observedAt: null; probeCommand: string };
@@ -72,7 +80,49 @@ export interface SlackBridgeStatusOptions {
   /** Slack transport state root holding messages.json (tests). */
   stateRoot?: string;
   home?: string;
+  busRoot?: string;
   now?: () => Date;
+}
+
+/** Current receipt-backed work, shared by thread replies and the status CLI. */
+export interface SlackWorkStatus {
+  asOf: string | null;
+  inbox: 'ok' | 'unavailable';
+  truncated: boolean;
+  items: Array<Pick<WorkBoardItem, 'id' | 'channelRef' | 'state' | 'owner' | 'claimReceipt'> & {
+    pr: number | null; head: string | null; dependency: string | null;
+  }>;
+}
+
+const safeWorkText = (text: string | null): string | null => text === null ? null
+  : scrubSecrets(text).replace(/[\r\n\p{Cc}]/gu, ' ').replace(/[<>&]/g, '?').slice(0, 200);
+
+export function readSlackWorkStatus(options: { runsDir?: string; busRoot?: string; now?: () => Date; channelRef?: string } = {}): SlackWorkStatus {
+  const now = (options.now ?? (() => new Date()))();
+  let asOf: string | null = null;
+  try {
+    const read = readPrivateFileCapped(join(options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue/status.json'), 1024 * 1024);
+    const tick: unknown = read && !read.truncated ? JSON.parse(read.text)?.last_tick : null;
+    if (typeof tick === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(tick) && Number.isFinite(Date.parse(tick)) && Date.parse(tick) <= now.getTime()) asOf = new Date(tick).toISOString();
+  } catch { /* Missing, malformed or future fleet time stays unknown. */ }
+  const board = listWorkBoard({ root: options.busRoot ?? join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 100, channelRef: options.channelRef });
+  return { asOf, inbox: board.inbox, truncated: board.truncated, items: board.items
+    .filter(item => item.channel === 'slack' && item.channelRef !== null && parseSlackThreadRef(item.channelRef))
+    .map(item => ({ id: item.id, channelRef: item.channelRef, state: item.state,
+      owner: safeWorkText(item.owner), claimReceipt: safeWorkText(item.claimReceipt),
+      pr: item.result?.kind === 'verified' ? item.result.pr : null,
+      head: item.result?.kind === 'verified' ? safeWorkText(item.result.head) : null,
+      dependency: item.result?.kind === 'blocked' ? safeWorkText(item.result.dependency) : null })) };
+}
+
+/** Match the exact receipt, never a different request sharing the thread. */
+export function slackWorkStatusLine(work: SlackWorkStatus, body: Record<string, unknown>): string {
+  const item = work.items.find(row => row.id === body.inReplyTo || row.id === body.in_reply_to ||
+    createHash('sha256').update(JSON.stringify(['slack', row.id])).digest('hex') === body.requestId);
+  const detail = item?.state === 'VERIFIED' ? `PR ${item.pr ?? 'unknown'}; head ${item.head ?? 'unknown'}`
+    : item?.state === 'BLOCKED' ? `dependency ${item.dependency ?? 'unknown'}`
+      : `owner ${item?.owner ?? 'unknown'}; claim ${item?.claimReceipt ?? 'unknown'}`;
+  return `${item?.state ?? 'UNKNOWN'}; ${detail}; fleet as of ${work.asOf ?? 'unknown'}`;
 }
 
 function slackIdentityCount(config: AgentNetworkConfig): number {
@@ -192,6 +242,7 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
         channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
       })),
     },
+    work: readSlackWorkStatus(options),
     ready,
     transport: { health: 'unknown', observedAt: null, probeCommand: 'phm channels slack probe --json' },
     next: nextStep(config.state, config.slack, bridge, slackIds, ingested, ignored, ignoredReasons[0]?.reason),
