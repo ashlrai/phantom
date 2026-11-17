@@ -177,6 +177,16 @@ CLI has related, independently shaped views and controls: `phm fleet status`,
 from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 [inbox CLI](../src/cli/inbox.ts) for flags and authority gates.
 
+`phm fleet status` also reports disk use and the ten largest proven cleanup
+candidates. `--json` adds typed `disk` data (`fleet.disk-attribution.v1`):
+categories, per-job entries, source health and ranked `cleanupCandidates`.
+Sizes are logical bytes, not promised physical savings; missing or partial
+totals are `null` with a measured lower bound. Worktrees use the census safety
+checks; job logs, publish results, prompts and notes are measured by metadata
+only and retained as evidence. Active, dirty, protected and uncertain trees
+are never candidates. This command deletes nothing. Roots honor `ASHLR_WT_DIR`
+and `ASHLR_RUNS_DIR`; size walks and git probes have shared two-second budgets.
+
 ## Merge queue age from a snapshot
 
 Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
