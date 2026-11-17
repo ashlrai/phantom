@@ -12,8 +12,8 @@
  *
  * 3.14 — talk to the Leader (vision/leader-thread.ts; the same thread Verse
  * and Telegram use):
- *   ashlr leader say "<text>"                 say something; prints the reply
- *   ashlr leader thread [--limit n] [--json]  the conversation, oldest first
+ *   ashlr leader say "<text>" [--text]        send through the verified inbox writer; prints the id
+ *   ashlr leader thread [--limit n] [--text]  inbox + leader replies, oldest first, with state (JSON default)
  *   ashlr leader answer <questionId> "<text>" answer one of the memo's questions
  *   ashlr leader approve <actionId>           approve a pending action (class B
  *                                            applies now only if the grant
@@ -54,10 +54,11 @@ Usage:
   phm leader veto <actionId> [--note "why"]
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
-  phm leader say "<text>"
+  phm leader say "<text>" [--text]   send to the leader; prints its id (JSON, or one line with --text)
   phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
-  phm leader thread [--limit n] [--follow] [--since messageId] [--json]
+  phm leader thread [--limit n] [--text]  your messages and the leader's replies, oldest first, with received/answered (JSON, --text for people)
+  phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
   phm leader directives [list] [--all] [--json]
@@ -389,62 +390,83 @@ function takeTextArgs(args: string[], allowed: AllowedOptions): string[] | null 
   return separator === -1 ? [] : args.splice(separator).slice(1);
 }
 
+/**
+ * `say`: one message to the leader through the verified local-owner inbox
+ * writer (the same path as `leader inbox --text`). JSON `{ id, ts }` by
+ * default; `--text` prints one plain line. Never calls a model.
+ */
+async function sayToLeader(message: string, text: boolean): Promise<number> {
+  if (message.length === 0) {
+    console.error(USAGE);
+    return 2;
+  }
+  const { composeLeaderInbox } = await import('../core/agents/leader-network-runtime.js');
+  const result = await composeLeaderInbox(message);
+  if (!result.ok) {
+    console.error(text ? `Not sent: ${result.reason}` : JSON.stringify({ ok: false, reason: result.reason }));
+    return 1;
+  }
+  console.log(text ? `Sent to the leader (${result.id ?? 'id unknown'}).` : JSON.stringify({ ok: true, id: result.id ?? null, ts: result.at }));
+  return 0;
+}
+
+/** `thread`: MASON-INBOX entries and the leader's replies as one list (core/fleet/leader-chat.ts). */
+async function printLeaderChat(limit: number, text: boolean): Promise<number> {
+  const { readLeaderChat } = await import('../core/fleet/leader-chat.js');
+  const { leaderChatLine } = await import('../core/fleet/leader-chat-text.js');
+  const chat = await readLeaderChat({ limit });
+  if (!text) {
+    console.log(JSON.stringify(chat, null, 2));
+    return 0;
+  }
+  if (chat.messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
+  for (const m of chat.messages) console.log(leaderChatLine(m, Date.parse(chat.generatedAt)));
+  if (chat.skipped.malformedInbox > 0) console.log(`(${chat.skipped.malformedInbox} unreadable inbox block${chat.skipped.malformedInbox === 1 ? '' : 's'} skipped)`);
+  return 0;
+}
+
 async function runThreadCli(sub: string, args: string[]): Promise<number> {
   if (sub === 'say' || sub === 'answer') {
-    const tail = takeTextArgs(args, {});
+    const tail = takeTextArgs(args, sub === 'say' ? { flags: ['--text', '--json'] } : {});
     if (!tail) return 2;
+    if (sub === 'say') {
+      const text = flag(args, '--text');
+      flag(args, '--json');
+      return sayToLeader([...args, ...tail].join(' ').trim(), text);
+    }
     args.push(...tail);
   }
   const thread = await import('../core/vision/leader-thread.js');
-  if (sub === 'say') {
-    const text = args.join(' ').trim();
-    if (text.length === 0) {
-      console.error(USAGE);
-      return 2;
-    }
-    return threadCall(thread, async () => {
-      const result = await thread.appendMasonMessage(text, { channel: 'cli', cfg: loadConfig() });
-      if (result.directive) console.log(`Standing directive recorded: ${result.directive.id} (${result.directive.kind}) ${result.directive.text}`);
-      if (result.reply) console.log(result.reply.text);
-      return 0;
-    });
-  }
   if (sub === 'thread') {
+    const text = flag(args, '--text');
     const json = flag(args, '--json');
     const limitOpt = option(args, '--limit');
     const follow = flag(args, '--follow');
     const sinceId = option(args, '--since');
-    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
+    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || (text && (json || follow)) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
       console.error(USAGE);
       return 2;
     }
-    if (follow) {
-      const { followThread } = await import('../core/vision/leader-thread-follow.js');
-      const controller = new AbortController();
-      const stop = () => controller.abort();
-      process.on('SIGINT', stop);
-      process.on('SIGTERM', stop);
-      try {
-        await followThread({
-          list: thread.listThread, signal: controller.signal,
-          ...(limitOpt === null ? {} : { backlog: Number(limitOpt) }),
-          ...(sinceId === null ? {} : { sinceId }),
-          onMessage: m => { if (json) console.log(JSON.stringify(m)); else printThreadMessage(m); },
-          onError: error => console.error(error instanceof Error ? error.message : String(error)),
-        });
-      } finally {
-        process.off('SIGINT', stop);
-        process.off('SIGTERM', stop);
-      }
-      return 0;
+    if (!follow) return printLeaderChat(limitOpt === null ? 50 : Number(limitOpt), text);
+    // --follow streams the in-process Leader conversation (vision/leader-thread.ts) live.
+    const { followThread } = await import('../core/vision/leader-thread-follow.js');
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    try {
+      await followThread({
+        list: thread.listThread, signal: controller.signal,
+        ...(limitOpt === null ? {} : { backlog: Number(limitOpt) }),
+        ...(sinceId === null ? {} : { sinceId }),
+        onMessage: m => { if (json) console.log(JSON.stringify(m)); else printThreadMessage(m); },
+        onError: error => console.error(error instanceof Error ? error.message : String(error)),
+      });
+    } finally {
+      process.off('SIGINT', stop);
+      process.off('SIGTERM', stop);
     }
-    return threadCall(thread, async () => {
-      const messages = await thread.listLeaderThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
-      if (json) console.log(JSON.stringify({ messages }, null, 2));
-      else if (messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
-      else for (const m of messages) printThreadMessage(m);
-      return 0;
-    });
+    return 0;
   }
   if (sub === 'answer') {
     const questionId = args.shift();

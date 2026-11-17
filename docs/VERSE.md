@@ -987,7 +987,7 @@ types, reads or stores a credential.
 ### The Leader
 
 The Leader is the fleet's planning agent, and since 3.14 you talk to it: one
-conversation across Mind (⌘4), Telegram and `ashlr leader say`, with standing
+conversation across Mind (⌘4) and Telegram, with standing
 directives, answers to its questions and early approvals. The full guide is
 [`docs/LEADER.md`](LEADER.md).
 
