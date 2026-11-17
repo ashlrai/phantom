@@ -13,7 +13,7 @@
  * are not listed: they cannot change the source tree.
  */
 
-/** `npm run build`, in order. Each entry must equal one `&&` segment of package.json scripts.build. */
+/** `npm run build`, in order. Executed by scripts/build.mjs with a portable creation mask. */
 export const NPM_BUILD_STEPS = Object.freeze([
   Object.freeze({ command: 'npm run check:version', writes: Object.freeze([]) }),
   // tsBuildInfoFile lives under node_modules/.cache (tsconfig.json).
