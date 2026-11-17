@@ -1,5 +1,5 @@
 /**
- * `ashlr notify` — notification webhook subcommand.
+ * `ashlr notify` — notification routing and opt-in delivery commands.
  *
  * Usage:
  *   ashlr notify test [--json]
@@ -38,12 +38,16 @@ async function importNotify() {
 
 function printNotifyHelp(): void {
   console.log('');
-  console.log(bold('  ashlr notify') + dim(' — notification webhook (opt-in)'));
+  console.log(bold('  ashlr notify') + dim(' — routing previews and opt-in notifications'));
   console.log('');
   console.log('  ' + bold('Subcommands:'));
   console.log('');
   console.log(`    ${cyan('test [--json]')}     Send a test ping to configured webhook(s).`);
   console.log(`    ${cyan('session [opts]')}    Notify on a Claude Code Stop/Notification hook.`);
+  console.log(`    ${cyan('route <type> [opts]')} Preview an owner update route; never sends.`);
+  console.log(`    ${dim('Types: decision, approval, digest, incident, merged, status')}`);
+  console.log(`    ${dim('Route options: --text | --json (default), --dry-run (default),')}`);
+  console.log(`    ${dim('  --available <imessage|email|desktop>, --unavailable <channel> (repeatable)')}`);
   console.log('');
   console.log('  ' + bold('session options:'));
   console.log('');
@@ -375,6 +379,42 @@ async function cmdNotifySession(args: string[]): Promise<number> {
 // cmdNotify — main entry point
 // ---------------------------------------------------------------------------
 
+async function cmdNotifyRoute(args: string[]): Promise<number> {
+  const { NOTIFY_ROUTES, NOTIFY_CHANNELS, planNotifyRoute } = await import('../core/comms/owner-channel.js');
+  type Channel = import('../core/comms/owner-channel.js').NotifyChannel;
+  type Update = import('../core/comms/owner-channel.js').NotifyUpdateType;
+  const usage = 'usage: phm notify route <decision|approval|digest|incident|merged|status> [--text|--json] [--dry-run] [--available <channel>] [--unavailable <channel>]';
+  const invalid = (): number => { process.stderr.write(usage + '\n'); return 2; };
+  const [type, ...flags] = args;
+  if (!type || !Object.hasOwn(NOTIFY_ROUTES, type)) return invalid();
+  const availability: Partial<Record<Channel, 'available' | 'unavailable'>> = {};
+  let text = false;
+  let json = false;
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i];
+    if (flag === '--text') text = true;
+    else if (flag === '--json') json = true;
+    else if (flag === '--dry-run') continue;
+    else if (flag === '--available' || flag === '--unavailable') {
+      const channel = flags[++i] as Channel;
+      if (!NOTIFY_CHANNELS.includes(channel) || Object.hasOwn(availability, channel)) return invalid();
+      availability[channel] = flag === '--available' ? 'available' : 'unavailable';
+    } else return invalid();
+  }
+  if (text && json) return invalid();
+  const plan = planNotifyRoute(type as Update, availability);
+  if (!text) process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
+  else {
+    const timing = plan.delivery === 'next-digest' ? 'next digest' : plan.delivery;
+    console.log(`Dry run: ${plan.updateType} → ${plan.channel ?? 'no available channel'} (${timing}). Nothing sent.`);
+    console.log(`Fallback: ${plan.fallbackChannel}. Availability: ${plan.availability}. Would send now: ${plan.wouldSendNow}.`);
+    console.log(plan.reason);
+    console.log(`Owner thread: ${plan.threadId}. Verified sender check: ${plan.verifiedSenderCheck}.`);
+    if (plan.replyFormat) console.log(`Reply with one word: ${plan.replyFormat}.`);
+  }
+  return 0;
+}
+
 /**
  * `ashlr notify test` — send a test ping to configured webhook(s).
  * Informative no-op when no webhook is configured. Returns a process exit code.
@@ -395,6 +435,8 @@ export async function cmdNotify(args: string[]): Promise<number> {
     printNotifyHelp();
     return 0;
   }
+
+  if (sub === 'route') return cmdNotifyRoute(rest);
 
   if (sub === 'test') {
     const unknown = rest.find((a) => a !== '--json');

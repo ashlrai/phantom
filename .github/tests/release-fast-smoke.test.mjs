@@ -21,7 +21,7 @@ function setup(kind = 'build') {
   const job = (name, steps, labels = ['macos-15']) => ({ id: 200, run_id: 30, head_sha: revision, name, labels, status: 'completed', conclusion: 'success', steps: steps.map(name => step(name)) });
   const jobs = kind === 'build' ? [job('Prepare unsigned desktop release', ['Reuse successful push CI and existing prepared artifact', 'Upload immutable release input', 'Build unsigned desktop and original package once'])]
     : kind === 'attest' ? [job('Desktop release smoke', ['Verify green master push CI', 'Smoke desktop release artifact', 'Upload qualified build handoff'])]
-      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Secret scan (diff)', ['Scan the commits this event adds'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check', 'Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
+      : [job('Secret-shape scan', ['Scan candidate diff (fail closed)'], ['ubuntu-latest']), job('Secret scan (diff)', ['Scan the commits this event adds'], ['ubuntu-latest']), job('Quick typecheck', ['Core no-emit type check'], ['ubuntu-latest']), job('Check generated files', ['Check generated files'], ['ubuntu-latest']), job('Check authority drift (hermetic)', ['Check authority drift (hermetic)'], ['ubuntu-latest']), job('Classify PR site lane', ['Bind candidate source'], ['ubuntu-latest']), job('Merge Gate', ['Require selected CI lane'], ['ubuntu-latest'])];
   if (kind === 'build') jobs[0].steps.push(step('Download existing immutable build', 'skipped'));
   const jobResponse = { total_count: jobs.length, jobs };
   let freshRun = run;
@@ -64,6 +64,47 @@ test('excludes the currently executing build when looking for reusable input', (
   assert.equal(f.select({ excludeRunId: '31' }).run, 30);
   assert.equal(f.select(), null);
 });
+
+function cachedAuthorityDrift(f) {
+  const job = f.jobs.find(row => row.name === 'Check authority drift (hermetic)');
+  job.steps[0].conclusion = 'skipped';
+  job.steps.unshift(...['Hash authority drift inputs', 'Restore authority drift green result', 'Decide authority drift reuse']
+    .map(name => ({ name, status: 'completed', conclusion: 'success' })));
+  job.steps.push({ name: 'Record authority drift green result', status: 'completed', conclusion: 'skipped' });
+  return job;
+}
+
+test('selects exact-source push CI when authority drift reuses a matching green receipt', () => {
+  const f = setup('push'); cachedAuthorityDrift(f);
+  assert.deepEqual(f.select(), { run: 30, attempt: 2, sha: revision });
+});
+
+for (const mutation of ['missing decision', 'ambiguous decision', 'failed restore', 'incomplete hash', 'check failed', 'record ran']) {
+  test(`refuses cached authority drift evidence with ${mutation}`, () => {
+    const f = setup('push'); const job = cachedAuthorityDrift(f);
+    if (mutation === 'missing decision') job.steps.splice(2, 1);
+    if (mutation === 'ambiguous decision') job.steps.push({ ...job.steps[2] });
+    if (mutation === 'failed restore') job.steps[1].conclusion = 'failure';
+    if (mutation === 'incomplete hash') job.steps[0].status = 'in_progress';
+    if (mutation === 'check failed') job.steps[3].conclusion = 'failure';
+    if (mutation === 'record ran') job.steps[4].conclusion = 'success';
+    assert.throws(() => f.select());
+  });
+}
+
+// RQ-PH-GATE-SPLIT-1: both split-out jobs must prove green in the exact push run.
+for (const name of ['Check generated files', 'Check authority drift (hermetic)']) {
+  for (const mutate of [
+    ['missing', jobs => jobs.filter(job => job.name !== name)],
+    ['failed', jobs => jobs.map(job => job.name === name ? { ...job, conclusion: 'failure' } : job)],
+    ['skipped', jobs => jobs.map(job => job.name === name ? { ...job, conclusion: 'skipped' } : job)],
+    ['step skipped', jobs => jobs.map(job => job.name === name ? { ...job, steps: job.steps.map(step => ({ ...step, conclusion: 'skipped' })) } : job)],
+  ]) test(`push CI evidence is refused when ${name} is ${mutate[0]}`, () => {
+    const f = setup('push'); f.jobs.splice(0, f.jobs.length, ...mutate[1](f.jobs.map(job => ({ ...job }))));
+    f.jobResponse.jobs = f.jobs; f.jobResponse.total_count = f.jobs.length;
+    assert.throws(() => f.select());
+  });
+}
 
 for (const state of [{ status: 'in_progress', conclusion: null }, { status: 'completed', conclusion: 'failure' }]) {
   test(`latest ${state.status}/${state.conclusion} run cannot be masked by older green evidence`, () => {

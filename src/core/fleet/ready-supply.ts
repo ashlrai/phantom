@@ -52,7 +52,7 @@ export function summarizeReadySupply(
 }
 
 /** Recognize the router's five-column id/repo/lane/work/path form. */
-function normalizeLegacyRows(text: string): string {
+export function normalizeLegacyRows(text: string): string {
   return text.replace(/^([A-Za-z0-9][A-Za-z0-9_.:/@-]{0,127}|)\t([^\t\r\n]+)\t([^\t\r\n]+)\twork\t\/[^\t\r\n]*(\r?)$/gm,
     '$1\t$3\t$2\twork\t$4');
 }

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "advisoryOnly": true,
+  "stacksync": {
+    "provider": "stacksync-eos",
+    "apiBaseUrl": "https://eos.stacksync.com",
+    "attemptedAt": "2026-11-14T08:01:54Z",
+    "observedAt": null,
+    "inventoryStatus": "unavailable",
+    "reasonCode": "local_credential_access_denied",
+    "accountVerified": false,
+    "workspaceVerified": false,
+    "creditBalanceUsd": null,
+    "monthlyIncludedCreditsUsd": null,
+    "creditExpiresAt": null,
+    "creditResetsAt": null,
+    "productsEnabled": {
+      "postgres": null,
+      "projectVariables": null,
+      "inference": null,
+      "storage": null,
+      "requestLogs": null
+    },
+    "inventory": {
+      "databaseCount": null,
+      "appCount": null,
+      "inferenceKeyCount": null,
+      "modelCount": null,
+      "storageBucketCount": null
+    },
+    "inference": {
+      "spentUsd": null,
+      "reservedUsd": null,
+      "remainingUsd": null
+    },
+    "storage": {
+      "usedBytes": null,
+      "reservedBytes": null,
+      "byteLimit": null,
+      "objectCount": null,
+      "objectLimit": null
+    },
+    "executionEligible": false
+  }
+}

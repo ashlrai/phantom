@@ -14,6 +14,8 @@ export interface InboxEntry {
   attachment?: string;
   channel?: string;
   alsoChannels?: string[];
+  /** Leader-network request id when the heading carries `[leader-network:<64hex>]`; absent otherwise. */
+  requestId?: string;
   at: string;
   source: string;
   priority: string | null;
@@ -102,10 +104,12 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
     const dated = match ? null : /^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?: ET)?/.exec(heading);
     const source = dated ? /\(([^)]*)\)/.exec(heading.slice(dated[0].length))?.[1]?.trim().slice(0, 80) : undefined;
     const priority = dated ? /\bPRIORITY\s*:?\s+(\w+)/.exec(heading)?.[1] : undefined;
+    const requestId = /\[leader-network:([0-9a-f]{64})\]/.exec(heading)?.[1];
     entries.push({
       at: match?.[1] ?? dated?.[1] ?? heading,
       source: match?.[2] ?? (source || 'unknown'),
       priority: match?.[3] ?? priority ?? null,
+      ...(requestId !== undefined ? { requestId } : {}),
       text: body.join('\n').trim().slice(0, INBOX_MAX_CHARS),
     });
   };
@@ -143,6 +147,7 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
 
 export async function appendInboxEntry(text: string, opts: InboxAppendOptions = {}): Promise<InboxAppendResult> {
   const clean = normaliseText(text);
+  if (!clean) return { ok: false, reason: 'empty' };
   if (isFlagOnlyInboxText(clean)) return { ok: false, reason: 'flag-only' };
   // Long messages become attachments, but only within a bound on what is stored.
   if (clean.length > INBOX_ATTACH_MAX_CHARS || text.length > INBOX_ATTACH_MAX_CHARS) return { ok: false, reason: 'too-long' };

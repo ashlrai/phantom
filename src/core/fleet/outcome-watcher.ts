@@ -21,6 +21,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { ancillaryStopReason, type AncillaryBudgetOptions, type AncillarySkipReason } from './ancillary-budget.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -53,6 +54,7 @@ export interface OutcomeScan {
   /** False when proposal/trace enumeration or candidate bounds were incomplete. */
   sourceComplete: boolean;
   candidateLimitReached: boolean;
+  skippedReason?: AncillarySkipReason;
 }
 
 const THROTTLE_MS = 6 * 60 * 60 * 1000; // 6h
@@ -161,13 +163,21 @@ export async function scanRealWorldOutcomes(
     stateFile?: string;
     /** Explicit production enrollment snapshot. Omitted only for legacy/manual callers. */
     enrolledRepos?: string[];
-  },
+  } & AncillaryBudgetOptions,
 ): Promise<OutcomeScan> {
   const scan: OutcomeScan = {
     scanned: 0, reverts: 0, followUps: 0, skipped: 0, throttled: false,
     sourceComplete: true, candidateLimitReached: false,
   };
+  const interrupted = (): boolean => {
+    const reason = ancillaryStopReason(opts ?? {});
+    if (!reason) return false;
+    scan.skippedReason = reason;
+    scan.sourceComplete = false;
+    return true;
+  };
   try {
+    if (interrupted()) return scan;
     const now = opts?.nowMs ?? Date.now();
     const stateFile = opts?.stateFile ?? defaultStateFile();
     const enrollmentSelection = opts?.enrolledRepos === undefined
@@ -218,6 +228,7 @@ export async function scanRealWorldOutcomes(
     // records that multiplied the reject signal. Skip any proposal that
     // ALREADY has a reverted/followed-up record anywhere in the stream.
     const allTraces = readJudgeTraces({ sinceMs, requireComplete: true });
+    if (interrupted()) return scan;
     const traceQuality = (allTraces as typeof allTraces & {
       sourceQuality?: { sourceState?: string; complete?: boolean };
     }).sourceQuality;
@@ -269,6 +280,7 @@ export async function scanRealWorldOutcomes(
     const appliedProposals = detailed?.proposals ?? (typeof listProposals === 'function'
       ? listProposals({ status: 'applied' })
       : []);
+    if (interrupted()) return scan;
     if (productionCursorMode && proposalSourceIncomplete) return scan;
     const strictProposals = new Map(
       appliedProposals
@@ -276,6 +288,7 @@ export async function scanRealWorldOutcomes(
         .map((proposal) => [proposal.id, proposal]),
     );
     for (const trace of traces) {
+      if (interrupted()) return scan;
       const proposal = strictProposals.get(trace.proposalId);
       if (!proposal) continue;
       if (enrolled !== null && (typeof proposal.repo !== 'string' || !enrolled.has(proposal.repo))) continue;
@@ -292,6 +305,7 @@ export async function scanRealWorldOutcomes(
       });
     }
     for (const proposal of appliedProposals) {
+      if (interrupted()) return scan;
       if (proposal.status !== 'applied') continue;
       if (enrolled !== null && (typeof proposal.repo !== 'string' || !enrolled.has(proposal.repo))) continue;
       const merge = realizedMergeOf(proposal);
@@ -415,6 +429,8 @@ export async function scanRealWorldOutcomes(
     }
 
     for (const candidate of selectedCandidates) {
+      if (interrupted()) return scan;
+      let candidateInterrupted = false;
       let cursorPersistFailed = false;
       const skippedBeforeCandidate = scan.skipped;
       try {
@@ -434,13 +450,20 @@ export async function scanRealWorldOutcomes(
         }
         const mergeSha = merge.mergeCommitOid;
         const mergedAt = merge.source === 'github-host' ? merge.mergedAt : undefined;
+        const remainingMs = opts?.deadlineAtMs === undefined
+          ? undefined
+          : Math.max(1, opts.deadlineAtMs - (opts.now ?? Date.now)());
         const inspection = inspectPostMergeWindow({
           repo: resolve(repo),
           mergeCommit: mergeSha,
           observedAtMs: now,
           followUpWindowMs: windowDays * 24 * 60 * 60 * 1_000,
           ...(mergedAt ? { windowStartedAtMs: Date.parse(mergedAt) } : {}),
-        });
+        }, remainingMs === undefined ? {} : { deadlineMs: remainingMs });
+        if (interrupted()) {
+          candidateInterrupted = true;
+          return scan;
+        }
         if (inspection.state === 'inconclusive') {
           scan.skipped++;
           continue;
@@ -481,9 +504,13 @@ export async function scanRealWorldOutcomes(
           scan.followUps++;
         }
       } catch {
+        if (interrupted()) {
+          candidateInterrupted = true;
+          return scan;
+        }
         scan.skipped++;
       } finally {
-        if (productionCursorMode && monitoringCursor && candidate.cursor) {
+        if (!candidateInterrupted && productionCursorMode && monitoringCursor && candidate.cursor) {
           const sweepComplete = finalCandidateKey === outcomeCandidateKey(candidate.cursor);
           const candidateIncomplete = scan.skipped > skippedBeforeCandidate;
           monitoringCursor = {
@@ -509,6 +536,7 @@ export async function scanRealWorldOutcomes(
       }
       if (cursorPersistFailed) break;
     }
+    if (interrupted()) return scan;
     if (scan.skipped > 0) scan.sourceComplete = false;
     const sweepComplete = !productionCursorMode || monitoringCursor?.outcome.sweepComplete === true;
     const sweepHadIncomplete = productionCursorMode && monitoringCursor?.outcome.hadIncomplete === true;

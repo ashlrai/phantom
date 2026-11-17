@@ -37,14 +37,14 @@ export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemC
   const r = e.runningEvidence;
   const hasRunning = !!r && text(r.source) && stamped(r.at);
   const age = hasRunning ? Date.parse(nowIso) - Date.parse(r.at) : NaN;
-  if (hasRunning && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
+  if (text(e.owner) && text(e.claimReceipt) && hasRunning && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
     return { state: 'RUNNING', asOf: r.at, source: r.source, missing: [] };
   }
 
   const missing: string[] = [];
   if (!text(e.owner)) missing.push('named owner');
   if (!text(e.claimReceipt)) missing.push('durable claim receipt');
-  const stale = hasRunning ? ['fresh running evidence'] : [];
+  const stale = hasRunning && (age > RUNNING_FRESH_MS || age < -FUTURE_SKEW_MS) ? ['fresh running evidence'] : [];
   const asOf = stamped(e.receivedAt) ? e.receivedAt : 'unknown';
   if (missing.length === 0) return { state: 'ASSIGNED', asOf, source: `claim:${e.claimReceipt}`, missing: stale };
   return { state: 'RECEIVED', asOf, source: asOf === 'unknown' ? 'unknown' : 'receivedAt', missing: [...missing, ...stale] };

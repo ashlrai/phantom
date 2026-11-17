@@ -26,7 +26,8 @@ function render(prs: MergeAutopilotPr[], apply: boolean): string {
     const ref = `${pr.repo}#${pr.number}`;
     const action = pr.action ? ` → ${pr.action.kind}:${pr.action.status} (${pr.action.detail})` : '';
     const check = pr.firstFailingCheck ? ` [first failing required: ${pr.firstFailingCheck}]` : '';
-    return `${ref.padEnd(28)} ${pr.class.padEnd(13)} ${pr.detail}${check}${action}`;
+    const review = pr.devinReview ? ` [Devin Review: ${pr.devinReview.state}${pr.devinReview.reason ? `/${pr.devinReview.reason}` : ''}${pr.devinReview.findings ? `, ${pr.devinReview.findings.count} findings` : ''}]` : '';
+    return `${ref.padEnd(28)} ${pr.class.padEnd(13)} ${pr.detail}${check}${action}${review}`;
   });
   const mode = apply ? 'applied' : 'dry-run (pass --apply to act)';
   return [`merge autopilot — ${mode}`, ...rows].join('\n');

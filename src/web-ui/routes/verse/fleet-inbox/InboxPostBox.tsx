@@ -4,6 +4,7 @@ import { ApiError } from '../../../data/client.js';
 import { loadDraft, saveDraft } from '../fleet/interject-ack-model.js';
 import { postInterjectionDetailed } from '../fleet/interject-queries.js';
 import { mintInterjectRequestId } from '../fleet/interject-request.js';
+import { LeaderChatList, leaderChatFrom } from '../leader-thread/LeaderChat.js';
 import { retryable } from './inbox-post-result.js';
 import { postAckLine } from './inbox-post-ack-model.js';
 import styles from './fleet-inbox.module.css';
@@ -49,7 +50,9 @@ export function InboxPostBox({ onPosted, snapshot }: { onPosted: (text: string) 
     }
   }
   const ack = postAckLine(result, snapshot, Date.now());
+  const chat = leaderChatFrom(snapshot);
   return <form className={styles.composer} onSubmit={event => { event.preventDefault(); void send(); }}>
+    {chat && <LeaderChatList chat={chat} />}
     <label htmlFor={id}>Prompt, thought or interjection</label>
     <textarea id={id} rows={3} maxLength={6_000} value={draft} disabled={sending}
       placeholder="Tell the leaders. Lands in MASON-INBOX.md."

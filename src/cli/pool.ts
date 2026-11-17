@@ -3,6 +3,8 @@ import { readAdmission, type AdmissionReport, type ReadAdmissionOptions } from '
 const HELP = `Usage: phm pool admission [--json]
 
 admission: what dispatchd would decide about new claims right now, read-only.
+  JSON includes per-lane routine/critical usage pacing verdicts and reasons.
+  Adaptive settle is advisory until integrated into the pinned host guard; phm admission explain shows its inputs.
   Reports 1-min loadavg, ncpu, the global running cap, running jobs, the install-lock
   holder and admit true/false with the reason. Exit 0 either way; 2 on bad arguments.
   Updated hosts report the dispatcher's admission.v2 snapshot, including its timestamp,
@@ -21,6 +23,7 @@ function render(r: AdmissionReport): string {
     `admit=${r.admit}${r.reason ? ` reason=${r.reason}` : ''}${r.disabled ? ' (gate disabled by queue/LOADGATE_OFF)' : ''}`,
     `load1=${r.load.load1.toFixed(2)} max=${r.load.max.toFixed(1)} ncpu=${r.ncpu} procs=${r.procs} worktrees=${r.worktrees}`,
     `running=${r.running} cap=${r.cap} adaptive_cap=${r.adaptiveCap ?? 'none'} hard_cap=${r.hardCap ?? 'none'}`,
+    `settle=${r.settle.settleSeconds}s (advisory): ${r.settle.reason}`,
     `daemon tick age=${r.daemon.tickAgeSeconds === null ? 'unknown' : `${Math.floor(r.daemon.tickAgeSeconds)}s`}`,
     ...(r.staleSnapshot ? [`dispatchd snapshot stale (ts=${r.staleSnapshot.ts ?? 'missing'}${r.staleSnapshot.ageSeconds === null ? '' : `, age=${Math.floor(r.staleSnapshot.ageSeconds)}s`}); live probes shown`] : []),
     `install lock holder=${holder ? `pid ${holder.pid}${holder.job ? ` job ${holder.job}` : ''}${holder.command ? ` (${holder.command})` : ''}` : 'none'}`,
