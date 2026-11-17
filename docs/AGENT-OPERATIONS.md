@@ -929,6 +929,18 @@ excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
 
+`phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
+published, PRs merged, empty jobs and the median time from publish to merge. It
+prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
+"38 merged in the last 6 hours, median 2m 50s", `totals`, one entry in `buckets`
+per hour and `groups` by lane. `--hours N` sets the window (1 to 168, default 24),
+`--by repo` or `--by tier` changes the grouping and `--text` prints plain lines.
+It reads `~/.ashlr-runs/metrics/jobs.jsonl` and the main-guardian status, and
+changes nothing. Each PR counts once. A value that was not measured is `null`
+(or "unknown"), never zero; lines that are not JSON are skipped and counted in
+`malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
+Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`).
+
 `phm fleet repo-rate --json` reads merged PR outcomes from
 `~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's
 merge count, median time to merge in seconds, and newest merge time. Each PR

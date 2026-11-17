@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (empties, jobs, radar, …)
+    observability   Observability - cost, telemetry, audit (empties, throughput, jobs, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -157,6 +157,7 @@ Every command, grouped by topic.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
     release status [--json] [--file <release-state.json>]                                                                                                         Show local release tags, age and commits since each tag. Use --file to read release train state.
+    release notes [--since <tag>] [--json] [--write]                                                                                                              Summarize local mainline changes since the latest release tag. Use --write to prepend notes to CHANGELOG.md.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
     backlog --repo <path>                                                                                                                                         Filter backlog to a specific enrolled repo.
     backlog --limit <n>                                                                                                                                           Show only the top N items.
@@ -171,7 +172,7 @@ Every command, grouped by topic.
     inbox submit <id> --yes                                                                                                                                       Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.
     inbox reject <id>                                                                                                                                             Discard a pending proposal; applies nothing.
     inbox --json                                                                                                                                                  Emit JSON for inbox list, show, approve, submit, or automerge results.
-    ideas [--json]                                                                                                                                                List READY fleet ideas (RQ id, repo, lane, goal) from the vision and queue docs.
+    ideas [--json|--text]                                                                                                                                         Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown.
     drive [--once --dry-run] [--tick <seconds>]                                                                                                                   Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.
     daemon start --once                                                                                                                                           Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.
     daemon start --once --dry-run                                                                                                                                 Plan only: which backlog items WOULD be worked (no swarm/proposal).
@@ -220,6 +221,7 @@ Every command, grouped by topic.
     authority setup [--dry-run [--json]]                                                                                                                          Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service - asks before every step; --dry-run --json prints the checklist as JSON.
     feed [--json] [--since 1h] [--limit N]                                                                                                                        Read merges, release announcements, blocked jobs and Leader replies with times and links, newest first.
     leader show|run|tick|veto                                                                                                                                     The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).
+    org [--text]                                                                                                                                                  The live organization as a tree: leader, lanes with running, target, queued and pool usage, and each running job. JSON by default; unknown stays unknown.
     org show|join|plan [--file <org.toml>] [--json]                                                                                                               Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.
     leader status|ask|org|assign [--json]                                                                                                                         Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.
     leader seat|inbox [--json]                                                                                                                                    Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.
@@ -311,6 +313,7 @@ Every command, grouped by topic.
 
   Observability - cost, telemetry, audit
     empties [--since 24h] [--text]                                                             Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
+    throughput [--hours 24] [--by lane|repo|tier] [--text]                                     Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
     jobs empty [--since 24h] [--json]                                                          Explain empty jobs from local notes and logs.
     radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                           Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
@@ -391,6 +394,7 @@ Every command, grouped by topic.
     wire status [claude|codex|cursor|gemini|all]                                     Read-only report of whether each editor is wired to the ashlr gateway.
     wire --claude-md                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
     notify test                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
+    notify route <type> [--text]                                                     Preview an owner update route in JSON (default) or plain words; never sends.
     stack [status|list|providers|recommend|scan|doctor|add|apply]                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
     ecosystem doctor [--json] [--deep]                                               Read-only sibling-repository health scan across the ecosystem.
 
@@ -422,16 +426,18 @@ Every command, grouped by topic.
     demo [--no-cleanup] [--json]                                                          Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.
 
   Surfaces - TUI + web dashboard
-    top [--once] [--json]           Read-only per-pool capacity and reset pressure snapshot.
-    tui [--once]                    Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
-    dash [--once]                   Alias of `tui` - interactive terminal dashboard.
-    dashboard [--stop|--status]     Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
-    serve [--port N]                Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
-    serve --open                    Start dashboard and open browser automatically.
-    serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
-    console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
-    verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
-    settings appearance [set]       Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
+    top [--once] [--json]                                                  Read-only per-pool capacity and reset pressure snapshot.
+    tui [--once]                                                           Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
+    dash [--once]                                                          Alias of `tui` - interactive terminal dashboard.
+    dashboard [--stop|--status]                                            Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
+    serve [--port N]                                                       Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+    serve --open                                                           Start dashboard and open browser automatically.
+    serve --allow-dispatch                                                 Enable guarded POST /api/run + web inbox approve/reject (prints session token).
+    console [--port N] [--no-open]                                         Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
+    verse [--port N] [--no-open]                                           Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    settings appearance [set]                                              Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
+    pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]  Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).
+    pages list [--json]                                                    List published report pages, newest first.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).

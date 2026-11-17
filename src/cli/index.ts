@@ -2211,6 +2211,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'throughput': {
+        const { cmdThroughput } = await import('./throughput.js');
+        process.exitCode = await cmdThroughput(rest);
+        break;
+      }
+
       case 'jobs': {
         const { cmdJobs } = await import('./jobs-empty.js');
         process.exitCode = await cmdJobs(rest);

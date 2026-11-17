@@ -35,10 +35,10 @@ function collectPanesFromCode(): Set<string> {
       continue;
     }
 
-    // Normal: first id: 'xxx' literal
-    const idMatch = src.match(/id:\s*'([a-z-]+)'/);
-    if (idMatch) {
-      ids.add(idMatch[1]);
+    // Normal: every id: 'xxx' literal (one file may register several panes)
+    const idMatches = [...src.matchAll(/id:\s*'([a-z-]+)'/g)];
+    if (idMatches.length) {
+      for (const idMatch of idMatches) ids.add(idMatch[1]);
       continue;
     }
 

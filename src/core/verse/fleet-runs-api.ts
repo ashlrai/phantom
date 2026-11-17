@@ -1,6 +1,7 @@
 import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { readThroughput, throughputOptions } from '../fleet/throughput.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
@@ -487,6 +488,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/metrics') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
+    // The Throughput pane reads the same report as `phm throughput`.
+    if (path === '/api/verse/fleet/runs/throughput') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const options = throughputOptions(params.get('hours'), params.get('by'));
+      if (!options) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes 1 to 168 and by takes lane, repo or tier' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, await readThroughput({ ...options, runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), now: now() }));
       return true;
     }
     // The Plugins and Skills panes read the same data as `phm plugins|skills list --all --json`.
