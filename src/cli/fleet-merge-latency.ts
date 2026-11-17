@@ -9,6 +9,7 @@ import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { recutRequest, type MergeRecutRequest } from '../core/merge-eta.js';
+import { mergeQueueStatus, type MergeQueueBlocker, type MergeQueueStatus } from '../core/fleet/merge-queue-status.js';
 
 const usage = 'Usage: ashlr fleet merge-latency [--events <file>] [--hours <n>] [--stalled-after <seconds>] [--json]';
 const SCHEMA = 'fleet.merge-latency.v1';
@@ -26,7 +27,7 @@ const TYPES: ReadonlySet<string> = new Set<MergeEventType>(['opened', 'queued', 
 
 /** One JSON object per line. `head_sha` is read from conflict and recut_requested events. */
 export interface MergeEvent { repo: string; pr: number; type: MergeEventType; at?: string; head_sha?: string; reason?: BlockerReason; required?: boolean; conclusion?: 'success' | 'failure' | 'pending' }
-export type BlockerReason = 'required_checks' | 'review' | 'conflict' | 'queue' | 'other';
+export type BlockerReason = MergeQueueBlocker;
 const BLOCKER_REASONS: readonly BlockerReason[] = ['required_checks', 'review', 'conflict', 'queue', 'other'];
 const eventTime = (e: MergeEvent): number => Date.parse(e.at ?? '');
 
@@ -158,6 +159,9 @@ function prStages(events: MergeEvent[]): PrStages {
 
 /** Recorded transitions are observations, not permission to merge. */
 export interface QueueTimeline {
+  status: MergeQueueStatus;
+  /** Readiness to observation time for open PRs; null after merge or lost readiness. */
+  ready_wait_s: number | null;
   repo: string; pr: number; enqueued_at: string | null; eligible_at: string | null; merged_at: string | null;
   blocked: { at: string; reason: BlockerReason }[];
   enqueue_to_eligible_s: number | null; eligible_to_merge_s: number | null;
@@ -261,16 +265,18 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
     && blocked.every(b => Date.parse(b.at) >= Date.parse(enqueued_at) && Date.parse(b.at) < Date.parse(eligible_at));
   // Readiness-to-merge does not depend on observing enqueue. Do not attribute
   // one readiness episode across reblocking, conflicts, closure or head changes.
-  const readyEvents = eligible_at ? events.filter(e => eventTime(e) >= Date.parse(eligible_at)) : [];
+  const terminal = events.some(e => e.type === 'merged' || e.type === 'closed');
+  const readyEnd = terminal ? merged_at === null ? NaN : Date.parse(merged_at) : now;
+  const readyEvents = eligible_at ? events.filter(e => eventTime(e) >= Date.parse(eligible_at) && eventTime(e) <= readyEnd) : [];
   const priorHead = eligible_at ? events.filter(e => e.head_sha && eventTime(e) <= Date.parse(eligible_at)).at(-1)?.head_sha : undefined;
   const heads = [priorHead, ...readyEvents.map(e => e.head_sha)].filter((head): head is string => !!head);
-  const readyValid = eligible_at && merged_at && Date.parse(eligible_at) <= Date.parse(merged_at)
+  const readyValid = eligible_at && Date.parse(eligible_at) <= readyEnd
     && !events.some(e => e.type === 'closed')
     && !readyEvents.some(e => e.type === 'blocked' || e.type === 'conflict')
-    && !readyEvents.some(e => e.type === 'check_observed' && e.required === true && e.conclusion === 'failure')
+    && !readyEvents.some(e => e.type === 'check_observed' && e.required === true && e.conclusion !== 'success')
     && new Set(heads.map(head => head.toLowerCase())).size <= 1;
-  const readyToMerge = readyValid ? gap(Date.parse(eligible_at!), Date.parse(merged_at!)) : null;
-  const admission = readyValid && enqueued_at && Date.parse(enqueued_at) <= Date.parse(merged_at!)
+  const readyToMerge = readyValid && merged_at ? gap(Date.parse(eligible_at!), Date.parse(merged_at)) : null;
+  const admission = readyToMerge !== null && enqueued_at && Date.parse(enqueued_at) <= readyEnd
     ? Math.max(0, Math.round((Date.parse(enqueued_at) - Date.parse(eligible_at!)) / 1000)) : null;
   const execution = admission !== null && readyToMerge !== null ? readyToMerge - admission : null;
   // A blocker starts an interval and the next blocker or eligibility ends it.
@@ -290,6 +296,7 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
     unrelated_failures: failures.filter(e => e.required === false).length,
     unknown_failures: failures.filter(e => e.required === undefined).length } : null;
   return { repo: events[0]!.repo, pr: events[0]!.pr, enqueued_at, eligible_at, merged_at, blocked,
+    status: mergeQueueStatus(events, now), ready_wait_s: readyValid && !terminal ? gap(Date.parse(eligible_at!), now) : null,
     wait_by_reason_s: measurable ? wait : null, checks,
     current_dwell_s: enqueued_at && !events.some(e => e.type === 'merged' || e.type === 'closed')
       ? gap(Date.parse(enqueued_at), now) : null,
@@ -382,7 +389,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
     const { repo, pr } = last;
     const mergedAt = first('merged');
     if (mergedAt === undefined || mergedAt >= since) stages.push(prStages(events));
-    if (events.some(e => e.type === 'queued' || e.type === 'eligible' || e.type === 'blocked' || e.type === 'check_observed')) timelines.push(timeline(events, now));
+    if (events.some(e => ['queued', 'eligible', 'blocked', 'check_observed', 'conflict', 'merged', 'closed'].includes(e.type))) timelines.push(timeline(events, now));
     if (events.some(e => e.type === 'merged')) {
       if (mergedAt !== undefined && mergedAt < since) continue;
       merged++;
@@ -486,6 +493,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
       : 'Oldest actionable queue delay: none observed.',
     line('Waiting to join the queue', r.opened_to_queue),
     line('Queue to merge', r.queue_to_merge),
+    ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: current stage ${t.status.stage.replaceAll('_', ' ')}, wait ${secs(t.status.waiting_s)}; ready to merge ${secs(t.eligible_to_merge_s)}; ready now ${secs(t.ready_wait_s)}; observed delays: ${Object.entries(t.status.delays_s).map(([stage, s]) => `${stage.replaceAll('_', ' ')} ${secs(s)}`).join(', ')}.`),
     ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.`),
     ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; ready before queue ${secs(t.ready_to_queue_s)}, ready in queue ${secs(t.ready_in_queue_s)}; dominant ready delay: ${t.dominant_delay?.replace('_', ' ') ?? 'unknown'}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
     stateTimeLine(r.queue_state_time!),

@@ -102,7 +102,8 @@ import { resolveManagerSessionTargets } from '../verse/manager-scope.js';
 import { OutcomeManagerDispatch, isOutcomeManagerWorkItem, outcomeManagerWorkItems, readOutcomeManagerWorkItemContext, readOutcomeManagerPrompt, reconcileOutcomeManagerTerminals } from './outcome-manager.js';
 import { managerConversation, managerHostAdmission } from './outcome-manager-host.js';
 import type { OutcomeManagerRoute } from '../goals/outcome-manager-types.js';
-import { buildBacklog, loadBacklog } from '../portfolio/backlog.js';
+import { buildBacklog, loadBacklog, type BacklogScanInvalidation } from '../portfolio/backlog.js';
+import { createBacklogScanSnapshot } from '../portfolio/scan-snapshot.js';
 import { loadQueuedAutonomyItems } from '../portfolio/queued-autonomy.js';
 import {
   acquireDaemonLock,
@@ -206,6 +207,7 @@ import {
   tickPhasesSnapshot,
   TICK_PHASE_BACKLOG_REFRESH_MS,
   TICK_PHASE_CAPACITY_MS,
+  TICK_PHASE_NODE_BRIDGE_MS,
   TICK_PHASE_DISPATCH_PLAN_MS,
   TICK_PHASE_FRONTIER_PROBE_MS,
   TICK_PHASE_GRACE_MS,
@@ -297,11 +299,12 @@ import {
   MAX_BEST_OF_N_CANDIDATE_SPECS_INSPECTED,
   resolveBestOfNCount,
 } from '../run/best-of-n-policy.js';
-import { runSelfHealCycle, runSelfHealCycleForRepos } from '../fleet/self-heal.js';
+import { runSelfHealCycle, runSelfHealCycleForRepos, type SelfHealCycleResult } from '../fleet/self-heal.js';
 import { startTickLoopWatchdog, writeTickLoopBeacon, type TickLoopBeaconV1, type TickLoopStage, type TickLoopWatchdog } from './tick-loop.js';
 import { runInventCycle } from '../generative/invent-cycle.js'; // M186
 import { resolvePlanningClient } from '../generative/invent.js';
 import { runCounterfactualReplay } from '../fleet/counterfactual.js'; // M187
+import { createAncillaryObservationBudget } from '../fleet/ancillary-budget.js';
 import { detectRegression, bisectAndRevert } from '../fleet/regression-sentinel.js'; // M189
 import { observePostMergeStability } from '../fleet/post-merge-stability-observer.js';
 import {
@@ -382,6 +385,9 @@ import {
 } from '../fleet/proposal-matching.js';
 import { loadConfig, resolveSubscriptionMaxPercent } from '../config.js';
 import { homedir, hostname as osHostname } from 'node:os';
+import { spawn as spawnChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { ashlrHome } from '../cloud/store.js';
 import {
   buildResourceStrategyReport,
   fleetStatusForDirection,
@@ -418,6 +424,7 @@ import {
 } from '../fleet/generated-repair-lifecycle.js';
 import { generatedRepairLifecycleAttemptHash } from '../fleet/generated-repair-identity.js';
 import {
+  childRuntimeArgs,
   scheduleResolutionObserverChild,
   type ScheduledResolutionObserverChild,
 } from './resolution-observer-scheduler.js';
@@ -1385,6 +1392,39 @@ const SEAT_SHADOW_MAX_IN_FLIGHT = 2;
  * make it Tier-1 code. No snapshot ⇒ no shadow (nothing honest to compare).
  * `foundry.seatRouterShadow: false` turns it off. Never throws, never awaited.
  */
+/**
+ * One `node-bridge` pass in a child spawned by path, not imported: the bridge and node router
+ * stay out of this module's Tier-1 import closure. Abort sends SIGTERM, then SIGKILL after 2 s.
+ */
+function runNodeBridgeChild(signal: AbortSignal): Promise<Record<string, unknown> | TickPhaseSkipped> {
+  const entry = fileURLToPath(new URL(import.meta.url.endsWith('.ts')
+    ? '../drive/nodes/ready-bridge-child.ts' : '../drive/nodes/ready-bridge-child.js', import.meta.url));
+  return new Promise((resolveChild, rejectChild) => {
+    const child = spawnChildProcess(process.execPath, [...childRuntimeArgs(), entry],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    let out = '';
+    let hardKill: ReturnType<typeof setTimeout> | undefined;
+    child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { if (out.length < 65_536) out += chunk; });
+    const abort = () => {
+      child.kill('SIGTERM');
+      hardKill = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      hardKill.unref();
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    const done = () => { signal.removeEventListener('abort', abort); if (hardKill) clearTimeout(hardKill); };
+    child.once('error', (error) => { done(); rejectChild(error); });
+    child.once('close', (code) => {
+      done();
+      if (signal.aborted) return rejectChild(signal.reason);
+      let summary: unknown = null;
+      try { summary = JSON.parse(out); } catch { /* reported below */ }
+      if (code !== 0 || !summary || typeof summary !== 'object') return rejectChild(new Error(`node-bridge child exited ${code}`));
+      const inert = (summary as Record<string, unknown>)['inert'];
+      resolveChild(typeof inert === 'string' ? skipTickPhase(inert) : summary as Record<string, unknown>);
+    });
+  });
+}
+
 function shadowSeatRouteBeside(cfg: AshlrConfig, item: WorkItem, backend: string): void {
   if ((cfg.foundry as Record<string, unknown> | undefined)?.['seatRouterShadow'] === false) return;
   if (seatShadowInFlight >= SEAT_SHADOW_MAX_IN_FLIGHT) return;
@@ -4026,13 +4066,14 @@ export async function tick(
   // second scan over it in the same tick only stacks work. Later refreshes
   // this tick are skipped and the next tick resumes the scan.
   let backlogRefreshTimedOut = false;
-  const runBacklogRefreshPhase = async (): Promise<WorkItem[]> => {
+  const backlogScanSnapshot = createBacklogScanSnapshot();
+  const runBacklogRefreshPhase = async (invalidate?: BacklogScanInvalidation): Promise<WorkItem[]> => {
     if (backlogRefreshTimedOut) {
       await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS,
         async () => skipTickPhase('an earlier backlog refresh this tick timed out'));
       return [];
     }
-    const refreshed = await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick());
+    const refreshed = await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, (signal) => refreshBacklogForTick(signal, invalidate));
     if (refreshed.status === 'timeout') backlogRefreshTimedOut = true;
     return refreshed.value ?? [];
   };
@@ -4347,6 +4388,7 @@ export async function tick(
   let zeroDollarOnlyTick = false;
   let meteredUsdExhaustedForMaintenance = false;
   let selfHealMaintenanceRan = false;
+  let selfHealMaintenanceResult: SelfHealCycleResult | undefined;
   let inventMaintenanceRan = false;
   let ancillaryMaintenanceRan = false;
   let proposalRepairMaintenanceRan = false;
@@ -4631,9 +4673,9 @@ export async function tick(
     try {
       const healOpts = phaseSignal ? { signal: phaseSignal } : {};
       if (targetRepos && targetRepos.length > 0) {
-        await runSelfHealCycleForRepos(targetRepos, liveCfg, healOpts);
+        selfHealMaintenanceResult = await runSelfHealCycleForRepos(targetRepos, liveCfg, healOpts);
       } else {
-        await runSelfHealCycle(liveCfg, healOpts);
+        selfHealMaintenanceResult = await runSelfHealCycle(liveCfg, healOpts);
       }
     } catch (err) {
       // Best-effort — self-heal must never crash the tick.
@@ -4760,49 +4802,68 @@ export async function tick(
       await runPhase('reflection', TICK_PHASE_REFLECTION_MS, run);
     }
   };
-  const runAncillaryMaintenance = async (): Promise<void> => {
+  const runAncillaryMaintenance = async (signal: AbortSignal): Promise<void> => {
     if (meteredUsdExhaustedForMaintenance || proposalOnlyActivation || opts.dryRun || stopRequested() || ancillaryMaintenanceRan) return;
     ancillaryMaintenanceRan = true;
 
-    // M187: Counterfactual replay — low-cadence judge calibration.
-    if (
-      !stopRequested() &&
-      (liveCfg.foundry as Record<string, unknown>)?.counterfactual === true &&
-      state.ticks.length % 20 === 0
-    ) {
-      try { await runCounterfactualReplay(liveCfg); } catch (err) { console.warn('[ashlr] daemon:tick runCounterfactualReplay failed:', (err as Error)?.message ?? err); }
-    }
-
-    // Outcome findings remain signed observation-only evidence. They are not
-    // allowed to rewrite judge labels or skill lifecycle state while cohort
-    // enumeration is incomplete.
-    if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['outcomeWatcher'] !== false) {
-      try {
-        const { scanRealWorldOutcomes } = await import('../fleet/outcome-watcher.js');
-        await scanRealWorldOutcomes(liveCfg, { enrolledRepos: enrolled });
-      } catch (err) {
-        console.warn('[ashlr] daemon:tick outcomeWatcher failed:', (err as Error)?.message ?? err);
+    const budget = createAncillaryObservationBudget({
+      signal,
+      onSkip: (stage, reason) => {
+        if (stage === 'counterfactual-replay') state.counterfactualReplayPending = true;
+        noteTickPhase('ancillary', `${stage} skipped: ${reason}`);
+        audit({ action: 'daemon:ancillary-skip', repo: null, sandboxId: null, summary: `${stage} skipped: ${reason}`, result: 'error' });
+      },
+    });
+    try {
+      // M187: Counterfactual replay — low-cadence judge calibration.
+      if (
+        !stopRequested() &&
+        (liveCfg.foundry as Record<string, unknown>)?.counterfactual === true &&
+        (state.counterfactualReplayPending === true || state.ticks.length % 20 === 0)
+      ) {
+        await budget.run('counterfactual-replay', async (controls) => {
+          state.counterfactualReplayPending = false;
+          try { await runCounterfactualReplay(liveCfg, controls); } catch (err) { console.warn('[ashlr] daemon:tick runCounterfactualReplay failed:', (err as Error)?.message ?? err); }
+        });
       }
-    }
 
-    // M505: Learning-loop sweeps. Each of these was previously unreachable in a
-    // live tick — rejection learning sat behind `autoMerge.enabled`, post-merge
-    // credit was a stubbed `false`, and reflection was a manual CLI command — so
-    // the fleet observed every run and learned from none of them.
-    if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] === true) {
-      try {
-        const { sweepRejectionLearning } = await import('../fleet/self-improve.js');
-        const result = sweepRejectionLearning(liveCfg);
-        rejectionLearningSweepResult = result;
-        if (result.scanned > 0 || result.written > 0) {
-          console.warn(
-            `[ashlr] daemon:tick sweepRejectionLearning: scanned=${result.scanned} ` +
-            `written=${result.written} skipped=${result.skipped} sourceComplete=${result.sourceComplete}`,
-          );
-        }
-      } catch (err) {
-        console.warn('[ashlr] daemon:tick sweepRejectionLearning failed:', (err as Error)?.message ?? err);
+      // Outcome findings remain signed observation-only evidence. They are not
+      // allowed to rewrite judge labels or skill lifecycle state while cohort
+      // enumeration is incomplete.
+      if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['outcomeWatcher'] !== false) {
+        await budget.run('outcome-watcher', async (controls) => {
+          try {
+            const { scanRealWorldOutcomes } = await import('../fleet/outcome-watcher.js');
+            await scanRealWorldOutcomes(liveCfg, { enrolledRepos: enrolled, ...controls });
+          } catch (err) {
+            console.warn('[ashlr] daemon:tick outcomeWatcher failed:', (err as Error)?.message ?? err);
+          }
+        });
       }
+
+      // M505: Learning-loop sweeps. Each of these was previously unreachable in a
+      // live tick — rejection learning sat behind `autoMerge.enabled`, post-merge
+      // credit was a stubbed `false`, and reflection was a manual CLI command — so
+      // the fleet observed every run and learned from none of them.
+      if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] === true) {
+        await budget.run('rejection-learning', async (controls) => {
+          try {
+            const { sweepRejectionLearning } = await import('../fleet/self-improve.js');
+            const result = sweepRejectionLearning(liveCfg, controls);
+            rejectionLearningSweepResult = result;
+            if (result.scanned > 0 || result.written > 0) {
+              console.warn(
+                `[ashlr] daemon:tick sweepRejectionLearning: scanned=${result.scanned} ` +
+                `written=${result.written} skipped=${result.skipped} sourceComplete=${result.sourceComplete}`,
+              );
+            }
+          } catch (err) {
+            console.warn('[ashlr] daemon:tick sweepRejectionLearning failed:', (err as Error)?.message ?? err);
+          }
+        });
+      }
+    } finally {
+      budget.dispose();
     }
 
     // Credit is released only by the M505 protocol's own fail-closed checks
@@ -5063,7 +5124,7 @@ export async function tick(
     const current = readPreparedManagerPrompt(item);
     return !!prepared && !!current && outcomeDigest(prepared) === outcomeDigest(current);
   };
-  const refreshBacklogForTick = async (): Promise<WorkItem[]> => {
+  const refreshBacklogForTick = async (signal: AbortSignal, invalidate?: BacklogScanInvalidation): Promise<WorkItem[]> => {
     if (stopRequested()) return [];
     const settleObservation = beginTickStageObservation('backlog-refresh');
     let observationOutcome: 'ok' | 'failed' = 'ok';
@@ -5126,7 +5187,7 @@ export async function tick(
           }
         }
       }
-      const backlog = await buildBacklog({ repos: enrolled });
+      const backlog = await buildBacklog({ repos: enrolled, snapshot: backlogScanSnapshot, signal, invalidate });
       backlogSnapshotAt = backlog.generatedAt;
       backlogSnapshotId = backlog.snapshotId;
       const resolution = resolveDiagnosticResliceParents([...backlog.items, ...managerItems]);
@@ -5142,6 +5203,8 @@ export async function tick(
       settleObservation(observationOutcome);
     }
   };
+  const refreshAfterSelfHeal = (touchedRepos?: string[]): Promise<WorkItem[]> =>
+    runBacklogRefreshPhase({ repos: touchedRepos ?? enrolled, scanners: ['queued-autonomy'] });
   const prunableSelfHealRepos = (items: WorkItem[]): string[] => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -5467,7 +5530,7 @@ export async function tick(
     (proposalRepairResult?.dispatchRepairPruned ?? 0) > 0
   ) {
     backlogItems =
-      await runBacklogRefreshPhase();
+      await runBacklogRefreshPhase({ scanners: ['queued-autonomy'] });
   }
   for (const key of proposalRepairResult?.blockedItemKeys ?? []) blockedRepairKeys.add(key);
   for (const key of proposalRepairResult?.blockedRootKeys ?? []) blockedRepairRootKeys.add(key);
@@ -5520,14 +5583,14 @@ export async function tick(
     if (!opts.dryRun && shouldRunProducerMaintenance(state)) {
       producerMaintenanceBeforeSelection = true;
       await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(undefined, signal));
-      backlogItems = filterGeneratedRepairDispatch(await runBacklogRefreshPhase());
+      backlogItems = filterGeneratedRepairDispatch(await refreshAfterSelfHeal(selfHealMaintenanceResult?.checkedRepos));
       if (backlogItems.length > 0) {
         skipInventAfterSelfHealRefill = true;
       } else {
         const invented =
           (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
         if (invented) backlogItems = filterGeneratedRepairDispatch(
-          await runBacklogRefreshPhase());
+          await runBacklogRefreshPhase({ repos: enrolled }));
       }
       await runMaintenancePhase('ancillary', runAncillaryMaintenance);
     }
@@ -5585,11 +5648,11 @@ export async function tick(
   ) {
     producerMaintenanceBeforeSelection = true;
     await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(selfHealReposBeforeSelection, signal));
-    backlogItems = filterGeneratedRepairDispatch(await runBacklogRefreshPhase());
+    backlogItems = filterGeneratedRepairDispatch(await refreshAfterSelfHeal(selfHealMaintenanceResult?.checkedRepos));
     const invented =
       (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
     if (invented) backlogItems = filterGeneratedRepairDispatch(
-      await runBacklogRefreshPhase());
+      await runBacklogRefreshPhase({ repos: enrolled }));
     await runMaintenancePhase('ancillary', runAncillaryMaintenance);
 
     if (backlogItems.length === 0) {
@@ -6504,6 +6567,11 @@ export async function tick(
   const batchParallelCeiling = dcfg.mode !== 'continuous' &&
     typeof liveCfg.daemon?.parallel === 'number' && Number.isSafeInteger(liveCfg.daemon.parallel) && liveCfg.daemon.parallel > 0
     ? liveCfg.daemon.parallel : null;
+  // RQ-NODE-BRIDGE-1: offload eligible ready.tsv rows to idle node-router workers. No
+  // awaited stage (and no phase record) until ~/.ashlr/node-bridge.json exists.
+  if (existsSync(join(ashlrHome(), 'node-bridge.json'))) {
+    await runPhase('node-bridge', TICK_PHASE_NODE_BRIDGE_MS, runNodeBridgeChild);
+  }
   const fleetMonitor = localFleetMonitor();
   const localFleet: LocalFleetSettings = readLocalFleetSettings(routingCfg);
   fleetMonitor.setSettings(localFleet);
@@ -10481,6 +10549,9 @@ async function runDaemonInEnrollmentScope(
   // Stopped in the shutdown block below (see startResidentCapacityPublisher).
   const residentPublisherRun = { dryRun: opts.dryRun, once: opts.once, standing: standing !== null };
   await startResidentCapacityPublisher(activationCfg, residentPublisherRun);
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).ensureDevinAutolandTimer(); } catch { /* Optional resident maintenance. */ }
+  }
 
   // Refresh independently of dispatch ticks; a slow GitHub call cannot overlap itself.
   let factsBusy = false;
@@ -11349,6 +11420,9 @@ async function runDaemonInEnrollmentScope(
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
   if (!opts.dryRun) await stopResidentCapacityPublisher();
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).stopDevinAutolandTimer(); } catch { /* Nothing to stop. */ }
+  }
   await cancelOffTickJobs();
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,

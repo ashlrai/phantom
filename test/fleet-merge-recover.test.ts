@@ -1,11 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { cmdFleetMergeRecover } from '../src/cli/fleet-merge-recover.js';
 import type { DirtyLandedPr } from '../src/cli/fleet-dirty-landed.js';
 import type { CloudGh } from '../src/core/cloud/pr-actions.js';
+import { reserveMergeRecoveryAttempt } from '../src/core/fleet/merge-recovery-budget.js';
+
+let runsDir: string;
+beforeEach(async () => { runsDir = await mkdtemp(join(tmpdir(), 'merge-recovery-budget-')); });
+afterEach(async () => { await rm(runsDir, { recursive: true, force: true }); });
 
 const head = 'a'.repeat(40);
 const source: DirtyLandedPr = { number: 42, title: 'bridge: RQ-PHX-EXAMPLE', head, base: 'main', class: 'needs-recut', changedPaths: ['src/example.ts'], landedPaths: [], remainingPaths: ['src/example.ts'] };
@@ -14,6 +19,8 @@ function fixture(remainingPaths = source.remainingPaths) {
   const title = `bridge: RQ-PHX-MR${createHash('sha256').update(`42:${head}`).digest('hex').slice(0, 32).toUpperCase()}`;
   let writes = 0, body = '', output = '';
   const liveReplacement: Record<string, unknown> = {};
+  const inspected = { ...source, remainingPaths };
+  let afterSearch = () => {};
   const state = { sourceState: 'OPEN', moved: false, replacement: false, replacementState: 'OPEN', conflict: false, failMerge: false, auto: false, failWrite: false, failView: false, replacementNumber: 43, replacementCount: 1, unrelated: false };
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -26,14 +33,15 @@ function fixture(remainingPaths = source.remainingPaths) {
     if (args[1] === 'view' && args[2] !== '42' && state.failView) return { ok: false, stdout: '', stderr: 'withheld' };
     const result = args[1] === 'view' ? args[2] === '42' ? pr : { ...replacement, ...liveReplacement }
       : state.replacement ? Array.from({ length: state.replacementCount }, (_, i) => ({ ...replacement, number: replacement.number + i, title: state.unrelated ? 'unrelated search hit' : title })) : [];
+    if (args[1] === 'list') afterSearch();
     return { ok: true, stdout: JSON.stringify(result), stderr: '' };
   };
-  const run = (apply = false) => cmdFleetMergeRecover([...(apply ? ['--apply'] : []), '--json'], {
-    gh, inspect: async () => [{ ...source, remainingPaths }], exists: async (_root, id) => jobs.has(id),
+  const run = (apply = false) => cmdFleetMergeRecover([...(apply ? ['--apply'] : []), '--json', '--runs-dir', runsDir], {
+    gh, inspect: async () => [inspected], exists: async (_root, id) => jobs.has(id),
     write: async (_root, job) => { if (state.failWrite) throw new Error('write'); writes++; jobs.add(job.id); body = job.body; return { file: 'fake', bytes: 1, at: '' }; },
     output: text => { output = text; },
   });
-  return { run, state, liveReplacement, calls, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
+  return { run, state, inspected, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
 }
 describe('fleet merge-recover', () => {
   it('defaults to a mutation-free conflict preview', async () => {
@@ -158,8 +166,66 @@ describe('fleet merge-recover', () => {
       const replacement = { ...base, number: 43, title: `bridge: RQ-PHX-MR${createHash('sha256').update(`42:${head}`).digest('hex').slice(0, 32).toUpperCase()}`, mergeStateStatus: 'BLOCKED' };
       return { ok: true, stdout: JSON.stringify(args[1] === 'view' ? args[2] === '42' ? base : replacement : [replacement]), stderr: '' };
     };
-    expect(await cmdFleetMergeRecover(['--apply', '--json'], { gh, inspect: async () => [source], output: text => { output = text; } })).toBe(0);
+    expect(await cmdFleetMergeRecover(['--apply', '--json', '--runs-dir', runsDir], { gh, inspect: async () => [source], output: text => { output = text; } })).toBe(0);
     expect(JSON.parse(output).rows[0].action).toBe('auto-merge-requested');
     expect(merges).toBe(1);
+  });
+  it.each(['recut', 'merge'] as const)('bounds failed %s submissions across fresh invocations and head changes', async action => {
+    for (let i = 0; i < 3; i++) {
+      const f = fixture(); f.state.replacement = action === 'merge';
+      f.state.failMerge = true; f.state.failWrite = true;
+      f.liveReplacement.headRefOid = String(i).repeat(40);
+      expect(await f.run(true)).toBe(1);
+    }
+    const f = fixture(); f.state.replacement = action === 'merge';
+    if (action === 'recut') { f.state.moved = true; f.inspected.head = 'b'.repeat(40); }
+    expect(await f.run()).toBe(0); expect(f.report.rows[0].action).toBe('retry-limit');
+    expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('retry-limit');
+    expect(f.writes).toBe(0); expect(f.calls.some(args => args[1] === 'merge')).toBe(false);
+  });
+  it.each([false, true])('refuses a source merged during replacement discovery (replacement=%s)', async replacement => {
+    const f = fixture(); f.state.replacement = replacement;
+    f.onSearch(() => { f.state.sourceState = 'MERGED'; });
+    expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('source-changed');
+    expect(f.writes).toBe(0); expect(f.calls.some(args => args[1] === 'merge')).toBe(false);
+    expect(await readdir(runsDir)).toEqual([]);
+  });
+  it('reports work already present on the base without another recut or merge', async () => {
+    const f = fixture(); f.inspected.class = 'landed';
+    expect(await f.run(true)).toBe(0);
+    expect(f.report.rows[0].action).toBe('already-present-on-base');
+    expect(f.calls).toEqual([]); expect(f.writes).toBe(0);
+  });
+  it('previews without writes and atomically caps concurrent reservations independently per action', async () => {
+    expect(await reserveMergeRecoveryAttempt(runsDir, 42, 'merge', false)).toBe(true);
+    expect(await readdir(runsDir)).toEqual([]);
+    const attempts = await Promise.all(Array.from({ length: 8 }, () => reserveMergeRecoveryAttempt(runsDir, 42, 'merge', true)));
+    expect(attempts.filter(Boolean)).toHaveLength(3);
+    expect(await reserveMergeRecoveryAttempt(runsDir, 42, 'merge', false)).toBe(false);
+    expect(await reserveMergeRecoveryAttempt(runsDir, 42, 'recut', true)).toBe(true);
+    expect(await reserveMergeRecoveryAttempt(runsDir, 43, 'merge', true)).toBe(true);
+  });
+  it('fails closed before effects when the budget store is unavailable or redirected', async () => {
+    const f = fixture(); f.state.replacement = true;
+    await writeFile(join(runsDir, 'queue'), 'not a directory');
+    expect(await f.run(true)).toBe(1);
+    await rm(join(runsDir, 'queue'));
+    await symlink(runsDir, join(runsDir, 'queue'), 'dir');
+    expect(await f.run(true)).toBe(1);
+    expect(f.calls.some(args => args[1] === 'merge')).toBe(false);
+  });
+  it('does not spend recut attempts while the drop queue is full', async () => {
+    const dir = join(runsDir, 'queue', 'prompts');
+    await mkdir(dir, { recursive: true });
+    await Promise.all(Array.from({ length: 40 }, (_, i) => writeFile(join(dir, `RQ-PHX-JOB${i}.md`), 'queued')));
+    let reserved = false;
+    const result = await cmdFleetMergeRecover(['--apply', '--json', '--runs-dir', runsDir], {
+      inspect: async () => [source], output: () => {},
+      gh: async args => ({ ok: true, stderr: '', stdout: JSON.stringify(args[1] === 'list' ? [] : {
+        number: 42, title: source.title, state: 'OPEN', headRefOid: head, baseRefName: 'main', isDraft: false, mergeStateStatus: 'DIRTY',
+      }) }),
+      reserve: async () => { reserved = true; return true; },
+    });
+    expect(result).toBe(1); expect(reserved).toBe(false);
   });
 });

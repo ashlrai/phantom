@@ -1,5 +1,7 @@
 # Router gateway
 
+Provider-neutral [failover chains](ROUTING.md#failover-chains) are advisory and dispatcher-unwired.
+
 See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
 
 The router gateway lets any agent ask for a model completion and have Phantom
@@ -164,9 +166,21 @@ The gateway uses only exact verified IDs from [the registry](model-registry.json
 Auto and offered pins skip unverified/retired models and try the next verified
 model offered by the same seat, retaining admission checks and logging the reason.
 No verified alternative means no call. A missing or invalid registry fails closed.
-To qualify a new model on release day, confirm its exact ID in official docs, add
-its URL as `verified_source`, the UTC date as `verified_at`, and set `status` to
-`verified`; unresolved IDs stay `unverified` with null evidence. Mark documented
-retirements `retired`. Discovery and page-text matches never promote status.
+`phm models [--json]` lists every registry entry: provider, model ID, lanes
+(empty means unknown), `verified`, source URL, verified-on date, and the
+`unverified` and `stale` (verified over 30 days ago) flags. The desktop Models
+panel shows the same rows from `GET /api/verse/fleet/control/models`.
+
+To qualify a new model on release day, confirm its exact ID in official docs, then
+run `phm models verify <id> --source <url>` (add `--provider <name>` for an ID that
+is not listed yet, and `--lane <lane>` for each lane that can run it). The command
+reads the page itself and refuses unless it is https on the provider's own doc
+site and names the exact ID. It records the result for this machine in
+`$ASHLR_HOME/model-registry.json`; the router reads that together with the shipped
+list. A local record never revives a `retired` model or replaces newer shipped
+evidence. To ship evidence to everyone, edit `docs/model-registry.json` in a PR:
+`verified_source`, the UTC date as `verified_at`, `status` `verified`, and
+optional `lanes`. Unresolved IDs stay `unverified` with null evidence. Mark
+documented retirements `retired`. Discovery alone never promotes status.
 This gate covers the gateway; legacy task routing and the advisory queue router
 are separate paths and are not yet protected by it.

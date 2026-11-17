@@ -52,7 +52,15 @@ phm nodes --can-take claude --json
 is running there, free memory, CPU headroom, lanes, running jobs and a
 plain-words state such as `ready for work` or `offline since 10:42`.
 `--can-take <lane>` lists only the computers that can take a job for that lane
-now. It is read only: it reads `tailscale status` and the node list already on
+now and recommends one: ready remote computers first, most free slots first,
+then name to break ties. If none qualifies, it falls back to this computer only
+when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
+`target` (`remote`, `local`, `none`), `reason` (`remote-ready`, `local-only`,
+`local-fallback`, `no-ready-node`) and a plain explanation. Unknown reachability
+or slots, stale mirrors and expired lane advertisements cannot qualify a node.
+The typed `chooseNodeForLane` API also accepts `{ localOnly: true }` to keep
+explicitly local work here. This is advice; it does not reserve or launch work.
+It is read only: it reads `tailscale status` and the node list already on
 this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
 the node list on another computer) is `unknown` with the reason. The desktop
 Computers pane shows the same rows as cards.
@@ -127,7 +135,10 @@ outside this change; any such integration needs its separate security review.
 The runner must be an absolute, owned executable with safe ancestors, checked by
 the existing Drive executable validator. It is invoked as `<runner> run`, receives
 one JSON object on stdin with `protocol: "phm-node-worker/v1"`, the existing node
-`job` view and its `claim`, and must return exactly one bounded JSON object:
+`job` view and its `claim`, plus an optional `providerBinaries` receipt naming the
+absolute provider binary the worker's probe signed in with (see
+[node runner](NODES.md#reference-runner-security-review-before-installation)), and
+must return exactly one bounded JSON object:
 
 ```json
 {"resultRef":"branch:example-1"}
@@ -137,7 +148,9 @@ The result reference must satisfy the existing node identifier grammar. The runn
 owns pack resolution, sandboxed execution on the requested locally signed-in lane,
 and artifact storage accessible to the primary. Its stdout is limited to 4096
 bytes and stderr is discarded. A successful process without a valid result
-reference is not completion. The worker forwards only the reference, never raw
+reference is not completion. A reply with `packError` or `codex: "error"`, or a
+nonzero exit, releases the lease for retry; two consecutive failures of one pack
+decline it for the session. The worker forwards only the reference, never raw
 provider transcripts. The runner must not publish, resolve copied credentials or
 perform unfenced external effects. It must pass the claim token to any effect sink
 that accepts effects; a preflight lease check alone cannot fence external effects.

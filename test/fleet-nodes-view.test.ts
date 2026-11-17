@@ -10,7 +10,7 @@ import { createFleetRuntimeIdentityApi } from '../src/core/verse/fleet-runtime-i
 import { VERSE_FLEET_NODES_PATH, createFleetHostReachApi } from '../src/core/verse/fleet-host-reach-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { narrowComputers } from '../src/web-ui/routes/verse/fleet-host/computers-model.js';
-import { nodesThatCanTake, readNodesView, type NodesRegistry, type NodesViewDeps } from '../src/core/fleet/nodes-view.js';
+import { chooseNodeForLane, nodesThatCanTake, readNodesView, type NodesRegistry, type NodesViewDeps } from '../src/core/fleet/nodes-view.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 const GIB = 1024 ** 3;
@@ -98,7 +98,7 @@ describe('readNodesView', () => {
     const view = readNodesView(deps(null, registry([node('node-a'), node('node-b')])));
     expect(view.reasons).toEqual(['tailscale unavailable or status unreadable']);
     expect(view.self).toBe('node-a');
-    expect(view.nodes.map(row => [row.name, row.reachable, row.state])).toEqual([['node-a', true, 'ready for work'], ['node-b', 'unknown', 'ready for work']]);
+    expect(view.nodes.map(row => [row.name, row.reachable, row.state])).toEqual([['node-a', true, 'ready for work'], ['node-b', 'unknown', 'Phantom running; reachability unknown']]);
     expect(view.nodes[1]?.lastSeen).toBe('2026-11-17T11:59:58.000Z');
   });
 
@@ -118,6 +118,70 @@ describe('readNodesView', () => {
     const stale = readNodesView(deps(tailnet([peer('node-b', true)]), mirror));
     expect(stale.nodes[1]).toMatchObject({ phantom: 'unknown', stateCode: 'unknown' });
     expect(stale.reasons).toEqual(['pool mirror last updated 11:50; newer node state unknown']);
+  });
+});
+
+describe('chooseNodeForLane', () => {
+  it('keeps a local-only pool local and honors an explicit local restriction', () => {
+    const local = readNodesView(deps(tailnet([]), registry([node('node-a')])));
+    expect(chooseNodeForLane(local, 'codex')).toMatchObject({ node: 'node-a', target: 'local', reason: 'local-only' });
+    const pool = readNodesView(deps(tailnet([peer('node-b', true)]), registry([node('node-a'), node('node-b')])));
+    expect(chooseNodeForLane(pool, 'codex', { localOnly: true })).toMatchObject({ node: 'node-a', reason: 'local-only' });
+    expect(chooseNodeForLane({ ...pool, nodes: pool.nodes.slice(1) }, 'codex', { localOnly: true }))
+      .toMatchObject({ node: null, target: 'none', reason: 'no-ready-node' });
+  });
+
+  it('prefers a ready remote computer and ranks remotes by free slots', () => {
+    const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true)]),
+      registry([node('node-a', { slots: 10 }), node('node-b'), node('node-c', { slots: 3 })])));
+    expect(chooseNodeForLane(view, 'codex')).toEqual({ lane: 'codex', node: 'node-c', target: 'remote', reason: 'remote-ready',
+      explanation: 'Ready remote computer; most free slots first, then name.' });
+  });
+
+  it.each([
+    ['offline', false, {}], ['expired heartbeat', true, { expiresAt: NOW }],
+    ['full', true, { slots: 0 }], ['unmeasured slots', true, { slots: undefined }],
+    ['wrong lane', true, { caps: ['claude'] }],
+    ['held', true, { capacity: { hostId: 'node-b', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 2, held: 'memory-pressure' } }],
+  ] satisfies [string, boolean, Partial<NodeRecord>][])('falls back locally when the remote is %s', (_reason, online, extra) => {
+    const view = readNodesView(deps(tailnet([peer('node-b', online)]), registry([node('node-a'), node('node-b', extra)])));
+    expect(nodesThatCanTake(view, 'codex').map(row => row.name)).toEqual(['node-a']);
+    expect(chooseNodeForLane(view, 'codex')).toMatchObject({ node: 'node-a', target: 'local', reason: 'local-fallback' });
+  });
+
+  it('breaks remote ties by name regardless of input order without mutating the snapshot', () => {
+    const view = readNodesView(deps(tailnet([peer('node-c', true), peer('node-b', true)]),
+      registry([node('node-c'), node('node-a'), node('node-b')])));
+    const before = JSON.stringify(view);
+    const choice = chooseNodeForLane(view, 'codex');
+    expect(choice.node).toBe('node-b');
+    expect(chooseNodeForLane({ ...view, nodes: [...view.nodes].reverse() }, 'codex')).toEqual(choice);
+    expect(JSON.stringify(view)).toBe(before);
+  });
+
+  it('does not place on unknown reachability or fabricate a ready local fallback', () => {
+    const view = readNodesView(deps(null, registry([node('node-a'), node('node-b')])));
+    expect(chooseNodeForLane(view, 'codex')).toMatchObject({ node: 'node-a', reason: 'local-fallback' });
+    for (const empty of [readNodesView(deps(tailnet([]), NO_POOL)), { ...view, nodes: view.nodes.slice(1) }]) {
+      expect(chooseNodeForLane(empty, 'codex')).toMatchObject({ node: null, target: 'none', reason: 'no-ready-node' });
+    }
+  });
+
+  it('rejects stale mirror evidence even when copied node leases have not expired', () => {
+    const mirror = registry([node('node-a'), node('node-b')], [], { source: 'pool-mirror' });
+    mirror.state!.observedAt = NOW - 600_000;
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), mirror));
+    expect(nodesThatCanTake(view, 'codex')).toEqual([]);
+    expect(chooseNodeForLane(view, 'codex')).toMatchObject({ node: null, reason: 'no-ready-node' });
+  });
+
+  it('does not inherit a lane from an expired record on an otherwise ready computer', () => {
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), registry([
+      node('node-a'), node('node-b'), node('old-worker', { expiresAt: NOW, caps: ['gemini'],
+        capacity: { hostId: 'node-b', sampledAtMs: NOW, ramBytes: 32 * GIB, slots: 2 } }),
+    ])));
+    expect(view.nodes[1]?.lanes).toEqual(['claude', 'codex']);
+    expect(chooseNodeForLane(view, 'gemini')).toMatchObject({ node: null, reason: 'no-ready-node' });
   });
 });
 
@@ -142,8 +206,19 @@ describe('phm nodes', () => {
   it('--can-take lists only computers ready for that lane', async () => {
     const json = JSON.parse((await run(['--can-take', 'claude', '--json'])).out);
     expect([json.canTake, json.nodes.map((row: { name: string }) => row.name)]).toEqual(['claude', ['node-a']]);
+    expect(json.placement).toMatchObject({ node: 'node-a', reason: 'local-fallback' });
     vi.restoreAllMocks();
     expect((await run(['--can-take', 'gemini'])).out).toBe('No computer can take a gemini job now. Run `phm nodes` to see why.');
+  });
+
+  it('exposes the same remote choice in JSON and plain words, and null when no lane is ready', async () => {
+    const json = JSON.parse((await run(['--can-take', 'codex', '--json'])).out);
+    expect(json.placement).toMatchObject({ lane: 'codex', node: 'node-b', target: 'remote', reason: 'remote-ready' });
+    vi.restoreAllMocks();
+    expect((await run(['--can-take', 'codex'])).out).toContain(`Suggested computer: node-b. ${json.placement.explanation}`);
+    vi.restoreAllMocks();
+    expect(JSON.parse((await run(['--can-take', 'gemini', '--json'])).out).placement)
+      .toMatchObject({ node: null, target: 'none', reason: 'no-ready-node' });
   });
 
   it('prints one plain row per computer and refuses bad flags', async () => {
