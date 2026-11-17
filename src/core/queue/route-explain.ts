@@ -8,7 +8,7 @@ import { loadRouteSources } from '../routing/decision-candidates.js';
 import { decideRoute } from '../routing/decision.js';
 import { modelModeTierSchema, routeRequestSchema, routeModelSchema } from '../routing/decision-schema.js';
 
-async function postureEvidence(root: string) {
+export async function postureEvidence(root: string) {
   const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
   const projection = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
   try {
@@ -31,7 +31,7 @@ async function postureEvidence(root: string) {
     const input = row?.event === 'posture' ? row.lanes : row?.ranking_inputs;
     if (!object(input) || !Object.keys(input).length) return null;
     const lanes: Record<string, { posture: string; postureReason: string; projectedUnusedPct: number | null; hoursToReset: number | null;
-      costClass?: string; costClassReason?: string; zeroCost?: boolean; allowance?: Record<string, number | null> }> = {};
+      costClass?: string; costClassReason?: string; zeroCost?: boolean; freePreview?: boolean; previewExpiresAt?: string; allowance?: Record<string, number | null> }> = {};
     for (const [lane, value] of Object.entries(input)) {
       if (!object(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
           typeof value.posture_reason !== 'string' || !value.posture_reason) return null;
@@ -43,6 +43,8 @@ async function postureEvidence(root: string) {
       if (typeof value.cost_class === 'string' && ['local', 'included', 'metered'].includes(value.cost_class)) lanes[lane].costClass = value.cost_class;
       if (typeof value.cost_class_reason === 'string') lanes[lane].costClassReason = value.cost_class_reason;
       if (typeof value.zero_cost === 'boolean') lanes[lane].zeroCost = value.zero_cost;
+      if (typeof value.free_preview === 'boolean') lanes[lane].freePreview = value.free_preview;
+      if (typeof value.preview_expires_at === 'string' && Number.isFinite(Date.parse(value.preview_expires_at))) lanes[lane].previewExpiresAt = value.preview_expires_at;
       if (object(value.allowance)) {
         const allowance = value.allowance;
         lanes[lane].allowance = Object.fromEntries(['used', 'limit', 'in_flight', 'reserve', 'session_cap', 'headroom']
