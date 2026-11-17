@@ -2652,6 +2652,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'nodes': {
+        const { cmdNodes } = await import('./nodes.js');
+        process.exitCode = await cmdNodes(rest);
+        break;
+      }
+
       case 'node': {
         const cmdNode = await loadNodeCmd();
         process.exitCode = await cmdNode(rest);

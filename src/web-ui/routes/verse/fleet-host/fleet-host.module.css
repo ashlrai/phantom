@@ -30,3 +30,8 @@
 .peerDot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--status-unknown-fg); }
 .peerDot[data-state='online'] { background: var(--status-success-solid); }
 .peerDot[data-state='offline'] { background: var(--status-danger-solid); }
+.peerDot[data-state='ready'] { background: var(--status-success-solid); }
+.peerDot[data-state='busy'], .peerDot[data-state='held'], .peerDot[data-state='not-running'] { background: var(--status-warning-solid); }
+.computers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.computer { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.computer[data-state='offline'] { border-color: var(--status-danger-solid); }

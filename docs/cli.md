@@ -410,6 +410,7 @@ Every command, grouped by topic.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     autofix [--apply] [--dry-run] [--json] [--only <fixer>]                               Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.
+    nodes [--json] [--can-take <lane>]                                                    Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.
     node join|beat|enqueue|plan|pull|complete|status [--json]                             Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.
     node bootstrap --dry-run [--json]                                                     Plan a persistent Linux node; registry integration is a stub, no provisioning.
     sandbox list                                                                          List active git-worktree sandboxes (M21 safety foundation).
