@@ -4,10 +4,11 @@ const effects = vi.hoisted(() => ({
   config: vi.fn(),
   inventory: vi.fn(),
   health: vi.fn(),
+  diagnose: vi.fn(() => [{ id: 'claude', engine: 'claude', reason: 'unavailable', binaryOnPath: false }]),
 }));
 vi.mock('../src/core/config.js', () => ({ loadConfigReadOnlyStrict: effects.config }));
 vi.mock('../src/core/generative/invent.js', () => ({ listFrontierClients: effects.inventory }));
-vi.mock('../src/core/daemon/guard-health.js', () => ({ readDaemonHealth: effects.health }));
+vi.mock('../src/core/daemon/guard-health.js', () => ({ readDaemonHealth: effects.health, diagnoseFrontierClients: effects.diagnose }));
 import { cmdDaemon } from '../src/cli/daemon.js';
 
 beforeEach(() => {
@@ -33,12 +34,15 @@ describe('daemon health CLI', () => {
     const output = JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]));
     expect(output.frontierClientsResolved).toEqual([{ id: 'codex-primary', engine: 'codex', model: 'gpt-5.4' }]);
     expect(effects.config).toHaveBeenCalledOnce();
+    expect(effects.health).toHaveBeenCalledWith(expect.any(Array), {}, {
+      unavailable: [{ id: 'claude', engine: 'claude', reason: 'unavailable', binaryOnPath: false }],
+    });
   });
 
   it('reports unknown inventory and exits nonzero on config failure without exposing the error', async () => {
     effects.config.mockImplementation(() => { throw new Error('sensitive configuration'); });
     expect(await cmdDaemon(['health', '--json'])).toBe(1);
-    expect(effects.health).toHaveBeenCalledWith(null);
+    expect(effects.health).toHaveBeenCalledWith(null, {}, { unavailable: [], error: 'config or frontier inventory unreadable' });
     expect(String(vi.mocked(console.log).mock.calls[0]?.[0])).not.toContain('sensitive');
     expect(effects.inventory).not.toHaveBeenCalled();
   });

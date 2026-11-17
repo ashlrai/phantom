@@ -1,4 +1,41 @@
+# Advisory routing pairing
+
+`run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
+model classifications and their capability order. `ModelEntry.modeTier` is
+required and excludes fusion (a composition). `RouteRequest.mode?` requests a
+minimum model class, independently of queue `tier_hint`; unknown models need
+`models.json["mode.<model>"]`. `RouteDecision.mode_tier` is the selected class
+or null. `RouteReport` includes `requested_mode` and nullable capacity evidence.
+`decideRoute(raw, sources, {backends?, signal?, nowMs?})` returns a
+`RouteReport` or, for fusion, `route.pairing.v1` with `mode_tier: fusion`.
+Fusion assigns ultra judgment and lite/normal implementation through
+`decidePairing`. Assignments add nullable `model` and `mode_tier`.
+`RouteSources` adds optional `capacity` and `request` snapshots, loaded from
+`queue/route-capacity.json` and `queue/route-request.json`. `explainRoutes`
+adds nullable `decision`, recomputed without model calls from those snapshots.
+Among eligible lanes: closest future reset with positive allowance, then
+zero marginal cost, then cheapest known marginal cost; unknown cost sorts last.
+`ResetCalendarPool.costPerMTok?` is nonnegative marginal USD/M tokens, not
+subscription sticker price. Reset-calendar lanes now sort by reset before pace.
+
+`decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
+is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
+sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;
+implementation escalates only for an explicit implementation bottleneck.
+`explainRoutes(root, nowSeconds)` adds nullable `pairing` from the optional
+`queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
+
 # Phantom — shared core contract (M1/M2 baseline)
+
+Resource-live sources accept optional `usage.liveSources` configuration (see
+[resource evidence](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity)).
+`ResourceLiveReading.confidence` is `high | medium | low | null`, derived from
+the source tier; old sidecars without it remain readable. Observations may
+carry `stale_after`, which can shorten but never extend the 15-minute TTL.
+`DaemonCapacityPublisherDeps.refreshResourceLive?(cfg)` refreshes the rail after
+a publisher cycle; production wiring is daemon-only and disabled in tests.
+`OperatorUsagePageReader.read(provider, usageUrl)` returns a nullable observation;
+the shipped implementation always returns null and is opt-in only.
 
 This is the binding interface for Phantom's original index, launcher and
 identity modules (the package was formerly named ashlr-hub). Do not change these
@@ -39,6 +76,16 @@ Results contain status, dryRun, bounded results, and a cursor on success.
 Only authenticated admission receipts qualify; labels and peer status messages
 cannot authorize claims or prove completion. No shell, engine, merge or spending
 is invoked. Queue task strings remain untrusted data under existing worker gates.
+
+`QueueJob` (RQ-SHARED-QUEUE-1) carries the optional market requirements
+`max_tier` (tier ceiling; `tier` and `min_tier` may not exceed it), `data_class`
+(`public|internal|confidential|restricted`) and `work_class`
+(`bulk|standard|judgment`) beside `preferred_lane`, `needs`, `min_tier`,
+`max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
+values, and `phm queue add` takes `--max-tier`, `--data-class` and
+`--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
+nowMs, windowHours)` and `renderUnfed(report)` in
+`src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
@@ -478,6 +525,21 @@ It shares the existing read-only queue parser through
 in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' | 'degraded'`
 and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
 report for unusable/incomplete input, and 2 indicates invalid arguments.
+
+The CLI also emits `train: GreenMergeTrain | null`. The pure
+`planGreenMergeTrain(prs: readonly MergeBatchPr[], run: MergeBatchRun, rows: readonly unknown[]): GreenMergeTrain`
+in `src/core/fleet/green-merge-train.ts` consumes the same validated snapshot and
+action report, with healthy hold/coverage reads required by its caller. A train
+has `authority: 'proposal-only'`, `validation: 'required-checks-on-combined-commit'`,
+`baseRef: string | null`, `members: {number, headSha}[]` and `deferred: {number, reason}[]`.
+It selects at most 16 ready enqueue actions in PR-number order, with one base,
+disjoint files, explicit OPEN/non-draft identities, matching full head OIDs,
+complete files confirmed by changedFiles, and nonempty, uncapped observed checks
+with no failures/pending entries and at least one success (completed skipped/neutral
+lanes are allowed). Missing/unhealthy queue or hold evidence produces null in the CLI.
+This proposes combined validation only: consumers must recheck head/base identities,
+required-check names/App identities, review, holds and Security policy through the
+existing protected merge queue. It grants no CI reuse or permission to merge.
 Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
 
 ## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
@@ -589,6 +651,18 @@ private journal is capped at 2,000 receipts and fails closed at capacity; state
 repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
+
+## Devin weekly capacity
+
+`src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
+`publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,
+`devinPreviewObservation`, `devinWeeklyWindow`, `devinWeeklyAllowance`, `devinWeeklyLine`
+and `DevinWeeklyCapacity { used, limit, remaining, limit_source, window_start, reset_at,
+burn_rate_per_hour, sessions, source, observed_at, state, reason }`. Unknown fields are
+`null`. `DevinSession.createdAtMs` (optional) and `devinInstantMs` come from
+`core/devin/client.ts`. Config: `devin.weeklyAcuAllowance`, `devin.weeklyResetAt`.
+`ResourceLiveSourceOptions` gains `readDevinWeekly`, `readDevinPublished` and
+`readDevinModels`. See [Devin weekly allowance](docs/RESOURCE-EVIDENCE.md#devin-weekly-allowance).
 
 ## Node host capacity
 
@@ -720,3 +794,13 @@ Optional role, capabilities, machine/lane affinity and peer mappings persist in
 roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
+
+`fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
+`readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
+Read-only lists of the plugins and skills fleet agents have: Phantom plugins and
+Claude Code installed plugins; Claude Code, Codex and learned skills. Each row has
+`name`, `source`, `agents` (plain words), `enabled` (boolean or `'unknown'`) and
+`lastUsed` (`'unknown'`; no usage record exists yet). Each source reports
+`read`, `none` or `unknown`; an unreadable source adds no rows. Served by
+`phm plugins list --all --json`, `phm skills list --all --json` and
+`GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.

@@ -46,6 +46,7 @@ export const USAGE_SENSOR_LANES = [
 export type UsageSensorLane = (typeof USAGE_SENSOR_LANES)[number];
 
 export const USAGE_SENSOR_SOURCES = [
+  'anthropic-admin-cost',
   'devin-api-v3-daily',
   'devin-api-v3-org-cycle',
   'devin-included-allowance',

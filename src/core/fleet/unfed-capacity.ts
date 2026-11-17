@@ -1,0 +1,216 @@
+/**
+ * Per-resource utilization and unfed capacity for the shared work queue
+ * (RQ-SHARED-QUEUE-1). A resource is unfed when it has free slots while
+ * runnable rows wait under another lane's hint. Pure: text in, report out.
+ * Counts and reason codes only; no job ids, task text or credentials.
+ */
+export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
+
+/** Reason codes are short lowercase identifiers written by the dispatcher. */
+const CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
+const MAX_CODES = 32;
+
+export interface UnfedResource {
+  lane: string;
+  running: number;
+  target: number;
+  held: boolean;
+  /** running / target, capped at 1; null when the target is 0. */
+  utilization: number | null;
+  /** Free slots: target minus running, never negative. */
+  headroom: number;
+  /** Ready rows whose lane hint names this resource. */
+  readyHinted: number;
+  /** Ready rows hinted elsewhere (or unhinted) while this resource had headroom. */
+  waitingElsewhere: number;
+  unfed: boolean;
+  /** Why those rows did not run here, by dispatcher reason code. Empty when the dispatcher did not say. */
+  blocked: Record<string, number>;
+}
+
+export interface UnfedHistoryLane {
+  lane: string;
+  /** Dispatcher ticks in the window that left this lane unfed. */
+  unfedTicks: number;
+  /** Sum over those ticks of min(headroom, waiting rows): slots that could have been filled. */
+  slotTicks: number;
+  lastUnfedAt: string | null;
+  blocked: Record<string, number>;
+}
+
+export interface UnfedHistory {
+  windowHours: number;
+  /** False when metrics/work-market.jsonl is absent or unreadable. */
+  available: boolean;
+  /** Ticks with at least one unfed lane. */
+  ticks: number;
+  lanes: UnfedHistoryLane[];
+}
+
+export interface UnfedReport {
+  schema: typeof FLEET_UNFED_SCHEMA;
+  readOnly: true;
+  /**
+   * `dispatcher`: the tick's own verdict from status.json, with reason codes.
+   * `derived`: computed here from lane counts and ready.tsv hints, because the
+   * running dispatcher does not publish the block; reasons are unknown.
+   */
+  source: 'dispatcher' | 'derived';
+  /** Ready rows still waiting. */
+  waiting: number;
+  unfedLanes: string[];
+  /** Slots that could be filled now: sum of min(headroom, waiting rows) over unfed lanes. */
+  unfedSlots: number;
+  resources: UnfedResource[];
+  history: UnfedHistory;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const count = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+/** Keep only well-formed reason codes with nonnegative counts. */
+function codes(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!isRecord(value)) return out;
+  for (const [code, n] of Object.entries(value)) {
+    if (Object.keys(out).length >= MAX_CODES) break;
+    if (CODE.test(code) && count(n) && n > 0) out[code] = n;
+  }
+  return out;
+}
+
+function utilization(running: number, target: number): number | null {
+  return target > 0 ? Math.round(Math.min(1, running / target) * 1000) / 1000 : null;
+}
+
+/** Dispatcher ready.tsv rows: job, repo, lane hint, tier, prompt[, requirements]. Parked rows are not runnable. */
+export function readyHints(readyTsv: string): { waiting: number; byLane: Map<string, number> } {
+  const byLane = new Map<string, number>();
+  let waiting = 0;
+  for (const line of readyTsv.split('\n')) {
+    if (!line.trim() || line.startsWith('#')) continue;
+    const cols = line.split('\t');
+    if (cols.length < 5 || !cols[0] || cols[0].startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
+    waiting++;
+    const lane = (cols[2] ?? '').trim();
+    byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
+  }
+  return { waiting, byLane };
+}
+
+/**
+ * The current picture from queue/status.json and queue/ready.tsv ('' when absent).
+ * Throws when status.json has no usable lanes map.
+ */
+export function currentUnfed(statusJson: string, readyTsv: string): Omit<UnfedReport, 'history'> {
+  const data: unknown = JSON.parse(statusJson);
+  if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
+  const hints = readyHints(readyTsv);
+  const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
+  const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
+  const waiting = published && count(published.waiting) ? published.waiting : hints.waiting;
+  const resources: UnfedResource[] = [];
+  for (const [lane, value] of Object.entries(data.lanes)) {
+    if (!LANE.test(lane) || !isRecord(value) || !count(value.running)) throw new Error('invalid lane');
+    // The effective target is what the lane may launch against after load shedding.
+    const target = count(value.effective_target) ? value.effective_target : value.target;
+    if (!count(target)) throw new Error('invalid lane');
+    const held = value.held === true;
+    const headroom = Math.max(0, target - value.running);
+    const readyHinted = hints.byLane.get(lane) ?? 0;
+    const entry = publishedLanes[lane];
+    let waitingElsewhere = 0;
+    let blocked: Record<string, number> = {};
+    if (isRecord(entry) && count(entry.waiting_elsewhere)) {
+      waitingElsewhere = entry.waiting_elsewhere;
+      blocked = codes(entry.blocked);
+    } else if (!published && headroom > 0 && !held) {
+      waitingElsewhere = hints.waiting - readyHinted;
+    }
+    resources.push({
+      lane, running: value.running, target, held, utilization: utilization(value.running, target), headroom,
+      readyHinted, waitingElsewhere, unfed: headroom > 0 && !held && waitingElsewhere > 0, blocked,
+    });
+  }
+  resources.sort((a, b) => a.lane.localeCompare(b.lane));
+  const unfed = resources.filter(r => r.unfed);
+  return {
+    schema: FLEET_UNFED_SCHEMA,
+    readOnly: true,
+    source: published ? 'dispatcher' : 'derived',
+    waiting,
+    unfedLanes: unfed.map(r => r.lane),
+    unfedSlots: unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0),
+    resources,
+  };
+}
+
+/**
+ * Fold `unfed_capacity` rows from metrics/work-market.jsonl over a window.
+ * Null text means the file was absent or unreadable. Malformed rows are skipped.
+ */
+export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHours: number): UnfedHistory {
+  const history: UnfedHistory = { windowHours, available: jsonl !== null, ticks: 0, lanes: [] };
+  if (jsonl === null) return history;
+  const since = nowMs / 1000 - windowHours * 3600;
+  const lanes = new Map<string, UnfedHistoryLane & { last: number }>();
+  for (const line of jsonl.split('\n')) {
+    // Cheap prefilter: the file is mostly route decisions.
+    if (!line.includes('"unfed_capacity"')) continue;
+    let row: unknown;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'unfed_capacity' || !isRecord(row.lanes)) continue;
+    const ts = row.ts;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > nowMs / 1000 + 300) continue;
+    let any = false;
+    for (const [lane, value] of Object.entries(row.lanes)) {
+      if (!LANE.test(lane) || !isRecord(value) || value.unfed !== true || !count(value.headroom) || !count(value.waiting_elsewhere)) continue;
+      any = true;
+      const entry = lanes.get(lane) ?? { lane, unfedTicks: 0, slotTicks: 0, lastUnfedAt: null, blocked: {}, last: 0 };
+      entry.unfedTicks++;
+      entry.slotTicks += Math.min(value.headroom, value.waiting_elsewhere);
+      entry.last = Math.max(entry.last, ts);
+      for (const [code, n] of Object.entries(codes(value.blocked))) {
+        if (code in entry.blocked || Object.keys(entry.blocked).length < MAX_CODES) entry.blocked[code] = (entry.blocked[code] ?? 0) + n;
+      }
+      lanes.set(lane, entry);
+    }
+    if (any) history.ticks++;
+  }
+  history.lanes = [...lanes.values()]
+    .map(({ last, ...entry }) => ({ ...entry, lastUnfedAt: new Date(last * 1000).toISOString() }))
+    .sort((a, b) => b.slotTicks - a.slotTicks || a.lane.localeCompare(b.lane));
+  return history;
+}
+
+const topCodes = (blocked: Record<string, number>): string =>
+  Object.entries(blocked).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([code, n]) => `${code} ${n}`).join(', ');
+
+/** Plain-text rendering; one line per resource, then the window summary. */
+export function renderUnfed(report: UnfedReport): string[] {
+  const lines: string[] = [];
+  for (const r of report.resources) {
+    const use = r.utilization === null ? 'no target' : `${Math.round(r.utilization * 100)}%`;
+    const state = r.held ? '  HELD' : r.unfed ? `  UNFED: ${r.headroom} free, ${r.waitingElsewhere} rows waiting elsewhere${Object.keys(r.blocked).length ? ` (${topCodes(r.blocked)})` : ''}` : '';
+    lines.push(`${r.lane}  ${r.running}/${r.target} running (${use}), ${r.readyHinted} hinted here${state}`);
+  }
+  if (report.resources.length === 0) lines.push('No lanes in queue/status.json.');
+  lines.push(report.unfedLanes.length === 0
+    ? `No unfed capacity: ${report.waiting} rows waiting.`
+    : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+  if (report.source === 'derived') lines.push('Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
+  const h = report.history;
+  if (!h.available) lines.push(`Last ${h.windowHours}h: no metrics/work-market.jsonl history.`);
+  else if (h.lanes.length === 0) lines.push(`Last ${h.windowHours}h: no unfed ticks recorded.`);
+  else {
+    lines.push(`Last ${h.windowHours}h: ${h.ticks} tick(s) left capacity unfed.`);
+    for (const l of h.lanes) {
+      lines.push(`  ${l.lane}: ${l.unfedTicks} tick(s), ${l.slotTicks} slot-tick(s) lost${Object.keys(l.blocked).length ? ` (${topCodes(l.blocked)})` : ''}`);
+    }
+  }
+  return lines;
+}

@@ -62,7 +62,7 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `tick hooks`     | ~26 min          | `boundedBeforeTick` (25 min + grace)                    |
 | `mirror-prep`    | prep + abort grace + 30 s | wraps the existing per-repo mirror deadline      |
 | `backlog-refresh`| 5 min            | `TICK_PHASE_BACKLOG_REFRESH_MS`                         |
-| `self-heal`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`; verify subprocesses ≤15 min|
+| `self-heal`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`; 4 min cycle budget, 2 min per repo |
 | `invent`         | 3 min            | `TICK_PHASE_INVENT_MS`; frontier probe ≤30 s            |
 | `ancillary`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`                             |
 | `reflection`     | 3 min            | `TICK_PHASE_REFLECTION_MS` (nested inside `ancillary`)  |
@@ -72,10 +72,73 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `dispatch`       | worst-case turns | `tasks / slots` × (turn watchdog + grace)               |
 | `dispatch-hook`  | 60 s             | per-item `afterDispatch` hooks                          |
 
+All phases of one tick also share a whole-tick budget, `TICK_BUDGET_MS`
+(12 min, under the 15 min admission staleness bound). A phase that starts
+inside the budget gets at most what is left of it. A phase that starts after
+it is skipped and recorded as `skipped: tick-budget-exhausted`; the next tick
+picks the work up. `dispatch` and `dispatch-hook` are exempt, because their
+runs are already admitted. When a `backlog-refresh` times out, the scan keeps
+running detached, so later refreshes in the same tick are skipped rather than
+stacked on top of it. The 60-minute `DAEMON_TICK_DEADLINE_MS` remains the
+backstop for an await that is not a phase.
+
+`~/.ashlr/daemon-tick-progress.json` always says `"authority": "none"`. That
+marks the file as observational, meaning it grants nothing. It is not the
+standing grant; read that with `phm authority status`.
+
 At a deadline the phase's `AbortSignal` fires; it then gets a 5-second grace
 (`TICK_PHASE_GRACE_MS`) to wind down. Still-running work is left **detached**
 and its late rejection is swallowed — never an unhandled rejection, never a
 record leaking into the next tick's ledger.
+
+## Self-heal is incremental
+
+One self-heal cycle used to verify every enrolled repo in turn, at up to
+90 s per verify command, and start again at the first repo every tick. With
+enough repos it hit the 5-minute phase deadline every time (`301740ms` on the
+owner's Mac). Now:
+
+- the cycle stops starting repos when less than 15 s of its 4-minute budget
+  (`SELF_HEAL_CYCLE_BUDGET_MS`) is left, so the phase settles `ok`;
+- each repo gets at most `SELF_HEAL_REPO_BUDGET_MS` (2 min); every verify
+  command's timeout is capped at what is left of it, and a repo cut short is
+  reported unverified, never green;
+- `~/.ashlr/self-heal-cursor.json` names the last repo reached, and the next
+  cycle starts after it. A large enrollment is covered over several ticks.
+  The result reports `deferred` (repos not reached) and `budgetExhausted`.
+
+## A stopped tick loop is a liveness state
+
+The lock heartbeat runs on its own timer, so a resident whose loop stopped
+moving still reported `alive` (5.6 h on the owner's Mac). The loop now writes
+`~/.ashlr/daemon-tick-loop.json` each time it moves: when a tick starts, when
+post-tick work starts, and before each park, with the time it expects to move
+next. `phm daemon status --json` and `phm daemon doctor --json` report
+`liveness.tickLoop.state`:
+
+| state     | meaning                                                                 |
+|-----------|-------------------------------------------------------------------------|
+| `ticking` | in a tick, in post-tick work, or between ticks on schedule              |
+| `parked`  | parked on purpose; `reason` says why (`paused`, `authority-withdrawn: …`, `budget-exhausted`) |
+| `stalled` | alive, but more than 3 intervals (`TICK_LOOP_STALL_INTERVALS` × max(interval, 60 s)) past its expected move |
+| `unknown` | no beacon from this daemon pid                                          |
+
+`phm daemon doctor` exits 1 on `stalled`. An in-process watchdog checks the
+same assessment every minute. On a stall it audits `daemon:tick-loop-stalled`
+and wakes the loop out of its park. If the loop still has not moved one
+threshold later, it stops with terminal failure `daemon-tick-loop-stalled`,
+and launchd's `KeepAlive` (`SuccessfulExit: false`) starts a fresh resident.
+
+## Health says why no frontier client resolved
+
+`phm daemon health --json` lists each unresolved client in
+`frontierClientsUnavailable`, with its inventory `reason` and `binaryOnPath`
+for the `codex` and `claude` CLIs. `supervisor.detail` names the cause of a
+`frontier-unavailable` or unreadable-inventory verdict, for example
+`claude: unavailable-or-not-admitted ('claude' not on PATH)`. The PATH check
+reads file metadata only. Resolution stays off the tick's critical path: the
+tick's own `invent` probe is bounded at 30 s and skips the phase without a
+client.
 
 ## Dispatched runs never block the tick
 

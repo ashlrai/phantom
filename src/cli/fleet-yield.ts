@@ -1,25 +1,12 @@
 /** `phm fleet yield`: merged PRs per launch slot, by job family, lane and tier. Read-only. */
-import { createReadStream } from 'node:fs';
-import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
+import { readLedgerLines, type YieldLineReader } from '../core/fleet/ledger-lines.js';
+export { readLedgerLines, type YieldLineReader } from '../core/fleet/ledger-lines.js';
 import { runsRoot } from '../core/metrics/loop-collect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { unknownYield, yieldTally, YIELD_MIN_LAUNCHES, type YieldReport, type YieldRow } from '../core/fleet/slot-yield.js';
 
 const usage = 'Usage: phm fleet yield [--since 24h] [--metrics <jobs.jsonl>] [--json]';
-
-/** Streams ledger lines into the callback; false when the file is missing, not a regular file, or unreadable. */
-export type YieldLineReader = (path: string, onLine: (line: string) => void) => Promise<boolean>;
-
-export const readLedgerLines: YieldLineReader = async (path, onLine) => {
-  try {
-    if (!(await lstat(path)).isFile()) return false;
-    const lines = createInterface({ input: createReadStream(path, { encoding: 'utf8' }), crlfDelay: Infinity });
-    for await (const line of lines) onLine(line);
-    return true;
-  } catch { return false; }
-};
 
 export async function readFleetYield(path: string, hours: number, now: number, read: YieldLineReader = readLedgerLines): Promise<YieldReport> {
   const tally = yieldTally(now, hours);
