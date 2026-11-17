@@ -88,7 +88,37 @@ semantics and never itself recommending restart. See
 
 `buildBacklog` scans up to `BACKLOG_REPO_CONCURRENCY` (4) repositories at once,
 aggregating scanner results in input repository order before existing ranking
-and snapshot persistence. Scanner bounds and observation ordering are unchanged.
+and snapshot persistence. Each scanner has a 45-second sub-deadline, overridable
+with `scannerDeadlineMs`. `signal` cancellation skips work not yet started.
+`skippedScanners` records `scanner-deadline` and `phase-cancelled` skips alongside
+unavailable observations. Skips are never cached as successful scans.
+
+`createBacklogScanSnapshot()` creates a tick-local cache of in-flight remote gh
+queries and scanner results. `buildBacklog({ snapshot, invalidate })` reuses
+results except for `invalidate.repos` (all scanners) and `invalidate.scanners`
+(all repos). Remote query promises survive scanner invalidation; ranking,
+filters, proposal deduplication and persistence always run again. Without a
+snapshot all reads are fresh. `runGhAsync`, `listIssuesAsync` and
+`githubCiStatusAsync` are abortable, never-throw read APIs; synchronous GitHub
+APIs retain their existing behavior. CI-only reads do not fetch PR/issue counts.
+
+`SelfHealCycleResult.checkedRepos` lists repos whose detector ran or whose
+self-heal queue projections were pruned during the cycle. Both cycle entry
+points return an empty array on early exits. The cycle budget is two minutes;
+the per-repo budget remains two minutes and the cursor resumes deferred work.
+Post-self-heal tick refreshes invalidate these repos plus queued-autonomy for
+every repo; a missing result conservatively invalidates all enrolled repos.
+
+Ancillary observation work shares `ANCILLARY_OBSERVATION_BUDGET_MS` (60 seconds).
+`runCounterfactualReplay`, `scanRealWorldOutcomes` and `sweepRejectionLearning`
+accept optional `signal`, `deadlineAtMs` and `now` controls. Calls without these
+controls retain their existing behavior. Interrupted replay does not persist
+partial calibration; outcome/learning results mark `sourceComplete: false` and
+include `skippedReason`. Outcome windows preserve their cursor on interruption.
+Daemon state persists optional `counterfactualReplayPending` to retry interrupted
+replay on the next eligible tick rather than waiting for its normal cadence.
+The budget audits skips but drains active work cooperatively; credit release,
+reflection and regression monitoring are not governed by this sub-budget.
 
 `runTickPhase` accepts `detached?: boolean`: detached phases retain deadline,
 abort and grace semantics but do not consume the tick budget, update progress,
