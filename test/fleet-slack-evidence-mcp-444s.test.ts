@@ -67,11 +67,11 @@ function snapshot(dir: string): string {
 }
 
 describe('fleet_slack_evidence over MCP', () => {
-  it('is advertised read-only with a required thread and optional age bound', async () => {
+  it('is advertised read-only with a required thread and optional channel, message and age bound', async () => {
     const tool = (await (await connect()).listTools()).tools.find(t => t.name === 'fleet_slack_evidence');
     expect(tool?.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     expect(tool?.inputSchema).toMatchObject({ required: ['thread'], additionalProperties: false });
-    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(['thread', 'maxAgeSeconds']);
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(['thread', 'channelId', 'messageTs', 'maxAgeSeconds']);
   });
 
   it('dispatches validated args to the injected reader', async () => {

@@ -46,6 +46,7 @@ function statusFixture(overrides: Partial<SlackBridgeStatus> = {}): SlackBridgeS
     comms: { confirmedByMason: true },
     journal: { state: 'ok', ingested: 3, ignored: 1, lastAt: '2026-11-13T18:28:00.000Z' },
     replies: { state: 'ok', answered: 3, unanswered: 0, oldestUnansweredAt: null, uncertainSends: 0, rejected: 0, futureDated: 0, unansweredSample: [] },
+    work: { asOf: null, inbox: 'ok', truncated: false, items: [] },
     ready: true,
     transport: { health: 'unknown', observedAt: null, probeCommand: PROBE },
     next: `mapping is ready; run ${PROBE} for authenticated identity`,
