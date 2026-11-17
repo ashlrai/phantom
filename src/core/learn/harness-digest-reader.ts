@@ -114,7 +114,11 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
     finishTakeaway();
     if (/^##(?:\s|$)/.test(line)) {
       finish();
-      const candidate = /^##\s+(S\S*)(?:\s+—(?:\s+(.*))?|\s*)$/.exec(line);
+      // A source heading is `## S<n> — title`. Without the em-dash separator
+      // only a bare `## S<digits>` is a (title-less, malformed) candidate, so
+      // ordinary prose sections such as `## Signals` or `## Summary` are not
+      // misread as malformed source records.
+      const candidate = /^##\s+(S\S*)\s+—(?:\s+(.*))?$/.exec(line) ?? /^##\s+(S\d+)\s*$/.exec(line);
       if (!candidate) continue;
       const id = candidate[1]!;
       const title = candidate[2]?.trim() ?? '';
