@@ -131,6 +131,13 @@
   }
   .rowControl {
     justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  /* A four-option segmented control (Theme) is ~360px of unbreakable labels;
+     on a 390px phone it wraps onto a second line instead of overflowing. */
+  .rowControl > [role='radiogroup'] {
+    flex-wrap: wrap;
+    max-width: 100%;
   }
 }
 
@@ -394,4 +401,20 @@
   display: flex;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+/* The accent's "Custom color" disclosure: sliders for a color the swatches lack. */
+.customAccent {
+  margin-top: var(--space-2);
+}
+
+.customAccent > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.customAccent[open] > summary {
+  margin-bottom: var(--space-2);
 }

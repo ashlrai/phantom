@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500" role="img" aria-labelledby="title desc">
+  <title id="title">Mason Wyatt — Co-founder and CEO at Ashlr.AI</title>
+  <desc id="desc">Digital Masonry. Building Phantom, the engineering agent workbench. A precise masonry pattern resolves into a connected work queue. phm.dev</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; letter-spacing: 1.5px; }
+  </style>
+  <rect width="1500" height="500" fill="#0D1520"/>
+  <path d="M80 96H1420M80 400H1420" fill="none" stroke="#476787" stroke-opacity=".45"/>
+  <path d="M80 96H144" stroke="#2563EB" stroke-width="3"/>
+  <text x="80" y="65" class="mono" fill="#A3B3C3">MASON WYATT / DIGITAL MASONRY</text>
+  <text x="1420" y="65" text-anchor="end" class="mono" fill="#A3B3C3">FOUNDER + ENGINEER</text>
+  <text x="76" y="236" fill="#FFFFFF" font-size="104" font-weight="700" letter-spacing="-5">Mason Wyatt</text>
+  <text x="80" y="298" fill="#A3B3C3" font-size="27">Co-founder &amp; CEO <tspan fill="#476787">/</tspan> <tspan fill="#FFFFFF">Ashlr.AI</tspan></text>
+  <text x="80" y="349" fill="#A3B3C3" font-size="22">Building the tools that move engineering forward.</text>
+  <!-- A refinement of the profile's masonry motif, with one purposeful blue course. -->
+  <g fill="#101A24" stroke="#476787" stroke-opacity=".45">
+    <rect x="1020" y="144" width="112" height="56" rx="5"/><rect x="1144" y="144" width="196" height="56" rx="5"/>
+    <rect x="964" y="212" width="112" height="56" rx="5"/><rect x="1088" y="212" width="168" height="56" rx="5"/>
+    <rect x="1268" y="212" width="112" height="56" rx="5"/>
+    <rect x="1020" y="280" width="168" height="56" rx="5"/><rect x="1200" y="280" width="140" height="56" rx="5"/>
+  </g>
+  <rect x="1088" y="212" width="168" height="56" rx="5" fill="#2563EB"/>
+  <path d="M1120 240H1224M1217 233L1224 240L1217 247" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+  <path d="M910 240H964M1380 240H1434" stroke="#476787"/>
+  <circle cx="910" cy="240" r="4" fill="#60A5FA"/><circle cx="1434" cy="240" r="4" fill="#60A5FA"/>
+  <text x="80" y="446" fill="#FFFFFF" font-size="18">Building Phantom <tspan fill="#A3B3C3">/ the engineering agent workbench</tspan></text>
+  <text x="1420" y="446" text-anchor="end" class="mono" fill="#60A5FA">phm.dev ↗</text>
+</svg>

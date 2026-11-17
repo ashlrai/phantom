@@ -1,6 +1,6 @@
 {
   "name": "@ashlr/phantom",
-  "version": "3.30.33",
+  "version": "3.30.36",
   "description": "Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.",
   "publishConfig": {
     "access": "public"
@@ -103,7 +103,9 @@
     "docs/contracts/CONTRACT-M521.md",
     "docs/contracts/CONTRACT-M568.md",
     "docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md",
-    "docs/MACHINE-TELEMETRY.md"
+    "docs/MACHINE-TELEMETRY.md",
+    "docs/REPO-OWNERS.md",
+    "docs/PRODUCTION-METRICS.md"
   ],
   "bundledDependencies": [
     "@modelcontextprotocol/sdk",

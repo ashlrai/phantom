@@ -27,6 +27,7 @@ import type { AshlrConfig, TidyRule } from './types.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from './fleet/local-store-lock.js';
 import { validateGatewayBaseUrl } from './run/gateway-target.js';
 import { localInferenceConfigProblems, parseLocalInferenceConfig } from './run/local-inference.js';
+import { liveSourcesSchema } from './usage/resource-live/config.js';
 
 // ---------------------------------------------------------------------------
 // Path constants (exported, resolved immediately)
@@ -584,6 +585,14 @@ const EXECUTION_IDENTITY_ENGINES = new Set([
   'kimi', 'nim', 'opencode', 'meta-muse', 'grok',
 ]);
 
+function sanitizeLiveSourcesConfigBoundary(config: AshlrConfig): AshlrConfig {
+  if (config.usage !== undefined) {
+    const parsed = liveSourcesSchema.safeParse(config.usage?.liveSources);
+    config.usage = parsed.success ? { liveSources: parsed.data } : {};
+  }
+  return config;
+}
+
 /**
  * Public config boundary for Execution Identity V1.
  *
@@ -784,9 +793,9 @@ function readConfigOrDefaults(configPath: string): AshlrConfig {
 
   // Deep-merge the user's persisted config over the defaults so newly-added
   // fields always have a value even on older config files.
-  return sanitizeExecutionIdentityConfigBoundary(
+  return sanitizeLiveSourcesConfigBoundary(sanitizeExecutionIdentityConfigBoundary(
     deepMerge(defaultConfig(), parsed as Partial<AshlrConfig>),
-  );
+  ));
 }
 
 function readConfigStrict(configPath: string): AshlrConfig {
@@ -828,9 +837,9 @@ function readConfigStrict(configPath: string): AshlrConfig {
     );
   }
 
-  return sanitizeExecutionIdentityConfigBoundary(
+  return sanitizeLiveSourcesConfigBoundary(sanitizeExecutionIdentityConfigBoundary(
     deepMerge(defaultConfig(), parsed as Partial<AshlrConfig>),
-  );
+  ));
 }
 
 /**
@@ -1067,7 +1076,7 @@ export function saveConfig(c: AshlrConfig): void {
   const configDir = resolveConfigDir();
   const configPath = resolveConfigPath();
   const bytes = Buffer.from(
-    JSON.stringify(sanitizeExecutionIdentityConfigBoundary(c), null, 2) + '\n',
+    JSON.stringify(sanitizeLiveSourcesConfigBoundary(sanitizeExecutionIdentityConfigBoundary(c)), null, 2) + '\n',
     'utf8',
   );
   const securedDirectory = secureConfigDirectory(configDir);

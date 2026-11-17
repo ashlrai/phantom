@@ -49,6 +49,7 @@
 import type { AshlrConfig } from '../types.js';
 import { readCapacitySnapshot, type CapacitySnapshot } from '../routing/budget-store.js';
 import { recordCapacityHistoryFromSnapshot } from '../routing/capacity-history.js';
+import { ResourceLiveBusyError } from '../usage/resource-live/engine.js';
 
 /** Another publisher (Verse, every 60 s) counts as live while its snapshot is this fresh. */
 export const FOREIGN_FRESH_MS = 3 * 60_000;
@@ -68,6 +69,7 @@ export interface PublisherCollector {
 }
 
 export interface DaemonCapacityPublisherDeps {
+  refreshResourceLive?(cfg: AshlrConfig): Promise<void>;
   nowMs(): number;
   sleep(ms: number): Promise<void>;
   readSnapshot(): CapacitySnapshot | null;
@@ -128,6 +130,7 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
   let stopped = false;
   let historyError: string | null = null;
   let retryAt = 0;
+  let resourceLiveFailed = false;
 
   const set = (state: PublisherState, reason: string): PublisherStatus => {
     status = { state, reason, lastPublishedAt: status.lastPublishedAt };
@@ -266,7 +269,16 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
     const previous = status.state;
     inFlight = runCycle()
       .catch(() => set('failed', 'the capacity publisher failed; check local account configuration and retry phm capacity publish'))
-      .then((result) => {
+      .then(async (result) => {
+        if (!stopped && deps.refreshResourceLive) {
+          try { await deps.refreshResourceLive(cfg); resourceLiveFailed = false; }
+          catch (error) {
+            if (!(error instanceof ResourceLiveBusyError) && !resourceLiveFailed) {
+              resourceLiveFailed = true;
+              try { deps.log('daemon resource usage refresh failed; existing readings retain their original expiration'); } catch { /* never throws */ }
+            }
+          }
+        }
         // Status readers may request another cycle immediately after failure.
         // Keep unavailable leases and failed probes idle between timer checks.
         retryAt = ['failed', 'sample-timeout', 'lease-held-elsewhere'].includes(result.state)
@@ -307,6 +319,15 @@ export function createDaemonCapacityPublisher(cfg: AshlrConfig, deps: DaemonCapa
  */
 export function defaultDaemonCapacityPublisherDeps(): DaemonCapacityPublisherDeps {
   return {
+    refreshResourceLive: async cfg => {
+      if (daemonCapacityPublisherRefusal() !== null) return;
+      const [{ runResourceLiveTick }, { defaultResourceLiveSources }, { liveSourceOptions }, { defaultResourceLiveRunsDir }] = await Promise.all([
+        import('../usage/resource-live/engine.js'), import('../usage/resource-live/sources.js'),
+        import('../usage/resource-live/config.js'), import('../usage/resource-live/feed.js'),
+      ]);
+      const runsDir = defaultResourceLiveRunsDir();
+      await runResourceLiveTick({ runsDir, sources: defaultResourceLiveSources({ runsDir, ...liveSourceOptions(cfg) }), deadlineMs: 20_000 });
+    },
     nowMs: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
     readSnapshot: () => readCapacitySnapshot(),
@@ -323,7 +344,7 @@ export function defaultDaemonCapacityPublisherDeps(): DaemonCapacityPublisherDep
       });
     },
     publish: async (cfg, collector) => {
-      const { publishCapacitySnapshotFrom } = await import('../routing/budget-api.js');
+      const { publishCapacitySnapshotFrom } = await import('../routing/budget-capacity-source.js');
       return publishCapacitySnapshotFrom(cfg, collector as unknown as import('../verse/accounts.js').VerseAccountCollector);
     },
     log: (message) => { console.warn(`[ashlr] ${message}`); },

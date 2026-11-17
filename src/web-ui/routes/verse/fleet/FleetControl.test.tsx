@@ -504,7 +504,11 @@ describe('the controls', () => {
       now,
       routes: {
         '/api/verse/fleet/control': () => json(nativeFinished ? fleetControl('live', now) : stopped),
-        '/api/fleet': { daemon: { running: true, pid: 4242 } },
+        // The shared stub matches prefixes; daemon readback is not a lane,
+        // job or map projection. Unspecified child endpoints stay unavailable.
+        '/api/fleet': (url: string) => url === '/api/fleet'
+          ? json({ daemon: { running: true, pid: 4242 } })
+          : json({ error: 'not found' }, 404),
         '/api/fleet-activity': { marker: 'after-native-start' },
       },
       post: (url) => (url === '/api/verse/fleet/control'

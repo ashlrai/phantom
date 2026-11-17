@@ -176,7 +176,7 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
 /** Last JOBS_TAIL_BYTES of the ledger, first partial line dropped. */
 export async function readJobsTail(path: string): Promise<{ text: string | null; truncated: boolean }> {
   try {
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = await file.stat();
       if (!info.isFile()) return { text: null, truncated: false };

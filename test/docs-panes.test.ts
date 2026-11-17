@@ -3,7 +3,7 @@
  *
  * Four assertions:
  * 1. The file begins with "# Phantom console panes".
- * 2. Every id declared in code (first `id:` string literal, or the
+ * 2. Every id declared in code (each `id:` string literal, or the
  *    TERMINAL_PANE_ID constant when no literal id exists) appears in the
  *    doc table as a backticked cell.
  * 3. Every backticked id in the doc table rows exists in code.
@@ -17,7 +17,7 @@ const ROOT = join(__dirname, "..");
 const PANES_MD = join(ROOT, "docs", "PANES.md");
 const VERSE_DIR = join(ROOT, "src", "web-ui", "routes", "verse");
 
-/** Scan all *.pane.tsx files and extract their registered id. */
+/** Scan all *.pane.tsx files and extract their registered ids. */
 function collectPanesFromCode(): Set<string> {
   const ids = new Set<string>();
   const files = readdirSync(VERSE_DIR, { recursive: true });
@@ -35,10 +35,10 @@ function collectPanesFromCode(): Set<string> {
       continue;
     }
 
-    // Normal: first id: 'xxx' literal
-    const idMatch = src.match(/id:\s*'([a-z-]+)'/);
-    if (idMatch) {
-      ids.add(idMatch[1]);
+    // A file can register several panes (for example Plugins and Skills).
+    const idMatches = [...src.matchAll(/id:\s*'([a-z-]+)'/g)];
+    if (idMatches.length > 0) {
+      for (const match of idMatches) ids.add(match[1]);
       continue;
     }
 

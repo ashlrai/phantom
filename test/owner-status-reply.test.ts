@@ -25,14 +25,15 @@ describe('composeOwnerStatusReply', () => {
   it('replaces the brief heading with an ET clock and keeps the sections', async () => {
     const brief = vi.fn(async () => 'Morning leader brief\nShipped (last 12h): none\nNeeds you: unavailable');
     const text = await composeOwnerStatusReply('/synthetic-runs', now, { brief });
-    expect(text).toBe('Phantom status, 10:36 ET\nShipped (last 12h): none\nNeeds you: unavailable');
+    expect(text).toBe('Phantom status, 10:36 ET\nShipped (last 12h): none\nNeeds you: unavailable\nWork items as of 10:36 ET: 0 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED');
     expect(brief).toHaveBeenCalledWith('/synthetic-runs', now);
   });
 
   it('uses a 24-hour ET clock across daylight saving', async () => {
     const brief = async () => 'Morning leader brief';
-    expect(await composeOwnerStatusReply('/r', new Date('2026-07-01T03:01:00Z'), { brief })).toBe('Phantom status, 23:01 ET');
-    expect(await composeOwnerStatusReply('/r', new Date('2026-11-07T04:01:00Z'), { brief })).toBe('Phantom status, 23:01 ET');
+    const counts = 'Work items as of 23:01 ET: 0 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED';
+    expect(await composeOwnerStatusReply('/r', new Date('2026-07-01T03:01:00Z'), { brief })).toBe(`Phantom status, 23:01 ET\n${counts}`);
+    expect(await composeOwnerStatusReply('/r', new Date('2026-11-07T04:01:00Z'), { brief })).toBe(`Phantom status, 23:01 ET\n${counts}`);
   });
 
   it('caps the reply at 1500 characters', async () => {

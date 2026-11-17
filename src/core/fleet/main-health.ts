@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { localTimestamp, readSource } from './runs-parked-queue.js';
 
 export const MAIN_HEALTH_STALE_MS = 30 * 60_000;
+/** Empty fix attempts for one failure before further automatic retries are held. */
+export const MAIN_HEALTH_EMPTY_LIMIT = 2;
 const MAX_STATUS_BYTES = 256 * 1024;
 const MAX_ROWS = 64;
 const MAX_CELL = 200;
@@ -24,6 +26,10 @@ export interface FleetMainHealthRepo {
   checkedAt: string | null;
   failingCheck: string | null;
   fixJobs: string[];
+  /** Empty fix attempts recorded for this red failure's retired jobs (0 when none). */
+  emptyAttempts: number;
+  /** True once empty attempts reach MAIN_HEALTH_EMPTY_LIMIT: stop retrying, a person or agent must act. */
+  retryHold: boolean;
   nightlyRed: string | null;
 }
 export interface FleetMainHealthV1 {
@@ -63,6 +69,8 @@ export function parseMainGuardianStatus(text: string, nowMs: number): Omit<Fleet
       checkedAt: checked && Number.isFinite(checked.ms) ? checked.at : null,
       failingCheck: orNull(cells[5] ?? ''),
       fixJobs: (cells[6] ?? '').split(/[,\s]+/).filter(Boolean),
+      emptyAttempts: 0,
+      retryHold: false,
       nightlyRed: orNull(cells[7] ?? ''),
     });
   }
@@ -76,6 +84,43 @@ export function parseMainGuardianStatus(text: string, nowMs: number): Omit<Fleet
   };
 }
 
+/**
+ * Jobs whose latest attempt finished empty, with how many distinct empty finishes
+ * that failure has had since its last publication or non-empty finish. An empty
+ * finish is never an active repair and never proves CI green.
+ */
+function emptyFixJobs(text: string, jobs: Set<string>, now: number): Map<string, number> {
+  type Attempt = { launch: number; finish: number; empty: boolean; published: number; invalid: boolean; empties: Set<number> };
+  const attempts = new Map<string, Attempt>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let row: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return new Map();
+      row = value as Record<string, unknown>;
+    } catch { return new Map(); } // Incomplete evidence cannot retire an active job.
+    if (typeof row.job !== 'string' || !jobs.has(row.job) || !['launch', 'claim', 'finish', 'publish', 'outcome'].includes(String(row.event))) continue;
+    const attempt = attempts.get(row.job) ?? { launch: -Infinity, finish: -Infinity, empty: false, published: -Infinity, invalid: false, empties: new Set<number>() };
+    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
+    if (!Number.isFinite(at) || at > now) attempt.invalid = true;
+    else if (row.event === 'launch' || row.event === 'claim') attempt.launch = Math.max(attempt.launch, at);
+    else if (row.event === 'finish') {
+      if (at > attempt.finish) { attempt.finish = at; attempt.empty = row.empty === true; }
+      else if (at === attempt.finish) attempt.empty = attempt.empty && row.empty === true;
+      // Duplicate rows share a timestamp, so one attempt counts once.
+      if (row.empty === true) attempt.empties.add(at); else attempt.empties.clear();
+    } else {
+      attempt.published = Math.max(attempt.published, at);
+      for (const t of attempt.empties) if (t < at) attempt.empties.delete(t);
+    }
+    attempts.set(row.job, attempt);
+  }
+  return new Map([...attempts]
+    .filter(([, a]) => !a.invalid && a.empty && a.finish > a.launch && a.published < a.launch)
+    .map(([job, a]): [string, number] => [job, a.empties.size]));
+}
+
 export async function readFleetMainHealth(opts: { runsDir?: string; now?: () => number } = {}): Promise<FleetMainHealthV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
@@ -86,5 +131,20 @@ export async function readFleetMainHealth(opts: { runsDir?: string; now?: () => 
   if (source.state !== 'healthy') {
     return { v: 1, generatedAt: new Date(now).toISOString(), source: 'unavailable', statusAt: null, stale: true, guardianOff: off, red: 0, repos: [] };
   }
-  return { ...parseMainGuardianStatus(source.text, now), source: 'ok', guardianOff: off };
+  const report = parseMainGuardianStatus(source.text, now);
+  const jobs = new Set(report.repos.filter(repo => repo.state === 'red').flatMap(repo => repo.fixJobs));
+  if (jobs.size) {
+    const ledger = await readSource(join(root, 'metrics', 'jobs.jsonl'), 256 * 1024, true);
+    if (ledger.state === 'healthy') {
+      const empty = emptyFixJobs(ledger.text, jobs, now);
+      for (const repo of report.repos) {
+        if (repo.state !== 'red') continue;
+        // Counts are per repo failure: another repo's empty attempts never hold this one.
+        repo.emptyAttempts = repo.fixJobs.reduce((sum, job) => sum + (empty.get(job) ?? 0), 0);
+        repo.fixJobs = repo.fixJobs.filter(job => !empty.has(job));
+        repo.retryHold = repo.fixJobs.length === 0 && repo.emptyAttempts >= MAIN_HEALTH_EMPTY_LIMIT;
+      }
+    }
+  }
+  return { ...report, source: 'ok', guardianOff: off };
 }

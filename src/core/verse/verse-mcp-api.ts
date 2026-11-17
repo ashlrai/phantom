@@ -179,7 +179,8 @@ async function knownSession(res: ServerResponse, raw: unknown): Promise<VerseSes
     invalid(res, 'sessionId is required');
     return null;
   }
-  const session = (await getVerseEngine()).getSession(raw);
+  const session = (await getVerseEngine()).getSession(raw)
+    ?? (await import('../owner-assist/service.js')).findOwnerAssistSession(raw);
   if (!session) {
     sendJson(res, 404, { code: 'VERSE_SESSION_NOT_FOUND', error: 'session not found' });
     return null;

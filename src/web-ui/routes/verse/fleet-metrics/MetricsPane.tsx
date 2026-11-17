@@ -1,4 +1,6 @@
 import type { MetricsPanel } from '../../../../core/fleet/metrics-panel.js';
+import { ChartContainer } from '../../../components/charts/ChartContainer.js';
+import { LineChart } from '../../../components/charts/LineChart.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -11,9 +13,33 @@ export function MetricsPane({ visible }: PaneProps) {
   const refresh = useRefetch(query);
   usePollWhileVisible(refresh, 60_000, { enabled: visible });
   const data = read.data;
+  const history = data?.series;
+  const hours = history?.hours ?? [];
+  const repos = [...new Set(hours.flatMap(hour => Object.keys(hour.byRepo)))].sort();
+  const mergeSeries = repos.length ? repos.map(repo => ({ id: repo, label: repo,
+    points: hours.map(hour => ({ x: Date.parse(hour.start), y: hour.merged === null ? null : hour.byRepo[repo] ?? 0 })) })) :
+    [{ id: 'all', label: 'All repos', points: hours.map(hour => ({ x: Date.parse(hour.start), y: hour.merged })) }];
+  const hourLabel = (stamp: string) => new Date(stamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   return <section aria-label="Metrics"><h2>Metrics</h2>
+    <p>Merged PRs: {history?.mergesLastHour ?? 'unknown'} in the last hour · {history?.mergesLast24h ?? 'unknown'} in the last 24 hours.</p>
+    <p>Updated: {history?.observedAt ? hourLabel(history.observedAt) : 'unknown'}.</p>
+    {history?.known && history.malformedLines > 0 ? <p>Merge history skipped {history.malformedLines} malformed lines.</p> : null}
+    <ChartContainer title="Merged PRs per hour" description="Last 24 hours, by repo. Each point starts a one-hour interval."
+      empty={!history?.known} emptyMessage="Merge history: unknown (job metrics file unreadable)."
+      table={history?.known ? <table><caption>Merged PRs by hour and repo</caption><thead><tr><th>Hour starting</th><th>All repos</th>{repos.map(repo => <th key={repo}>{repo}</th>)}</tr></thead>
+        <tbody>{hours.map(hour => <tr key={hour.start}><td>{hourLabel(hour.start)}</td><td>{hour.merged}</td>{repos.map(repo => <td key={repo}>{hour.byRepo[repo] ?? 0}</td>)}</tr>)}</tbody></table> : undefined}>
+      <LineChart series={mergeSeries} height={160} ariaLabel="Merged PRs per hour by repo" />
+    </ChartContainer>
+    <ChartContainer title="Merged PRs per launch" description="Merges divided by launches in each hour. Human actions are not recorded, so this does not measure autonomy."
+      caveat="Merges may come from earlier launches. Gaps mean no launches in that hour."
+      empty={!history?.known} emptyMessage="Launch and merge history: unknown (job metrics file unreadable)."
+      table={history?.known ? <table><caption>Merged PRs per launch by hour</caption><thead><tr><th>Hour starting</th><th>Merged</th><th>Launches</th><th>PRs per launch</th></tr></thead>
+        <tbody>{hours.map(hour => <tr key={hour.start}><td>{hourLabel(hour.start)}</td><td>{hour.merged}</td><td>{hour.launches}</td><td>{hour.mergesPerLaunch === null ? 'No launches' : hour.mergesPerLaunch.toFixed(2)}</td></tr>)}</tbody></table> : undefined}>
+      <LineChart series={[{ id: 'yield', label: 'PRs per launch', points: hours.map(hour => ({ x: Date.parse(hour.start), y: hour.mergesPerLaunch })) }]}
+        height={160} formatY={value => value.toFixed(2)} ariaLabel="Merged PRs per launch by hour" />
+    </ChartContainer>
+    <h3>By lane</h3>
     <p>Jobs launched in the last 24 hours. Updated: {data?.observedAt ?? 'unknown'}.</p>
-    <p>Hourly merges over 24 hours: unknown</p>
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : data.lanes.length === 0 ? <p>Lane measurements: unknown</p> :
       <table><thead><tr><th>Lane</th><th>PRs merged per hour</th><th>Median open to merge (seconds)</th><th>Empty rate</th><th>Running / target</th></tr></thead>
         <tbody>{data.lanes.map(row => <tr key={row.lane}><td>{row.lane}</td><td>{row.mergesPerHour === null ? 'unknown' : row.mergesPerHour.toFixed(2)}</td><td>{row.medianOpenToMergeSeconds ?? 'unknown'}</td><td>{row.emptyRate === null ? 'unknown' : `${(row.emptyRate * 100).toFixed(1)}%`}</td><td>{row.running ?? 'unknown'} / {row.target ?? 'unknown'}</td></tr>)}</tbody></table>}

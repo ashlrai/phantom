@@ -41,7 +41,9 @@ export type DevinFetch = (url: string, init: {
   headers: Record<string, string>;
   body?: string;
   signal: AbortSignal;
-}) => Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+  /** Only attachment downloads set this ('manual'), so the key never follows a redirect. */
+  redirect?: 'manual';
+}) => Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string>; body?: ReadableStream<Uint8Array> | null; arrayBuffer?(): Promise<ArrayBuffer> }>;
 
 export interface DevinClientOptions {
   /** The `cog_` key, read by the caller from custody / the Keychain. */
@@ -58,16 +60,18 @@ export interface DevinClientOptions {
 }
 
 export class DevinApiError extends Error {
+  readonly errorCode: string | null;
   readonly code: DevinFailureCode;
   readonly status: number | null;
   /** Absolute provider retry deadline, carried only by organization-consumption reads. */
   readonly retryAfterAt: number | null;
-  constructor(code: DevinFailureCode, message: string, status: number | null = null, retryAfterAt: number | null = null) {
+  constructor(code: DevinFailureCode, message: string, status: number | null = null, retryAfterAt: number | null = null, errorCode: string | null = null) {
     super(message);
     this.name = 'DevinApiError';
     this.code = code;
     this.status = status;
     this.retryAfterAt = retryAfterAt;
+    this.errorCode = errorCode;
   }
 }
 
@@ -119,15 +123,28 @@ export interface DevinSession {
   orgId?: string;
   /** Provider attribution; absent on short create responses. */
   userId?: string;
+  serviceUserId?: string;
+  isArchived?: boolean;
   url: string;
   status: DevinSessionStatus;
   statusDetail: string | null;
   /** null when omitted (create responses may omit it — see the module header). */
   acusConsumed: number | null;
+  /** `created_at` as epoch ms (integer seconds or ISO accepted); null when absent or unreadable. */
+  createdAtMs?: number | null;
   pullRequests: Array<{ url: string; state: string | null }>;
   tags: string[];
   title: string | null;
   structuredOutput: Record<string, unknown> | null;
+}
+
+/** SessionAttachment — https://docs.devin.ai/v3-openapi.yaml (SessionAttachment) */
+export interface DevinSessionAttachment {
+  attachmentId: string;
+  name: string;
+  url: string;
+  source: 'devin' | 'user';
+  contentType: string | null;
 }
 
 /**
@@ -185,6 +202,16 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => {
   t.unref?.();
 });
 
+/** An API instant as epoch ms: integer seconds (below 1e11) or ms, or an ISO string. Anything else is null. */
+export function devinInstantMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value < 1e11 ? value * 1000 : value;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
 function isHttpsUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2048) return false;
   try {
@@ -234,6 +261,9 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
   if (orgId !== undefined && (typeof orgId !== 'string' || !DEVIN_ORG_ID_PATTERN.test(orgId))) return null;
   const userId = raw['user_id'];
   if (userId !== undefined && userId !== null && !isDevinOpaqueSelfId(userId)) return null;
+  const serviceUserId = raw['service_user_id'];
+  if (serviceUserId !== undefined && serviceUserId !== null && !isDevinOpaqueSelfId(serviceUserId)) return null;
+  if (raw['is_archived'] !== undefined && typeof raw['is_archived'] !== 'boolean') return null;
 
   const detail = raw['status_detail'];
   if (detail !== undefined && detail !== null && typeof detail !== 'string') return null;
@@ -244,6 +274,7 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
     if (typeof acus !== 'number' || !Number.isFinite(acus) || acus < 0) return null;
     acusConsumed = acus;
   }
+  const createdAtMs = devinInstantMs(raw['created_at']);
 
   const prs = raw['pull_requests'];
   const pullRequests: DevinSession['pullRequests'] = [];
@@ -263,10 +294,13 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
     sessionId,
     ...(typeof orgId === 'string' ? { orgId } : {}),
     ...(typeof userId === 'string' ? { userId } : {}),
+    ...(typeof serviceUserId === 'string' ? { serviceUserId } : {}),
+    ...(typeof raw['is_archived'] === 'boolean' ? { isArchived: raw['is_archived'] } : {}),
     url,
     status: status as DevinSessionStatus,
     statusDetail: typeof detail === 'string' ? detail.slice(0, 60) : null,
     acusConsumed,
+    createdAtMs,
     pullRequests,
     tags,
     title: typeof raw['title'] === 'string' ? raw['title'].slice(0, 200) : null,
@@ -275,6 +309,21 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
 }
 
 /** PaginatedResponse[SessionResponse] — https://docs.devin.ai/api-reference/concepts/pagination. Unparseable items are dropped. */
+/** Array of SessionAttachment; any malformed row fails the whole read closed. */
+export function parseDevinSessionAttachments(raw: unknown): DevinSessionAttachment[] | null {
+  if (!Array.isArray(raw) || raw.length > 1000) return null;
+  const out: DevinSessionAttachment[] = [];
+  for (const row of raw) {
+    if (!isRecord(row)) return null;
+    const { attachment_id: id, name, url, source, content_type: contentType } = row;
+    if (typeof id !== 'string' || id === '' || id.length > 200 || typeof name !== 'string' || name === '' || name.length > 255
+      || !isHttpsUrl(url) || (source !== 'devin' && source !== 'user')
+      || (contentType !== undefined && contentType !== null && typeof contentType !== 'string')) return null;
+    out.push({ attachmentId: id, name, url, source, contentType: typeof contentType === 'string' ? contentType : null });
+  }
+  return out;
+}
+
 export interface DevinSessionPage {
   items: DevinSession[];
   endCursor: string | null;
@@ -399,6 +448,24 @@ export function parseConsumptionRetryAfter(value: string | null, now = Date.now(
 
 type RetryPolicy = 'read' | 'create';
 
+const DEVIN_PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
+export interface DevinPrReview {
+  status: 'pending' | 'running' | 'completed' | 'errored' | 'cancelled' | 'skipped';
+  repo_path: string;
+  pr_number: number;
+  commit_sha: string;
+  created_at: string;
+}
+
+export function parseDevinPrReview(raw: unknown): DevinPrReview | null {
+  if (!isRecord(raw) || typeof raw['status'] !== 'string' || !['pending', 'running', 'completed', 'errored', 'cancelled', 'skipped'].includes(raw['status']) ||
+      typeof raw['repo_path'] !== 'string' || !/^github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw['repo_path']) ||
+      !Number.isSafeInteger(raw['pr_number']) || (raw['pr_number'] as number) < 1 ||
+      typeof raw['commit_sha'] !== 'string' || !/^[a-fA-F0-9]{40,64}$/.test(raw['commit_sha']) ||
+      typeof raw['created_at'] !== 'string' || !Number.isFinite(Date.parse(raw['created_at']))) return null;
+  return { status: raw['status'] as DevinPrReview['status'], repo_path: raw['repo_path'], pr_number: raw['pr_number'] as number, commit_sha: raw['commit_sha'], created_at: raw['created_at'] };
+}
+
 export class DevinClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -472,7 +539,15 @@ export class DevinClient {
       }
       const code = failureForStatus(response.status);
       const detail = problemDetail(text, this.apiKey);
-      lastError = new DevinApiError(code, detail ? `${STATUS_SENTENCES[code]} Devin said: ${detail}` : STATUS_SENTENCES[code], response.status, consumptionRetry && code === 'rate-limited' ? parseConsumptionRetryAfter(response.headers.get('retry-after')) : null);
+      let errorCode: string | null = null;
+      try {
+        const value: unknown = JSON.parse(text)?.error_code;
+        if (typeof value === 'string') {
+          const clean = scrubSecrets(redactKnownValues(value, [this.apiKey])).replace(/\bcog_[A-Za-z0-9_-]+/g, '').slice(0, 64);
+          if (/^[A-Za-z0-9_.-]+$/.test(clean)) errorCode = clean;
+        }
+      } catch { /* Non-JSON errors have no provider code. */ }
+      lastError = new DevinApiError(code, detail ? `${STATUS_SENTENCES[code]} Devin said: ${detail}` : STATUS_SENTENCES[code], response.status, consumptionRetry && code === 'rate-limited' ? parseConsumptionRetryAfter(response.headers.get('retry-after')) : null, errorCode);
       const retryable = code === 'rate-limited' || (policy === 'read' && code === 'server');
       if (!retryable || attempt === this.retries) throw lastError;
       const consumptionWait = consumptionRetry && code === 'rate-limited' && lastError.retryAfterAt !== null
@@ -488,6 +563,21 @@ export class DevinClient {
   /** GET /v3/self — https://docs.devin.ai/api-reference/v3/self/self */
   async getSelf(): Promise<DevinSelf> {
     const parsed = parseDevinSelf(await this.request('GET', '/self', undefined, 'read'));
+    if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  async triggerPrReview(orgId: string, prUrl: string): Promise<DevinPrReview> {
+    if (!DEVIN_PR_URL.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
+    const parsed = parseDevinPrReview(await this.request('POST', `/organizations/${checkOrg(orgId)}/pr-reviews`, { pr_url: prUrl }, 'create'));
+    if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  async getPrReview(orgId: string, prUrl: string, commitSha?: string): Promise<DevinPrReview> {
+    if (!DEVIN_PR_URL.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
+    const query = new URLSearchParams({ pr_url: prUrl, ...(commitSha ? { commit_sha: commitSha } : {}) });
+    const parsed = parseDevinPrReview(await this.request('GET', `/organizations/${checkOrg(orgId)}/pr-reviews?${query}`, undefined, 'read'));
     if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
     return parsed;
   }
@@ -621,6 +711,99 @@ export class DevinClient {
     }
     // Empty/nonterminal responses are not evidence that provider spend stopped.
     return parsed;
+  }
+
+  /** POST archive — https://docs.devin.ai/v3-openapi.yaml (handle_archive_session). */
+  async archiveSession(orgId: string, sessionId: string): Promise<DevinSession> {
+    const org = checkOrg(orgId);
+    const id = checkSessionId(sessionId);
+    const parsed = parseDevinSession(await this.request('POST', `/organizations/${encodeURIComponent(org)}/sessions/${encodeURIComponent(id)}/archive`, undefined, 'create'));
+    if (!parsed || parsed.sessionId !== id || (parsed.orgId !== undefined && parsed.orgId !== org)) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  /** GET /v3/organizations/{org_id}/sessions/{devin_id}/attachments — https://docs.devin.ai/v3-openapi.yaml (handle_get_session_attachments) */
+  async listSessionAttachments(orgId: string, sessionId: string): Promise<DevinSessionAttachment[]> {
+    const org = checkOrg(orgId);
+    const id = checkSessionId(sessionId);
+    const parsed = parseDevinSessionAttachments(await this.request('GET', `/organizations/${encodeURIComponent(org)}/sessions/${encodeURIComponent(id)}/attachments`, undefined, 'read'));
+    if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  /**
+   * GET /v3/organizations/{org_id}/attachments/{uuid}/{name} — "Returns a 307
+   * redirect … to a presigned S3 URL". The key goes only to the API; the
+   * redirect target is fetched without it, and must be https.
+   * https://docs.devin.ai/v3-openapi.yaml (handle_download_attachment)
+   */
+  async downloadAttachment(orgId: string, uuid: string, name: string, maxBytes: number): Promise<Buffer> {
+    const org = checkOrg(orgId);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uuid) || typeof name !== 'string' || name.length < 1 || name.length > 255
+      || name.includes('/') || name.includes('\\') || name === '..' || name.includes('\0')) {
+      throw new DevinApiError('invalid-request', 'That is not a Devin attachment.');
+    }
+    let nameSegment: string;
+    try { nameSegment = encodeURIComponent(name); }
+    catch { throw new DevinApiError('invalid-request', 'That is not a Devin attachment.'); }
+    let url = `${this.baseUrl}/organizations/${encodeURIComponent(org)}/attachments/${encodeURIComponent(uuid)}/${nameSegment}`;
+    let headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
+    for (let hop = 0; hop < 3; hop += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs * 6);
+      timer.unref?.();
+      let response: Awaited<ReturnType<DevinFetch>>;
+      let bytes: Buffer | null = null;
+      try {
+        response = await this.fetchImpl(url, { method: 'GET', headers, redirect: 'manual', signal: controller.signal });
+        if (response.status >= 200 && response.status < 300) {
+          const tooLarge = () => new DevinApiError('unparsed', 'The Devin attachment is larger than allowed.', response.status);
+          const contentLength = response.headers.get('content-length');
+          if (contentLength && /^\d+$/.test(contentLength) && BigInt(contentLength) > BigInt(maxBytes)) {
+            controller.abort();
+            try { await response.body?.cancel(); } catch { /* The response is already being rejected. */ }
+            throw tooLarge();
+          }
+          if (!response.body) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed, response.status);
+          const reader = response.body.getReader();
+          const chunks: Buffer[] = [];
+          let total = 0;
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              total += value.byteLength;
+              if (total > maxBytes) {
+                try { await reader.cancel(); } catch { /* The response is already being rejected. */ }
+                controller.abort();
+                throw tooLarge();
+              }
+              chunks.push(Buffer.from(value));
+            }
+          } finally { reader.releaseLock(); }
+          bytes = Buffer.concat(chunks, total);
+        }
+      } catch (error) {
+        if (error instanceof DevinApiError) throw error;
+        throw new DevinApiError('network', STATUS_SENTENCES.network);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (bytes) {
+        return bytes;
+      }
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed, response.status);
+        const next = new URL(location, url).toString();
+        if (!isHttpsUrl(next)) throw new DevinApiError('unparsed', 'The Devin attachment redirect is not https.', response.status);
+        url = next;
+        headers = {};
+        continue;
+      }
+      throw new DevinApiError(failureForStatus(response.status), STATUS_SENTENCES[failureForStatus(response.status)], response.status);
+    }
+    throw new DevinApiError('unparsed', 'The Devin attachment redirected too many times.');
   }
 }
 

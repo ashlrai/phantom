@@ -38,8 +38,8 @@ it('polls both bus routes only while visible', async () => {
   await act(async () => {});
   const before = fetcher.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  // fleet-runs, owner thread, channel health, bus status and bus page each poll once per tick.
-  expect(fetcher.mock.calls.length - before).toBe(5);
+  // fleet-runs, owner thread, channel health, claim notices, Slack trace, orchestration, bus status and bus page each poll once per tick.
+  expect(fetcher.mock.calls.length - before).toBe(8);
   view.rerender(<FleetChannelsPane {...props} visible={false} />);
   const hidden = fetcher.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });

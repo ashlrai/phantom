@@ -5,6 +5,7 @@ import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { OrdersCard } from './OrdersCard.js';
+import { ReleaseCard } from '../fleet-releases/ReleaseCard.js';
 
 const query: QueryDef<GoalsView> = { key: 'fleet-goals', fetch: signal => apiGet('/api/verse/fleet/runs/goals', signal) };
 export function GoalsPane({ visible }: PaneProps) {
@@ -13,6 +14,7 @@ export function GoalsPane({ visible }: PaneProps) {
   usePollWhileVisible(refresh, 60_000, { enabled: visible });
   const data = read.data;
   return <section aria-label="Goals"><h2>Goals</h2>
+    <ReleaseCard visible={visible} />
     {!data ? <p>{read.status === 'error' ? 'Goals are unavailable.' : 'Reading goals…'}</p> : !data.available ? <p>Dispatcher status is unknown.</p> : <>
       <p>Jobs launched in the last 24 hours. Last updated: {data.observedAt ?? 'unknown'}.</p>
       <OrdersCard visible={visible} />

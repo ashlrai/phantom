@@ -1,5 +1,8 @@
+import { readTaskCheckJobs } from './fleet-task-check.js';
+import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { readLeverageMix } from '../core/metrics/leverage-mix.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
+import { cmdMetricsProd } from './metrics-prod.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
 import { join } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
@@ -11,11 +14,14 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]> [--json]
+const USAGE = `Usage: phm metrics <loop [--dry-run]|merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]|prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL]> [--json]
+phm metrics loop [--json] measures throughput, loop times, cost per merged PR and capacity per node; see phm metrics loop --help.
+phm metrics merges [--json] reads the last 24 hourly buckets from the local jobs ledger.
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
 phm metrics levers ranks opportunity proxies from local activity and fleet rollups.
 phm metrics leverage-mix reports the 24-hour fleet merge mix; --prs enriches it with GitHub PR file paths.
-No network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
+phm metrics prod reads bridge PR merge, release ancestry and exact npm or crates.io publication evidence. See docs/PRODUCTION-METRICS.md.
+Every subcommand except prod stays local: no network, writes, provider calls or operational routing changes. See docs/METRICS-ROUTER-FEED.md for schemas.
 Exit 0: report or help. Exit 2: invalid arguments or refused input.`;
 
 interface CliIo {
@@ -45,7 +51,9 @@ function cmdIngest(args: string[], io: CliIo): number {
 }
 
 export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number> {
+  if (argv[0] === 'prod') return cmdMetricsProd(argv, {}, io);
   if (argv[0] === 'idle') return cmdMetricsIdle(argv);
+  if (argv[0] === 'loop') return import('./metrics-loop.js').then(({ cmdMetricsLoop }) => cmdMetricsLoop(argv.slice(1), io));
   if (argv[0] === 'levers' || (argv[0] === '--json' && argv[1] === 'levers')) {
     const args = argv[0] === 'levers' ? argv : ['levers', '--json', ...argv.slice(2)];
     return import('./metrics-levers.js').then(({ cmdMetricsLevers }) => cmdMetricsLevers(args, io));
@@ -56,6 +64,14 @@ export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number>
   const [sub = 'summary', ...rest] = argv.filter((a) => a !== '--json');
   if (sub === 'help') { io.out(USAGE); return 0; }
   if (sub === 'ingest') return cmdIngest(rest, io);
+  if (sub === 'merges') {
+    if (rest.length) { io.err(USAGE); return 2; }
+    return readTaskCheckJobs().then(raw => {
+      const report = mergeGraph(raw);
+      io.out(json ? JSON.stringify(report, null, 2) : !report.known ? 'Merge metrics: unknown' : report.lanes!.length ? report.lanes!.map(lane => `${lane.lane}: ${lane.buckets.reduce((sum, bucket) => sum + bucket.merges, 0)} merges`).join('\n') : 'No merges in the last 24 hours');
+      return 0;
+    });
+  }
   if (sub === 'leverage-mix') {
     if (rest.length && (rest.length !== 2 || rest[0] !== '--prs' || !rest[1] || rest[1].startsWith('-'))) { io.err(USAGE); return 2; }
     const report = readLeverageMix(rest[1]);
