@@ -951,7 +951,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'inbox submit <id> --yes',      desc: 'Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.', topic: 'autonomy' },
   { cmd: 'inbox reject <id>',            desc: 'Discard a pending proposal; applies nothing.', topic: 'autonomy' },
   { cmd: 'inbox --json',                 desc: 'Emit JSON for inbox list, show, approve, submit, or automerge results.', topic: 'autonomy' },
-  { cmd: 'ideas [--json]',               desc: 'List READY fleet ideas (RQ id, repo, lane, goal) from the vision and queue docs.', topic: 'autonomy' },
+  { cmd: 'ideas [--json|--text]',        desc: 'Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown.', topic: 'autonomy' },
   { cmd: 'drive [--once --dry-run] [--tick <seconds>]', desc: 'Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.', topic: 'autonomy' },
   { cmd: 'daemon start --once',          desc: 'Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.', topic: 'autonomy' },
   { cmd: 'daemon start --once --dry-run', desc: 'Plan only: which backlog items WOULD be worked (no swarm/proposal).', topic: 'autonomy' },
