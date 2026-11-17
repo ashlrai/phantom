@@ -32,6 +32,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 - Cross-provider subagents: `phm subagent spawn --parent session-id --tier fast --task "Review a bounded change" --json` plans a scope-limited child through the provider-neutral router. Dry-run writes nothing; `--apply` stores held records only, never dispatches. No metered fallback. See [subagents](docs/SUBAGENTS.md).
 
+- Outcome-driven routing: `phm route outcomes --json` reads local evidence; `phm route tune --dry-run --json` previews bounded weights. Only `--apply` writes local weights. See [router tuning](docs/ROUTER-GATEWAY.md#outcome-driven-work-market-tuning).
+
 - CI baseline analysis: `phm ci baseline --json` groups fresh Vitest failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
 
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.

@@ -2,6 +2,34 @@ import { explainRoutes } from '../core/queue/route-explain.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { open, constants } from 'node:fs/promises';
+import { readRouterOutcomes } from '../core/router/outcomes.js';
+import { applyRouterWeights, proposeRouterWeights, readRouterWeights } from '../core/router/tune.js';
+
+async function routeOutcomesOrTune(args: string[]): Promise<number> {
+  const verb = args[0];
+  let lane: string | undefined, minSamples: number | undefined, maxShift: number | undefined;
+  let apply = false, dry = false;
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--json') continue;
+    if (verb === 'outcomes' && a === '--lane' && args[i + 1]) lane = args[++i];
+    else if (verb === 'tune' && a === '--apply') apply = true;
+    else if (verb === 'tune' && a === '--dry-run') dry = true;
+    else if (verb === 'tune' && a === '--min-samples' && args[i + 1]) minSamples = Number(args[++i]);
+    else if (verb === 'tune' && a === '--max-shift' && args[i + 1]) maxShift = Number(args[++i]);
+    else { console.error('Invalid route tuning arguments'); return 2; }
+  }
+  if (apply && dry) { console.error('Choose --apply or --dry-run'); return 2; }
+  try {
+    const outcomes = await readRouterOutcomes({ lane });
+    if (verb === 'outcomes') { console.log(JSON.stringify(outcomes)); return 0; }
+    const current = await readRouterWeights();
+    const proposals = proposeRouterWeights(outcomes, current, { minSamples, maxShift });
+    if (apply) await applyRouterWeights(proposals, current);
+    console.log(JSON.stringify({ applied: apply, proposals }));
+    return 0;
+  } catch { console.error('Route tuning failed: invalid bounds or unavailable local weights store'); return 2; }
+}
 
 async function routeInput(file: string, limit = 32 * 1024): Promise<unknown> {
   if (file !== '-') {
@@ -91,11 +119,16 @@ async function routeFit(args: string[]): Promise<number> {
 }
 
 export async function cmdRoute(args: string[]): Promise<number> {
+  if (args[0] && !args[0].startsWith('-') && (args.includes('--help') || args.includes('-h'))) {
+    console.log('Usage: phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route outcomes [--lane <id>] --json | phm route tune [--dry-run] [--apply] [--min-samples N] [--max-shift X] --json | phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
+    return 0;
+  }
+  if (args[0] === 'outcomes' || args[0] === 'tune') return routeOutcomesOrTune(args);
   if (args[0] === 'failover') return routeFailover(args.slice(1));
   if (args[0] === 'decide') return routeDecide(args.slice(1));
   if (args[0] === 'fit') return routeFit(args.slice(1));
   if (args[0] !== 'explain' || args.slice(1).some(a => a !== '--json') || args.length > 2) {
-    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
+    console.error('Usage: phm route outcomes [--lane <id>] --json | phm route tune [--dry-run] [--apply] [--min-samples N] [--max-shift X] --json | phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
     return 2;
   }
   const report = await explainRoutes();

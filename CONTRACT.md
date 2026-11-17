@@ -1,3 +1,29 @@
+# Outcome-driven router tuning
+
+`src/core/router/outcomes.ts` exports `RouterOutcome`,
+`foldRouterOutcomes(text, scores?)`, `readRouterOutcomes({runsDir?,rootDir?,lane?}?)`
+and `readBoundedRouterFile(path, limit?)`. Outcomes use `router.outcome.v1`;
+missing measurements are null, malformed ledger lines are ignored, and PR URLs
+join terminal outcomes to jobs. Lane/model pass^k evidence is advisory only.
+
+`src/core/router/tune.ts` exports `RouterWeight`, `WeightProposal`,
+`routerWeightSchema`, `routerWeightsPath(rootDir?)`, `readRouterWeights(rootDir?)`,
+`proposeRouterWeights(outcomes,current?,{minSamples?,maxShift?,now?}?)` and
+`applyRouterWeights(proposals,current,rootDir?)`. Weights persist as an array
+of `router.weights.v1` rows; apply preserves groups without accepted proposals.
+Proposals count known merge outcomes only, use merge rate as target, default
+to neutral 0.5, require 20 samples, and cap each shift at 0.1. Refused proposals
+retain the current weight and report `insufficient-evidence`.
+
+`RouteRequest` accepts optional `work_class` (route ID). `RouteSources` accepts
+optional `weights: RouterWeight[]`, loaded from the local ashlr home by
+`loadRouteSources`. `rankRouteCandidates(request,candidates,nowMs?,weights?)`
+uses weights only after eligibility filtering, spend priority and cost rank,
+before latency and lane. No work class means the original ordering.
+`planFallbackChain` passes the request work class and source weights through
+to ranked failover ordering; rejection gates and explicitly pinned ordering
+remain unchanged.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
