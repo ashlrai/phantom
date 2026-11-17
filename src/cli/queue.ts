@@ -85,7 +85,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   if (args.length === 1 && args[0] === '--json') return (await import('./queue-batches.js')).cmdQueueBatches(args);
   let command: string | undefined;
   let commandIndex = -1;
-  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-cost-class', '--impact', '--port', '--token-file', '--runs']);
+  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--') { command = args[i + 1]; commandIndex = i + 1; break; }

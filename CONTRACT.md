@@ -40,6 +40,16 @@ Only authenticated admission receipts qualify; labels and peer status messages
 cannot authorize claims or prove completion. No shell, engine, merge or spending
 is invoked. Queue task strings remain untrusted data under existing worker gates.
 
+`QueueJob` (RQ-SHARED-QUEUE-1) carries the optional market requirements
+`max_tier` (tier ceiling; `tier` and `min_tier` may not exceed it), `data_class`
+(`public|internal|confidential|restricted`) and `work_class`
+(`bulk|standard|judgment`) beside `preferred_lane`, `needs`, `min_tier`,
+`max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
+values, and `phm queue add` takes `--max-tier`, `--data-class` and
+`--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
+nowMs, windowHours)` and `renderUnfed(report)` in
+`src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
+
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
 The optional synchronous host guard runs under that lock; an existing ID or an
