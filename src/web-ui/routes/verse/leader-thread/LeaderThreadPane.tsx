@@ -79,7 +79,7 @@ function laneEventStorage(): Storage | null {
 function LineView({ line, match, current }: { line: LabeledLine; match?: boolean; current?: boolean }) {
   const leader = line.who === 'leader';
   const iso = Number.isFinite(line.at) ? new Date(line.at).toISOString() : null;
-  const clock = iso ? clockTime(iso) : '—';
+  const clock = iso ? clockTime(iso) : 'unknown';
   if (line.quiet === 'status-ask') {
     return <p className={styles.note} data-find-match={match || undefined} data-find-current={current || undefined}>You asked for status · <span className={leaderStyles.channel}>{lineSourceLabel(line.source)}</span> · <time dateTime={iso ?? undefined}>{clock}</time></p>;
   }
