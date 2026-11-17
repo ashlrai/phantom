@@ -438,6 +438,15 @@ a truncated file list) are reported as `pinned`, not enqueued. Each action is
 written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
 per cycle.
 
+Within each repository, ready PRs enter the queue before branch updates and
+conflict resolution. Each group keeps PR-number order; already queued PRs
+are left alone and auto-merge stays armed. The offline scheduling fixture in
+`test/merge-queue-loop.test.ts` models a 60-second update and a 90-second
+conflict resolution: two ready PRs enroll after 0.1 and 0.2 seconds instead
+of 150.1 and 150.2 seconds, including when the update fails. These are fixture
+times, not measured production latency; repository reads and enrollment API
+latency still apply.
+
 `node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE ...`
 counts merged PRs per UTC day from each clone's first-parent history
 ([`merged-per-day.ts`](../src/core/drive/merged-per-day.ts)) and appends
