@@ -28,6 +28,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { readDaemonActivity, DAEMON_ACTIVITY_STALE_MS, type DaemonActivityPhase } from './activity.js';
+import { assessTickLoop, readTickLoopBeacon, type TickLoopAssessment } from './tick-loop.js';
 import {
   acquireDaemonLock,
   loadDaemonStateStrict,
@@ -42,7 +43,8 @@ export const LOCK_HEARTBEAT_STALE_MS = DAEMON_ACTIVITY_STALE_MS;
 const CACHE_MS = 5_000;
 
 /**
- * - `alive`   — a daemon process provably owns the lock right now.
+ * - `alive`   — a daemon process provably owns the lock right now; whether its
+ *               tick loop is still moving is `tickLoop.state` (`stalled` when not).
  * - `stale`   — the record says running, but the recorded process is provably
  *               gone (or is someone else's process): the daemon is NOT running.
  * - `stopped` — nothing claims to be running and nothing is.
@@ -69,6 +71,12 @@ export interface DaemonLivenessV1 {
   staleRecord: boolean;
   /** One specific sentence. */
   reason: string;
+  /**
+   * Whether the live daemon's tick loop is moving (tick-loop.ts). Present only
+   * when `state` is `alive`: `stalled` is a live process whose loop has stopped
+   * scheduling ticks — the state `alive` alone hid for 5.6 h.
+   */
+  tickLoop?: TickLoopAssessment;
 }
 
 type PidProbe = 'alive' | 'dead' | 'foreign';
@@ -200,7 +208,19 @@ function computeLiveness(
     pid: number | null,
     reason: string,
     staleRecord = false,
-  ): DaemonLivenessV1 => ({ v: 1, checkedAt, state, alive, pid, recorded, lock, activity, staleRecord, reason });
+  ): DaemonLivenessV1 => {
+    if (state !== 'alive' || pid === null) {
+      return { v: 1, checkedAt, state, alive, pid, recorded, lock, activity, staleRecord, reason };
+    }
+    let tickLoop: TickLoopAssessment;
+    try {
+      tickLoop = assessTickLoop({ beacon: readTickLoopBeacon(), nowMs, expectPid: pid });
+    } catch {
+      tickLoop = assessTickLoop({ beacon: null, nowMs });
+    }
+    const withLoop = tickLoop.state === 'stalled' ? `${reason} ${tickLoop.summary}` : reason;
+    return { v: 1, checkedAt, state, alive, pid, recorded, lock, activity, staleRecord, reason: withLoop, tickLoop };
+  };
 
   const lastTick = recorded.lastTickAt ? ` The last tick was ${describeAge(ageMs(recorded.lastTickAt, nowMs))}.` : '';
 
