@@ -20,7 +20,7 @@ vi.mock('node:fs', async (original) => ({
   statSync: probes.stat,
 }));
 
-import { DAEMON_LOG_STALE_MS, readDaemonHealth } from '../src/core/daemon/guard-health.js';
+import { DAEMON_LOG_STALE_MS, readDaemonHealth, diagnoseFrontierClients } from '../src/core/daemon/guard-health.js';
 
 const nowMs = Date.parse('2026-10-26T16:00:00Z');
 const clients = [{ id: 'codex-primary', engine: 'codex', model: 'gpt-5.4' }];
@@ -70,6 +70,29 @@ describe('daemon health and supervisor recommendation', () => {
       logMtime: (name) => name.includes('.out.') ? nowMs - 60_000 : nowMs - DAEMON_LOG_STALE_MS - 1,
     });
     expect(report.logState).toBe('fresh');
+  });
+
+  it('names each unresolved frontier client and why, including a CLI missing from PATH', () => {
+    const inventory = [
+      { id: 'codex', engine: 'codex', model: null, available: false, reason: 'unavailable-or-not-admitted' },
+      { id: 'grok-cli', engine: 'grok-cli', model: null, available: false, reason: 'resource-unavailable' },
+      { id: 'claude', engine: 'claude', model: null, available: false, reason: 'unavailable-or-not-admitted' },
+      { id: 'local', engine: 'local', model: null, available: false, reason: 'unavailable-or-not-selected' },
+    ];
+    const unavailable = diagnoseFrontierClients(inventory, (bin) => bin === 'codex');
+    const report = readDaemonHealth([], { nowMs }, { unavailable });
+    expect(report.healthy).toBe(false);
+    expect(report.frontierClientsUnavailable).toEqual([
+      { id: 'codex', engine: 'codex', reason: 'unavailable-or-not-admitted', binaryOnPath: true },
+      { id: 'grok-cli', engine: 'grok-cli', reason: 'resource-unavailable', binaryOnPath: null },
+      { id: 'claude', engine: 'claude', reason: 'unavailable-or-not-admitted', binaryOnPath: false },
+      { id: 'local', engine: 'local', reason: 'unavailable-or-not-selected', binaryOnPath: null },
+    ]);
+    expect(report.supervisor).toMatchObject({ reason: 'frontier-unavailable', restartRecommended: false });
+    expect(report.supervisor.detail).toContain("claude: unavailable-or-not-admitted ('claude' not on PATH)");
+    expect(report.supervisor.detail).toContain('codex: unavailable-or-not-admitted;');
+    const unreadable = readDaemonHealth(null, { nowMs }, { unavailable: [], error: 'config module unavailable' });
+    expect(unreadable.supervisor).toMatchObject({ reason: 'unknown', detail: 'frontier inventory unreadable: config module unavailable' });
   });
 
   it('recommends restart when proven dead even if log was recently written', () => {
