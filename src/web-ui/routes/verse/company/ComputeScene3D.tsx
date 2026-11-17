@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
+import type { FleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { AGENT_COLORS, buildScene, makeFrame, pickAgent, project, UNKNOWN_COLOR } from './scene3d-model.js';
 import styles from './compute.module.css';
 
 interface Props {
   nodes: ComputeNode[]; jobs: MapSession[]; now: number; heat: boolean;
+  orgMap?: FleetOrgMap | null;
   yaw: number; tilt: number; zoom: number; selection: string | null;
   onSelect: (job: string) => void; onOrbit: (yaw: number, tilt: number) => void;
 }
@@ -15,10 +17,14 @@ const HEIGHT = 460;
  * Canvas-2D projected 3D scene (no WebGL, no dependency). Draws on demand (data/camera change), reuses
  * preallocated buffers, and the text machine list stays the keyboard/assistive path to every agent.
  */
-export function ComputeScene3D({ nodes, jobs, now, heat, yaw, tilt, zoom, selection, onSelect, onOrbit }: Props) {
+export function ComputeScene3D({ nodes, jobs, orgMap, now, heat, yaw, tilt, zoom, selection, onSelect, onOrbit }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const scene = useMemo(() => buildScene(nodes, jobs, now, heat), [nodes, jobs, now, heat]);
   const frame = useMemo(() => makeFrame(scene), [scene]);
+  const orgNodes = useMemo(() => new Map(orgMap?.nodes.map(n => [n.id, n])), [orgMap]);
+  const orgJobs = useMemo(() => new Map(orgMap?.nodes.filter(n => n.kind === 'job' && n.jobId).map(n => [n.jobId, n])), [orgMap]);
+  const selectedOrg = selection === null ? undefined : orgJobs.get(selection);
+  const messages = orgMap?.edges.filter(edge => edge.kind === 'message') ?? [];
   const drag = useRef<{ x: number; y: number; yaw: number; tilt: number; moved: boolean } | null>(null);
   const state = useRef({ yaw, tilt, zoom, selection });
   state.current = { yaw, tilt, zoom, selection };
@@ -52,7 +58,11 @@ export function ComputeScene3D({ nodes, jobs, now, heat, yaw, tilt, zoom, select
           ctx.strokeStyle = AGENT_COLORS[a.kind] ?? UNKNOWN_COLOR;
           ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
           ctx.beginPath(); ctx.arc(tx, ty, a.job === s.selection ? 7 : 5, 0, 6.2832); ctx.fillStyle = AGENT_COLORS[a.kind] ?? UNKNOWN_COLOR; ctx.fill();
-          if (a.job === s.selection) { ctx.strokeStyle = '#fff'; ctx.stroke(); }
+          if (a.job === s.selection) {
+            ctx.strokeStyle = '#fff'; ctx.stroke();
+            const org = orgJobs.get(a.job);
+            ctx.fillStyle = '#c9d1d9'; ctx.fillText(`${org?.label ?? a.job} · ${org?.provider ?? 'unknown'}`, tx, ty - 14);
+          }
         }
       }
       ctx.globalAlpha = 1;
@@ -62,7 +72,7 @@ export function ComputeScene3D({ nodes, jobs, now, heat, yaw, tilt, zoom, select
     el.addEventListener('redraw', schedule);
     window.addEventListener('resize', schedule);
     return () => { cancelAnimationFrame(raf); el.removeEventListener('redraw', schedule); window.removeEventListener('resize', schedule); };
-  }, [scene, frame]);
+  }, [scene, frame, orgJobs]);
   useEffect(() => { canvas.current?.dispatchEvent(new Event('redraw')); }, [yaw, tilt, zoom, selection]);
 
   const local = (e: { clientX: number; clientY: number }) => {
@@ -89,6 +99,15 @@ export function ComputeScene3D({ nodes, jobs, now, heat, yaw, tilt, zoom, select
     <figcaption>
       {scene.nodes.length} nodes · {scene.shown} agents shown{scene.overflow ? ` · +${scene.overflow} more aggregated` : ''}
       {' '}· Heat = 1-min load ÷ 2×CPU ceiling; gray = unknown.
+      {!orgMap && <p>Org map unknown.</p>}
+      {selection && <p>{selectedOrg?.label ?? selection} · Provider: {selectedOrg?.provider ?? 'unknown'} · Org status: {selectedOrg?.status ?? 'unknown'}</p>}
+      <section aria-label="Org map messages"><h3>Agent messages</h3>
+        {orgMap?.sources.messages !== 'available' ? <p>Agent messages unknown.</p> : <>
+          <p>Last {orgMap.messageWindowMinutes} minutes · retained live messages</p>
+          {messages.length ? <ul>{messages.map(edge => <li key={edge.id}>{orgNodes.get(edge.from)?.label ?? 'unknown'} → {orgNodes.get(edge.to)?.label ?? 'unknown'} · {edge.count ?? 'unknown'} messages</li>)}</ul> : <p>No mapped messages in this window.</p>}
+          {orgMap.unmappedMessages !== 0 && <p>Messages without a mapped endpoint: {orgMap.unmappedMessages ?? 'unknown'}</p>}
+        </>}
+      </section>
     </figcaption>
   </figure>;
 }

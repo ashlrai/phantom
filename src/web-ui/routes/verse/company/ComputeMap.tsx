@@ -12,6 +12,7 @@ import { JobActivity } from '../fleet-job-log/JobActivity.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
+import { fleetOrgMapQuery } from '../fleet/org-map-query.js';
 import { advanceCores, fresh, isFleetCompute, isFleetSessionMap, loadRatio, type CoreHistory, type MapSession } from './compute-model.js';
 import { ComputeScene3D } from './ComputeScene3D.js';
 import { recordedAt, shown } from './company-model.js';
@@ -136,10 +137,13 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const compute = useQuery(computeQuery, { enabled, freshMs: 0 });
   const sessions = useQuery(sessionsMapQuery, { enabled, freshMs: 0 });
   const lanes = useQuery(fleetLanesQuery, { enabled, freshMs: 0 });
+  const org = useQuery(fleetOrgMapQuery, { enabled, freshMs: 0 });
+  const refreshOrg = useRefetch(fleetOrgMapQuery);
   const refreshCompute = useRefetch(computeQuery), refreshSessions = useRefetch(sessionsMapQuery), refreshLanes = useRefetch(fleetLanesQuery);
   usePollWhileVisible(refreshCompute, 5_000, { enabled });
   usePollWhileVisible(refreshSessions, 5_000, { enabled });
   usePollWhileVisible(refreshLanes, 15_000, { enabled });
+  usePollWhileVisible(refreshOrg, 15_000, { enabled });
   const [mode, setMode] = useState<'2D' | '3D'>('2D');
   const [group, setGroup] = useState(true), [heat, setHeat] = useState(true);
   const [yaw, setYaw] = useState(0), [tilt, setTilt] = useState(15), [zoom, setZoom] = useState(1);
@@ -175,7 +179,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       {(['2D', '3D'] as const).map(m => <button type="button" key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{m}</button>)}
       <label><input type="checkbox" checked={group} onChange={e => setGroup(e.target.checked)} />Group lanes</label>
       <label><input type="checkbox" checked={heat} onChange={e => setHeat(e.target.checked)} />Capacity heat</label>
-      <button type="button" onClick={() => { refreshCompute(); refreshSessions(); refreshLanes(); }}>Refresh fleet</button>
+      <button type="button" onClick={() => { refreshCompute(); refreshSessions(); refreshLanes(); refreshOrg(); }}>Refresh fleet</button>
       <button type="button" onClick={() => host ? host.openPane('fleet-bus') : openDockPane('fleet-bus')}>Agent bus</button>
     </div>
     {mode === '3D' && <div className={styles.toolbar}>
@@ -183,7 +187,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       <label>Tilt <input aria-label="Tilt" type="range" min="-35" max="35" value={tilt} onChange={e => setTilt(Number(e.target.value))} /></label>
       <label>Zoom <input aria-label="Zoom" type="range" min="0.4" max="1.5" step="0.05" value={zoom} onChange={e => setZoom(Number(e.target.value))} /></label>
     </div>}
-    {[['Compute', compute], ['Sessions', sessions], ['Lanes', lanes]].map(([label, q]) => {
+    {[['Compute', compute], ['Sessions', sessions], ['Lanes', lanes], ['Org map', org]].map(([label, q]) => {
       const read = q as typeof compute;
       return read.status === 'error' ? <p key={String(label)} role="alert">{String(label)} refresh failed. {read.data ? 'Last reading retained; may be stale.' : 'No data available.'}</p> : null;
     })}
@@ -195,7 +199,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       <small>Reset {l.credit.resetAt ?? 'unknown'} · {recordedAt(l.credit.observedAt, now)}</small>
     </article>) ?? <p>Lane quota: no data</p>}</div>
     {data && <PoolHosts data={data} now={now} />}
-    {mode === '3D' && <ComputeScene3D nodes={nodes} jobs={jobs} now={now3d} heat={heat} yaw={yaw} tilt={tilt} zoom={zoom}
+    {mode === '3D' && <ComputeScene3D nodes={nodes} jobs={jobs} orgMap={org.data ?? null} now={now3d} heat={heat} yaw={yaw} tilt={tilt} zoom={zoom}
       selection={selection} onSelect={select} onOrbit={(y, t) => { setYaw(y); setTilt(t); }} />}
     <details className={styles.viewport} open={mode === '2D' || undefined}>
       <summary>{mode === '2D' ? 'Machines' : 'Machine details (text)'}</summary>
