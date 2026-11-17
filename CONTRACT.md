@@ -1,3 +1,20 @@
+# Lane allowance evidence
+
+`src/core/usage/lane-allowance.ts` exports pure `projectLaneAllowance(inputs,
+nowMs)` and read-only `readLaneAllowance({ runsDir?, weeklyFile?, nowMs? }?)`,
+returning `LaneAllowanceSnapshot` (`v: 1`, `asOf`, `lanes`). Inputs combine
+resource-live state/history, parsed posture evidence and published Devin weekly
+capacity. Runs default to `ASHLR_RUNS_DIR` or `~/.ashlr-runs`; `weeklyFile`
+overrides the Devin publication path. `LaneAllowanceInputs` and
+`LaneAllowanceRow` describe nullable usage, reset, age, history, posture and
+Devin preview evidence. Missing measurements stay null; stale values retain
+their age and reason. USD pools map to `api-credit`, included/metered posture
+classes pass through, and local, absent or unrecognized classes stay unknown.
+`GET /api/usage/lanes` returns this projection without refreshing providers.
+`postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
+the shared bounded journal parser, including optional `freePreview` and
+`previewExpiresAt` evidence; absent optional fields remain absent.
+
 # Frontier CLI discovery and daemon health
 
 `src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
