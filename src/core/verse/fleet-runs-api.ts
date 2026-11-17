@@ -1,4 +1,5 @@
 import { readGoals } from '../fleet/goals.js';
+import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
@@ -497,6 +498,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/goals') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readGoals(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
+    // The desktop Goals view reads the same scorecard as `phm goals`.
+    if (path === '/api/verse/fleet/runs/goal-scorecard') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, await readGoalScorecard({ runsDir: deps.runsDir ?? defaultRunsDir(), now }));
       return true;
     }
     if (path === '/api/verse/fleet/runs/orders') {
