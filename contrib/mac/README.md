@@ -99,8 +99,18 @@ down by 2, never below the floor 6, and at most once per new completion
 (`step_seen` in `slots.json`). A held devin lane never adjusts. The devin lane
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
-Starvation admission (RQ-LOADGATE-RETUNE; real load gate restored by RQ-BATCH-SESSIONS-2).
-Claims stop on load1 above 2 x ncpu, on macOS
+Starvation admission (RQ-LOADGATE-RETUNE; real load gate restored by RQ-BATCH-SESSIONS-2; per-lane CPU placement by RQ-LOADGATE-PLACEMENT-1).
+Node saturation stops every claim when the measured CPU of the tick's one `ps` snapshot reaches 2 x ncpu,
+in cores. Measured CPU is the `%CPU` column of `ps -axo pid=,ppid=,pcpu=,comm=` summed over every listed process
+except dispatchd itself, so processes outside dispatchd (an operator's agent shell, a model server, a build) count
+toward the node. A snapshot without `%CPU` falls back to load1 against 2 x ncpu. Load1 is no longer a per-lane block.
+Each lane places its next job only while the node has CPU room for that lane: room = `GATE_PLACE_PER_CPU` x ncpu minus
+measured busy cores minus the cores already claimed this tick. A lane's cost is its `cores_per_job` from
+`state/resource-pool.json` when that file is fresh (`measured_at` within 900 seconds) and well formed for the lane,
+else `GATE_JOB_CORES` (1.0). A lane out of room waits; the other lanes still place. The room, costs and cost sources
+are recorded as `placement` in `admission.json`. Only the global signals below trip the whole gate.
+Known limit: on macOS `ps %cpu` is each process's lifetime average, so a new burst shows in the room a tick or
+more late. Per-tick launch limits (`MAX_LAUNCH_PER_TICK`, lane targets, the adaptive cap) still bound one tick.
 `kern.memorystatus_vm_pressure_level >= 2` (warn: pressure has risen), swap growth greater than 2 GiB
 within the last 300 seconds, or free disk below `DISK_HARD_STOP_GB` (30 GB).
 Swap samples persist across ticks in `admission.json`; startup needs a prior
@@ -120,14 +130,18 @@ admission --json` reports the same verdict read-only. `ashlr fleet admission --j
 reads the embedded block and says, per lane, whether work is held, at target,
 blocked by the global cap, or ok. `queue/LOADGATE_OFF` no longer waives the gate:
 it is reported as `off_switch_ignored` with a warning. The `codex-local` mid-tier cap is 4 while the gate is clear
-and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
+and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped. "Load" here is the same node
+signal: measured busy cores when the snapshot has `%CPU`, load1 otherwise.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
 is recorded as `local_mid_cap` in `admission.json`.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
 `GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
+`GATE_PLACE_PER_CPU` (defaults to `GATE_LOAD_PER_CPU`), `GATE_JOB_CORES=1`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
+`GATE_PLACE_PER_CPU` below `GATE_LOAD_PER_CPU` tightens per-lane placement without tripping the node;
+the node-wide trip stays at `GATE_LOAD_PER_CPU`. `lane_placement.py` holds the pure room arithmetic.
 `dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
 swap samples and the `admit` or `stop` decision. Signal fixtures
 `LOADGATE_LOADAVG`, `LOADGATE_NCPU`, `LOADGATE_PRESSURE`, `LOADGATE_SWAP_GB`
