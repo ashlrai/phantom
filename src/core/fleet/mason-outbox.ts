@@ -6,16 +6,47 @@ import { scrubSecrets } from '../util/scrub.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS } from '../verse/fleet-runs-types.js';
 
 export interface OutboxEntry {
+  /** Heading wall time, `YYYY-MM-DD HH:MM` ET or ISO; '' when the heading has none. */
   at: string;
   heading?: string;
+  /** PLAN-LOG only: stable id derived from the entry heading. */
+  id?: string;
+  /** MASON-OUTBOX only: the leader-network request id a `[leader-network:reply-<id>]` heading answers. */
+  replyTo?: string;
   text: string;
 }
 
 const MAX_READ_BYTES = 256 * 1024;
 // The leader's outbox is free-form Markdown; the first ISO 8601 or
 // "YYYY-MM-DD HH:MM" run in a "## " heading is the entry's time and every
-// other heading word stays as text.
-const HEADING_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?|\d{4}-\d{2}-\d{2} \d{2}:\d{2}/;
+// other heading word stays as text. The leader writes approximate times as
+// "2026-11-16 ~22:55 ET"; the "~" is dropped and the wall time normalised.
+const HEADING_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?|(\d{4}-\d{2}-\d{2}) ~?(\d{1,2}):(\d{2})(?!\d)/;
+
+function headingAt(match: RegExpExecArray): string {
+  return match[1] ? `${match[1]} ${match[2]!.padStart(2, '0')}:${match[3]}` : match[0];
+}
+
+// "**Reply for Mason** (for OUTBOXFALLBACK to copy): "text"" and older shapes:
+// optional bullet or heading, optional bold, an optional parenthetical note
+// before the colon. Group 1 is the reply text.
+const REPLY_MARKER = /^(?:[-*]\s+|#{1,6}\s+)?(?:\*\*)?(?:Reply for Mason(?:, to copy there)?|MASON-OUTBOX)(?:\*\*)?(?:\s*\([^)\n]*\))?\s*:?(?:\*\*)?\s*(.*)$/i;
+
+/** Drop one pair of outer quotes; quotes inside the reply stay. */
+function unquote(text: string): string {
+  const match = /^(["\u201C])([\s\S]*)(["\u201D])$/.exec(text);
+  return match && match[2]!.trim() ? match[2]!.trim() : text;
+}
+
+/** Stable across reads and rotations: the same heading always yields the same id. */
+export function planReplyId(heading: string): string {
+  return `plan-${createHash('sha256').update(heading.trim()).digest('hex').slice(0, 16)}`;
+}
+
+/** One plain line per reply for terminal output; a missing time reads "unknown". */
+export function replyLine(entry: Pick<OutboxEntry, 'at' | 'text'>): string {
+  return `${entry.at || 'unknown'}  ${entry.text.replace(/\s+/g, ' ').trim()}`;
+}
 
 function cap(text: string): string {
   return scrubSecrets(text).slice(0, FLEET_RUNS_INBOX_MAX_CHARS);
@@ -33,10 +64,11 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
   let openEntry = false;
   let at = '';
   let words = '';
+  let replyTo: string | undefined;
   let body: string[] = [];
   const finish = (): void => {
     if (!openEntry) return;
-    entries.push({ at, text: cap([body.join('\n').trim(), words].filter(part => part !== '').join('\n')) });
+    entries.push({ at, ...(replyTo ? { replyTo } : {}), text: cap([body.join('\n').trim(), words].filter(part => part !== '').join('\n')) });
   };
   for (const line of lines) {
     if (line.startsWith('## ')) {
@@ -44,10 +76,11 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
       openEntry = true;
       at = '';
       body = [];
+      replyTo = /\[leader-network:reply-([a-f0-9]{64})\]$/.exec(line)?.[1];
       const rest = line.slice(3).replace(/\s*\[leader-network:(?:reply-|digest-)[a-f0-9]{64}\]$/, '');
       const match = HEADING_TIME.exec(rest);
       if (match) {
-        at = match[0];
+        at = headingAt(match);
         words = `${rest.slice(0, match.index)} ${rest.slice(match.index + match[0].length)}`.replace(/\s+/g, ' ').trim();
       } else {
         words = rest.trim();
@@ -72,14 +105,14 @@ export function parsePlanLog(markdown: string): OutboxEntry[] {
   const finish = (): void => {
     const text = body?.join('\n').trim();
     if (text) {
-      const reply = { at, heading, text: cap(text) };
+      const reply = { at, heading, id: planReplyId(heading), text: cap(unquote(text)) };
       if (entryIndex >= 0) entries[entryIndex] = reply;
       else { entryIndex = entries.length; entries.push(reply); }
     }
     body = null;
   };
   for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
-    const marker = /^(?:[-*]\s+|#{1,6}\s+)?(?:\*\*)?(?:Reply for Mason(?:, to copy there)?|MASON-OUTBOX)(?:\*\*)?\s*:?(?:\*\*)?\s*(.*)$/i.exec(line);
+    const marker = REPLY_MARKER.exec(line);
     if (marker) {
       finish();
       body = [marker[1]!];
@@ -88,7 +121,8 @@ export function parsePlanLog(markdown: string): OutboxEntry[] {
       if (line.startsWith('## ')) {
         entryIndex = -1;
         heading = line.slice(3).trim();
-        at = HEADING_TIME.exec(line)?.[0] ?? /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
+        const match = HEADING_TIME.exec(line);
+        at = match ? headingAt(match) : /^## (\d{4}-\d{2}-\d{2}) ET/.exec(line)?.[1] ?? '';
       }
     } else if (body !== null) {
       body.push(line);

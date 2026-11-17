@@ -1,0 +1,141 @@
+{
+  "schema": "phantom-release-flow-metrics/v1",
+  "role": "baseline",
+  "generated_at": "2026-11-16T18:33:41.155Z",
+  "window_days": 7,
+  "window_start": "2026-11-09T18:33:41.155Z",
+  "window_end": "2026-11-16T18:33:41.155Z",
+  "full_runs": {
+    "total": 15,
+    "green": 0,
+    "red": 15,
+    "pass_rate": 0,
+    "runs": [
+      {
+        "id": 42711453542,
+        "head_sha": "0582d8ee9cd62165afaf4ca072ffddc87bd981df",
+        "conclusion": "failure",
+        "created_at": "2026-11-09T22:23:32Z",
+        "green": false
+      },
+      {
+        "id": 42774595121,
+        "head_sha": "155ebde0f9848316fc7fc74428cbccf805b7e9c6",
+        "conclusion": "failure",
+        "created_at": "2026-11-10T07:20:25Z",
+        "green": false
+      },
+      {
+        "id": 42888322289,
+        "head_sha": "34ea67b8595829c061bc90af98b90a7fe33dd8e0",
+        "conclusion": "failure",
+        "created_at": "2026-11-10T19:44:44Z",
+        "green": false
+      },
+      {
+        "id": 42972163769,
+        "head_sha": "f8e7abbe61a5aac59f0f2e037b7c8fa1823410cb",
+        "conclusion": "failure",
+        "created_at": "2026-11-11T06:24:09Z",
+        "green": false
+      },
+      {
+        "id": 43088819006,
+        "head_sha": "108dec2cfc082508e5e08de895150c1f27c3e825",
+        "conclusion": "failure",
+        "created_at": "2026-11-11T19:36:45Z",
+        "green": false
+      },
+      {
+        "id": 43173577226,
+        "head_sha": "2e5a671a84dfc1878ac2e6cdca2e71a773565f08",
+        "conclusion": "failure",
+        "created_at": "2026-11-12T07:12:42Z",
+        "green": false
+      },
+      {
+        "id": 43295081998,
+        "head_sha": "87c8406675427ce5f62f07531089baadd954dbcd",
+        "conclusion": "failure",
+        "created_at": "2026-11-12T19:55:22Z",
+        "green": false
+      },
+      {
+        "id": 43381243747,
+        "head_sha": "c2f5f20ebc61b8956f6508400c6925a2344eb1a9",
+        "conclusion": "failure",
+        "created_at": "2026-11-13T06:48:19Z",
+        "green": false
+      },
+      {
+        "id": 43494969731,
+        "head_sha": "afc979fd840de55c64233b1262f18a46c1c1d5bf",
+        "conclusion": "failure",
+        "created_at": "2026-11-13T19:44:07Z",
+        "green": false
+      },
+      {
+        "id": 43566285620,
+        "head_sha": "2dde4523634560bd5f983431ec665f9657326c42",
+        "conclusion": "failure",
+        "created_at": "2026-11-14T06:25:44Z",
+        "green": false
+      },
+      {
+        "id": 43624457008,
+        "head_sha": "91ce390e60828343ccfd9e08e3a3c4dfd78a9fed",
+        "conclusion": "failure",
+        "created_at": "2026-11-14T18:03:33Z",
+        "green": false
+      },
+      {
+        "id": 43648012265,
+        "head_sha": "f76d89e275d7dede0d3c1761b6f23fa73790d890",
+        "conclusion": "failure",
+        "created_at": "2026-11-14T22:25:22Z",
+        "green": false
+      },
+      {
+        "id": 43686033475,
+        "head_sha": "63283860155ef123e8bca71b38ba18d4dbe7a03a",
+        "conclusion": "failure",
+        "created_at": "2026-11-15T06:34:05Z",
+        "green": false
+      },
+      {
+        "id": 43749183989,
+        "head_sha": "243436a4a814c16de668e7e68d46ff96db9a201c",
+        "conclusion": "failure",
+        "created_at": "2026-11-15T18:52:22Z",
+        "green": false
+      },
+      {
+        "id": 43817368962,
+        "head_sha": "2a6d016b90b6ab915d30ee7500e6cfa85509c2fd",
+        "conclusion": "failure",
+        "created_at": "2026-11-16T06:31:48Z",
+        "green": false
+      }
+    ]
+  },
+  "merge_to_release": {
+    "samples": 2,
+    "median_seconds": 2832,
+    "min_seconds": 2178,
+    "max_seconds": 3485,
+    "releases": [
+      {
+        "tag": "v3.30.31",
+        "merge_at": "2026-11-10T04:32:45.000Z",
+        "published_at": "2026-11-10T05:09:03.000Z",
+        "seconds": 2178
+      },
+      {
+        "tag": "v3.30.33",
+        "merge_at": "2026-11-14T10:21:08.000Z",
+        "published_at": "2026-11-14T11:19:13.000Z",
+        "seconds": 3485
+      }
+    ]
+  }
+}

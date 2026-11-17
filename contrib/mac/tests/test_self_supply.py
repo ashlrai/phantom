@@ -162,6 +162,16 @@ class SelfSupplyTests(unittest.TestCase):
             self.assertEqual(plan['feeds'], {'recut-feed.py': 'absent', 'salvage-feed.py': 'ok'})
             self.assertTrue(all('pool=devin' in line for line in plan['lines']))
 
+    def test_self_declared_lane_stays_a_hint_and_open_lines_get_the_idle_lane(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('self_supply', SCRIPT)
+        supply = importlib.util.module_from_spec(spec); spec.loader.exec_module(supply)
+        declared = '- READY RQ-A (P1, tier=work, repo=phantom, pool=claude): keep the declared lane'
+        self.assertEqual(supply.stamp_pool(declared, 'devin'), declared)
+        self.assertIn('pool=devin', supply.stamp_pool('- READY RQ-B (P1, tier=work, pool=any): open', 'devin'))
+        self.assertNotIn('pool=any', supply.stamp_pool('- READY RQ-B (P1, tier=work, pool=any): open', 'devin'))
+        self.assertIn('repo=phantom, pool=devin)', supply.stamp_pool('- READY RQ-C (P1, repo=phantom): open', 'devin'))
+
     def test_both_feeds_dedupe_across_sources(self):
         two = {'recut-feed.py': FEED, 'salvage-feed.py': STRICT_FEED}
         with build({'devin': {'target': 6, 'running': 0, 'queued': 0}}, feeds=two) as home:

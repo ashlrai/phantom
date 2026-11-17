@@ -41,7 +41,13 @@ export function orderKey(entryAt: string): string | null {
       Number(match[1]!.slice(3)) < 1 || Number(match[1]!.slice(3)) > 31 || Number(match[2]!.slice(0, 2)) > 23) return null;
   return `${match[1]} ${match[2]}`;
 }
-const cache = new Map<string, { mtime: number; keys: string[] }>();
+const cache = new Map<string, { mtime: number; keys: string[]; channel: string | null }>();
+const ORDER_CHANNELS = ['slack', 'desktop', 'telegram', 'email', 'imessage'];
+function orderChannelHint(body: string): string | null {
+  const match = body.match(/\b(slack|desktop|telegram|email|imessage)\b/i);
+  const channel = match?.[1]?.toLowerCase() ?? null;
+  return channel !== null && ORDER_CHANNELS.includes(channel) ? channel : null;
+}
 /** Explicit merge evidence in a metrics/jobs.jsonl row. Producers write a
  * MERGED phase on `state`/`outcome`/`status` (metrics-outcomes reconciler,
  * dispatchd outcome rows), `event` = 'merged', or a parseable
@@ -144,7 +150,8 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
     try {
       let cached = cache.get(file.path);
       if (!cached || cached.mtime !== file.mtime) {
-        cached = { mtime: file.mtime, keys: parseOrderCitations(await boundedText(file.path, 16 * 1024)) };
+        const body = await boundedText(file.path, 16 * 1024);
+        cached = { mtime: file.mtime, keys: parseOrderCitations(body), channel: orderChannelHint(body) };
         cache.set(file.path, cached);
       }
       let launched = false;
@@ -164,6 +171,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
       if (state === 'queued' && lane === null) lane = queued.lanes.get(file.id) ?? null;
       for (const order of result.orders) {
         if (!cached.keys.includes(order.key) || order.jobs.some(job => job.id === file.id)) continue;
+        if (cached.channel !== null && order.source.toLowerCase() !== cached.channel) continue;
         order.jobs.push({ id: file.id, lane, state, url: publish?.url ?? merges.get(file.id) ?? null, ...(endedEmpty !== undefined ? { endedEmptyAt: endedEmpty } : {}) });
       }
     } catch { result.sources.prompts = 'degraded'; }

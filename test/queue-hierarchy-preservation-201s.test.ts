@@ -45,6 +45,9 @@ describe('queue hierarchy preservation', () => {
     expect(doc.jobs[0]).not.toHaveProperty('depth');
     expect(doc.raw?.[0]?.text).toBe('- UNKNOWN RQ-RAW: untouched');
     expect(exportMarkdown(doc)).toBe(text);
-    expect(() => importMarkdown('- READY RQ-CHILD (depth=65): Work Acceptance: Done\n')).toThrow('Invalid depth');
+    const invalid = importMarkdown('- READY RQ-CHILD (depth=65): Work Acceptance: Done\n');
+    expect(invalid.jobs).toEqual([]);
+    expect(invalid.raw?.[0]?.text).toContain('depth=65');
+    expect(invalid.raw?.[0]?.warning).toBe('invalid job requirements');
   });
 });

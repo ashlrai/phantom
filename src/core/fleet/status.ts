@@ -1515,6 +1515,8 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** CLI-only disk attribution; bounded read-only census, never a deletion plan. */
+  disk?: import('./disk-attribution.js').FleetDiskAttribution;
   /** Additive dashboard feed; optional for legacy snapshots. */
   metrics?: FleetMetrics;
   /** Advisory per-pool observations, independent of dispatch authority. */

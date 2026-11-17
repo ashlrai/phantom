@@ -12,20 +12,233 @@
   max-height: none;
 }
 
+/* ---- overview: where things stand, before the conversation -------------- */
 .overview {
   flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2) var(--space-6);
   max-height: 35%;
   overflow: auto;
-  padding: var(--space-3);
+  padding: var(--space-3) var(--card-pad);
   border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+  container-type: inline-size;
+}
+
+.overview > * { min-width: 0; margin: 0; }
+
+/* Section names are quiet labels; the readings under them carry the weight. */
+.overview h2,
+.overview h3 {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-display);
+  font-size: var(--text-2xs-size);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-2xs-line);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.overview ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.overview p { margin: 0; }
+
+.summary { color: var(--text-primary); }
+
+/* "Unavailable" is a reading, not a failure: unknown tone, never danger. */
+.unknown { color: var(--status-unknown-fg); }
+.quiet { color: var(--text-tertiary); }
+
+.bottleneck {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-primary);
+}
+
+.bottleneck::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--status-unknown-solid);
+}
+
+.bottleneck strong { color: var(--text-secondary); font-weight: var(--font-weight-medium); }
+.bottleneck[data-tone='warning']::before { background: var(--status-warning-solid); }
+.bottleneck[data-tone='unknown'] { color: var(--status-unknown-fg); }
+
+.office {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2) var(--space-6);
+}
+
+.office > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; }
+.office li { overflow-wrap: anywhere; }
+.latestReply { grid-column: 1 / -1; color: var(--text-tertiary); }
+
+@container (min-width: 720px) {
+  .office { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+.laneHealth summary {
+  width: fit-content;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.laneHealth summary:hover { color: var(--text-primary); }
+.laneHealth[open] summary { margin-bottom: var(--space-1); }
+.laneHealth li strong { color: var(--text-primary); font-weight: var(--font-weight-medium); }
+.laneHealth li[data-stuck='true'] { color: var(--status-warning-fg); }
+
+/* ---- toolbar: thread controls on the left, readings on the right -------- */
+.toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--card-pad);
+}
+
+.toolbarMeta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbarMeta [data-tone='unknown'] { color: var(--status-unknown-fg); }
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs-size);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.tool:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+.tool[aria-pressed='true'] { border-color: var(--accent-500); background: var(--bg-hover); color: var(--text-primary); }
+.tool:disabled { color: var(--text-disabled); cursor: default; }
+
+.tool:focus-visible,
+.send:focus-visible,
+.findBar input:focus-visible,
+.laneHealth summary:focus-visible,
+.channels summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.findBar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--card-pad) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+}
+
+.findBar input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  height: var(--control-h-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs-size);
+}
+
+.statusNow {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0 var(--card-pad) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.statusNow p { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---- channels: a dot says live or off before the word does -------------- */
+.channels {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--card-pad) var(--space-2);
+  color: var(--text-tertiary);
   font-size: var(--text-xs-size);
   line-height: var(--text-xs-line);
 }
 
-.overview h2 { margin: 0 0 var(--space-2); font-size: var(--text-sm-size); }
-.overview p { margin: var(--space-2) 0; }
-.overview ul { margin: var(--space-2) 0; padding-left: var(--space-4); }
-.overview summary { cursor: pointer; }
+.channels summary { list-style: none; cursor: pointer; }
+.channels summary::-webkit-details-marker { display: none; }
+.channels details[open] { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.channelGuidance { color: var(--text-secondary); }
+
+.channels [data-state] { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+.channels [data-state]::before {
+  content: '';
+  flex: none;
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--status-neutral-solid);
+}
+
+.channels [data-state='live'] { border-color: var(--status-success-solid); color: var(--status-success-fg); }
+.channels [data-state='live']::before { background: var(--status-success-solid); }
+.channels [data-state='paused'],
+.channels [data-state='late'] { border-color: var(--status-warning-solid); color: var(--status-warning-fg); }
+.channels [data-state='paused']::before,
+.channels [data-state='late']::before { background: var(--status-warning-solid); }
+.channels [data-state='late'] { font-weight: var(--font-weight-semibold); }
+.channels [data-state='unknown']::before { background: var(--status-unknown-solid); }
+
+/* A teammate text that has waited too long is the one urgent chip in the toolbar. */
+.toolbar [data-dot-reply='late'] { border-color: var(--status-danger-solid); color: var(--status-danger-fg); }
+.toolbar [data-dot-reply='answered'] { color: var(--status-success-fg); }
 
 /* A line of Mason's own words (inbox or thread): a rail on the left edge marks it his. */
 .masonLine {
@@ -43,7 +256,7 @@
 .note {
   flex: none;
   margin: 0;
-  padding: var(--space-2) var(--space-3) 0;
+  padding: var(--space-2) var(--card-pad) 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs-size);
   line-height: var(--text-xs-line);
@@ -51,7 +264,7 @@
 
 .reply {
   flex: none;
-  padding: var(--space-3);
+  padding: var(--space-3) var(--card-pad);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-surface);
 }
@@ -68,25 +281,49 @@
   min-height: 3rem;
   max-height: 10rem;
   resize: vertical;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   color: var(--text-primary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   font: inherit;
+  transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
-.replyRow button {
-  padding: var(--space-2) var(--space-3);
+.replyRow textarea::placeholder { color: var(--text-tertiary); }
+.replyRow textarea:focus { border-color: var(--border-focus); outline: none; }
+.replyRow textarea:disabled { color: var(--text-disabled); }
+
+.send {
+  flex: none;
+  height: var(--control-h);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--accent-500);
+  color: var(--text-on-accent);
   font: inherit;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
-.replyRow button:disabled { cursor: default; opacity: 0.5; }
+/* Nothing to send yet: the button recedes instead of shouting from an empty box. */
+.send:disabled {
+  border-color: var(--border-default);
+  background: none;
+  color: var(--text-disabled);
+  cursor: default;
+}
 
 .replyFailure {
   margin: var(--space-2) 0 0;
-  color: var(--text-primary);
+  color: var(--status-danger-fg);
+  font-size: var(--text-sm-size);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool, .send, .replyRow textarea { transition: none; }
 }
 
 .root [data-find-current='true'] { outline: 2px solid var(--accent-500); outline-offset: -2px; }

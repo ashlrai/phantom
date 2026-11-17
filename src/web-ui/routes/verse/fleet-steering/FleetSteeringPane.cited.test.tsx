@@ -34,5 +34,5 @@ it('shows prompt citations under the matching order with a linked PR chip', asyn
   expect(await screen.findByText(/2 jobs cite this order/)).toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'PR #2001' })).toHaveAttribute('href', 'https://github.com/example/fake/pull/2001');
   expect(screen.getByRole('button', { name: 'Open log for RQ-FAKE-RUNNING' })).toBeInTheDocument();
-  expect(screen.getByText('running')).toBeInTheDocument();
+  expect(screen.getByText('launched')).toBeInTheDocument();
 });

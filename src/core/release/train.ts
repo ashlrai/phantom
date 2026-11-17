@@ -98,6 +98,97 @@ export function judgeRequiredChecks(
   return pending ? 'pending' : 'green';
 }
 
+export interface FinalizeRunRecord {
+  status: string;
+  conclusion: string | null;
+  createdAt: string | null;
+  version: string | null;
+  sha: string | null;
+}
+
+export const FINALIZE_ATTEMPT_CAP = 2;
+export const FINALIZE_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+
+/** Matches `run-name` on finalize-github-release.yml. Anything else is unreadable. */
+export function finalizeRunIdentity(title: string | null): { version: string; sha: string } | null {
+  const match = /^finalize ((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)) ([a-f0-9]{40})$/.exec(title ?? '');
+  if (!match) return null;
+  return { version: match[1]!, sha: match[2]! };
+}
+
+/**
+ * At most two finalize runs for one version and sha. A failure in the last
+ * hour blocks the next try. An unattributed run newer than the candidate
+ * counts against that pair, so a title-less failure cannot retry every tick.
+ */
+export function finalizeRetryDecision(input: {
+  now: string;
+  version: string;
+  sha: string;
+  since: string | null;
+  runs: readonly FinalizeRunRecord[];
+}): { dispatch: boolean; reason: string } {
+  const nowMs = Date.parse(input.now);
+  const sinceMs = input.since === null ? Number.NEGATIVE_INFINITY : Date.parse(input.since);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(sinceMs)) return { dispatch: false, reason: 'finalize-clock' };
+  const relevant = input.runs.filter((run) => {
+    if (run.version !== null && run.sha !== null) return run.version === input.version && run.sha === input.sha;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    return Number.isFinite(at) && at >= sinceMs;
+  });
+  if (relevant.some((run) => run.status !== 'completed')) return { dispatch: false, reason: 'finalize-in-progress' };
+  if (relevant.length >= FINALIZE_ATTEMPT_CAP) return { dispatch: false, reason: 'finalize-attempt-cap' };
+  const cooling = relevant.some((run) => {
+    if (run.conclusion === 'success' || run.conclusion === 'skipped') return false;
+    const at = run.createdAt === null ? Number.NaN : Date.parse(run.createdAt);
+    if (!Number.isFinite(at) || at > nowMs) return true;
+    return nowMs - at < FINALIZE_FAILURE_COOLDOWN_MS;
+  });
+  if (cooling) return { dispatch: false, reason: 'finalize-failure-cooldown' };
+  return { dispatch: true, reason: 'finalize-allowed' };
+}
+
+export const FINALIZE_HISTORY_MS = 24 * 60 * 60 * 1000;
+const FINALIZE_RUN_PAGE_SIZE = 100;
+const FINALIZE_RUN_PAGE_CAP = 10;
+
+/** One page of finalize runs created in the last 24 hours. */
+export function finalizeRunsQuery(now: string, page: number): string {
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs) || !Number.isInteger(page) || page < 1) throw new Error('finalize-clock');
+  const created = new Date(nowMs - FINALIZE_HISTORY_MS).toISOString();
+  return `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/runs?per_page=${FINALIZE_RUN_PAGE_SIZE}&page=${page}&created=${encodeURIComponent(`>=${created}`)}`;
+}
+
+function finalizeRunRecord(row: unknown): FinalizeRunRecord {
+  const item = record(row);
+  const identity = finalizeRunIdentity(text(item?.display_title) ?? text(item?.name));
+  return {
+    status: text(item?.status) ?? '',
+    conclusion: text(item?.conclusion),
+    createdAt: text(item?.created_at),
+    version: identity?.version ?? null,
+    sha: identity?.sha ?? null,
+  };
+}
+
+/** Every finalize run in the last 24 hours. A truncated window throws, so the cap cannot reset by falling off the first page. */
+export async function listFinalizeRuns(read: (path: string) => Promise<unknown>, now: string): Promise<FinalizeRunRecord[]> {
+  const runs: FinalizeRunRecord[] = [];
+  for (let page = 1; page <= FINALIZE_RUN_PAGE_CAP; page += 1) {
+    const listed = record(await read(finalizeRunsQuery(now, page)));
+    if (!listed || !Array.isArray(listed.workflow_runs)) throw new Error('incomplete finalize run inventory');
+    const rows = listed.workflow_runs;
+    runs.push(...rows.map(finalizeRunRecord));
+    const total = listed.total_count;
+    if (typeof total === 'number' && rows.length < FINALIZE_RUN_PAGE_SIZE && total !== runs.length) {
+      throw new Error('incomplete finalize run inventory');
+    }
+    if (rows.length < FINALIZE_RUN_PAGE_SIZE) return runs;
+  }
+  throw new Error('incomplete finalize run inventory');
+}
+
 export interface ReleaseAsset { name: string; created_at: string | null }
 export interface ReleaseRow {
   id: number;
@@ -123,8 +214,15 @@ export interface TrainObservation {
    * be a later merge than the release-please commit (two merges a second apart).
    * It carries that release commit's message when it is an ancestor of the tag
    * and package.json at the tag still carries the tag version.
+   * packageVersion and releaseGate identify that same tagged SHA when the
+   * subject is not a release-please line: package.json equals the tag and the
+   * release-gate receipt on that SHA is green.
    */
-  head: { tag: string; sha: string; message: string; releaseMessage?: string; ancestry: Ancestry; compareStatus?: string; committedAt: string | null } | null;
+  head: {
+    tag: string; sha: string; message: string; releaseMessage?: string;
+    packageVersion?: string | null; releaseGate?: ReleaseGateReceipt;
+    ancestry: Ancestry; compareStatus?: string; committedAt: string | null;
+  } | null;
   skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
   openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
@@ -149,8 +247,20 @@ export interface TrainObservation {
   attest: { runId: number; attempt: number; artifactId: number; completedAt: string | null } | null;
   attestPending: boolean;
   audit: { runId: number; attempt: number } | null;
+  /** A tag-ref or master audit for this SHA is queued or running. */
+  auditPending?: boolean;
   npmPublished: boolean | null;
   npmAt: string | null;
+  /** Public npm provenance for this version. Absent means finalize is not dispatched. */
+  npmPublish?: { runId: number; attempt: number; integrity: string } | null;
+  /** A finalize run is queued, waiting, or in progress. */
+  finalizePending?: boolean;
+  /**
+   * Recent finalize runs. `version` and `sha` are null when the run cannot
+   * be attributed; those still count against the current candidate when they
+   * are newer than its commit.
+   */
+  finalizeRuns?: readonly FinalizeRunRecord[];
   docsSynced: boolean;
   /** Parsed `version` from the updater endpoint, or null when it was not read. */
   feedVersion: string | null;
@@ -315,6 +425,38 @@ export function isReleasePleaseCommit(message: string, version: string): boolean
   return `${match[1]}.${match[2]}.${match[3]}` === version;
 }
 
+/** Same names and all/any rules as ci-release-gate.mjs. A receipt is those check runs on one SHA. */
+export const RELEASE_GATE_RECEIPT = Object.freeze([
+  ['Merge Gate', 'all'],
+  ['Secret-shape scan', 'all'],
+  ['Secret scan (diff)', 'all'],
+  ['Check generated files', 'any'],
+  ['Check authority drift (hermetic)', 'any'],
+  ['Quick typecheck', 'any'],
+  ['Fast gate (typecheck + affected tests)', 'any'],
+  ['Desktop release smoke', 'any'],
+  ['Release suites (build + signing path)', 'any'],
+] as const);
+
+export type ReleaseGateReceipt = 'green' | 'red' | 'pending' | 'unknown';
+
+/** Green only when every receipt row is present. Missing or running is pending. A bad conclusion is red. */
+export function releaseGateReceipt(
+  runs: readonly { name: string; status: string; conclusion: string | null; appId: number }[],
+): ReleaseGateReceipt {
+  let pending = false;
+  for (const [name, rule] of RELEASE_GATE_RECEIPT) {
+    const rows = runs.filter((run) => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (rows.length === 0) { pending = true; continue; }
+    if (rows.some((run) => run.status !== 'completed')) { pending = true; continue; }
+    const conclusions = rows.map((run) => run.conclusion ?? 'none');
+    if (conclusions.some((conclusion) => conclusion !== 'success' && conclusion !== 'skipped')) return 'red';
+    if (rule === 'all' && conclusions.includes('skipped')) return 'red';
+    if (rule === 'any' && !conclusions.includes('success')) pending = true;
+  }
+  return pending ? 'pending' : 'green';
+}
+
 function releaseMismatch(tag: string, message: string): string {
   return `release_message_mismatch: tag=${tag} first_line=${JSON.stringify(message.split(/\r?\n/, 1)[0] ?? '')} expected=chore(<scope>): release ${tag.slice(1)}`;
 }
@@ -390,7 +532,7 @@ function emptyStages(mergeAt: string | null): Record<string, StageTiming> {
 export function assertReleaseWrite(write: ReleaseWrite): void {
   if (write.method !== 'PATCH' && write.method !== 'POST') throw new Error('refusing release write');
   const release = /^repos\/ashlrai\/phantom\/releases\/([1-9]\d*)$/;
-  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
+  const dispatch = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
   if (write.path.includes('/merge') || JSON.stringify(write.body).includes('admin') || JSON.stringify(write.body).includes('bypass')) {
     throw new Error('refusing release write');
   }
@@ -408,6 +550,21 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
     if ((body.ref !== 'master' && !/^v\d+\.\d+\.\d+$/.test(body.ref ?? '')) || !body.inputs) throw new Error('refusing workflow dispatch');
     if (write.path.endsWith('/release-please.yml/dispatches') && (body.ref !== 'master' || Object.keys(body.inputs).length !== 0)) throw new Error('refusing release PR dispatch');
+    if (write.path.endsWith('/dependency-audit.yml/dispatches') && (!/^v\d+\.\d+\.\d+$/.test(body.ref ?? '') || Object.keys(body.inputs).length !== 0)) {
+      throw new Error('refusing audit dispatch');
+    }
+    if (write.path.endsWith('/finalize-github-release.yml/dispatches')) {
+      const inputs = body.inputs as Record<string, string>;
+      const keys = Object.keys(inputs).sort();
+      if (body.ref !== 'master' || keys.join(',') !== 'candidate_integrity,candidate_sha,confirm_stable_finalization,publish_run_attempt,publish_run_id,version') {
+        throw new Error('refusing finalize dispatch');
+      }
+      if (inputs.version === '3.30.34' || inputs.confirm_stable_finalization !== 'true') throw new Error('refusing finalize dispatch');
+      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(inputs.version ?? '')) throw new Error('refusing finalize dispatch');
+      if (!/^[1-9]\d*$/.test(inputs.publish_run_id ?? '') || !/^[1-9]\d*$/.test(inputs.publish_run_attempt ?? '')) throw new Error('refusing finalize dispatch');
+      if (!/^[a-f0-9]{40}$/.test(inputs.candidate_sha ?? '')) throw new Error('refusing finalize dispatch');
+      if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(inputs.candidate_integrity ?? '')) throw new Error('refusing finalize dispatch');
+    }
     return;
   }
   throw new Error('refusing release write');
@@ -499,9 +656,15 @@ export function buildTrain(input: TrainObservation): TrainPlan {
     return stopped(input.head ? 'candidate-not-newest' : 'no-release-tag');
   }
   const version = headTag.name.slice(1);
+  const subjectAdmitted = isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version);
+  // The tagged SHA is the release when its package.json version is the tag and
+  // the release-gate receipt on that SHA is green. The commit subject is not
+  // an input to the receipt, digest, or attestation checks, which stay bound
+  // to this SHA.
+  const receiptAdmitted = input.head.packageVersion === version && input.head.releaseGate === 'green';
   const admitted = (input.head.ancestry === 'ancestor' || input.head.ancestry === 'identical')
     && input.head.sha !== ''
-    && (isReleasePleaseCommit(input.head.message, version) || isReleasePleaseCommit(input.head.releaseMessage ?? '', version));
+    && (subjectAdmitted || receiptAdmitted);
   if (!admitted) {
     const detail = input.head.ancestry !== 'ancestor' && input.head.ancestry !== 'identical'
       ? `compare_not_ahead: ${input.head.compareStatus ?? input.head.ancestry}`
@@ -519,7 +682,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const superseded: string[] = [];
   const writes: ReleaseWrite[] = [];
   for (const row of input.releases) {
-    if (row.draft !== true) continue;
+    if (row.draft !== true || row.tag_name === 'v3.30.34') continue;
     const older = versionOf(row.tag_name);
     const current = versionOf(headTag.name);
     if (!older || !current || compareVersion(older, current) >= 0) continue;
@@ -552,6 +715,16 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   // same SHA when they match, but github.ref_name must be the tag so the
   // phantom-release-<tag> concurrency group and tag-scoped workflows apply.
   const ref = headTag.name;
+  // The Mac autorun looks up the dependency audit by the release SHA. A master
+  // push audit is not a tag-ref run, so dispatch the audit on the tag itself
+  // as soon as this candidate is admitted. Empty inputs keep the audit workflow
+  // on its own steps. GITHUB_TOKEN sends it; the release App has no actions right.
+  if (!input.audit && !input.auditPending && publishable) {
+    writes.push({
+      method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/dispatches`,
+      body: { ref, inputs: {} },
+    });
+  }
   if (!input.build && !input.buildPending && publishable && !input.pushCiRed && !(row?.draft === false && input.npmPublished === true)) {
     writes.push({
       method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/ci.yml/dispatches`,
@@ -579,6 +752,20 @@ export function buildTrain(input: TrainObservation): TrainPlan {
         attestor_run_id: String(input.attest.runId), attestor_run_attempt: String(input.attest.attempt),
         attested_artifact_id: String(input.attest.artifactId), version,
         audit_run_id: String(input.audit.runId), audit_run_attempt: String(input.audit.attempt),
+      } },
+    });
+  }
+  const stocked = signed && names.includes('latest.json');
+  const finalizeRetry = finalizeRetryDecision({
+    now: input.now, version, sha: headTag.sha, since: input.head.committedAt, runs: input.finalizeRuns ?? [],
+  });
+  if (row?.draft === true && stocked && publishable && input.npmPublished === true && input.npmPublish
+    && input.finalizePending !== true && finalizeRetry.dispatch && version !== '3.30.34' && headTag.name !== 'v3.30.34') {
+    writes.push({
+      method: 'POST', path: `repos/${REPOSITORY}/actions/workflows/finalize-github-release.yml/dispatches`,
+      body: { ref: 'master', inputs: {
+        version, publish_run_id: String(input.npmPublish.runId), publish_run_attempt: String(input.npmPublish.attempt),
+        candidate_sha: headTag.sha, candidate_integrity: input.npmPublish.integrity, confirm_stable_finalization: 'true',
       } },
     });
   }
@@ -670,6 +857,47 @@ async function pages(read: (path: string) => Promise<unknown>, path: string): Pr
   throw new Error('incomplete release inventory');
 }
 
+async function packageVersionAt(read: (path: string) => Promise<unknown>, sha: string): Promise<string | null> {
+  try {
+    const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${sha}`));
+    if (content?.encoding !== 'base64' || typeof content.content !== 'string') return null;
+    const pkg = record(JSON.parse(Buffer.from(content.content.replace(/\s/g, ''), 'base64').toString('utf8')));
+    if (pkg?.name !== '@ashlr/phantom' || typeof pkg.version !== 'string' || !VERSION.test(pkg.version)) return null;
+    return pkg.version;
+  } catch {
+    return null;
+  }
+}
+
+async function releaseGateFor(read: (path: string) => Promise<unknown>, sha: string): Promise<ReleaseGateReceipt> {
+  try {
+    const collected: { name: string; status: string; conclusion: string | null; appId: number }[] = [];
+    let total: number | null = null;
+    for (let page = 1; page <= 10; page += 1) {
+      const listed = record(await read(`repos/${REPOSITORY}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`));
+      const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+      const pageTotal = listed && Number.isInteger(listed.total_count) ? Number(listed.total_count) : null;
+      if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+      if (total === null) total = pageTotal;
+      else if (pageTotal !== total) return 'unknown';
+      for (const row of batch) {
+        const item = record(row);
+        collected.push({
+          name: text(item?.name) ?? '',
+          status: text(item?.status) ?? '',
+          conclusion: text(item?.conclusion),
+          appId: Number(record(item?.app)?.id),
+        });
+      }
+      if (batch.length < 100) break;
+    }
+    if (total === null || total !== collected.length || collected.length > 1000) return 'unknown';
+    return releaseGateReceipt(collected);
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, tag: { name: string; sha: string }): Promise<string | null> {
   const version = tag.name.slice(1);
   const content = record(await read(`repos/${REPOSITORY}/contents/package.json?ref=${tag.sha}`));
@@ -740,11 +968,16 @@ export async function observeTrain(
     const status = text(compare?.status);
     const ancestry: Ancestry = status === 'ahead' ? 'ancestor' : status === 'identical' ? 'identical' : status === 'diverged' ? 'diverged' : status === 'behind' ? 'behind' : 'unknown';
     const candidate: NonNullable<TrainObservation['head']> = { tag: newest.name, sha: newest.sha, message, ancestry, compareStatus: status ?? 'unknown', committedAt };
-    if (!isReleasePleaseCommit(message, newest.name.slice(1))) {
+    const version = newest.name.slice(1);
+    if (!isReleasePleaseCommit(message, version)) {
       const releaseMessage = await ancestorReleaseMessage(read, newest);
       if (releaseMessage) candidate.releaseMessage = releaseMessage;
     }
-    if (isReleasePleaseCommit(message, newest.name.slice(1)) || candidate.releaseMessage) {
+    candidate.packageVersion = await packageVersionAt(read, newest.sha);
+    if (candidate.packageVersion === version) candidate.releaseGate = await releaseGateFor(read, newest.sha);
+    const subject = isReleasePleaseCommit(message, version) || candidate.releaseMessage !== undefined;
+    const receipt = candidate.packageVersion === version && candidate.releaseGate === 'green';
+    if (subject || receipt) {
       head = candidate;
       break;
     }
@@ -811,10 +1044,30 @@ export async function observeTrain(
   }
   const version = head ? head.tag.slice(1) : masterVersion;
   const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
-  const audit = head ? await auditRun(read, head.sha) : null;
+  const audited = head ? await auditRun(read, head.sha) : { audit: null, pending: false };
   const attested = found.build ? await attestRun(read, found.build.runId, found.build.attempt) : { attest: null, pending: false };
   const npm = await read(`registry/npm/@ashlr/phantom/${version}`);
   const npmRecord = record(npm);
+  const integrity = text(record(npmRecord?.dist)?.integrity) ?? '';
+  let npmPublish: TrainObservation['npmPublish'] = null;
+  if (/^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity)) {
+    try {
+      const parsed = publishRunFromAttestation(await read(`registry/attestations/@ashlr/phantom/${version}`));
+      if (parsed) npmPublish = { ...parsed, integrity };
+    } catch {
+      npmPublish = null;
+    }
+  }
+  let finalizePending = false;
+  let finalizeRuns: FinalizeRunRecord[] = [];
+  if (npmPublish) {
+    try {
+      finalizeRuns = await listFinalizeRuns(read, now);
+      finalizePending = finalizeRuns.some((run) => run.status !== 'completed');
+    } catch {
+      finalizePending = true;
+    }
+  }
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
   const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
   // Only a candidate that can never build needs master's gate: see fixForwardDue.
@@ -825,9 +1078,12 @@ export async function observeTrain(
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
     openReleasePr, pullChecks, candidateCi, build: found.build, buildPending: found.pending, pushCiRed: found.pushCiRed,
     ...(masterCi ? { masterCi } : {}),
-    attest: attested.attest, attestPending: attested.pending, audit,
+    attest: attested.attest, attestPending: attested.pending, audit: audited.audit, auditPending: audited.pending,
     npmPublished: npm === null ? false : npmRecord?.version === version ? true : null,
     npmAt: text(npmRecord?.time) ?? (npmRecord && record(npmRecord.time)?.[version] ? String(record(npmRecord.time)?.[version]) : null),
+    npmPublish,
+    finalizePending,
+    finalizeRuns,
     docsSynced,
     feedVersion: await publishedFeedVersion(read, releases, head?.tag ?? null),
   };
@@ -949,16 +1205,24 @@ async function successfulRun(read: (path: string) => Promise<unknown>, workflow:
   return { build: null, pending, pushCiRed: pushRed && !pushGreen };
 }
 
-async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<TrainObservation['audit']> {
-  const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/runs?head_sha=${sha}&status=success&per_page=5`));
+export function admitAuditRun(run: Record<string, unknown> | null, sha: string): boolean {
+  if (!run || run.head_sha !== sha || run.path !== '.github/workflows/dependency-audit.yml') return false;
+  return run.head_branch === 'master' || (typeof run.head_branch === 'string' && /^v\d+\.\d+\.\d+$/.test(run.head_branch));
+}
+
+async function auditRun(read: (path: string) => Promise<unknown>, sha: string): Promise<{ audit: TrainObservation['audit']; pending: boolean }> {
+  const listed = record(await read(`repos/${REPOSITORY}/actions/workflows/dependency-audit.yml/runs?head_sha=${sha}&per_page=10`));
   const runs = Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [];
+  let pending = false;
   for (const row of runs) {
     const run = record(row);
-    if (run?.head_sha !== sha || run.conclusion !== 'success' || run.head_branch !== 'master') continue;
-    if (!Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) continue;
-    return { runId: Number(run.id), attempt: Number(run.run_attempt) };
+    if (!admitAuditRun(run, sha)) continue;
+    if (run?.status === 'queued' || run?.status === 'in_progress' || run?.status === 'waiting') pending = true;
+    if (run?.status !== 'completed' || run?.conclusion !== 'success') continue;
+    if (!Number.isSafeInteger(run?.id) || !Number.isSafeInteger(run?.run_attempt)) continue;
+    return { audit: { runId: Number(run.id), attempt: Number(run.run_attempt) }, pending };
   }
-  return null;
+  return { audit: null, pending };
 }
 
 async function attestRun(read: (path: string) => Promise<unknown>, ciRun: number, ciAttempt: number): Promise<{ attest: TrainObservation['attest']; pending: boolean }> {
@@ -996,6 +1260,45 @@ export function readReleaseState(path: string): TrainState {
   return parsed as TrainState;
 }
 
+const PUBLISH_WORKFLOW = '.github/workflows/publish-canonical-npm.yml';
+const PUBLISH_INVOCATION = /^https:\/\/github\.com\/ashlrai\/phantom\/actions\/runs\/([1-9]\d*)\/attempts\/([1-9]\d*)$/;
+
+/** Path, event and run id must all sit on this one predicate. A partial object is not a match. */
+function onePredicate(node: Record<string, unknown> | null): { runId: number; attempt: number } | null {
+  if (!node) return null;
+  const build = record(node.buildDefinition);
+  const workflow = record(record(build?.externalParameters)?.workflow);
+  const github = record(record(build?.internalParameters)?.github);
+  const invocation = text(record(record(node.runDetails)?.metadata)?.invocationId);
+  const path = text(workflow?.path);
+  const event = text(github?.event_name);
+  if (path !== PUBLISH_WORKFLOW || event !== 'workflow_dispatch' || !invocation) return null;
+  const match = PUBLISH_INVOCATION.exec(invocation);
+  if (!match) return null;
+  const runId = Number(match[1]);
+  const attempt = Number(match[2]);
+  if (!Number.isSafeInteger(runId) || !Number.isSafeInteger(attempt)) return null;
+  return { runId, attempt };
+}
+
+export function publishRunFromAttestation(body: unknown): { runId: number; attempt: number } | null {
+  const rows = Array.isArray(record(body)?.attestations) ? record(body)?.attestations as unknown[] : null;
+  if (!rows || rows.length !== 1) return null;
+  const payload = text(record(record(record(rows[0])?.bundle)?.dsseEnvelope)?.payload);
+  if (!payload || payload.length > 200_000) return null;
+  let decoded: unknown;
+  try { decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); } catch { return null; }
+  const statement = record(decoded);
+  if (!statement) return null;
+  const candidates = [record(statement.predicate), record(statement.buildDefinition) ? statement : null];
+  if (Array.isArray(statement.subject)) {
+    for (const entry of statement.subject) candidates.push(record(entry));
+  }
+  const found = candidates.map(onePredicate).filter((item): item is { runId: number; attempt: number } => item !== null);
+  if (found.length !== 1) return null;
+  return found[0]!;
+}
+
 /** Argv and stdin for one `gh api` call. A body is sent only with `--input -`. */
 export function releaseGithubCall(method: string, path: string, body?: unknown): { args: string[]; input?: string } {
   const args = ['api', '--hostname', 'github.com', '--method', method];
@@ -1003,7 +1306,7 @@ export function releaseGithubCall(method: string, path: string, body?: unknown):
   return { args: [...args, '--input', '-', path], input: JSON.stringify(body) };
 }
 
-export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|publish-canonical-npm|ci|release-please)\.yml\/dispatches$/;
+export const WORKFLOW_DISPATCH = /^repos\/ashlrai\/phantom\/actions\/workflows\/(attest-ci-build|dependency-audit|publish-canonical-npm|ci|release-please|finalize-github-release)\.yml\/dispatches$/;
 
 /** Draft PATCH and enqueue use the App token. Workflow dispatches stay on
  *  GITHUB_TOKEN: the ashlr-release App has no actions permission, so a mint
@@ -1053,6 +1356,13 @@ async function githubRead(path: string): Promise<unknown> {
     const spec = path.slice('registry/npm/'.length);
     const response = await fetch(`https://registry.npmjs.org/${spec}`, { redirect: 'error' });
     if (response.status === 404) return null;
+    if (!response.ok) throw new Error('registry read failed');
+    return response.json() as Promise<unknown>;
+  }
+  if (path.startsWith('registry/attestations/@ashlr/phantom/')) {
+    const version = path.slice('registry/attestations/@ashlr/phantom/'.length);
+    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw new Error('registry read failed');
+    const response = await fetch(`https://registry.npmjs.org/-/npm/v1/attestations/@ashlr%2fphantom@${version}`, { redirect: 'error' });
     if (!response.ok) throw new Error('registry read failed');
     return response.json() as Promise<unknown>;
   }

@@ -69,12 +69,12 @@ describe('phm lanes --json (RQ-PHX-LANESTATERECOVER173)', () => {
   it('does not leak private state fields or unscrubbed free text', async () => {
     await homeWithStatus({
       ...baseStatus,
-      operator_secret: 'PRIVATE-MARKER-9f8e7d',
+      operator_extra: 'PRIVATE-MARKER-9f8e7d',
       lanes: {
         'alpha-lane': {
           running: 0, target: 1, queued: 0, held: true,
           held_reason: 'hold until /Users/someone/private/quota resets',
-          api_token: 'PRIVATE-MARKER-9f8e7d',
+          aux_marker: 'PRIVATE-MARKER-9f8e7d',
           healthy: 'yes',
         },
       },

@@ -10,9 +10,13 @@ name: Perf Budget
 # deliberate startup work lands.
 
 on:
+  # Once per PR open/reopen/ready, not on every push or update-branch: in the
+  # 24h to Nov 16 2026 the synchronize churn ran this ~1560 times (mean 137s
+  # each). Later regressions still surface on the daily drift run
+  # (CI-PHANTOM-PERF-BUDGET-CHURN).
   pull_request:
     branches: ["**"]
-    types: [opened, synchronize, reopened]
+    types: [opened, reopened, ready_for_review]
   # Daily read on the default branch keeps baseline drift visible without
   # waiting for an unrelated PR to trip the budget.
   schedule:

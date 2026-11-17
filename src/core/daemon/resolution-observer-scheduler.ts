@@ -148,7 +148,8 @@ function recordParentDeadlineExceeded(
   }
 }
 
-function childRuntimeArgs(): string[] {
+/** Loader flags a `.ts` child needs under the test runner; empty for compiled JS. */
+export function childRuntimeArgs(): string[] {
   if (!import.meta.url.endsWith('.ts')) return [];
   const args: string[] = [];
   for (let index = 0; index < process.execArgv.length; index++) {

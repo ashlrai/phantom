@@ -61,7 +61,8 @@ describe('teammate worker receipt capacity', () => {
     expect(deps.send).toHaveBeenCalledOnce();
     expect(deps.generate).toHaveBeenCalledOnce();
     const rows = state().replies;
-    expect(rows).toHaveLength(256);
+    // Count retention keeps the newest 150 settled receipts, plus the new one.
+    expect(rows).toHaveLength(151);
     expect(rows.some(row => row.rowid === 1)).toBe(false);
     expect(rows.find(row => row.rowid === 257)).toMatchObject({ state: 'sent' });
     expect(readTeammateTexts({ runsDir }).texts).toHaveLength(0);
@@ -120,10 +121,11 @@ describe('teammate worker receipt capacity', () => {
     expect(deps.send).toHaveBeenCalledOnce();
     expect(deps.generate).toHaveBeenCalledOnce();
     const rows = state().replies;
-    expect(rows).toHaveLength(256);
-    // The four oldest terminal rows are the suppressed ones; one slot was needed.
+    // 150 newest settled receipts + the two reconciled sends + the new reply.
+    expect(rows).toHaveLength(153);
+    // The four oldest terminal rows are the suppressed ones; count retention drops them first.
     expect(rows.some(row => row.rowid === terminalRowids[250])).toBe(false);
-    expect(rows.filter(row => row.state === 'suppressed')).toHaveLength(3);
+    expect(rows.filter(row => row.state === 'suppressed')).toHaveLength(0);
     // Interrupted settlement: the ambiguous sends reconciled to sent, never resent.
     expect(rows.find(row => row.rowid === 2)).toMatchObject({ state: 'sent' });
     expect(rows.find(row => row.rowid === 3)).toMatchObject({ state: 'sent' });
@@ -133,23 +135,24 @@ describe('teammate worker receipt capacity', () => {
     expect(deps.send).toHaveBeenCalledOnce();
   });
 
-  it('retains terminal rows lacking answered-marker proof and reports honest pending', async () => {
-    // Sent receipts with no durable answered marker are not conclusively
-    // settled: they are never evicted, so a store full of them plus ambiguous
-    // work yields an honest pending result instead of an unsafe send.
-    writeStore([...Array.from({ length: 255 }, (_, i) => sentRow(500 + i)), sendingRow(800)]);
-    seedTexts([800, 801]);
+  it('closes settled rows that lack an answered marker before trimming them, and never resends one', async () => {
+    // The Nov 17 wedge: a store full of sent receipts with no answered marker.
+    // Count retention marks the oldest closed first, so trimming a receipt can
+    // never reopen its message; unresolved sends are kept as they are.
+    const settled = Array.from({ length: 255 }, (_, i) => 500 + i);
+    writeStore([...settled.map(rowid => sentRow(rowid)), sendingRow(800)]);
+    seedTexts([...settled, 800, 801]);
 
     const deps = options();
     deps.reconcile = vi.fn(async (): Promise<TeamMessageReceipt | null> => null);
-    const report = await runTeammateResponder(cfg, deps);
-    expect(report.state).toBe('pending');
-    expect(deps.send).not.toHaveBeenCalled();
-    expect(deps.generate).not.toHaveBeenCalled();
+    expect((await runTeammateResponder(cfg, deps)).state).toBe('pending');
+    expect(deps.send).toHaveBeenCalledOnce();
+    expect(deps.send.mock.calls[0]).toEqual(expect.arrayContaining([expect.stringContaining('ref [801]')]));
     const rows = state().replies;
-    expect(rows).toHaveLength(256);
-    expect(rows.filter(row => row.state === 'sent')).toHaveLength(255);
+    expect(rows.filter(row => row.state === 'sent')).toHaveLength(150);
+    expect(rows.some(row => row.rowid === 500)).toBe(false);
+    expect(rows.some(row => row.rowid === 754)).toBe(true);
     expect(rows.find(row => row.rowid === 800)).toMatchObject({ state: 'sending' });
-    expect(rows.some(row => row.rowid === 801)).toBe(false);
+    expect(readTeammateTexts({ runsDir }).texts.map(text => text.rowid)).toEqual([800, 801]);
   });
 });

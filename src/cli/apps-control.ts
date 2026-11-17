@@ -1,12 +1,19 @@
 import { APP_ACTIONS, runAppsControl, type AppsControlDeps, type AppsRequest } from '../core/apps-control.js';
+import { formatMacApps, readMacApps } from '../core/apps-known.js';
 export { parseAllowlist, readAllowlist } from '../core/apps-control.js';
 export type { AllowedApp, AllowlistRead, AppsControlDeps, AppsFeedEntry, AppsOutcome } from '../core/apps-control.js';
 
-const usage = `Usage: phm apps list [--json]
-       phm apps open|quit|focus|status <app> [--json]
+const usage = `Usage: phm apps [--json]
+       phm apps open|focus|status <app> [--json]
+       phm apps quit <app> [--json]
+       phm apps list [--json]
        phm apps request open|quit|focus <app> [--json]
-  Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default).
-  Per-app actions and mode apply to every caller. Requests go to needs-you without acting.
+  phm apps shows Phantom, Claude, Codex, ChatGPT, Cursor, Grok and Safari: installed,
+  running, frontmost and memory. Anything it cannot read says unknown, with the reason.
+  open starts or raises a known app; focus raises a running one. Phantom never quits
+  your apps: only Safari, its own browser, can be quit.
+  list and other app names use ~/.ashlr/apps-allow.json (empty by default); an entry
+  there narrows a known app's actions. Requests go to needs-you without acting.
   Every action is logged to the feed. Unsaved work blocks quitting.
   Exit: 0 done, 1 refused or failed, 2 usage, 3 routed to needs-you.`;
 
@@ -15,6 +22,11 @@ export async function cmdApps(args: string[], deps: AppsControlDeps = {}): Promi
   if (args.includes('--help') || args.includes('-h')) { out(usage); return 0; }
   const json = args.includes('--json');
   const rest = args.filter((a, i) => !(a === '--json' && args.indexOf('--json') === i));
+  if (rest.length === 0) {
+    const report = await readMacApps({ probe: deps.probe, home: deps.home });
+    out(json ? JSON.stringify(report) : formatMacApps(report));
+    return 0;
+  }
   const request = rest[0] === 'request';
   if (request) rest.shift();
   const [action, app] = rest;

@@ -294,8 +294,26 @@ if [ -n "${PUBLISH_JUDGE_CMD:-}" ] && [ -z "$SENS" ] && [ -z "$G1T" ]; then
 fi
 if [ $JUDGE_OK = 0 ]; then echo "NOTE AUTO_MERGE skipped judge (leader review)"
 elif [ -z "$SENS" ] && [ -z "$G1T" ]; then
-  if ME=$(gh pr merge "$URL" --repo $REPO --auto 2>&1 >/dev/null); then echo "AUTO_MERGE on"
-  elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
-  else echo "NOTE AUTO_MERGE skipped-or-failed"; fi
+  # RQ-ARM-CI-GATE-1: arm only on a SAFE verdict for the PR's actual head (see arm_gate.py). The head comes from the API only: never guessed
+  # from local shas. RED = leader review; PENDING/UNKNOWN = bounded deferral (re-evaluated by `arm_gate.py sweep`), never an arm.
+  # Nothing is weakened: this only withholds arming that cannot succeed yet. Every arm is pinned to the sha that was judged.
+  HEADSHA=$(gh pr view "$URL" --repo $REPO --json headRefOid -q .headRefOid 2>/dev/null || true)
+  if ! printf '%s' "$HEADSHA" | grep -qE '^[0-9a-f]{40}$'; then echo "NOTE AUTO_MERGE not armed: PR head unknown (API read failed); leader review"
+  else
+    AG=$(python3 -I -B "$R/bin/arm_gate.py" check --repo "$REPO" --sha "$HEADSHA" --wait "${ARM_GATE_WAIT:-180}" 2>&1); AGRC=$?
+    HEAD2=$(gh pr view "$URL" --repo $REPO --json headRefOid -q .headRefOid 2>/dev/null || true)
+    if [ "$HEAD2" != "$HEADSHA" ]; then echo "NOTE AUTO_MERGE not armed: PR head changed or unreadable during the gate wait; leader review"
+    elif [ $AGRC = 1 ]; then echo "NOTE AUTO_MERGE skipped ci-red ($AG); leader review"
+    elif [ $AGRC != 0 ]; then
+      python3 -I -B "$R/bin/arm_gate.py" defer --dir "$R/arm-deferred" --repo "$REPO" --pr "$URL" --sha "$HEADSHA" --job "$J" --deadline-s "${ARM_GATE_DEFER_S:-3600}" >/dev/null 2>&1 \
+        && echo "NOTE AUTO_MERGE deferred ($AG); arm_gate.py sweep re-evaluates" || echo "NOTE AUTO_MERGE not armed: gate not SAFE ($AG) and deferral unavailable; leader review"
+    elif AG=$(python3 -I -B "$R/bin/arm_gate.py" check --repo "$REPO" --sha "$HEADSHA" 2>&1); AGRC=$?; [ $AGRC != 0 ]; then   # final pre-arm re-check (late rerun / new check)
+      if [ $AGRC = 1 ]; then echo "NOTE AUTO_MERGE skipped ci-red on final re-check ($AG); leader review"
+      else python3 -I -B "$R/bin/arm_gate.py" defer --dir "$R/arm-deferred" --repo "$REPO" --pr "$URL" --sha "$HEADSHA" --job "$J" --deadline-s "${ARM_GATE_DEFER_S:-3600}" >/dev/null 2>&1 \
+        && echo "NOTE AUTO_MERGE deferred after final re-check ($AG); arm_gate.py sweep re-evaluates" || echo "NOTE AUTO_MERGE not armed: final re-check not SAFE ($AG) and deferral unavailable; leader review"; fi
+    elif ME=$(gh pr merge "$URL" --repo $REPO --auto --match-head-commit "$HEADSHA" 2>&1 >/dev/null); then echo "AUTO_MERGE on"
+    elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash --match-head-commit "$HEADSHA" >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
+    else echo "NOTE AUTO_MERGE skipped-or-failed"; fi
+  fi
 else echo "NOTE AUTO_MERGE skipped sensitive"; fi
 echo "RESULT PR $URL SENS=[$SENS]"

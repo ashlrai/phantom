@@ -225,9 +225,25 @@ vi.mock('../src/core/run/orchestrator.js', () => ({ listRuns: vi.fn(() => []), l
 vi.mock('../src/core/swarm/store.js', () => ({ listSwarms: vi.fn(() => []), loadSwarm: vi.fn(() => null) }));
 vi.mock('../src/core/mcp-registry.js', () => ({ discoverMcpServers: vi.fn(() => FIXTURE_MCP_REGISTRY) }));
 vi.mock('../src/core/genome/store.js', () => ({ loadGenome: vi.fn(() => FIXTURE_GENOME_ENTRIES) }));
+vi.mock('../src/core/run/learned-router.js', () => ({
+  buildEngineScores: vi.fn(() => new Map()),
+}));
 vi.mock('../src/core/daemon/state.js', () => ({ loadDaemonState: vi.fn(() => FIXTURE_DAEMON_STATE) }));
 vi.mock('../src/core/usage/frontier-usage.js', () => ({
   getFrontierUsageSync: vi.fn(() => FIXTURE_FRONTIER_USAGE),
+}));
+vi.mock('../src/core/web/fleet-status-cache.js', () => ({
+  getCachedFleetStatus: vi.fn(async () => ({
+    status: {} as never,
+    stale: false,
+    ageMs: 0,
+  })),
+}));
+vi.mock('../src/core/fleet/runs-sessions.js', () => ({
+  getFleetSessions: vi.fn(async () => ({} as never)),
+}));
+vi.mock('../src/core/web/visibility.js', () => ({
+  buildVisibilitySnapshot: vi.fn(async () => ({} as never)),
 }));
 
 // inbox/store: used both by base snapshot (pendingCount) and production (listProposals)
