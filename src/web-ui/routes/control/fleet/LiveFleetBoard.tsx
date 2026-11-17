@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { fleetActivityQuery, fleetLanesQuery, verifiedCompletionQuery } from '../../../data/queries.js';
-import { ProviderLogo, providerEngine } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import styles from './LiveFleetBoard.module.css';
 
 /** Polls the bounded local projections while visible; readings retain their own observation times. */
@@ -37,11 +37,10 @@ export function LiveFleetBoard() {
           {lanes.status === 'error' ? <p role="alert">Lane refresh failed{lanes.data ? ' · showing last reading' : ''}.</p> : null}
           {!lanes.data ? <p>{lanes.status === 'error' ? 'Lane resources unknown.' : 'Loading lane resources…'}</p> : lanes.data.lanes.length === 0 ? <p>No lanes observed.</p> : (
             <ul className={styles.lanes}>{lanes.data.lanes.map(lane => {
-              const mark = providerEngine(lane.lane);
               const pct = lane.credit.state === 'observed' && lane.credit.remainingPct !== null && Number.isFinite(lane.credit.remainingPct)
                 ? Math.max(0, Math.min(100, lane.credit.remainingPct)) : null;
               return <li key={lane.lane} className={styles.lane}>
-                <div className={styles.row}><strong>{mark ? <ProviderLogo engine={mark} size={19} /> : null}{lane.lane}</strong><span>{pct === null ? 'Quota unknown' : `${Math.round(pct * 10) / 10}% remaining`}</span></div>
+                <div className={styles.row}><strong><BrandMark brand={lane.lane} size={19} />{lane.lane}</strong><span>{pct === null ? 'Quota unknown' : `${Math.round(pct * 10) / 10}% remaining`}</span></div>
                 {pct === null ? <div className={styles.unknown}>No percentage reading</div> : <div className={styles.track} role="meter" aria-label={`${lane.lane} quota remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}><div className={styles.fill} style={{ width: `${pct}%` }} /></div>}
                 <div className={styles.meta}><span>Live {lane.liveJobs ?? 'unknown'} · Queue {lane.queueDepth ?? 'unknown'}</span><span>Observed {lane.credit.observedAt ?? 'unknown'}{lane.credit.state === 'reset-pending' ? ' · reset pending' : ''}</span></div>
               </li>;

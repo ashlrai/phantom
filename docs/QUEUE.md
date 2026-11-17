@@ -658,3 +658,16 @@ invalid manifests or more than 1000 files mark the report partial, with counts
 only for readable sessions. Old sessions whose handoff markers were superseded
 may have unknown publication results. These changes require Security review and
 re-pinning before dispatcher installation; no live cutover is part of this change.
+
+### Queue health
+
+Run `phm fleet parked --json` for the read-only `health` summary
+(`fleet.queue-health.v1`). It separates ready and parked counts and groups
+repeated precheck skips, including `RESTOCK`, by job, code and reason over the
+last 24 hours. A repeat means at least two matching records; it does not prove
+a job is still blocked. The plain-text command shows the same repeat counts.
+Counts cover the bounded readable queue and log snapshot, before display
+limits; check `sources` for missing or degraded evidence. Unavailable health
+counts are `null`; a readable empty source counts as zero. Lane filters omit
+unattributed repeat details; health counts remain global. Nothing is unparked,
+restocked or changed by reading the report.

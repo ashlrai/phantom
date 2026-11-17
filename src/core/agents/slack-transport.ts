@@ -13,6 +13,7 @@ import { readSlackWorkStatus, slackWorkStatusLine } from './slack-status.js';
 import type { TeamIdentity } from './channel-policy.js';
 import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 import type { SlackInboundDecision } from './slack-inbound.js';
+import { slackSendStoreKey } from './slack-reply-identity.js';
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -153,7 +154,7 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
     for (const [id, receipt] of Object.entries(store.messages)) {
       if (receipt.state === 'sent' && receipt.expiresAt < Date.now()) delete store.messages[id];
     }
-    const key = hash(checked.value.id), digest = hash(checked.json);
+    const key = slackSendStoreKey(checked.value.id), digest = hash(checked.json);
     const previous = store.messages[key];
     if (previous && previous.digest !== digest) return { status: 'refused', reason: 'message-identity-conflict' };
     await verifySlackIdentity(input.call, input.config);

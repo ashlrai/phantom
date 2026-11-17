@@ -39,12 +39,24 @@ Build and ad-hoc sign on the Mac:
 
 ```sh
 mkdir -p ~/.ashlr/bin
-swiftc -O -framework ApplicationServices -framework Cocoa -framework Vision -o ~/.ashlr/bin/desktop-operator tools/desktop-operator/main.swift
+swiftc -O -target arm64-apple-macos13.0 -framework ApplicationServices -framework Cocoa -framework Vision -o ~/.ashlr/bin/desktop-operator tools/desktop-operator/main.swift
 codesign -s - --force ~/.ashlr/bin/desktop-operator
 phm desktop doctor --json
 ```
 
 The helper is loaded only from `~/.ashlr/bin/desktop-operator`.
+
+The `-target` flag is required: the macOS 15 SDK marks `CGWindowListCreateImage` unavailable for newer deployment targets, and the helper still uses it for single-window capture.
+
+## Which window is read
+
+When a call names an app and no window title, the helper uses that app's largest window. Windows shorter than 64pt are title-bar and toolbar strips: a native-fullscreen app, and any app with an overlay title bar, owns several that are as wide as the screen and about 30pt tall. They are left out of `windows` and are never picked for `read` or `screenshot` while a larger window exists. Before this rule a fullscreen Phantom was captured as a 1280x21 sliver and looked like an empty app.
+
+If only strips are on screen, the app is fullscreen on another Space; the helper then looks for the content window across all Spaces. `windows` rows carry `width` and `height` in points.
+
+`read` falls back to OCR when the accessibility tree has no labelled node below the window. A webview that has not published its tree walks as `AXWindow` plus an empty `AXGroup`; that is structure, not the app's text. `source` is `ocr` in that case.
+
+`echo '{"op":"self-test"}' | ~/.ashlr/bin/desktop-operator` runs the window-selection checks. It needs no grant and touches no app.
 
 ## Writes
 

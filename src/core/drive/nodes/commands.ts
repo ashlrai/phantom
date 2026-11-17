@@ -1,6 +1,6 @@
 import type { DriveNodes, JobClaim } from './index.js';
 import type { NodeAuth } from './state.js';
-import { isHostStats } from './state.js';
+import { isNodeCapacity, isHostStats } from './state.js';
 
 export class UsageError extends Error {
   constructor(readonly code: string, message: string, readonly fix: string, readonly exit = 2) { super(message); }
@@ -10,7 +10,7 @@ const LEASE = ['--job', '--node', '--session', '--token', '--leader-token'];
 /** Flags each verb accepts; anything else is refused, never ignored. `--json` is always allowed. */
 const FLAGS: Record<string, { value: string[]; boolean?: string[] }> = {
   join: { value: ['--node', '--owner', '--caps', '--slots'] },
-  beat: { value: ['--node', '--session', '--usage', '--auth', '--slots', '--host-stats'], boolean: ['--probe-auth'] },
+  beat: { value: ['--node', '--session', '--usage', '--auth', '--slots', '--host-stats', '--capacity'], boolean: ['--probe-auth'] },
   enqueue: { value: ['--job', '--owner', '--requires', '--pack', '--secrets'] },
   plan: { value: ['--owner'] },
   pull: { value: ['--node', '--session'] },
@@ -76,13 +76,15 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         try { const raw = flags.get('--host-stats')!; hostStats = raw.length <= 128 * 1024 ? JSON.parse(raw) : null; } catch { hostStats = null; }
         if (!isHostStats(hostStats)) throw new UsageError('bad-host-stats', 'Host stats must be a numeric host observation.', 'Use the node worker to collect host stats.');
       }
+      const capacity: unknown = flags.has('--capacity') ? JSON.parse(flags.get('--capacity')!) : undefined;
+      if (capacity !== undefined && !isNodeCapacity(capacity)) throw new Error('Invalid node capacity sample');
       const auth = flags.has('--probe-auth') ? probeAuth() : flags.get('--auth');
       if (auth !== undefined && !['ok', 'missing', 'unknown'].includes(auth)) {
         throw new UsageError('bad-auth', '--auth must be ok, missing or unknown.', 'Use --probe-auth to check this machine\'s own gh login.');
       }
       const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
       const s = session();
-      const beat = nodes.heartbeat(s, { ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
+      const beat = nodes.heartbeat(s, { ...(isNodeCapacity(capacity) ? { capacity } : {}), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
       if (!beat) throw stale;
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
