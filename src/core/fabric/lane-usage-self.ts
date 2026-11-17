@@ -18,9 +18,10 @@ export type SelfLane = typeof SELF_LANES[number];
 
 /** Fields this module owns inside a lane's budget entry. Every other field is preserved on write. */
 export const OWNED_FIELDS = ['weekly_used_pct', 'credits_remaining', 'reset_at', 'source', 'estimated', 'as_of',
-  'burn_pct_per_hour', 'unmeasured_jobs'] as const;
+  'burn_pct_per_hour', 'unmeasured_jobs', 'account_id'] as const;
 
 export interface BudgetEntry {
+  account_id?: string;
   weekly_used_pct: number | null;
   credits_remaining: number | null;
   reset_at: string | null;
@@ -33,6 +34,7 @@ export interface BudgetEntry {
 
 /** What a sanctioned reader returns. Null from the reader means "no reading", never zero. */
 export interface SanctionedReading {
+  account_id?: string;
   pctUsed: number | null;
   resetAt: string | null;
   /** Remaining allowance in the lane's own unit (ACUs, credits), when the source reports a limit. */
@@ -164,6 +166,7 @@ export function calibrate(lane: SelfLane, reading: SanctionedReading, rows: read
 /** Build the budget entry for a sanctioned reading. */
 export function entryFromReading(reading: SanctionedReading, nowMs: number): BudgetEntry {
   return {
+    ...(reading.account_id ? { account_id: reading.account_id } : {}),
     weekly_used_pct: reading.pctUsed === null ? null : clampPct(reading.pctUsed),
     credits_remaining: finite(reading.creditsRemaining) ? reading.creditsRemaining : null,
     reset_at: reading.resetAt, source: reading.source, estimated: false, as_of: isoOf(nowMs),
@@ -251,7 +254,9 @@ export async function refreshLanes(input: RefreshInput): Promise<RefreshResult> 
       if (est) { entry = est; action = 'estimated'; }
       else { entry = unknownEntry(input.nowMs, lane === 'gemini' ? 'unknown:no-sanctioned-reader' : 'unknown:no-reading-or-estimate'); action = 'unknown'; }
     }
-    overrides[lane] = { ...(cur ?? {}), ...entry };
+    const next = { ...(cur ?? {}) };
+    for (const field of OWNED_FIELDS) delete next[field];
+    overrides[lane] = { ...next, ...entry };
     outcomes.push({ lane, action, entry });
   }
   return { overrides, state, outcomes };

@@ -1,5 +1,35 @@
 # Apps control
 
+## Known apps
+
+`phm apps` lists the apps Phantom knows by name: Phantom, Claude, Codex,
+ChatGPT, Cursor, Grok and Safari (Phantom's own agent browser). Each row says
+whether the app is installed, running and in front, and how much memory it
+and its helpers hold. Anything Phantom cannot read says `unknown`, with the
+reason. The Fleet Host **Apps** card shows the same report with one button per
+row: Open, or Bring to front.
+
+```sh
+phm apps
+phm apps --json
+phm apps open claude --json
+phm apps focus cursor --json
+```
+
+`open` starts or raises an installed app. `focus` raises a running app and
+never starts one. Both are logged to the feed and stop under KILL or a comms
+pause; Phantom itself still goes to Needs you. Phantom never quits your apps:
+`phm apps quit` refuses every known app except Safari with code `protected`,
+whatever `apps-allow.json` says. An `apps-allow.json` entry for a known app
+narrows what it allows.
+
+The report reads the filesystem, `plutil`, `ps` and `lsappinfo` only. It needs
+no Accessibility or Automation permission and never launches anything. Apps
+are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/1"`)
+has one row per app in a fixed order; GET `/api/verse/apps/mac` returns it.
+
+## Allowed apps
+
 The Phantom desktop Fleet Host pane's **Allowed apps** card and `phm apps` use
 one typed app-control service. Enrollment is empty by default. Actions are
 open, focus, quit and status; app-level requests can go to Needs you without
@@ -51,7 +81,7 @@ phm apps list --json
 phm apps status Cursor --json
 phm apps open com.apple.Safari --json
 phm apps focus Cursor --json
-phm apps quit Cursor --json
+phm apps quit Notes --json
 phm apps request focus Cursor --json
 phm apps request quit Phantom --json
 phm comms status --json
