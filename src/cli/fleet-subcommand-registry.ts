@@ -458,4 +458,5 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'wt-census': () => import('./fleet-wt-census.js'),
   'wt-deps': () => import('./fleet-wt-deps.js'),
   'wt-reap': () => import('./fleet-wt-reap.js'),
+  'yield': () => import('./fleet-yield.js'),
 };
