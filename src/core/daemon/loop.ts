@@ -212,6 +212,7 @@ import {
   TICK_PHASE_INVENT_MS,
   TICK_PHASE_MAINTENANCE_MS,
   TICK_PHASE_REFLECTION_MS,
+  TICK_BUDGET_MS,
 } from './tick-phases.js';
 import {
   consumeDaemonActivationPermit,
@@ -295,6 +296,7 @@ import {
   resolveBestOfNCount,
 } from '../run/best-of-n-policy.js';
 import { runSelfHealCycle, runSelfHealCycleForRepos } from '../fleet/self-heal.js';
+import { startTickLoopWatchdog, writeTickLoopBeacon, type TickLoopBeaconV1, type TickLoopStage, type TickLoopWatchdog } from './tick-loop.js';
 import { runInventCycle } from '../generative/invent-cycle.js'; // M186
 import { resolvePlanningClient } from '../generative/invent.js';
 import { runCounterfactualReplay } from '../fleet/counterfactual.js'; // M187
@@ -1273,6 +1275,8 @@ interface TickOptions {
   drain?: DaemonDrainMode;
   drainLimit?: number;
   signal?: AbortSignal;
+  /** Whole-tick phase budget (tick-phases.ts). Absent = TICK_BUDGET_MS. */
+  tickBudgetMs?: number;
   /** Resident ownership fence for asynchronous state callbacks. */
   ownerLock?: DaemonLock;
   onOwnershipLost?: () => void;
@@ -3996,7 +4000,7 @@ export async function tick(
   // stage below appends {name,status,durationMs,error}; recordTick stamps the
   // ledger onto the record and the resident loop persists it onto state even
   // when the tick is abandoned at the runDaemon deadline.
-  beginTickPhases();
+  beginTickPhases({ budgetMs: opts.tickBudgetMs ?? TICK_BUDGET_MS });
   const phaseLog = (line: string): void => console.warn('[ashlr] daemon:tick', line);
   // RQ-DAEMONTICK-UNBLOCK: one funnel for every awaited tick stage — bounded
   // wait + AbortSignal + ledger record + log on failure. A phase that times
@@ -4009,7 +4013,22 @@ export async function tick(
   ) => runTickPhase(name, run, {
     deadlineMs, parentSignal: opts.signal, log: phaseLog,
     ...(graceMs !== undefined ? { graceMs } : {}),
+    ...(name === 'dispatch' || name === 'dispatch-hook' ? { budgetExempt: true } : {}),
   });
+  // A backlog refresh that timed out is still running detached; starting a
+  // second scan over it in the same tick only stacks work. Later refreshes
+  // this tick are skipped and the next tick resumes the scan.
+  let backlogRefreshTimedOut = false;
+  const runBacklogRefreshPhase = async (): Promise<WorkItem[]> => {
+    if (backlogRefreshTimedOut) {
+      await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS,
+        async () => skipTickPhase('an earlier backlog refresh this tick timed out'));
+      return [];
+    }
+    const refreshed = await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick());
+    if (refreshed.status === 'timeout') backlogRefreshTimedOut = true;
+    return refreshed.value ?? [];
+  };
   const now = new Date().toISOString();
   // receipt.v1 R6: later[] entries from ledger events this process writes (idempotent, best effort).
   try { installReceiptLaterHooks(registerLedgerAppendObserver); } catch { /* never blocks the tick */ }
@@ -5411,7 +5430,7 @@ export async function tick(
   // 5. Build / refresh backlog for ENROLLED repos only.
   // -------------------------------------------------------------------------
   let backlogItems: WorkItem[] =
-    (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? [];
+    await runBacklogRefreshPhase();
   const proposalRepairResult =
     (await runPhase('proposal-repair', TICK_PHASE_MAINTENANCE_MS, () => runProposalRepairMaintenance())).value ?? null;
   if (
@@ -5419,7 +5438,7 @@ export async function tick(
     (proposalRepairResult?.dispatchRepairPruned ?? 0) > 0
   ) {
     backlogItems =
-      (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? [];
+      await runBacklogRefreshPhase();
   }
   for (const key of proposalRepairResult?.blockedItemKeys ?? []) blockedRepairKeys.add(key);
   for (const key of proposalRepairResult?.blockedRootKeys ?? []) blockedRepairRootKeys.add(key);
@@ -5473,14 +5492,14 @@ export async function tick(
       producerMaintenanceBeforeSelection = true;
       await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(undefined, signal));
       backlogItems = filterGeneratedRepairDispatch(
-        (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
+        await runBacklogRefreshPhase());
       if (backlogItems.length > 0) {
         skipInventAfterSelfHealRefill = true;
       } else {
         const invented =
           (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
         if (invented) backlogItems = filterGeneratedRepairDispatch(
-          (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
+          await runBacklogRefreshPhase());
       }
       await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
     }
@@ -5539,11 +5558,11 @@ export async function tick(
     producerMaintenanceBeforeSelection = true;
     await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(selfHealReposBeforeSelection, signal));
     backlogItems = filterGeneratedRepairDispatch(
-      (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
+      await runBacklogRefreshPhase());
     const invented =
       (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
     if (invented) backlogItems = filterGeneratedRepairDispatch(
-      (await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick())).value ?? []);
+      await runBacklogRefreshPhase());
     await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
 
     if (backlogItems.length === 0) {
@@ -10586,6 +10605,7 @@ async function runDaemonInEnrollmentScope(
   }
 
   let terminalFailure: string | undefined;
+  let tickLoopWatchdog: TickLoopWatchdog | null = null;
   /**
    * M-WINDOW: why a bounded run ended, when it ended on its own terms.
    *
@@ -10669,6 +10689,66 @@ async function runDaemonInEnrollmentScope(
       let cyclesLeft = opts.maxCycles ?? Infinity;
       // M-PAUSE: transition tracking so a park audits once, not once per poll.
       let parkedByPause = false;
+
+      // Tick-loop beacon + watchdog (see tick-loop.ts): the loop records every
+      // move with when it expects to move next; a loop that stops moving while
+      // the process is alive is woken, then restarted under launchd.
+      let loopIntervalMs = dcfg.intervalMs;
+      let loopTicks = 0;
+      let loopRecoveries = 0;
+      let loopBeacon: TickLoopBeaconV1 | null = null;
+      let loopWake = new AbortController();
+      const noteLoop = (stage: TickLoopStage, reason: string | null, expectedInMs: number): void => {
+        const nowMs = Date.now();
+        loopBeacon = {
+          v: 1,
+          pid: process.pid,
+          at: new Date(nowMs).toISOString(),
+          stage,
+          reason,
+          expectedBy: new Date(nowMs + Math.max(0, expectedInMs)).toISOString(),
+          intervalMs: loopIntervalMs,
+          ticks: loopTicks,
+          recoveries: loopRecoveries,
+        };
+        if (!ownershipLost) writeTickLoopBeacon(loopBeacon);
+      };
+      /** Park the loop; a watchdog wake ends the park early. False only on shutdown. */
+      const loopSleep = async (ms: number, reason: string): Promise<boolean> => {
+        noteLoop('park', reason, ms);
+        const wake = loopWake;
+        await sleep(ms, AbortSignal.any([shutdown.signal, wake.signal]));
+        if (wake.signal.aborted) loopWake = new AbortController();
+        return !shutdown.signal.aborted;
+      };
+      if (!opts.dryRun) {
+        tickLoopWatchdog = startTickLoopWatchdog({
+          current: () => loopBeacon,
+          wake: (assessment) => {
+            loopRecoveries++;
+            audit({
+              action: 'daemon:tick-loop-stalled',
+              repo: null,
+              sandboxId: null,
+              summary: `${assessment.summary} Waking the loop.`,
+              result: 'error',
+            });
+            loopWake.abort();
+          },
+          restart: (assessment) => {
+            loopRecoveries++;
+            terminalFailure ??= 'daemon-tick-loop-stalled';
+            audit({
+              action: 'daemon:tick-loop-stalled',
+              repo: null,
+              sandboxId: null,
+              summary: `${assessment.summary} A wake did not restart it; stopping for a supervised restart.`,
+              result: 'error',
+            });
+            requestShutdown('SIGTERM');
+          },
+        });
+      }
       // Same discipline for the serving runtime: audit the transition, not
       // every poll, so a runtime that is down for an hour writes two lines.
       let localFleetRuntimeDownAudited = false;
@@ -10771,8 +10851,9 @@ async function runDaemonInEnrollmentScope(
        * Returns false only when the sleep was aborted, matching `sleep()`.
        */
       const parkWithinWindow = async (ms: number): Promise<boolean> => {
-        if (runWindow === null) return sleep(ms, shutdown.signal);
+        if (runWindow === null) return loopSleep(ms, 'interval');
         const wakeAtMs = Date.now() + Math.max(0, ms);
+        noteLoop('park', 'interval', ms);
         while (true) {
           const nowMs = Date.now();
           if (nowMs >= wakeAtMs) return true;
@@ -10877,7 +10958,7 @@ async function runDaemonInEnrollmentScope(
               result: 'ok',
             });
           }
-          if (!(await sleep(DAEMON_PAUSE_PARK_MS, shutdown.signal))) break;
+          if (!(await loopSleep(DAEMON_PAUSE_PARK_MS, 'paused'))) break;
           continue;
         }
         if (parkedByPause) {
@@ -10892,6 +10973,7 @@ async function runDaemonInEnrollmentScope(
         }
 
         const liveCfg = reloadLiveConfigForDaemon(cfg);
+        loopIntervalMs = resolveCfg(liveCfg).intervalMs;
 
         const currentLoaded = loadDaemonStateStrict();
         if (!currentLoaded.ok) {
@@ -10934,7 +11016,7 @@ async function runDaemonInEnrollmentScope(
                 result: 'refused',
               });
             }
-            if (!(await sleep(STANDING_WITHDRAWN_PARK_MS, shutdown.signal))) break;
+            if (!(await loopSleep(STANDING_WITHDRAWN_PARK_MS, `authority-withdrawn: ${minted.reason}`))) break;
             continue;
           }
           if (standingWithdrawnReason !== null) {
@@ -10952,6 +11034,9 @@ async function runDaemonInEnrollmentScope(
         const standingHeadSeq = standing ? standing.headSeq() : null;
 
         transitionActivity('tick');
+        loopTicks++;
+        // The bounded tick settles by its deadline plus the abort grace.
+        noteLoop('tick', null, (opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS) + 60_000);
         // RQ-DAEMONTICK-UNBLOCK: bounded + guaranteed-persisted — a tick that
         // throws or never settles still advances lastTickAt with an outcome.
         const tickResult = await runResidentBoundedTick(
@@ -10971,6 +11056,8 @@ async function runDaemonInEnrollmentScope(
         );
         noteAdaptiveThroughput(tickResult === null);
         completedTicks++;
+        // Post-tick stages carry their own bounds; give them one tick deadline.
+        noteLoop('post-tick', null, opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS);
         if (tickResult === null) {
           // Thrown / timed-out / refused-open tick: the outcome is already
           // persisted. Park like an idle cycle so an abandoned-then-detached
@@ -10980,7 +11067,7 @@ async function runDaemonInEnrollmentScope(
           const parkMs = parkCfg.mode === 'continuous'
             ? (parkCfg.idleBackoffMs ?? 5_000)
             : parkCfg.intervalMs;
-          if (!(await sleep(parkMs, shutdown.signal))) break;
+          if (!(await loopSleep(parkMs, 'interval'))) break;
           if (!ownsDaemonLock() || killSwitchOn() || shutdown.signal.aborted) break;
           continue;
         }
@@ -11026,6 +11113,7 @@ async function runDaemonInEnrollmentScope(
         // an immediate 'no-landing'. The suite only runs when a head moved.
         if (postMergeHaltEnabled && !opts.dryRun && ownsDaemonLock()) {
           let postMerge: PostMergeGateResult | null = null;
+          noteLoop('post-tick', 'post-merge-gate', opts.tickDeadlineMs ?? DAEMON_TICK_DEADLINE_MS);
           try {
             postMerge = await runPostMergeGate(
               headsBeforeTick,
@@ -11151,6 +11239,7 @@ async function runDaemonInEnrollmentScope(
             summary: 'daily budget exhausted; daemon sleeping until the next UTC budget day',
             result: 'ok',
           });
+          noteLoop('park', 'budget-exhausted', nextUtcBudgetDayStartMs() - Date.now() + 60_000);
           if (!(await sleepUntilNextUtcBudgetDay(daemonLock, shutdown.signal))) break;
           continue;
         }
@@ -11183,7 +11272,7 @@ async function runDaemonInEnrollmentScope(
               result: 'ok',
             });
           }
-          if (!(await sleep(fleetHealth.backoffMs, shutdown.signal))) break;
+          if (!(await loopSleep(fleetHealth.backoffMs, `local-runtime-${fleetHealth.state}`))) break;
           continue;
         }
         if (fleetHealth !== null && fleetHealth.state === 'healthy' && localFleetRuntimeDownAudited) {
@@ -11230,6 +11319,7 @@ async function runDaemonInEnrollmentScope(
   closeLocalWorkObservation();
   transitionToStopping();
   clearInterval(killSwitchPoll);
+  tickLoopWatchdog?.stop();
   if (factsTimer) clearInterval(factsTimer);
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.

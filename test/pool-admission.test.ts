@@ -2,7 +2,7 @@
  * RQ-LOADGATE-1 — `phm pool admission` and the read-only admission core that mirrors dispatchd's load gate.
  * Temp runs dirs and injected probes only; nothing reads the real load, process table, daemon or ~/.ashlr-runs.
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,9 +39,14 @@ describe('evaluateAdmission gates', () => {
     expect(evaluateAdmission(healthy({ procs: 801 })).reason).toBe('procs 801 > 800');
     expect(evaluateAdmission(healthy({ procs: 800 })).admit).toBe(true);
   });
-  it('blocks on more than 40 live job worktrees', () => {
-    expect(evaluateAdmission(healthy({ worktrees: 41 })).reason).toBe('worktrees 41 > 40');
-    expect(evaluateAdmission(healthy({ worktrees: 40 })).admit).toBe(true);
+  it('blocks on more active job worktrees than the core-scaled limit max(40, 4 x ncpu)', () => {
+    // 18 cores: 72 active worktrees are admitted, 73 block.
+    expect(evaluateAdmission(healthy({ worktrees: 73 })).reason).toBe('worktrees 73 > 72');
+    expect(evaluateAdmission(healthy({ worktrees: 72 })).admit).toBe(true);
+    expect(evaluateAdmission(healthy({ worktrees: 72 })).worktreesMax).toBe(72);
+    // A small host keeps the 40 floor.
+    expect(evaluateAdmission(healthy({ ncpu: 4, load1: 1, worktrees: 41 })).reason).toBe('worktrees 41 > 40');
+    expect(evaluateAdmission(healthy({ ncpu: 4, load1: 1, worktrees: 40 })).admit).toBe(true);
   });
   it('blocks on a daemon tick older than 15 minutes, or an unreadable status', () => {
     expect(evaluateAdmission(healthy({ daemonTickAgeS: 901 })).reason).toBe('daemon_tick_stale 901s > 900s');
@@ -50,7 +55,7 @@ describe('evaluateAdmission gates', () => {
     expect(gone).toMatchObject({ admit: false, reason: 'daemon_status_unavailable (Error)' });
   });
   it('lists every tripped gate', () => {
-    const r = evaluateAdmission(healthy({ load1: 200, procs: 900, worktrees: 50, daemonTickAgeS: 2000 }));
+    const r = evaluateAdmission(healthy({ load1: 200, procs: 900, worktrees: 500, daemonTickAgeS: 2000 }));
     expect(r.reasons).toHaveLength(4);
   });
   it('reports at_cap once running reaches the cap', () => {
@@ -170,6 +175,24 @@ describe('readAdmission and phm pool admission', () => {
     await writeFile(join(dir, 'RQ-B.base'), `abc x ${join(dir, 'gone')} devin\n`);
     await writeFile(join(dir, 'RQ-C.base'), 'short\n');
     expect((await readAdmission(probes())).worktrees).toBe(1);
+  });
+  it('counts active job worktrees, not parked ones holding uncommitted work (441 parked do not block)', async () => {
+    const idle = new Date(NOW - 6 * 3600_000);
+    for (let i = 0; i < 441; i++) {
+      const wt = join(dir, `parked-${i}`); await mkdir(wt);
+      await writeFile(join(dir, `RQ-P${i}.base`), `abc x ${wt} devin\n`);
+      await writeFile(join(dir, `RQ-P${i}.log`), 'done\n');
+      for (const p of [wt, join(dir, `RQ-P${i}.base`), join(dir, `RQ-P${i}.log`)]) await utimes(p, idle, idle);
+    }
+    const live = join(dir, 'live-1'); await mkdir(live);
+    await writeFile(join(dir, 'RQ-LIVE.base'), `abc x ${live} devin\n`);
+    for (const p of [live, join(dir, 'RQ-LIVE.base')]) await utimes(p, idle, idle);
+    // A running job keeps writing its log: that alone marks its worktree active.
+    const fresh = new Date(NOW - 60_000);
+    await writeFile(join(dir, 'RQ-LIVE.log'), 'working\n'); await utimes(join(dir, 'RQ-LIVE.log'), fresh, fresh);
+    const report = await readAdmission(probes());
+    expect(report).toMatchObject({ worktrees: 1, worktreesParked: 441, worktreesMax: 72 });
+    expect(report.reasons.join(' ')).not.toMatch(/worktrees/);
   });
   it('trips on each live probe', async () => {
     expect((await readAdmission(probes({ load1: () => 40 }))).reason).toContain('loadavg 40.0 > 36.0');
