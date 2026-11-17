@@ -20,6 +20,8 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ### Added
 
+- Add `phm devin autoland` with capped dry-run/apply passes, principal filtering, bundle deduplication, retry backoff, superseding PRs, pause/resume and a single-flight resident timer. Successful landings terminate and archive their Devin sessions.
+- Add `phm devin land` to land a Devin session's attached bundle and `pr.md` through the pinned fork-only `publish.sh`: verifies the bundle, rebases the session's own commits onto the latest base, writes the job records, arms auto-merge unless `publish.sh` withheld it, and records the landing. Dry run by default; `--apply` acts. See `docs/DEVIN.md`.
 - Add one owner thread that joins desktop, Telegram, email, iMessage and Slack, with replies returning only to the channel the owner used ([#4233](https://github.com/ashlrai/phantom/pull/4233)). See `docs/OWNER-THREAD.md`.
 - Add `phm fleet owner-pull` to pull configured remote owner channels into the thread ([#4295](https://github.com/ashlrai/phantom/pull/4295)) and `phm fleet owner-history` to page archived messages after rotation ([#4302](https://github.com/ashlrai/phantom/pull/4302), [#4316](https://github.com/ashlrai/phantom/pull/4316)).
 - Show the owner thread and a channel strip inline in the desktop Leader pane ([#4287](https://github.com/ashlrai/phantom/pull/4287), [#4296](https://github.com/ashlrai/phantom/pull/4296)), and open the desktop on a Leader-first home surface ([#4328](https://github.com/ashlrai/phantom/pull/4328)).

@@ -37,6 +37,8 @@ import { localWhen, readOriginRepo } from './cloud.js';
 import { isTty } from './ui.js';
 import { rejectUnknownOptions } from './args.js';
 import type { DevinBusRequest } from '../core/fleet/bus-adapters/devin.js';
+import type { DevinLandRequest, DevinLandResult } from '../core/devin/land.js';
+import type { DevinAutolandRequest, DevinAutolandResult } from '../core/devin/autoland.js';
 
 const USAGE = `ashlr devin — Devin (Cognition) sessions that deliver PRs through the standing gates
 
@@ -64,6 +66,12 @@ Usage:
       Read each live session's status and ACUs, and ask GitHub for its PR.
   ashlr devin message <task-id> "<text>"
       Reply to a Devin session that is waiting for you.
+  ashlr devin land --session <devin-session-id> [--repo phantom] [--base branch] [--job id] [--bundle name] [--apply] [--json]
+      Land a session's attached <slug>.bundle and <slug>.pr.md through ~/.ashlr-runs/bin/publish.sh (fork-only PR),
+      then turn on auto-merge unless publish.sh withheld it. Dry run by default; --apply acts. publish.sh's repos only.
+  ashlr devin autoland [--apply] [--cap N] [--json]
+  ashlr devin autoland pause|resume [--json]
+      Land finished sessions owned by the connected key, or pause/resume resident passes.
   ashlr devin bus --inbox <file> --outbox <file> [--cwd <dir>] [--model <id>]
                   [--stall-window-ms <ms>] [--timeout-ms <ms>]
       Reply to one untrusted inbox using the local Devin CLI. Requires current native free-model admission.
@@ -81,6 +89,8 @@ Dollar figures are estimates; ACUs come from Devin's own readings.`;
 // ---------------------------------------------------------------------------
 
 export interface DevinCliDeps {
+  autoland?: (request: DevinAutolandRequest) => Promise<DevinAutolandResult>;
+  land?: (request: DevinLandRequest) => Promise<DevinLandResult>;
   runBus?: (request: DevinBusRequest) => Promise<{ bytes: number }>;
   connect: (input: { key: string; orgId: string | null }) => Promise<DevinConnectResult>;
   disconnect: () => Promise<{ removedKey: boolean }>;
@@ -114,6 +124,8 @@ async function defaultDeps(): Promise<DevinCliDeps> {
     import('../core/devin/tracker.js'),
   ]);
   return {
+    land: async (request) => (await import('../core/devin/land.js')).landDevinSession(request),
+    autoland: async (request) => (await import('../core/devin/autoland.js')).runDevinAutoland(request),
     runBus: async (request) => (await import('../core/fleet/bus-adapters/devin.js')).runDevinBusAdapter(request),
     connect: (input) => service.connectDevin(input),
     disconnect: () => service.disconnectDevin(),
@@ -379,6 +391,45 @@ async function cmdLaunch(deps: DevinCliDeps, args: string[]): Promise<number> {
   return 0;
 }
 
+async function cmdLand(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const asJson = takeFlag(args, '--json');
+  const apply = takeFlag(args, '--apply');
+  const sessionId = takeOption(args, '--session');
+  const repo = takeOption(args, '--repo');
+  const base = takeOption(args, '--base');
+  const job = takeOption(args, '--job');
+  const bundle = takeOption(args, '--bundle');
+  rejectLeftovers(args);
+  if (!sessionId) throw new UsageError('Name the session: ashlr devin land --session <devin-session-id>.');
+  if (!deps.land) throw new Error('Landing is unavailable in this build.');
+  const req: DevinLandRequest = { sessionId, apply };
+  if (repo !== null) req.repo = repo;
+  if (base !== null) req.base = base;
+  if (job !== null) req.job = job;
+  if (bundle !== null) req.bundle = bundle;
+  const result = await deps.land(req);
+  if (asJson) {
+    json(deps, JSON.parse(clean(JSON.stringify(result))));
+    return result.ok ? 0 : 1;
+  }
+  const say = (line: string) => deps.out(clean(line));
+  if (result.bundle && result.base) {
+    say(`Session ${result.sessionId}: ${result.commitCount} commit${result.commitCount === 1 ? '' : 's'} in ${result.bundle.name} on top of origin/${result.base.branch} (merge-base ${result.mergeBase?.slice(0, 12)}).`);
+    for (const commit of result.commits ?? []) say(`  ${commit.sha.slice(0, 12)} ${commit.subject}`);
+  }
+  if (result.prMd) say(`PR title: ${result.prMd.title}`);
+  say(result.mode === 'dry-run' ? (result.ok ? 'Dry run. With --apply this would:' : 'Dry run.') : 'Did:');
+  for (const step of result.steps) say(`  - ${step}`);
+  if (result.publish) say(`publish.sh: ${result.publish.result || 'no RESULT line'}`);
+  if (result.publish?.pr) say(`PR: ${result.publish.pr}`);
+  if (result.autoMerge) say(`Auto-merge: ${result.autoMerge.armed ? 'on' : 'off'} (${result.autoMerge.detail})`);
+  if (!result.ok) {
+    deps.err(`Not landed: ${clean(result.error ?? 'the landing failed.')}`);
+    return 1;
+  }
+  return 0;
+}
+
 function cmdList(deps: DevinCliDeps, args: string[]): number {
   const asJson = takeFlag(args, '--json');
   const all = takeFlag(args, '--all');
@@ -544,7 +595,7 @@ function clean(text: string): string {
 const HELP_VALUE_OPTIONS = new Set([
   '--acu', '--fleet-concurrent', '--fleet-per-day', '--max-concurrent', '--max-per-day', '--pause-at', '--per-day',
   '--per-session', '--reserve', '--spent', '--usd-per-acu', '--base', '--email', '--org', '--repo', '--title',
-  '--inbox', '--outbox', '--cwd', '--model', '--stall-window-ms', '--timeout-ms',
+  '--inbox', '--outbox', '--cwd', '--model', '--stall-window-ms', '--timeout-ms', '--session', '--job', '--bundle',
 ]);
 
 function wantsHelp(args: readonly string[]): boolean {
@@ -565,7 +616,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
     (sub ? print : printErr)(USAGE);
     return sub ? 0 : 2;
   }
-  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget', 'bus'];
+  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget', 'bus', 'land', 'autoland'];
   if (!known.includes(sub)) {
     printErr(`Unknown devin command "${sub}".\n\n${USAGE}`);
     return 2;
@@ -597,6 +648,25 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
       case 'fleet': return cmdFleet(deps, args);
       case 'status': return await cmdStatus(deps, args);
       case 'launch': return await cmdLaunch(deps, args);
+      case 'land': return await cmdLand(deps, args);
+      case 'autoland': {
+        const asJson = takeFlag(args, '--json');
+        if (args[0] === 'pause' || args[0] === 'resume') {
+          const paused = args.shift() === 'pause';
+          rejectLeftovers(args);
+          (await import('../core/devin/autoland.js')).setDevinAutolandPaused(paused);
+          if (asJson) json(deps, { ok: true, paused }); else deps.out(paused ? 'Autoland paused.' : 'Autoland resumed.');
+          return 0;
+        }
+        const apply = takeFlag(args, '--apply');
+        const cap = takeOption(args, '--cap');
+        rejectLeftovers(args);
+        if (!deps.autoland) throw new Error('Autoland is unavailable in this build.');
+        const result = await deps.autoland({ apply, ...(cap !== null ? { cap: Number(cap) } : {}) });
+        if (asJson) json(deps, result);
+        else for (const row of result.decisions) deps.out(clean(`${row.sessionId ?? 'Pass'}: ${row.decision} — ${row.reason}${row.commitCount !== undefined ? ` (${row.commitCount} commits)` : ''}${row.pr ? ` ${row.pr}` : ''}`));
+        return result.ok ? 0 : 1;
+      }
       case 'list':
       case 'ls': return cmdList(deps, args);
       case 'refresh': return await cmdRefresh(deps, args);
