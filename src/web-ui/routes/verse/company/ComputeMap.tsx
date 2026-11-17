@@ -14,7 +14,8 @@ import { openDockPane } from '../dock/dock-store.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
 import { fleetOrgMapQuery } from '../fleet/org-map-query.js';
 import { advanceCores, fresh, isFleetCompute, isFleetSessionMap, loadRatio, type CoreHistory, type MapSession } from './compute-model.js';
-import { ComputeScene3D } from './ComputeScene3D.js';
+import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
+import { ComputeScene3D, OrgMessages } from './ComputeScene3D.js';
 import { recordedAt, shown } from './company-model.js';
 import styles from './compute.module.css';
 
@@ -91,7 +92,7 @@ function PoolHosts({ data, now }: { data: FleetCompute; now: number }) {
 
 function Token({ session, selected, choose }: { session: MapSession; selected: boolean; choose: () => void }) {
   return <button type="button" className={styles.token} data-state={session.mapState} aria-pressed={selected} onClick={choose}>
-    <strong>{session.job}</strong><span>{session.lane ?? 'lane unknown'} · {session.model ?? 'model unknown'}</span>
+    <strong>{session.job}</strong><ProviderBadge of={session.model} lane={session.lane} /><span>{session.lane ?? 'lane unknown'} · {session.model ?? 'model unknown'}</span>
     <span>{session.status} · {session.elapsedSeconds === null ? 'age unknown' : `${Math.floor(session.elapsedSeconds / 60)}m elapsed`}</span>
     <small>{session.activity ? `Last log excerpt (time unknown): ${session.activity}` : 'Activity unknown'}</small>
   </button>;
@@ -227,6 +228,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
     </details>
     {!nodes.length && <p>No nodes observed.</p>}
     <section aria-label="Unassigned agents"><h3>Queued / placement unknown</h3>{tokens(jobs.filter(j => location(j) === null || !nodes.some(n => n.id === location(j))))}</section>
+    {mode === '2D' && <OrgMessages orgMap={org.data ?? null} />}
     {!jobs.length && <p>{sessions.data?.sourceState === 'healthy' ? 'No active sessions recorded.' : 'Session inventory unknown.'}</p>}
     {sessions.data && <p>Session placement uses compute observation {sessions.data.computeAt}.</p>}
     <p>Sessions: {sessions.data?.sourceState ?? 'unknown'}{sessions.data?.truncated ? ' · partial snapshot' : ''} · {recordedAt(sessions.data?.generatedAt, now)}. Dispatcher: {recordedAt(data?.dispatcherAt, now)}. {data && Object.entries(data.sources).map(([k, v]) => `${k}: ${v}`).join(' · ')}</p>

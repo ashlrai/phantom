@@ -15,8 +15,8 @@ function fixture(): FleetOrgMap {
     nodes: [{ id: 'leader', kind: 'leader', label: 'Leader (CEO)', provider: 'unknown', status: 'unknown' },
       { id: 'lane:claude', kind: 'lane', label: 'claude', provider: 'Anthropic', status: 'running' },
       { id: 'job:J1', kind: 'job', label: 'Fix a bug', jobId: 'J1', provider: 'unknown', status: 'stale', repo: 'phantom', model: 'unknown', ageSeconds: 120 }],
-    edges: [{ id: 'reports:J1', kind: 'reports-to', from: 'job:J1', to: 'lane:claude' },
-      { id: 'message', kind: 'message', from: 'leader', to: 'lane:claude', count: 2 }] };
+    edges: [{ id: 'reports:J1', kind: 'reports-to', from: 'job:J1', to: 'lane:claude', provider: 'unknown' },
+      { id: 'message', kind: 'message', from: 'lane:claude', to: 'leader', provider: 'Anthropic', count: 2 }] };
 }
 
 describe('Fleet map', () => {
@@ -34,9 +34,11 @@ describe('Fleet map', () => {
     read.data = fixture(); read.status = 'success';
     render(<OrgMap live={null} />);
     expect(screen.getByRole('heading', { name: 'Messages in the last 15 minutes' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'Agent messages' })).toHaveTextContent('Leader (CEO) → claude: 2 messages');
+    expect(screen.getByRole('region', { name: 'Agent messages' })).toHaveTextContent('claude → Leader (CEO): 2 messages');
+    expect(screen.getByRole('region', { name: 'Agent messages' }).querySelector('[data-provider-badge="Anthropic"] svg[aria-label="Anthropic"]')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'claude' }).querySelector('[data-provider-badge="Anthropic"]')).toHaveTextContent('Anthropic');
     const job = screen.getByRole('button', { name: 'Open job J1' });
-    expect(job).toHaveTextContent('unknown'); expect(job).toHaveTextContent('stale · 2m old');
+    expect(job).toHaveTextContent('unknown'); expect(job.querySelector('[data-provider-badge="unknown"] svg')).toHaveTextContent('?'); expect(job).toHaveTextContent('stale · 2m old');
     fireEvent.click(job); expect(screen.getByRole('dialog')).toHaveTextContent('J1');
     fireEvent.click(screen.getByRole('button', { name: 'Close' })); expect(screen.queryByRole('dialog')).toBeNull();
   });

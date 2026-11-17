@@ -289,7 +289,13 @@ The Fleet screen shows a map of the Leader, reported lanes and active jobs.
 Run `phm fleet map --minutes 60 --json` for the `fleet.map.v2` graph (replaces
 the nested v1 tree). `GET /api/verse/fleet/control/map?minutes=60` serves the same
 contract to the existing 2D/3D views with a current read session; minutes is 1..1440.
-Nodes carry provider text badges; reporting edges point from child to parent.
+Every node and every edge carries a `provider` field: `Anthropic`, `OpenAI`,
+`Cognition`, `xAI`, `Google`, `Z.ai`, `Cursor`, `Local` or `unknown`. A job's
+provider comes from its model id, then its lane; an edge carries its sender's
+(`from`) provider. One function decides this, `providerFor` in
+`src/core/fleet/provider.ts`, and the 2D and 3D maps draw its badge on each
+agent and message line. A name it does not recognise is `unknown` and shows a
+neutral “?” badge, never a guess. Reporting edges point from child to parent.
 Session evidence preserves exact lanes and stale jobs; missing model/provider/health
 is `unknown`. The 2D map opens the existing job detail sheet. The 3D view retains
 machine placement and reads shared job labels and message counts.
