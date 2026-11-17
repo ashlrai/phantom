@@ -484,8 +484,8 @@ code 14.
 `merge-queue-loop` ([`merge-queue-loop.ts`](../src/core/drive/merge-queue-loop.ts),
 run by `node scripts/merge-queue-loop.mjs cycle [--dry-run]`) makes one pass
 over the fleet PRs of the seven approved repos. A green, mergeable PR is
-added to the default branch's GitHub merge queue (`enqueuePullRequest` with
-`expectedHeadOid`, so a moved head is refused); the queue still runs every
+added to the default branch's GitHub merge queue (`gh pr merge --auto` with
+`--match-head-commit`, so a moved head is refused); the queue still runs every
 required check on the merge group. A BEHIND PR gets `updatePullRequestBranch`
 with the MERGE method (a base merge commit, never a rewrite or force-push) only
 where it helps: in a repo without a merge queue, or when its head reports no
@@ -496,6 +496,15 @@ queue are never auto-enqueued, and PRs touching Security-pinned paths (or with
 a truncated file list) are reported as `pinned`, not enqueued. Each action is
 written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
 per cycle.
+
+The same cycle recovers eligible PRs stranded outside the queue, including
+those with auto-merge already armed. Live PR or repository claims in the
+coordination ledger report `owned`; unreadable ownership stops that repo.
+JSON `repos[].latency` reports each PR's head, state, state entry time (`since`),
+observation time (`observedAt`, both epoch milliseconds) and cumulative `stateMs`. Times are sampled
+at successful reads: intervals belong to the preceding observed state, not
+exact GitHub transition times. New heads, failed reads and backward clocks
+reset the timing window; closed PRs are removed. Dry runs report without saving.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
