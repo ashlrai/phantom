@@ -63,6 +63,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
   'test/coordination-return-durable-retry-378s.test.ts', // Spawns a tsx child racing a concurrent owner return on the coordination lock.
   'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
+  'test/release-status.test.ts', // Local publication fixtures use real Git repositories and child processes.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.

@@ -1987,7 +1987,8 @@ export async function handleApi(
 
     if (path === '/api/fleet/release-chain' && method === 'GET') {
       const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
+      const { getLocalReleaseStatus } = await import('../fleet/release-chain-status.js');
+      sendJson(res, 200, { ...releaseChainResponse(), release: await getLocalReleaseStatus() });
       return true;
     }
 
@@ -1995,14 +1996,6 @@ export async function handleApi(
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
       sendJson(res, report ? 200 : 503, report ?? { error: 'Jobs ledger is unreadable.' });
-      return true;
-    }
-
-    // Read-only release-chain status: same local signing/feed evidence as
-    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
-    if (path === '/api/fleet/release-chain' && method === 'GET') {
-      const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
       return true;
     }
 
