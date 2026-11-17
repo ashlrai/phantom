@@ -262,6 +262,9 @@ roots, budgets and acceptance evidence explicit.
 
 ## Deeper design and history
 
+The [recursive self-improvement and open fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md)
+proposes verified improvement experiments and a public-work-only contributor fleet.
+
 The [30-day fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/FLEET-30D.md)
 ranks the delivery gaps, maps accountable roles to existing runtimes, and sets
 acceptance targets for November 14 through December 13, 2026.
