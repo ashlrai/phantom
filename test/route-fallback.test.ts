@@ -17,6 +17,27 @@ const sources = () => ({ models: Object.fromEntries(lanes.map(l => [l, 'gpt-6.1-
   capacity: Object.fromEntries(lanes.map(l => [l, { resetAt: null as string | null, remainingPercent: 50 as number | null, observedAt: new Date(now).toISOString() }])) });
 
 describe('provider-neutral fallback chains', () => {
+  it('uses work-class weights for ranked ties without overriding spend, cost or rejections', () => {
+    const r = { ...request(), work_class: 'code' }, s = sources();
+    const weights = [{ schema: 'router.weights.v1' as const, work_class: 'code', lane: 'e', weight: 1,
+      evidence_n: 20, updated_at: new Date(now).toISOString() }];
+    const weighted = { ...s, weights };
+    const baseline = planFallbackChain(r, s, 'a', now);
+    expect(planFallbackChain(r, weighted, 'a', now).lanes.map(e => e.lane)).toEqual(['e', 'b', 'c']);
+    expect(planFallbackChain({ ...r, work_class: undefined }, weighted, 'a', now).lanes).toEqual(baseline.lanes);
+    s.capacity.b.resetAt = new Date(now + 3600000).toISOString();
+    expect(planFallbackChain(r, weighted, 'a', now).lanes[0].lane).toBe('b');
+    s.capacity.b.resetAt = null;
+    s.models.e = 'unknown-model';
+    expect(planFallbackChain(r, weighted, 'a', now).lanes.map(e => e.lane)).toEqual(['b', 'c', 'd']);
+    s.models.e = s.models.b;
+    r.quota_state.e = 'exhausted';
+    const rejected = planFallbackChain(r, s, 'a', now);
+    const plan = planFallbackChain(r, weighted, 'a', now);
+    expect(plan.lanes).toEqual(rejected.lanes);
+    expect(plan.rejected).toEqual(rejected.rejected);
+    expect(plan.rejected).toContainEqual({ lane: 'e', reason_codes: ['quota_unavailable'] });
+  });
   it('ranks at most three alternatives without primary or implicit local opt-in', () => {
     const plan = planFallbackChain(request(), sources(), 'a', now);
     expect(plan.lanes.map(e => e.lane)).toEqual(['b', 'c', 'd']);

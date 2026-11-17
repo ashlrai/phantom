@@ -12,7 +12,7 @@ export async function decideRoute(raw: unknown, sources: RouteSources, options: 
   const started = performance.now();
   const request = routeRequestSchema.parse(raw);
   const nowMs = options.nowMs ?? Date.now();
-  const candidates = rankRouteCandidates(request, enumerateRouteCandidates(request, sources), nowMs);
+  const candidates = rankRouteCandidates(request, enumerateRouteCandidates(request, sources), nowMs, sources.weights);
   if (request.mode === 'fusion') return decidePairing(candidates.map(c => ({
     lane: c.lane, model: c.model, mode_tier: c.mode_tier,
     laneClass: c.mode_tier === 'ultra' ? 'frontier' : 'cheap', available: true,

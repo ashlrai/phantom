@@ -16,6 +16,20 @@ vi.mock('../src/core/run/provider-client.js', () => ({ buildOpenAICompatibleClie
 vi.mock('../src/core/decide/decide.js', () => ({ decide: vi.fn() }));
 
 describe('company-neutral mode tiers', () => {
+  it('uses weights only after spend/cost and never bypasses quota or tier gates', () => {
+    const req = routeRequestSchema.parse({ task_class: 'bug-fix', repo: 'repo', tier_hint: 'work', work_class: 'code',
+      lane_candidates: ['a', 'b', 'c'], quota_state: { a: 'available', b: 'available', c: 'exhausted' },
+      machine_state: { admit: true, running_by_lane: { a: 0, b: 0, c: 0 } } });
+    const src = { models: { a: 'custom', b: 'custom', c: 'custom' }, admission: { admit: true },
+      slots: Object.fromEntries(['a', 'b', 'c'].map(l => [l, { target: 1, hard_cap: 1 }])) };
+    const weights = ['b', 'c'].map(lane => ({ schema: 'router.weights.v1' as const, lane, work_class: 'code', weight: 1, evidence_n: 20, updated_at: new Date().toISOString() }));
+    const candidates = enumerateRouteCandidates(req, src);
+    expect(rankRouteCandidates(req, candidates, 0, weights).map(c => c.lane)).toEqual(['b', 'a']);
+    expect(rankRouteCandidates({ ...req, work_class: undefined }, candidates, 0, weights)[0].lane).toBe('a');
+    expect(rankRouteCandidates(req, candidates.map(c => ({ ...c, cost_rank: c.lane === 'a' ? 1 : 2 })), 0, weights)[0].lane).toBe('a');
+    expect(rankRouteCandidates(req, candidates.map(c => ({ ...c, speed_tier: 'everyday' as const })), 0, weights)).toEqual([]);
+    expect(rankRouteCandidates(req, candidates.map(c => ({ ...c, capacity: { pool: c.lane, remainingPercent: null, resetAt: null, costPerMTok: c.lane === 'a' ? 0 : 10 } })), 0, weights)[0].lane).toBe('a');
+  });
   const now = Date.parse('2026-11-17T12:00:00Z');
   const at = (hours: number) => new Date(now + hours * 3600000).toISOString();
   const request = (mode: string) => ({ task_class: 'bug-fix', repo: 'phantom', tier_hint: 'work', mode,

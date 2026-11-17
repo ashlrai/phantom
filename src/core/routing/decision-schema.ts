@@ -28,6 +28,7 @@ export const routeRequestSchema = z.object({
   data_class: routeDataClassSchema.optional(),
   fallback: z.array(z.object({ lane: routeIdSchema, on: z.array(routeFailureKindSchema).min(1).max(4) }).strict()).max(3)
     .refine(rows => new Set(rows.map(row => row.lane)).size === rows.length, 'Duplicate fallback lane').optional(),
+  work_class: routeIdSchema.optional(),
   lane_candidates: z.array(routeIdSchema).max(64),
   quota_state: z.record(routeIdSchema, z.enum(['available', 'exhausted', 'unknown'])),
   machine_state: z.object({
