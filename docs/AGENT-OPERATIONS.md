@@ -800,7 +800,7 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
-| Is the fleet on track (merges, publish-to-merge, empty finishes, mains, releases, pools)? | `phm goals` (JSON: target, value, as-of, source, 24 h trend, status; unknown when a signal is missing) or `phm goals --text`; the desktop Goals view shows the same cards |
+| Is the fleet on track (merges, publish-to-merge, empty finishes, mains, releases, pools)? | `phm goals` (plain words, behind first) or `phm goals --json` (`fleet.goal-scorecard.v2` with `version`: target, value, as-of, source, 24 h and 7 d trend, status text such as `unknown: <reason>`); the desktop Goals view shows the same rows |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
 | Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
@@ -928,6 +928,24 @@ The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
 excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm home` answers one question: is the fleet healthy and moving? It prints a
+headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
+merged PRs, median time to merge, main per repo, running jobs per lane, the
+resource most at risk of going unused, the last 5 work-log items and unread
+Leader replies (these need `--leader-seen <time>`). `phm home --json` prints
+schema `home.v1`: each field is `{state:"ok",value}` or `{state:"unknown",reason}`.
+It is read-only, and the desktop app opens on the same summary.
+
+`phm asks` lists what only Mason can do: a password, a 2FA code, a device
+approval or a payment. Each row has a short id, the kind, its age and one plain
+line. `phm asks answer <id> yes|no|done` records the answer once, with its
+source and time, on the existing needs-you ledger and bus; a repeat changes
+nothing. Agents raise one with `phm asks add <kind> "<request>"` and never put
+the secret itself in the request. Any other kind is refused: the fleet decides
+this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
+own private chat; the desktop Home view shows the same asks with Yes, No and
+Done buttons. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
 
 `phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
 published, PRs merged, empty jobs and the median time from publish to merge. It

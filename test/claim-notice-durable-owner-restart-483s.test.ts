@@ -239,16 +239,23 @@ describe('claim notice durable owner restart (RQ-PHX-CLAIMNOTICEDURABLERESTART48
     expect(f.sentRows().map(row => row.key)).toEqual([key]);
   });
 
-  it('a corrupt snapshot is untrusted rather than replayed: baseline, then real transitions emit once', async () => {
+  it('a corrupt snapshot halts until removed: baseline, then real transitions emit once', async () => {
     const f = fixture();
     const claim = must(claimFleetWork(
       { repo: REPO_A, task: 'fake durable task', agent: 'agent-a' }, f.options()));
     f.bind({ claimId: claim.claim.id, repo: REPO_A, threadKey: THREAD_A, pr: 7, head: HEAD_A });
     const baseline = await f.pass();
     expect(baseline).toMatchObject({ status: 'completed', baselined: true, sent: 0 });
-    // Damage the snapshot between restarts: it must not replay history into
-    // the thread, and the rebuilt state must recover cleanly.
+    // Damage the snapshot between restarts: it must not replay history or
+    // overwrite the unavailable state before an explicit repair.
     writeFileSync(f.paths.prev, '{"v":1,"state":"known","claims":[{torn', { mode: 0o600 });
+    const corruptBytes = readFileSync(f.paths.prev);
+    const unavailable = await f.pass();
+    expect(unavailable).toMatchObject({ status: 'prev-unavailable', reason: 'prev-snapshot-unreadable', baselined: false, planned: 0, sent: 0 });
+    expect(f.sends).toHaveLength(0);
+    expect(readFileSync(f.paths.prev)).toEqual(corruptBytes);
+    expect(existsSync(f.paths.sent)).toBe(false);
+    rmSync(f.paths.prev);
     const recovered = await f.pass();
     expect(recovered).toMatchObject({ status: 'completed', baselined: true, planned: 0, sent: 0 });
     expect(f.sends).toHaveLength(0);

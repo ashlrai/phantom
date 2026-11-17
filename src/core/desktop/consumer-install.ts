@@ -118,11 +118,12 @@ function original(a: Admission): void {
   const checked=verifyCompatibleUpdateManifest(JSON.parse(owned(join(a.stage,'envelope.json'),128*1024).data.toString('utf8')),a.deps.trust);
   require(canonicalJson(checked.manifest)===canonicalJson(a.manifest),'manifest-changed');
 }
-async function packageReady(root: string, a: Admission): Promise<void> {
+export async function packageReady(root: string, a: Pick<Admission,'pins'|'manifest'>): Promise<void> {
   await verifyInstalledRuntimeArchive(root,a.pins);
   const surface=verifyAuthoritySurfaceAt(root,'installed',{fresh:true});
   require(surface.ok && surface.digest===a.manifest.authoritySurfaceDigest,'package-surface');
 }
+export {directory, parents, owned, regular, write, sha, ioRead};
 /** Inspection persists only fresh private downloaded/staged data, never an installation. */
 export async function inspectConsumerDesktopInstall(input: ConsumerInstallDependencies): Promise<ConsumerInstallResult> {
   // Capture invocation inputs before the first await; caller mutation cannot

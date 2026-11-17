@@ -30,6 +30,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 ## Tools for agents working here
 
+- Cross-provider subagents: `phm subagent spawn --parent session-id --tier fast --task "Review a bounded change" --json` plans a scope-limited child through the provider-neutral router. Dry-run writes nothing; `--apply` stores held records only, never dispatches. No metered fallback. See [subagents](docs/SUBAGENTS.md).
+
 - CI baseline analysis: `phm ci baseline --json` groups fresh Vitest failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
 
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
@@ -220,12 +222,17 @@ displayed draft digest. Do not treat a queued job or result draft as send author
 
 ## Apps control
 
-`phm apps list|open|quit|focus|status [--json]` and
-`phm apps request open|quit|focus <app> --json` manage desktop apps named in
+`phm apps --json` reports Phantom, Claude, Codex, ChatGPT, Cursor, Grok and
+Safari (installed, running, frontmost, memory; unknown with a reason), and
+`phm apps open|focus <name> --json` acts on them. Quit refuses every one of
+them except Safari. `phm apps list|open|quit|focus|status [--json]` and
+`phm apps request open|quit|focus <app> --json` manage other desktop apps named in
 `~/.ashlr/apps-allow.json` (empty by default). Copy and paste these commands;
 see [APPS-CONTROL](docs/APPS-CONTROL.md):
 
 ```sh
+phm apps --json
+phm apps focus claude --json
 phm apps list --json
 phm apps status Notes --json
 phm apps quit Notes --json
@@ -428,5 +435,7 @@ each lane CLI. Local models must be on loopback. Nothing is called while the
 kill switch is on.
 
 ## Typed routing decisions
+
+Provider-neutral [failover chains](docs/ROUTING.md#failover-chains) remain inert with `failover_dispatcher_unwired`; no dispatcher installation is authorized by a plan.
 
 `phm route decide --input request.json --json` validates a closed set from local model, slot and admission snapshots. Local fast, one schema retry, existing Jev escalation and deterministic fallback share a 450 ms service budget. Advisory only; dispatcher observations append `metrics/route.explain.jsonl` without changing launches. See [typed routing](docs/ROUTING.md) for the request schema and a copy-paste offline example.

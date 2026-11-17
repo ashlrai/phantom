@@ -7,6 +7,7 @@ import { recutDropJob } from '../core/fleet/recut-drop-body.js';
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError, resolveDropJobRoot, writeDropJob } from '../core/fleet/drop-job-writer.js';
 import { cmdFleetDirtyLanded, type DirtyLandedPr } from './fleet-dirty-landed.js';
 import { mergeQueueAge, validMergeQueueAgeInput } from './fleet-merge-queue-age.js';
+import { reserveMergeRecoveryAttempt } from '../core/fleet/merge-recovery-budget.js';
 
 const USAGE = 'Usage: phm fleet merge-recover [--queue-input <snapshot.json>] [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. A queue snapshot prioritizes the oldest measured entries and reports their wait. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
 const REPO = 'ashlrai/phantom';
@@ -20,6 +21,7 @@ export interface MergeRecoverDeps {
   inspect?: () => Promise<DirtyLandedPr[]>;
   exists?: (root: string, id: string) => Promise<boolean>;
   write?: typeof writeDropJob;
+  reserve?: typeof reserveMergeRecoveryAttempt;
   output?: (text: string) => void;
 }
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
@@ -67,13 +69,18 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
     for (const pr of [...prs].sort((a, b) => (ranks.get(a.number) ?? Infinity) - (ranks.get(b.number) ?? Infinity))) {
       if (PHANTOM_PR_HOLDS.has(pr.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
       const job = recutDropJob(pr, 0);
-      if ('reason' in job) continue;
+      if ('reason' in job) { rows.push({ pr: pr.number, action: job.reason }); continue; }
       // Stable across dates and processes; a changed source head is a new recovery.
       job.id = `MR${createHash('sha256').update(`${pr.number}:${pr.head}`).digest('hex').slice(0, 32).toUpperCase()}`;
       const title = `bridge: RQ-PHX-${job.id}`;
       try {
         const current = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
         if (!valid(current) || current.number !== pr.number) throw new Error('invalid');
+        const sourceUnchanged = async () => {
+          const latest = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
+          return valid(latest) && latest.number === pr.number && latest.state === 'OPEN'
+            && latest.headRefOid === pr.head && latest.baseRefName === pr.base && !latest.isDraft && latest.mergeStateStatus === 'DIRTY';
+        };
         let action = 'source-changed';
         if (current.state !== 'OPEN') action = current.state.toLowerCase();
         else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && current.mergeStateStatus === 'DIRTY') {
@@ -95,7 +102,14 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
             if (replacement.state === 'OPEN' && replacement.mergeStateStatus === 'DIRTY') action = 'replacement-conflict';
             if (replacement.state === 'OPEN' && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
               action = replacement.autoMergeRequest ? 'auto-merge-requested' : 'request-auto-merge';
+              if (!replacement.autoMergeRequest && !await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'merge', false)) {
+                rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
+              }
               if (apply && !replacement.autoMergeRequest) {
+                if (!await sourceUnchanged()) { rows.push({ pr: pr.number, action: 'source-changed' }); continue; }
+                if (!await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'merge', true)) {
+                  rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
+                }
                 const result = await gh(['pr', 'merge', String(replacement.number), '--repo', REPO, '--auto', '--match-head-commit', replacement.headRefOid]);
                 if (!result.ok) throw new Error('merge request');
                 action = 'auto-merge-requested';
@@ -104,12 +118,16 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
           } else if (await (deps.exists ?? dropJobExists)(resolveDropJobRoot(root), job.id)) action = 'recut-queued';
           else {
             if (queued >= 2) { rows.push({ pr: pr.number, action: 'capped' }); continue; }
+            if (!await sourceUnchanged()) { rows.push({ pr: pr.number, action: 'source-changed' }); continue; }
+            if (apply && !deps.write && await countQueuedDropJobPrompts(resolveDropJobRoot(root)) >= DROP_JOB_QUEUE_LIMIT) throw new Error('queue full');
+            if (!await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'recut', apply)) {
+              rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
+            }
             queued++;
             action = 'queue-recut';
             // The worker leaves edits uncommitted; the existing router publisher owns publication.
             job.body += `\nRecovery identity: ${title}. The sanctioned router publisher must use this exact PR title. Never bypass required checks or the merge queue.\n`;
             if (apply) {
-              if (!deps.write && await countQueuedDropJobPrompts(resolveDropJobRoot(root)) >= DROP_JOB_QUEUE_LIMIT) throw new Error('queue full');
               try { await (deps.write ?? writeDropJob)(resolveDropJobRoot(root), job); }
               catch (e) { if (!(e instanceof DropJobExistsError)) throw e; }
               action = 'recut-queued';

@@ -1,10 +1,16 @@
-/** `phm bets list|launch|score|kill [--json]`: the bets lane ledger (RQ-BETS-LANE-1). Logic lives in core/metrics. */
+/**
+ * `phm bets list|launch|score|kill [--json]`: the bets lane ledger (RQ-BETS-LANE-1). Logic lives in core/metrics.
+ * `phm bets suggest|explain`: read-only next-job suggestions; logic lives in core/fleet/next-bets.
+ */
+import { explainBetLines, nextBetsLines, readNextBets, type BetReaders } from '../core/fleet/next-bets.js';
 import { BetInputError, type Bet, type BetDirection } from '../core/metrics/bets.js';
 import { killBet, launchBet, readBets, scoreCycle } from '../core/metrics/bets-store.js';
 import { defaultLoopReaders, type LoopReaders } from '../core/metrics/loop-collect.js';
 import { LOOP_METRIC_KEYS } from '../core/metrics/loop.js';
 
-export const BETS_USAGE = `Usage: phm bets <list|launch|score|kill> [--json]
+export const BETS_USAGE = `Usage: phm bets <suggest|explain|list|launch|score|kill> [--json]
+  phm bets suggest [--json] [--limit N]
+  phm bets explain <id> [--json]
   phm bets list [--json]
   phm bets launch --id RQ-BET-<slug> --hypothesis <text> --metric <key> --max-lane-hours <n> --max-cycles <n>
                   [--direction up|down] [--baseline <n>] [--min-delta <n>] [--kill <criterion>] [--json]
@@ -14,9 +20,11 @@ Ledger: $ASHLR_RUNS_DIR or ~/.ashlr-runs, file metrics/bets.jsonl (append-only).
 Metric keys: ${LOOP_METRIC_KEYS.join(', ')}.
 score runs one kill-fast cycle: kept when a bet job merged and the metric moved, killed when over budget without
 movement, hold otherwise; each decision is appended with the numbers used, and metrics/bets-share.json is refreshed.
-Exit 0 ok, 1 read or write failure, 2 bad usage or refused input.`;
+suggest ranks the next jobs worth queuing from lane status, usage pace, launch yield, main health, releases and
+the autonomy score; explain shows one suggestion's inputs and score. Both only read: nothing is queued.
+Exit 0 ok, 1 read or write failure (or explain id not on the list), 2 bad usage or refused input.`;
 
-export interface BetsCliDeps { out?: (line: string) => void; err?: (line: string) => void; readers?: LoopReaders; now?: () => Date }
+export interface BetsCliDeps { out?: (line: string) => void; err?: (line: string) => void; readers?: LoopReaders; now?: () => Date; betReaders?: BetReaders }
 
 function flags(args: string[], allowed: readonly string[], booleans: readonly string[] = ['--json']): Map<string, string> | null {
   const out = new Map<string, string>();
@@ -51,6 +59,24 @@ export async function cmdBets(argv: string[], deps: BetsCliDeps = {}): Promise<n
   const usage = () => { err(BETS_USAGE); return 2; };
   try {
     switch (verb) {
+      case 'suggest': {
+        const f = flags(rest, ['--limit']);
+        const limit = f?.has('--limit') ? num(f.get('--limit')) : 10;
+        if (!f || !Number.isInteger(limit) || limit! < 1 || limit! > 50) return usage();
+        const report = await readNextBets({ readers: deps.betReaders, now: now().getTime(), limit });
+        out(f.has('--json') ? JSON.stringify(report, null, 2) : nextBetsLines(report).join('\n'));
+        return 0;
+      }
+      case 'explain': {
+        const [id, ...more] = rest;
+        const f = id && !id.startsWith('--') ? flags(more, []) : null;
+        if (!f) return usage();
+        const report = await readNextBets({ readers: deps.betReaders, now: now().getTime() });
+        const suggestion = report.suggestions.find(bet => bet.id === id);
+        if (!suggestion) { err(`No current suggestion has the id ${JSON.stringify(id)}. Run phm bets suggest for the list.`); return 1; }
+        out(f.has('--json') ? JSON.stringify({ schema: 'fleet.next-bet.v1', generatedAt: report.generatedAt, readOnly: true, suggestion, weights: report.weights }, null, 2) : explainBetLines(suggestion).join('\n'));
+        return 0;
+      }
       case 'list': {
         const f = flags(rest, []);
         if (!f) return usage();

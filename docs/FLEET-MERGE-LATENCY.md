@@ -22,6 +22,16 @@ Missing enqueue still permits total readiness-to-merge measurement; it cannot
 establish the dominant delay. Queue execution includes any merge-group checks;
 these spans identify where time passed, not the cause between observations.
 
+Each row also has typed `status`: `stage`, `since`, `waiting_s`, and `delays_s`
+for queue, required checks and conflicts. These sum observed stage intervals,
+not unobserved lifetime delays; absent or ambiguous evidence is `null`.
+Simultaneous contradictory stages stay unknown. Queue entry and individual
+check successes cannot clear a blocker; `checks_passed` clears only checks.
+`eligible_to_merge_s` is completed readiness-to-merge time; `ready_wait_s` is
+open readiness age. Terminal PRs have no current wait, and measured intervals
+stop at merge or closure. The same report reaches the read-only desktop API at
+`/api/verse/fleet/merge-latency`. Required checks and sanctioned merge paths stay in place.
+
 The existing [merge queue loop](QUEUE.md#merge-queue-throughput-loop) repairs
 green, mergeable fleet PRs with auto-merge armed but no actual queue membership.
 It uses the normal head-pinned enqueue request, with the same holds, file gates

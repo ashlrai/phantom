@@ -46,6 +46,10 @@ class MarketUnit(unittest.TestCase):
         lanes = view(claude={'capabilities': ['git', 'gh', 'node']})
         self.assertEqual(self.choose({'preferred_lane': 'claude', 'needs': ['gh']}, lanes)[0]['chosen_lane'], 'claude')
 
+    def test_claude_hashed_account_scope_survives(self):
+        self.assertEqual(market._scope_names({'account_id': 'claude:0123456789abcdef'}),
+                         {'account_id': 'claude:0123456789abcdef'})
+
     def test_provenance_only_follows_measured_posture(self):
         provenance = dict(account_id='org-test', model='swe-2-high', window_start='1970-01-01T00:00:00Z', reset_at='1970-01-01T03:46:40Z')
         for reading in ({}, {'used': 80}):
