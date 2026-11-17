@@ -221,6 +221,12 @@ measured entry in that snapshot. Add `--apply` to queue recuts and, after a
 replacement is published, request head-pinned GitHub auto-merge. GitHub still
 enforces required checks and the merge queue. Retry the command after a failed
 request or publication; it reuses the recovery identity.
+Recovery rechecks the source before submitting work and reports work already
+present on the base. Each source PR has three recut attempts and three auto-merge
+attempts, persisted under `queue/merge-recover` in the runs directory. Failures
+and interrupted submissions consume attempts; changing heads does not reset them.
+`retry-limit` means that budget is exhausted. Preview reads the same budget
+without spending it; an unreadable store prevents submission.
 
 For a dropped auto-merge instead of a conflict, run `phm fleet merge-retry
 --events merge-events.jsonl --json` against the same ledger `phm fleet
