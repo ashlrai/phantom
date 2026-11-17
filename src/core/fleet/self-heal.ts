@@ -262,6 +262,7 @@ export function proposeHeal(
 
 export interface SelfHealCycleResult {
   checked: number;
+  checkedRepos: string[];
   broken: string[];
   healItems: WorkItem[];
   /** Repos this cycle did not reach because its budget ran out; the cursor resumes at them. */
@@ -275,7 +276,7 @@ export interface SelfHealCycleResult {
  * the 5-minute maintenance phase (TICK_PHASE_MAINTENANCE_MS); the cycle stops
  * starting repos well before that deadline so the phase settles `ok`.
  */
-export const SELF_HEAL_CYCLE_BUDGET_MS = 4 * 60_000;
+export const SELF_HEAL_CYCLE_BUDGET_MS = 2 * 60_000;
 /** Per-repo (per-item) budget: one slow repo cannot consume the whole cycle. */
 export const SELF_HEAL_REPO_BUDGET_MS = 2 * 60_000;
 /** A repo is not started with less than this left in the cycle budget. */
@@ -480,9 +481,20 @@ function pruneStaleSelfHealItems(
   return locked.ok ? locked.value : 0;
 }
 
+function recordPrunedRepos(before: unknown[], after: unknown[], repos?: Set<string>): void {
+  if (!repos) return;
+  const retained = new Set(after);
+  for (const item of before) {
+    if (retained.has(item) || !item || typeof item !== 'object') continue;
+    const repo = (item as { repo?: unknown }).repo;
+    if (typeof repo === 'string') repos.add(resolve(repo));
+  }
+}
+
 function pruneInvalidSelfHealItemsUnlocked(
   repos: string[],
   canPersist: () => boolean = () => true,
+  checkedRepos?: Set<string>,
 ): number {
   const enrolledRepoKeys = new Set<string>();
   for (const repo of repos) {
@@ -501,6 +513,7 @@ function pruneInvalidSelfHealItemsUnlocked(
       if (filtered.length !== existing.length) {
         if (!canPersist()) return removed;
         writeJsonAtomic(qPath, filtered);
+        recordPrunedRepos(existing, filtered, checkedRepos);
         removed += removedFromQueue;
       }
     }
@@ -518,6 +531,7 @@ function pruneInvalidSelfHealItemsUnlocked(
       if (filtered.length !== parsed.length) {
         if (!canPersist()) return removed;
         writeJsonAtomic(bPath, filtered);
+        recordPrunedRepos(parsed, filtered, checkedRepos);
         removed += removedFromBacklog;
       }
     } else if (
@@ -531,6 +545,7 @@ function pruneInvalidSelfHealItemsUnlocked(
       if (filtered.length !== envelope.items.length) {
         if (!canPersist()) return removed;
         writeJsonAtomic(bPath, { ...parsed, items: filtered });
+        recordPrunedRepos(envelope.items, filtered, checkedRepos);
         removed += removedFromBacklog;
       }
     }
@@ -544,8 +559,9 @@ function pruneInvalidSelfHealItemsUnlocked(
 function pruneInvalidSelfHealItems(
   repos: string[],
   canPersist: () => boolean = () => true,
+  checkedRepos?: Set<string>,
 ): number {
-  const locked = withSelfHealQueueLock(() => pruneInvalidSelfHealItemsUnlocked(repos, canPersist));
+  const locked = withSelfHealQueueLock(() => pruneInvalidSelfHealItemsUnlocked(repos, canPersist, checkedRepos));
   return locked.ok ? locked.value : 0;
 }
 
@@ -570,6 +586,7 @@ function pruneInvalidSelfHealItemsForReposUnlocked(
   targetRepos: string[],
   enrolled: string[],
   canPersist: () => boolean = () => true,
+  checkedRepos?: Set<string>,
 ): number {
   const targetRepoKeys = new Set<string>();
   for (const repo of targetRepos) {
@@ -594,6 +611,7 @@ function pruneInvalidSelfHealItemsForReposUnlocked(
       if (filtered.length !== existing.length) {
         if (!canPersist()) return removed;
         writeJsonAtomic(qPath, filtered);
+        recordPrunedRepos(existing, filtered, checkedRepos);
         removed += removedFromQueue;
       }
     }
@@ -611,6 +629,7 @@ function pruneInvalidSelfHealItemsForReposUnlocked(
       if (filtered.length !== parsed.length) {
         if (!canPersist()) return removed;
         writeJsonAtomic(bPath, filtered);
+        recordPrunedRepos(parsed, filtered, checkedRepos);
         removed += removedFromBacklog;
       }
     } else if (
@@ -624,6 +643,7 @@ function pruneInvalidSelfHealItemsForReposUnlocked(
       if (filtered.length !== envelope.items.length) {
         if (!canPersist()) return removed;
         writeJsonAtomic(bPath, { ...parsed, items: filtered });
+        recordPrunedRepos(envelope.items, filtered, checkedRepos);
         removed += removedFromBacklog;
       }
     }
@@ -638,9 +658,10 @@ function pruneInvalidSelfHealItemsForRepos(
   targetRepos: string[],
   enrolled: string[],
   canPersist: () => boolean = () => true,
+  checkedRepos?: Set<string>,
 ): number {
   const locked = withSelfHealQueueLock(() =>
-    pruneInvalidSelfHealItemsForReposUnlocked(targetRepos, enrolled, canPersist));
+    pruneInvalidSelfHealItemsForReposUnlocked(targetRepos, enrolled, canPersist, checkedRepos));
   return locked.ok ? locked.value : 0;
 }
 
@@ -722,6 +743,7 @@ async function runSelfHealCycleForRepoList(
   cfg: Pick<AshlrConfig, 'foundry'> | undefined,
   authority: OutwardMutationFence | undefined,
   opts: SelfHealCycleOptions,
+  checkedRepos: Set<string>,
 ): Promise<SelfHealCycleResult> {
   const { signal } = opts;
   const now = opts.now ?? Date.now;
@@ -746,6 +768,7 @@ async function runSelfHealCycleForRepoList(
     checked++;
     try {
       if (!authorized(repo)) continue;
+      checkedRepos.add(repo);
       const result = await detectBreakage(repo, cfg, {
         ...(signal ? { signal } : {}),
         budgetMs: Math.min(repoBudgetMs, remainingMs),
@@ -774,6 +797,7 @@ async function runSelfHealCycleForRepoList(
   const deferred = ordered.length - checked;
   return {
     checked,
+    checkedRepos: [...checkedRepos],
     broken,
     healItems,
     ...(deferred > 0 ? { deferred } : {}),
@@ -816,24 +840,25 @@ export async function runSelfHealCycleForRepos(
   let lifecycle: ReturnType<typeof selfHealAuthority> | undefined;
   try {
     const enabled = (cfg?.foundry as Record<string, unknown> | undefined)?.selfHeal !== false;
-    if (!enabled) return { checked: 0, broken: [], healItems: [] };
+    if (!enabled) return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
 
     lifecycle = selfHealAuthority(opts);
     const authority = lifecycle.authority;
     if (!authority || !ownsOutwardMutationFence(authority) || killSwitchOn()) {
-      return { checked: 0, broken: [], healItems: [] };
+      return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
     }
     const enrolled = listEnrolled();
     const targets = uniqueEnrolledTargets(repos, enrolled);
-    if (targets.length === 0) return { checked: 0, broken: [], healItems: [] };
+    if (targets.length === 0) return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
     const authorizedTargets = (): boolean =>
       ownsOutwardMutationFence(lifecycle?.authority) && !killSwitchOn() &&
       targets.every((repo) => isEnrolled(repo));
-    pruneInvalidSelfHealItemsForRepos(targets, enrolled, authorizedTargets);
-    if (!authorizedTargets()) return { checked: 0, broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(targets, cfg, authority, opts);
+    const checkedRepos = new Set<string>();
+    pruneInvalidSelfHealItemsForRepos(targets, enrolled, authorizedTargets, checkedRepos);
+    if (!authorizedTargets()) return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
+    return await runSelfHealCycleForRepoList(targets, cfg, authority, opts, checkedRepos);
   } catch {
-    return { checked: 0, broken: [], healItems: [] };
+    return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
   } finally {
     if (lifecycle && !lifecycle.borrowed) releaseOutwardMutationFence(lifecycle.authority);
   }
@@ -858,22 +883,23 @@ export async function runSelfHealCycle(
     // Flag gate — default TRUE
     const enabled = (cfg?.foundry as Record<string, unknown> | undefined)?.selfHeal !== false;
     if (!enabled) {
-      return { checked: 0, broken: [], healItems: [] };
+      return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
     }
 
     lifecycle = selfHealAuthority(opts);
     const authority = lifecycle.authority;
     if (!authority || !ownsOutwardMutationFence(authority) || killSwitchOn()) {
-      return { checked: 0, broken: [], healItems: [] };
+      return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
     }
     const repos = listEnrolled();
     const authorizedCycle = (): boolean =>
       ownsOutwardMutationFence(lifecycle?.authority) && !killSwitchOn();
-    pruneInvalidSelfHealItems(repos, authorizedCycle);
-    if (!authorizedCycle()) return { checked: 0, broken: [], healItems: [] };
-    return await runSelfHealCycleForRepoList(repos, cfg, authority, opts);
+    const checkedRepos = new Set<string>();
+    pruneInvalidSelfHealItems(repos, authorizedCycle, checkedRepos);
+    if (!authorizedCycle()) return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
+    return await runSelfHealCycleForRepoList(repos, cfg, authority, opts, checkedRepos);
   } catch {
-    return { checked: 0, broken: [], healItems: [] };
+    return { checked: 0, checkedRepos: [], broken: [], healItems: [] };
   } finally {
     if (lifecycle && !lifecycle.borrowed) releaseOutwardMutationFence(lifecycle.authority);
   }

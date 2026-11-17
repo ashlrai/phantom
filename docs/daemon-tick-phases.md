@@ -59,6 +59,45 @@ Resident non-dry-run ticks run auto-merge before backlog-refresh; backlog scans
 at most four repositories concurrently, aggregating results in repository
 input order before existing ranking.
 
+Backlog discovery uses asynchronous, abortable GitHub reads (CI discovery reads
+only repository identity and workflow status, not PR or issue counts). Each
+scanner has a 45-second sub-deadline. A missed deadline produces no items and an
+unavailable `scanner-deadline` observation; phase cancellation records
+`phase-cancelled` and prevents new scanners from starting. `skippedScanners` and
+the refresh audit summary report these skips.
+
+One scan snapshot is shared by all refreshes within a tick. Proposal repair
+invalidates the local queued-autonomy scanner. Post-self-heal refreshes invalidate
+that queue and all scanners in `checkedRepos`, including repos with pruned queue
+items. Only a missing self-heal result falls back to all enrolled repos. Invent conservatively invalidates
+all scanner results because it can change local inputs. Remote GitHub query
+promises remain shared for the tick; ranking, filters and persistence always
+run again. Fence-bound maintenance remains on-tick.
+
+Tick hooks keep KILL revocation, mirror preparation and enrollment reconciliation
+ahead of intake. Leader work overlaps the cloud-intake → Devin sequence, retaining
+its 15-second wait limit; intake and Devin retain their 90-/60-second limits.
+Ledger, journal and waiting-verification evidence reads overlap, with PR
+observations following the ledger. Holds/cooldown writes and post-merge watch
+remain serial, outside these groups. Timeouts still audit and continue without
+waiting for detached work; these limits do not cancel those producers.
+
+Ancillary observation work shares `ANCILLARY_OBSERVATION_BUDGET_MS` (60 seconds):
+counterfactual replay, real-world outcome scanning and rejection learning check
+the same deadline and phase cancellation. Exhausted stages audit
+`daemon:ancillary-skip` with `ancillary-budget` or `phase-cancelled`. Replay
+passes cancellation to its judge and never publishes interrupted calibration.
+Outcome windows cap their git deadline to the remaining budget; an interrupted
+window does not advance the existing monitoring cursor or arm the six-hour
+throttle. Learning stops between items and relies on existing written-lesson
+dedup on retry. Interrupted replay persists a pending flag in daemon state to
+retry next eligible tick, then returns to its every-20-ticks cadence. Other
+eligible work retries next tick. Cancellation is cooperative: synchronous metadata I/O and
+an in-progress atomic write must finish, never detach while holding authority.
+Credit release, reflection scheduling and regression/bisect/revert are outside
+this sub-budget and unchanged; the whole ancillary phase is not a 60-second
+hard bound.
+
 ## Tick outcomes
 
 `.tick.outcome` folds the phases plus whole-tick failure into one word:
@@ -82,10 +121,11 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `tick hooks`     | ~26 min          | `boundedBeforeTick` (25 min + grace)                    |
 | `mirror-prep`    | prep + abort grace + 30 s | wraps the existing per-repo mirror deadline      |
 | `backlog-refresh`| 5 min            | `TICK_PHASE_BACKLOG_REFRESH_MS`                         |
-| `self-heal`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`; 4 min cycle budget, 2 min per repo |
+| `self-heal`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`; 2 min cycle budget, 2 min per repo |
 | `invent`         | 3 min            | `TICK_PHASE_INVENT_MS`; frontier probe ≤30 s            |
 | `ancillary`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`                             |
 | `reflection`     | 3 min            | `TICK_PHASE_REFLECTION_MS`; separate resident off-tick job |
+| `ci-rerun`       | 5 min            | `TICK_PHASE_CI_RERUN_MS`; optional resident off-tick flake maintenance |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |
 | `dispatch-plan`  | 60 s             | `TICK_PHASE_DISPATCH_PLAN_MS`                           |
@@ -118,7 +158,7 @@ One self-heal cycle used to verify every enrolled repo in turn, at up to
 enough repos it hit the 5-minute phase deadline every time (`301740ms` on the
 owner's Mac). Now:
 
-- the cycle stops starting repos when less than 15 s of its 4-minute budget
+- the cycle stops starting repos when less than 15 s of its 2-minute budget
   (`SELF_HEAL_CYCLE_BUDGET_MS`) is left, so the phase settles `ok`;
 - each repo gets at most `SELF_HEAL_REPO_BUDGET_MS` (2 min); every verify
   command's timeout is capped at what is left of it, and a repo cut short is

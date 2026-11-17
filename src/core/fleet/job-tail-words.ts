@@ -10,6 +10,7 @@
 export type JobTailStatus = 'unknown' | 'finished' | 'no-log' | 'live';
 
 export interface JobWordsInput {
+  schema?: string | null;
   job?: string | null;
   state?: string | null;
   lane?: string | null;

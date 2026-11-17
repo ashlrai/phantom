@@ -17,6 +17,7 @@ const FLAGS: Record<string, { value: string[]; boolean?: string[] }> = {
   renew: { value: LEASE },
   complete: { value: [...LEASE, '--result'] },
   release: { value: LEASE, boolean: ['--decline'] },
+  withdraw: { value: ['--job', '--owner'] },
   status: { value: ['--owner'] },
   list: { value: ['--owner'] },
   leave: { value: ['--node', '--session'] },
@@ -120,6 +121,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         'Nothing to hand back. Another node holds a newer token or the job finished.', 1);
       return { jobId: need(flags, '--job'), released: true, declined: flags.has('--decline') };
     }
+    case 'withdraw': return { jobId: need(flags, '--job'), ...nodes.withdraw(need(flags, '--job'), need(flags, '--owner')) };
     case 'list':
     case 'status': return { ...nodes.view(csv(need(flags, '--owner'))) };
     default: {
