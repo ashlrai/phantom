@@ -40,6 +40,31 @@ Repeat the heartbeat comfortably within 30 seconds to keep the session live;
 if it expires, join again and use the new session number. Omit `--probe-auth`
 if this node does not need GitHub authentication.
 
+## Enable ready-queue jobs
+
+On the primary, set `~/.ashlr/node-bridge.json` to
+`{"enabled":true,"owner":"<scope>"}`, using the jobs' owner scope.
+On each claiming node, install the repository's standalone runner
+`contrib/mac/node-runner.mjs` as `~/.ashlr-runs/bin/node-runner` through the fleet
+inventory. Preview from the repository with `python3 fleet/sync.py --json`
+(or `python3 fleet/sync.py --bin <scratch> --json`). After review, an operator
+runs `python3 fleet/sync.py --apply`; agents never apply to the live directory.
+
+The runner's `packs` probe advertises `shell-check` always, `codex-file` only
+when codex resolves from the fixed absolute provider allowlist (not PATH), and
+`omlx-ping` when 127.0.0.1:8000 accepts TCP. The worker uses these pack caps.
+For bridged codex jobs, `ready:<job>:<attempt>` carries the task text and SHA-256
+digest in the router job and writes a result under key `<job>.<attempt>`.
+No task file is needed on the claiming node. After clearance checks, the primary
+reads the ready row's prompt beneath `queue/prompts/`: valid UTF-8, nonblank,
+secret-scrub clean, regular non-symlink file, at most 16 KiB. Rows above `internal`
+clearance stay local without reading the prompt. Invalid or unavailable prompts
+also stay local. Task text is visible only to the claiming node, not status/list
+views; worker and runner check its size and digest again before executing.
+Local non-bridged jobs and direct `codex-file` still support task files at
+`~/.ashlr-runs/node-tasks/<job>.txt`.
+See [ready queue bridge](NODE-ROUTER.md#ready-queue-bridge) for worker operation.
+
 ## Leave
 
 ```sh

@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/node-runner-standalone.test.ts', // Spawns the standalone runner and binds a loopback fixture.
   'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
   'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
   'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
