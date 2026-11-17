@@ -62,6 +62,37 @@ it('explains a job mode and its spending evidence through the real JSON CLI with
   } finally { vi.unstubAllEnvs(); log.mockRestore(); await rm(root, { recursive: true, force: true }); }
 });
 
+it('surfaces real Devin cost reason codes and nullable ACU evidence in route explain JSON', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'devin-cost-explain-'));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.stubEnv('ASHLR_RUNS_DIR', root);
+  try {
+    await mkdir(join(root, 'metrics'));
+    const receipt = JSON.parse(execFileSync('python3', ['-c', `
+import json, sys
+sys.path.insert(0, 'contrib/mac')
+import work_market as m
+v = m.lane_view(['devin'], {'devin': {}}, {'devin': 0}, {'devin': 1}, set(), {}, {}, [], now=10000,
+  allowance={'devin': {'weekly_acu': dict(used=None, limit=50, reset_at=13600)}})
+r, _ = m.choose('RQ-DEVIN', dict(needs=[], max_cost_class='included'), 'work', v, None, 10000, None)
+print(json.dumps(r))
+`], { encoding: 'utf8' }));
+    const file = join(root, 'metrics/work-market.jsonl');
+    for (const row of [receipt, { schema: 'work-market.v1', event: 'posture', lanes: {
+      devin: { ...receipt.ranking_inputs.devin, projected_unused_pct: null, hours_to_reset: null } } }]) {
+      await writeFile(file, JSON.stringify(row));
+      expect(await cmdRoute(['explain', '--json'])).toBe(0);
+      expect(JSON.parse(log.mock.calls.at(-1)![0]).posture.lanes.devin).toMatchObject({
+        costClass: 'metered', costClassReason: 'devin_usage_unknown', zeroCost: false,
+        allowance: { used: null, limit: 50, in_flight: null, reserve: null, session_cap: null, headroom: null },
+      });
+    }
+    receipt.ranking_inputs.devin.allowance.headroom = -5;
+    await writeFile(file, JSON.stringify(receipt));
+    expect((await explainRoutes(root)).posture?.lanes.devin.allowance?.headroom).toBe(-5);
+  } finally { vi.unstubAllEnvs(); log.mockRestore(); await rm(root, { recursive: true, force: true }); }
+});
+
 it('counts only accepted moves in the trailing hour and reports unavailable state', async () => {
   const root = await mkdtemp(join(tmpdir(), 'route-explain-'));
   try {

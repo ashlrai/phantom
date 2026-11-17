@@ -30,7 +30,8 @@ async function postureEvidence(root: string) {
     const row = rows.find(r => r.event === 'posture') ?? rows.find(r => r.event === 'route_decision');
     const input = row?.event === 'posture' ? row.lanes : row?.ranking_inputs;
     if (!object(input) || !Object.keys(input).length) return null;
-    const lanes: Record<string, { posture: string; postureReason: string; projectedUnusedPct: number | null; hoursToReset: number | null }> = {};
+    const lanes: Record<string, { posture: string; postureReason: string; projectedUnusedPct: number | null; hoursToReset: number | null;
+      costClass?: string; costClassReason?: string; zeroCost?: boolean; allowance?: Record<string, number | null> }> = {};
     for (const [lane, value] of Object.entries(input)) {
       if (!object(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
           typeof value.posture_reason !== 'string' || !value.posture_reason) return null;
@@ -39,6 +40,18 @@ async function postureEvidence(root: string) {
       if (!projection(unused) || !projection(hours)) return null;
       lanes[lane] = { posture: String(value.posture), postureReason: value.posture_reason,
         projectedUnusedPct: unused as number | null, hoursToReset: hours as number | null };
+      if (typeof value.cost_class === 'string' && ['local', 'included', 'metered'].includes(value.cost_class)) lanes[lane].costClass = value.cost_class;
+      if (typeof value.cost_class_reason === 'string') lanes[lane].costClassReason = value.cost_class_reason;
+      if (typeof value.zero_cost === 'boolean') lanes[lane].zeroCost = value.zero_cost;
+      if (object(value.allowance)) {
+        const allowance = value.allowance;
+        lanes[lane].allowance = Object.fromEntries(['used', 'limit', 'in_flight', 'reserve', 'session_cap', 'headroom']
+          .map(key => {
+            const amount = allowance[key];
+            return [key, amount === null || (typeof amount === 'number' && Number.isFinite(amount)
+              && (key === 'headroom' || amount >= 0)) ? amount : null];
+          }));
+      }
     }
     return { lanes };
   } catch { return null; }

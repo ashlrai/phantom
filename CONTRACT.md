@@ -49,6 +49,13 @@ following). Its `lanes` map contains `posture`, `postureReason`, nullable
 `projectedUnusedPct` and nullable `hoursToReset`. The newest `work-market.v1`
 posture event wins, falling back to the newest route decision's ranking inputs
 only when no posture event exists. Missing or invalid evidence returns null.
+Lane evidence may also include `costClass`, `costClassReason`, `zeroCost`, and
+`allowance` with nullable numeric `used`, `limit`, `in_flight`, `reserve`,
+`session_cap` and `headroom` ACUs, projected from `work-market.v1` receipts.
+Devin's effective class is `included` only within measured weekly allowance
+after reservations and reserve with room for one session, or for an unexpired
+selected Lightning/Flash free preview (`zeroCost: true`); otherwise `metered`.
+Unknown usage stays null. See [queue cost evidence](docs/QUEUE.md#resource-posture-the-lane-is-a-hint).
 
 `run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
 model classifications and their capability order. `ModelEntry.modeTier` is
