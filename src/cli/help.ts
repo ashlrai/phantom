@@ -1211,6 +1211,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
 
+  { cmd: 'worktrees [--json] [--reap [--dry-run | --apply]]', desc: 'List job worktrees by state and remove the ones safe to remove.', topic: 'safety' },
   { cmd: 'worktrees prune [--dry-run | --apply] [--json]', desc: 'Preview or remove clean, inactive worktrees for finished jobs.', topic: 'safety' },
   { cmd: 'worktrees report [--dir <path>] [--json]', desc: 'Report worktree age, size, last log time and job state.', topic: 'safety' },
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },

@@ -125,7 +125,7 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | --- | --- |
 | Summarize local metrics. | `phm metrics summary --json` |
 | Check the release train. | `phm release status --json` |
-| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
+| Preview cleanup of finished worktrees. | `phm worktrees --reap --json` |
 | Explain dispatcher routes. | `phm route explain --json` |
 | Show usage by engine. | `phm usage` |
 

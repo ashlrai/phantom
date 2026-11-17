@@ -134,3 +134,27 @@ describe('fleet runs api', () => {
     }
   });
 });
+
+describe('worktrees route (Home Disk card)', () => {
+  const WORKTREES = '/api/verse/fleet/runs/worktrees';
+  const report = { schema: 'worktrees.v1', counts: { total: 3, safe: 1 }, rows: [] };
+  it('serves the phm worktrees report, reads at most once a minute and is GET only', async () => {
+    let tick = NOW;
+    const read = vi.fn(async () => report as never);
+    const api = createFleetRunsApi(deps({ now: () => tick, readWorktrees: read }));
+    expect(await request(api, { path: WORKTREES })).toMatchObject({ handled: true, status: 200, wire: report });
+    tick += 30_000;
+    await request(api, { path: WORKTREES });
+    expect(read).toHaveBeenCalledTimes(1);
+    tick += 61_000;
+    await request(api, { path: WORKTREES });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect((await request(api, { path: WORKTREES, method: 'POST', body: {} })).status).toBe(405);
+  });
+  it('answers 503 with a fixed code when the read fails, then retries on the next call', async () => {
+    const read = vi.fn().mockRejectedValueOnce(new Error('/private/path')).mockResolvedValue(report);
+    const api = createFleetRunsApi(deps({ readWorktrees: read }));
+    expect(await request(api, { path: WORKTREES })).toMatchObject({ status: 503, wire: { code: 'WORKTREES_UNAVAILABLE' } });
+    expect((await request(api, { path: WORKTREES })).status).toBe(200);
+  });
+});

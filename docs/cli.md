@@ -412,6 +412,7 @@ Every command, grouped by topic.
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]     Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
+    worktrees [--json] [--reap [--dry-run | --apply]]                                     List job worktrees by state and remove the ones safe to remove.
     worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean, inactive worktrees for finished jobs.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
