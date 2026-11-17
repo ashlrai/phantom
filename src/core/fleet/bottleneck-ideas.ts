@@ -27,9 +27,10 @@ import { defaultUsageLogPaths, parseUsageJournals, type UsageJournalRow } from '
 import { readFleetMainHealth, type FleetMainHealthRepo } from './main-health.js';
 import { readSource } from './runs-parked-queue.js';
 import { fleetYield } from './slot-yield.js';
+import { enrichIdeas, validJobEvents } from './idea-context.js';
 
 export const IDEA_LIST_SCHEMA = 'fleet.idea-list.v1';
-export const SIGNAL_NAMES = ['empty-launches', 'guardian-fixups', 'disk-trend', 'idle-lanes', 'unspent-usage'] as const;
+export const SIGNAL_NAMES = ['empty-launches', 'guardian-fixups', 'disk-trend', 'idle-lanes', 'unspent-usage', 'vision', 'queue', 'mason-inbox', 'job-events'] as const;
 export type SignalName = typeof SIGNAL_NAMES[number];
 /** Window for the launch ledger: long enough to see a pattern, short enough to be current. */
 export const EMPTY_WINDOW_HOURS = 72;
@@ -46,6 +47,9 @@ export interface BottleneckIdea {
   evidence: Evidence;
   payoff: { score: number; text: string };
   task: string;
+  why: string;
+  lane: string | null;
+  status: 'proposed' | 'queued' | 'running' | 'shipped';
 }
 export interface SignalStatus { name: SignalName; status: 'ok' | 'unknown'; reason: string | null }
 export interface IdeaListReport {
@@ -120,7 +124,7 @@ const slug = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]+/g,
 
 /** Pure: turn signals into ranked ideas. Thresholds keep noise out; unknown signals add nothing. */
 export function rankBottlenecks(signals: BottleneckSignals, now: number): IdeaListReport {
-  const ideas: BottleneckIdea[] = [];
+  const ideas: Omit<BottleneckIdea, 'why' | 'lane' | 'status'>[] = [];
   const status = (name: SignalName, signal: Signal<unknown>): SignalStatus =>
     ({ name, status: signal.ok ? 'ok' : 'unknown', reason: signal.ok ? null : signal.reason });
 
@@ -203,7 +207,7 @@ export function rankBottlenecks(signals: BottleneckSignals, now: number): IdeaLi
   return {
     schema: IDEA_LIST_SCHEMA,
     generatedAt: new Date(now).toISOString(),
-    ideas,
+    ideas: ideas.map(idea => ({ ...idea, why: idea.title, lane: typeof (idea.evidence.lane ?? idea.evidence.pool) === 'string' ? String(idea.evidence.lane ?? idea.evidence.pool) : 'claude', status: 'proposed' })),
     signals: [
       status('empty-launches', signals.emptyLaunches), status('guardian-fixups', signals.guardianFixups),
       status('disk-trend', signals.disk), status('idle-lanes', signals.idleLanes), status('unspent-usage', signals.unspentUsage),
@@ -225,8 +229,8 @@ export async function readBottleneckSignals(opts: ReadBottleneckOptions = {}): P
     readSource(join(root, 'queue', 'status.json'), 1024 * 1024, false),
   ]);
 
-  const emptyLaunches: Signal<FamilyLaunches[]> = ledger.state === 'healthy'
-    ? { ok: true, data: familyLaunches(ledger.text, now) } : { ok: false, reason: sourceReason('metrics/jobs.jsonl', ledger.state) };
+  const emptyLaunches: Signal<FamilyLaunches[]> = ledger.state === 'healthy' && validJobEvents(ledger.text, now)
+    ? { ok: true, data: familyLaunches(ledger.text, now) } : { ok: false, reason: ledger.state === 'healthy' ? 'metrics/jobs.jsonl contains malformed event lines' : sourceReason('metrics/jobs.jsonl', ledger.state) };
 
   let guardian: Signal<GuardianFixups[]>;
   try {
@@ -252,17 +256,19 @@ export async function readBottleneckSignals(opts: ReadBottleneckOptions = {}): P
   let unspentUsage: Signal<UsageLeft[]>;
   if (journals.length === 0) unspentUsage = { ok: false, reason: 'usage-readings.log not found or unreadable' };
   else {
-    const rows = usageLeft(parseUsageJournals(journals).latest.values(), now);
-    unspentUsage = rows.length > 0 ? { ok: true, data: rows } : { ok: false, reason: `no usage reading from the last ${USAGE_READING_MAX_AGE_HOURS} hours with a reset time` };
+    const parsed = parseUsageJournals(journals);
+    const rows = parsed.dropped ? [] : usageLeft(parsed.latest.values(), now);
+    unspentUsage = rows.length > 0 ? { ok: true, data: rows } : { ok: false, reason: parsed.dropped ? 'usage-readings.log contains malformed lines' : `no usage reading from the last ${USAGE_READING_MAX_AGE_HOURS} hours with a reset time` };
   }
 
   return { emptyLaunches, guardianFixups: guardian, disk, idleLanes, unspentUsage };
 }
 
-/** The Ideas list: read signals, rank, report. Backs `phm ideas list` and GET /api/ideas/list. */
+/** The Ideas list: read signals, rank, report. Backs `phm ideas` and GET /api/verse/fleet/control/ideas. */
 export async function readIdeaList(opts: ReadBottleneckOptions = {}): Promise<IdeaListReport> {
   const now = opts.now ?? Date.now();
-  return rankBottlenecks(await readBottleneckSignals({ ...opts, now }), now);
+  const report = rankBottlenecks(await readBottleneckSignals({ ...opts, now }), now);
+  return enrichIdeas(report, resolveDropJobRoot(opts.runsDir), ideaJobId);
 }
 
 export interface QueueIdeaResult { ideaId: string; jobId: string; queued: boolean; existing: boolean }
@@ -286,11 +292,15 @@ export function ideaJobBody(idea: BottleneckIdea): string {
  * id is derived from the idea id, so a second click finds the same job.
  */
 export async function queueIdea(ideaId: unknown, deps: QueueIdeaDeps = {}): Promise<QueueIdeaResult> {
-  if (typeof ideaId !== 'string' || !/^[a-z-]+:[a-z0-9:-]{1,160}$/.test(ideaId)) throw new QueueIdeaError(400, 'id must be an idea id from the Ideas list');
+  if (typeof ideaId !== 'string' || !/^[a-z-]+:[a-z0-9:_-]{1,160}$/.test(ideaId)) throw new QueueIdeaError(400, 'id must be an idea id from the Ideas list');
   const report = await (deps.list ?? (() => readIdeaList(deps)))();
   const idea = report.ideas.find(candidate => candidate.id === ideaId);
   if (!idea) throw new QueueIdeaError(404, 'that idea is not on the current list');
-  const job: DropJobInput = { id: ideaJobId(idea.id), lane: 'claude', tier: 'work', body: scrubSecrets(ideaJobBody(idea)) };
+  if (idea.status !== 'proposed' || typeof idea.evidence.existingJobId === 'string') {
+    const ref = String(idea.evidence.jobId ?? ideaJobId(idea.id));
+    return { ideaId, jobId: ref === `RQ-PHX-${ideaJobId(idea.id)}` ? ideaJobId(idea.id) : ref, queued: false, existing: true };
+  }
+  const job: DropJobInput = { id: ideaJobId(idea.id), lane: idea.lane ?? 'claude', tier: 'work', body: scrubSecrets(ideaJobBody(idea)) };
   const verdict = validateDropJob(job);
   if (!verdict.ok) throw new QueueIdeaError(422, `job refused: ${verdict.reasons.join(', ')}`);
   const root = resolveDropJobRoot(deps.runsDir);
