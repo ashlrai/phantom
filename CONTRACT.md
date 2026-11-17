@@ -71,6 +71,21 @@ returns 503 with a value-free error if unavailable, and disallows mutation
 methods. `/bots` consumes `botSeatsQuery` and renders accessible measured quota
 meters, unknown evidence, claims/jobs and handoffs; there is no web apply route.
 See [bot seats](docs/BOT-SEATS.md) for storage and API-gap boundaries.
+# Codex model defaults
+
+The source-owned Codex default is `gpt-6.2-sol` for work, mid, fast,
+computer and generic selection; frontier selects `gpt-6.2-astra`.
+`codexModelForTier` keeps this mapping independent of experimental Terra priors.
+Explicit operator model pins and custom engine defaults still take precedence.
+Legacy GPT-6/6.1 catalog identities remain available for exact fallback lookup.
+The elite identity table recognizes the exact `gpt-6.2-sol` and
+`gpt-6.2-astra` IDs for OpenAI engines; older model-specific grants do not
+implicitly authorize either new version.
+Batch `model_for(lane, tier, prompt, cfg)` keeps its signature and accepts optional
+`models.codex.<tier>` overrides above `models.codex.default`. Legacy loaded configs
+with only a Codex default retain that default for every tier. The issue router
+keeps its separate Luna cheap slot. These defaults grant no provider access,
+subscription allowance or spending authority.
 
 # Managed desktop CLI upgrade
 

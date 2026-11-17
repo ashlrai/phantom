@@ -3,8 +3,9 @@ import { queueReportFromText } from '../core/queue-metrics.js';
 import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
-const HELP = `Usage: phm queue stuck [--json]
-       phm queue --json
+const HELP = `Usage: phm queue [--json]
+       phm queue top <id> | lane <id> <lane> | drop <id> [--dry-run] [--json]
+       phm queue stuck [--json]
        phm queue batches [--runs <directory>] [--json]
        phm queue stats [--json] [--window <seconds>]
        phm queue yield [--since 24h] [--json]
@@ -24,6 +25,9 @@ report: read local JSON/JSONL station visits: {station, arrivedAt, startedAt?, c
   W = mean completed arrival-to-completion time. Rates: jobs/hour; W: hours.
   Single-server stations; bottleneck = highest known rho (alphabetical ties).
   Unknown metrics print n/a; incomplete visits count toward arrivals only.
+
+phm queue lists the queued jobs in launch order; --json adds them as the launch field of the batch report.
+top, lane and drop steer one queued job; see phm queue top --help.
 
 Job queue: use phm queue <command> --help for options; see docs/QUEUE.md.`;
 
@@ -84,7 +88,17 @@ async function cmdQueueReport(args: string[]): Promise<number> {
 }
 
 export async function cmdQueue(args: string[]): Promise<number> {
-  if (args.length === 1 && args[0] === '--json') return (await import('./queue-batches.js')).cmdQueueBatches(args);
+  if (args.length === 1 && args[0] === '--json') {
+    // The batch report, plus the queue in launch order (schema queue.order.v1); null when there is no queue file.
+    const { readQueueOrder } = await import('../core/queue/order.js');
+    return (await import('./queue-batches.js')).cmdQueueBatches(args, async () => ({ launch: await readQueueOrder().catch(() => null) }));
+  }
+  if (args.length === 0) {
+    // With a queue on this machine the bare command shows it; without one it shows the usage.
+    const { readQueueOrder, queueOrderText } = await import('../core/queue/order.js');
+    const order = await readQueueOrder().catch(() => null);
+    if (order) { console.log([...queueOrderText(order), 'Steer a job with phm queue top|lane|drop <id>. All commands: phm queue --help'].join('\n')); return 0; }
+  }
   let command: string | undefined;
   let commandIndex = -1;
   const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs']);
@@ -94,6 +108,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
     if (valueOptions.has(arg)) { i++; continue; }
     if (!arg.startsWith('-')) { command = arg; commandIndex = i; break; }
   }
+  if (command === 'top' || command === 'lane' || command === 'drop') return (await import('./queue-order.js')).cmdQueueOrder([command, ...args.filter((_, i) => i !== commandIndex)]);
   if (command === 'yield') return (await import('./queue-yield.js')).cmdQueueYield(args.slice(args.indexOf('yield') + 1));
   if (command === 'batches') return (await import('./queue-batches.js')).cmdQueueBatches(args.filter((_, i) => i !== commandIndex));
   if (command === 'coalesce') return (await import('./queue-coalesce.js')).cmdQueueCoalesce(args.slice(args.indexOf('coalesce') + 1));

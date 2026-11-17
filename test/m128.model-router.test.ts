@@ -233,7 +233,7 @@ describe('M128 routeTask — difficulty routing', () => {
     const cfg = withFoundry({ allowedBackends: ['claude', 'codex', 'local-coder' as any, 'builtin'] });
     const result = routeTask(item, cfg, ALL_ENGINES_CTX as any);
     expect(result.engine).toBe('codex');
-    expect(result.model).toBe('gpt-6.1-sol');
+    expect(result.model).toBe('gpt-6.2-sol');
     expect(result.reason).toMatch(/codex|gpt-5\.5|coder/i);
   });
 

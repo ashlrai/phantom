@@ -110,6 +110,7 @@ trailing context tag such as `[1m]` is ignored.
 | Claude Fable 5.1 | same | `claude-fable-5-1`, `fable-5-1` |
 | Claude Fable 5 | same | `claude-fable-5`, `fable-5` |
 | Claude Sonnet 5 | same | `claude-sonnet-5`, `sonnet-5` |
+| GPT-6.2 Astra / Sol | `codex`, `openai` | Exact `gpt-6.2-astra`, `gpt-6.2-sol`; older model-specific grants do not imply these versions |
 | GPT-6 Astra / Sol / Luna | `codex`, `openai`, `devin-cli` | `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, each also with `-minimal`, `-low`, `-medium`, `-high`, `-xhigh` or `-max` |
 | Grok 4.7 | `grok-cli` | `grok-4.7`, `grok-4.7-build-fast` |
 | Grok 4.6 | `grok-cli` | `grok-4.6`, `grok-4.6-build` |

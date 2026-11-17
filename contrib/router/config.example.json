@@ -64,13 +64,13 @@
   },
   "tiers": {
     "frontier": {
-      "codex": "gpt-6-astra",
+      "codex": "gpt-6.2-astra",
       "claude": "fable",
       "grok": "grok-4.7",
       "omlx": ""
     },
     "workhorse": {
-      "codex": "gpt-6-sol",
+      "codex": "gpt-6.2-sol",
       "claude": "opus",
       "grok": "grok-4.5",
       "omlx": ""
