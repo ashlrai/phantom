@@ -241,6 +241,10 @@ hint, and a member that joins a combined session on another lane records
 `placement_moved` when the row declared no lane and only its provisional
 lane column changed.
 
+Advisory [failover receipts](ROUTING.md#failover-chains) use `lane_override`
+codes `failover_quota`, `failover_5xx`, `failover_timeout` and
+`failover_near_reset` on `failover` rows. These do not wire the live dispatcher.
+
 Other reason codes include `missing_capability`, `tier_unavailable`,
 `tier_ceiling_exceeded`, `repo_unserved`, `data_class_exceeded`,
 `cost_class_exceeded`, `quota_exhausted`, `provider_backoff`, `held`,

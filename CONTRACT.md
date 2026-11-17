@@ -179,6 +179,22 @@ precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
 
 # Advisory routing pairing
 
+`routing/decision-schema.ts` exports `routeFailureKindSchema` (quota, 5xx,
+timeout, near_reset). Strict `RouteRequest` accepts optional `job`, `needs`
+(up to 32 capability names), `min_tier`, `max_cost_class`, `data_class` and
+`fallback` (up to three unique strict `{lane,on}` pins). Old requests are unchanged.
+`routeCandidateRejections(request,sources,nowMs,{failover?,pinned?}?)` returns
+all exclusion reason codes for deduped sorted candidate lanes; empty means eligible.
+`router/fallback.ts` exports `planFallbackChain`, `nextFailover`,
+`recordFailover`, `readFallbackUsed` and `runFailover`. Plans are
+`route.fallback.v1`, advisory, live:false, at most three entries, never primary.
+`nextFailover` accepts failed_lane, failure and attempted, with an optional
+fresh request/sources/nowMs recheck. Recording requires a job identifier and
+appends sorted-key failover/refusal rows to metrics/jobs.jsonl without task text.
+History reads only the bounded 256 KiB regular-file tail, newest last, max three
+matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
+decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
+
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
 following). Its `lanes` map contains `posture`, `postureReason`, nullable

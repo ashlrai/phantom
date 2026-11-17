@@ -1204,6 +1204,7 @@
 /test/role-completion.test.ts @masonwyatt23
 /test/role-slots-leader-agnostic.test.ts @masonwyatt23
 /test/route-decision.test.ts @masonwyatt23
+/test/route-fallback.test.ts @masonwyatt23
 /test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-catalog-refresh.test.ts @masonwyatt23
