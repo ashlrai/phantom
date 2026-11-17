@@ -488,6 +488,21 @@ It shares the existing read-only queue parser through
 in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' | 'degraded'`
 and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
 report for unusable/incomplete input, and 2 indicates invalid arguments.
+
+The CLI also emits `train: GreenMergeTrain | null`. The pure
+`planGreenMergeTrain(prs: readonly MergeBatchPr[], run: MergeBatchRun, rows: readonly unknown[]): GreenMergeTrain`
+in `src/core/fleet/green-merge-train.ts` consumes the same validated snapshot and
+action report, with healthy hold/coverage reads required by its caller. A train
+has `authority: 'proposal-only'`, `validation: 'required-checks-on-combined-commit'`,
+`baseRef: string | null`, `members: {number, headSha}[]` and `deferred: {number, reason}[]`.
+It selects at most 16 ready enqueue actions in PR-number order, with one base,
+disjoint files, explicit OPEN/non-draft identities, matching full head OIDs,
+complete files confirmed by changedFiles, and nonempty, uncapped observed checks
+with no failures/pending entries and at least one success (completed skipped/neutral
+lanes are allowed). Missing/unhealthy queue or hold evidence produces null in the CLI.
+This proposes combined validation only: consumers must recheck head/base identities,
+required-check names/App identities, review, holds and Security policy through the
+existing protected merge queue. It grants no CI reuse or permission to merge.
 Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
 
 ## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
