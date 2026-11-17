@@ -269,6 +269,9 @@ export function emptiesText(report: EmptiesReport): string[] {
   if (report.notes_missing) gaps.push(`${plural(report.notes_missing, 'empty job')} left no notes, so their reason comes from the log alone.`);
   if (report.malformed_lines) gaps.push(`${plural(report.malformed_lines, 'metrics line')} could not be read and ${report.malformed_lines === 1 ? 'was' : 'were'} skipped.`);
   if (gaps.length) lines.push(gaps.join(' '));
+  for (let i = lines.length - 1; lines.length > 20 && i > 0; i--) {
+    if (lines[i]!.startsWith('  Next:')) lines.splice(i - 1, 2, `${lines[i - 1]} ${lines[i]!.trim()}`);
+  }
   return lines;
 }
 
