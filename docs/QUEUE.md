@@ -114,6 +114,15 @@ underperformance; it does not infer a causal yield gain or train a tier optimize
 
 ### Resource posture: the lane is a hint
 
+Measured `work-market.v1` posture entries carry `lane`, `account_id`, `model`,
+`window_start` and `reset_at`, with the journal row's `ts` proving freshness.
+Only usage-derived posture carries reading provenance; host declarations, free
+windows, previews and use-it-all overrides do not. Devin uses the weekly API
+measurement's scope verbatim and drops a model that differs from the dispatcher
+selection. Other lanes normalize budget-reading instants to UTC milliseconds.
+Unknown scope is omitted, never invented; incomplete or mismatched receipts do
+not establish allowance posture.
+
 Each executor has a posture: `burn` (spend the window on volume), `preserve`
 (keep the window for judgment work), or `balanced`. The defaults are `burn` for
 `codex-cmp` and `preserve` for `codex-personal` and `claude`; every other

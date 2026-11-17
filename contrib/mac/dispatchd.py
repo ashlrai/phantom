@@ -1905,10 +1905,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     for _l in LANES:
         _waste = waste_risk(UIA.get(_l), _l)
         if market_view[_l]["cost_class"] == "included" and (_waste or pace_behind(UIA.get(_l)) is True):
+            market_view[_l].pop("provenance", None)
             market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
     if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view["devin"]["target"] > 0:
         market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
-            l: dict(posture=v["posture"], posture_reason=v["posture_reason"],
+            l: dict(lane=l, **v.get("provenance", {}), posture=v["posture"], posture_reason=v["posture_reason"],
                     projected_unused_pct=v["spend_down"]["projected_unused_pct"],
                     hours_to_reset=v["spend_down"]["hours_to_reset"], cost_class=v["cost_class"],
                     **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v}) for l, v in market_view.items()}})

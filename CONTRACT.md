@@ -785,6 +785,15 @@ with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHist
 
 ## Devin weekly capacity
 
+`DevinWeeklyInput` and `DevinWeeklyDeps` accept optional `accountId` and `model`.
+`DevinWeeklyCapacity` emits optional `account_id` and `model`: the connected Devin
+org ID and configured fleet model, omitted when unknown. Explicit dependencies
+override these defaults. `devinWeeklyObservation` forwards these and `window_start`.
+`ResourceLiveObservation` accepts optional `account_id`, `model`, `window_start`;
+the engine retains them in verified readings and normalizes window instants like
+`reset_at`. Preview observations carry the first matched free model ID, never an
+account ID (the CLI catalog exposes none).
+
 `src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
 `publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,
 `devinPreviewObservation`, `devinWeeklyWindow`, `devinWeeklyAllowance`, `devinWeeklyLine`
