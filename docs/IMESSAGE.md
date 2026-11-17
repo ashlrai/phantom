@@ -15,9 +15,20 @@ What happens to an allowlisted message:
    mirror below). Owner message bodies never enter the shared agent bus.
 3. Repeats of the same words inside ten minutes are one instruction, not two.
 4. Owner acknowledgement evidence is written to
-   `~/.ashlr-runs/imessage/acks.jsonl`; nonduplicate owner acknowledgements pass
-   through the existing owner-only transport. That transport still cannot send
-   to teammates.
+   `~/.ashlr-runs/imessage/acks.jsonl` before the send attempt. Since
+   RQ-IMSG-REPLY-1 ([#3534](https://github.com/ashlrai/phantom/pull/3534)),
+   nonduplicate verified-owner acknowledgements are attempted through the
+   outbox to the original owner handle. This caller does not acknowledge
+   teammate input. The shared outbox separately supports locally registered
+   agents; that does not grant them owner acknowledgement authority.
+
+The journal's legacy `delivery: "recorded-not-sent"` label describes the
+pre-attempt record, not a final delivery result. The acknowledgement evidence
+reader always reports `deliveryProof: false`. Neither a journal row nor a
+successful native send return proves delivery; an absent result does not prove
+failure. The receiver's acknowledgement deadline does not cancel a late send,
+so a timed-out attempt may still complete. Do not infer a safe retry from this
+journal. This documentation changes no send, retry, or KILL behavior.
 
 Text that looks like a secret is refused and never stored.
 
