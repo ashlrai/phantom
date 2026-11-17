@@ -38,12 +38,27 @@ in flight `tickInProgress` names the phase currently running.
 | `timeout`   | the stage exceeded its deadline; cancelled, then left detached |
 | `skipped`   | intentionally not run (`error` says why, e.g. `no-frontier`)   |
 | `running`   | in-progress snapshot only — never persisted                    |
+| `off-tick`  | work handed to a resident background job; the tick did not wait |
+
+For `off-tick`, `durationMs: 0` is handoff metadata, not a work result.
+`offTick` carries `state` (`started` or `running`), `run`, `since`, and the
+previous settlement's `lastStatus`, `lastDurationMs`, `lastSettledAt` and
+`lastError` when available. These entries do not affect the tick outcome.
+
+Resident non-dry-run ticks run self-heal and ancillary maintenance off-tick,
+single-flight per job, retaining the same 5-minute deadline and `AbortSignal`.
+Ancillary's nested reflection is detached from tick ledgers and budgets.
+A job that ignores cancellation remains single-flight until its work settles;
+shutdown cancels running jobs with bounded waiting. Once and dry-run ticks
+keep in-tick behavior. Resident non-dry-run ticks run auto-merge before
+backlog-refresh; backlog scans at most four repositories concurrently,
+aggregating results in repository input order before existing ranking.
 
 ## Tick outcomes
 
 `.tick.outcome` folds the phases plus whole-tick failure into one word:
 
-- `ok` — every phase settled clean.
+- `ok` — every awaited phase settled clean (off-tick handoffs are excluded).
 - `degraded` — at least one phase threw.
 - `timeout` — at least one phase hit its deadline, or the whole tick was
   abandoned at the resident deadline.
