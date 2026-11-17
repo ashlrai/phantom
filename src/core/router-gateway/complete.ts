@@ -1,3 +1,4 @@
+import { localModelFit } from '../resources/local-memory-fit.js';
 /** One routed completion: the single code path behind the loopback endpoint
  * and `phm run --model auto|<lane:model>`. `phm router pick` previews the same
  * routing step and calls no model.
@@ -256,6 +257,8 @@ async function routeRequest(deps: RouterGatewayDeps, req: Omit<RoutedCompletionR
         ruleOut(seat, 'Local models are loopback-only, and this runtime is not on 127.0.0.1.');
         continue;
       }
+      const fit = localModelFit(model, plan.request.contextTokens);
+      if (fit.verdict !== 'fits') { ruleOut(seat, fit.reason); continue; }
       base = deps.capacityFromSeat(seat);
     } else {
       const engine = seat.engine as NativeRoleEngine;
@@ -382,6 +385,8 @@ function buildCompletion(deps: RouterGatewayDeps, entry: { candidate: LeaderSeat
   const { candidate, capacity, model } = entry;
   const { seat } = candidate;
   if (seat.engine === 'local') {
+    const fit = localModelFit(model, opts.contextTokens ?? 65536);
+    if (fit.verdict !== 'fits') return fit.reason;
     if (candidate.localDispatch?.kind === 'llama-server') {
       const binding = candidate.localDispatch.binding;
       if (!binding || binding.model !== model || !deps.transports.llama) return 'The local model has no current llama-server binding.';

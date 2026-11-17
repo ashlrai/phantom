@@ -8,6 +8,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import './helpers/local-memory.js';
+import { localModelFit, memoryFit } from '../src/core/resources/local-memory-fit.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
@@ -118,6 +120,19 @@ const LOCAL_ONLY_CTX = {
 const BUILTIN_ONLY_CTX = {
   availableEngines: ['builtin'] as any[],
 };
+
+it.each([[48, 18, 0, true], [24, 18, 0, false], [48, 18, 1, false], [48, null, 0, false]] as const)(
+  'routes with memory evidence: free %s GiB, resident %s GiB, swap growth %s', (free, size, swapGrowth, fits) => {
+    vi.mocked(localModelFit).mockImplementation(model => memoryFit(model ?? 'fixture', size === null ? null : size * 1024 ** 3, 8192,
+      { totalBytes: 64 * 1024 ** 3, freeBytes: free * 1024 ** 3, swapGrowth }));
+    const cfg = withFoundry({ allowedBackends: ['local-coder', 'codex', 'builtin'], routingPolicy: 'cost' });
+    const item = makeItem({ source: 'docs', effort: 1, score: 1 });
+    expect(routeBackend(item, cfg).backend).toBe(fits ? 'local-coder' : 'codex');
+    const result = routeTask(item, cfg, { availableEngines: ['local-coder', 'codex', 'builtin'] });
+    expect(result.engine).toBe(fits ? 'local-coder' : 'codex');
+    if (!fits) expect(result.reason).toContain('routing to cloud');
+    if (!fits) expect(routeTask(item, cfg, LOCAL_ONLY_CTX).engine).toBe('builtin');
+  });
 
 // ---------------------------------------------------------------------------
 // 1. model-catalog.ts tests

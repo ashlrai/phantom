@@ -1,6 +1,7 @@
 import { decide } from '../decide/decide.js';
 import { classifierKilledByEnv, jevKilledByEnv, readJevConfig } from '../decide/ledger.js';
 import { buildOpenAICompatibleClient } from '../run/provider-client.js';
+import { localModelFit } from '../resources/local-memory-fit.js';
 import type { RouteCandidate, RouteDecision, RouteRequest } from './decision-schema.js';
 
 export interface RouteBackendInput {
@@ -27,6 +28,8 @@ function localBackend(model: 'fast' | 'strong'): RouteBackend {
     name: model === 'fast' ? 'local-fast' : 'local-strong',
     async ask(input) {
       if (routeModelsDisabled()) throw new Error('Decision backend disabled');
+      const fit = localModelFit(model);
+      if (fit.verdict !== 'fits') throw new Error(fit.reason);
       const client = buildOpenAICompatibleClient('http://127.0.0.1:8123/v1', '', model, false, 0, input.signal, {
         strictStreaming: { expectedModel: model, disableThinking: true }, redirect: 'error', timeoutMs: input.timeoutMs,
         maxRequestBytes: 32 * 1024, maxResponseBytes: 16 * 1024, maxOutputTokens: 160,

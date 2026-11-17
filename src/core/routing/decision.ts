@@ -9,12 +9,13 @@ export async function decideRoute(raw: unknown, sources: RouteSources, options: 
 } = {}): Promise<RouteReport> {
   const started = performance.now();
   const request = routeRequestSchema.parse(raw);
-  const candidates = rankRouteCandidates(request, enumerateRouteCandidates(request, sources));
+  const local_models_refused: RouteReport['local_models_refused'] = [];
+  const candidates = rankRouteCandidates(request, enumerateRouteCandidates(request, sources, local_models_refused));
   const reasons: RouteReason[] = [];
   let attempts = 0, retried = false;
   const report = (decision: ReturnType<typeof candidateDecision>, path: RouteReport['path']): RouteReport => ({
     ...routeDecisionSchema.parse(decision), schema: 'route.decision.v1', advisory: true, path,
-    duration_ms: Math.round(performance.now() - started), attempts, candidate_count: candidates.length,
+    duration_ms: Math.round(performance.now() - started), attempts, candidate_count: candidates.length, local_models_refused,
   });
   const fallback = (): RouteReport => report(candidates[0] ? {
     ...candidateDecision(candidates[0]), reason_codes: [...new Set([...reasons, 'deterministic-fallback' as const])],

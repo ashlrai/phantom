@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { isLocalModel, localModelFit, type MemoryFit } from '../resources/local-memory-fit.js';
 import { effortSchema, routeIdSchema, type RouteCandidate, type RouteRequest } from './decision-schema.js';
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -40,7 +41,7 @@ export function modelPrior(model: string, tier: RouteRequest['tier_hint']): Pick
   return { speed_tier: tier === 'frontier' ? 'premium' : tier === 'work' ? 'workhorse' : 'everyday', cost_rank: 4, latency_rank: 4 };
 }
 
-export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSources): RouteCandidate[] {
+export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSources, refused: MemoryFit[] = []): RouteCandidate[] {
   if (!request.machine_state.admit || object(sources.admission)['admit'] !== true) return [];
   const models = object(sources.models), slots = object(sources.slots);
   const result: RouteCandidate[] = [];
@@ -58,6 +59,10 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
     const rawEffort = models[`effort.${lane}.${tier}`] || models[`effort.${family}.${tier}`];
     const effort = effortSchema.safeParse(rawEffort ?? (tier === 'frontier' ? 'xhigh' : 'high'));
     if (!model.success || !effort.success) continue;
+    if (isLocalModel(lane)) {
+      const fit = localModelFit(model.data, 65536);
+      if (fit.verdict !== 'fits') { refused.push(fit); continue; }
+    }
     result.push({ lane, model: model.data, effort: effort.data, ...modelPrior(model.data, tier) });
   }
   return result;

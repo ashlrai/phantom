@@ -50,6 +50,7 @@ export interface RouteCandidate {
   latency_rank: number;
 }
 export interface RouteReport extends RouteDecision {
+  local_models_refused: import('../resources/local-memory-fit.js').MemoryFit[];
   schema: 'route.decision.v1';
   advisory: true;
   path: 'local-fast' | 'jev' | 'local-strong' | 'fallback';

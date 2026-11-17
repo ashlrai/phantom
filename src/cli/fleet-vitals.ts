@@ -1,3 +1,4 @@
+import { localModelsVitals } from '../core/resources/local-memory-fit.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -33,12 +34,13 @@ export async function readFleetVitals(root = join(homedir(), '.ashlr-runs'), now
 
 /** Disk contract (above) is unchanged; launch evidence is additive and carries its own state. */
 export interface HostVitals extends FleetVitals {
+  local_models: ReturnType<typeof localModelsVitals>;
   launch: LaunchVitals;
   launchCost: Awaited<ReturnType<typeof readLaunchCosts>>;
 }
 export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<HostVitals> {
   const [disk, launch, launchCost] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root)]);
-  return { ...disk, launch, launchCost };
+  return { ...disk, launch, launchCost, local_models: localModelsVitals(root, now) };
 }
 
 const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue and first-minute launch cost. Missing readings are unknown.';
@@ -64,6 +66,8 @@ export async function cmdFleetVitals(args: string[]): Promise<number> {
     console.log(`Next launch window: ${report.launch.nextWindowSeconds === null ? 'unknown' : `${report.launch.nextWindowSeconds} seconds`}`);
     for (const lane of report.launch.lanes) console.log(`${lane.lane}: ${lane.running ?? 'unknown'} running of ${lane.target ?? 'unknown'} target; ${lane.queued ?? 'unknown'} queued`);
     console.log(`Launch cost: ${report.launchCost.state} (source ${report.launchCost.source})`);
+    const local = report.local_models.models.find(row => row.verdict !== 'fits') ?? report.local_models.models[0];
+    console.log(local ? `${local.reason}${local.verdict === 'fits' ? '' : '; local routing withheld'}` : 'Local models: loaded models, memory fit and last unload reason unknown');
     for (const r of report.launchCost.launches)
       console.log(`${r.launchId} / ${r.lane}: ${r.status}; peak processes ${r.peakProcesses ?? 'unknown'}; mean CPU ${r.meanCpuPercentOneCore ?? 'unknown'}%; peak CPU ${r.peakCpuPercentOneCore ?? 'unknown'}%; ${r.sampledSeconds}/60s sampled`);
   }
