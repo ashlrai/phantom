@@ -342,6 +342,10 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/ideas' || path === '/api/verse/fleet/control/ideas/queue') {
     return (await import('./fleet-ideas-api.js')).handleFleetIdeasApi(ctx, req, res, path, method);
   }
+  // The Models panel: registry list (GET) and "Verify" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/models' || path === '/api/verse/fleet/control/models/verify') {
+    return (await import('./models-api.js')).handleModelsApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/merge-graph') {
     return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
   }
