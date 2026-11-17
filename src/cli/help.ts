@@ -39,7 +39,7 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
-  { usage: 'phm fleet vitals [--runs-dir <directory>] [--json]', description: 'Read first-minute launch process and sampled CPU costs, plus the top three causes of empty jobs in 24 hours. Missing or incomplete evidence stays unknown or partial; no launches or writes.', safety: 'read', jsonShape: 'fleet.vitals.v1 {status,disk,launch,launchCost:{source,state,launches},emptyCauses:{total,top}}' },
+  { usage: 'phm fleet vitals [--runs-dir <directory>] [--json]', description: 'Read first-minute launch process and sampled CPU costs, plus the top three causes of empty jobs in 24 hours. Missing or incomplete evidence stays unknown or partial; no launches or writes.', safety: 'read', jsonShape: 'fleet.vitals.v1 {status,disk,launch,launchCost:{source,state,launches},emptyCauses:{total,top},stuck:{count,oldestAgeSeconds}}' },
   { usage: 'phm app restart --json', description: 'Report held restart: UI-owned sessions, PTYs and computer-use workers require runtime migration. Does not restart or replace the app. Exit 1 held, 2 usage.', safety: 'read', jsonShape: '{schema: phantom-app-restart/v1, state: held, restarted: false, reason, blockers}' },
   { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
   { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
@@ -1193,6 +1193,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
+  { cmd: 'settings appearance get|set', desc: 'Read or change the app theme, accent (hex), density and fontSize: get [--json], set <key> <value> [--json]. A running desktop or phone app applies it live.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },

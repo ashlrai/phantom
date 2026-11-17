@@ -21,7 +21,8 @@
   flex-direction: column;
   background: var(--bg-canvas);
   color: var(--text-primary);
-  font-size: 1.0625rem;
+  /* Text size (Appearance) scales the phone's em-based type with the desktop's --ui-text-scale. */
+  font-size: calc(1.0625rem * var(--ui-text-scale, 1));
   line-height: 1.35;
   overflow: hidden;
   -webkit-tap-highlight-color: transparent;
@@ -242,6 +243,10 @@
   border: 1px solid var(--border-subtle);
   padding: var(--space-4);
   min-width: 0;
+}
+
+:global(:root[data-density='compact']) .card {
+  padding: var(--space-3);
 }
 
 .skeletonRow {

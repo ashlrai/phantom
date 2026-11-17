@@ -524,7 +524,8 @@ describe('default sources', () => {
     const without = defaultResourceLiveSources({ runsDir: tmp() });
     expect(without.gemini).toEqual([]);
     expect(without['claude-weekly'].some(source => source.tier === 'visible-window')).toBe(false);
-    for (const id of ['devin-flash', 'antigravity', 'dot', 'instinct', 'cursor'] as const) expect(without[id]).toEqual([]);
+    expect(without['devin-flash'].map(source => source.tier)).toEqual(['official']);
+    for (const id of ['antigravity', 'dot', 'instinct', 'cursor'] as const) expect(without[id]).toEqual([]);
     const page = (text: string, url?: string) => ({ newPage: async () => ({ goto: async () => {}, url: () => url ?? 'https://claude.ai/settings/usage',
       visibleText: async () => text, close: async () => {} }), close: async () => {} });
     const withBrowser = defaultResourceLiveSources({ runsDir: tmp(), browser: page('Weekly limits\nResets in 3 days\n62% used\n') });

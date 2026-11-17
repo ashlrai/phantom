@@ -197,3 +197,22 @@ and check every minute outside tick dispatch, sampling at most every five minute
 ```sh
 phm capacity publish --json
 ```
+
+### Devin weekly allowance
+
+Devin Max meters a weekly ACU allowance (no daily allowance). `phm capacity
+publish` also measures it: the sum of `acus_consumed` over the sessions
+`GET /v3/organizations/{org_id}/sessions` lists as created since the last
+weekly reset, against `devin.weeklyAcuAllowance` (fallback: the local Devin
+budget total). The JSON gains a `devin` object with `used`, `remaining`,
+`limit`, `reset_at`, `burn_rate_per_hour` and `state` (`live`, `stale` or
+`unmeasured`). Set `devin.weeklyResetAt` to any known reset instant; without it
+the window, the use and the reset stay `null`. An incomplete listing, a session
+without `created_at` or `acus_consumed`, or a failed request is `null`, never
+zero. A failed read shows the last published reading as `stale` until its reset.
+The same reading feeds the `devin` allowance in `state/resource-live.json`.
+
+The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
+`devin-flash` allowance: zero cost, class `expiring`, ending
+`2026-12-01T05:00Z`. Its reading counts the free preview models in the cached
+`devin models list` catalog, so the burn-down orders it first until it expires.

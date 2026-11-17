@@ -67,6 +67,15 @@ bridge = "loopback"
 
 ### Copy Leader plan replies into the conversation
 
+The Leader conversation in the desktop app and the phone view already shows
+each **Reply for Mason** from the plan log as a Leader message at its heading
+time, oldest first; no command is needed. To read them in a terminal, run
+`phm leader replies` (one line each, newest first; `--json` adds a stable `id`
+per heading). The leader's usual line,
+`**Reply for Mason** (for OUTBOXFALLBACK to copy): "..."` under a
+`## 2026-11-16 ~22:55 ET` heading, is read as the plain quoted text at 22:55
+ET. A heading with no time shows its time as "unknown".
+
 Run `phm leader replies sync --json` to copy new dated **Reply for Mason**
 blocks from `~/.ashlr-runs/leader/PLAN-LOG.md` into the existing Leader thread.
 The same typed function, `syncLeaderReplies()` in `leader-thread.ts`, serves

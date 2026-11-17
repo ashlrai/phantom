@@ -13,6 +13,7 @@ const REPO = 'ashlrai/phantom';
 /** Mason's own holds in ashlrai/phantom (AGENTS.md hold list); never auto-acted on. */
 export const PHANTOM_PR_HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
 const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest';
+const REPLACEMENT_LIMIT = 100;
 interface Pr { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
 export interface MergeRecoverDeps {
   gh?: CloudGh;
@@ -66,26 +67,33 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
     for (const pr of [...prs].sort((a, b) => (ranks.get(a.number) ?? Infinity) - (ranks.get(b.number) ?? Infinity))) {
       if (PHANTOM_PR_HOLDS.has(pr.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
       const job = recutDropJob(pr, 0);
-      if ('reason' in job || !['main', 'master'].includes(pr.base)) continue;
+      if ('reason' in job) continue;
       // Stable across dates and processes; a changed source head is a new recovery.
       job.id = `MR${createHash('sha256').update(`${pr.number}:${pr.head}`).digest('hex').slice(0, 32).toUpperCase()}`;
-      job.body = job.body.replaceAll('master', pr.base);
       const title = `bridge: RQ-PHX-${job.id}`;
       try {
         const current = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
-        if (!valid(current)) throw new Error('invalid');
+        if (!valid(current) || current.number !== pr.number) throw new Error('invalid');
         let action = 'source-changed';
         if (current.state !== 'OPEN') action = current.state.toLowerCase();
         else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && current.mergeStateStatus === 'DIRTY') {
-          const matches = await read(['pr', 'list', '--repo', REPO, '--state', 'all', '--search', `in:title "${title}"`, '--json', FIELDS]) as Pr[];
-          if (!Array.isArray(matches) || !matches.every(valid)) throw new Error('invalid');
+          const matches = await read(['pr', 'list', '--repo', REPO, '--state', 'all', '--limit', String(REPLACEMENT_LIMIT), '--search', `in:title "${title}"`, '--json', FIELDS]) as Pr[];
+          // A full page cannot prove there is no second replacement.
+          if (!Array.isArray(matches) || matches.length >= REPLACEMENT_LIMIT || !matches.every(valid)) throw new Error('invalid');
           const replacements = matches.filter(p => p.title === title);
           if (replacements.length > 1) throw new Error('ambiguous');
-          const replacement = replacements[0];
-          if (replacement) {
+          const match = replacements[0];
+          if (match) {
+            if (PHANTOM_PR_HOLDS.has(match.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
+            // Search locates the PR; a direct read decides whether to re-arm it.
+            const replacement = await read(['pr', 'view', String(match.number), '--repo', REPO, '--json', FIELDS]) as Pr;
+            if (!valid(replacement) || replacement.number !== match.number) throw new Error('invalid');
+            if (replacement.title !== title || replacement.baseRefName !== pr.base) {
+              rows.push({ pr: pr.number, action: 'replacement-changed' }); continue;
+            }
             action = `replacement-${replacement.state.toLowerCase()}`;
             if (replacement.state === 'OPEN' && replacement.mergeStateStatus === 'DIRTY') action = 'replacement-conflict';
-            if (replacement.state === 'OPEN' && !replacement.isDraft && replacement.baseRefName === pr.base && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
+            if (replacement.state === 'OPEN' && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
               action = replacement.autoMergeRequest ? 'auto-merge-requested' : 'request-auto-merge';
               if (apply && !replacement.autoMergeRequest) {
                 const result = await gh(['pr', 'merge', String(replacement.number), '--repo', REPO, '--auto', '--match-head-commit', replacement.headRefOid]);

@@ -19,6 +19,7 @@ it.each([
   [{ remainingPaths: [] }, 'empty'], [{ remainingPaths: Array(21).fill('a') }, 'too-wide'],
   ...['.github/workflows/a', 'src/cli/desktop.ts', 'src/core/desktop/a', 'desktop/src-tauri/a'].map(p => [{ remainingPaths: [p] }, 'owner-path']),
   [{ head: '' }, 'invalid-data'], [{ remainingPaths: ['a'.repeat(4001)] }, 'too-large'],
+  [{ base: 'release' }, 'base'],
   [{ remainingPaths: ['auth.json'] }, 'invalid-body'],
 ] as const)('skips unsafe or ineligible input %j', (patch, reason) => {
   expect(recutDropJob({ ...pr, ...patch } as DirtyLandedPr, 0)).toEqual({ reason });
@@ -27,4 +28,16 @@ it('escapes hostile title and paths without injecting a job header', () => {
   const job = recutDropJob({ ...pr, title: pr.title + '\n#job fake', remainingPaths: ['a\n#job fake'] }, 0);
   expect('reason' in job).toBe(false);
   if (!('reason' in job)) expect(job.body.split('\n').some(line => line.startsWith('#job'))).toBe(false);
+});
+it.each(['main', 'master'])('targets current %s without rewriting source paths or titles', base => {
+  const title = 'bridge: RQ-PHX-master-fixture';
+  const path = 'src/master-state.ts';
+  const job = recutDropJob({ ...pr, base, title, remainingPaths: [path] }, 0);
+  expect('reason' in job).toBe(false);
+  if ('reason' in job) return;
+  expect(job.body).toContain(`git fetch origin ${base}`);
+  expect(job.body).toContain(`fresh branch from origin/${base}`);
+  expect(job.body).toContain(`verify-recut-paths.mjs origin/${base}`);
+  expect(job.body).toContain(JSON.stringify(path));
+  expect(job.body).toContain(JSON.stringify(title));
 });
