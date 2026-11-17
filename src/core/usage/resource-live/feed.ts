@@ -48,7 +48,7 @@ function sensorRow(reading: ResourceLiveReading): UsageSensorReading | null {
     lane,
     observedAt: reading.observed_at,
     source: SENSOR_SOURCE[reading.source] ?? reading.source,
-    staleAfter: new Date(Date.parse(reading.observed_at) + USAGE_SENSOR_STALE_MS).toISOString(),
+    staleAfter: reading.stale_after ?? new Date(Date.parse(reading.observed_at) + USAGE_SENSOR_STALE_MS).toISOString(),
     used: Math.round(reading.used * factor * 1000) / 1000,
     limit: Math.round(reading.limit * factor * 1000) / 1000,
     unit: reading.unit === 'acu' ? 'acu' : 'percent',

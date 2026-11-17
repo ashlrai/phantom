@@ -462,6 +462,15 @@ describe('loadConfig — existing config', () => {
     expect(cfg.roots).toContain('/custom/root');
   });
 
+  it('drops invalid liveSources while preserving unrelated configuration', () => {
+    writeFileSync(join(tmpHome, '.ashlr', 'config.json'), JSON.stringify({
+      staleDays: 42, usage: { liveSources: { operatorPageFallback: 'yes' } },
+    }));
+    const cfg = loadConfig();
+    expect(cfg.usage).toEqual({});
+    expect(cfg.staleDays).toBe(42);
+  });
+
   it('does not overwrite an existing config.json', () => {
     const cfgPath = join(tmpHome, '.ashlr', 'config.json');
     const stored: AshlrConfig = {

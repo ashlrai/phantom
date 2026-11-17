@@ -62,6 +62,7 @@ def gate_limit(name, default):
     except ValueError: return default
 GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 2.0)
 GATE_PROCS_MAX = gate_limit("GATE_PROCS_MAX", 2500); GATE_WORKTREES_MAX = gate_limit("GATE_WORKTREES_MAX", 40)
+GATE_WORKTREES_PER_CPU = gate_limit("GATE_WORKTREES_PER_CPU", 4)   # live-worktree warning: max(floor, per-cpu x ncpu)
 GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 2); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
 GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
 GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
@@ -1316,6 +1317,7 @@ def admission_gate():
     growth = max(0, swap_gb - min(v[1] for v in samples)) if samples and swap_gb is not None else 0
     if swap_gb is not None: samples.append([NOW, swap_gb])
     load_max = GATE_LOAD_PER_CPU * ncpu
+    wts_max = int(max(GATE_WORKTREES_MAX, GATE_WORKTREES_PER_CPU * ncpu))
     if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f (%g x ncpu)" % (load1, load_max, GATE_LOAD_PER_CPU))
     if g["off_switch_ignored"]: g["warnings"].append("LOADGATE_OFF present and ignored")
     if procs > GATE_PROCS_MAX: g["warnings"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
@@ -1327,8 +1329,8 @@ def admission_gate():
     g.update(memory_pressure=pressure, pressure_min=GATE_PRESSURE_MIN, swap_gb=swap_gb, swap_growth_gb=growth,
              swap_growth_max_gb=GATE_SWAP_GROWTH_GB, swap_window_s=GATE_SWAP_WINDOW_S, swap_samples=samples,
              disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, claim_limit=MAX_LAUNCH_PER_TICK,
-             procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
-    if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
+             procs_max=GATE_PROCS_MAX, worktrees_max=wts_max, tick_max_s=GATE_TICK_MAX_S)
+    if wts > wts_max: g["warnings"].append("worktrees %d > %d" % (wts, wts_max))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
     g.update(load5=_l5, load15=_l15)
@@ -1625,7 +1627,7 @@ _FC_PREV = FC_STATE["level"]
 BUS = fc.build_readings(NOW, load=(GATE["load1"], GATE.get("load5"), GATE.get("load15")), ncpu=GATE["ncpu"], mem_free_pct=free,
     memory_pressure=GATE["memory_pressure"], swap_gb=GATE["swap_gb"], swap_growth_gb=GATE["swap_growth_gb"] if GATE["swap_gb"] is not None else None,
     swap_window_s=GATE_SWAP_WINDOW_S, procs=GATE["procs"], worktrees=GATE["worktrees"], disk_free_gb=disk_free_gb, disk_gate=DISK_GATE,
-    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE_WORKTREES_MAX},
+    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE["worktrees_max"]},
     queue_by_lane=qdepth, queue_by_tier=fc.tier_depth([l for l in lines if not parked_row(l)], TIERS),
     quota=fc.lane_quota(_BUDGET_OV, LANES), merge=fc.merge_stats(JOBS_RAW, NOW), holds=sorted(hold))
 FC_WOULD_LEVEL, FC_STATE, FC_WHY = fc.shed_level(BUS, FC_STATE, NOW)

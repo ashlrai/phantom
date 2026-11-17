@@ -11,6 +11,7 @@ export interface ResourceLiveObservation {
   reset_at: string | null;
   source: string;
   observed_at: string;
+  stale_after?: string;
   /** Overrides the source's tier, for a store that mixes operator entries with readings. */
   tier?: ResourceLiveTier;
 }

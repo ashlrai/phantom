@@ -41,6 +41,8 @@ export const readingSchema = z.object({
   source: z.string().min(1).max(128).regex(/^[\x20-\x7e]+$/).nullable(),
   source_tier: z.enum(['official', 'own-call', 'visible-window', 'operator-entry']).nullable(),
   observed_at: instant.nullable(),
+  confidence: z.enum(['high', 'medium', 'low']).nullable().optional(),
+  stale_after: instant.nullable().optional(),
 });
 const pollSchema = z.object({
   last_polled_at: instant, next_poll_at: instant, interval_s: z.number().finite().positive(),
@@ -55,7 +57,7 @@ export function unverified(allowance: ResourceLiveAllowance, reason: ResourceLiv
   return {
     id: allowance.id as ResourceLiveId, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: false,
     used: null, limit: null, unit: null, used_pct: null, remaining: null, reset_at: null, expires_at: allowance.expires_at,
-    source: null, source_tier: null, observed_at: null, stale_after: null, reason,
+    source: null, source_tier: null, confidence: null, observed_at: null, stale_after: null, reason,
   };
 }
 
@@ -70,8 +72,10 @@ export function toReading(allowance: ResourceLiveAllowance, row: StoredReading &
     used_pct: measured ? Math.min(100, Math.round(row.used! / row.limit! * 1000) / 10) : null,
     remaining: measured ? Math.max(0, Math.round((row.limit! - row.used!) * 1000) / 1000) : null,
     reset_at: row.reset_at, expires_at: allowance.expires_at, source: row.source, source_tier: row.source_tier,
+    confidence: row.source_tier === 'official' ? 'high' : row.source_tier === 'own-call' ? 'medium' : 'low',
     observed_at: row.observed_at,
-    stale_after: new Date(Date.parse(row.observed_at) + RESOURCE_LIVE_STALE_MS).toISOString(), reason: null,
+    stale_after: new Date(Math.min(Date.parse(row.observed_at) + RESOURCE_LIVE_STALE_MS,
+      row.stale_after ? Date.parse(row.stale_after) : Infinity)).toISOString(), reason: null,
   };
 }
 

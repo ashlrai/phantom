@@ -355,6 +355,8 @@
 /test/daemon-resident-capacity-publisher-310.test.ts @masonwyatt23
 /test/daemon-start-temp-worktree-sweep.test.ts @masonwyatt23
 /test/daemon-state-resolution-clock.test.ts @masonwyatt23
+/test/daemon-tick-budget.test.ts @masonwyatt23
+/test/daemon-tick-loop.test.ts @masonwyatt23
 /test/daemon-tick-unblock.test.ts @masonwyatt23
 /test/decide-critics-315.test.ts @masonwyatt23
 /test/decide-judge-manager-315.test.ts @masonwyatt23
@@ -1184,6 +1186,7 @@
 /test/resource-spark-enrollment-cli.test.ts @masonwyatt23
 /test/resource-spark-enrollment-files.test.ts @masonwyatt23
 /test/resource-spark-enrollment.test.ts @masonwyatt23
+/test/resource-usage-readers.test.ts @masonwyatt23
 /test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
 /test/returns-pr-check-396.test.ts @masonwyatt23
@@ -1236,6 +1239,7 @@
 /test/schemas/fixtures/loop.v1.json @masonwyatt23
 /test/scrub-310.test.ts @masonwyatt23
 /test/scrub-corpus.test.ts @masonwyatt23
+/test/self-heal-budget.test.ts @masonwyatt23
 /test/self-update-smoke-gate-04.test.ts @masonwyatt23
 /test/send-policy-email-outbox.test.ts @masonwyatt23
 /test/send-policy-recut2.test.ts @masonwyatt23
