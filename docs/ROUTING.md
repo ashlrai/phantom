@@ -110,6 +110,47 @@ Reports contain `lane`, `model`, `effort`, `speed_tier`, fixed `reason_codes`,
 With no eligible candidates the four route fields are all `null`; there is no
 synthetic runnable lane. No candidates or one candidate means zero model calls.
 
+## Lane capability fit
+
+`phm route fit --input <file|-> [--worktree <directory>] --json` answers one
+question before a launch slot is spent: can this lane's sandbox do this job?
+
+Each lane declares four capabilities: `gh`, `network`, `browser` and
+`local_fs_outside_worktree`. A value is `true`, `false` or unknown. Today the
+only declared fact is that `claude` has no `gh`: its sandbox cannot read the gh
+config. Only a declared `false` refuses a route. Unknown is reported in
+`unknown` and is never treated as proof either way.
+
+The request is `{job, lane, prompt, candidates?, gh_context?}`. What the job
+needs is inferred from the prompt with fixed patterns: `gh pr`, `gh run` and
+`gh api` commands, requests to list open PRs, and requests to read failed-run
+logs. The fleet CONTEXT block and sentences that forbid a tool are not needs.
+No model is called.
+
+The `route.fit.v1` report has `decision`, a typed `code` and one plain `line`:
+
+| decision | meaning |
+|---|---|
+| `route` | The lane can take the job. |
+| `route_skip` | The lane lacks a capability. `code` is `route_skip: lane lacks gh`; `next_lane` is the first candidate that can take it, or `null`. |
+| `route_with_pack` | The lane lacks gh, but a gh context pack covers the job's read-only needs. |
+
+### gh context pack
+
+For a job that only reads PR or run data, the dispatcher fetches that data
+outside the sandbox and passes it as `gh_context`
+(`{repo, prs?, failed_run?}`) with `--worktree`. Phantom scrubs and bounds it,
+writes `.ashlr/gh-context.json` in the worktree and returns `pack.prompt_note`
+to append to the prompt. The note tells the worker to read the file instead of
+calling gh, so no credential enters the sandbox. A section that was not
+supplied is `null` (unknown), not an empty list. A pack never covers a gh
+write such as `gh pr comment`; those jobs still move to another lane.
+
+`phm queue --json` shows the same check for every ready job under
+`routeSkips`. Wiring the check into the live dispatcher is a
+[proposal for Security](proposals/lane-capability-route-fit.md); until it is
+pinned, nothing here changes a launch.
+
 ## Dispatcher observation
 
 The repository dispatcher samples the first valid ready row of each tick

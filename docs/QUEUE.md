@@ -628,6 +628,13 @@ Run `phm queue batches` to see one plain summary of batch sessions, or
 `batches` to inspect a fixture or another local runs directory.
 This is read-only. The same report backs both forms.
 
+The report also carries `routeSkips`: ready jobs whose prompt needs something
+their lane is declared unable to do, each with the typed code
+`route_skip: lane lacks gh` and one plain sentence. The human form adds one
+line only when such jobs exist. It is a forecast from `queue/ready.tsv` and
+`queue/prompts`; it moves nothing. Unreadable files report `unknown`, never an
+empty all-clear. See [lane capability fit](ROUTING.md#lane-capability-fit).
+
 `emptyPrefixes` reports the top five job-ID prefixes by empty `finish` rows in
 the last 24 hours, with counts and a total. Retries count separately; filler
 counters and trailing incident hashes are removed while lane names remain.
