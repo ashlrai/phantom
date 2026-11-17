@@ -10,6 +10,7 @@ import type { TidyRule } from './workspace.js';
 
 /** Persisted configuration for the hub. Lives at ~/.ashlr/config.json. */
 export interface AshlrConfig {
+  usage?: { liveSources?: import('../usage/resource-live/config.js').LiveSourcesConfig };
   /** Optional agent graph inspection root. Explicit existing canonical private directory;
    * absent disables firm MCP resources. Reading never enrolls, executes, or creates keys.
    */
