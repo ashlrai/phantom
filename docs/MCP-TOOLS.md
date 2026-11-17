@@ -207,3 +207,7 @@ reference followed by every page. The Vercel build runs
 "All pages" block of `docs/llms.txt` complete. After adding or renaming a docs
 page, run `node scripts/generate-docs-llms.mjs`; `test/docs-agent-parity.test.ts`
 fails when a page is missing from `docs/llms.txt`.
+
+`fleet_empties` on the standalone fleet server returns the same typed report as
+`phm fleet empties`. Optional `hours` selects a trailing window (default 24,
+positive and at most 2160); paths are not accepted. See [Empty job reasons](FLEET-EMPTIES.md).
