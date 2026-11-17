@@ -933,9 +933,11 @@ total; reported logical bytes are not a promise of physical disk space freed.
 headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
 merged PRs, median time to merge, main per repo, running jobs per lane, the
 resource most at risk of going unused, the last 5 work-log items and unread
-Leader replies (these need `--leader-seen <time>`). `phm home --json` prints
-schema `home.v1`: each field is `{state:"ok",value}` or `{state:"unknown",reason}`.
-It is read-only, and the desktop app opens on the same summary.
+Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
+with the one-word answers each takes. `phm home --json` prints schema `home.v1`
+(the `schema` field is the version): each field is `{state:"ok",value}` or
+`{state:"unknown",reason}`. It is read-only. The desktop app and the phone's
+first screen show this summary and nothing else.
 
 `phm asks` lists what only Mason can do: a password, a 2FA code, a device
 approval or a payment. Each row has a short id, the kind, its age and one plain
