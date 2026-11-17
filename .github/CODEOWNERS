@@ -261,6 +261,7 @@
 /test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
+/test/agents-app-adapters.test.ts @masonwyatt23
 /test/amplify.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23

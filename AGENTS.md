@@ -293,6 +293,12 @@ phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 ```
 
+## Agent app adapters
+
+`phm agents apps [<id> launch|sessions|show|send|usage] --json` drives Codex,
+Claude, Devin, Grok and Cursor through one adapter interface: CLI adapters first,
+`<app>-desktop` fallbacks through the desktop operator's gates. See [AGENT-APPS](docs/AGENT-APPS.md).
+
 ## Agent sessions
 
 `phm sessions create|show|resume|terminate --json` runs resumable agent
