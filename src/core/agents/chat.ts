@@ -1,3 +1,4 @@
+import { readOwnerChatReceipts, ownerChatRoot, verifiedOwnerChat, ownerChatReceiptState } from './chat-owner-receipts.js';
 /** Read-only channel projection. Routing labels and human flags are not authority. */
 import { createHash } from 'node:crypto';
 import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, type BusInboxOptions } from '../fleet/bus-inbox.js';
@@ -25,8 +26,8 @@ export type ChatResult = {
 export interface ChatQuery { channel: string; thread?: string; after?: number; limit?: number }
 
 /** Local owner read boundary only; never combines DMs, inboxes, or external transports.
- * Human-labelled channel messages are interjections, not proof of owner identity or
- * permission to execute. The existing authenticated ingress remains responsible for that.
+ * Owner interjections require a matching accepted ingress receipt; a human flag
+ * alone grants neither owner attribution nor permission to execute.
  */
 export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): ChatResult {
   const after = query.after ?? 0, limit = query.limit ?? 100;
@@ -50,29 +51,37 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
       engine: runtime?.model ?? runtime?.provider ?? null, state: 'unknown',
       avatarColor: COLORS[createHash('sha256').update(identity.id).digest()[0]! % COLORS.length]! };
   }).sort((a, b) => a.agentId.localeCompare(b.agentId));
+  let ownerReceipts;
+  try { ownerReceipts = readOwnerChatReceipts(ownerChatRoot(options.root)); } catch { return { status: 'unavailable' }; }
   const messages: ChatMessage[] = [];
   const threads = new Map<string, ChatThread>();
   let cursor = 0, complete = false;
   // One bounded retained-store scan, including a final exhaustion probe at capacity.
   for (let pageIndex = 0; pageIndex <= Math.ceil(BUS_INBOX_MAX_MESSAGES / 100); pageIndex++) {
-    const page = listBusInboxAfter(cursor, 100, fixed);
+    const page = listBusInboxAfter(cursor, 100, { ...fixed, includeOriginalEnvelope: true });
     if (page.status !== 'ok') return { status: page.status === 'retryable' ? 'retryable' : 'unavailable' };
+    try { ownerReceipts = readOwnerChatReceipts(ownerChatRoot(options.root)); } catch { return { status: 'unavailable' }; }
     for (const row of page.messages) {
-      const e = row.envelope;
-      if (e.channel !== 'bus' || e.external !== false || e.origin_bridge !== 'agent-bus' ||
+      const e = row.originalEnvelope ?? row.envelope;
+      if (e.channel !== 'bus' || e.external !== false || !['agent-bus', 'agent-chat-owner'].includes(e.origin_bridge ?? '') ||
           e.channel_ref !== e.to || !e.to.startsWith(`group:${channel.name}:`) ||
           !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(e.to.slice(`group:${channel.name}:`.length))) continue;
       const sender = resolveAgent(registry.registry, e.from);
-      if (!sender || !members.has(sender.id) || e.sender?.agent_id !== sender.id) continue;
+      if (e.origin_bridge === 'agent-chat-owner' && ownerChatReceiptState(e, row.cursor, ownerReceipts) === 'pending') return { status: 'retryable' };
+      const owner = e.origin_bridge === 'agent-chat-owner' && e.from === 'owner:local' &&
+        e.sender?.agent_id === 'owner:local' && verifiedOwnerChat(e, row.cursor, ownerReceipts);
+      if (!owner && (e.origin_bridge !== 'agent-bus' || !sender || !members.has(sender.id) || e.sender?.agent_id !== sender.id)) continue;
       const body = busBodySchema.safeParse(e.body);
       if (!body.success || !('thread' in body.data) || !body.data.thread || !THREAD.test(body.data.thread) ||
           !('text' in body.data)) continue;
+      if (owner && !participants.some(p => p.agentId === 'owner:local')) participants.push({
+        agentId: 'owner:local', handle: 'owner', displayName: 'Owner', engine: null, avatarColor: '#475569', state: 'unknown' });
       const thread = body.data.thread;
       const summary = threads.get(thread) ?? { id: thread, messageCount: 0, lastCursor: 0 };
       summary.messageCount++; summary.lastCursor = row.cursor; threads.set(thread, summary);
       if (query.thread === thread && row.cursor > after) messages.push({ id: e.id, cursor: row.cursor,
-        receivedAt: row.receivedAt, thread, agentId: sender.id,
-        kind: e.sender.human ? 'interjection' : 'message', text: scrubSecrets(body.data.text) });
+        receivedAt: row.receivedAt, thread, agentId: owner ? 'owner:local' : sender!.id,
+        kind: owner ? 'interjection' : 'message', text: scrubSecrets(body.data.text) });
     }
     if (page.nextCursor <= cursor) { complete = true; break; }
     cursor = page.nextCursor;
