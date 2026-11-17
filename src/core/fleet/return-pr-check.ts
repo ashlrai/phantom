@@ -114,12 +114,24 @@ export async function checkReturnPrs(
   }
   const truncated = eligible.length > limit;
   const checked: ReturnPrChecked[] = [];
+  let expired = false;
   for (const row of eligible.slice(0, limit)) {
-    if (now() >= deadline) {
+    const remaining = deadline - now();
+    if (expired || remaining <= 0) {
       checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
       continue;
     }
-    checked.push(await checkOne(gh, row));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), remaining);
+    });
+    const result = await Promise.race([checkOne(gh, row), timeout]).finally(() => clearTimeout(timer));
+    if (result === null) {
+      expired = true;
+      checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
+    } else {
+      checked.push(result);
+    }
   }
   const end = now();
   return { v: 1, authority: 'none', asOf: Number.isFinite(end) ? new Date(end).toISOString() : 'unknown', checked,
