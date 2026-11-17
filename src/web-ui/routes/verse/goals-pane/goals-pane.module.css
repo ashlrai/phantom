@@ -15,3 +15,7 @@
 .steer input { flex: 1; min-width: 12ch; }
 
 .metric[data-state='met'] .metricValue { color: var(--success-500, var(--text-primary)); }
+.fleet { display: flex; flex-direction: column; gap: var(--space-2); }
+.badge[data-status='on-track'] { color: var(--success-500, var(--text-primary)); }
+.badge[data-status='behind'] { color: var(--warning-500, var(--text-primary)); }
+.badge[data-status='unknown'] { font-style: italic; }

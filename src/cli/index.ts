@@ -2829,7 +2829,8 @@ async function main(): Promise<void> {
       }
 
       case 'goals': {
-        if (rest.length === 0 || (rest.length === 1 && rest[0] === '--json')) {
+        // Bare `goals` (or only --json/--text) is the fleet scorecard; every subcommand is M28.
+        if (rest.every(arg => arg === '--json' || arg === '--text')) {
           const { cmdGoals } = await import('./goals-view.js');
           process.exitCode = await cmdGoals(rest);
           break;
