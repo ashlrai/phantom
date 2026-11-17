@@ -1,0 +1,17 @@
+# PR 6570 owner qualification
+
+Owner route: RQ-DEVINCLOUD-APPADAPT3-N17, branch `codex-bridge/RQ-DEVINCLOUD-APPADAPT3-N17`, PR #6570, head `b69a5d3e8a1568795b78fe95af53a8cb17715383`. This is a handoff to that existing owner, not a new implementation or evidence of a live assignment. Public PR metadata reports it open. The supplied fleet snapshot lists no qualification owner; a parked-job query did not establish live claim ownership. Live host/claim access remains unconfirmed, not proof of vacancy.
+
+## Content audit
+
+Compared with `origin/master` at `54eae652080c0453b56d3f1c11c217ef433c6c99`, the named adapter, registry, CLI dispatcher, documentation and original test are new; the bus dispatcher adds help and lazy routing. The owner adds Codex and Claude CLI launch/resume with local session storage, a Devin CLI stub, and desktop operator adapters for five apps. The original documentation says desktop launch/send only types into a composer and requires a separate click; it cannot set model or directory. These are distinct source changes, not evidence of integration with the shared resource pool or cross-computer dispatch. Protected and shared hunks were not adopted.
+
+## Observed qualification
+
+The accompanying test dynamically loads the original source from a disposable checkout of the exact head, with fake absolute binaries, injected runner, temporary ledger and fixed clock. No provider, desktop helper or API is invoked. Three tests passed: both CLI adapters recorded and resumed their session IDs using the corresponding provider binary; a nonzero runner with an ID returned `ok: true` and `status: failed`; timeout returned `ok: false`, `code: failed`; engaged and throwing stop probes blocked both launch and send without runner calls. Devin describes launch as unsupported and refuses it. A Linux desktop describes itself unavailable while advertising the abstract launch capability; model and cwd requests return unsupported. This does not establish desktop runtime availability or submission.
+
+**Owner defect to reproduce:** inject a runner returning `{code: 1, stdout: '{"type":"thread.started","thread_id":"failed_1"}', stderr: '', timedOut: false, missing: false}` and call Codex `launchTask`. `src/core/agents/apps/cli-adapters.ts:104` records `status: failed`, but line 107 returns `ok: true`. `src/cli/agents-apps.ts:55` therefore returns exit 0 for this failed execution. The test records the actual result; the requirement that a failed runner cannot imply successful execution is **not met** at the CLI boundary. Return this evidence to the existing owner for a source fix and protected-path review; no implementation is supplied here. The timeout case does not exhibit this success result.
+
+A local ledger row is not a fleet claim receipt, a lease, a cross-computer coordination receipt, or proof of a live worker. The audited adapter does not connect its launch/resume to such receipts; the operational bridge and evidence for Mason's shared-resource-pool and receipt-backed coordination orders remain missing. Source tests do not establish installation, provider execution, dispatch, or shipment.
+
+Reproduce from this repository after checking out the owner's exact head separately and making its existing dependencies available: `HOME=$(mktemp -d) APP_OWNER_SOURCE=/absolute/path/to/owner-checkout npm run test:ci -- test/agent-app-owner-qualification-527s.test.ts`. Verify that checkout's HEAD before running. The test requires that explicit path and does not statically import unmerged modules.
