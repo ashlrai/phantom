@@ -232,9 +232,9 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   },
   {
     usage: 'phm nodes [--json] [--can-take <lane>]',
-    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, CPU headroom, lanes, running jobs and a plain-words state. --can-take lists the computers able to take a job for that lane now. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
+    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, CPU headroom, lanes, running jobs and a plain-words state. --can-take lists ready computers and recommends a remote computer, falling back to this computer when ready. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
     safety: 'read',
-    jsonShape: '{schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,phantom,freeMemoryBytes,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?}',
+    jsonShape: '{schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,phantom,freeMemoryBytes,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?, placement?:{lane,node,target,reason,explanation}}',
   },
   {
     usage: 'phm node bootstrap --dry-run [--json]',
