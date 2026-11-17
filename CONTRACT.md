@@ -21,6 +21,15 @@ ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`
 `previewExpiresAt`; parsing does not establish freshness or grant free status.
 The resource-live reading parser preserves optional `account_id`, `model` and
 `window_start`; weekly capacity also accepts optional `account_id` and `model`.
+`ClaudeAccountStatusResult` and `ClaudeAccountUsageResult` include nullable
+`accountScope`, an organization-only SHA-256 scope (`claude:` plus 16 lowercase
+hex digits) from validated opaque native status `orgId`, never email. Usage
+requires matching before/after scopes. `ClaudeQuotaReadingV1.accountId` is optional;
+malformed scopes reject the reading, while legacy unscoped files remain valid.
+The official Claude weekly resource-live source and sanctioned budget readings
+forward it as optional `account_id`, without a model (the window covers all models).
+`SanctionedReading` and `BudgetEntry` accept optional `account_id`; refresh owns
+and clears it on unscoped re-reads or estimates, never borrowing prior scope.
 When weekly capacity supplies the usage, its own scope is required, never
 borrowed from a different sidecar reading. Receipt evidence must match that lane/account/model and window
 (reset or fixed expiry, and window start when present), be within the reading's

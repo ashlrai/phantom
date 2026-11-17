@@ -4,7 +4,7 @@
 
 # Phantom documentation
 
-- [Router catalog refresh](ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
+- [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
 
 - [Append-union PR conflict resolver](PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.
 
@@ -14,6 +14,7 @@ Phantom is an open-source workbench for running coding agents, coordinating a fl
 | --- | --- |
 | [Quickstart](QUICKSTART.md#open-verse) | Install the CLI, open the console and check one resource. |
 | [First useful turn](QUICKSTART.md#make-your-first-useful-turn) | Ask an agent for a small change and review the diff. |
+| [Run the fleet from Phantom](https://github.com/ashlrai/phantom/blob/master/docs/RUN-THE-FLEET.md) | Read Home, find work, steer a job and check Autonomy. |
 | [Fleet guide](AUTOMATIC-OUTCOMES.md#work-for-me) | Save an outcome and understand resident setup. |
 | [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) | Join a node with its own sign-in and owner scope. |
 | [Agent network](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK.md) | Understand participants, coordination and channel boundaries. |
@@ -22,7 +23,7 @@ The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands
 
 ## Agents, start here
 
-- [CI baseline analyzer](CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
+- [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
 
 Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 

@@ -703,7 +703,7 @@ async function runExperimentDefault(opts: { fleetQueueDepth: () => number; signa
 }
 
 async function insightsDefault(): Promise<ReasoningInsight[]> {
-  const { computeReasoningDigest } = await import('../reasoning/reasoning-api.js');
+  const { computeReasoningDigest } = await import('../reasoning/digest.js');
   const digest = await computeReasoningDigest(14);
   return digest.insights;
 }
