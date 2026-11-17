@@ -357,6 +357,7 @@
     "src/core/autopilot/act.ts",
     "src/core/autopilot/diagnose.ts",
     "src/core/autopilot/github.ts",
+    "src/core/brand/registry.ts",
     "src/core/build-identity.ts",
     "src/core/classify.ts",
     "src/core/classify/completion-claims.ts",
