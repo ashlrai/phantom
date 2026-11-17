@@ -1,3 +1,4 @@
+import { injectedSlackCredentialResolver } from '../core/agents/slack-credentials.js';
 /**
  * `phm channels slack` -- offline inspection of the Slack bridge adapter
  * (RQ-AGENTNET-SLACK-1).
@@ -179,10 +180,7 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
   const config = parsed.slack;
   const controller = new AbortController();
   const deadline = run ? Date.now() + seconds * 1000 : Infinity;
-  const call = createSlackApi({ config, resolveCredential: reference => {
-    if (!/^phm_SLACK_(?:AGENTNET_)?(?:BOT|APP)_TOKEN$/.test(reference)) return undefined;
-    return process.env[reference.slice(4)];
-  }, signal: controller.signal });
+  const call = createSlackApi({ config, resolveCredential: injectedSlackCredentialResolver(config, process.env), signal: controller.signal });
   let socket: SlackSocketSession | undefined;
   let stopped = false;
   let disconnected = false;
