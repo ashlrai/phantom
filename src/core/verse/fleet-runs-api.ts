@@ -1,5 +1,6 @@
 import { readGoals } from '../fleet/goals.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
@@ -485,6 +486,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/metrics') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
+    // The Plugins and Skills panes read the same data as `phm plugins|skills list --all --json`.
+    if (path === '/api/verse/fleet/runs/plugins' || path === '/api/verse/fleet/runs/skills') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, path.endsWith('/plugins') ? readPluginsPanel() : readSkillsPanel());
       return true;
     }
     if (path === '/api/verse/fleet/runs/goals') {
