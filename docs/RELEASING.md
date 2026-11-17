@@ -479,13 +479,23 @@ lanes retain their separate ownership.
 
 ### Check release status
 
-Run `phm release status` for a read-only table across the seven enrolled Ashlr
-repositories, or add `--json` for the `phantom.release-status.v1` report. The
-latest tag is GitHub's most recently listed tag; assets belong to the release
-for that tag, and unreleased commits count commits on the default branch ahead
-of it. The Phantom row also shows the HTTP status of the public updater feed.
-`Unknown` (JSON `null`) means the observation could not be made, including when
-a tag has no GitHub release. Other repositories have no updater feed check.
-GitHub access uses the existing `gh` authentication. The command changes no
-release settings. `phm release status --file <path>` continues to inspect a
-local release-train state file.
+Run `phm release status` for local tag age and unreleased commit counts across
+the seven enrolled repositories, or add `--json` for `phantom.release-status.v2`.
+Local refs may be stale; unavailable observations are `null`.
+`phm release status --file <path>` inspects a local release-train state file.
+
+### Draft release notes
+
+Run `phm release notes` inside a repository for Markdown since its latest
+reachable stable version tag, or choose `--since v3.30.35`. It reads the current
+branch's mainline, including squash and ordinary GitHub PR merges. Fetch history
+and tags first when the requested range is unavailable. No network calls occur.
+`--json` returns `phantom.release-notes.v1` with `since`, `head`, `summary` and
+ordered `groups` (New, Improved, Fixed, Internal); entries carry text, PRs and
+commit SHAs. Direct commits without a PR retain their short SHA in Markdown.
+Opaque subjects use touched files as context, without inferring user benefits.
+Add `--write` to prepend notes inside `CHANGELOG.md`'s existing `Unreleased`
+section. Repeated writes replace only the generated block, preserving manual
+entries and release history. New/Improved become Added/Changed in the changelog.
+No version, tag, release or workflow is changed. Invalid flags exit 2; unreadable
+history or an unsupported changelog exits 1 (JSON errors have `ok: false`).
