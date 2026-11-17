@@ -44,8 +44,10 @@ it('reserves the reply for a posted request while retaining the failed request',
     unansweredSample: [], busFailedSample: [{ channelId, threadTs, messageTs: threadTs, at }] });
 });
 
-it('binds a keyed row without a bus outcome', () => {
-  expect(fixture([undefined]).replies).toMatchObject({ answered: 1, unanswered: 0, unverified: 0 });
+it('a keyed row without a bus outcome is uncertain, never answered (answered needs posted|duplicate ingress)', () => {
+  expect(fixture([undefined]).replies).toMatchObject({ answered: 0, unanswered: 0, unverified: 0, uncertainRequests: 1 });
+  expect(fixture(['posted']).replies).toMatchObject({ answered: 1, uncertainRequests: 0 });
+  expect(fixture(['duplicate']).replies).toMatchObject({ answered: 1, uncertainRequests: 0 });
 });
 
 it('reports legacy rows without a requestId as unverified, never answered by a same-thread receipt', () => {
