@@ -10,11 +10,13 @@ import { z } from 'zod';
 import { EMPTY_RESET_STATE } from './reset-rule.js';
 import {
   RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA, RESOURCE_LIVE_STALE_MS,
+  RESOURCE_HISTORY_SCHEMA, type ResourceHistoryFile,
   type HistorySample, type PollState, type ResourceLiveAllowance, type ResourceLiveId,
   type ResourceLiveReading, type ResourceLiveReason, type ResourceLiveSidecar,
 } from './types.js';
 
 export const HISTORY_PER_ALLOWANCE = 12;
+export const resourceHistoryPath = (runsDir: string): string => join(resourceLiveStateDir(runsDir), 'resource-live-history.json');
 const MAX_SIDECAR_BYTES = 512 * 1024;
 
 export function resourceLiveStateDir(runsDir: string): string {
@@ -130,11 +132,54 @@ export function parseResourceLiveSidecar(raw: unknown): Pick<ResourceLiveSidecar
 
 /** Read the sidecar as stored. Missing, oversized, symlinked or malformed files read as null. */
 export async function readResourceLiveFile(runsDir: string): Promise<unknown | null> {
+  return readPrivateJson(resourceLivePath(runsDir), MAX_SIDECAR_BYTES);
+}
+
+export async function readResourceHistoryFile(runsDir: string): Promise<unknown | null> {
+  return readPrivateJson(resourceHistoryPath(runsDir), 8 * 1024 * 1024);
+}
+
+async function readPrivateJson(path: string, cap: number): Promise<unknown | null> {
   let handle;
-  try { handle = await open(resourceLivePath(runsDir), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return null; }
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return null; }
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.size > MAX_SIDECAR_BYTES) return null;
+    if (!info.isFile() || info.size > cap) return null;
     return JSON.parse(await handle.readFile('utf8')) as unknown;
   } catch { return null; } finally { await handle.close().catch(() => undefined); }
+}
+
+const historyPointSchema = readingSchema.pick({ unit: true, reset_at: true, source_tier: true }).extend({
+  observed_at: instant, used: z.number().finite().nonnegative(), limit: z.number().finite().nonnegative(),
+  left: amount, source: readingSchema.shape.source.unwrap(), confidence: z.enum(['high', 'medium', 'low']).nullable(),
+});
+export function parseResourceHistory(raw: unknown, nowMs = Date.now()): ResourceHistoryFile {
+  const result: ResourceHistoryFile = { schema: RESOURCE_HISTORY_SCHEMA, allowances: {} };
+  const file = z.object({ schema: z.literal(RESOURCE_HISTORY_SCHEMA), allowances: z.record(z.string(), z.unknown()) }).safeParse(raw);
+  if (!file.success) return result;
+  for (const id of ids) {
+    const rows = file.data.allowances[id];
+    if (!Array.isArray(rows)) continue;
+    const points = rows.flatMap(row => { const p = historyPointSchema.safeParse(row); return p.success ? [p.data] : []; })
+      .filter(p => Date.parse(p.observed_at) >= nowMs - 7 * 24 * 3_600_000 && Date.parse(p.observed_at) <= nowMs)
+      .sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+    const kept = points.filter((p, i) => i === 0 || p.observed_at !== points[i - 1]!.observed_at).slice(-2016);
+    if (kept.length) result.allowances[id] = kept;
+  }
+  return result;
+}
+
+export function appendResourceHistory(raw: unknown, readings: readonly ResourceLiveReading[], nowMs: number): ResourceHistoryFile {
+  const file = parseResourceHistory(raw, nowMs);
+  for (const r of readings) {
+    if (!r.verified || r.used === null || r.limit === null || r.observed_at === null || r.source === null) continue;
+    const points = file.allowances[r.id] ?? [];
+    const last = points.at(-1);
+    const at = Date.parse(r.observed_at);
+    if (at > nowMs || at < nowMs - 7 * 24 * 3_600_000 || (last && at - Date.parse(last.observed_at) < 300_000)) continue;
+    points.push({ observed_at: r.observed_at, used: r.used, left: r.remaining, limit: r.limit, unit: r.unit,
+      reset_at: r.reset_at, source: r.source, source_tier: r.source_tier, confidence: r.confidence });
+    file.allowances[r.id] = points.slice(-2016);
+  }
+  return file;
 }
