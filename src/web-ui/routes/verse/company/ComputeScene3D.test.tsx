@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { evictAll } from '../../../data/cache.js';
 import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
+import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { ComputeScene3D } from './ComputeScene3D.js';
 import { ComputeMap } from './ComputeMap.js';
 import { buildScene, heatColor, makeFrame, pickAgent, project, UNKNOWN_COLOR } from './scene3d-model.js';
@@ -89,6 +90,26 @@ it('does not throw when no canvas context exists', () => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
   expect(() => render(<ComputeScene3D nodes={[node('a', 1)]} jobs={[]} now={NOW} heat yaw={0} tilt={0} zoom={1} selection={null} onSelect={() => {}} onOrbit={() => {}} />)).not.toThrow();
   expect(screen.getByText(/1 nodes/)).toBeInTheDocument();
+});
+
+it('reads selected job identity and message counts from the shared org contract', () => {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  const orgMap = fleetOrgMap(null);
+  orgMap.nodes = [
+    { id: 'leader', kind: 'leader', label: 'Leader', provider: 'unknown', status: 'unknown' },
+    { id: 'job:J1', kind: 'job', jobId: 'J1', label: 'Shared job label', provider: 'openai', status: 'stale' },
+  ];
+  orgMap.edges = [{ id: 'message', kind: 'message', from: 'leader', to: 'job:J1', count: 3 }];
+  orgMap.sources.messages = 'available'; orgMap.messageWindowMinutes = 15; orgMap.unmappedMessages = 0;
+  const props = { nodes: [node('a', 1)], jobs: [job('J1', 'a')], now: NOW, heat: true,
+    yaw: 0, tilt: 0, zoom: 1, selection: 'J1', onSelect: vi.fn(), onOrbit: vi.fn() };
+  const view = render(<ComputeScene3D {...props} orgMap={orgMap} />);
+  expect(screen.getByText('Shared job label · Provider: openai · Org status: stale')).toBeInTheDocument();
+  expect(screen.getByText('Leader → Shared job label · 3 messages')).toBeInTheDocument();
+  expect(screen.getByTestId('scene3d')).toHaveAccessibleName(/1 nodes, 1 agents shown/);
+  view.rerender(<ComputeScene3D {...props} orgMap={null} />);
+  expect(screen.getByText('Org map unknown.')).toBeInTheDocument();
+  expect(screen.getByText('Agent messages unknown.')).toBeInTheDocument();
 });
 
 it('toggles between the 2D machine list and the 3D scene on the same data', async () => {

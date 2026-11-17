@@ -286,10 +286,16 @@ Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
 ### Fleet map
 
 The Fleet screen shows a map of the Leader, reported lanes and active jobs.
-Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
-`/api/verse/fleet/live`: it shows only jobs in that snapshot, and a job with
-an unreported lane appears under an unknown lane. Provider marks are initials;
-the snapshot does not provide logos or the Leader's identity.
+Run `phm fleet map --minutes 60 --json` for the `fleet.map.v2` graph (replaces
+the nested v1 tree). `GET /api/verse/fleet/control/map?minutes=60` serves the same
+contract to the existing 2D/3D views with a current read session; minutes is 1..1440.
+Nodes carry provider text badges; reporting edges point from child to parent.
+Session evidence preserves exact lanes and stale jobs; missing model/provider/health
+is `unknown`. The 2D map opens the existing job detail sheet. The 3D view retains
+machine placement and reads shared job labels and message counts.
+Message edges count retained, unexpired local bus receipts in the window, exclude
+human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately. This is
+not a complete historical ledger. Leader, guardian and channel health remain unknown.
 
 ### Desktop workbench actions (WB-4)
 
