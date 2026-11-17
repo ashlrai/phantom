@@ -20,6 +20,9 @@ FIT = {"burn": {"bulk": 0, "standard": 0, "judgment": 1},
        "balanced": {"bulk": 1, "standard": 1, "judgment": 1},
        "preserve": {"bulk": 2, "standard": 1, "judgment": 0}}
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+# Same expiry as resource-live/types.ts; only these selected CLI models have a free preview.
+DEVIN_PREVIEW_UNTIL = "2026-12-01T05:00:00.000Z"
+DEVIN_PREVIEW = re.compile(r"^swe-2[\w.-]*(?:lightning|flash)(?:[.-][\w.-]+)?$", re.I)
 
 
 def number(value):
@@ -102,6 +105,104 @@ def _epoch(value):
     except (ValueError, OverflowError): return None
 
 
+def read_devin_allowance(home, ashlr_home=None):
+    """Read existing local metadata only. Missing/corrupt accounting never proves zero exposure."""
+    from pathlib import Path
+    def read(path, cap=1024 * 1024):
+        if path.is_symlink() or not path.is_file(): raise ValueError("invalid metadata file")
+        with path.open() as stream:
+            raw = stream.read(cap + 1)
+        if len(raw) > cap: raise ValueError("oversize metadata")
+        value = json.loads(raw)
+        if not isinstance(value, dict): raise ValueError("invalid metadata")
+        return value
+    root = Path(ashlr_home) if ashlr_home and Path(ashlr_home).is_absolute() else Path(home) / ".ashlr"
+    def optional(path):
+        try: return read(path)
+        except (OSError, ValueError): return {}
+    section = optional(Path(home) / ".ashlr/config.json").get("devin", {})
+    if not isinstance(section, dict): section = {}
+    budget = optional(root / "devin/budget.json")
+    weekly = optional(root / "devin/weekly-capacity.json")
+    limit = number(section.get("weeklyAcuAllowance"))
+    if limit is None or limit <= 0: limit = number(budget.get("acuBudgetTotal"))
+    reset = _epoch(section.get("weeklyResetAt"))
+    measured_reset = _epoch(weekly.get("reset_at"))
+    observed = _epoch(weekly.get("observed_at"))
+    # The configured instant is a recurring anchor, but the measured window must still match it.
+    if reset is None or measured_reset is None or observed is None:
+        measured_reset = None
+    elif abs(reset + (math.floor((observed - reset) / 604800) + 1) * 604800 - measured_reset) > 1:
+        measured_reset = None
+    reserved = None
+    def version(path):
+        stat = path.stat()
+        # Reading a task can update atime; only identity/content changes invalidate the inventory.
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+    try:
+        tasks = root / "devin/tasks"
+        names = sorted(tasks.iterdir())
+        if len(names) > 10000 or tasks.is_symlink(): raise ValueError("invalid inventory")
+        total = 0
+        observed_tasks = {}
+        for path in names:
+            if path.suffix != ".json": continue
+            if path.is_symlink(): raise ValueError("invalid task")
+            observed_tasks[path] = version(path)
+            task = read(path)
+            cap = number(task.get("maxAcu"))
+            if cap is None or cap <= 0 or "sessionId" not in task or task.get("state") not in (
+                    "queued", "launching", "running", "blocked", "pr-open", "merged", "closed", "failed", "expired"):
+                raise ValueError("unknown task exposure")
+            session = task.get("session")
+            if isinstance(session, dict) and session.get("status") in ("exit", "error"):
+                settled = _epoch(session.get("readAt"))
+                # A session can finish between publications; keep its cap until a newer usage reading.
+                if observed is None or settled is None or settled > observed: total += cap
+                continue
+            if (task["sessionId"] is not None or task.get("failure") in ("network", "unparsed")
+                    or task["state"] in ("queued", "launching", "running", "blocked")):
+                # Full cap, not a spend reading: it also covers usage since the weekly observation.
+                total += cap
+        if names != sorted(tasks.iterdir()) or any(version(path) != before for path, before in observed_tasks.items()):
+            raise ValueError("inventory changed")
+        reserved = total
+    except (OSError, ValueError): pass
+    return dict(used=number(weekly.get("used")), limit=limit, in_flight=reserved,
+                reserve=number(budget.get("reserveAcu")), session_cap=number(budget.get("maxAcuPerSession")),
+                reset_at=measured_reset, as_of=observed,
+                state=weekly.get("state") if weekly.get("source") == "devin-api-v3-sessions" else None,
+                burn_rate_per_hour=number(weekly.get("burn_rate_per_hour")))
+
+
+def devin_cost(reading, model, running, now):
+    """Included only while a whole session fits. Free CLI previews do not reserve ACUs."""
+    r = reading if isinstance(reading, dict) else {}
+    evidence = {key: number(r.get(key)) for key in ("used", "limit", "in_flight", "reserve", "session_cap")}
+    evidence["headroom"] = None
+    result = dict(cost_class="metered", zero_cost=False, allowance=evidence)
+    preview = isinstance(model, str) and DEVIN_PREVIEW.fullmatch(model)
+    if preview:
+        if number(now) is not None and now < _epoch(DEVIN_PREVIEW_UNTIL):
+            return dict(result, cost_class="included", zero_cost=True, cost_class_reason="devin_free_preview")
+        return dict(result, cost_class_reason="devin_preview_expired")
+    limit, used, reserve, cap, flight = (evidence[k] for k in ("limit", "used", "reserve", "session_cap", "in_flight"))
+    reset, observed = _epoch(r.get("reset_at")), _epoch(r.get("as_of"))
+    if reset is None: reason = "devin_reset_unknown"
+    elif number(now) is None or reset <= now: reason = "devin_reset_expired"
+    elif limit is None or limit <= 0: reason = "devin_allowance_unknown"
+    elif used is None or used < 0: reason = "devin_usage_unknown"
+    elif r.get("state") != "live" or observed is None or not 0 <= now - observed <= 900: reason = "devin_usage_stale"
+    elif flight is None or flight < 0 or reserve is None or reserve < 0 or cap is None or cap <= 0:
+        reason = "devin_reservations_unknown"
+    else:
+        # Include all live dispatcher workers, and re-evaluate after every claim in this tick.
+        evidence["in_flight"] = flight + running * cap
+        evidence["headroom"] = limit - used - evidence["in_flight"] - reserve
+        reason = "devin_within_allowance" if evidence["headroom"] >= cap else "devin_allowance_headroom"
+    return dict(result, cost_class="included" if reason == "devin_within_allowance" else "metered", cost_class_reason=reason)
+
+
 def spend_down(lane, cost_class, reading, now):
     """Project only fresh, measured included-subscription allowance."""
     result = dict(posture=None, reason="spend_down_unknown", projected_unused_pct=None, hours_to_reset=None)
@@ -140,7 +241,7 @@ def hard_down(slot):
             or (slot.get("held") and slot.get("held_reason") == "auth_failure"))
 
 
-def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, adaptive=None, now=None, allowance=None):
+def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, adaptive=None, now=None, allowance=None, tier=None):
     """Use configured executor capabilities; sensitive capabilities require explicit advertisement.
 
     Existing executor contracts supply git/gh/node and their own CLI. Host-owned
@@ -206,15 +307,31 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
             "latency_source": "adaptive_model" if latency_s is not None and latency_s >= 0 else "model_phase" if latency else "session_wall" if wall else None,
         }
         if not isinstance(view[lane]["cost_class"], str): view[lane]["cost_class"] = None
-        projection = spend_down(lane, view[lane]["cost_class"], allowance.get(lane) if isinstance(allowance, dict) else None, now)
+        reading = allowance.get(lane) if isinstance(allowance, dict) else None
+        if lane == "devin":
+            weekly = reading.get("weekly_acu") if isinstance(reading, dict) else None
+            model = models.get("devin." + tier) if tier else None
+            view[lane].update(devin_cost(weekly, model or models.get("devin"), running[lane], now))
+            if isinstance(weekly, dict):
+                limit, used, burn = (number(weekly.get(k)) for k in ("limit", "used", "burn_rate_per_hour"))
+                reading = dict(weekly_used_pct=used / limit * 100 if used is not None and limit is not None and limit > 0 else None,
+                               burn_pct_per_hour=burn / limit * 100 if burn is not None and limit is not None and limit > 0 else None,
+                               reset_at=weekly.get("reset_at"), as_of=weekly.get("as_of"))
+        projection = spend_down(lane, view[lane]["cost_class"], reading, now)
         until = _epoch(slot.get("free_until"))
         reason = projection["reason"]
-        if until is not None and number(now) is not None and now < until:
+        if lane == "devin" and view[lane]["zero_cost"]:
+            view[lane]["posture"], reason = "burn", "devin_free_preview"
+        elif lane == "devin" and view[lane]["cost_class"] == "metered":
+            view[lane]["posture"], reason = "balanced", view[lane]["cost_class_reason"]
+        elif until is not None and number(now) is not None and now < until:
             reason = "free_until"
         elif slot.get("posture") in POSTURES:
             reason = "host_declared"
         elif projection["posture"] is not None:
             view[lane]["posture"] = projection["posture"]
+        if view[lane]["cost_class"] == "metered" and view[lane]["posture"] == "burn":
+            view[lane]["posture"], reason = "balanced", "spend_down_not_subscription"
         view[lane].update(posture_reason=reason, spend_down=projection)
         if not valid_caps: view[lane]["unavailable"] = "invalid_capability_advertisement"
     return view
@@ -271,6 +388,7 @@ def choose(job, spec, tier, view, record, now, decide):
               "rejected_lanes": rejected, "reason_codes": [],
               "ranking_inputs": {lane: dict({key: v[key] for key in ("running", "target", "quota", "empty_rate", "yield_rate", "cost_class", "latency_s", "latency_source")},
                                             posture=v.get("posture", "balanced"), posture_reason=v.get("posture_reason"),
+                                            **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v},
                                             spend_down=v.get("spend_down"), fit=fit[lane]) for lane, v in view.items()}}
     # Hint-only records preserve old external-proposal diagnostics without making
     # the preference a routing commitment before the first runnable assignment.

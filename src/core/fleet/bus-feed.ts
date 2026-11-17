@@ -8,7 +8,7 @@ import { scrubSecrets } from '../util/scrub.js';
 export const VERSE_FLEET_LIVE_BUS_PATH = '/api/verse/fleet/live/bus';
 export type BusFeedSourceState = 'healthy' | 'missing' | 'degraded';
 export interface BusFeedHop { id: string; from: string; to: string; inputTokens: number | null; outputTokens: number | null }
-export type BusFeedEventKind = 'inbox' | 'orch' | 'incident' | 'lane-hold' | 'launch' | 'published' | 'other';
+export type BusFeedEventKind = 'inbox' | 'orch' | 'incident' | 'lane-hold' | 'launch' | 'published' | 'blocked' | 'other';
 export interface BusFeedEvent { at: string; atIso?: string; kind: BusFeedEventKind; text: string }
 export interface FleetBusFeedV1 {
   v: 1;
@@ -57,7 +57,7 @@ export function parseDispatchEvents(text: string): BusFeedEvent[] {
     const atIso = `${timestamp}${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
     const token = match[2];
     const kinds: Record<string, BusFeedEventKind> = { INBOX: 'inbox', INCIDENT: 'incident',
-      LANE_HOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published' };
+      LANE_HOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published', PARKED: 'blocked' };
     const kind = token.startsWith('ORCH-') ? 'orch' : (Object.hasOwn(kinds, token) ? kinds[token] : 'other');
     // Some historical offsets contain seconds and cannot be represented by an ISO minute offset.
     events.push({ at: scrubSecrets(match[1]), ...(Date.parse(atIso) === parsed.getTime() ? { atIso } : {}),

@@ -5,9 +5,9 @@ import { WorklogView } from './WorklogView.js';
 vi.mock('../../../data/client.js', () => ({ apiGet: vi.fn(async (path: string) => {
   if (path !== '/api/worklog') throw new Error('Unexpected path');
   return { malformedLines: 0, entries: [
-    { job: 'J1', repo: 'phantom', lane: 'work', model: 'm', mergedAt: '2026-11-09', openToMergeSeconds: 60, url: null },
-    { job: 'J2', repo: 'locus', lane: 'work', model: 'm', mergedAt: '2026-11-09', openToMergeSeconds: 120, url: null },
-    { job: 'J3', repo: 'phantom', lane: 'fast', model: null, mergedAt: '2026-11-09', openToMergeSeconds: null, url: null },
+    { job: 'J1', repo: 'phantom', lane: 'work', model: 'm', kind: 'merged', at: '2026-11-09', mergedAt: '2026-11-09', openToMergeSeconds: 60, url: null },
+    { job: 'J2', repo: 'locus', lane: 'work', model: 'm', kind: 'merged', at: '2026-11-09', mergedAt: '2026-11-09', openToMergeSeconds: 120, url: null },
+    { job: 'J3', repo: 'phantom', lane: 'fast', model: null, kind: 'merged', at: '2026-11-09', mergedAt: '2026-11-09', openToMergeSeconds: null, url: null },
   ] };
 }) }));
 

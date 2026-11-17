@@ -24,6 +24,54 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def devin_view(self, reading=None, model='swe-2-high', running=0, now=10000, **slot):
+        weekly = dict(used=20, limit=100, in_flight=10, reserve=10, session_cap=10,
+                      reset_at=13600, as_of=10000, burn_rate_per_hour=0, state='live')
+        weekly.update(reading or {})
+        return market.lane_view(['devin'], {'devin': slot}, {'devin': running}, {'devin': 4},
+                                set(), {'devin': model}, {}, [], now=now,
+                                allowance={'devin': {'weekly_acu': weekly}})
+
+    def test_devin_allowance_bounds_and_unknowns(self):
+        entry = self.devin_view()['devin']
+        self.assertEqual((entry['cost_class'], entry['posture']), ('included', 'burn'))
+        self.assertEqual(entry['cost_class_reason'], 'devin_within_allowance')
+        for reading, reason in [({'used': 80}, 'devin_allowance_headroom'),
+                                ({'used': 71}, 'devin_allowance_headroom'),
+                                ({'used': None}, 'devin_usage_unknown'),
+                                ({'reset_at': 10000}, 'devin_reset_expired'),
+                                ({'reset_at': None}, 'devin_reset_unknown'),
+                                ({'limit': None}, 'devin_allowance_unknown'),
+                                ({'in_flight': None}, 'devin_reservations_unknown'),
+                                ({'as_of': 9000}, 'devin_usage_stale')]:
+            with self.subTest(reading=reading):
+                entry = self.devin_view(reading, posture='burn', cost_class='included')['devin']
+                self.assertEqual((entry['cost_class'], entry['posture']), ('metered', 'balanced'))
+                self.assertEqual(entry['cost_class_reason'], reason)
+        self.assertEqual(self.devin_view({'used': 70})['devin']['cost_class'], 'included')
+        self.assertEqual(self.devin_view({'used': 70}, running=1)['devin']['cost_class'], 'metered')
+        self.assertIsNone(self.devin_view({'used': None})['devin']['allowance']['used'])
+
+    def test_devin_preview_is_zero_cost_only_until_expiry(self):
+        for model in ('swe-2-lightning', 'swe-2-flash'):
+            entry = self.devin_view({'used': None}, model=model, now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['posture']), ('included', 'burn'))
+            self.assertTrue(entry['zero_cost'])
+            self.assertEqual(entry['cost_class_reason'], 'devin_free_preview')
+            self.assertEqual(self.choose(lanes={'devin': entry})[0]['ranking_inputs']['devin']['cost_class_reason'],
+                             'devin_free_preview')
+        expired = market.lane_view(['devin'], {'devin': {'free_until': 1e12, 'posture': 'burn'}},
+                                  {'devin': 0}, {'devin': 2}, set(), {'devin': 'swe-2-flash'}, {}, [],
+                                  now=1796101200)['devin']
+        self.assertEqual((expired['cost_class'], expired['posture']), ('metered', 'balanced'))
+        self.assertEqual(expired['cost_class_reason'], 'devin_preview_expired')
+        self.assertEqual(self.devin_view(model='swe-2-high')['devin']['zero_cost'], False)
+
+    def test_metered_api_cannot_burn_from_host_posture(self):
+        entry = market.lane_view(['claude-api'], {'claude-api': {'posture': 'burn'}},
+                                 {'claude-api': 0}, {'claude-api': 2}, set(), {}, {}, [], now=10000)['claude-api']
+        self.assertEqual(entry['posture'], 'balanced')
+
     def test_spend_down_projection_and_precedence(self):
         reading = dict(weekly_used_pct=20, burn_pct_per_hour=0, reset_at=13600, as_of=10000)
         def lanes(reading, **slot):
@@ -261,6 +309,102 @@ class MarketTick(unittest.TestCase):
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def devin_accounting(self, home, used=20):
+        now = time.time()
+        root = home / '.ashlr'
+        (root / 'devin/tasks').mkdir(parents=True)
+        (root / 'config.json').write_text(json.dumps({'devin': {
+            'weeklyAcuAllowance': 50, 'weeklyResetAt': now + 3600}}))
+        (root / 'devin/budget.json').write_text(json.dumps({
+            'acuBudgetTotal': 40, 'reserveAcu': 10, 'maxAcuPerSession': 10}))
+        (root / 'devin/weekly-capacity.json').write_text(json.dumps({
+            'used': used, 'reset_at': now + 3600, 'observed_at': now, 'state': 'live',
+            'source': 'devin-api-v3-sessions', 'burn_rate_per_hour': 0}))
+        (home / '.ashlr-runs/models.json').write_text('{"devin":"swe-2-high"}')
+        return root
+
+    def test_devin_reader_uses_budget_fallback_and_keeps_missing_usage_null(self):
+        home, q = self.fixture({'devin': 3})
+        root = self.devin_accounting(home, used=None)
+        section = json.loads((root / 'config.json').read_text())
+        section['devin'].pop('weeklyAcuAllowance')
+        (root / 'config.json').write_text(json.dumps(section))
+        reading = market.read_devin_allowance(home)
+        self.assertIsNone(reading['used'])
+        self.assertEqual((reading['limit'], reading['in_flight']), (40, 0))
+        (root / 'devin/tasks/session.json').write_text(json.dumps({
+            'maxAcu': 10, 'sessionId': 'session', 'state': 'closed', 'session': {'status': 'suspended'}}))
+        self.assertEqual(market.read_devin_allowance(home)['in_flight'], 10)
+        (root / 'devin/tasks/broken.json').write_text('{')
+        self.assertIsNone(market.read_devin_allowance(home)['in_flight'])
+        (root / 'config.json').write_text('{}')
+        self.assertIsNone(market.read_devin_allowance(home)['reset_at'])
+
+    def test_devin_reserves_every_claim_before_the_next_cost_decision(self):
+        home, q = self.fixture({'devin': 3})
+        self.devin_accounting(home, used=30)
+        for i in range(2):
+            self.add(home, f'RQ-ALLOWANCE-{i}', lane='devin', max_cost_class='included')
+        self.run_tick(home)
+        routes = [r for r in self.rows(home) if r['event'] == 'route_decision']
+        self.assertEqual([r['chosen_lane'] for r in routes], ['devin', None])
+        first, second = [r['ranking_inputs']['devin'] for r in routes]
+        self.assertEqual((first['cost_class'], first['posture']), ('included', 'burn'))
+        self.assertEqual((second['cost_class'], second['posture']), ('metered', 'balanced'))
+        self.assertEqual(second['cost_class_reason'], 'devin_allowance_headroom')
+        self.assertEqual(second['allowance']['in_flight'], 10)
+        self.assertEqual(sum(dispatched(home, f'RQ-ALLOWANCE-{i}') for i in range(2)), 1)
+        snapshot = next(r for r in self.rows(home) if r['event'] == 'posture')['lanes']['devin']
+        self.assertEqual(snapshot['cost_class_reason'], 'devin_within_allowance')
+
+    def test_devin_reader_uses_relocated_inventory_and_waits_for_settled_usage(self):
+        home, q = self.fixture({'devin': 1})
+        root = self.devin_accounting(home)
+        relocated = home / 'relocated'
+        relocated.mkdir()
+        (root / 'devin').rename(relocated / 'devin')
+        observed = json.loads((relocated / 'devin/weekly-capacity.json').read_text())['observed_at']
+        task = relocated / 'devin/tasks/session.json'
+        row = {'maxAcu': 10, 'sessionId': 'session', 'state': 'closed',
+               'session': {'status': 'exit', 'readAt': observed + 1}}
+        task.write_text(json.dumps(row))
+        reading = market.read_devin_allowance(home, str(relocated))
+        self.assertEqual((reading['limit'], reading['in_flight']), (50, 10))
+        row['session']['readAt'] = observed - 1
+        task.write_text(json.dumps(row))
+        self.assertEqual(market.read_devin_allowance(home, str(relocated))['in_flight'], 0)
+        config = json.loads((root / 'config.json').read_text())
+        # weeklyResetAt is a recurring anchor, as in the TypeScript weekly reader.
+        config['devin']['weeklyResetAt'] -= 604800
+        (root / 'config.json').write_text(json.dumps(config))
+        self.assertIsNotNone(market.read_devin_allowance(home, str(relocated))['reset_at'])
+        config['devin']['weeklyResetAt'] += 100
+        (root / 'config.json').write_text(json.dumps(config))
+        self.assertIsNone(market.read_devin_allowance(home, str(relocated))['reset_at'])
+
+    def test_devin_metered_cannot_be_promoted_by_waste_risk(self):
+        home, q = self.fixture({'devin': 1})
+        self.devin_accounting(home, used=None)
+        (home / '.ashlr-runs/bin/use-it-all.py').write_text(
+            'import json, time\nprint(json.dumps({"schema":"use-it-all.v1", "ts":int(time.time()),'
+            '"lanes":{"devin":{"known":True,"stale":False,"waste_risk":"high","behind":True}}}))\n')
+        self.add(home, 'RQ-UNKNOWN-USAGE', lane='devin', max_cost_class='included')
+        self.run_tick(home)
+        route = next(r for r in self.rows(home) if r['event'] == 'route_decision')
+        self.assertIsNone(route['chosen_lane'])
+        self.assertEqual(route['ranking_inputs']['devin']['posture'], 'balanced')
+        self.assertEqual(route['ranking_inputs']['devin']['cost_class_reason'], 'devin_usage_unknown')
+
+    def test_devin_preview_cost_uses_the_actual_job_tier_model(self):
+        home, q = self.fixture({'devin': 1})
+        self.devin_accounting(home, used=None)
+        (home / '.ashlr-runs/models.json').write_text('{"devin":"swe-2-flash","devin.work":"swe-2-high"}')
+        self.add(home, 'RQ-PAID-TIER', lane='devin', max_cost_class='included')
+        self.run_tick(home)
+        route = next(r for r in self.rows(home) if r['event'] == 'route_decision')
+        self.assertIsNone(route['chosen_lane'])
+        self.assertFalse(route['ranking_inputs']['devin']['zero_cost'])
 
     def test_measured_allowance_changes_tick_posture_and_receipt(self):
         home, q = self.fixture()
