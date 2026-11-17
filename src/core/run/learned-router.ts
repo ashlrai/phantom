@@ -204,7 +204,7 @@ export function codexArmPriors(
 
 /** Default model only; availability, quota, local-only and config remain caller gates. */
 export function codexModelForTier(tier: ModelRoutingTier): string {
-  return codexArmPriors(tier)[0]!.model;
+  return tier === 'frontier' ? CODEX_ASTRA_MODEL_ID : DEFAULT_CODEX_MODEL_ID;
 }
 
 
