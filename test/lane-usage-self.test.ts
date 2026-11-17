@@ -145,6 +145,24 @@ describe('autopilot consumption', () => {
 });
 
 describe('runSelfRefresh', () => {
+  it('publishes scope from the quota file and clears it on an unscoped re-read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'usage-self-scope-'));
+    mkdirSync(join(dir, 'queue')); mkdirSync(join(dir, 'metrics'));
+    const quotaPath = join(dir, 'metrics', 'claude-quota.json');
+    const quota = { v: 1, observedAt: new Date(T0).toISOString(), reason: 'ok', fresh: true,
+      windows: [{ id: 'seven_day', usedPct: 40, resetAt: new Date(T0 + 86_400_000).toISOString() }] };
+    const opts = { runsDir: dir, nowMs: () => T0, lanes: ['claude'] as const };
+    writeFileSync(quotaPath, JSON.stringify({ ...quota, accountId: 'claude:0123456789abcdef' }));
+    await runSelfRefresh(opts);
+    const path = join(dir, 'queue', 'budget-overrides.json');
+    expect(JSON.parse(readFileSync(path, 'utf8')).claude.account_id).toBe('claude:0123456789abcdef');
+    writeFileSync(quotaPath, JSON.stringify(quota));
+    await runSelfRefresh({ ...opts, nowMs: () => T0 + 31 * 60_000 });
+    expect(JSON.parse(readFileSync(path, 'utf8')).claude).not.toHaveProperty('account_id');
+    const result = await refreshLanes({ overrides: { claude: { account_id: 'claude:0123456789abcdef' } }, state: {}, rows: [],
+      nowMs: T0, lanes: ['claude'], readers: { claude: async () => { throw new Error('fixture'); } } });
+    expect(result.overrides.claude).not.toHaveProperty('account_id');
+  });
   it('writes budget-overrides.json atomically, keeping other keys, and honours dry-run', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'usage-self-'));
     mkdirSync(join(dir, 'queue')); mkdirSync(join(dir, 'metrics'));
