@@ -39,7 +39,7 @@ export interface AgentCommandDoc {
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm release notes [--since <tag>] [--json] [--write]', description: 'Draft local mainline release notes. --write updates only the generated Unreleased changelog block. Exit 0 success, 1 unavailable history/write failure, 2 usage.', safety: 'append', jsonShape: 'phantom.release-notes.v1 {since,head,summary,groups:{New,Improved,Fixed,Internal}}; entries: {text,prs,commits}' },
-  { usage: 'phm worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', description: 'Read job launches, finishes and merges, newest first. Exit 0 report, 1 unreadable ledger, 2 bad usage.', safety: 'read', jsonShape: 'worklog.v2 {entries:[{kind,at,job,repo,lane,model,mergedAt,openToMergeSeconds,url}],malformedLines}' },
+  { usage: 'phm worklog [--hours 6] [--kind merged|launched|finished|empty|leader|incident] [--repo <repo>] [--lane <lane>] [--json]', description: 'One feed of what the fleet did, newest first: merges, launches, finishes, empty jobs, leader replies and incidents, one plain-words line each. An unreadable source is reported as unknown with a reason. Exit 0 report, 1 read failure, 2 bad usage.', safety: 'read', jsonShape: 'worklog.v3 {hours,rows:[{at,kind,job,lane,repo,text,url,count}],sources:{jobs,events,leader:{state,reason?}},entries:[{kind,at,job,repo,lane,model,mergedAt,openToMergeSeconds,url}],malformedLines}' },
   { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
   { usage: 'phm fleet vitals [--runs-dir <directory>] [--json]', description: 'Read first-minute launch process and sampled CPU costs, plus the top three causes of empty jobs in 24 hours. Missing or incomplete evidence stays unknown or partial; no launches or writes.', safety: 'read', jsonShape: 'fleet.vitals.v1 {status,disk,launch,launchCost:{source,state,launches},emptyCauses:{total,top},stuck:{count,oldestAgeSeconds}}' },
   { usage: 'phm app restart --json', description: 'Report held restart: UI-owned sessions, PTYs and computer-use workers require runtime migration. Does not restart or replace the app. Exit 1 held, 2 usage.', safety: 'read', jsonShape: '{schema: phantom-app-restart/v1, state: held, restarted: false, reason, blockers}' },
@@ -123,6 +123,8 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'ashlr router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', description: 'Rank eligible lanes by forecast exhaustion, then nearest reset; missing slots or budgets exclude a lane. No dispatch or state writes.', safety: 'read', jsonShape: '{ schema: fleet.lane-rank.v1, tier, lanes: RankedLane[] }' },
   { usage: 'phm router pick --model auto|<lane:model> [--task T] [--difficulty D] [--json]', description: 'Show which seats a routed call would try, in order, and why. Calls no model and writes no decision log. Exit 0 routable, 1 no route, 2 bad request.', safety: 'read', jsonShape: 'RouterPlan {schema:"router.plan.v1", ok, steps[], ruledOut[], decision, reason}' },
   { usage: 'phm run --model auto|<lane:model> "<prompt>" [--json]', description: 'One routed completion through the router gateway. Spends included usage of the chosen seat. Exit 0 answered, 1 no route or every seat failed, 2 bad request.', safety: 'append', jsonShape: 'RoutedCompletionResult {schema:"router.completion.v1", ok, text|reason, seatId, model, attempts[]}' },
+  { usage: 'phm router catalog refresh [--json] [--apply] [--include-seats] [--out-dir DIR]', description: 'Discover models and write review-only report and patch; apply explicitly.', safety: 'append', jsonShape: '{schema:"router.catalog-refresh.v1", additions, unseen, unknown}' },
+  { usage: 'phm router catalog schedule [--install] [--hour 0-23]', description: 'Print or install weekly review-only catalog refresh user units.', safety: 'append', jsonShape: 'Human-readable user service units; no JSON mode.' },
   { usage: 'phm router serve [--port N] [--json]', description: 'Start the loopback-only OpenAI-compatible endpoint (127.0.0.1; bearer token in ~/.ashlr/router/token). Runs until stopped.', safety: 'append', jsonShape: '{schema:"router.gateway.v1", url, port, config, tokenFile}' },
   { usage: 'phm router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', description: 'Compare recorded router predictions with matched outcomes and usage offline.', safety: 'read', jsonShape: 'CalibrationReport (schemaVersion 1)' },
   {
@@ -211,12 +213,19 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   },
   { usage: 'phm jobs retry-empty --dry-run|--apply [--file <router-queue.md>] [--json]', description: 'Preview or queue one scoped retry per eligible empty job.', safety: 'append', jsonShape: 'jobs.retry-empty.v1 {applied,lines}' },
   { usage: 'phm empties [--since 24h] [--text] [--metrics <file>] [--runs-dir <directory>] [--notes-dir <directory>]', description: 'Why jobs finished with no change, grouped by reason, with share of all finishes, tokens, the lanes and job families most affected and one next step each. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'empties.v1 {since_hours,metrics_path,metrics,finishes,empties,empty_share,tokens,tokens_unknown_jobs,malformed_lines,notes_missing,top_families:[{name,count}],reasons:[{reason,label,count,share_of_finishes,tokens,tokens_unknown_jobs,lanes,prefixes,examples,next_step}]}' },
+  { usage: 'phm throughput [--hours 24] [--by lane|repo|tier] [--text] [--metrics <file>] [--runs-dir <directory>]', description: 'What the fleet produced hour by hour: jobs launched, PRs published, PRs merged, empty jobs and the median publish-to-merge time, with totals, a headline and whether main is green. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'throughput.v1 {as_of,since,hours,by,metrics_path,metrics,malformed_lines,main,headline,totals,buckets:[{start,launched,published,merged,finished,empty,empty_rate,median_publish_to_merge_s,merge_time_unknown}],groups:[{name,totals,buckets}]}' },
   { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
     usage: 'phm metrics ingest --jobs <jobs.jsonl> --status <status.json> [--json]',
     description: 'Read local job snapshots into deterministic lane and tier metrics and advisory priors. No network, writes or operational steering.',
     safety: 'read',
     jsonShape: 'MetricsFeed (schemaVersion 1); unknown measurements are null; refused input exits 2',
+  },
+  {
+    usage: 'phm nodes [--json] [--can-take <lane>]',
+    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, CPU headroom, lanes, running jobs and a plain-words state. --can-take lists the computers able to take a job for that lane now. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
+    safety: 'read',
+    jsonShape: '{schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,phantom,freeMemoryBytes,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?}',
   },
   {
     usage: 'phm node bootstrap --dry-run [--json]',
@@ -850,6 +859,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
   { cmd: 'empties [--since 24h] [--text]', desc: 'Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.', topic: 'observability' },
+  { cmd: 'throughput [--hours 24] [--by lane|repo|tier] [--text]', desc: 'Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.', topic: 'observability' },
   { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
@@ -974,7 +984,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
   { cmd: 'prs triage [--repo ashlrai/<name>] [--limit N] --json', desc: 'Read-only classification of open pull requests.', topic: 'autonomy' },
-  { cmd: 'worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', desc: 'Show job launches, finishes and merges from the jobs ledger.', topic: 'observability' },
+  { cmd: 'worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]', desc: 'One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.', topic: 'observability' },
   { cmd: 'library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]', desc: 'Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.', topic: 'observability' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
   { cmd: 'graph status --fleet <file> [--seats <file>] [--json]',        desc: 'Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.', topic: 'autonomy' },
@@ -1188,6 +1198,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
   { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
   { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
+  { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },

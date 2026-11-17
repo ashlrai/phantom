@@ -8,7 +8,7 @@
  * null (JSON) or "unknown" (text), never zero.
  */
 import { join } from 'node:path';
-import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerRows, readText, type EmptyCause, type EmptyEvidence } from './empty-cause.js';
+import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerRows, readText, type EmptyCause, type EmptyEvidence, type LedgerRow } from './empty-cause.js';
 import { REASON_LINE, TIMEOUT_EXITS } from './lane-empty-causes.js';
 
 export const EMPTY_REASONS = ['already_on_master', 'no_eligible_target', 'no_diff', 'blocked_tool', 'tool_missing', 'precheck_skip', 'timeout', 'model_error', 'unknown'] as const;
@@ -35,11 +35,11 @@ export interface EmptiesFinish {
 const SKIP_EVENTS = new Set(['precheck_skip', 'skipped_empty']);
 const whole = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 
-/** Pure: every job that finished in the window, newest row per job. */
-export function ledgerFinishes(ledger: string, now: number, hours: number): { finishes: EmptiesFinish[]; malformed: number } {
-  const { rows, malformed } = ledgerRows(ledger, now, hours);
+/** Pure: the newest finish per job among rows already read, with its time. Shared with `phm throughput`. */
+export function finishesIn(rows: readonly LedgerRow[]): (EmptiesFinish & { at: number })[] {
   const newest = new Map<string, EmptiesFinish & { at: number }>();
   for (const { row, id, lane, at } of rows) {
+    if (!id) continue;
     // `applied: false` is the skip gate's dry run: the job still launched, so only its finish row counts.
     const skipped = SKIP_EVENTS.has(row.event as string) && row.applied !== false;
     const marked = [row.event, row.outcome, row.state].includes('EMPTY_DONE');
@@ -57,7 +57,13 @@ export function ledgerFinishes(ledger: string, now: number, hours: number): { fi
       poolError: (typeof row.pool_error === 'string' && row.pool_error !== '') || (prior?.poolError ?? false),
     });
   }
-  return { finishes: [...newest.values()].map(({ at: _at, ...finish }) => finish), malformed };
+  return [...newest.values()];
+}
+
+/** Pure: every job that finished in the window, newest row per job. */
+export function ledgerFinishes(ledger: string, now: number, hours: number): { finishes: EmptiesFinish[]; malformed: number } {
+  const { rows, malformed } = ledgerRows(ledger, now, hours);
+  return { finishes: finishesIn(rows).map(({ at: _at, ...finish }) => finish), malformed };
 }
 
 // The agent's own EMPTY_REASON line (the launcher asks for one) is the best evidence.

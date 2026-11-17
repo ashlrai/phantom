@@ -2006,14 +2006,19 @@ export async function handleApi(
       return true;
     }
 
+    // One work log for the CLI and the desktop: /api/worklog?hours=6&kind=merged&repo=&lane= (since=6h still works).
     if (path === '/api/worklog' && method === 'GET') {
-      const { readWorklog, filterWorklog, worklogHours } = await import('../fleet/worklog.js');
+      const { readWorklog, filterWorklog, worklogHours, WORKLOG_KINDS } = await import('../fleet/worklog.js');
+      const param = (name: string) => getQueryParam(req.url ?? '', name);
+      const kind = param('kind');
       let hours: number;
-      try { hours = worklogHours(getQueryParam(req.url ?? '', 'since')); }
-      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 1h.' }); return true; }
+      try { hours = worklogHours(param('hours') ?? param('since')); }
+      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 6.' }); return true; }
+      if (kind && !(WORKLOG_KINDS as readonly string[]).includes(kind)) { sendJson(res, 400, { error: `Use one kind: ${WORKLOG_KINDS.join(', ')}.` }); return true; }
       try {
         const report = await readWorklog(hours);
-        report.entries = filterWorklog(report.entries, getQueryParam(req.url ?? '', 'repo'), getQueryParam(req.url ?? '', 'lane'));
+        report.rows = filterWorklog(report.rows, param('repo'), param('lane'), kind);
+        report.entries = filterWorklog(report.entries, param('repo'), param('lane'));
         sendJson(res, 200, report);
       }
       catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }

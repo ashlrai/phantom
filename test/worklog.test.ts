@@ -63,8 +63,10 @@ describe('work log', () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdWorklog([], async () => worklog('', 0, now))).toBe(0);
-    expect(output).toHaveBeenCalledWith('No work events match these filters.');
+    expect(output).toHaveBeenCalledWith('No work recorded in the last 6 hours.');
+    expect(await cmdWorklog(['--lane', 'none'], async () => worklog('', 0, now))).toBe(0);
+    expect(output).toHaveBeenLastCalledWith('No work events match these filters.');
     expect(await cmdWorklog(['--json'], async () => { throw new Error('private path'); })).toBe(1);
-    expect(error).toHaveBeenCalledWith('Unable to read jobs ledger.');
+    expect(error).toHaveBeenCalledWith('Unable to read the work log.');
   });
 });

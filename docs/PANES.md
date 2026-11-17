@@ -37,6 +37,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-steering` | Steering | — | `src/web-ui/routes/verse/fleet-steering/fleet-steering.pane.tsx` |
 | `fleet-steer` | Steer | none | `src/web-ui/routes/verse/fleet-steer/fleet-steer.pane.tsx` |
 | `fleet-supply` | Supply | `mod+alt+u` | `src/web-ui/routes/verse/fleet-supply/fleet-supply.pane.tsx` |
+| `fleet-throughput` | Throughput | — | `src/web-ui/routes/verse/fleet-throughput/fleet-throughput.pane.tsx` |
 | `fleet-timeline` | Worker timeline | `mod+alt+t` | `src/web-ui/routes/verse/fleet-timeline/fleet-timeline.pane.tsx` |
 | `fleet-usage` | Usage | — | `src/web-ui/routes/verse/fleet-usage/fleet-usage.pane.tsx` |
 | `goals` | Goals | — | `src/web-ui/routes/verse/goals-pane/goals.pane.tsx` |
