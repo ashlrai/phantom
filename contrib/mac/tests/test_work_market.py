@@ -11,6 +11,8 @@ sys.path.insert(0, str(MAC))
 import work_market as market
 from test_dispatchd import build, tick, queue_job, launch_stubs, held_lanes, dispatched
 
+CAPABILITY_PROMPTS = json.loads((MAC.parents[1] / 'test/fixtures/lane-capabilities/prompts.json').read_text())
+
 node = next(n for n in ast.parse((MAC / 'dispatchd.py').read_text()).body
             if isinstance(n, ast.FunctionDef) and n.name == 'route_decision')
 scope = {}
@@ -24,6 +26,26 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def test_producer_infers_gh_without_losing_declared_requirements(self):
+        for job, prompt in CAPABILITY_PROMPTS['c499'].items():
+            with self.subTest(job=job):
+                spec = market.from_envelope('pool=claude, needs=git, max_cost_class=included', prompt)
+                self.assertEqual(spec['needs'], ['git', 'gh'])
+                self.assertEqual(spec['preferred_lane'], 'claude')
+                self.assertEqual(spec['max_cost_class'], 'included')
+        for prompt in [*CAPABILITY_PROMPTS['pureCode'].values(),
+                       'Never run gh pr merge. Rename a helper.',
+                       'Recut the local patch; inspect fixtures/failed-run.log offline.']:
+            with self.subTest(prompt=prompt[:40]):
+                self.assertEqual(market.from_envelope('pool=claude', prompt)['needs'], [])
+        self.assertEqual(market.from_envelope('needs=gh', 'Run gh pr diff 12')['needs'], ['gh'])
+
+    def test_claude_gh_requires_explicit_host_advertisement(self):
+        self.assertNotIn('gh', view()['claude']['capabilities'])
+        self.assertIn('gh', view()['codex-personal']['capabilities'])
+        lanes = view(claude={'capabilities': ['git', 'gh', 'node']})
+        self.assertEqual(self.choose({'preferred_lane': 'claude', 'needs': ['gh']}, lanes)[0]['chosen_lane'], 'claude')
+
     def devin_view(self, reading=None, model='swe-2-high', running=0, now=10000, **slot):
         weekly = dict(used=20, limit=100, in_flight=10, reserve=10, session_cap=10,
                       reset_at=13600, as_of=10000, burn_rate_per_hour=0, state='live')
@@ -548,6 +570,58 @@ class MarketTick(unittest.TestCase):
         self.run_tick(home)
         self.assertEqual(self.rows(home)[0]['chosen_lane'], 'claude')
         self.assertTrue(dispatched(home, 'RQ-RESTOCK'))
+
+    def test_restock_routes_gh_repairs_to_capable_lane_through_dispatch(self):
+        from test_restock import restock, line
+        for job, prompt in CAPABILITY_PROMPTS['c499'].items():
+            with self.subTest(job=job):
+                home, q = self.fixture()
+                (q / 'admission.json').write_text(json.dumps({'cap': 100}))
+                (q / 'router-queue.md').write_text(line(job, pool='claude', tier='frontier', repo='phantom',
+                    text=prompt.split('Task from the Ashlr router queue, verbatim:\n\n')[1].split('\n\nRules:')[0]) + '\n')
+                result = restock(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                fields = (q / 'ready.tsv').read_text().strip().split('\t')
+                self.assertEqual(fields[2], 'codex-personal')
+                self.assertEqual(json.loads(fields[5])['needs'], ['gh'])
+                self.run_tick(home)
+                route = next(r for r in self.rows(home) if r['event'] == 'route_decision')
+                self.assertEqual(route['chosen_lane'], 'codex-personal')
+                self.assertIn('missing_capability', next(r for r in route['rejected_lanes'] if r['lane'] == 'claude')['reason_codes'])
+                self.assertTrue(dispatched(home, job))
+
+    def test_restock_waits_for_gh_capacity_but_keeps_ordinary_claude_work(self):
+        from test_restock import restock, line
+        home, q = self.fixture({'claude': 2})
+        (q / 'admission.json').write_text(json.dumps({'cap': 100}))
+        (q / 'router-queue.md').write_text('\n'.join([
+            line('RQ-PHX-REDWAIT', pool='claude', tier='frontier', repo='phantom', text='Run gh run view 7 --log-failed.'),
+            line('RQ-PHX-ORDINARY', pool='claude', tier='frontier', repo='phantom', text='Rename a helper. Never run gh pr merge.'),
+        ]) + '\n')
+        result = restock(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = (q / 'ready.tsv').read_text().strip().split('\t')
+        self.assertEqual((fields[0], fields[2], json.loads(fields[5])['needs']), ('RQ-PHX-ORDINARY', 'claude', []))
+        self.assertIn('- READY RQ-PHX-REDWAIT', (q / 'router-queue.md').read_text())
+        self.run_tick(home)
+        self.assertTrue(dispatched(home, 'RQ-PHX-ORDINARY'))
+        self.assertFalse(dispatched(home, 'RQ-PHX-REDWAIT'))
+
+    def test_deferred_repair_keeps_requirements_when_unparked(self):
+        from test_restock import restock
+        home, q = self.fixture()
+        (q / 'admission.json').write_text(json.dumps({'cap': 100}))
+        (q / 'router-queue.md').write_text('- READY RQ-PHX-RECUTDEFER (pool=claude, tier=frontier, repo=phantom, after RQ-UPSTREAM, needs=git, max_cost_class=included): Run gh pr diff 12.\n')
+        self.assertEqual(restock(home).returncode, 0)
+        self.assertIn('PARKED-DEP.claude', (q / 'ready.tsv').read_text())
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(json.dumps({'job': 'RQ-UPSTREAM', 'event': 'outcome', 'state': 'MERGED'}) + '\n')
+        self.assertEqual(restock(home).returncode, 0)
+        spec = json.loads((q / 'ready.tsv').read_text().strip().split('\t')[5])
+        self.assertEqual(spec['needs'], ['git', 'gh'])
+        self.assertEqual(spec['max_cost_class'], 'included')
+        self.run_tick(home)
+        self.assertTrue(dispatched(home, 'RQ-PHX-RECUTDEFER'))
+        self.assertEqual(next(r for r in self.jobs(home) if r['event'] == 'claim')['lane'], 'codex-personal')
 
     def test_advertised_executor_joins_without_a_new_lane_constant(self):
         home, q = self.fixture({'cursor': 1})
