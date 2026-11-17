@@ -1,7 +1,8 @@
+import { useEffect, useReducer } from 'react';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { returnsQuery } from './returns-query.js';
-import { returnsHeadline, type ParsedReturns } from './returns-model.js';
+import { returnsHeadline, returnTemporal, type ParsedReturns } from './returns-model.js';
 import styles from './fleet-board.module.css';
 
 function age(at: string, now: number): string {
@@ -13,7 +14,7 @@ function age(at: string, now: number): string {
 }
 
 export function ReturnsBody({ parsed, now }: { parsed: ParsedReturns | null; now: number }) {
-  const headline = parsed === null ? null : returnsHeadline(parsed);
+  const headline = parsed === null ? null : returnsHeadline(parsed, now);
   return (
     <>
       <p className={headline?.tone === 'danger' ? styles.error : styles.orderNote}>
@@ -23,7 +24,9 @@ export function ReturnsBody({ parsed, now }: { parsed: ParsedReturns | null; now
         <ul className={styles.orderRows}>
           {parsed.rows.slice(0, 8).map((row, i) => (
             <li className={styles.orderRow} key={`${row.claimId}|${row.at}|${i}`}>
-              <span className={styles.orderState} data-state={row.result}>{row.result}</span>
+              <span className={styles.orderState} data-state={returnTemporal(row, now) === 'current' ? row.result : 'background'}>
+                {row.result} · {returnTemporal(row, now)}{returnTemporal(row, now) === 'current' ? '' : ' (background)'}
+              </span>
               <span>{row.repo}</span>
               <span className={styles.mono}>{row.evidenceKind === 'pr'
                 ? `PR #${row.pr} · head ${row.head?.slice(0, 7)}` : row.evidenceKind}</span>
@@ -44,11 +47,21 @@ export function ReturnsBody({ parsed, now }: { parsed: ParsedReturns | null; now
 export function ReturnsStrip({ visible = true }: { visible?: boolean }) {
   const read = useQuery(returnsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(returnsQuery);
+  const [, tick] = useReducer(value => value + 1, 0);
+  const now = Date.now();
+  useEffect(() => {
+    if (!visible) return;
+    const boundaries = read.data?.rows.flatMap(row => [Date.parse(row.at), Date.parse(row.expiresAt)]) ?? [];
+    const next = Math.min(...boundaries.filter(at => at > now));
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(tick, Math.min(next - now, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [read.data, visible, now]);
   usePollWhileVisible(() => { refetch(); }, 30_000, { enabled: visible });
   return (
     <section className={styles.orderStrip} aria-label="Results">
       <h3 className={styles.sectionTitle}>Results</h3>
-      {read.data !== undefined ? <ReturnsBody parsed={read.data} now={Date.now()} />
+      {read.data !== undefined ? <ReturnsBody parsed={read.data} now={now} />
         : <p className={styles.orderNote}>{read.status === 'error' ? 'Results unknown: request failed' : 'Loading results…'}</p>}
     </section>
   );
