@@ -38,6 +38,7 @@ import { isAbsolute, join } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { createGunzip } from 'node:zlib';
 import { redactHomePaths, scrubSecrets } from '../util/scrub.js';
+import { parsePublishResult } from './job-state.js';
 import { parseReadyRows } from './ready-row-edit.js';
 import { parseClaimedTsv, parseDispatchEvents } from './runs-dir-state.js';
 import { readSource } from './runs-parked-queue.js';
@@ -334,6 +335,7 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
 
   // ── J.publish — bridge result; the object exists whenever the file does ──
   let publish: FleetJobDetailV1['publish'] = null;
+  let publishMalformed = false;
   if (exists(pPublish)) {
     sources.publish = 'degraded';
     publish = { prUrl: null, autoMerge: null, testLine: null, sensitive: null };
@@ -341,7 +343,9 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
       try {
         // RESULT/AUTO_MERGE/TEST/SENS lines are emitted at the end of the run.
         const start = Math.max(0, pPublish.size - PUBLISH_READ_BYTES);
-        publish = parsePublish(await readSlice(file('publish'), pPublish.size, start, PUBLISH_READ_BYTES));
+        const publishText = await readSlice(file('publish'), pPublish.size, start, PUBLISH_READ_BYTES);
+        publish = parsePublish(publishText);
+        publishMalformed = parsePublishResult(publishText).malformed;
         sources.publish = 'healthy';
       } catch { /* stays degraded */ }
     }
@@ -388,6 +392,8 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
     && newerThan(pLaunch, pLogGz) && newerThan(pLog, pLogGz);
   const state: FleetJobState =
     currentAttempt ? 'running'
+      // A RESULT line the shared parser rejects is unknown, never published (job-state.ts).
+      : publishMalformed ? 'unknown'
       : exists(pPublish) ? 'published'
         : exists(pLogGz) && !launchNewerThanGz ? 'archived'
           : 'unknown';

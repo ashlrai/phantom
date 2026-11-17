@@ -1,7 +1,7 @@
 /**
  * routes/verse/apps/MonogramTile.tsx — the square tile every seat and app row
  * leads with. 3.11.1: engine-backed tiles show the provider's own mark
- * (Anthropic Claude, OpenAI, xAI Grok, Ollama — ProviderLogo) so an account is
+ * (Anthropic Claude, OpenAI, xAI Grok, Ollama — BrandMark) so an account is
  * recognisable at a glance; the mark only identifies the provider, the row's
  * text still names the account. Neutral tiles (Aider, Goose, …) keep their
  * letters.
@@ -13,7 +13,7 @@
 import type { CSSProperties } from 'react';
 import type { VerseEngine } from '../../../data/api-types.js';
 import { engineColor } from '../../../components/primitives/Tag.js';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import styles from './Apps.module.css';
 
 export function MonogramTile({
@@ -35,7 +35,7 @@ export function MonogramTile({
       style={style}
       aria-hidden="true"
     >
-      {engine === null ? monogram.slice(0, 2) : <ProviderLogo engine={engine} size={size === 'sm' ? 14 : 18} />}
+      {engine === null ? monogram.slice(0, 2) : <BrandMark brand={engine} size={size === 'sm' ? 14 : 18} />}
     </span>
   );
 }

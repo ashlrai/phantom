@@ -4,6 +4,80 @@ import os
 import re
 import signal
 import subprocess
+from datetime import datetime
+
+
+def admission_history(rows, now):
+    """24h resolved launches by (prefix, tier, lane); unmatched evidence stays unknown."""
+    attempts, latest, urls, states = {}, {}, {}, {}
+    timed = []
+    for row in rows:
+        if not isinstance(row, dict): continue
+        try:
+            stamp = datetime.fromisoformat(row.get("ts", row.get("timestamp", row.get("at", ""))).replace("Z", "+00:00"))
+            at = stamp.timestamp()
+            if not stamp.tzinfo or at > now: continue
+        except (ValueError, TypeError, AttributeError, OverflowError): continue
+        timed.append((at, row))
+    for at, row in sorted(timed, key=lambda x: x[0]):
+        job, repo = row.get("job"), row.get("repo", "")
+        if not isinstance(job, str) or not isinstance(repo, str): continue
+        key = (repo.removeprefix("ashlrai/"), job)
+        if not repo:
+            matches = [k for k in latest if k[1] == job]
+            if len(matches) == 1: key = matches[0]  # finish/publish rows omit repo
+        event, state = row.get("event"), row.get("state", row.get("outcome"))
+        url = row.get("url", row.get("prUrl"))
+        if not isinstance(url, str): url = None
+        if event == "outcome" and url and state in ("MERGED", "CLOSED", "OPEN"):
+            states[url.rstrip("/")] = state if state == "MERGED" or now - at <= 300 else "unknown"
+        if (event == "launch" and now - at < 86400
+                and all(isinstance(row.get(k), str) for k in ("tier", "lane"))):
+            aid = (*key, at)
+            attempts.setdefault(aid, dict(job=job, tier=row.get("tier"), lane=row.get("lane"), result=None))
+            latest[key] = aid
+        aid = latest.get(key)
+        if event == "publish" and url and aid: urls[url.rstrip("/")] = aid
+        if event == "outcome":
+            # URL observations must match a publication, never a later retry of the same job.
+            aid = urls.get(url.rstrip("/")) if url else aid
+            if not url and sum(a[:2] == key for a in attempts) != 1: aid = None
+        if aid and (state in ("MERGED", "CLOSED") or (event == "finish" and row.get("empty") is True)):
+            attempts[aid]["result"] = state == "MERGED" or attempts[aid]["result"] is True
+    groups = {}
+    for attempt in attempts.values():
+        key = admission_cohort(attempt["job"], attempt["tier"], attempt["lane"])
+        groups.setdefault(key, []).append(attempt["result"])
+    return groups, states
+
+
+def admission_cohort(job, tier, lane):
+    return (re.split(r"[-_0-9]", job.removeprefix("RQ-"), maxsplit=1)[0], tier, lane)
+
+
+def admission_rank(job, tier, lane, groups):
+    results = groups.get(admission_cohort(job, tier, lane), [])
+    known = [r for r in results if r is not None]
+    rate = sum(known) / len(known) if known else None
+    # Unseen cohorts get optimistic priority; pending and low-yield work keep a floor.
+    return dict(job=job, mergeRate=rate, sampledLaunches=len(known), unknownLaunches=len(results) - len(known),
+                score=max(0.1, rate) if rate is not None else (0.1 if results else 1.0),
+                reason="observed_merge_rate_24h" if known else "unknown_outcomes" if results else "unknown_sample", outcome="ready")
+
+
+def terminal_target(job, repo, prompt, states):
+    # Only explicit task-envelope targets or the refix producer's exact ID count;
+    # incidental PR references in prose must never retire new work.
+    task = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
+    envelope = task.split("):", 1)[0] if "):" in task else ""
+    targets = re.findall(r"(?:^|[(,\s])pr=([1-9][0-9]*)(?=[,\s)]|$)", envelope, re.I)
+    drain = re.fullmatch(r"RQ-DRAIN-" + re.escape(repo) + r"-([1-9][0-9]*)-[0-9a-fA-F]{7}", job)
+    if drain: targets.append(drain.group(1))
+    repair = repair_target(job, repo)
+    if repair: targets.append(repair.group(2))
+    if len(set(targets)) != 1: return None
+    state = states.get("https://github.com/ashlrai/%s/pull/%s" % (repo, targets[0]))
+    return "target_pr_" + state.lower() if state in ("MERGED", "CLOSED") else None
 
 # RQ-EMPTYJOBYIELDQ8: a job id whose last EMPTY_STREAK finishes in jobs.jsonl all
 # came back empty repeats work that already yielded nothing — retire it instead
@@ -16,6 +90,23 @@ METRICS_TAIL_BYTES = 8 * 1024 * 1024
 # The fleet's canonical empty finish kinds (src/core/fleet/lane-empty-streak.ts).
 _TERMINAL_EMPTY = {"EMPTY", "DONE-NOOP", "EMPTY_DONE", "SKIPPED-EMPTY"}
 _streak_cache = {}
+
+# RQ-EMPTY-SIGNAL-1: a finish row's boolean `empty` only says "no diff vs the launch
+# base". It cannot tell an agent that ran cleanly and legitimately changed nothing
+# (research, already done) from one that died, hit a pool error, or never wrote its
+# exit status. Penalizing a lane for the first kind burns quota-routing signal on
+# healthy work, so classify. Returns None when the row is not a measured empty.
+EMPTY_NO_DIFF = "no_diff"    # exit 0, no pool error: ran fine, produced nothing publishable
+EMPTY_ERROR = "error"        # nonzero exit or a classified pool error: infrastructure
+EMPTY_UNKNOWN = "unknown"    # no exit status recorded: possible capture gap, not blamed on prompt
+
+
+def classify_empty(empty, exit_code, pool_error=None):
+    if empty is not True:
+        return None
+    if pool_error or (type(exit_code) is int and exit_code != 0):
+        return EMPTY_ERROR
+    return EMPTY_NO_DIFF if exit_code == 0 and type(exit_code) is int else EMPTY_UNKNOWN
 
 
 def empty_streaks(jobs_path):
@@ -47,7 +138,7 @@ def empty_streaks(jobs_path):
             row = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or row.get("launched") is False:
             continue
         job = row.get("job") or row.get("job_id") or row.get("jobId")
         if not isinstance(job, str) or not job:
@@ -75,6 +166,57 @@ def run(cmd, timeout, **kwargs):
         p.communicate()
         raise
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def repair_target(job, repo):
+    """Only producer-shaped identities name repair targets; prose is not evidence."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", repo): return None
+    return re.fullmatch(r"RQ-(FIXUP|REBASE|RECUT)-" + re.escape(repo)
+                        + r"-([1-9][0-9]*)(?:-([0-9a-f]{7}))?", job)
+
+
+def repair_freshness(job, repo, prompt, home, runner=run):
+    """Bounded current PR read through the host's scoped identity; fail open.
+
+    Only a closed/merged PR or a resolved repair on the queued head retires work.
+    Pending, absent, malformed and moved-head evidence never proves resolution.
+    Return fixed reason codes only, never subprocess text.
+    """
+    target = repair_target(job, repo)
+    if not target: return None
+    try:
+        result = runner(["locus", "exec", "--", "gh", "pr", "view", target.group(2),
+                         "--repo", "ashlrai/" + repo, "--json",
+                         "number,state,headRefOid,mergeable,statusCheckRollup"], 3, cwd=home)
+        if result.returncode or len(result.stdout) > 65536: return None
+        pr = json.loads(result.stdout)
+        if not isinstance(pr, dict) or type(pr.get("number")) is not int or pr["number"] != int(target.group(2)):
+            return None
+        state = pr.get("state")
+        if state in ("MERGED", "CLOSED"): return "target_pr_" + state.lower()
+        sha = pr.get("headRefOid")
+        if (state != "OPEN" or not target.group(3) or not isinstance(sha, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", sha) or not sha.startswith(target.group(3))):
+            return None
+        if target.group(1) in ("REBASE", "RECUT"):
+            return "target_pr_conflicts_resolved" if pr.get("mergeable") == "MERGEABLE" else None
+        task = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
+        expected = re.search(r'\bcheck="([^"\r\n]+)"', task)
+        if not expected: return None
+        checks = pr.get("statusCheckRollup")
+        if not isinstance(checks, list) or not checks: return None
+        matched = False
+        for check in checks:
+            if not isinstance(check, dict): return None
+            matched |= check.get("name", check.get("context")) == expected.group(1)
+            if check.get("__typename") == "CheckRun":
+                if check.get("status") != "COMPLETED" or check.get("conclusion") not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+                    return None
+            elif check.get("__typename") != "StatusContext" or check.get("state") != "SUCCESS":
+                return None
+        return "target_pr_checks_resolved" if matched else None
+    except Exception:
+        return None
 
 
 def precheck(job, repo, prompt, home, runs, runner=run):

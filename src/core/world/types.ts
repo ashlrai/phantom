@@ -3,6 +3,8 @@
  * desktop. A missing or stale measurement is null. It is never stored as 0.
  */
 
+import type { LaneHistory } from '../usage/resource-live/types.js';
+
 export const WORLD_SCHEMA = 'ashlr.world-model/v1' as const;
 export const WORLD_CACHE_TTL_MS = 15_000;
 
@@ -36,6 +38,7 @@ export interface WorldModel {
   sensors: {
     lanes: Array<{
       lane: string;
+      history?: LaneHistory;
       model?: string;
       role?: 'planning-orchestration';
       claudeWeeklyUsedPercent?: Field<number>;
@@ -44,6 +47,10 @@ export interface WorldModel {
       used: Field<number>;
       limit: Field<number>;
       remaining: Field<number>;
+      /** The window reset. A fact until it passes, so it outlives a stale usage reading. */
+      resetAt: Field<string>;
+      /** Set only while the lane is at zero capacity. Absent means not known to be at zero. */
+      zeroCapacityUntil: Field<string>;
       burnRate: Field<number>;
       idleIncludedWastedPerWeek: Field<number>;
       pacePerHour: Field<number>;

@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import { dedupeQueueFile } from '../core/queue/dedupe.js';
 
 const help = `Usage: phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
-Find repeated READY jobs in the router queue. The first READY or CLAIMED job wins.
-By default, only show the count and IDs. Add --apply to mark repeats as superseded.
-Jobs missing a repo, target file or acceptance text are unknown and left alone.`;
+Find repeated READY jobs; claimed/running goals take precedence over new work.
+By default, show matches and reasons. Add --apply to mark repeats.
+Semantic repeats share a file/module and >=50% goal tokens: DUPLICATE-OF-<id>.
+Jobs missing a repo, file/module or goal tokens are unknown and left alone.`;
 export async function cmdQueueDedupe(args: string[]): Promise<number> {
   let file = join(process.env.ASHLR_RUNS_DIR || join(homedir(), '.ashlr-runs'), 'queue', 'router-queue.md');
   let apply = false, json = false;
@@ -20,8 +21,8 @@ export async function cmdQueueDedupe(args: string[]): Promise<number> {
     const report = await dedupeQueueFile(file, apply);
     if (json) console.log(JSON.stringify(report));
     else {
-      console.log(`${report.count} repeats${report.applied ? ' marked superseded' : ' (preview)'}.`);
-      for (const row of report.repeats) console.log(`${row.id} repeats ${row.repeatOf}`);
+      console.log(`${report.count} repeats${report.applied ? ' marked' : ' (preview)'}.`);
+      for (const row of report.repeats) console.log(`${row.id} repeats ${row.repeatOf} (${row.reason ?? row.match})`);
       console.log(`Unknown: ${report.unknown.length}`);
     }
     return 0;

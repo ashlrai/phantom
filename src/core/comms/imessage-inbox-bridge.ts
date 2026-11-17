@@ -1,5 +1,6 @@
+import { receiptOwnerChat } from '../agents/chat-owner-ingress.js';
 /**
- * RQ-IMSG-BRIDGE-1: iMessage → MASON-INBOX.md / chief-of-staff queue (never the agent bus).
+ * RQ-IMSG-BRIDGE-1: private iMessage → local inbox; explicit owner share is separately gated.
  *
  * Third intake channel beside email and Telegram. integrations/imessage.ts reads
  * chat.db read-only and hands back allowlisted messages past a persisted
@@ -19,7 +20,8 @@
  * row to the local agent bus on the `teammate.findings` topic as an untrusted
  * `note` envelope, deduped by rowid. The mirror is best effort and changes no
  * receipt: a store-side failure only leaves `findings.pending` for the next
- * pass. Mason's own texts are never mirrored.
+ * pass. Mason's ordinary texts are never mirrored; an exact agent-chat.share request
+ * after native owner verification can publish only its explicitly selected text.
  *
  * Chunked patch transfers (RQ-SWE3-IMSGDEEP-1, imessage-patch-transfer.ts):
  * PATCH-BEGIN/PART/END frames from an allowlisted teammate are consumed by the
@@ -139,14 +141,20 @@ export interface PatchIngestReport extends PatchSweepReport {
 export { senderIdFor };
 
 // The status composer's digest readers must not join the Tier-1 import
-// closure, so the default seam is resolved at ack time through a lazy,
-// non-literal import; a load failure degrades to the generic ack rather than
-// failing a durable receipt.
-type OwnerStatusReplyModule = typeof import('../agents/owner-status-reply.js');
-const STATUS_REPLY_SPEC = '../agents/owner-status-reply.js';
+// closure, so this module never imports them, and a computed import() is not an
+// option: the compiled sidecar resolves a computed specifier against its
+// virtual FS and always misses (test/sidecar-literal-imports-315.test.ts).
+// The CLI entry (src/cli/index.ts, outside the closure and the entry of every
+// host: CLI, daemon tick, Leader tick, teammate worker, sidecar) publishes a
+// loader built from a literal import under this well-known key. The loader runs
+// on the first ack, so it costs nothing at startup. With no loader the ack
+// degrades to the generic receipt.
+export const IMESSAGE_STATUS_REPLY_LOADER = Symbol.for('ashlr.imessage.statusReplyLoader');
 const loadStatusReply = async (): Promise<IMessageStatusReply | null> => {
-  try { return (await import(STATUS_REPLY_SPEC) as OwnerStatusReplyModule).ownerStatusReply(); }
-  catch { return null; }
+  try {
+    const loader = (globalThis as Record<symbol, unknown>)[IMESSAGE_STATUS_REPLY_LOADER];
+    return typeof loader === 'function' ? await (loader as () => Promise<IMessageStatusReply | null>)() : null;
+  } catch { return null; }
 };
 
 /** Map one allowlisted chat.db row to a canonical channel message. */
@@ -224,7 +232,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       runsDir: deps.runsDir,
       now: deps.now,
       // iMessage bodies are personal texts: they stay in local inbox/queue files and are
-      // never mirrored to the shared agent bus (Textbot handoff #3472).
+      // never automatically mirrored to the shared agent bus (Textbot handoff #3472).
       publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
@@ -259,6 +267,11 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
         const got = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
         if (got.ok) {
           if (got.ack.status === 'duplicate') result.duplicate++; else result.accepted++;
+          // Explicit structured share only, after native verified-owner receipt. Ordinary
+          // private traffic remains local. A transient group write must retry this row.
+          const share = receiptOwnerChat(msg, cfg, { runsDir: deps.runsDir, busRoot: deps.busRoot, now: () => now().getTime() });
+          if (share.status === 'retryable') { result.deferred = true; break; }
+          if (share.status === 'refused') result.refused++;
         } else if (TRANSIENT.has(got.reason)) {
           result.deferred = true;
           break;

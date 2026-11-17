@@ -16,6 +16,8 @@ test('projects bounded observations without free text and expires availability',
   await writeFile(join(root, 'queue/claimed.tsv'), 'job-1\twork\twork\t12:00\t1767268800\n');
   const report = await fleetStatusApi(root, () => now);
   expect(report.sessions).toEqual([{ job: 'job-1', lane: 'work', tier: 'work', claimedAt: '2026-01-01T12:00:00.000Z' }]);
+  expect(report.awareness).toMatchObject({ schema: 'fleet.awareness.v1', queue: { laneQueued: 0 } });
+  expect(report.awareness.lanes[0]).toMatchObject({ running: 1, target: 3, available: 2 });
   expect(report.lanes[0]).toMatchObject({ available: 2, merged24h: 2 });
   expect(report.queue).toBeNull();
   expect(JSON.stringify(report)).not.toMatch(/private-value|secret\/path/);

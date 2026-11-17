@@ -148,12 +148,18 @@ function prune(state: RefixState, cap = 8_192): void {
   }
 }
 
-function drainRow(repo: string, pr: RefixPr, key: string, reason: string, pinned: boolean): string {
+/** Queue id shared by every producer of a fix-forward line for one PR head. */
+export function drainKey(repo: string, number: number, headSha: string): string {
+  return `RQ-DRAIN-${shortName(repo)}-${number}-${headSha.slice(0, 7)}`;
+}
+
+export function drainRow(repo: string, pr: RefixPr, key: string, reason: string, pinned: boolean): string {
   const short = shortName(repo);
   const url = `https://github.com/${repo}/pull/${pr.number}`;
   const prompt = [
     ...(pinned ? [SECURITY_PIN] : []),
     `${url} (head ${pr.headSha.slice(0, 7)}): ${reason}.`,
+    `For conflicts, first run phm pr resolve-conflicts --repo ${repo} --pr ${pr.number} --json; use --apply for proven append unions. Follow ready-supersede bundle plans through publish.sh; needs-agent names the files and hunks to resolve.`,
     'Check out the PR head, reproduce the failure or resolve the conflict, and push one fix-forward commit to the PR branch.',
     'Never force-push to the default branch; no --admin merge, no auto-merge, no check skipping.',
   ].join('\n');
@@ -242,7 +248,7 @@ export function runRefixCycle(io: RefixIo, options: RefixOptions = {}): RefixSum
       }
       for (const pr of prs) {
         if (!eligible(repo, pr) || pr.headSha.length < 7) continue;
-        const key = `RQ-DRAIN-${shortName(repo)}-${pr.number}-${pr.headSha.slice(0, 7)}`;
+        const key = drainKey(repo, pr.number, pr.headSha);
         if (queueIds.has(key) || key in state.appended || key in state.giveup) continue;
         if (summary.drains >= cycleCap) { summary.capped = true; continue; }
         const prTag = `${shortName(repo)}#${pr.number}`;

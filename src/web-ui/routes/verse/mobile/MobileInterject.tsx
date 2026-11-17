@@ -7,6 +7,7 @@ import { loadHistory, pushHistory } from '../fleet/interject-history.js';
 import { getMobileFleetClient } from './fleet-client.js';
 import { inboxTailQuery } from './inbox-tail-query.js';
 import { mobileAckLine, mobileTime } from './interject-ack-model.js';
+import { LeaderChatList } from '../leader-thread/LeaderChat.js';
 import { MicButton } from './MicButton.js';
 import { canShowActions, useMobile } from './mobile-context.js';
 import { showMobileToast } from './mobile-toast.js';
@@ -30,7 +31,7 @@ function savePostedAt(at: number | null): void {
   } catch { /* Storage may be unavailable. */ }
 }
 
-export function MobileInterject({ title = 'Tell the leaders', placeholder = 'A prompt, a thought, a correction. The next leader pass reads it.' }: { title?: string; placeholder?: string } = {}) {
+export function MobileInterject({ title = 'Tell the leaders', placeholder = 'A prompt, a thought, a correction. The next leader pass reads it.', compact = false }: { title?: string; placeholder?: string; /** Home: the box alone, no thread above it. */ compact?: boolean } = {}) {
   const { permissions, reachability } = useMobile();
   const query = useQuery(inboxTailQuery);
   const refetch = useRefetch(inboxTailQuery);
@@ -49,6 +50,7 @@ export function MobileInterject({ title = 'Tell the leaders', placeholder = 'A p
   const displayedText = interim ? `${text}${text && !text.endsWith(' ') ? ' ' : ''}${interim}`.slice(0, 6000) : text;
   usePollWhileVisible(() => { setClockTick(tick => tick + 1); refetch(); }, 20_000, { enabled: !missing });
   const ack = mobileAckLine(postedAt, query.data?.snapshot, Date.now());
+  const chat = compact ? null : query.data?.chat ?? null;
 
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -80,6 +82,7 @@ export function MobileInterject({ title = 'Tell the leaders', placeholder = 'A p
   return (
     <Section title={title}>
       {missing ? <Row title="This build has no fleet inbox yet." /> : <>
+        {chat ? <LeaderChatList chat={chat} /> : null}
         {canShowActions(permissions) ? (
           <form className={`${ui.stack} ${ui.row}`} onSubmit={(event) => void send(event)}>
             <label className="visually-hidden" htmlFor="mobile-interject">Message to the leaders</label>
@@ -111,10 +114,11 @@ export function MobileInterject({ title = 'Tell the leaders', placeholder = 'A p
           </form>
         ) : null}
         {query.error ? <Row title="Couldn’t read the inbox" subtitle={readFailureReason(query.error)} /> : null}
-        {query.data?.inbox.slice(0, 3).map((entry, index) => (
+        {/* An older Mac build serves no chat: keep the last three inbox lines. */}
+        {chat || compact ? null : query.data?.inbox.slice(0, 3).map((entry, index) => (
           <Row key={`${entry.at}-${index}`} title={entry.text.slice(0, 80)} subtitle={`${entry.source} · ${mobileTime(entry.at)}`} />
         ))}
-        {query.status === 'success' && query.data?.inbox.length === 0 ? <Row title="No inbox entries yet" /> : null}
+        {!chat && !compact && query.status === 'success' && query.data?.inbox.length === 0 ? <Row title="No inbox entries yet" /> : null}
       </>}
     </Section>
   );

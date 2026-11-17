@@ -50,7 +50,7 @@ describe('LibraryPane', () => {
     const { fetchMock } = stub();
     render(<LibraryPane visible />);
     await screen.findByText('# Alpha notes');
-    fireEvent.change(screen.getByLabelText('Search past chats'), { target: { value: 'a' } });
+    fireEvent.change(screen.getByLabelText('Search Library'), { target: { value: 'a' } });
     await new Promise(r => setTimeout(r, 450));
     expect(fetchMock.mock.calls.some(c => String(c[0]).startsWith('/api/verse/search'))).toBe(false);
   });
@@ -59,7 +59,7 @@ describe('LibraryPane', () => {
     let refuse = true;
     stub(() => (refuse ? json({ error: 'q must be at least 2 characters' }, 400) : json({ query: 'ba', hits: [hit], scannedSessions: 1, truncated: false })));
     render(<LibraryPane visible />);
-    const box = screen.getByLabelText('Search past chats');
+    const box = screen.getByLabelText('Search Library');
     fireEvent.change(box, { target: { value: 'ab' } });
     expect(await screen.findByText('q must be at least 2 characters', {}, { timeout: 3000 })).toBeInTheDocument();
     refuse = false;

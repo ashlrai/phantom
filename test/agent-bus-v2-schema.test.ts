@@ -23,6 +23,9 @@ describe('participants', () => {
     ['bad wake kind', { wake: { kind: 'sms', target: 'x' } }],
     ['extra field', { secret: 'FAKE-TOKEN' }],
     ['bad status', { status: 'busy' }],
+    ['label newline', { participantId: 'dot-main\n' }],
+    ['capability newline', { capabilities: ['review\n'] }],
+    ['wake target newline', { wake: { kind: 'poll', target: 'dot-poll\n' } }],
   ])('rejects %s', (_n, patch) => {
     expect(participantSchema.safeParse({ ...ok, ...patch }).success).toBe(false);
   });
@@ -36,6 +39,12 @@ describe('claim keys and overlap', () => {
     expect(parseClaimKey('pr:a/b#12')).toEqual({ kind: 'pr', repo: 'a/b', number: 12 });
     for (const bad of ['repo:nope', 'pr:a/b#0', 'pr:a/b#x', 'path:a/b:../x', 'path:a/b:/abs', 'queue:', 'x:y'])
       expect(parseClaimKey(bad), bad).toBeUndefined();
+  });
+  it.each(['repo:a/b', 'path:a/b:src/**', 'queue:q', 'pr:a/b#1'])('refuses control suffixes on %s', key => {
+    for (const suffix of ['\n', '\r', '\u007f', '\u2028', '\u2029']) {
+      expect(parseClaimKey(key + suffix)).toBeUndefined();
+      expect(claimKeysOverlap(key, key + suffix)).toBe(false);
+    }
   });
   it('computes literal prefixes and globs', () => {
     expect(literalPrefix('src/core/*.ts')).toBe('src/core/');
@@ -102,12 +111,14 @@ describe('body kinds and work feed', () => {
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'dot-main', leaseMs: 1000 },
     { kind: 'work.claim', op: 'renew', claimKey: 'queue:q', token: TOKEN, leaseMs: 1000 },
     { kind: 'work.status', jobId: 'j1', status: 'rescheduled' },
+    { kind: 'work.result', jobId: 'j1', claimKey: 'queue:q', queueId: 'peer-work-' + 'a'.repeat(32),
+      receiptId: 'pw-' + 'a'.repeat(32), outcome: 'admitted' },
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN, outcome: 'completed' },
     { kind: 'wake', target: 'dot-main', reason: 'new work' },
   ];
   it('covers every declared kind', () => {
     expect(new Set(valid.map((v) => v.kind))).toEqual(new Set(BODY_KINDS));
-    for (const v of valid) expect(busBodySchema.safeParse(v).success, JSON.stringify(v)).toBe(true);
+    for (const v of valid) expect(busBodySchema.parse(JSON.parse(JSON.stringify(v)))).toEqual(v);
   });
   it.each([
     { kind: 'note' },
@@ -118,6 +129,8 @@ describe('body kinds and work feed', () => {
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN, outcome: 'stolen' },
     { kind: 'work.post', jobId: 'j', title: 't', repo: 'nope', claimKeys: [] },
     { kind: 'unknown', text: 'x' },
+    { kind: 'work.post', jobId: 'j', title: 't', repo: 'a/b\n', claimKeys: [] },
+    { kind: 'work.release', claimKey: 'queue:q', token: TOKEN + '\n', outcome: 'released' },
   ])('rejects %j', (body) => {
     expect(busBodySchema.safeParse(body).success).toBe(false);
   });

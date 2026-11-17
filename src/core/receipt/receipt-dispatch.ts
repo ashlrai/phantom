@@ -4,13 +4,16 @@
  * ASHLR_RUN_RECEIPTS=1 while it beds in. Never throws and never blocks the tick.
  *
  * Only fields the event actually carries are filled; everything else stays
- * null (base revision, custody wrap, tokens, approvals). The event's free-text
+ * null (base revision, tokens, approvals). `secrets.wrap` comes from the
+ * dispatch's in-memory custody capture when the daemon passes it (custody step 2);
+ * it is never persisted in the dispatch ledger. The event's free-text
  * fields (title, reason, routeReason) are never copied.
  */
 import { execFileSync } from 'node:child_process';
 import { basename, isAbsolute } from 'node:path';
 import { isCancelledDispatchProductionEvent, type DispatchProductionEvent } from '../fleet/dispatch-production-ledger.js';
 import { emitReceiptV1, type EmitReceiptResult } from './receipt-store.js';
+import type { ReceiptV1Secrets } from './receipt-v1.js';
 import { EXECUTION_OUTCOMES, isReceiptV1Body, RECEIPT_V1_SCHEMA, type ReceiptV1Body } from './receipt-v1.js';
 
 type Execution = (typeof EXECUTION_OUTCOMES)[number];
@@ -71,7 +74,10 @@ export function receiptRepoName(repo: string, readOrigin: (dir: string) => strin
 const count = (v: unknown): number => (Number.isSafeInteger(v) && (v as number) >= 0 ? (v as number) : 0);
 
 /** Pure. Null when the event cannot produce a valid receipt (no run id, shadow rows, bad repo). */
-export function receiptBodyFromDispatchEvent(event: DispatchProductionEvent): ReceiptV1Body | null {
+export function receiptBodyFromDispatchEvent(
+  event: DispatchProductionEvent,
+  wrap: ReceiptV1Secrets['wrap'] = null,
+): ReceiptV1Body | null {
   if (!event.runId || event.outcome === 'shadow-observation') return null;
   const createdAt = Date.parse(event.ts);
   if (!Number.isFinite(createdAt)) return null;
@@ -86,7 +92,7 @@ export function receiptBodyFromDispatchEvent(event: DispatchProductionEvent): Re
     head_oid: null,
     identity: { engine: event.backend ?? 'unknown', seat: null, locus_pin_id: null, locus_observed: false },
     secrets: {
-      initialized: null, status_schema: null, wrap: null, preflight: { verdict: null, exit: null },
+      initialized: null, status_schema: null, wrap, preflight: { verdict: null, exit: null },
       injected_names_count: null, injected_names_digest: null,
       audit: { enabled: null, chain_verified: null, first_seq: null, last_seq: null },
     },
@@ -108,11 +114,12 @@ export function runReceiptsEnabled(env: NodeJS.ProcessEnv = process.env): boolea
 export function emitReceiptForDispatchEvent(
   event: DispatchProductionEvent,
   env: NodeJS.ProcessEnv = process.env,
+  wrap: ReceiptV1Secrets['wrap'] = null,
 ): EmitReceiptResult | { ok: false; reason: 'disabled' | 'not-applicable' | 'not-receiptable' } {
   try {
     if (!runReceiptsEnabled(env)) return { ok: false, reason: 'disabled' };
     if (!event.runId || event.outcome === 'shadow-observation') return { ok: false, reason: 'not-applicable' };
-    const body = receiptBodyFromDispatchEvent(event);
+    const body = receiptBodyFromDispatchEvent(event, wrap);
     return body ? emitReceiptV1(body) : { ok: false, reason: 'not-receiptable' };
   } catch {
     return { ok: false, reason: 'not-receiptable' };

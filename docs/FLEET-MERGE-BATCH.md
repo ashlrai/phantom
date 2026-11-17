@@ -26,11 +26,13 @@ snapshot carries no repo; an envelope `repo` wins over the flag.
 
 ## What the plan means
 
-Two open PRs conflict only when they share a file, so the file→PR index forms
-an overlap graph. Its connected components are the batches:
+The planner predicts conflict from shared files; it does not compute Git
+conflicts. The file→PR index forms an overlap graph whose connected
+components are the batches:
 
 - `independent` batches hold a single PR touching files nobody else touches —
-  they merge in any order, concurrently, with any other batch.
+  the file-overlap model permits any order across batches; Git and required
+  checks still decide actual mergeability.
 - `serial` batches must serialize: merging one member moves main under every
   member that shares a file with it.
 
@@ -71,6 +73,21 @@ proven-disjoint. When the snapshot envelope's own read failed
 (`input.upstream`, e.g. a `gh-failed` merge-backlog read) the command exits 1
 — a plan built on a failed read is never a clean-looking answer. Exit codes:
 0 plan produced, 1 no usable snapshot, 2 bad usage.
+
+## Green train proposals
+
+`phm fleet merge-batch-run --input open-prs.json --repo ashlrai/phantom --json`
+adds a `train` proposal to its action report. Include `state`, `baseRefName`,
+`changedFiles` and `statusCheckRollup` alongside the existing snapshot fields.
+With healthy queue and hold reads, it selects up to 16 ready merge actions on
+the same base with disjoint complete file lists, no failing/pending checks and at
+least one successful check (completed skipped/neutral daily lanes are allowed).
+Missing checks wait; `deferred` names each exclusion. Unreadable queue/hold evidence
+makes `train` null. Snapshot checks are observations, not required-check authority.
+The opportunity is one combined validation through the existing merge queue;
+this command neither configures batching nor runs CI. Revalidate heads, base,
+required checks/App identities, review and Security gates on the combined commit.
+Disjoint files can still interact semantically. No check or control is bypassed.
 
 ## Local lookahead preparation
 

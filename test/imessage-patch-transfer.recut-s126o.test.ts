@@ -60,7 +60,7 @@ let previousHome: string | undefined;
 const imsgDir = () => join(runsDir, 'imessage');
 const watermarkPath = () => join(imsgDir(), 'findings-bridge.json');
 const busEnvelopes = () => {
-  const page = listBusInboxAfter(0, 100, { root: busRoot });
+  const page = listBusInboxAfter(0, 100, { root: busRoot, now: () => NOW.getTime() });
   return page.status === 'ok' ? page.messages.map((m) => m.envelope) : [];
 };
 
@@ -181,9 +181,11 @@ describe('ingestIMessages patch tallies on every exit path', () => {
         ],
       }),
     });
-    expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 3 });
+    // Handled frames stay out of the teammate ledger, so the mirror has no
+    // protocol rows. The verified artifact is still announced from its receipt.
+    expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 0 });
     expect(result.patches).toMatchObject({ frames: 3, completed: 1 });
-    expect(result.findings).toMatchObject({ protocol: 3, posted: 0, announced: 1 });
+    expect(result.findings).toMatchObject({ protocol: 0, posted: 0, announced: 1 });
     expect(existsSync(join(imsgDir(), 'patches', 'done-1.patch'))).toBe(true);
   });
 });

@@ -56,14 +56,17 @@ describe('rolling estimate for claude', () => {
     expect(later.weekly_used_pct).toBe(50);
     expect(later.estimated).toBe(true);
   });
-  it('rolls a passed reset forward by one week and counts only new-window usage', () => {
+  it('estimates only within the known reset window', () => {
     const st: LaneState = { asOf: new Date(T0).toISOString(), pctUsed: 90, resetAt: new Date(T0 + 3_600_000).toISOString(), unitsPerPct: 100_000, limit: null };
     const now = T0 + 2 * 3_600_000;
-    const r = [fin('claude', new Date(T0 + 1_800_000).toISOString().slice(0, 19), { tokens_total: 9_999_999 }),
-      fin('claude', new Date(T0 + 3_700_000).toISOString().slice(0, 19), { tokens_total: 500_000 })];
-    const e = estimateLane('claude', st, r, now)!;
-    expect(e.reset_at).toBe(new Date(T0 + 3_600_000 + 7 * 86_400_000).toISOString());
-    expect(e.weekly_used_pct).toBe(5);
+    const r = [fin('claude', new Date(T0 + 1_800_000).toISOString(), { tokens_total: 500_000 }),
+      fin('claude', new Date(T0 + 3_700_000).toISOString(), { tokens_total: 500_000 })];
+    const current = estimateLane('claude', st, r, T0 + 3_600_000 - 1);
+    expect(current?.reset_at).toBe(st.resetAt);
+    expect(current?.weekly_used_pct).toBe(95);
+    const after = estimateLane('claude', st, r, now);
+    expect(after).toBeNull();
+    expect(after?.weekly_used_pct).toBeUndefined();
   });
   it('has no estimate without a calibration, and unknown pct when units are unknown', () => {
     expect(estimateLane('claude', undefined, rows, T0)).toBeNull();
@@ -84,9 +87,10 @@ describe('devin ACUs', () => {
     const e = estimateLane('devin', st, [fin('devin', new Date(T0 + 60_000).toISOString().slice(0, 19), { acus: 100 })], T0 + 3_600_000)!;
     expect(e.weekly_used_pct).toBe(60);
     expect(e.credits_remaining).toBe(400);
-    const after = estimateLane('devin', st, [], T0 + 2 * 86_400_000)!;
-    expect(after.reset_at).toBeNull();
-    expect(after.weekly_used_pct).toBe(0);
+    const after = estimateLane('devin', st, [], T0 + 2 * 86_400_000);
+    expect(after).toBeNull();
+    expect(after?.reset_at).toBeUndefined();
+    expect(after?.weekly_used_pct).toBeUndefined();
   });
 });
 
@@ -105,15 +109,15 @@ describe('refreshLanes', () => {
     const r = await refreshLanes({ ...base, lanes: ['claude'], overrides: { claude: typed }, readers: { claude: async () => { throw new Error('must not run'); } } });
     expect(r.outcomes[0]!.action).toBe('kept');
   });
-  it('falls back to an estimate when the reader fails and re-reads after reset_at', async () => {
+  it('falls back to unknown when the reader fails after reset_at', async () => {
     const st: LaneState = { asOf: new Date(T0 - 3_600_000).toISOString(), pctUsed: 10, resetAt: new Date(T0 - 1000).toISOString(), unitsPerPct: 1000, limit: null };
     const old = { weekly_used_pct: 10, reset_at: st.resetAt, source: 'x', estimated: false, as_of: new Date(T0 - 3_600_000).toISOString() };
     let calls = 0;
     const r = await refreshLanes({ ...base, state: { claude: st }, lanes: ['claude'], overrides: { claude: old },
       readers: { claude: async () => { calls++; throw new Error('boom'); } } });
     expect(calls).toBe(1);
-    expect(r.outcomes[0]!.action).toBe('estimated');
-    expect((r.overrides['claude'] as { estimated: boolean }).estimated).toBe(true);
+    expect(r.outcomes[0]!.action).toBe('unknown');
+    expect(r.overrides['claude']).toMatchObject({ weekly_used_pct: null, reset_at: null, estimated: false });
   });
   it('ignores a reading whose reset already passed and never emits ask-for-reading text', async () => {
     const r = await refreshLanes({ ...base, lanes: ['gemini', 'claude'], overrides: {},
@@ -141,6 +145,24 @@ describe('autopilot consumption', () => {
 });
 
 describe('runSelfRefresh', () => {
+  it('publishes scope from the quota file and clears it on an unscoped re-read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'usage-self-scope-'));
+    mkdirSync(join(dir, 'queue')); mkdirSync(join(dir, 'metrics'));
+    const quotaPath = join(dir, 'metrics', 'claude-quota.json');
+    const quota = { v: 1, observedAt: new Date(T0).toISOString(), reason: 'ok', fresh: true,
+      windows: [{ id: 'seven_day', usedPct: 40, resetAt: new Date(T0 + 86_400_000).toISOString() }] };
+    const opts = { runsDir: dir, nowMs: () => T0, lanes: ['claude'] as const };
+    writeFileSync(quotaPath, JSON.stringify({ ...quota, accountId: 'claude:0123456789abcdef' }));
+    await runSelfRefresh(opts);
+    const path = join(dir, 'queue', 'budget-overrides.json');
+    expect(JSON.parse(readFileSync(path, 'utf8')).claude.account_id).toBe('claude:0123456789abcdef');
+    writeFileSync(quotaPath, JSON.stringify(quota));
+    await runSelfRefresh({ ...opts, nowMs: () => T0 + 31 * 60_000 });
+    expect(JSON.parse(readFileSync(path, 'utf8')).claude).not.toHaveProperty('account_id');
+    const result = await refreshLanes({ overrides: { claude: { account_id: 'claude:0123456789abcdef' } }, state: {}, rows: [],
+      nowMs: T0, lanes: ['claude'], readers: { claude: async () => { throw new Error('fixture'); } } });
+    expect(result.overrides.claude).not.toHaveProperty('account_id');
+  });
   it('writes budget-overrides.json atomically, keeping other keys, and honours dry-run', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'usage-self-'));
     mkdirSync(join(dir, 'queue')); mkdirSync(join(dir, 'metrics'));

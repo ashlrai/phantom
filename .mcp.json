@@ -36,6 +36,13 @@
         "ashlr-stack-mcp"
       ]
     },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.7.1"
+      ]
+    },
     "ashlr": {
       "command": "npx",
       "args": [

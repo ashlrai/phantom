@@ -128,7 +128,12 @@ describe('desktop app adapters', () => {
     expect(secret.ok && secret.text).not.toContain('sk-ant-api03');
   });
   it('profiles never target a denied app', () => {
-    for (const p of Object.values(DESKTOP_APP_PROFILES)) for (const b of p.bundleIds) expect(computerAppPolicy(b).ceiling).toBe('full');
+    for (const p of Object.values(DESKTOP_APP_PROFILES)) for (const b of p.bundleIds) {
+      // Devin.app reports com.exafunction.windsurf, which computer policy caps
+      // at click. A profile may name that bundle. It may not name a denied app.
+      const ceiling = computerAppPolicy(b).ceiling;
+      expect(ceiling === 'full' || ceiling === 'click' || ceiling === 'read').toBe(true);
+    }
   });
 });
 

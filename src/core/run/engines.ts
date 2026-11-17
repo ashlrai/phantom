@@ -1,4 +1,5 @@
 import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
+import { resolveExecutable } from './tool-path.js';
 import { checkHostHeadroom } from './host-headroom.js';
 /**
  * engines.ts — M11: hardened per-engine adapters.
@@ -21,6 +22,7 @@ import { checkHostHeadroom } from './host-headroom.js';
  */
 
 import { runPhantomPreflight, type PreflightRunner } from './phantom-preflight.js';
+import { custodyRequiresWrap, noteSpawnCustody } from './custody-capture.js';
 import { appendCustodyRecord } from './custody-ledger.js';
 import { decidePhantomCustody, formatCustodyLine, isLinkedGitWorktree, type PhantomCustodyRecord } from './phantom-custody.js';
 import { spawnSync, execFileSync, spawn } from 'node:child_process';
@@ -234,10 +236,11 @@ export function resolveBinAbsolute(bin: string): string {
   try {
     const probe = process.platform === 'win32' ? 'where' : 'which';
     const out = execFileSync(probe, [bin], { encoding: 'utf8', timeout: 2_000 }).trim().split('\n')[0]?.trim();
-    return out && out.length > 0 ? out : bin;
+    if (out) return out;
   } catch {
-    return bin;
+    // Fall through to metadata discovery for resident service environments.
   }
+  return resolveExecutable(bin)?.path ?? bin;
 }
 
 export function engineInstalled(engine: EngineId, cfg?: AshlrConfig): boolean {
@@ -300,7 +303,7 @@ export function engineInstalled(engine: EngineId, cfg?: AshlrConfig): boolean {
       execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore', timeout: 2_000 });
       return true;
     } catch {
-      // try next
+      if (resolveExecutable(bin)) return true;
     }
   }
   return false;
@@ -892,6 +895,18 @@ async function spawnEngineInner(
   if (phantomEnabled) process.stderr.write(formatCustodyLine(custody));
   appendCustodyRecord(custody);
   opts?.onCustody?.(custody);
+  noteSpawnCustody(custody);
+  // Hold rule (design-custody-fleet.md 3.2): a task that declared it needs
+  // project secrets never runs unwrapped. Refused before the child starts; the
+  // custody record above already names the reason.
+  if (!custody.wrapped && custodyRequiresWrap()) {
+    return {
+      ok: false,
+      output: '',
+      error: `held: task needs secrets but the spawn would run unwrapped (${custody.reason})`,
+      terminationReason: 'error-exit',
+    };
+  }
 
   // M52: apply the OS sandbox launcher when provided. The launcher wraps the
   // already-phantom-wrapped command so the jail contains the entire chain.
@@ -1085,6 +1100,20 @@ async function spawnEngineInner(
         return;
       }
       if (observedGroupState === 'present') {
+        // A direct child (no caller-owned group) can exit while its session
+        // watchdog still holds the extra pipe, so `close` lags `exit`. The
+        // stall or cancel reason already recorded is the cause; do not replace
+        // it with an authority failure once the leader is gone.
+        const leaderGone = leaderExited || child.exitCode !== null || child.signalCode !== null;
+        if (!ownsProcessGroup && leaderGone && terminationReason && terminationReason !== 'error-exit') {
+          settle({
+            ok: false,
+            ...captured,
+            error: `terminated (${terminationReason})`,
+            terminationReason,
+          });
+          return;
+        }
         settle({
           ok: false,
           ...captured,

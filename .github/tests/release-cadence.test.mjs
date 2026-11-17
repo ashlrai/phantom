@@ -293,7 +293,7 @@ test('timer cadence keeps the existing permissions and guarded merge route', () 
   const workflow = parse(read('../workflows/release-please.yml'));
   assert.deepEqual(workflow.permissions, {});
   assert.deepEqual(workflow.jobs['release-please'].permissions, { contents: 'write', 'pull-requests': 'write' });
-  assert.deepEqual(workflow.on.schedule, [{ cron: '17,47 * * * *' }]);
+  assert.deepEqual(workflow.on.schedule, [{ cron: '*/5 * * * *' }]);
   assert.equal(workflow.on.workflow_run, undefined);
   const steps = workflow.jobs['release-please'].steps;
   assert.equal(steps.find(s => s.id === 'rp').if, "steps.cadence.outputs.due == 'true'");

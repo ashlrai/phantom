@@ -28,6 +28,15 @@ See `desktop/README.md` for full setup, build, and open-item details, and
 
 ## Watch and steer
 
+Choose **View → Fleet** in the native menu, or **Fleet** in the console
+navigation (⌘2 on macOS), to open the live compute and agent map in the same
+window. Fleet starts with the **Compute & agents** lens and its 2D/3D controls;
+**Workspaces** and **Runs graph** remain available beside it. The map reads the
+existing authenticated compute and session projections and pauses its polling
+while hidden. Unavailable readings stay labeled rather than showing an empty
+fleet as healthy. The menu uses the `open-fleet` desktop command; no extra
+listener, browser window or token handoff is needed.
+
 Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append to
 `~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
 [Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).
@@ -125,10 +134,38 @@ quarantine above is active.
 
 ## Background update discovery and local status
 
-The native shell checks signed releases every 15 minutes. A polling gap over
+The native shell checks signed releases at startup and every 15 minutes. A polling gap over
 30 seconds triggers a check after wake, including while the window is hidden.
 Checks use the existing background download and minisign verification path.
 Disabled updates stay disabled and concurrent checks are coalesced.
+
+Each check revalidates the public `latest.json` feed with `Cache-Control:
+no-cache`. A missing feed or failed download is retried on the next scheduled
+check. Publishing an npm package alone does not supply a desktop update: the
+sanctioned desktop publisher must publish the signed paired assets and feed.
+That publisher checks the public feed and independently verifies the published
+artifacts before reporting success. No release push notification reaches an
+installed app; discovery follows the schedule above.
+
+With Automatic updates enabled in Desktop settings, the app downloads a newer
+signed release in the background. The native update status reports checking,
+downloading, then waiting for idle or `Quit Phantom to install <version>`.
+Closing the window can leave Phantom running in the tray. Use normal Quit to allow the verified
+stage to hand off to the installed host consumer. The consumer still requires
+authority Stop and zero execution leases. A held update reports its reason;
+it does not interrupt active work. After successful application, reopen Phantom
+when the status says `Installed <version>; reopen Phantom`. Once the running
+desktop matches that version, the status no longer asks you to reopen it.
+Disabling Automatic updates cancels discovery and download and prevents the quit handoff.
+
+To verify a desktop publication, record `phm app update status --json` before
+publication and again after the next check, normal Quit, successful host
+application and reopening. Confirm that `current` increased to the published
+desktop version. A newer feed, completed download or staged `available`
+version alone does not prove that `/Applications/Phantom.app` advanced.
+The native client tests use mock HTTP responses with existing test-only signed
+fixtures to cover missing-feed recovery, repeated revalidation, signature and
+discovery mismatch rejection, malformed JSON and the streaming size limit.
 
 Copy and paste: `phm app update status --json`. For a readable report, run
 `phm app update status`. This inspects the remembered local stage through the

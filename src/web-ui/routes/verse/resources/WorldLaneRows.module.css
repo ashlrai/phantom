@@ -1,3 +1,5 @@
+.sparkline { display: inline-flex; align-items: center; gap: 4px; }
+.sparkline [data-exhaust='before-reset'] { color: var(--color-warning, #d99b45); }
 /* Live lane rows inside the rail resource bar. The parent bar scrolls. */
 
 .group {

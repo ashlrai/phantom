@@ -1,3 +1,4 @@
+import { readFleetMetrics, type FleetMetrics, type RouterMetricsFeed } from './metrics-feed.js';
 import { readPoolBudgets } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot } from './pool-budget.js';
 /**
@@ -1514,6 +1515,10 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** CLI-only disk attribution; bounded read-only census, never a deletion plan. */
+  disk?: import('./disk-attribution.js').FleetDiskAttribution;
+  /** Additive dashboard feed; optional for legacy snapshots. */
+  metrics?: FleetMetrics;
   /** Advisory per-pool observations, independent of dispatch authority. */
   budgets?: PoolBudgetSnapshot;
   /** Additive fleet.v1 contract marker; absent in legacy snapshots. */
@@ -2540,7 +2545,7 @@ function laneQueueSourceQuality(
 
 export async function buildFleetStatus(
   cfg: AshlrConfig,
-  options: { memoryPaths?: FleetMemoryPaths } = {},
+  options: { memoryPaths?: FleetMemoryPaths; readMetrics?: () => RouterMetricsFeed | null } = {},
 ): Promise<FleetStatus> {
   const generatedAt = new Date().toISOString();
   let dispatchLearningEvents: DispatchProductionEvent[] | undefined;
@@ -3277,6 +3282,7 @@ export async function buildFleetStatus(
   }
 
   const status: FleetStatus = {
+    metrics: readFleetMetrics(options.readMetrics),
     schema: 'fleet.v1',
     memory: await readFleetMemory(options.memoryPaths),
     generatedAt,

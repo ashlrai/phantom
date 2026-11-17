@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500" role="img" aria-labelledby="title desc">
+  <title id="title">Ashlr.AI — Forward-deployed software and AI engineering</title>
+  <desc id="desc">The Ashlr.AI keystone beside a quiet diagram of a shared queue, three agent lanes, and connected machines. Digital Masonry.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .ink { fill: #FFFFFF; } .muted { fill: #A3B3C3; } .accent { fill: #60A5FA; }
+    .rule { fill: none; stroke: #476787; stroke-opacity: .45; }
+    .panel { fill: #101A24; stroke: #476787; stroke-opacity: .55; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; letter-spacing: 1.5px; }
+  </style>
+  <rect width="1500" height="500" fill="#0D1520"/>
+  <path class="rule" d="M80 96H1420M80 400H1420"/>
+  <path d="M80 96H144" stroke="#2563EB" stroke-width="3"/>
+  <text x="80" y="65" class="muted mono">ASHLR / ENGINEERING</text>
+  <text x="1420" y="65" text-anchor="end" class="muted mono">BUILT TO MOVE WORK FORWARD</text>
+  <!-- Canonical ashlar-landing keystone geometry, uniformly scaled; reversed tone. -->
+  <g transform="translate(80 160) scale(.1)">
+    <path class="ink" d="M367.9 0.6L345.4 1.8L0 594.2L3.4 606.2L97.3 764L300.3 763.9L409.2 579.7L309.3 286.2L478.4 285.6L478.4 5.5Z"/>
+    <path class="ink" d="M521.6 5.5L521.6 285.6L690.7 286.2L590.8 579.7L699.7 763.9L902.7 764L996.6 606.2L1000 594.2L654.6 1.8L632.1 0.6Z"/>
+    <path fill="#2563EB" d="M370.1 329L629.9 329L554.3 560L445.8 560Z"/>
+  </g>
+  <text x="212" y="238" class="ink" font-size="104" font-weight="700" letter-spacing="-5">Ashlr.AI</text>
+  <text x="80" y="302" class="ink" font-size="29" letter-spacing="-.5">Forward-deployed software</text>
+  <text x="80" y="343" class="muted" font-size="29" letter-spacing="-.5">and AI engineering</text>
+  <!-- Queue → lanes → machines: a schematic, without live status or counts. -->
+  <g stroke-linejoin="round">
+    <path class="rule" d="M890 250H980V164H1040M980 250H1040M980 250V336H1040M1180 164H1230V250H1280M1180 250H1280M1180 336H1230V250M1324 250H1380V186M1380 250V314"/>
+    <path d="M890 250H1040M1180 250H1280" fill="none" stroke="#2563EB" stroke-width="2"/>
+    <rect x="854" y="218" width="72" height="64" rx="8" class="panel"/>
+    <path d="M874 238H906M874 250H900M874 262H894" stroke="#60A5FA" stroke-width="2"/>
+    <rect x="1040" y="136" width="140" height="56" rx="8" class="panel"/>
+    <rect x="1040" y="222" width="140" height="56" rx="8" fill="#1E3A8A" stroke="#2563EB"/>
+    <rect x="1040" y="308" width="140" height="56" rx="8" class="panel"/>
+    <path d="M1060 155H1090M1060 169H1140M1060 327H1090M1060 341H1140" stroke="#758DA5" stroke-width="2"/>
+    <path d="M1060 241H1090M1060 255H1140" stroke="#BFDBFE" stroke-width="2"/>
+    <circle cx="980" cy="250" r="4" fill="#60A5FA"/>
+    <rect x="1280" y="228" width="44" height="44" rx="9" class="panel"/>
+    <rect x="1362" y="150" width="36" height="36" rx="7" class="panel"/>
+    <rect x="1362" y="314" width="36" height="36" rx="7" class="panel"/>
+    <rect x="1296" y="244" width="12" height="12" rx="2" fill="#2563EB"/>
+    <circle cx="1380" cy="168" r="4" fill="#758DA5"/><circle cx="1380" cy="332" r="4" fill="#758DA5"/>
+  </g>
+  <text x="80" y="446" class="muted" font-size="18">Digital Masonry.</text>
+  <text x="1420" y="446" class="accent mono" text-anchor="end">ashlr.ai</text>
+</svg>
