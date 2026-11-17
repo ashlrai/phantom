@@ -2222,6 +2222,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'asks': {
+        const { cmdAsks } = await import('./asks.js');
+        process.exitCode = await cmdAsks(rest);
+        break;
+      }
+
       case 'home': {
         const { cmdHome } = await import('./home.js');
         process.exitCode = await cmdHome(rest);

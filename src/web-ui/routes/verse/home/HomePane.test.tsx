@@ -9,7 +9,8 @@ import { getVerseUiState, resetVerseUi } from '../verse-ui-store.js';
 import { HomePane } from './HomePane.js';
 
 const state = vi.hoisted(() => ({ status: 'success', data: undefined as unknown, openDockPane: vi.fn() }));
-vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state, useRefetch: () => vi.fn() }));
+// One mocked read serves every query, so the Asks card sees a home.v1 body and stays hidden (AsksCard.test.tsx covers it).
+vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state, useRefetch: () => vi.fn(), useMutationHold: () => ({ hasHold: false, token: null, touch: vi.fn() }) }));
 vi.mock('../dock/dock-store.js', async original => ({ ...await original<typeof import('../dock/dock-store.js')>(), openDockPane: state.openDockPane }));
 const unknown = (reason: string) => ({ state: 'unknown' as const, reason });
 const HEALTHY: HomeSummary = {

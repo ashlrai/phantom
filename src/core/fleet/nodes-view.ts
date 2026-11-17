@@ -131,7 +131,7 @@ export function buildNodesView(
   }
 
   const nodes = machines.map((machine): NodeRow => {
-    const live = machine.records.filter(record => record.expiresAt > nowMs);
+    const live = machine.records.filter(record => !mirrorStale && record.expiresAt > nowMs);
     // Absence proves "not running" only where the list is authoritative and current.
     const silenceKnown = state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none';
     const phantom = live.length ? 'running' : silenceKnown ? 'not-running' : UNKNOWN;
@@ -150,7 +150,9 @@ export function buildNodesView(
     } else if (phantom === 'running') {
       if (held || slots === 0 && jobs.length === 0) { stateCode = 'held'; words = `holding: ${HELD_WORDS[held ?? ''] ?? 'no job slots open'}`; }
       else if (slots === 0) { stateCode = 'busy'; words = `busy: ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'} running, no free slots`; }
-      else { stateCode = 'ready'; words = 'ready for work'; }
+      else if (machine.reachable !== true || slots === UNKNOWN) {
+        stateCode = UNKNOWN; words = `Phantom running; ${machine.reachable !== true ? 'reachability' : 'free slots'} unknown`;
+      } else { stateCode = 'ready'; words = 'ready for work'; }
     } else if (phantom === 'not-running') {
       stateCode = machine.reachable === true ? 'not-running' : UNKNOWN;
       words = machine.reachable === true ? `reachable but Phantom not running: run \`phm node join\` ${where}` : 'not seen on the network; Phantom not running';
@@ -161,7 +163,7 @@ export function buildNodesView(
     return {
       name: machine.name, isSelf: machine.isSelf, reachable: machine.reachable, lastSeen: machine.lastSeen, phantom,
       ...headroom(machine.isSelf ? local.stats ?? undefined : newest?.hostStats),
-      lanes: machine.records.length ? [...new Set(machine.records.flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
+      lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
       jobsRunning: jobs, freeSlots: slots, stateCode, state: words,
     };
   });
@@ -169,9 +171,33 @@ export function buildNodesView(
   return { schemaVersion: 1, asOf, self: selfName, registry: registry?.source ?? UNKNOWN, nodes, reasons };
 }
 
-/** Computers that can take a job for `lane` right now: ready, and advertising the lane. */
+/** Require confirmed reachability, free slots and a live advertisement for the lane. */
 export function nodesThatCanTake(view: NodesView, lane: string): NodeRow[] {
-  return view.nodes.filter(node => node.stateCode === 'ready' && node.lanes !== UNKNOWN && node.lanes.includes(lane));
+  return view.nodes.filter(node => node.stateCode === 'ready' && node.reachable === true
+    && typeof node.freeSlots === 'number' && node.freeSlots > 0 && node.lanes !== UNKNOWN && node.lanes.includes(lane));
+}
+
+export interface NodePlacement {
+  lane: string;
+  node: string | null;
+  target: 'remote' | 'local' | 'none';
+  reason: 'remote-ready' | 'local-only' | 'local-fallback' | 'no-ready-node';
+  explanation: string;
+}
+
+/** Pure placement advice for a selected lane; reserves nothing and grants no execution authority. */
+export function chooseNodeForLane(view: NodesView, lane: string, options: { localOnly?: boolean } = {}): NodePlacement {
+  const ready = nodesThatCanTake(view, lane).sort((a, b) => Number(b.freeSlots) - Number(a.freeSlots)
+    || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const remote = options.localOnly ? undefined : ready.find(node => !node.isSelf);
+  if (remote) return { lane, node: remote.name, target: 'remote', reason: 'remote-ready',
+    explanation: 'Ready remote computer; most free slots first, then name.' };
+  const local = ready.find(node => node.isSelf);
+  if (!local) return { lane, node: null, target: 'none', reason: 'no-ready-node',
+    explanation: options.localOnly ? 'This computer is not ready for this lane.' : 'No computer is ready for this lane.' };
+  const localOnly = options.localOnly || view.nodes.every(node => node.isSelf);
+  return { lane, node: local.name, target: 'local', reason: localOnly ? 'local-only' : 'local-fallback',
+    explanation: localOnly ? 'Using this computer; placement is local only.' : 'Using this computer; no remote computer is ready for this lane.' };
 }
 
 /** Read every source through its seam and join; never throws. */
