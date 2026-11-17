@@ -290,6 +290,32 @@ Print it: `ashlr agents bus contract --json` (read-only, no bus access).
 
 ### 2. Body kinds
 
+#### Flat mesh observations
+
+`phm agents mesh status --json` reads the identity registry and retained presence
+observations without probing apps or writing state. Each row includes a directly
+addressable `agent:<handle>`, lane, last-seen time, current task and source.
+Unknown providers and unobserved timestamps are `null`. These are observations,
+never authentication or execution authority.
+
+The live console publishes local observations once a minute:
+desktop roster-hook windows, CLI job claims, and iMessage teammate loop/task
+metadata. No message bodies, contact handles, credentials or result tokens are published.
+Existing v2 `context` bodies carry JSON observation text on `fleet.mesh`; no new
+bus kind or provider is introduced. Observations expire from the bus after ten
+minutes and become unknown after two minutes without a refresh. Registered agents
+remain visible when observations expire. A healthy source clears departed tasks;
+an unavailable source reports unknown. iMessage last-seen means a peer result,
+not a successful local poll. Desktop last-seen means a visible window observation.
+One row represents each claim owner (aggregating concurrent claims) or desktop
+session (keyed by the hook's app/window-title pair). Desktop collection has a five-second deadline; a stalled
+desktop source does not prevent CLI or teammate observations.
+
+`phm agentnet peers mesh --json` and `phm agentnet peers work-feed --json` expose
+these shared projections to every enrolled, authenticated peer, independent of
+lane or role. Private inboxes keep their recipient checks. Routine local DMs use
+`phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
+
 `body.kind` is one of:
 
 | kind | fields |

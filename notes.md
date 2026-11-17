@@ -1,4 +1,15 @@
 # Identity findings
+
+## RQ-FLAT-MESH-1 audit
+- Desktop roster hook has no publisher; observe/read merges only Devin, Cursor and Grok.
+- CLI identity registration records runtime timestamps, not current job claims.
+- iMessage task/loop state has no bus presence publisher; task views contain result tokens, so select fields explicitly.
+- Group presence uses a legacy kind with no current task; work feed already has no local role gate.
+- Peer inbox checks authenticate sessions and protect recipient mail; shared metadata reads can be added independently.
+- v2 has no provider for Instinct or several CLI lanes: keep provider null instead of inventing one.
+- All new modules remain outside Tier-1; verify-changed's authority drift checks pass.
+- Full lint has 9 existing errors in 3 untouched .github files; changed-file lint is clean.
+
 Roster v1 already persists stable ids, domain, lane/model allowlists and memory.
 Orchestration receipts bind job/lane to specialist with assignedAt.
 Identity metadata must be optional to preserve old roster snapshots.

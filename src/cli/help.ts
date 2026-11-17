@@ -320,6 +320,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'agent-roster.v1 {schema, observedAt, latencyMs, sources[{source, ok, availability, sessions, error, observedAt, truncated}], sessions[], claims}',
   },
   {
+    usage: 'ashlr agents mesh status [--root <absolute>] [--json]',
+    description: 'Read the flat fleet mesh: every known identity, direct address, lane, last-seen and current task. No probes or writes.',
+    safety: 'read',
+    jsonShape: 'agent-mesh.v1 {status, asOf, agents[{agent, address, lane, lastSeen, currentTask, status, source}]}',
+  },
+  {
     usage: 'ashlr runtime status --store <absolute> --json',
     description: 'Verify the explicitly selected local candidate and rollback slot without installing, publishing, or starting services.',
     safety: 'read',
@@ -1005,6 +1011,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'agents bus dm|channel|handoff ... [--json]', desc: 'Unified agent bus: DMs, member-only channels and handoffs on the one local bus store, with priority wake.', topic: 'autonomy' },
   { cmd: 'agents bus inbox|wakes|adapters [<agent>] [--json]', desc: 'Read an identity inbox or wake hints, or list the claude/codex/devin/cursor/grok session adapters. Read-only.', topic: 'autonomy' },
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents mesh status [--json]', desc: 'Flat agent mesh: direct addresses, lanes, last-seen and current tasks. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
   { cmd: 'bus send|inbox|ack [--json]', desc: 'Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.', topic: 'autonomy' },
   { cmd: 'metrics merges', desc: 'Show hourly merges and median open-to-merge time by lane for the last 24 hours.', topic: 'autonomy' },
