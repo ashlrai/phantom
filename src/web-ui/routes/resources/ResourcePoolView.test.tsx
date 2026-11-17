@@ -19,6 +19,7 @@ afterEach(() => {
 function setup() {
   const { scope, snapshot } = resourceFixture();
   const request = vi.fn(async (path: string, init?: RequestInit): Promise<Response> => {
+    if (path === '/api/app/fleet-usage' && init?.method === 'GET') return json({ schema: 'fleet-usage.v1', generatedAt: snapshot.sampledAt, lanes: [] });
     if (path === '/api/resources' && init?.method === 'GET') return json(snapshot);
     if (path === '/api/resources/tasks' && init?.method === 'POST') {
       const task = JSON.parse(init.body as string); const job = { ...snapshot.supervisor!.jobs[0]!, id: task.id, allowedWorkerIds: task.allowedWorkerIds };
@@ -49,7 +50,9 @@ describe('resource dispatch desk', () => {
     expect(await screen.findByText('Last reported: Legacy ownership evidence missing')).toBeVisible();
     expect(screen.getByText(/Current collector records, activity and quota freshness are unverified/)).toBeVisible();
     expect(screen.queryByRole('button', { name: /restart collector|retry collector|recover|Pause queue/ })).not.toBeInTheDocument();
-    expect(f.request.mock.calls.every(([path, init]) => path === '/api/resources' && init?.method === 'GET')).toBe(true);
+    expect(f.request.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
+      ['/api/resources', 'GET'], ['/api/app/fleet-usage', 'GET'], ['/api/resources', 'GET'],
+    ]);
   });
 
   it('keeps the desk useful when configured metadata collection was blocked at startup', async () => {

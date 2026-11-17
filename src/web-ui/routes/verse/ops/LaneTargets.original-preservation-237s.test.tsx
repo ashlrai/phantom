@@ -60,8 +60,8 @@ it('does not offer raise action for held lane with backlog', async () => {
   
   // Verify the held lane shows the proper status
   expect(await screen.findByText(/running 2 of 2 · 15 waiting/)).toBeInTheDocument();
-  const heldChip = screen.getByRole('status', { name: 'Held' });
-  expect(heldChip).toBeInTheDocument();
+  expect(screen.getByText('Held')).toBeVisible();
+  expect(screen.getByText('Held')).toHaveAttribute('title', 'Hold reason');
 });
 
 it('does not offer raise action for unknown runs (no runs data)', async () => {

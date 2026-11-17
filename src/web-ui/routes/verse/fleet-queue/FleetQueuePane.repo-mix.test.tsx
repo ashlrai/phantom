@@ -20,14 +20,14 @@ it('renders repo counts and the personal Phantom restock notice', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(data)));
   render(<FleetQueuePane {...{ visible: true } as PaneProps} />);
   expect(await screen.findByText('codex-personal: 19 ready (17 Phantom · 2 other: ashlr-hub, verse) · 3 parked')).toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('Only 17 Phantom lines are ready on codex-personal; under 20 the author adds filler on the next restock.');
+  expect(screen.getByText('Only 17 Phantom lines are ready on codex-personal; under 20 the author adds filler on the next restock.')).toHaveAttribute('role', 'status');
 });
 
 it('preserves old payload text without a restock notice', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(fixture())));
   render(<FleetQueuePane {...{ visible: true } as PaneProps} />);
   expect(await screen.findByText('codex-personal: 19 ready · 3 parked')).toBeInTheDocument();
-  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  expect(screen.queryByText(/the author adds filler on the next restock/)).not.toBeInTheDocument();
 });
 
 it('validates optional mix fields independently and warns only below the personal threshold', () => {

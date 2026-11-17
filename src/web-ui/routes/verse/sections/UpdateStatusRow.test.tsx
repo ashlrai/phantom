@@ -6,12 +6,12 @@ import { evictAll } from '../../../data/cache.js';
 import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { UpdateStatusRow } from './UpdateStatusRow.js';
+import { installUpdateFetch } from './update-row.test-support.js';
 
 const facts = { v: 1, sourceState: 'healthy', installedVersion: '1.0.0', headSha: 'abcdef123456', headAt: null, originSha: null, branch: 'master', behind: 2, ahead: 0, dirty: false, lastFetchAt: null, processStartedAt: null, uptimeSeconds: 120, canFastForward: true };
 const state = { phase: 'staged', enabled: true, version: '2.0.0', bytesReceived: 0, bytesTotal: null, reason: null };
 function server(body: unknown = facts, status = 200) {
-  const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(body), { status }));
-  vi.stubGlobal('fetch', fetcher); return fetcher;
+  return installUpdateFetch(async () => Response.json(body, { status })).statusRequests;
 }
 beforeEach(() => { evictAll(); resetDesktopUpdatesForTests(); });
 afterEach(() => { cleanup(); resetDesktopUpdatesForTests(); delete (window as unknown as Record<string, unknown>)['__ASHLR_DESKTOP__']; vi.unstubAllGlobals(); vi.useRealTimers(); });
