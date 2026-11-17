@@ -7,7 +7,8 @@ import type { JobClaim } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
 import { callPool, type PoolConfig } from './pool-host.js';
 import { NODE_HEARTBEAT_MS, isHostStats, validId } from './state.js';
-import { readNodeCapacity } from './capacity.js';
+import { nodeRamSlots, readNodeCapacity, type NodeCapacity } from './capacity.js';
+import { hostSlots, type HostSlotLease } from './host-slots.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
@@ -60,28 +61,46 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       return isHostStats(sample) && json.length <= 64 * 1024 ? ['--host-stats', json] : [];
     } catch { return []; }
   };
-  const capacityReport = (capacity: ReturnType<typeof readNodeCapacity>) => ['--capacity', JSON.stringify({ ...capacity,
-    hostId: hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100), sampledAtMs: Date.now() })];
   let active = 0;
+  // Router slots include this session's active claims, not just the host's free slots.
+  // A lease this attempt already owns is counted in both terms, so it is subtracted once.
+  const routerSlots = (observed: NodeCapacity, owned = 0) => observed.held ? 0 : Math.min(capacity.slots, active + observed.slots - owned);
+  // The pool's capacity sample does not accept CPU or host-slot holds yet. Those beats omit the
+  // sample, so the router shows this host as unknown instead of refusing the whole heartbeat.
+  const capacityReport = (observed: NodeCapacity, slots: number) => observed.held && /^(?:cpu|host-slots)-/.test(observed.held) ? [] :
+    ['--capacity', JSON.stringify({ ...observed, slots,
+      hostId: hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100), sampledAtMs: Date.now() })];
   const usage = () => String(Math.min(1000, Math.round(active / capacity.slots * 1000)));
   const attempt = async (): Promise<Record<string, unknown>> => {
     const admission = capacityNow();
-    callPool(config, 'beat', [...identity, ...telemetry(), ...capacityReport(admission), '--usage', usage(), '--slots', String(admission.slots), ...(auth ? ['--auth', auth] : [])]);
+    const advertised = routerSlots(admission);
+    callPool(config, 'beat', [...identity, ...telemetry(), ...capacityReport(admission, advertised), '--usage', usage(), '--slots', String(advertised), ...(auth ? ['--auth', auth] : [])]);
     if (admission.held) return { held: admission.held };
+    let hostLease: HostSlotLease | null;
+    try { hostLease = hostSlots().acquire(nodeRamSlots(admission.ramBytes)); }
+    catch { return { slots: 0, held: 'host-slots-unmeasured' }; }
+    if (!hostLease) return { slots: 0, held: 'host-slots-exhausted' };
+    try { return await runAttempt(hostLease); }
+    finally { hostLease.release(); }
+  };
+  const runAttempt = async (hostLease: HostSlotLease): Promise<Record<string, unknown>> => {
     const pulled = callPool(config, 'pull', identity);
     if (pulled.demoted || !pulled.result['pulled']) return { pulled: false };
     const claim = pulled.result['claim'] as JobClaim;
     const job = pulled.result['job'] as JobView;
+    const jobCapacity = () => readNodeCapacity(light, { ...(job.pack ? { pack: job.pack } : {}), lease: hostLease });
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job)) || nodeStopped() || capacityNow().held) return { held: 'unsupported-job' };
+        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job)) || nodeStopped()) return { held: 'unsupported-job' };
+    const packCapacity = jobCapacity();
+    if (packCapacity.held) return { held: packCapacity.held, capacity: packCapacity };
     const lease = [...identity, '--job', claim.jobId, '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
     // Check immediately before spawn as well as throughout execution.
     const renewed = callPool(config, 'renew', lease);
-    if (!renewed.result['expiresAt'] || renewed.demoted || capacityNow().held) return { held: 'lease-lost' };
-    active++;
+    if (!renewed.result['expiresAt'] || renewed.demoted || jobCapacity().held) return { held: 'lease-lost' };
     const resultRef = await new Promise<string | null>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
+      active++;
       let fenced = false;
       const output: Buffer[] = [];
       let bytes = 0;
@@ -102,9 +121,10 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       const timer = setInterval(() => {
         try {
           if (nodeStopped()) return stop();
-          const observed = capacityNow();
+          const observed = jobCapacity();
           if (observed.held) stop();
-          callPool(config, 'beat', [...identity, ...telemetry(), ...capacityReport(observed), '--usage', usage(), '--slots', String(observed.slots)]);
+          const slots = routerSlots(observed, 1);
+          callPool(config, 'beat', [...identity, ...telemetry(), ...capacityReport(observed, slots), '--usage', usage(), '--slots', String(slots)]);
           if (observed.held) return;
           const current = callPool(config, 'renew', lease);
           if (current.demoted || !current.result['expiresAt']) stop();
@@ -121,7 +141,8 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
           resolve(code === 0 && !fenced && validId(result.resultRef) ? result.resultRef : null);
         } catch { resolve(null); }
       });
-      child.stdin.end(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.result['job'], claim }));
+      try { child.stdin.end(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.result['job'], claim })); }
+      catch { stop(); } // Retain the host slot until close even if writing stdin fails synchronously.
     });
     active--;
     if (!resultRef) return { completed: false, held: 'runner-stopped' };

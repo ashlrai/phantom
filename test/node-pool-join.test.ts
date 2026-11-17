@@ -17,6 +17,11 @@ beforeEach(() => {
   deps.call.mockImplementation((_config, verb) => ({ demoted: false, result: verb === 'join' ? { session: 3 } : { left: true } }));
 });
 describe('repeatable Mac enrollment', () => {
+  it('includes local host slot exhaustion in pool status', async () => {
+    deps.capacity.mockReturnValue({ slots: 0, held: 'host-slots-exhausted' });
+    expect(await cmdNodePool('status', ['--json'])).toBe(0);
+    expect(JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0])).toMatchObject({ capacity: { slots: 0, held: 'host-slots-exhausted' } });
+  });
   it('writes a private metrics snapshot beneath an existing shared metrics directory', async () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'muse-metrics-')));
     vi.stubEnv('HOME', home);
