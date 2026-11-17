@@ -170,3 +170,23 @@ lane targets, queue edits or model selection in this change.
 No live dispatcher is installed by this change. Installation follows the
 existing [dispatcher review and pin workflow](../contrib/mac/README.md#installing-the-dispatcher).
 `phm route explain --json` keeps its existing hysteresis report contract.
+
+### Advisory lead/sidekick pairing
+
+The report's `pairing` field is a typed `route.pairing.v1` advisory decision,
+not dispatch authority. Optional `<runs>/queue/pairing-lanes.json` supplies
+`{ "lanes": [{ "lane": "lead", "laneClass": "frontier", "available": true,
+"pool": { "pool": "lead", "resetAt": null, "remainingPercent": null } }] }`.
+Lane classes are `frontier` or `cheap`; pools may also carry `creditBalance`.
+Missing or invalid input yields `pairing: null`; an empty list yields unassigned roles.
+Existing runs snapshots do not publish this lane-class/calendar combination.
+
+The pure `decidePairing(lanes, nowMs, { bottleneck })` contract assigns frontier
+`plan`/`verify` and cheap `implement`, ordering each class by reset pressure,
+then credits, then lanes without spendable evidence by id. Reasons are closed:
+`reset-pressure`, `credits-only`, `no-capacity-evidence`, `no-frontier-lane`,
+`no-cheap-lane`, `implement-escalated`, `paired`. Only an explicit `implement`
+bottleneck permits a second frontier lane to implement; route explain declares
+no bottleneck. Assignments include reset, remaining allowance and burn pace;
+unknown evidence is null, never invented capacity.
+Zero remaining allowance excludes a lane unless positive credits remain; zero burn pace is labeled `no-capacity-evidence`, not `reset-pressure`.

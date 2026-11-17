@@ -8,6 +8,7 @@ import { readRebaseCoverage } from './fleet-rebase-plan.js';
 import { MAX_PRS, parseMergeBatchPrs, planMergeBatches } from '../core/fleet/merge-batch.js';
 import { MERGE_BATCH_RUN_SCHEMA, runMergeBatch } from '../core/fleet/merge-batch-runner.js';
 import { parseHoldList, type RebasePlanExistingJob } from '../core/fleet/rebase-plan.js';
+import { planGreenMergeTrain } from '../core/fleet/green-merge-train.js';
 
 export interface FleetMergeBatchRunDeps extends FleetMergeBatchDeps {
   existing?: readonly RebasePlanExistingJob[];
@@ -18,6 +19,8 @@ Emit merge, rebase, close-review and wait actions from an open-PR snapshot.
 Input: gh pr list JSON (include headRefOid and files), merge-backlog, or pr-hygiene.
 Default input: piped stdin or <root>/fleet/open-prs.json. JSON output is the default.
 Reads <root>/queue/{router-queue.md,ready.tsv,hold-list.txt} for coverage and holds.
+Includes a green, disjoint train proposal when queue and hold reads are healthy.
+Train evidence additionally needs state, baseRefName, changedFiles and statusCheckRollup.
 No GitHub calls or writes. Dependencies require merged PRs and a fresh snapshot;
 CI tiers are advisory and never replace required checks. Exit 1 for unusable input.`;
 
@@ -83,7 +86,8 @@ export async function cmdFleetMergeBatchRun(args: string[], deps: FleetMergeBatc
   }
   const plan = planMergeBatches({ ...parsed, repo, now });
   const report = runMergeBatch({ plan, prs: parsed.prs, existing: coverage.jobs, hold });
-  out(JSON.stringify({ ...report, input: { kind: parsed.kind, source: read.source, state: 'ok' },
+  const train = coverage.state === 'ok' && holdState === 'ok' ? planGreenMergeTrain(parsed.prs, report, rows) : null;
+  out(JSON.stringify({ ...report, train, input: { kind: parsed.kind, source: read.source, state: 'ok' },
     sources: { queue: coverage.state, hold: holdState } }) + '\n');
   return 0;
 }
