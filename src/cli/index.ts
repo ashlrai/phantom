@@ -2740,6 +2740,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pr': {
+        const { cmdPr } = await import('./pr.js');
+        process.exitCode = await cmdPr(rest);
+        break;
+      }
+
       case 'prs': {
         const { cmdPrs } = await import('./prs.js');
         process.exitCode = await cmdPrs(rest);

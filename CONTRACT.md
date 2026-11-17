@@ -1083,3 +1083,18 @@ first-paint consumers observe it without importing pane definitions or shortcuts
 `readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
 `describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
 `createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
+
+### PR append-union conflict resolution
+
+`resolvePrConflicts(ConflictOptions): Promise<ConflictReport>` in
+`src/core/fleet/pr-conflict-resolver.ts` inspects one pinned open PR in a
+disposable git repository/worktree. The exact `APPEND_UNION_ALLOWLIST` and empty
+diff3 base regions constrain resolution; GATES v3 and holds override any
+configuration. Dry-run is the default. Apply runs generators and verification,
+then revalidates PR identity, holds and master before export or sanctioned
+publication. `ConflictReport.status` is `needs-agent`, `would-resolve`,
+`ready-supersede` or `published`; available scrubbed conflict hunks and failed
+command names remain evidence. No direct push fallback exists.
+`runPrConflictResolution(ConflictRunOptions): Promise<unknown>` reads GitHub and
+fleet hold evidence for the `pr.resolve-conflicts.v1` CLI envelope.
+See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).
