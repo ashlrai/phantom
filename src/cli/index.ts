@@ -2400,6 +2400,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'admission': {
+        process.exitCode = await (await import('./admission.js')).cmdAdmission(rest);
+        break;
+      }
+
       case 'daily-fix': {
         const cmdDailyFix = await loadDailyFixCmd();
         process.exitCode = await cmdDailyFix(rest);
