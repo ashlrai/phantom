@@ -37,7 +37,8 @@ export function createSlackApi(input: {
     const token = ref ? input.resolveCredential(ref) : undefined;
     if (!token) throw new Error('slack-credential-unavailable');
     const json = method === 'chat.postMessage';
-    const encoded = json ? JSON.stringify(body) : new URLSearchParams(Object.entries(body)
+    // Enforce preview suppression at the HTTP boundary, including minimal replies.
+    const encoded = json ? JSON.stringify({ ...body, unfurl_links: false, unfurl_media: false }) : new URLSearchParams(Object.entries(body)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => [key, typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)])).toString();
     let response: Response;
@@ -133,6 +134,8 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
   call: SlackCall; stateRoot?: string; runsDir?: string; busRoot?: string; leaderRequestId?: string;
   readPolicy?: () => SlackDeliveryPolicy | undefined;
   signal?: AbortSignal;
+  /** Trusted Leader composer fallback only; retain its minimal presentation. */
+  plainReply?: boolean;
 }): Promise<SlackDelivery> {
   if (input.signal?.aborted) return { status: 'refused', reason: 'session-expired' };
   const checked = validateBusEnvelope(envelope);
@@ -160,14 +163,40 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
     await verifySlackIdentity(input.call, input.config);
     if (previous?.state === 'sent') return { status: 'duplicate', reason: 'delivery-proved', ts: previous.ts };
     if (previous) {
-      const result = await input.call(previous.thread ? 'conversations.replies' : 'conversations.history', {
-        channel: previous.channel, ...(previous.thread ? { ts: previous.thread } : {}), limit: 100,
-      });
-      if (!Array.isArray(result.messages)) throw new Error('slack-history-invalid');
-      const matches = result.messages.filter(value => record(value) && value.client_msg_id === previous.clientId && value.user === input.config.ownUserId &&
-        (!previous.thread || value.thread_ts === previous.thread) && isSlackTs(value.ts));
-      if (matches.length !== 1) return { status: 'uncertain', reason: 'delivery-needs-reconciliation' };
-      previous.state = 'sent'; previous.ts = (matches[0] as RecordValue).ts as string;
+      const matches = new Set<string>(), cursors = new Set<string>();
+      let cursor = '', messages = 0, complete = false;
+      // A match on an early page is insufficient: later pages may prove a
+      // conflicting physical send. Keep the durable intent until a full scan.
+      for (let page = 0; page < 16; page++) {
+        if (input.signal?.aborted) throw new Error('slack-session-expired');
+        const result = await input.call(previous.thread ? 'conversations.replies' : 'conversations.history', {
+          channel: previous.channel, ...(previous.thread ? { ts: previous.thread } : {}), limit: 100,
+          ...(cursor ? { cursor } : {}),
+        });
+        if (!Array.isArray(result.messages) || result.messages.length > 100 ||
+            result.messages.some(value => !record(value)) || (messages += result.messages.length) > 1600 ||
+            (result.has_more !== undefined && typeof result.has_more !== 'boolean')) throw new Error('slack-history-invalid');
+        for (const value of result.messages) {
+          if (record(value) && value.client_msg_id === previous.clientId && value.user === input.config.ownUserId &&
+              isSlackTs(value.ts) && (previous.thread ? value.thread_ts === previous.thread :
+                value.thread_ts === undefined || value.thread_ts === value.ts)) matches.add(value.ts);
+        }
+        const metadata = result.response_metadata;
+        if (metadata !== undefined && !record(metadata)) throw new Error('slack-history-invalid');
+        const next = record(metadata) ? metadata.next_cursor : undefined;
+        if (next !== undefined && (typeof next !== 'string' || next.length > 4096 ||
+            (next !== '' && next.trim() === ''))) throw new Error('slack-history-invalid');
+        if (next === undefined || next === '') {
+          if (result.has_more === true) throw new Error('slack-history-incomplete');
+          complete = true;
+          break;
+        }
+        if (cursors.has(next)) throw new Error('slack-history-incomplete');
+        cursors.add(next);
+        cursor = next;
+      }
+      if (!complete || matches.size !== 1) return { status: 'uncertain', reason: 'delivery-needs-reconciliation' };
+      previous.state = 'sent'; previous.ts = [...matches][0];
       writePrivateFileAtomic(path, JSON.stringify(store));
       return { status: 'sent', reason: 'delivery-reconciled', ts: previous.ts };
     }
@@ -188,9 +217,11 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
       channelRef: `slack:${input.config.teamId}:${receipt.channel}:${receipt.thread}` }) : undefined;
     store.messages[key] = receipt;
     writePrivateFileAtomic(path, JSON.stringify(store));
-    const result = await input.call('chat.postMessage', { channel: receipt.channel, text: planned.plan.text, client_msg_id: receipt.clientId,
-      ...(work ? { attachments: [{ text: slackWorkStatusLine(work, { ...checked.value.body as RecordValue, requestId: input.leaderRequestId }), mrkdwn_in: [] }] } : {}),
-      ...(receipt.thread ? { thread_ts: receipt.thread } : {}), unfurl_links: false, unfurl_media: false });
+    const result = await input.call('chat.postMessage', { channel: receipt.channel,
+      text: input.plainReply ? planned.plan.text.replace(/^Leader: /, '') : planned.plan.text, client_msg_id: receipt.clientId,
+      ...(work && !input.plainReply ? { attachments: [{ text: slackWorkStatusLine(work, { ...checked.value.body as RecordValue, requestId: input.leaderRequestId }), mrkdwn_in: [] }] } : {}),
+      ...(receipt.thread ? { thread_ts: receipt.thread } : {}),
+      ...(!input.plainReply ? { unfurl_links: false, unfurl_media: false } : {}) });
     if (result.channel !== receipt.channel || !isSlackTs(result.ts)) return { status: 'uncertain', reason: 'delivery-response-unproved' };
     receipt.state = 'sent'; receipt.ts = result.ts;
     writePrivateFileAtomic(path, JSON.stringify(store));

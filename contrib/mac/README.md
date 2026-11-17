@@ -67,7 +67,9 @@ in the dispatcher; installing it needs a Security pin.
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
 free slots (`target - running - queued` above zero) it asks the feed scripts
 beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
-that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+that many `READY` lines. A line that declares no lane gets `pool=<lane>` as its
+hint; a lane the line declares for itself stays, because the dispatcher's shared
+market treats `pool=` as a preference and runs the line wherever capacity is. Ids already in the router queue or
 claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
 lines to `router-queue.md` under `ready.lock`, logging
 `SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next
@@ -126,7 +128,8 @@ is recorded as `local_mid_cap` in `admission.json`.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
-`GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
+`GATE_WORKTREES_MAX=40` (floor), `GATE_WORKTREES_PER_CPU=4` (the live-worktree
+warning fires above max(floor, per-cpu × ncpu)), `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
 `dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
 swap samples and the `admit` or `stop` decision. Signal fixtures

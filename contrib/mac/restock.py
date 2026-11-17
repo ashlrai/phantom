@@ -432,7 +432,6 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    if pool not in CODEX: skip(j, "lane-" + pool); continue
     if pool == "codex-local":
         fits, reason = local_fit(attrs, text)
         if not fits:
@@ -457,8 +456,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     # instead of silently skipping; restock unparks them once jobs.jsonl shows every id MERGED.
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
         if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
-        lane = pool if pool in CODEX else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-        dep_parks.append((j, rm.group(1), lane, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        dep_parks.append((j, rm.group(1), pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue

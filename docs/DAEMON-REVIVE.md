@@ -14,6 +14,27 @@ work around a refused `authority resident start`.
 
 ## Read the health result
 
+Unavailable frontier clients include `binaryPath`, `binarySource` (`path`,
+`well-known`, or null), and `cause`. The compatibility field `binaryOnPath`
+still means a PATH hit, not merely an installed binary. Causes distinguish
+`binary-not-found`, `auth-or-seat-not-admitted`, `policy-refused`,
+`resource-unavailable`, `not-selected`, `non-loopback-refused`, `probe-timeout`,
+and the fallback `unavailable`. Admission failures are inferred from adapter
+inventory: health does not inspect authentication, pinned seats, or credentials.
+The cause can therefore also reflect confinement refusal, not just missing auth.
+Human output prints each unavailable client's cause and resolved path, if any.
+
+Frontier inventory discovery is bounded to 30 seconds. A timeout leaves the
+inventory unknown (not an empty resolved inventory) and the supervisor detail
+reports `frontier probe timed out after 30 s` when the supervisor reason is
+`unknown`. It does not recommend a restart just because discovery timed out.
+
+Migration: existing launchd plists retain their exact safe PATH. CLI discovery
+checks PATH first, then well-known user install directories (including
+`~/.local/bin`, `~/.npm-global/bin`, `/opt/homebrew/bin`, and the running Node
+binary's directory). These metadata-only checks require a regular file with an
+execute bit and never launch the CLI. No plist reinstall is needed.
+
 ```sh
 ashlr daemon health --json
 ```

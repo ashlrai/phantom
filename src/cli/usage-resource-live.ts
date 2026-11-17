@@ -14,6 +14,8 @@ import type { ResourceLiveSources } from '../core/usage/resource-live/source-typ
 import { defaultResourceLiveSources } from '../core/usage/resource-live/sources.js';
 import { readResourceLiveFile } from '../core/usage/resource-live/store.js';
 import type { ResourceLiveSidecar } from '../core/usage/resource-live/types.js';
+import { loadConfigReadOnly } from '../core/config.js';
+import { liveSourceOptions } from '../core/usage/resource-live/config.js';
 
 const USAGE = 'Usage: phm usage resource-live [--json] [--watch] [--force] [--show] [--browser [--headed]] [--runs-dir <abs>]';
 
@@ -36,8 +38,8 @@ function printTable(sidecar: Pick<ResourceLiveSidecar, 'readings' | 'burn_down'>
     const used = reading.used_pct === null ? 'unknown' : `${reading.used_pct}%`;
     const target = plan?.target_rate_per_hour == null ? '' : ` target=${plan.target_rate_per_hour} ${reading.unit}/h`;
     console.log(reading.verified
-      ? `${reading.id} used=${used} reset=${reading.reset_at ?? 'unknown'} source=${reading.source} (${reading.source_tier}) observed=${reading.observed_at} plan=${plan?.action ?? 'unknown'}${target}`
-      : `${reading.id} unverified (${reading.reason}) plan=${plan?.action ?? 'unknown'}`);
+      ? `${reading.id} used=${used} reset=${reading.reset_at ?? 'unknown'} source=${reading.source} (${reading.source_tier}) confidence=${reading.confidence} observed=${reading.observed_at} plan=${plan?.action ?? 'unknown'}${target}`
+      : `${reading.id} unverified (${reading.reason}) confidence=null plan=${plan?.action ?? 'unknown'}`);
   }
   console.log(`spend order: ${sidecar.burn_down.lane_order.join(', ') || 'none'}`);
 }
@@ -85,11 +87,9 @@ export async function cmdUsageResourceLive(args: string[], deps: UsageResourceLi
     }
   }
   const sources = deps.sources ?? defaultResourceLiveSources({
+    ...liveSourceOptions(loadConfigReadOnly()),
     runsDir,
     operatorHome: home,
-    codexCmpHome: abs(process.env['PHANTOM_SENSOR_CODEX_CMP_HOME']),
-    codexPersonalHome: abs(process.env['PHANTOM_SENSOR_CODEX_PERSONAL_HOME']),
-    accountsRoot: abs(process.env['PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT']),
     browser: session,
   });
   const now = deps.now ?? Date.now;

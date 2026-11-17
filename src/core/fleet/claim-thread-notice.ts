@@ -1,5 +1,6 @@
 /** Pure coordination deltas. Return receipts name evidence; they do not authenticate it. */
 import type { FleetBoard } from './coordination.js';
+import { createHash } from 'node:crypto';
 import { projectCoordinationReturns } from './coordination-returns-view.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -29,7 +30,14 @@ function returns(snapshot: ClaimThreadSnapshot) {
   // Project one receipt at a time so the UI projection's 50-row cap cannot drop a delta.
   return snapshot.messages.filter(m => m.at <= snapshot.asOf && m.expiresAt > snapshot.asOf).flatMap(message =>
     projectCoordinationReturns({ schema: 'fleet.coordination.v1', state: snapshot.state,
-      claims: [], messages: [message], proposals: [], expiredClaims: 0 }, snapshot.asOf).returns);
+      claims: [], messages: [message], proposals: [], expiredClaims: 0 }, snapshot.asOf).returns.map(row => ({
+        ...row,
+        // Match the writer's final task delimiter, as the projection does, but
+        // hash full dependency evidence before the display's 300-character cap.
+        blockerKey: row.result === 'BLOCKED' ? createHash('sha256')
+          .update(/^RESULT BLOCKED .+ task ".+": (dependency .+)$/.exec(message.body)![1]!)
+          .digest('hex') : undefined,
+      })));
 }
 
 /** Live claims are repository-qualified: the same claim id can be held in
@@ -51,8 +59,8 @@ export function planClaimThreadNotices(
   const prevReturns = returns(prev), nextReturns = returns(next);
   // Return receipts are repository-scoped evidence: the same claim id can
   // carry a receipt in each repository and neither may fence the other.
-  const returnSeen = (r: { result: string; repo: string; claimId: string; head: string | null }) =>
-    JSON.stringify([r.result, r.repo, r.claimId, r.head]);
+  const returnSeen = (r: (typeof prevReturns)[number]) =>
+    JSON.stringify([r.result, r.repo, r.claimId, r.head, ...(r.blockerKey ? [r.blockerKey] : [])]);
   const oldReturns = new Set(prevReturns.map(returnSeen));
   // A claim id observed in more than one repository (live claims or return
   // receipts in either snapshot) earns a repo-qualified notice identity so
@@ -71,7 +79,7 @@ export function planClaimThreadNotices(
   const seen = new Set<string>();
   const add = (state: ClaimThreadNotice['state'], id: string, repo: string, owner: string,
     evidence: string, pr?: number | null, head?: string | null,
-    transition?: { agent: string; claimedAt: number }) => {
+    transition?: { agent: string; claimedAt: number }, blockerKey?: string) => {
     const matches = bindings.filter(b => b.claimId === id && b.repo === repo);
     // Conflicting routes are unsafe even if one looks plausible.
     if (matches.length !== 1 || !matches[0]!.threadKey.trim()) return;
@@ -84,7 +92,9 @@ export function planClaimThreadNotices(
     // the earlier owner's ledgered key, while an identical replay recomputes
     // the same fields and stays fenced.
     const repos = claimRepos.get(id);
-    const dedupeKey = transition !== undefined
+    const dedupeKey = blockerKey !== undefined
+      ? JSON.stringify([state, repo, id, tail, blockerKey])
+      : transition !== undefined
       ? JSON.stringify([state, repo, id, transition.agent, transition.claimedAt, tail])
       : repos !== undefined && repos.size > 1
         ? JSON.stringify([state, repo, id, tail])
@@ -105,8 +115,10 @@ export function planClaimThreadNotices(
     }
   }
   for (const row of nextReturns) {
+    // Unchanged historical receipts stay silent even with legacy sent keys;
+    // only BLOCKED evidence gains an identity, never old VERIFIED results.
     if (oldReturns.has(returnSeen(row))) continue;
-    add(row.result, row.claimId, row.repo, row.from, row.evidence, row.pr, row.head);
+    add(row.result, row.claimId, row.repo, row.from, row.evidence, row.pr, row.head, undefined, row.blockerKey);
   }
   for (const claim of before.values()) {
     const key = claimKey(claim.repo, claim.id);

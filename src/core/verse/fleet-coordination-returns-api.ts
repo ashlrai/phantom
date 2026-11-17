@@ -9,14 +9,14 @@ import { projectCoordinationReturns } from '../fleet/coordination-returns-view.j
 export const VERSE_FLEET_COORDINATION_RETURNS_PATH = '/api/verse/fleet/coordination-claims/returns';
 
 export interface FleetCoordinationReturnsApiDeps {
-  /** Reader seam for tests. Default: readFleetBoard(). */
+  /** Reader seam for tests. Default: readFleetBoard({ reap: false }). */
   read?: () => FleetBoard;
   /** Clock seam for tests. */
   now?: () => Date;
 }
 
 export function createFleetCoordinationReturnsApi(deps: FleetCoordinationReturnsApiDeps = {}): ApiModule {
-  const read = deps.read ?? (() => readFleetBoard());
+  const read = deps.read ?? (() => readFleetBoard({ reap: false }));
   const now = deps.now ?? (() => new Date());
   return async (_ctx, _req, res, path, method) => {
     if (path !== VERSE_FLEET_COORDINATION_RETURNS_PATH) return false;

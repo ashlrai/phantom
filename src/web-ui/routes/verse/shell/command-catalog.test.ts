@@ -243,8 +243,8 @@ describe('command catalog — table integrity', () => {
     expect(findCommand('chat.new-on')!.argument).toEqual({ kind: 'seat', prompt: 'Seat' });
   });
 
-  it('orders the palette groups Needs you › Panes › Workers › Chats › Actions › Go to › Seats & Apps › Projects', () => {
-    expect(PALETTE_GROUPS.map((g) => g.label)).toEqual(['Needs you', 'Panes', 'Workers', 'Chats', 'Actions', 'Go to', 'Seats & Apps', 'Projects']);
+  it('orders the palette groups Needs you › Panes › Workers › Chats › Actions › Go to › Commands › Seats & Apps › Projects', () => {
+    expect(PALETTE_GROUPS.map((g) => g.label)).toEqual(['Needs you', 'Panes', 'Workers', 'Chats', 'Actions', 'Go to', 'Commands', 'Seats & Apps', 'Projects']);
     expect(PALETTE_PREFIXES).toEqual({ '>': 'actions', '#': 'chats', '@': 'workers' });
     expect(PALETTE_RECENT_LIMIT).toBe(5);
     expect(paletteCommands('go-to').map((c) => c.id)).toEqual([
