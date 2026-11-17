@@ -97,6 +97,7 @@ export function parseState(value: unknown): NodesState {
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();
   if (!value.jobs.every(j => object(j) && validId(j.id) &&
     (j.owner === undefined || validId(j.owner)) && (j.requires === undefined || list(j.requires, validCap)) &&
+    (j.declined === undefined || (Array.isArray(j.declined) && j.declined.length <= 16 && j.declined.every(token))) &&
     (j.pack === undefined || validId(j.pack)) && (j.secrets === undefined || list(j.secrets, validSecretName)) &&
     ['pending', 'running', 'completed'].includes(String(j.state)) &&
     (j.executionHostId === undefined || validId(j.executionHostId)) &&

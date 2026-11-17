@@ -89,14 +89,25 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     const claim = pulled.result['claim'] as JobClaim;
     const job = pulled.result['job'] as JobView;
     const jobCapacity = () => readNodeCapacity(light, { ...(job.pack ? { pack: job.pack } : {}), lease: hostLease });
-    if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job)) || nodeStopped()) return { held: 'unsupported-job' };
-    const packCapacity = jobCapacity();
-    if (packCapacity.held) return { held: packCapacity.held, capacity: packCapacity };
     const lease = [...identity, '--job', claim.jobId, '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+    // A claim we will not run is handed back at once; stranding it until expiry shows the job
+    // as running while nothing executes. Only a permanent inability (`decline`) bars this session from
+    // the job; transient holds (capacity, stop, lease-lost) leave it retryable. Best effort: an older
+    // primary without `release` just expires.
+    const refuse = (held: string, decline: boolean, extra: Record<string, unknown> = {}): Record<string, unknown> => {
+      let released = false;
+      try { released = callPool(config, 'release', decline ? [...lease, '--decline'] : lease).result['released'] === true; } catch { /* expiry fences it */ }
+      return { held, ...extra, released };
+    };
+    if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
+        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
+    // A stopping node cannot run anything right now, but another session or a restart can: retryable.
+    if (nodeStopped()) return refuse('unsupported-job', false);
+    const packCapacity = jobCapacity();
+    if (packCapacity.held) return refuse(packCapacity.held, false, { capacity: packCapacity });
     // Check immediately before spawn as well as throughout execution.
     const renewed = callPool(config, 'renew', lease);
-    if (!renewed.result['expiresAt'] || renewed.demoted || jobCapacity().held) return { held: 'lease-lost' };
+    if (!renewed.result['expiresAt'] || renewed.demoted || jobCapacity().held) return refuse('lease-lost', false);
     const resultRef = await new Promise<string | null>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });

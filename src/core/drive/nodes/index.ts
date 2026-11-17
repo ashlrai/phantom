@@ -303,6 +303,22 @@ export class DriveNodes implements QueueV1 {
     });
   }
 
+  /** Return a held claim unrun: the job is pending again, the old token is dead (renew and complete
+   * both refuse it) and the releasing session is not routed this job again only when `decline` is set (a permanent
+   * inability). A transient refusal (capacity, stop) leaves the job retryable by this session. Same fencing
+   * check as `complete`, so a stale or replaced holder cannot release a newer holder's claim.
+   */
+  release(claim: JobClaim, decline = false): boolean {
+    return this.transaction((state, now) => {
+      if (!this.currentClaim(state, claim, now)) return false;
+      const job = state.jobs.find(j => j.id === claim.jobId)!;
+      job.state = 'pending';
+      delete job.claim;
+      if (decline) job.declined = [...(job.declined ?? []).filter(s => s !== claim.session), claim.session].slice(-16);
+      return true;
+    });
+  }
+
   complete(claim: JobClaim, result: string): boolean {
     if (typeof result !== 'string' || Buffer.byteLength(result) > 64 * 1024) throw new Error('Invalid drive job result');
     return this.transaction((state, now) => {
