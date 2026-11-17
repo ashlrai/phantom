@@ -103,7 +103,7 @@ Every command, grouped by topic.
     run show <id>                                                         Print a past run in detail.
     runs [--json]                                                         List past runs (newest first).
     models [--json]                                                       List local models (Ollama/LM Studio); marks the active one.
-    models verify [--json]                                                Check registry model IDs against official provider documentation.
+    models verify [--text]                                                Show model verification status and age (JSON by default).
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).
     models start                                                          Best-effort start a locally-installed Ollama (never downloads).
     local-runtime <status|start|stop|restart|reshape|logs|resolve-model>  Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.
