@@ -41,7 +41,7 @@ export interface ReturnPrCheckReport {
   checked: ReturnPrChecked[];
   /** Input rows with no check row of their own: filtered, deduped or truncated. */
   skipped: number;
-  /** More eligible repo#pr pairs existed than the limit allowed. */
+  /** More distinct eligible repo#pr/head evidence existed than the limit allowed. */
   truncated: boolean;
 }
 
@@ -106,7 +106,8 @@ export async function checkReturnPrs(
   for (const row of rows) {
     if (row.result !== 'VERIFIED' || row.evidenceKind !== 'pr'
       || typeof row.pr !== 'number' || !Number.isSafeInteger(row.pr) || row.pr < 1) continue;
-    const key = `${row.repo.toLowerCase()}#${row.pr}`;
+    // Keep conflicting heads and their original claim provenance independently visible.
+    const key = JSON.stringify([row.repo.toLowerCase(), row.pr, row.head?.toLowerCase() ?? null]);
     if (seen.has(key)) continue;
     seen.add(key);
     eligible.push({ claimId: row.claimId, repo: row.repo, pr: row.pr, head: row.head });
