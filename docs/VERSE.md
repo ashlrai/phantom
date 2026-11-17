@@ -43,21 +43,29 @@ optional and separate from this interactive session.
 
 ## Work log
 
-Open **Work → Work log** to see job launches, finishes and merges, newest first.
-Choose a repo or lane to narrow the last 24 hours. The page updates every five
-seconds while visible, keeps your filters, and offers Retry after a read failure.
-An empty list says when no events match.
+Open **Work → Work log** for one feed of what the fleet did in the last six
+hours, newest first and grouped by hour: merges, launches, finishes, jobs that
+ended with no change, leader replies and incidents, one plain line each. Tap a
+chip to show one kind, and tap a job to see its state, branch and last log
+lines. The page reads well on a phone, updates every five seconds while
+visible, keeps your filters, and offers Retry after a read failure. A source
+that cannot be read is listed as unknown with the reason. When nothing is
+recorded it says so and offers the last 24 hours.
 
-Agents can read the same records with
-`phm worklog --json --lane work --repo phantom --since 1h`, or
-`GET /api/worklog?lane=work&repo=phantom&since=1h`. Filters are optional;
-`since` accepts positive hours, including fractions, and defaults to `24h`.
-The typed `worklog.v2` report has `entries` and `malformedLines`. Each entry
-has `kind`, `at`, job, repo, lane, model and an optional PR link; merge timing
-is null for other events. It extends the existing `metrics/jobs.jsonl` reader.
+Agents can read the same feed with
+`phm worklog --json --hours 6 --kind merged`, or
+`GET /api/worklog?hours=6&kind=merged`. Filters are optional: `kind` is one of
+merged, launched, finished, empty, leader or incident, `repo` and `lane` match
+exactly, and `hours` defaults to 6 (the older `since=6h` form still works).
+The typed `worklog.v3` report has `rows`, `sources`, `entries` and
+`malformedLines`. Each row has `at`, `kind`, job, lane, repo, one plain-words
+`text`, an optional PR `url` and `count`: consecutive same-kind events from one
+job collapse into one row. Rows come from the existing `metrics/jobs.jsonl`
+reader, the dispatch events reader (incidents, lane holds, parked jobs) and
+the leader plan log reply reader. `sources` reports each of the three as `ok`
+or `unknown` with a reason; rows from an unknown source are absent, not zero.
+`entries` keeps the per-event ledger records with model and merge timing.
 PR opened requires recorded PR evidence; a finish alone stays Finished.
-Malformed records are skipped and counted. A missing ledger yields an empty
-list; an unreadable ledger reports an error (CLI exit 1, API 503).
 
 ## Workspaces and resources
 
