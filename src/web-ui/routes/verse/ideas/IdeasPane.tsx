@@ -1,6 +1,6 @@
 /**
- * routes/verse/ideas/IdeasPane.tsx: what the fleet will pick next. "Fix next"
- * (FixNext) leads with ranked bottlenecks and one "Queue it" each; below it, a
+ * routes/verse/ideas/IdeasPane.tsx: what the fleet will pick next. "Next bets"
+ * (FixNext) leads with ranked candidates and one "Queue it" each; below it, a
  * view of the ranked backlog (`GET /api/backlog`, via the same query the
  * Autonomy panel uses), grouped by repo, each row saying where it came from.
  * Each row can be sent to the Leader as "Do next" / "Not now" (IdeaSteer).
@@ -24,7 +24,6 @@ import { IdeaNotNow, postIdeaVerdict } from './IdeaNotNow.js';
 import { IdeaSteer } from './IdeaSteer.js';
 import styles from './ideas.module.css';
 import { FixNext } from './FixNext.js';
-import { NextIdeas } from './NextIdeas.js';
 
 export const IDEAS_POLL_MS = 30_000;
 const PER_REPO = 5;
@@ -165,7 +164,6 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
   return <div className={styles.root} aria-label="Ideas">
     <FixNext visible={visible} />
     {goals.data !== undefined && !Array.isArray(goals.data) ? <CardNote tone="unknown">Goal links unavailable.</CardNote> : null}
-    <NextIdeas visible={visible} />
     <label>Goal: <select value={goalFilter} onChange={event => setGoalFilter(event.target.value)}>
       <option value="all">All</option>
       {openGoals(Array.isArray(goals.data) ? goals.data : []).map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
