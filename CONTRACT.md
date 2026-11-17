@@ -953,6 +953,20 @@ unsafe paths or corrupt state hold admission. Leases have no time-based expiry:
 a crashed worker's reservation remains until verified offline cleanup or reboot.
 See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
 
+## Node provider binaries and runner errors
+
+`src/core/drive/nodes/provider-binary.ts` exports `NODE_PROVIDERS`,
+`isNodeProvider`, `providerBinaryCandidates(provider, deps?)` and
+`resolveProviderBinary(provider, deps?) => string | null`, the single absolute
+allowlist resolver (no `PATH` lookup). `worker.ts` adds
+`probeProviderBinaries(run?, deps?) => ProviderBinaries`,
+`classifyRunnerReply(code, fenced, stdout)`, `PACK_FAILURE_LIMIT` (2), and an
+optional third `binaryDeps` argument to `probeNodeLanes`. `NodeRunnerRequest` gains
+optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
+`codex-pack.ts` exports `CODEX_OUTPUT_LIMIT` (48 KiB), `nodeWorkDir`, `codexFileArgv`
+and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
+See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
+
 ## Fleet compute observation (`fleet.compute.v1`)
 
 `GET /api/verse/fleet/control/compute` serves the read-only projection in
