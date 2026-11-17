@@ -29,7 +29,7 @@ export interface DockPaneCatalogEntry {
 export const REGISTERED_DOCK_PANE_GROUPS: Readonly<Record<string, DockPaneGroup>> = {
   company: 'fleet',
   'fleet-compute': 'fleet',
-  'fleet-hub': 'fleet', 'fleet-map': 'fleet', 'fleet-org': 'fleet', 'fleet-direct': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
+  'fleet-hub': 'fleet', 'fleet-map': 'fleet', 'fleet-sessions': 'fleet', 'fleet-org': 'fleet', 'fleet-direct': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
   'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet',
   'worker-log': 'fleet', models: 'fleet',
   'fleet-merges': 'shipping', 'fleet-outcomes': 'shipping', 'fleet-releases': 'shipping', 'fleet-timeline': 'shipping',
