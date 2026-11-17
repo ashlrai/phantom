@@ -67,7 +67,7 @@ function printStatus(status: SlackBridgeStatus): void {
   const ignoredReasons = status.journal.ignoredReasons ?? [];
   console.log(`ignored reasons: ${ignoredReasons.length === 0 ? 'none' : ignoredReasons.map((row) => `${row.reason}=${row.count}`).join(', ')}`);
   const r = status.replies;
-  console.log(`replies: ${r.state} answered=${r.answered} unanswered=${r.unanswered} oldest=${cell(r.oldestUnansweredAt)} uncertain=${r.uncertainSends}`);
+  console.log(`replies: ${r.state} answered=${r.answered} unanswered=${r.unanswered} oldest=${cell(r.oldestUnansweredAt)} uncertain=${r.uncertainSends} unverified=${r.unverified} uncertainRequests=${r.uncertainRequests}`);
   console.log(`work: ${status.work.inbox}; fleet as of ${status.work.asOf ?? 'unknown'}${status.work.truncated ? '; latest only' : ''}`);
   for (const item of status.work.items) console.log(`  ${item.id}: ${slackWorkStatusLine(status.work, { inReplyTo: item.id })}`);
   console.log(`ready: ${cell(status.ready)}`);

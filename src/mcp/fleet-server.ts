@@ -220,8 +220,8 @@ const readFleetPoolReach = (read: () => Promise<unknown> = async () => readPoolR
 /** Slack reply binding: the `replies` section of the offline bridge status plus its `at`. */
 async function readSlackRepliesEvidence() {
   const status = buildSlackBridgeStatus();
-  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample } = status.replies;
-  return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample };
+  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, unverified, uncertainRequests, rejected, futureDated, unansweredSample } = status.replies;
+  return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, unverified, uncertainRequests, rejected, futureDated, unansweredSample };
 }
 
 /** Bounded Slack-replies read. A throw or timeout is reported as status
