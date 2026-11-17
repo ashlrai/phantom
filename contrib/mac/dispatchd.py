@@ -2403,6 +2403,12 @@ for p in glob.glob(R + "/*.publish"):
     m = re.search(r"RESULT PR (https://github.com/\S+/pull/\d+)", rd(p))
     if m: pubs.append((os.path.getmtime(p), os.path.basename(p)[:-8], m.group(1)))
 pubs.sort(reverse=True)
+# A legacy mkdir marker proves a claim, not an active reaper. Preserve it until
+# all writers support fenced recovery; make that unknown ownership visible.
+reap_markers = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
+active_reaping = publish_processes | {j for j in reap_markers if _reap_starting(j)}
+reap_blocked = [{"job": j, "reason": "ownership-unknown"} for j in sorted(reap_markers - active_reaping) if JID.fullmatch(j)]
+for item in reap_blocked: ev("REAP_SKIP %s %s" % (item["reason"], item["job"]))
 evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
@@ -2414,7 +2420,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                     "effective_target": tgt(l), "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
-      "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
+      "reaping": sorted(active_reaping), "reap_blocked": reap_blocked, "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],
       "recent_events": evs,
       "concurrency": {"cap": CONC["cap"], "floor": CONC_FLOOR, "ceiling": CONC_CEILING, "zones": CONC.get("zones"),

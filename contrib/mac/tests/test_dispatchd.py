@@ -1147,6 +1147,9 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertNotIn('REAP ', result.stdout)
         self.assertFalse((home / '.ashlr-runs/publish-order').exists())
 
+        status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+        self.assertIn('RQ-EXISTING', status['reaping'])
+
     def test_merged_job_is_not_republished_when_base_survives(self):
         home, env = self.fixture(())
         self.publish_stubs(home)
@@ -1255,6 +1258,10 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertIn('REAP RQ-DESK-A ', result.stdout)
         self.assertEqual(self.published(home, 1), ['RQ-DESK-A'])
         self.assertTrue(marker.exists())
+        status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+        self.assertNotIn('RQ-ORPHAN', status['reaping'])
+        self.assertEqual(status['reap_blocked'], [{'job': 'RQ-ORPHAN', 'reason': 'ownership-unknown'}])
+        self.assertIn('REAP_SKIP ownership-unknown RQ-ORPHAN', events(home))
 
     def test_publisher_without_base_holds_next_publish_handoff(self):
         home, env = self.fixture(())

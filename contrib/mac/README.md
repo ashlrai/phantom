@@ -195,6 +195,14 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+Status JSON lists observed publishers and startup markers in `reaping`;
+older markers appear in `reap_blocked` with `reason: "ownership-unknown"`.
+They remain protected and emit `REAP_SKIP ownership-unknown <job>` each tick.
+For terminal cleanup, `python3 contrib/mac/wt_closed_prune.py --json` previews
+eligible trees and per-job `skipped` reasons. `--apply --max 375` removes up to
+375 eligible trees, records `WT_REMOVED <job>` only after removal, and records
+`REAP_SKIP <reason> <job>` for retained trees. Missing evidence reports
+`known: false` and `unknown_reasons`; legacy markers still require fenced recovery.
 The reaper consults the job ledger before handoff: a merged outcome for the
 current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an

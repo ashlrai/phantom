@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 JID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 REOPEN = {"enqueue", "claim", "batch_claim", "queued", "launch"}
@@ -82,15 +83,22 @@ def git(args, timeout=60):
 
 def live_commands():
     r = subprocess.run(["ps", "-axww", "-o", "command="], capture_output=True, text=True, timeout=20)
-    if r.returncode:
+    if r.returncode or not r.stdout.strip():
         raise RuntimeError("process list unavailable")
     return r.stdout
 
 
-def plan(wtroot, runs, rows, commands, names=None):
-    if rows is None: return [], Counter({"ledger-unavailable": 1})
+def plan(wtroot, runs, rows, commands, names=None, skipped=None):
+    try: names = sorted(os.listdir(wtroot) if names is None else names)
+    except OSError: return [], Counter({"worktrees-unavailable": 1})
+    def blocked(why):
+        if skipped is not None:
+            skipped.extend({"job": name, "why": why} for name in names if JID.fullmatch(name))
+        return [], Counter({why: 1})
+    if rows is None: return blocked("ledger-unavailable")
+    if commands is None: return blocked("processes-unavailable")
     if os.path.realpath(wtroot) != os.path.abspath(wtroot) or any(PROTECTED.search(part) for part in wtroot.split(os.sep)):
-        return [], Counter({"protected-root": 1})
+        return blocked("protected-root")
     closed = closed_jobs(rows)
     run_dir = os.path.join(runs, "queue", "run")
     try:
@@ -99,7 +107,7 @@ def plan(wtroot, runs, rows, commands, names=None):
     except FileNotFoundError:
         keep = set()
     except OSError:
-        return [], Counter({"keep-unavailable": 1})
+        return blocked("keep-unavailable")
     pins = os.path.expanduser("~/.ashlr/kept-worktrees.json")
     try:
         if os.path.islink(pins) or os.path.getsize(pins) > 65536: raise ValueError()
@@ -109,14 +117,16 @@ def plan(wtroot, runs, rows, commands, names=None):
     except FileNotFoundError:
         pins = set()
     except (OSError, ValueError):
-        return [], Counter({"pins-unavailable": 1})
+        return blocked("pins-unavailable")
     out, held = [], Counter()
-    for name in sorted(os.listdir(wtroot) if names is None else names):
+    for name in names:
         path = os.path.join(wtroot, name)
-        if not JID.match(name) or os.path.islink(path) or not os.path.isdir(path):
+        if not JID.fullmatch(name):
             continue
         why = None
-        if name not in closed:
+        if os.path.islink(path) or not os.path.isdir(path):
+            why = "unsafe-path"
+        elif name not in closed:
             why = "not-closed"
         elif name in keep or os.path.realpath(path) in pins:
             why = "keep-list"
@@ -136,12 +146,13 @@ def plan(wtroot, runs, rows, commands, names=None):
                 why = "dirty"
         if why:
             held[why] += 1
+            if skipped is not None: skipped.append({"job": name, "why": why})
             continue
         out.append({"job": name, "path": path, "outcome": closed[name]})
     return out, held
 
 
-def apply(items, limit, recheck=None):
+def apply(items, limit, recheck=None, emit=lambda event, job: None):
     removed, failed, repos = [], [], set()
     for it in items[:limit]:
         common = git(["-C", it["path"], "rev-parse", "--path-format=absolute", "--git-common-dir"])
@@ -149,14 +160,22 @@ def apply(items, limit, recheck=None):
         if not repo or not os.path.isdir(repo):
             failed.append({"job": it["job"], "why": "repo not found"})
             continue
-        if recheck is not None and not recheck(it["job"]):
+        try: retained = recheck is not None and not recheck(it["job"])
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            failed.append({"job": it["job"], "why": "state-unavailable"})
+            continue
+        if retained:
             failed.append({"job": it["job"], "why": "retention changed"})
             continue
         r = git(["-C", repo, "worktree", "remove", it["path"]])
         if r.returncode:
             failed.append({"job": it["job"], "why": "git remove failed"})
             continue
+        if os.path.lexists(it["path"]):
+            failed.append({"job": it["job"], "why": "worktree-remains"})
+            continue
         removed.append(it["job"])
+        emit("WT_REMOVED", it["job"])
         repos.add(repo)
     for repo in sorted(repos):
         git(["-C", repo, "worktree", "prune"])
@@ -182,22 +201,34 @@ def main(argv=None):
     try:
         commands = live_commands()
     except (RuntimeError, OSError, subprocess.SubprocessError):
-        print(json.dumps({"error": "process list unavailable; nothing pruned"}))
-        return 1
-    items, held = plan(a.wtroot, a.runs, rows, commands)
+        commands = None
+    skipped = []
+    items, held = plan(a.wtroot, a.runs, rows, commands, skipped=skipped)
     def recheck(job):
         current = read_jobs(os.path.join(a.runs, "metrics", "jobs.jsonl"))
         return bool(plan(a.wtroot, a.runs, current, live_commands(), [job])[0])
-    removed, failed = apply(items, max(0, a.max), recheck) if a.apply else ([], [])
-    rep = {"schema": "ashlr.wt-closed-prune.v1", "dry_run": not a.apply, "removable": len(items), "held": dict(held),
-           "removed": len(removed), "failed": failed}
+    removed, failed = [], []
+    if a.apply:
+        # Open the audit sink before deleting anything. Never follow a log symlink.
+        with os.fdopen(os.open(os.path.join(a.runs, "dispatch-events.log"),
+                               os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW, 0o600), "a") as log:
+            def emit(event, job):
+                log.write(time.strftime("%F %T ") + event + " " + job + "\n"); log.flush()
+            removed, failed = apply(items, max(0, a.max), recheck, emit)
+            skipped.extend(failed)
+            skipped.extend({"job": it["job"], "why": "limit"} for it in items[max(0, a.max):])
+            for it in skipped: emit("REAP_SKIP " + it["why"], it["job"])
+    unknown = sorted({why for why in list(held) + [it["why"] for it in failed] if why.endswith("-unavailable")})
+    rep = {"schema": "ashlr.wt-closed-prune.v1", "dry_run": not a.apply, "removable": None if unknown else len(items), "held": dict(held),
+           "removed": len(removed), "removed_jobs": removed, "failed": failed, "skipped": skipped,
+           "known": not unknown, "unknown_reasons": unknown}
     if a.json:
         rep["removable_jobs"] = [i["job"] for i in items]
         print(json.dumps(rep, indent=1, sort_keys=True))
     else:
-        print("removable=%d removed=%d failed=%d held=%s%s" % (len(items), len(removed), len(failed),
+        print("removable=%s removed=%d failed=%d held=%s%s" % ("unknown" if unknown else len(items), len(removed), len(failed),
               json.dumps(dict(held), sort_keys=True), " (dry run)" if not a.apply else ""))
-    return 1 if failed else 0
+    return 1 if failed or unknown else 0
 
 
 if __name__ == "__main__":
