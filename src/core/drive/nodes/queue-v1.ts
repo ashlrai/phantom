@@ -47,6 +47,7 @@ export interface QueueV1 {
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null;
   renewClaim(claim: JobClaim): JobClaim | null;
   complete(claim: JobClaim, result: string): boolean;
-  /** Hand a held claim back unrun; the job returns to pending without penalty. */
-  release(claim: JobClaim): boolean;
+  /** Hand a held claim back unrun; the job returns to pending without penalty. `decline` also records
+   * that this session can never run it (permanent), so it is not routed there again. Default: retryable. */
+  release(claim: JobClaim, decline?: boolean): boolean;
 }

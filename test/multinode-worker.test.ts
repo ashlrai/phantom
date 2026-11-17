@@ -130,9 +130,47 @@ describe('multi-Mac worker lifecycle', () => {
     });
     expect(await runNodeWorker(config, '/reviewed/runner')).toEqual({ held: 'unsupported-job', released: true });
     const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
-    expect(release).toEqual(expect.arrayContaining(['--job', 'j', '--token', '4', '--leader-token', '3']));
+    expect(release).toEqual(expect.arrayContaining(['--job', 'j', '--token', '4', '--leader-token', '3', '--decline']));
     expect(ports.spawn).not.toHaveBeenCalled();
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('releases a pack-capacity hold for retry: no decline, capacity payload kept, host slot freed', async () => {
+    ports.capacity.mockImplementation((_light, options) => options?.pack
+      ? { slots: 0, held: 'cpu-pressure' } : { slots: 1, held: null });
+    ports.call.mockImplementation(((route) => (...args: unknown[]) => {
+      if (args[1] === 'release') return { demoted: false, result: { released: true } };
+      return (route as (...a: unknown[]) => unknown)(...args);
+    })(ports.call.getMockImplementation()!));
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({
+      held: 'cpu-pressure', released: true, capacity: { slots: 0, held: 'cpu-pressure' } });
+    const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
+    expect(release).toEqual(expect.arrayContaining(['--job', 'j', '--token', '4', '--leader-token', '3']));
+    expect(release).not.toContain('--decline');
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.release).toHaveBeenCalledOnce();
+  });
+  it('releases a lease-lost claim before spawn without declining', async () => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'release') return { demoted: false, result: { released: true } };
+      const reply = route(...args);
+      if (args[1] === 'renew') return { demoted: true, result: {} };
+      return reply;
+    });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toEqual({ held: 'lease-lost', released: true });
+    const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
+    expect(release).not.toContain('--decline');
+    expect(ports.spawn).not.toHaveBeenCalled();
+  });
+  it('a stopping node releases the claim without declining it', async () => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => args[1] === 'release' ? { demoted: false, result: { released: true } } : route(...args));
+    const enoent = () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+    ports.stat.mockImplementationOnce(enoent).mockImplementationOnce(enoent).mockImplementation(() => ({}));
+    const out = await runNodeWorker(config, '/reviewed/runner');
+    expect(out).toMatchObject({ held: 'unsupported-job', released: true });
+    const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
+    expect(release).not.toContain('--decline');
   });
   it('still refuses cleanly when the primary predates the release verb', async () => {
     const route = ports.call.getMockImplementation()!;

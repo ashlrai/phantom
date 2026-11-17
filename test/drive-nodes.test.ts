@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 
 class MemoryStore implements NodesStore {
@@ -100,7 +101,8 @@ describe('drive node leases', () => {
     const claim = f.a.claim(leader, f.bob, 'job')!;
     expect(f.a.release({ ...claim, token: claim.token + 1 })).toBe(false); // forged token
     expect(f.a.release(claim)).toBe(true);
-    expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending', declined: [f.bob.session] });
+    expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending' });
+    expect(f.a.snapshot().jobs[0].declined).toBeUndefined(); // default release is retryable
     expect(f.a.snapshot().jobs[0].claim).toBeUndefined();
     expect(f.b.renewClaim(claim)).toBeNull();
     expect(f.b.complete(claim, 'late')).toBe(false);
@@ -113,6 +115,27 @@ describe('drive node leases', () => {
     expect(parseState(f.store.state).jobs[0].state).toBe('completed');
   });
 
+  it('a plain release stays retryable by the same session and plans no all-declined fix', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job', { owner: 'o' });
+    const claim = f.a.claim(leader, f.bob, 'job')!;
+    expect(f.a.release(claim)).toBe(true);
+    expect(f.a.claim(leader, f.bob, 'job')!.token).toBeGreaterThan(claim.token);
+  });
+
+  it('a declining release is keyed by session, bounded, and does not duplicate', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job', { owner: 'o' });
+    const c1 = f.a.claim(leader, f.bob, 'job')!;
+    expect(f.a.release(c1, true)).toBe(true);
+    expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending', declined: [f.bob.session] });
+    const c2 = f.a.claim(leader, f.bob, 'job')!;
+    expect(f.a.release(c2, true)).toBe(true);
+    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session]);
+  });
+
   it('does not re-route a released job to the session that declined it', () => {
     const f = fixture();
     const alice = f.a.join('alice2', { owners: ['o'] })!, bob = f.b.join('bob2', { owners: ['o'] })!;
@@ -121,7 +144,7 @@ describe('drive node leases', () => {
     const claim = (f.b.pull(bob) ?? f.a.pull(alice))!.claim;
     const [holder, other, otherNode] = claim.nodeId === 'bob2' ? [f.b, f.a, alice] : [f.a, f.b, bob];
     const self = claim.nodeId === 'bob2' ? bob : alice;
-    expect(holder.release(claim)).toBe(true);
+    expect(holder.release(claim, true)).toBe(true);
     expect(holder.pull(self)).toBeNull();
     expect(other.plan('o')[0]!.nodeId).toBe(otherNode.nodeId);
     expect(other.pull(otherNode)!.claim.jobId).toBe('job');
@@ -197,5 +220,37 @@ describe('drive node leases', () => {
       { ...emptyState(), leader: {} }, { ...emptyState(), jobs: [{ id: 'j', state: 'running' }] }]) {
       expect(() => parseState(value)).toThrow('Invalid');
     }
+  });
+});
+
+describe('release: decline versus retry (CLI + router)', () => {
+  const lease = (c: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }) =>
+    ['--job', c.jobId, '--node', c.nodeId, '--session', String(c.session), '--token', String(c.token), '--leader-token', String(c.leaderToken)];
+  function one() {
+    const f = fixture();
+    const node = f.a.join('solo', { owners: ['o'] })!;
+    f.a.heartbeat(node);
+    f.a.enqueue('job', { owner: 'o', requires: [], secrets: [] });
+    return { f, node, claim: f.a.pull(node)!.claim };
+  }
+  it('plain release over the CLI is retryable: the same node is planned the job again', () => {
+    const { f, node, claim } = one();
+    expect(executeNodeFleet('release', lease(claim), f.a)).toMatchObject({ released: true, declined: false });
+    expect(f.a.snapshot().jobs[0].declined).toBeUndefined();
+    expect(f.a.plan('o')[0]).toMatchObject({ nodeId: node.nodeId });
+  });
+  it('--decline over the CLI is permanent for that session and plans the genuine all-declined fix', () => {
+    const { f, claim } = one();
+    expect(executeNodeFleet('release', [...lease(claim), '--decline'], f.a)).toMatchObject({ released: true, declined: true });
+    const plan = f.a.plan('o')[0]!;
+    expect(plan.nodeId).toBeNull();
+    expect(plan.fix).toContain('released');
+    expect(plan.fix).toContain('unrun');
+  });
+  it('rejects --decline on other verbs and a stale release', () => {
+    const { f, claim } = one();
+    expect(() => executeNodeFleet('complete', [...lease(claim), '--result', 'x', '--decline'], f.a)).toThrow();
+    expect(executeNodeFleet('release', lease(claim), f.a)).toMatchObject({ released: true });
+    expect(() => executeNodeFleet('release', lease(claim), f.a)).toThrow();
   });
 });

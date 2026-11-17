@@ -46,8 +46,9 @@ phm node pull --node box --session 1 --json
 # While working, renew; when done, complete (values come from the pull output):
 phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
-# A claim you will not run is handed back at once (job returns to pending; this session is not offered it again):
-phm node release --job fix-123 --node box --session 1 --token 5 --leader-token 3
+# A claim you will not run is handed back at once and the job returns to pending. Add --decline only when this
+# session can never run it (it is then not offered again); a temporary refusal omits it and stays retryable:
+phm node release --job fix-123 --node box --session 1 --token 5 --leader-token 3 [--decline]
 
 # What this owner scope can see:
 phm node status --owner acme
