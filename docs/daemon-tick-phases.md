@@ -86,6 +86,7 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `invent`         | 3 min            | `TICK_PHASE_INVENT_MS`; frontier probe ≤30 s            |
 | `ancillary`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`                             |
 | `reflection`     | 3 min            | `TICK_PHASE_REFLECTION_MS`; separate resident off-tick job |
+| `ci-rerun`       | 5 min            | `TICK_PHASE_CI_RERUN_MS`; optional resident off-tick flake maintenance |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |
 | `dispatch-plan`  | 60 s             | `TICK_PHASE_DISPATCH_PLAN_MS`                           |

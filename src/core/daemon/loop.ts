@@ -212,9 +212,10 @@ import {
   TICK_PHASE_INVENT_MS,
   TICK_PHASE_MAINTENANCE_MS,
   TICK_PHASE_REFLECTION_MS,
+  TICK_PHASE_CI_RERUN_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
-import { launchOffTickJob, cancelOffTickJobs } from './off-tick-jobs.js';
+import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
 import {
   consumeDaemonActivationPermit,
   isDaemonActivationCapability,
@@ -4731,6 +4732,15 @@ export async function tick(
     }
   };
   const runReflectionMaintenance = async (): Promise<void> => {
+    const ci = liveCfg.ciRerun;
+    const lastCiLaunch = offTickJobsSnapshot().find(job => job.name === 'ci-rerun');
+    if (offTickMaintenance && !stopRequested() && ci?.enabled !== false && ci?.repos?.length &&
+        (!lastCiLaunch || Date.now() - Date.parse(lastCiLaunch.since) >= Math.max(1, ci.intervalMinutes ?? 10) * 60_000)) {
+      launchOffTickJob('ci-rerun', async signal => {
+        const { runCiRerunMaintenance } = await import('../fleet/ci-rerun.js');
+        await runCiRerunMaintenance({ repos: ci.repos!, maxPerHour: ci.maxPerHour, signal });
+      }, { deadlineMs: TICK_PHASE_CI_RERUN_MS, parentSignal: opts.signal, log: phaseLog });
+    }
     if (
       stopRequested() ||
       (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] !== true ||

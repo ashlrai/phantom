@@ -15,6 +15,7 @@ ashlr agents edges [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
+ashlr agents apps [<id> <verb>] [--json]  (docs/AGENT-APPS.md)
 ${AGENTS_BUS_UNIFIED_HELP}
 
 Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
@@ -33,6 +34,7 @@ export async function runAgentsCli(
   if (args[0] === 'chat') return runAgentsChat(args.slice(1), out, err);
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
   if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
+  if (args[0] === 'apps') return (await import('./agents-apps.js')).runAgentsAppsCli(args.slice(1), out, err);
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }

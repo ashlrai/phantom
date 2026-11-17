@@ -11,6 +11,8 @@ export interface OutboxEntry {
   heading?: string;
   /** PLAN-LOG only: stable id derived from the entry heading. */
   id?: string;
+  /** MASON-OUTBOX only: the leader-network request id a `[leader-network:reply-<id>]` heading answers. */
+  replyTo?: string;
   text: string;
 }
 
@@ -62,10 +64,11 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
   let openEntry = false;
   let at = '';
   let words = '';
+  let replyTo: string | undefined;
   let body: string[] = [];
   const finish = (): void => {
     if (!openEntry) return;
-    entries.push({ at, text: cap([body.join('\n').trim(), words].filter(part => part !== '').join('\n')) });
+    entries.push({ at, ...(replyTo ? { replyTo } : {}), text: cap([body.join('\n').trim(), words].filter(part => part !== '').join('\n')) });
   };
   for (const line of lines) {
     if (line.startsWith('## ')) {
@@ -73,6 +76,7 @@ export function parseOutbox(markdown: string, limit = 30): OutboxEntry[] {
       openEntry = true;
       at = '';
       body = [];
+      replyTo = /\[leader-network:reply-([a-f0-9]{64})\]$/.exec(line)?.[1];
       const rest = line.slice(3).replace(/\s*\[leader-network:(?:reply-|digest-)[a-f0-9]{64}\]$/, '');
       const match = HEADING_TIME.exec(rest);
       if (match) {
