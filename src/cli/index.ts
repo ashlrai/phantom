@@ -2651,7 +2651,7 @@ async function main(): Promise<void> {
           process.exitCode = await cmdWorktreesPrune(rest.slice(1));
         } else {
           const { cmdWorktrees } = await import('./worktrees.js');
-          process.exitCode = cmdWorktrees(rest);
+          process.exitCode = await cmdWorktrees(rest);
         }
         break;
       }

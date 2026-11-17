@@ -2,6 +2,7 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
+import { formatWorktrees, readWorktrees, type WorktreesDeps, type WorktreesReport } from '../core/fleet/worktrees.js';
 
 export interface WorktreeReport {
   name: string;
@@ -44,35 +45,61 @@ export function reportWorktrees(root: string, now = Date.now()): WorktreeReport[
     });
 }
 
-const USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
+const REPORT_USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
+const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply]]
+       phm worktrees report [--dir <worktrees-dir>] [--json]
+       phm worktrees prune [--dry-run | --apply] [--json]
 
-export function cmdWorktrees(args: string[]): number {
+List every job worktree with its job, repo, state (live job, merged PR, empty
+result, open PR, kept on purpose, unknown), age, size and whether it is safe to
+remove. Safe means: merged or empty, over 6 hours old, no uncommitted changes,
+no live job and not kept on purpose.
+  --reap            Preview removal of the safe worktrees (a dry run).
+  --reap --apply    Remove them with git worktree remove (never --force).`;
+
+type Output = { log: (text: string) => void; error: (text: string) => void };
+
+export async function cmdWorktrees(args: string[], deps: WorktreesDeps & { output?: Output } = {}): Promise<number> {
+  const out = deps.output ?? { log: console.log, error: console.error };
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(USAGE);
+    out.log(args[0] === 'report' ? REPORT_USAGE : USAGE);
     return 0;
   }
-  if (args[0] !== 'report') {
-    console.error(USAGE);
-    return 1;
+  if (args[0] === 'report') return cmdWorktreesReport(args.slice(1), out);
+  const allowed = ['--json', '--reap', '--dry-run', '--apply'];
+  const bad = args.find(arg => !allowed.includes(arg));
+  if (bad !== undefined || new Set(args).size !== args.length || (args.includes('--dry-run') && args.includes('--apply'))
+    || ((args.includes('--dry-run') || args.includes('--apply')) && !args.includes('--reap'))) {
+    out.error(bad !== undefined ? `Unknown argument: ${bad}\n${USAGE}` : USAGE);
+    return 2;
   }
-  const options = args.slice(1);
+  const mode = !args.includes('--reap') ? 'list' : args.includes('--apply') ? 'apply' : 'dry-run';
+  let report: WorktreesReport;
+  try { report = await readWorktrees(mode, deps); }
+  catch { out.error('Cannot read worktrees.'); return 1; }
+  if (args.includes('--json')) out.log(JSON.stringify(report));
+  else for (const line of formatWorktrees(report)) out.log(line);
+  return (report.removals ?? []).every(removal => removal.status === 'removed') ? 0 : 1;
+}
+
+function cmdWorktreesReport(options: string[], out: Output): number {
   const error = rejectUnknownOptions(options, { flags: ['--json'], values: ['--dir'] });
   const dirIndex = options.indexOf('--dir');
   if (error || (dirIndex >= 0 && options[dirIndex + 1]?.startsWith('-')) || options.some((arg, index) => !arg.startsWith('-') && (dirIndex < 0 || index !== dirIndex + 1))) {
-    console.error(error?.message ?? 'unexpected argument');
+    out.error(error?.message ?? 'unexpected argument');
     return 1;
   }
   const root = resolve(dirIndex >= 0 ? options[dirIndex + 1]! : join(homedir(), 'Projects', 'ashlrai', 'wt'));
   try {
     const rows = reportWorktrees(root);
-    if (options.includes('--json')) console.log(JSON.stringify(rows, null, 2));
+    if (options.includes('--json')) out.log(JSON.stringify(rows, null, 2));
     else {
-      console.log('WORKTREE\tAGE (hours)\tSIZE (bytes)\tLAST LOG MTIME\tJOB STATE');
-      for (const row of rows) console.log(`${row.name}\t${(row.ageMs / 3_600_000).toFixed(1)}\t${row.sizeBytes}\t${row.lastLogMtime ?? '-'}\t${row.jobState ?? '-'}`);
+      out.log('WORKTREE\tAGE (hours)\tSIZE (bytes)\tLAST LOG MTIME\tJOB STATE');
+      for (const row of rows) out.log(`${row.name}\t${(row.ageMs / 3_600_000).toFixed(1)}\t${row.sizeBytes}\t${row.lastLogMtime ?? '-'}\t${row.jobState ?? '-'}`);
     }
     return 0;
   } catch (error) {
-    console.error(`Cannot report worktrees: ${error instanceof Error ? error.message : String(error)}`);
+    out.error(`Cannot report worktrees: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
 }
