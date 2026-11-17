@@ -10,78 +10,18 @@
  */
 
 import { makeColors, isTty } from './ui.js';
+import { HELP_ENTRIES } from './help.js';
 
 /**
- * Top-level commands (kept in sync by test/m31.cli-agent.test.ts AND, since
- * M-cli-audit, by a structural drift test — test/cli-registry-drift.test.ts —
- * that parses the real dispatch switch in src/cli/index.ts and fails if this
- * list (or HELP_ENTRIES) ever falls out of sync with it again).
+ * Top-level commands, derived from HELP_ENTRIES (src/cli/help.ts), which is the
+ * single table a new command registers in. There is deliberately no second
+ * list here: every command PR used to append to it and collide. The structural
+ * drift test (test/cli-registry-drift.test.ts) still proves this set equals the
+ * dispatch switch in src/cli/index.ts.
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
-  'graph',
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'empties', 'throughput', 'home', 'asks', 'subagent', 'init',
-  'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
-  'new', 'ship', 'recall', 'learn', 'genome',
-  'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
-  'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
-  'enroll', 'backlog', 'inbox', 'ideas', 'claim', 'daemon', 'worker', 'ask', 'knowledge', 'reflect',
-  'health', 'goals', 'pr', 'prs', 'fleet', 'recovery', 'manager', 'vision', 'goal', 'loop',
-  'roadmap', 'stack', 'ecosystem', 'digest', 'sweep', 'seams', 'verify', 'engineering-receipt', 'verify-safety', 'verify-pr', 'release-articles', 'release', 'preflight',
-  'conductor-permit', 'signals', 'friction',
-  'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'comms-agent',
-  'agentnet', 'amplify', 'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'growth', 'world', 'settings', 'drafts',
-  'director', 'best-of-n', 'invent', 'ideas', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime', 'tune', 'tools', 'messages', 'map',
-  // Dispatched by index.ts but previously missing here, so completion and
-  // "did you mean" were blind to them (caught by cli-registry-drift).
-  'verse', 'console', 'local-runtime',
-  // V3.10 Track B: standing authority, the Leader, fleet mirrors.
-  'authority', 'leader', 'mirror',
-  // 3.11 cloud lane.
-  'cloud',
-  // 3.15 Devin lane.
-  'devin',
-  'bots',
-  'openai-agents',
-  'agents',
-  'benchmark', 'queue', 'issues', 'incident', 'chain', 'select', 'job', 'pool', 'admission',
-  // 3.15 automations.
-  'automations', 'routines',
-  // 3.15 Jev decision layer.
-  'jev',
-  // 3.15 private repo wiki.
-  'wiki',
-  // 3.15 versioned playbooks.
-  'playbook',
-  // receipt.v1: `receipt` is the same as `fleet receipt`.
-  'receipt',
-  // Shared task board: `bus` is the same as `fleet bus`.
-  'bus',
-  // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'bets', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
-  // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
-  'trail',
-  // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
-  'estates', 'ci', 'ci-metrics', 'daily-fix', 'main',
-  // Read-only disk report for agent worktrees (RQ-DISKFLOW).
-  'disk', 'app', 'radar',
-  // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
-  'disk-maint',
-  // Read-only view of every pooled computer (RQ-NODESN17RQ8). `autonomy` was
-  // dispatched but missing here, which kept cli-registry-drift red on master.
-  'nodes', 'autonomy',
-  // Eng Ops incident auto-fix (RQ-SELF-AWARE-AUTOFIX-1).
-  'autofix',
-  // Changed-file tests and the fleet event feed.
-  'test', 'check', 'feed',
-  'worklog', 'library',
-  // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'constitution', 'wb', 'caps',
-  // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
-  'pages',
-  // The typed command catalog the desktop palette also lists (RQ-CMDPALN17TQ8).
-  'commands',
-];
+  ...new Set(HELP_ENTRIES.map((entry) => entry.cmd.split(/\s+/)[0]!)),
+].sort();
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
