@@ -431,13 +431,19 @@ describe('runMergeAutopilot --apply', () => {
       },
     }));
     enqueue.mockClear();
-    const fixup = await runMergeAutopilot({ repo: redRepo, apply: true, deps: deps(redHost.host, { enqueue }) });
+    const devinReview = vi.fn(async () => ({ state: 'triggered' as const, findings: { count: 1, items: [{ path: 'x.ts', line: 1, body: 'Inspect the edge case' }] } }));
+    const dry = await runMergeAutopilot({ repo: redRepo, deps: deps(redHost.host, { enqueue, devinReview }) });
+    expect(dry.prs[0]!.devinReview).toEqual({ state: 'planned' });
+    expect(devinReview).not.toHaveBeenCalled();
+    const fixup = await runMergeAutopilot({ repo: redRepo, apply: true, deps: deps(redHost.host, { enqueue, devinReview }) });
+    expect(fixup.prs[0]!.devinReview?.state).toBe('triggered');
     expect(fixup.prs[0]!.class).toBe('red-required');
     expect(fixup.prs[0]!.firstFailingCheck).toBe('ci');
     expect(fixup.prs[0]!.action).toMatchObject({ kind: 'fixup-task', status: 'applied' });
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue.mock.calls[0]![0].title).toContain('ci');
     expect(enqueue.mock.calls[0]![0].detail).toContain('ci');
+    expect(enqueue.mock.calls[0]![0].detail).toContain('Advisory Devin Review findings (not gating): x.ts:1 Inspect the edge case');
   });
 
   it('per-PR cap: a 4th action inside 24 h is skipped and nothing is touched', async () => {

@@ -46,7 +46,7 @@
 import { FrictionFeedback } from './feedback/FrictionFeedback.js';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { reportThemeToShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
+import { trackThemeForShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
 import { RouteErrorBoundary } from '../../components/primitives/RouteErrorBoundary.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
 import { useToast } from '../../components/primitives/Toast.js';
@@ -321,6 +321,14 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
   if (paneId) openPaneInChat(paneId, sessionId);
 }
 
+/** Pointer navigation to Fleet shares the menu's map target, including repeat visits. */
+function navigateSection(section: VerseSectionId): void {
+  // Home pressed while a landing view is already showing goes back to the Home summary.
+  if (section === 'live' && getVerseUiState().section === 'live') setHomeChoice('home');
+  if (section === 'fleet') executeCatalogCommand('surface.fleet', { via: 'button' });
+  else setVerseSection(section);
+}
+
 // The landing pane pulls in the pane registry, which stays out of first paint.
 const HomeSurface = lazy(() => import('./shell/HomeSurface.js').then((m) => ({ default: m.HomeSurface })));
 const ShellUpdates = lazy(() => import('./shell/ShellUpdates.js'));
@@ -429,7 +437,7 @@ export function PhantomApp() {
         // land in the composer: an open palette or shortcuts sheet would keep
         // focus (and every key) for itself. The drawer opener, the theme and
         // Settings leave overlays alone — open-needs-you REPLACES the overlay.
-        if (command.name === 'new-chat' || command.name === 'focus-composer') closeVerseOverlay();
+        if (command.name === 'new-chat' || command.name === 'focus-composer' || command.name === 'open-fleet') closeVerseOverlay();
         executeCatalogCommand(command.commandId, { via: 'menu' });
       }),
     [],
@@ -466,7 +474,7 @@ export function PhantomApp() {
   useEffect(() => subscribeAnchorRequests(VERSE_ANCHOR_EVENT), []);
   // Report the PAINTED theme so the native window pre-paints its background
   // on the next cold launch instead of flashing white. No-op in a browser.
-  useEffect(() => { reportThemeToShell(theme.theme); }, [theme.theme]);
+  useEffect(() => trackThemeForShell(theme.theme), [theme.theme]);
 
   // ── one-time announcements ──────────────────────────────────────────────
   useEffect(() => {
@@ -512,7 +520,7 @@ export function PhantomApp() {
   // and the page's name, since one gear stands for three pages), not only
   // through the data-active styling.
   const currentPage = sectionEntry(ui.section);
-  // The landing view (Leader by default) replaces the Home section; below 720
+  // The landing view (the Home summary by default) replaces the Home section; below 720
   // the compact strip carries navigation and, above the phone layout, the rail steps aside on it.
   const homePane = home.view === 'live' ? null : HOME_PANE_IDS[home.view];
   const homeShowing = ui.section === 'live' && homePane !== null;
@@ -525,7 +533,7 @@ export function PhantomApp() {
   const selectCompactNav = (id: CompactNavId) => {
     closeVerseOverlay();
     if (id === 'needs-you') { openVerseOverlay('needs-you'); return; }
-    if (id === 'fleet') { setVerseSection('fleet'); return; }
+    if (id === 'fleet') { navigateSection('fleet'); return; }
     setHomeChoice(id);
     setVerseSection('live');
   };
@@ -580,7 +588,7 @@ export function PhantomApp() {
                     aria-current={active ? 'page' : undefined}
                     data-section={entry.id}
                     aria-label={`${entry.label}${badge?.spoken ?? ''}`}
-                    onClick={() => setVerseSection(entry.id)}
+                    onClick={() => navigateSection(entry.id)}
                   >
                     <span className={styles.railIcon}>
                       {IconComponent ? <IconComponent /> : null}
@@ -658,7 +666,7 @@ export function PhantomApp() {
           {WORK_MODES.map((mode) => (
             <button key={mode.id} type="button" className={styles.workMode}
               aria-pressed={workModeForSection(ui.section) === mode.id} title={mode.description}
-              onClick={() => setVerseSection(mode.section)}>
+              onClick={() => navigateSection(mode.section)}>
               {mode.label}
             </button>
           ))}

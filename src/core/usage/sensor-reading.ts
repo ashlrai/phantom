@@ -38,10 +38,15 @@ export const USAGE_SENSOR_LANES = [
   'grok-bot',
   'local',
   'terra',
+  'zai',
+  'gemini',
+  'agy',
+  'instinct',
 ] as const;
 export type UsageSensorLane = (typeof USAGE_SENSOR_LANES)[number];
 
 export const USAGE_SENSOR_SOURCES = [
+  'anthropic-admin-cost',
   'devin-api-v3-daily',
   'devin-api-v3-org-cycle',
   'devin-included-allowance',
@@ -53,7 +58,11 @@ export const USAGE_SENSOR_SOURCES = [
   'cursor-status',
   'browser-visible',
   'grok-status',
+  'manual',
   'local-throughput',
+  'zai-lane-resources',
+  'claude-api-grant-store',
+  'grok-ultra-app',
   'unmeasured',
 ] as const;
 export type UsageSensorSource = (typeof USAGE_SENSOR_SOURCES)[number];
@@ -101,6 +110,12 @@ export interface UsageSensorLaneView {
   forecastVsReset: ForecastVsReset;
   /** Included allowance projected to expire unused, scaled to a week. Null when unknown. */
   idleIncludedWastedPerWeek: number | null;
+  /**
+   * Reset time while the allowance is used up, else null. Usage never falls
+   * inside a window, so this holds past staleAfter: a lane at zero stays at
+   * zero until the reset, however old the reading is.
+   */
+  zeroCapacityUntil: string | null;
 }
 
 export interface UsageSensorReport {
@@ -136,7 +151,9 @@ export function readingIsFresh(input: {
   return Number.isFinite(deadline) && input.nowMs < deadline;
 }
 
-const PAY_PER_USE = new Set<UsageSensorLane>(['claude-api']);
+const PAY_PER_USE = new Set<string>(['claude-api']);
+/** Included usage: a subscription pool that resets, not a pay-per-use or local lane. */
+export const isIncludedLane = (lane: string): boolean => !PAY_PER_USE.has(lane) && lane !== 'local';
 
 function burnFrom(samples: readonly UsageSensorReading[], latest: UsageSensorReading): number | null {
   const resetAt = latest.resetAt;
@@ -177,7 +194,7 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
   let forecastExhaustAt: string | null = null;
   let forecastVsReset: ForecastVsReset = 'unknown';
   let idleIncludedWastedPerWeek: number | null = null;
-  const included = !PAY_PER_USE.has(latest.lane) && latest.lane !== 'local';
+  const included = isIncludedLane(latest.lane);
   if (measured && remaining !== null && burn !== null && hoursLeft > 0 && included) {
     if (burn > 0) forecastExhaustAt = new Date(nowMs + (remaining / burn) * 3_600_000).toISOString();
     const marginMs = Math.max(30 * 60_000, (resetMs - nowMs) * FORECAST_ON_PACE_FRACTION);
@@ -189,6 +206,8 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
     const usedAtReset = latest.used! + burn * hoursLeft;
     idleIncludedWastedPerWeek = weeklyWaste(Math.max(0, latest.limit! - usedAtReset), hoursLeft);
   }
+  const spent = latest.source !== 'unmeasured' && latest.used !== null && latest.limit !== null && latest.used >= latest.limit;
+  const zeroCapacityUntil = spent && Number.isFinite(resetMs) && resetMs > nowMs ? latest.resetAt : null;
   return {
     lane: latest.lane,
     observedAt: latest.observedAt,
@@ -210,6 +229,7 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
     forecastExhaustAt,
     forecastVsReset,
     idleIncludedWastedPerWeek,
+    zeroCapacityUntil,
   };
 }
 

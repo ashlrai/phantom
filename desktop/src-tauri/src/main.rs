@@ -71,6 +71,7 @@ mod hotkey;
 mod launch_state;
 mod media_guard;
 mod notify;
+mod owner_assist;
 mod shell_contract;
 mod sidecar_guard;
 mod sidecar_supervisor;
@@ -706,6 +707,9 @@ fn create_main_window(handle: &AppHandle, startup: Option<&SidecarStartup>) {
 
     let handle2 = handle.clone();
     let result = handle.run_on_main_thread(move || {
+        if let (Some(owner), Some(tokens)) = (handle2.get_webview_window(owner_assist::LABEL), existing_tokens.as_deref()) {
+            let _ = owner.eval(tokens);
+        }
         if let Some(existing) = handle2.get_webview_window(MAIN_WINDOW_LABEL) {
             if let Some(token_script) = existing_tokens.as_deref() {
                 if let Err(e) = existing.eval(token_script) {
@@ -1447,13 +1451,14 @@ fn token_handoff_script(startup: &SidecarStartup) -> String {
 fn hand_tokens_to_open_window(handle: &AppHandle, startup: &SidecarStartup) {
     let script = token_handoff_script(startup);
     let handle2 = handle.clone();
-    let result = handle.run_on_main_thread(move || match handle2.get_webview_window(MAIN_WINDOW_LABEL) {
-        Some(window) => {
-            if let Err(e) = window.eval(&script) {
-                eprintln!("[ashlr-desktop] could not hand the restarted sidecar's tokens to the window: {e}");
+    let result = handle.run_on_main_thread(move || {
+        for label in [MAIN_WINDOW_LABEL, owner_assist::LABEL] {
+            if let Some(window) = handle2.get_webview_window(label) {
+                if let Err(e) = window.eval(&script) {
+                    eprintln!("[ashlr-desktop] could not hand the restarted sidecar's tokens to the window: {e}");
+                }
             }
         }
-        None => eprintln!("[ashlr-desktop] no Phantom app window to hand the restarted sidecar's tokens to"),
     });
     if let Err(e) = result {
         eprintln!("[ashlr-desktop] could not schedule the token handoff: {e}");
@@ -1557,6 +1562,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // a second stacked confirm dialog for Stop.
     app.on_menu_event(|app, event| {
         let id = event.id().as_ref();
+        if id == owner_assist::MENU_ID { owner_assist::toggle(app); return; }
         if let Some(action) = tray::parse_tray_id(id) {
             handle_tray_action(app, action);
             return;
@@ -1806,6 +1812,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 /// marshals menu construction onto it.
 fn build_tray_menu(handle: &AppHandle, model: &tray::TrayModel) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::new(handle)?;
+    menu.append(&MenuItemBuilder::with_id(owner_assist::MENU_ID, "Owner Assist").build(handle)?)?;
     for row in tray::menu_rows(model) {
         match row {
             tray::Row::Item { id, label, enabled } => {

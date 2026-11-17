@@ -30,7 +30,11 @@ afterEach(() => {
 
 function mount(value: unknown, state = 'healthy', visible = true) {
   const fetch = installFetch(call => call.path === '/api/verse/fleet/runs'
-    ? json({ sources: { codex: state }, codexPersonal: value }) : json({}));
+    ? json({ v: 1, generatedAt: new Date(NOW).toISOString(),
+      sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: state, merges: 'healthy' },
+      lastTick: null, paused: false, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+      lanes: [], workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [],
+      mergesLastHour: { count: null, items: [] }, events: [], inbox: [], drop: null, codexPersonal: value }) : json({}, 404));
   const view = render(<SectionVisibilityProvider visible={visible}><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
   // Session readings are supporting evidence, opened explicitly beside the account rows.
   fireEvent.click(screen.getByRole('button', { name: /Usage sources and budgets/ }));

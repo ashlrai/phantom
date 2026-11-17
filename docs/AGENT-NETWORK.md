@@ -41,6 +41,30 @@ install a runner or start background execution. On a configured Mac, repeat
 `phm node join --json` to recheck the route and local capacity using the saved
 identity. A primary or backup retains its role; repeat join never resets its witness.
 
+See every computer in one place, from the backup or primary:
+
+```sh
+phm nodes
+phm nodes --can-take claude --json
+```
+
+`phm nodes` prints one row per known computer: reachable or not, whether Phantom
+is running there, free memory, CPU headroom, lanes, running jobs and a
+plain-words state such as `ready for work` or `offline since 10:42`.
+`--can-take <lane>` lists only the computers that can take a job for that lane
+now and recommends one: ready remote computers first, most free slots first,
+then name to break ties. If none qualifies, it falls back to this computer only
+when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
+`target` (`remote`, `local`, `none`), `reason` (`remote-ready`, `local-only`,
+`local-fallback`, `no-ready-node`) and a plain explanation. Unknown reachability
+or slots, stale mirrors and expired lane advertisements cannot qualify a node.
+The typed `chooseNodeForLane` API also accepts `{ localOnly: true }` to keep
+explicitly local work here. This is advice; it does not reserve or launch work.
+It is read only: it reads `tailscale status` and the node list already on
+this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
+the node list on another computer) is `unknown` with the reason. The desktop
+Computers pane shows the same rows as cards.
+
 Then run one bounded worker batch:
 
 ```sh
@@ -111,7 +135,10 @@ outside this change; any such integration needs its separate security review.
 The runner must be an absolute, owned executable with safe ancestors, checked by
 the existing Drive executable validator. It is invoked as `<runner> run`, receives
 one JSON object on stdin with `protocol: "phm-node-worker/v1"`, the existing node
-`job` view and its `claim`, and must return exactly one bounded JSON object:
+`job` view and its `claim`, plus an optional `providerBinaries` receipt naming the
+absolute provider binary the worker's probe signed in with (see
+[node runner](NODES.md#reference-runner-security-review-before-installation)), and
+must return exactly one bounded JSON object:
 
 ```json
 {"resultRef":"branch:example-1"}
@@ -121,11 +148,16 @@ The result reference must satisfy the existing node identifier grammar. The runn
 owns pack resolution, sandboxed execution on the requested locally signed-in lane,
 and artifact storage accessible to the primary. Its stdout is limited to 4096
 bytes and stderr is discarded. A successful process without a valid result
-reference is not completion. The worker forwards only the reference, never raw
+reference is not completion. A reply with `packError` or `codex: "error"`, or a
+nonzero exit, releases the lease for retry; two consecutive failures of one pack
+decline it for the session. The worker forwards only the reference, never raw
 provider transcripts. The runner must not publish, resolve copied credentials or
 perform unfenced external effects. It must pass the claim token to any effect sink
 that accepts effects; a preflight lease check alone cannot fence external effects.
 No runner executable is installed by this change.
+The [reference runner](NODES.md#reference-runner-security-review-before-installation)
+provides `phm node run-once` for the fixed `shell-check` and `omlx-chat` packs;
+its operator-owned wrapper requires Security review before installation.
 
 Workers target a three-second renewal and pressure-check interval; bounded
 synchronous telemetry probes and SSH operations can delay a check. They hold on local `~/.ashlr-runs/PAUSE` or `KILL`,
@@ -164,6 +196,36 @@ The [node layout](NODES.md) describes custody and deployment limits. Agent Bus
 claims, `/api/verse/agent-bus`, the desktop Durable bus tab and A2A schemas keep
 providing coordination. Their local claims do not become multi-host execution
 leases. The already shipped node router is reused for execution fencing instead.
+
+## Company desktop view
+
+Open **Company overview** from the Fleet hub, choose **Company** in the pane
+menu, or open `/verse/?pane=company`. The read-only view combines the recorded
+mission/leader verdict, READY queue depth and departures per hour, live and
+recent sessions, PR merges, lane quota windows, enrolled nodes (including muse)
+and their heartbeats, and observed agent/channel assignments. Job buttons open
+the existing worker log; PR links open the recorded GitHub pull request.
+
+The view reuses the shared queries for `/api/fleet/sessions`, `/api/fleet/lanes`,
+`/api/nodes`, `/api/queue/stats?window=3600`, `/api/verse/fleet/runs`,
+`/api/verse/fleet/runs/mission`, `/api/verse/fleet/comms-status`,
+`/api/verse/fleet/work-board?limit=20`, and `/api/verse/agent-bus/status`.
+Panels refresh every 15 seconds only while visible. Each has its own loading,
+empty, retry and stale-reading state; recordings older than two minutes are
+marked stale. Finished includes failed jobs in the source's trailing hour;
+truncated session counts are lower bounds, and missing evidence stays unknown.
+Quota `used_frac` is derived from observed remaining percent; reset-pending
+readings are unknown rather than fresh quota.
+
+The Company view uses a lane roster; it does not display specialist callsigns
+or per-agent memory freshness. Its chief-of-staff brief panel remains pending;
+the existing mission is shown separately. Specialist assignments are available
+separately in the Channels pane's Leader orchestration journal (see
+[fleet coordination](FLEET-COORDINATION.md)). Channel assignments show
+recorded owners and channel references, not proven Slack membership or current
+reachability. Unread counts and channel-creation proposals stay unknown because
+the existing JSON endpoints do not expose them. Unexpired bus messages are
+labelled separately. Company adds no backend route, writes, sends, or grants.
 
 ## Slack bridge
 
@@ -214,6 +276,19 @@ phm channels slack map --json
 phm channels slack map --topic leaders --json
 phm channels slack map --topic leaders --snapshot ./slack-audience.json --json
 ```
+
+Ask `Phantom status` in the mapped Slack conversation. Each threaded reply
+carries a plain state line: RECEIVED, ASSIGNED (owner and claim), RUNNING,
+BLOCKED (dependency), or VERIFIED (PR and head). Missing evidence says unknown.
+`phm channels slack status --json` exposes the same typed `work` projection:
+receipt IDs, states, owner/claim, dependency, PR/head and `asOf` from the live
+`queue/status.json` last tick. Missing or future fleet time is null, rendered
+as unknown; it is never replaced with the reply clock. Work states use the
+existing work-board rules (RUNNING means a live work lease). A sent reply proves
+delivery, not verified work. Replies without an exact receipt match say UNKNOWN.
+Owner ingress and same-thread delivery are joined in `replies`; duplicate owner
+delivery does not add another request. Reads are bounded; `work.truncated` marks
+a partial list. The status line is a plain-text Slack attachment below the reply.
 
 `status` reports the config parse, bridge and workspace ids, `phm_` reference
 names (never values), journal counts and the next step. `map` prints the
@@ -326,3 +401,29 @@ phm org join --member evan-deloria --machine evan-mac --lane claude=20 --json
 echo '[{"id":"RQ-1","priority":3}]' > /tmp/jobs.json
 phm org plan --queue /tmp/jobs.json --json
 ```
+
+## Agent peer mesh
+
+Host-enrolled specialists address one another by callsign through the existing
+bus and approved Slack broker:
+
+```sh
+phm agentnet peers list --json
+phm agentnet peers read --after 0 --json
+phm agentnet peers send reviewer review "Review pr:123" --json
+phm agentnet peers send builder handoff "Review complete" --reply-to peer-00000000-0000-0000-0000-000000000000 --json
+phm agentnet channels propose parser-review --json
+phm agentnet channels propose parser-review --apply --json
+phm agentnet identity register reviewer --json
+```
+
+Channel proposals preview by default; `--apply` and identity registration record
+local drafts. Actual bot/channel provisioning needs a reviewed provisioner and
+outbound approval. Session bindings come from the trusted host, never a callsign
+argument. Missing bindings fail closed. Peer messages are untrusted coordination,
+not work-launch authority; replies must carry the preceding message's `replyTo`.
+The ninth hop and repeated origin/pair escalate to the human queue. See the
+[peer mesh contract](contracts/CONTRACT-AGENTNET-PEERBUS.md) for enrollment,
+limits, CoS opt-in, delivery results and the separate Security handoff.
+
+See [Slack host credential boundary](SLACK-CREDENTIAL-INJECTION.md) for the injected-reference contract and its verification limits.

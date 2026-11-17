@@ -271,8 +271,12 @@ async function main() {
   flags['--mirrors-root'] = resolve(flags['--mirrors-root']);
   flags['--metrics'] = resolve(flags['--metrics']);
 
-  const { runQueuegenCycle, normalizeState, QUEUEGEN_PR_WINDOW_MS } =
+  const { runQueuegenCycle, normalizeState, QUEUEGEN_PR_WINDOW_MS, QUEUEGEN_REPOS } =
     await import('../dist/core/drive/queuegen.js');
+  const { readRebaseCoverage } = await import('../dist/cli/fleet-rebase-plan.js');
+  const { rebaseWorkState } = await import('../dist/core/fleet/rebase-plan.js');
+  const coverage = await readRebaseCoverage(dirname(flags['--queue']), async (path) =>
+    readFileSync(path === join(dirname(flags['--queue']), 'router-queue.md') ? flags['--queue'] : path, 'utf8'));
 
   mkdirSync(dirname(flags['--queue']), { recursive: true, mode: 0o700 });
   const io = {
@@ -281,6 +285,7 @@ async function main() {
     checkLogTail,
     conflictFiles: (repo, pr) => conflictFiles(flags['--mirrors-root'], repo, pr),
     readQueueIds: () => readQueueIds(flags['--queue']),
+    readRebaseWork: () => rebaseWorkState(coverage.jobs, QUEUEGEN_REPOS),
     appendQueueLine: (line) => {
       if (dryRun) { console.log(`DRY ${line}`); return; }
       appendFileSync(flags['--queue'], `${line}\n`, { mode: 0o600 });

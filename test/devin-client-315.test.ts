@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DevinApiError,
   DevinClient,
+  type DevinFetch,
   failureForStatus,
   parseDevinSelf,
   parseDevinSession,
@@ -109,6 +110,44 @@ describe('parsers (docs.devin.ai v3 schemas)', () => {
 
   it('maps HTTP status to failure codes (docs overview#error-handling)', () => {
     expect([401, 403, 404, 422, 429, 500, 503].map(failureForStatus)).toEqual(['auth', 'forbidden', 'invalid-request', 'invalid-request', 'rate-limited', 'server', 'server']);
+  });
+
+  it('stops reading an attachment stream as soon as it exceeds the byte cap', async () => {
+    let reads = 0;
+    let cancelled = false;
+    let signal: AbortSignal | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads++;
+        controller.enqueue(new Uint8Array(reads === 1 ? [1, 2, 3] : reads === 2 ? [4, 5, 6] : [7]));
+      },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const fetch: DevinFetch = async (_url, init) => {
+      signal = init.signal;
+      return { status: 200, headers: { get: () => null }, text: async () => '', body };
+    };
+    const c = new DevinClient({ apiKey: FAKE_KEY, fetch });
+    await expect(c.downloadAttachment(FAKE_ORG, 'u1', 'f.bundle', 5)).rejects.toThrow('larger than allowed');
+    expect(reads).toBe(2);
+    expect(cancelled).toBe(true);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('rejects an oversized Content-Length without reading the body', async () => {
+    let reads = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { reads++; controller.enqueue(new Uint8Array([1])); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const fetch: DevinFetch = async () => ({
+      status: 200, headers: { get: name => name.toLowerCase() === 'content-length' ? '6' : null }, text: async () => '', body,
+    });
+    const c = new DevinClient({ apiKey: FAKE_KEY, fetch });
+    await expect(c.downloadAttachment(FAKE_ORG, 'u1', 'f.bundle', 5)).rejects.toThrow('larger than allowed');
+    expect(reads).toBe(0);
+    expect(cancelled).toBe(true);
   });
 
   it('preserves provider organization context and reports lossy pages as incomplete recovery evidence', () => {

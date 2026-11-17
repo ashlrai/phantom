@@ -212,6 +212,8 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
     let slackReplies: {
       state: SlackBridgeStatus['replies']['state']; answered: number; unanswered: number;
       oldestUnansweredAt: string | null; uncertainSends: number;
+      unverified: number; uncertainRequests: number; busFailed: number;
+      busFailedSample: { channelId: string; threadTs: string; at: string }[];
       sample: { channelId: string; threadTs: string; at: string }[];
     } | null = null;
     let slackRepliesSource: 'healthy' | 'degraded' = 'healthy';
@@ -220,6 +222,11 @@ export function createFleetCommsStatusApi(deps: FleetCommsStatusApiDeps = {}): A
       slackReplies = {
         state: r.state, answered: r.answered, unanswered: r.unanswered,
         oldestUnansweredAt: r.oldestUnansweredAt, uncertainSends: r.uncertainSends,
+        unverified: r.unverified, uncertainRequests: r.uncertainRequests, busFailed: r.busFailed,
+        busFailedSample: r.busFailedSample
+          .filter(row => SLACK_CHANNEL_ID.test(row.channelId) && SLACK_TS.test(row.threadTs))
+          .slice(0, SLACK_SAMPLE_MAX)
+          .map(row => ({ channelId: row.channelId, threadTs: row.threadTs, at: row.at })),
         sample: r.unansweredSample
           .filter(row => SLACK_CHANNEL_ID.test(row.channelId) && SLACK_TS.test(row.threadTs))
           .slice(0, SLACK_SAMPLE_MAX)

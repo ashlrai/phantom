@@ -1,0 +1,16 @@
+.deck { display: grid; gap: var(--space-3); min-width: 0; }
+.deck h2, .deck h3 { font-weight: var(--font-weight-semibold); }
+.deck h2 { font-size: var(--text-lg-size); }
+.note { color: var(--text-tertiary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.needs, .metrics { padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.needs li { margin: var(--space-2) 0; overflow-wrap: anywhere; }
+.deck summary { cursor: pointer; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: var(--space-3); }
+.metrics dt { color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.metrics dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tableWrap { overflow-x: auto; min-width: 0; }
+.deck table { width: 100%; border-collapse: collapse; font-size: var(--text-sm-size); }
+.deck th, .deck td { padding: var(--space-2); text-align: left; border-bottom: 1px solid var(--border-subtle); }
+.deck caption { text-align: left; color: var(--text-tertiary); }
+:global([data-console-layout='compact']) .metrics { grid-template-columns: 1fr; }
+:global([data-console-layout='wide']) .metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }

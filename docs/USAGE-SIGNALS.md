@@ -163,6 +163,106 @@ instant within ten minutes of the earlier one keeps the earlier one. Unknown
 stays unknown: a page with no matching numbers produces no reading and never a
 zero. The `browser-visible` source is estimated, not provider-official.
 
+## Live resource sidecar
+
+`phm usage resource-live` reads every allowance and writes
+`~/.ashlr-runs/state/resource-live.json` (`resource-live.v1`). It is the only
+writer of that file. The Eng Ops `ai.ashlr.resource-pool` builder merges it
+into `state/resource-pool.json` and stays the only writer of that one, so the
+two never race. The sidecar is replaced by rename, and a lock file beside it
+keeps two passes from overlapping.
+
+Allowances: Claude weekly, the Claude Fable share, the Claude API included
+credit, Codex personal, Codex CMP, Devin, Devin Flash, GLM Lite, Gemini,
+Antigravity, Dot, Instinct, local models, Grok and Cursor.
+
+Sources are tried in order and the first current reading wins:
+
+1. `official`: the provider's own API or CLI status, through the readers
+   above. Claude weekly comes from `metrics/claude-quota.json`, the Fable share
+   from the Fable weekly sensor file, Codex from the App Server on an explicit
+   pool home (`PHANTOM_SENSOR_CODEX_CMP_HOME`,
+   `PHANTOM_SENSOR_CODEX_PERSONAL_HOME`), Devin from the org API, the Claude
+   API credit from the grant store (`PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT`),
+   Grok from its runway store, local models from loopback `/v1/models`.
+2. `own-call`: rate-limit data returned to calls Phantom already made. That is
+   the Claude `rate_limit_event` store and the GLM Lite window in
+   `queue/resources.json`.
+3. `visible-window`: with `--browser`, the rendered text of the usage page in
+   the dedicated usage browser, as in the live usage tracker above.
+
+A reading older than 15 minutes is kept only when no later source has a
+current one. Devin Flash, Antigravity, Dot, Instinct and Cursor have no
+supported source yet.
+
+Every reading records `source`, `source_tier`, `observed_at` and
+`stale_after`. An allowance with no verified reading has `verified: false`, a
+fixed `reason` and null for every number. It is never zero. No credential,
+cookie, keychain item, app database or TCC store is read, and no path under
+`~/.codex*`.
+
+Cadence under `--watch`: an allowance whose lane is running jobs (from
+`queue/status.json`) is read about every 60 seconds. A reading that did not
+change doubles the wait, up to 10 minutes. An idle lane waits 10 minutes, and
+is read within a minute once it becomes active. An allowance is read again as
+soon as its `reset_at` passes. `--force` reads everything now. `--show` prints
+the stored sidecar and reads nothing else.
+
+### Burn-down plan
+
+`burn_down` in the sidecar paces each allowance to about zero at its deadline:
+`target_rate_per_hour = remaining / hours_to_deadline`, where the deadline is
+the reset or a fixed expiry, whichever comes first. `observed_rate_per_hour`
+comes from readings in the same window, and `pace` is `behind`, `on-pace` or
+`ahead` within 15 percent of the target.
+
+Spend order, in `lane_order`:
+
+1. Free and expiring: Dot, local models, Devin Flash through Nov 30 and Codex
+   CMP through Nov 25, 2026. After its end date an expiring allowance ranks
+   with the included ones.
+2. Included subscriptions, most urgent first (largest share of the allowance
+   that must be spent per hour).
+3. The Claude API, only up to its included credit.
+4. Reserve lanes: Grok and Cursor.
+
+The plan orders and paces. It does not set slots: lane targets, floors and
+ceilings stay with their owners, so a steady-load rule keeps its share. An
+allowance with no current reading is `steady`, which means existing rules
+apply unchanged. Two cases are `hold` and drop the lane from `lane_order`: an
+allowance used up until its reset, and the Claude API when its included credit
+is spent or cannot be verified, because past that point every call is new
+spend.
+
+### Consumers
+
+- The world model reads the sidecar on each build, so `GET /api/verse/world`
+  and the desktop resource bar's lane rows show used, remaining, reset, source,
+  observed time and freshness, plus `pacePerHour`, `requiredPacePerHour` and
+  `runwayHours` from the plan. A reading past `stale_after` shows as stale and
+  is not headroom.
+- The fleet scheduler's pace input (`planLanes`) takes the same readings, so a
+  lane is narrowed from live remaining and reset values.
+- The dispatcher reads the plan only through the merged pool file. That change
+  is a Security package draft in `handoff/RQ-RESOURCE-LIVE-1/`.
+
+### Reset rule
+
+The reset rule only drafts a decision. No agent clicks a reset.
+
+- Fable reset: Fable is at or above 95 percent of its share with more than 24
+  hours before the weekly reset.
+- Weekly reset: the weekly allowance is at or above 95 percent with more than
+  24 hours left.
+- Never both inside one week unless both are exhausted. When both cross 95
+  percent in one pass and they are not both exhausted, only the weekly reset
+  is drafted.
+
+When it fires, one file is written to `~/.ashlr-runs/bus/masbot/`
+(`resource-live.reset-decision.v1`, `audience: mason-only`,
+`agent_may_act: false`) covering every draft from that pass. It fires once per
+weekly window.
+
 ## Self-maintained lane budgets (no human reading)
 
 `src/cli/usage-self.ts` is a one-shot refresh that keeps `weekly_used_pct`, `credits_remaining`,

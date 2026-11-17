@@ -18,13 +18,13 @@ Terminal colors and trailing whitespace are removed, and em dashes become hyphen
 ```text
 Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 
-    core            Core - index, navigate, configure (caps, constitution, tune, …)
+    core            Core - index, navigate, configure (app, caps, constitution, …)
     run             Run - local-first agent runs (run, runs, …)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
-    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (jobs, radar, observe, …)
+    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
+    observability   Observability - cost, telemetry, audit (empties, home, asks, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -43,6 +43,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
 Phantom - every command (phm or ashlr)
 
   Core - index, navigate, configure
+    app restart --json                                                                                             Report a held restart while the native UI owns live runtime state; does not quit or update the app.
     caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]                 Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.
     constitution check [--root <repo>] [--json] [paths...]                                                         Check constitution rule definitions and references in prompts and templates (read-only).
     tune <prepare|evaluate>                                                                                        Prepare scrub-gated local model datasets or evaluate paired evidence.
@@ -56,11 +57,12 @@ Phantom - every command (phm or ashlr)
     config effective [--json]                                                                                      Read-only effective autonomy/daemon/foundry/backend settings.
     config set <k> --json <v>                                                                                      Set a structured (array/object) config value as JSON.
     config path                                                                                                    Print the path to config.json.
+    doctor merge-path --repo owner/name                                                                            Read-only required-check sentinel for recent PR heads.
     doctor                                                                                                         One-glance health check: config, phantom, providers, ecosystem.
     init [--yes]                                                                                                   Idempotent onboarding: ensure config, detect phantom + models, set editor.
-    desktop install [--apply]                                                                                      Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.
+    desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]                                Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.
     desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]                              Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.
-    apps list|open|quit|focus|status [<app>] [--json]                                                              Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Logged to the feed; quit with unsaved work goes to needs-you.
+    apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]                Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.
     desktopctl capabilities|status|run <resource> [--json]                                                         Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
     desktop-update inspect|apply --stage <32hex> --json                                                            Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.
     app update status [--json]                                                                                     Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.
@@ -73,20 +75,24 @@ Phantom - every command (phm or ashlr)
     orient [--repo <r>] [--json]                                                                                   Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).
     docs --agent [--json]                                                                                          Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).
     check [--base <ref>] [--json]                                                                                  Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.
+    commands [--json]                                                                                              List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
-    plugins init|list|info|enable|disable                                                                          Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes.
+    plugins init|list|info|enable|disable                                                                          Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes. list --all adds Claude Code plugins (the Plugins pane).
     x <name> [args...]                                                                                             Run an enabled plugin's command.
     help [<topic>|--all|--search <term>]                                                                           Topic-grouped help; --all prints every command; --search <term> filters.
     version                                                                                                        Print the installed ashlr version (aliases: --version, -v).
     setup                                                                                                          Temporarily unavailable: refuses before config or wizard effects; use owner-invoked run/swarm or daemon dry-run while compiled runtime roots are empty.
     app update status [--json]                                                                                     Read the local signed desktop-update stage and deferral counts; never downloads or installs.
+    app steer --text <msg> [--json]                                                                                Send one message to the leader agents through the shared inbox receiver.
+    onboard --ecosystem [--json]                                                                                   Detect existing tools, key binding names and loopback endpoints; select toggles and grant one integration bundle. See docs/ECOSYSTEM-ONBOARDING.md.
 
   Run - local-first agent runs
     run "<goal>" [opts]                                                   Decompose goal into tasks; execute via local model (Ollama/LM Studio).
     run show <id>                                                         Print a past run in detail.
     runs [--json]                                                         List past runs (newest first).
-    models [--json]                                                       List local models (Ollama/LM Studio); marks the active one.
-    models verify [--json]                                                Check registry model IDs against official provider documentation.
+    models [--json]                                                       List the model registry (verified, unverified, stale) and local models.
+    models verify <id> --source <url>                                     Mark one model verified once its official doc page names the exact id.
+    models verify [--text]                                                Show model verification status and age (JSON by default).
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).
     models start                                                          Best-effort start a locally-installed Ollama (never downloads).
     local-runtime <status|start|stop|restart|reshape|logs|resolve-model>  Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.
@@ -96,6 +102,7 @@ Phantom - every command (phm or ashlr)
     eval attention [--window 1d|7d|30d]                                   Metadata-only fleet attention report: context pressure, retrieval, yield, routing, and traces.
     eval checkpoints --file <fixture.json> [--json]                       Compare scripted context retention and input-token estimates; requires PHANTOM_CHECKPOINTS=1.
     skills list [--status <s>] [--limit N] [--json]                       List skills learned from merged PRs (newest revision each; counts are real or "unknown").
+    skills list --all [--json]                                            Every skill fleet agents have: Claude Code, Codex and learned (the Skills pane).
     eval prompts --dataset <jobs.jsonl>                                   Per-class prompt-variant A/B replay; promotes a variant only on a significant lift.
     skills audit <pack-path> [--json]                                     Read-only quarantine audit for external skill structure, trigger routing, collisions, and behavioral fixtures.
 
@@ -129,6 +136,8 @@ Phantom - every command (phm or ashlr)
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
+    bots list|show|create --dry-run|explain [--json]                                                                                                              Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.
+    subagent spawn|list|result [opts]                                                                                                                             Plan bounded cross-provider children; apply stores held records only, never dispatches.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
     enroll add <repo> [--locus-firm]                                                                                                                              Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).
@@ -138,7 +147,8 @@ Phantom - every command (phm or ashlr)
     select [--json] [--dry-run] [--top <n>]                                                                                                                       Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
-    release status [--json] [--file <release-state.json>]                                                                                                         Show release tags, assets, unreleased commits and updater status for Ashlr repositories. Use --file to read release train state.
+    release status [--json | --text] [--file <release-state.json>]                                                                                                Show local publication, signed assets, updater, merged PRs, cadence and autorun reason. JSON by default; --text for people.
+    release notes [--since <tag>] [--json] [--write]                                                                                                              Summarize local mainline changes since the latest release tag. Use --write to prepend notes to CHANGELOG.md.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
     backlog --repo <path>                                                                                                                                         Filter backlog to a specific enrolled repo.
     backlog --limit <n>                                                                                                                                           Show only the top N items.
@@ -153,6 +163,7 @@ Phantom - every command (phm or ashlr)
     inbox submit <id> --yes                                                                                                                                       Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.
     inbox reject <id>                                                                                                                                             Discard a pending proposal; applies nothing.
     inbox --json                                                                                                                                                  Emit JSON for inbox list, show, approve, submit, or automerge results.
+    ideas [--json|--text]                                                                                                                                         Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown.
     drive [--once --dry-run] [--tick <seconds>]                                                                                                                   Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.
     daemon start --once                                                                                                                                           Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.
     daemon start --once --dry-run                                                                                                                                 Plan only: which backlog items WOULD be worked (no swarm/proposal).
@@ -165,8 +176,11 @@ Phantom - every command (phm or ashlr)
     daemon recover-state --dry-run|--execute                                                                                                                      Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).
     daemon resolve-state --dry-run|--execute                                                                                                                      Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.
     worker setup                                                                                                                                                  Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.
+    pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]                                                                                          Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md.
     prs triage [--repo ashlrai/<name>] [--limit N] --json                                                                                                         Read-only classification of open pull requests.
     fleet status [--json]                                                                                                                                         Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.
+    graph status --fleet <file> [--seats <file>] [--json]                                                                                                         Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.
+    fleet vitals [--runs-dir <directory>] [--json]                                                                                                                Read first-minute launch process and sampled CPU costs and the top empty-job causes; missing evidence stays unknown.
     fleet evidence doctor <source>                                                                                                                                Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.
     fleet direction [--json]                                                                                                                                      Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.
     fleet automerge-canary status|prepare-shadow|activate-shadow|halt                                                                                             Prepare or operate the bounded observation-only shadow canary; enforce mode remains unsupported.
@@ -197,26 +211,37 @@ Phantom - every command (phm or ashlr)
     authority ledger verify|tail                                                                                                                                  Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).
     authority protect --print|--apply                                                                                                                             Print (or apply after confirmation) the GitHub rulesets for the grant's server-enforced repos.
     authority setup [--dry-run [--json]]                                                                                                                          Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service - asks before every step; --dry-run --json prints the checklist as JSON.
-    feed [--json] [--limit N]                                                                                                                                     Read recent fleet events, newest first; unavailable sources remain unknown.
+    feed [--json] [--since 1h] [--kind merged] [--limit N]                                                                                                        What the fleet did, newest first: merges, releases, failures, incidents and Leader replies, each with a time and a link.
     leader show|run|tick|veto                                                                                                                                     The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).
+    org [--text]                                                                                                                                                  The live organization as a tree: leader, lanes with running, target, queued and pool usage, and each running job. JSON by default; unknown stays unknown.
     org show|join|plan [--file <org.toml>] [--json]                                                                                                               Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.
     leader status|ask|org|assign [--json]                                                                                                                         Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.
     leader seat|inbox [--json]                                                                                                                                    Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.
-    leader say|thread|answer|approve|directives                                                                                                                   Talk to the Leader in the one thread Phantom and Telegram share: say something, read the thread, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.
+    leader say|thread|answer|approve|directives                                                                                                                   Talk to the Leader: say something through the verified inbox writer, read your messages and its replies as one chat with received/answered state, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.
     leader oversight-plist --print                                                                                                                                Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.
     cloud launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder's GitHub origin.
     playbook list|show|new|edit|run <id>                                                                                                                          Versioned task templates every lane runs under (`!fix-bug` in any task text): list them, show one with per-version outcomes, write a new version in $EDITOR, or run one in the cloud / Devin lane (`--repo o/n --lane cloud|devin`).
     openai-agents sessions|inspect|turns [session-id] [--json]                                                                                                    Read bounded managed OpenAI Agents API metadata. API access is separate from subscriptions; no execution qualification or mutations.
     agents bus channels list|test <id> [--json]                                                                                                                   List registered channel adapters and probe the local bus or handoff store.
     agents bus contract [--json]                                                                                                                                  Print the Agent Bus v2 contract: schema version, providers, body kinds, work statuses, claim key forms. Read-only.
+    agents bus id register|list [<handle>] [--json]                                                                                                               Stable agent identity registry: one agt_ id per handle across providers and models.
+    agents bus dm|channel|handoff ... [--json]                                                                                                                    Unified agent bus: DMs, member-only channels and handoffs on the one local bus store, with priority wake.
+    agents bus inbox|wakes|adapters [<agent>] [--json]                                                                                                            Read an identity inbox or wake hints, or list the claude/codex/devin/cursor/grok session adapters. Read-only.
     agents roster [--json]                                                                                                                                        Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.
+    agents mesh status [--json]                                                                                                                                   Flat agent mesh: direct addresses, lanes, last-seen and current tasks. Read-only.
     bus thread|task <verb> [--peer <id>] [--json]                                                                                                                 Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.
     bus send|inbox|ack [--json]                                                                                                                                   Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.
+    metrics merges                                                                                                                                                Show hourly merges and median open-to-merge time by lane for the last 24 hours.
     metrics ingest --jobs <file> --status <file>                                                                                                                  Read local lane and tier merge metrics and advisory routing priors; always JSON.
+    metrics loop [--dry-run] [--json]                                                                                                                             Self-awareness loop: merges and opens per hour, idea-to-merged-to-installed minutes, cost per merged PR, capacity per node; writes loop, selection-hint and bets-share files.
+    bets suggest [--json] [--limit N]                                                                                                                             Rank the next jobs worth queuing from idle lanes, expiring usage, red mains and unreleased repos, each with a queue line to copy; bets explain <id> shows the scoring. Read-only.
+    bets list|launch|score|kill [--json]                                                                                                                          Bets lane ledger: launch scored experiments, run the kill-fast scorer, kill by hand. Append-only metrics/bets.jsonl.
     metrics levers [--window <7d|30d>] [--json]                                                                                                                   Rank three opportunity proxies from local activity and fleet rollups.
     benchmark run|--compare-reports                                                                                                                               Explicit local-agent benchmark trials, or offline matched-receipt comparison; real checkers and private traces.
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
+    devin land --session <id> [--repo phantom] [--apply]                                                                                                          Land a Devin session's attached bundle + pr.md through the pinned fork-only publish.sh, then arm auto-merge unless publish.sh withheld it (dry run by default).
+    devin autoland [--apply] [--cap N] [--json]                                                                                                                   Land finished sessions owned by the connected key; pause/resume controls resident passes.
     routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.
@@ -229,11 +254,14 @@ Phantom - every command (phm or ashlr)
     manager [--apply-rejects]                                                                                                                                     Frontier judge scorecard over pending proposals (shadow mode by default; never merges).
     best-of-n [--repo --title -n]                                                                                                                                 Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).
     comms <status|thread|send-owner|cycle|digest>                                                                                                                 Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.
-    connectors add|list|remove|show|import [--json]                                                                                                               Manage credential-free connector profiles and import safe client metadata; vault references only.
+    connectors add|list|remove|show|import|exec|config [--json]                                                                                                   Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.
+    agentnet peers list|read|send | channels propose | identity register [--json]                                                                                 Session-bound team peer messages, verified inbox and Slack provisioning drafts.
     channels add <kind> | status [--json] | slack status|map [--json]                                                                                             Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.
     imessage doctor|poll [--apply] [--json]                                                                                                                       iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.
     director                                                                                                                                                      Retired - the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.
     invent                                                                                                                                                        Generative backlog invention - propose novel high-value work items.
+    ideas list [--human]                                                                                                                                          Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage). JSON by default; unreadable signals show as unknown.
+    ideas queue <id> [--json]                                                                                                                                     Queue one idea from `ideas list` as a job; the same idea queues once.
     universe <demo|init|run|status|archive>                                                                                                                       Local experiment evolution: run competing code variants, measure them, and reuse winning artifacts.
     universe console --root <absolute> [--port N] [--json]                                                                                                        Foreground read-only Universe console on loopback; explicit root, ephemeral port by default, no service activation.
     universe graph <id> [--node <node-id>]                                                                                                                        Read-only experiment evidence graph: trace selected parents, feedback, campaigns, and local branch receipts.
@@ -268,62 +296,90 @@ Phantom - every command (phm or ashlr)
     queue add|claim|done|block|replay|list|import|export                                                                                                          Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.
     issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
+    route decide --input <file|-> [--root <directory>] --json                                                                                                     Suggest a schema-validated route without changing launch behavior.
+    route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json        Select an advisory fallback lane; optional receipt only, live dispatcher unwired.
+    map [--json]                                                                                                                                                  The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. Read only.
+    messages [--since 15m] [--agent <name>] [--limit <n>] [--text]                                                                                                What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR.
+    tools [--json] [--lane <lane>]                                                                                                                                Which lane has which tool, a parity score per lane and the top 3 gaps with a fix. Read only.
+    tools parity [--text]                                                                                                                                         Which lane declares which tool (GitHub read/write, web search, browser, computer use, shell, package install, MCP servers, CLIs, skills, plugins). Unknown is never missing.
+    tools requires --needs <need,...> [--text]                                                                                                                    List the lanes that can run a job with these needs, e.g. --needs github-read,browser.
+    route fit --input <file|-> [--worktree <directory>] --json                                                                                                    Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
+    admission explain [--json]                                                                                                                                    Read existing admission inputs, the adaptive launch interval and its reason. Advisory; launches nothing.
+    queue [--json]                                                                                                                                                List queued jobs in launch order: position, id, repo, lane, tier, age and any newer cycle that replaces them.
+    queue top|lane|drop <id> [<lane>] [--dry-run] [--json]                                                                                                        Steer one queued job: move it to the front, to another lane, or out of the queue (kept in queue/dropped.tsv).
+    queue supersede [--json] [--apply]                                                                                                                            List queued jobs that a newer cycle of the same job replaces; --apply archives them.
     queue dedupe [--file <router-queue.md>] [--apply] [--json]                                                                                                    Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.
     trail claim|beat|release <claim-key> [--json]                                                                                                                 Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.
     trail list|show|resume|sweep|save [--json]                                                                                                                    Read claim markers, pick up a stalled claim with its saved checkpoint, or evaporate expired markers. See docs/STIGMERGY.md.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
-    jobs empty [--since 24h] [--json]                                                          Explain empty jobs from local notes and logs.
-    radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
-    observe [--json]                                                                           Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
-    context --for-agent <lane> [--json]                                                        Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
-    claim acquire <work-key> --lane <lane> [--json]                                            Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.
-    claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]                Release this lane claim when a pull opens, merges, or is abandoned.
-    growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]                                       Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.
-    world [--json] [--refresh]                                                                 Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.
-    world get <path> [--json]                                                                  Read one node from the cached world model. A missing path is unknown, not zero.
-    chain verify [--json]                                                                      Synthetic in-memory chain checks. Does not verify live transports.
-    incident report|receipts [--json]                                                          Turn a production signal into one bounded fix job, or send receipts for finished incidents.
-    router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]  Rank supplied router decisions by pool budget reset; advisory, no writes.
-    router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
-    worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                             Show merged pull requests from the jobs ledger.
-    library list [--json]                                                                      List leader files. Read-only.
-    queue report --events <file> [--json]                                                      Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
-    signals [--json]                                                                           Read real repository adoption signals.
-    radar list|run|diff [--json]                                                               Observe public docs and package metadata; GET only, six-hour per-source floor.
-    observe session <id> [--json]                                                              Read one roster session. Transcript stays unknown until desktop-operator registers a reader.
-    friction [--json]                                                                          Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.
-    pulse [--window 1d|7d|30d]                                                                 Local observability dashboard: tokens, cost, sessions, commits.
-    pulse --json                                                                               Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
-    pulse --project <name>                                                                     Restrict pulse rollup to a single project.
-    pulse-export                                                                               Fleet→pulse OTLP backfill/manual export.
-    pulse-test                                                                                 Fleet→pulse connectivity + auth probe (read-only).
-    resource [--json] [--directory <fleet-directory>]                                          Refresh the shared resource.v1 view in fleet.json from recorded inputs.
-    resources [--json] [--watch]                                                               Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
-    capacity publish [--json]                                                                  Refresh local subscription usage metadata once with this node’s local authentication.
-    estates [--json] [--repo <repo-id>]                                                        Per-repo estate cards: health, CI, security. Read-only portfolio view.
-    main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]             Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.
-    ci-metrics [--json]                                                                        Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.
-    daily-fix validate|filter|dispatch|parse-fixup [--json]                                    Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.
-    wb <secrets|steer|reprioritize|stop> [--apply] [--json]                                    Workbench actions from the terminal: read secret custody, append a steer note, re-prioritize an unclaimed queue line, or stop a job. Mutating verbs are a dry run unless --apply.
-    budget <show|add> [--json]                                                                 Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
-    budget get [--json]                                                                        Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.
-    budget set --provider <id> --period day|week|month --usd <n> [--json]                      Owner-only spend budget change from an interactive terminal, with one audit line. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents and non-TTY calls are refused. The committed default stays 0.
-    usage                                                                                      Frontier usage table: per-engine calls/tokens/cost + window state.
-    usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]                Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.
-    usage sensors [--json] [--refresh] [--file <snapshot>]                                     Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
-    queue stats [--json] [--window <seconds>]                                                  Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
-    repos rank [proposals] [--json] [--recompute]                                              Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
-    telemetry [status]                                                                         M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
-    telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
-    audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
-    receipt list|status|show <run>|verify <run>|timeline <run> [--json]                        Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
-    lanes fit --lane <lane> [--json]                                                           Show job kinds to send or avoid from measured PR rates.
-    lanes --json                                                                               Read dispatcher pools, slot caps and local endpoint health.
-    lanes health [--json]                                                                      Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
-    goals [--json]                                                                             Show dispatcher throughput, empty rates and resource resets.
+    empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
+    home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
+    asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
+    throughput [--hours 24] [--by lane|repo|tier] [--text]                                      Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
+    jobs empty [--since 24h] [--family F] [--json]                                              Explain empty jobs with family and lane suggestions.
+    radar list|run|diff [--json]                                                                Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
+    observe [--json]                                                                            Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
+    context --for-agent <lane> [--json]                                                         Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.
+    claim acquire <work-key> --lane <lane> [--json]                                             Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.
+    claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]                 Release this lane claim when a pull opens, merges, or is abandoned.
+    growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]                                        Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.
+    world [--json] [--refresh]                                                                  Cached ashlr.world-model/v1 for the scheduler and leaders. blindSpots lists each unknown field by path with a stable id. See docs/WORLD.md.
+    world get <path> [--json]                                                                   Read one node from the cached world model. A missing path is unknown, not zero.
+    chain verify [--json]                                                                       Synthetic in-memory chain checks. Does not verify live transports.
+    incident report|receipts [--json]                                                           Turn a production signal into one bounded fix job, or send receipts for finished incidents.
+    router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]   Rank supplied router decisions by pool budget reset; advisory, no writes.
+    router serve|models|pick|config [--json]                                                    Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
+    router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                     Compare recorded router predictions with outcomes and usage.
+    worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]                One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.
+    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
+    queue report --events <file> [--json]                                                       Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    autonomy [--hours 24] [--json]                                                              Measure merges, human involvement, fleet improvements, releases and main health from local evidence.
+    signals [--json]                                                                            Read real repository adoption signals.
+    radar list|run|diff [--json]                                                                Observe public docs and package metadata; GET only, six-hour per-source floor.
+    observe session <id> [--json]                                                               Read one roster session. Transcript stays unknown until desktop-operator registers a reader.
+    friction [--json]                                                                           Mine the runs dir for recurring dispatch→merge friction; ledger keeps before/after metrics.
+    pulse [--window 1d|7d|30d]                                                                  Local observability dashboard: tokens, cost, sessions, commits.
+    pulse --json                                                                                Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).
+    pulse --project <name>                                                                      Restrict pulse rollup to a single project.
+    pulse-export                                                                                Fleet→pulse OTLP backfill/manual export.
+    pulse-test                                                                                  Fleet→pulse connectivity + auth probe (read-only).
+    resource [--json] [--directory <fleet-directory>]                                           Refresh the shared resource.v1 view in fleet.json from recorded inputs.
+    resources [--json] [--watch]                                                                Per-backend resource control plane: availability/used%/cap/resets-in (read-only god-view).
+    capacity publish [--json]                                                                   Refresh local subscription usage metadata once with this node’s local authentication.
+    estates [--json] [--repo <repo-id>]                                                         Per-repo estate cards: health, CI, security. Read-only portfolio view.
+    main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]              Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.
+    ci baseline [--repo owner/repo] [--json] [--queue] [--queue-file /absolute/path] [--apply]  Analyze shared CI baselines; plan master fixes and post-merge branch updates.
+    ci reruns [--json]                                                                          Read resident CI rerun journal and hourly counts.
+    ci-metrics [--json]                                                                         Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.
+    daily-fix validate|filter|dispatch|parse-fixup [--json]                                     Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.
+    wb <secrets|steer|reprioritize|stop> [--apply] [--json]                                     Workbench actions from the terminal: read secret custody, append a steer note, re-prioritize an unclaimed queue line, or stop a job. Mutating verbs are a dry run unless --apply.
+    amplify <status|tick|goal> [--json]                                                         Objective, expiring capacity, vitals and leader decisions; tick journals advisory actions only.
+    budget <show|add> [--json]                                                                  Per-pool remaining budget: show the ledger, or record a manual reading or parsed CLI/log output. Manual readings override automatic ones until their reset; raw output is never stored.
+    budget get [--json]                                                                         Read the owner spend budget in USD. A missing provider is 0 for the month. This does not change the budget.
+    budget set --provider <id> --period day|week|month --usd <n> [--json]                       Owner-only spend budget change from an interactive terminal, with one audit line. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents and non-TTY calls are refused. The committed default stays 0.
+    usage                                                                                       Frontier usage table: per-engine calls/tokens/cost + window state.
+    usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]                 Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.
+    usage resource-live [--json] [--watch] [--force] [--show] [--browser]                       Read every allowance and write state/resource-live.json: readings with source and observed time, the burn-down spend order, and a reset decision draft for Mason. Unverified readings are null.
+    usage history --lane <id> [--json] [--runs-dir <abs>]                                       Read seven days of measured per-lane allowance history.
+    usage sensors [--json] [--refresh] [--file <snapshot>]                                      Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
+    queue stats [--json] [--window <seconds>]                                                   Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
+    queue batches [--runs <directory>] [--json]                                                 Show each batch line’s PR, empty reason, failure or unknown result.
+    repos rank [proposals] [--json] [--recompute]                                               Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
+    job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]                        Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.
+    job cost <id> [--json]                                                                      Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
+    job tail <id> [--lines N] [--follow] [--json]                                               What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.
+    telemetry [status]                                                                          M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
+    telemetry test                                                                              Emit a synthetic metadata-only test span; report sink+ok.
+    audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]          Tail the append-only audit trail; --team lists workspace actions (read-only).
+    receipt list|status|show <run>|verify <run>|timeline <run> [--json]                         Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
+    sessions [--lane <lane>] [--repo <repo>] [--json]                                           Every running agent session in one list: lane, model, repo, age, last output (quiet after 10 min), PR and computer.
+    lanes fit --lane <lane> [--json]                                                            Show job kinds to send or avoid from measured PR rates.
+    lanes --json                                                                                Read dispatcher pools, slot caps and local endpoint health.
+    lanes health [--json]                                                                       Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
+    goals [--json]                                                                              Show dispatcher throughput, empty rates and resource resets.
 
   Integrations - MCP, GitHub, Vercel, editors
     mcp                                                                              Run the MCP aggregation gateway on stdio (point any agent here; includes the native ashlr_* tools; list them with tools/list).
@@ -333,6 +389,7 @@ Phantom - every command (phm or ashlr)
     mcp list                                                                         List native ashlr tools + discovered MCP servers with per-server tool counts.
     mcp doctor                                                                       Per-server MCP health: does it start? how many tools?
     autopilot <pr> [--apply] [--watch]                                               Drive one of Phantom's own PRs to green: fix red CI and review feedback with an agent, merge a conflicting or behind base, re-run infra failures once, re-verify; stops and says why when a failure is not the PR's. Plan only unless --apply; never force-pushes or merges the PR.
+    land auto [--repo <o/n>] [--apply] [--json]                                      Merge autopilot over the fleet's open PRs: classifies each as green-ready/behind/conflicting/red-required; --apply (needs PHANTOM_MERGE_AUTOPILOT=1) updates behind branches (merge only), enqueues DRAIN for conflicts and FIXUP for a failing required check. Holds honored, 3 actions/PR/24h.
     metrics <summary|dashboard|record|recommend|ingest|levers>                       Local telemetry: value-weighted PRs shipped per token/second/$, leaderboards, UCB1 allocation, HTML dashboard, router-metrics ingest and opportunity proxies.
     improve propose [--open-pr --repo <dir>]                                         Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
     improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons  Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
@@ -348,16 +405,20 @@ Phantom - every command (phm or ashlr)
     wire status [claude|codex|cursor|gemini|all]                                     Read-only report of whether each editor is wired to the ashlr gateway.
     wire --claude-md                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
     notify test                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
+    notify route <type> [--text]                                                     Preview an owner update route in JSON (default) or plain words; never sends.
     stack [status|list|providers|recommend|scan|doctor|add|apply]                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
     ecosystem doctor [--json] [--deep]                                               Read-only sibling-repository health scan across the ecosystem.
 
   Safety - sandboxes, invariants, activation
     daemon activation-preflight --request <path> [--json]                                 Read-only verification of operator-custodied signed candidate and rollback artifacts; grants no service authority.
     daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]     Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.
+    worktrees [--json] [--reap [--dry-run | --apply]]                                     List job worktrees by state and remove the ones safe to remove.
     worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean, inactive worktrees for finished jobs.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
+    autofix [--apply] [--dry-run] [--json] [--only <fixer>]                               Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.
+    nodes [--json] [--can-take <lane>]                                                    Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.
     node join|beat|enqueue|plan|pull|complete|status [--json]                             Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.
     node bootstrap --dry-run [--json]                                                     Plan a persistent Linux node; registry integration is a stub, no provisioning.
     sandbox list                                                                          List active git-worktree sandboxes (M21 safety foundation).
@@ -378,15 +439,18 @@ Phantom - every command (phm or ashlr)
     demo [--no-cleanup] [--json]                                                          Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.
 
   Surfaces - TUI + web dashboard
-    top [--once] [--json]           Read-only per-pool capacity and reset pressure snapshot.
-    tui [--once]                    Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
-    dash [--once]                   Alias of `tui` - interactive terminal dashboard.
-    dashboard [--stop|--status]     Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
-    serve [--port N]                Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
-    serve --open                    Start dashboard and open browser automatically.
-    serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
-    console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
-    verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    top [--once] [--json]                                                  Read-only per-pool capacity and reset pressure snapshot.
+    tui [--once]                                                           Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
+    dash [--once]                                                          Alias of `tui` - interactive terminal dashboard.
+    dashboard [--stop|--status]                                            Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
+    serve [--port N]                                                       Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+    serve --open                                                           Start dashboard and open browser automatically.
+    serve --allow-dispatch                                                 Enable guarded POST /api/run + web inbox approve/reject (prints session token).
+    console [--port N] [--no-open]                                         Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
+    verse [--port N] [--no-open]                                           Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    settings appearance [set]                                              Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
+    pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]  Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).
+    pages list [--json]                                                    List published report pages, newest first.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).

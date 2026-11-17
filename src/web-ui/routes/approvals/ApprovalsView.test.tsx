@@ -10,6 +10,8 @@ const projection = (over: Json = {}): Json => ({
   generatedAt: '2026-11-10T00:00:00Z',
   team: 'default',
   teamApprovals: { state: 'ok', items: [] },
+  proposals: { state: 'ok', items: [], truncated: false },
+  drafts: { state: 'ok', items: [], truncated: false },
   pins: { state: 'ok', root: '/x/staged', items: [] },
   holds: { state: 'ok', path: '/x/holds.json', configured: true, items: [] },
   ...over,
