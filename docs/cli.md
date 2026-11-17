@@ -428,7 +428,7 @@ Every command, grouped by topic.
     serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
     console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
     verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
-    settings appearance get|set     Read or change the app theme, accent (hex), density and fontSize: get [--json], set <key> <value> [--json]. A running desktop or phone app applies it live.
+    settings appearance [set]       Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).

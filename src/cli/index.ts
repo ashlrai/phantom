@@ -2967,7 +2967,7 @@ async function main(): Promise<void> {
       case 'settings': {
         if (wantsHelp(rest)) {
           printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
-            ['phm settings appearance get [--json]', 'Read the four appearance settings'],
+            ['phm settings appearance [--json]', 'Read the four appearance settings'],
             ['phm settings appearance set <key> <value> [--json]', 'Change one; a running app applies it live'],
           ]);
           process.exitCode = 0;
