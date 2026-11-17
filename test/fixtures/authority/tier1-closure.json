@@ -453,6 +453,7 @@
     "src/core/daemon/local-fleet.ts",
     "src/core/daemon/local-work-observation.ts",
     "src/core/daemon/loop.ts",
+    "src/core/daemon/off-tick-jobs.ts",
     "src/core/daemon/outcome-dispatch.ts",
     "src/core/daemon/outcome-manager-host.ts",
     "src/core/daemon/outcome-manager.ts",

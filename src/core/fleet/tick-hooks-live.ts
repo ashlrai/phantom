@@ -1757,28 +1757,25 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       } catch {
         snapshot = null;
       }
-      let local: LocalRuntimeReading;
-      try {
-        local = await deps.probeLocalRuntime(cfg, snapshot);
-      } catch {
-        local = { reachable: null, slots: null, contextPerSlot: null, detail: 'the local runtime probe failed' };
-      }
+      const [local, presence] = await Promise.all([
+        (async (): Promise<LocalRuntimeReading> => {
+          try { return await deps.probeLocalRuntime(cfg, snapshot); }
+          catch { return { reachable: null, slots: null, contextPerSlot: null, detail: 'the local runtime probe failed' }; }
+        })(),
+        (async (): Promise<OperatorPresence> => {
+          if (presenceCache && nowMs - presenceCache.atMs < PRESENCE_TTL_MS) return presenceCache.value;
+          let value: OperatorPresence;
+          try { value = await deps.presence(nowMs); }
+          catch { value = { present: null, reason: 'Presence could not be probed.', evidenceAt: null }; }
+          presenceCache = { atMs: nowMs, value };
+          return value;
+        })(),
+      ]);
       const experimentAtObservation = experiment;
       const capacity: SeatCapacity[] = [
         ...(snapshot?.seats ?? []).filter((s) => s.engine !== 'local'),
         localSeat(local),
       ];
-      let presence: OperatorPresence;
-      if (presenceCache && nowMs - presenceCache.atMs < PRESENCE_TTL_MS) {
-        presence = presenceCache.value;
-      } else {
-        try {
-          presence = await deps.presence(nowMs);
-        } catch {
-          presence = { present: null, reason: 'Presence could not be probed.', evidenceAt: null };
-        }
-        presenceCache = { atMs: nowMs, value: presence };
-      }
       let directives: LeaderDirectivesV1 | null = null;
       try {
         // B-U8: honour codexEnabled only while the grant lists codex, and the

@@ -214,6 +214,7 @@ import {
   TICK_PHASE_REFLECTION_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
+import { launchOffTickJob, cancelOffTickJobs } from './off-tick-jobs.js';
 import {
   consumeDaemonActivationPermit,
   isDaemonActivationCapability,
@@ -1270,6 +1271,7 @@ const MAX_DIAGNOSTIC_RESLICE_DRAIN_LIMIT = 50;
 type TickItemOutcome = { item: WorkItem; spentUsd: number; dispatched: boolean; dispatch?: DaemonDispatchTrace };
 type BestOfNRunResult = Awaited<ReturnType<typeof runBestOfN>>;
 interface TickOptions {
+  offTickMaintenance?: boolean;
   dryRun: boolean;
   activationCapability?: DaemonActivationCapability;
   drain?: DaemonDrainMode;
@@ -4002,6 +4004,7 @@ export async function tick(
   // when the tick is abandoned at the runDaemon deadline.
   beginTickPhases({ budgetMs: opts.tickBudgetMs ?? TICK_BUDGET_MS });
   const phaseLog = (line: string): void => console.warn('[ashlr] daemon:tick', line);
+  const offTickMaintenance = opts.offTickMaintenance === true && !opts.dryRun;
   // RQ-DAEMONTICK-UNBLOCK: one funnel for every awaited tick stage — bounded
   // wait + AbortSignal + ledger record + log on failure. A phase that times
   // out is cancelled and left detached; the tick continues and completes.
@@ -4015,6 +4018,9 @@ export async function tick(
     ...(graceMs !== undefined ? { graceMs } : {}),
     ...(name === 'dispatch' || name === 'dispatch-hook' ? { budgetExempt: true } : {}),
   });
+  const runMaintenancePhase = async (name: 'self-heal' | 'ancillary', run: (signal: AbortSignal) => Promise<void>): Promise<void> => {
+    await runPhase(name, TICK_PHASE_MAINTENANCE_MS, run);
+  };
   // A backlog refresh that timed out is still running detached; starting a
   // second scan over it in the same tick only stacks work. Later refreshes
   // this tick are skipped and the next tick resumes the scan.
@@ -4724,6 +4730,26 @@ export async function tick(
       settleObservation(observationOutcome, enqueued === undefined ? undefined : { backlogItems: enqueued });
     }
   };
+  const runReflectionMaintenance = async (): Promise<void> => {
+    if (
+      stopRequested() ||
+      (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] !== true ||
+      state.ticks.length % 20 !== 0
+    ) return;
+    const run = async (signal: AbortSignal): Promise<void> => {
+      const { runReflectionCycle } = await import('../learn/reflect.js');
+      await runReflectionCycle(liveCfg, { signal });
+    };
+    if (offTickMaintenance) {
+      launchOffTickJob('reflection', run, {
+        deadlineMs: TICK_PHASE_REFLECTION_MS,
+        parentSignal: opts.signal,
+        log: phaseLog,
+      });
+    } else {
+      await runPhase('reflection', TICK_PHASE_REFLECTION_MS, run);
+    }
+  };
   const runAncillaryMaintenance = async (): Promise<void> => {
     if (meteredUsdExhaustedForMaintenance || proposalOnlyActivation || opts.dryRun || stopRequested() || ancillaryMaintenanceRan) return;
     ancillaryMaintenanceRan = true;
@@ -4788,19 +4814,7 @@ export async function tick(
       }
     }
 
-    // Low cadence, matching the counterfactual-replay pattern above: reflection
-    // persists a snapshot and distills playbooks, and does not need every tick.
-    // Its own bounded phase — a wedged distillation must not hold ancillary.
-    if (
-      !stopRequested() &&
-      (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] === true &&
-      state.ticks.length % 20 === 0
-    ) {
-      await runTickPhase('reflection', async (phaseSignal) => {
-        const { runReflectionCycle } = await import('../learn/reflect.js');
-        await runReflectionCycle(liveCfg, { signal: phaseSignal });
-      }, { deadlineMs: TICK_PHASE_REFLECTION_MS, parentSignal: opts.signal, log: phaseLog });
-    }
+    await runReflectionMaintenance();
 
     // M189: Regression sentinel — detect regressions introduced by auto-merge and bisect/revert.
     const regressionSentinel = (liveCfg.foundry as Record<string, unknown>)?.regressionSentinel;
@@ -5429,6 +5443,11 @@ export async function tick(
   // -------------------------------------------------------------------------
   // 5. Build / refresh backlog for ENROLLED repos only.
   // -------------------------------------------------------------------------
+  if (offTickMaintenance) {
+    preDispatchAutoMergePassResult =
+      (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
+    preDispatchAutoMergePassRan = true;
+  }
   let backlogItems: WorkItem[] =
     await runBacklogRefreshPhase();
   const proposalRepairResult =
@@ -5481,7 +5500,7 @@ export async function tick(
   }
 
   if (backlogItems.length === 0) {
-    const autoMergePassResult =
+    const autoMergePassResult = preDispatchAutoMergePassRan ? preDispatchAutoMergePassResult :
       (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
     preDispatchAutoMergePassResult = autoMergePassResult;
     preDispatchAutoMergePassRan = true;
@@ -5490,9 +5509,8 @@ export async function tick(
 
     if (!opts.dryRun && shouldRunProducerMaintenance(state)) {
       producerMaintenanceBeforeSelection = true;
-      await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(undefined, signal));
-      backlogItems = filterGeneratedRepairDispatch(
-        await runBacklogRefreshPhase());
+      await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(undefined, signal));
+      backlogItems = filterGeneratedRepairDispatch(await runBacklogRefreshPhase());
       if (backlogItems.length > 0) {
         skipInventAfterSelfHealRefill = true;
       } else {
@@ -5501,7 +5519,7 @@ export async function tick(
         if (invented) backlogItems = filterGeneratedRepairDispatch(
           await runBacklogRefreshPhase());
       }
-      await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
+      await runMaintenancePhase('ancillary', runAncillaryMaintenance);
     }
 
     if (backlogItems.length > 0) {
@@ -5556,17 +5574,16 @@ export async function tick(
     shouldRunProducerMaintenance(state)
   ) {
     producerMaintenanceBeforeSelection = true;
-    await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(selfHealReposBeforeSelection, signal));
-    backlogItems = filterGeneratedRepairDispatch(
-      await runBacklogRefreshPhase());
+    await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(selfHealReposBeforeSelection, signal));
+    backlogItems = filterGeneratedRepairDispatch(await runBacklogRefreshPhase());
     const invented =
       (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
     if (invented) backlogItems = filterGeneratedRepairDispatch(
       await runBacklogRefreshPhase());
-    await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
+    await runMaintenancePhase('ancillary', runAncillaryMaintenance);
 
     if (backlogItems.length === 0) {
-      const autoMergePassResult =
+      const autoMergePassResult = preDispatchAutoMergePassRan ? preDispatchAutoMergePassResult :
         (await runPhase('auto-merge', TICK_PHASE_MAINTENANCE_MS, () => runAutoMergeMaintenancePass())).value ?? null;
       preDispatchAutoMergePassResult = autoMergePassResult;
       preDispatchAutoMergePassRan = true;
@@ -6370,9 +6387,9 @@ export async function tick(
   // guard so queued work discovery and regression watches do not extend an
   // in-flight accounting guard for selected dispatches.
   if (!producerMaintenanceBeforeSelection && shouldRunProducerMaintenance(state)) {
-    await runPhase('self-heal', TICK_PHASE_MAINTENANCE_MS, (signal) => runSelfHealMaintenance(undefined, signal));
+    await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(undefined, signal));
     await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal));
-    await runPhase('ancillary', TICK_PHASE_MAINTENANCE_MS, () => runAncillaryMaintenance());
+    await runMaintenancePhase('ancillary', runAncillaryMaintenance);
   }
 
   if (!stillOwnsTick()) {
@@ -11041,6 +11058,7 @@ async function runDaemonInEnrollmentScope(
           () => tick(liveCfg, {
             dryRun: opts.dryRun,
             ...(standingCapability && standing ? { activationCapability: standingCapability, hooks: standing.hooks } : {}),
+            offTickMaintenance: true,
             // Test/integrator seam — standing ticks always take the live hooks.
             ...(standingCapability !== null && standing ? {} : opts.hooks ? { hooks: opts.hooks } : {}),
             ...(opts.drain ? { drain: opts.drain } : {}),
@@ -11321,6 +11339,7 @@ async function runDaemonInEnrollmentScope(
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
   if (!opts.dryRun) await stopResidentCapacityPublisher();
+  await cancelOffTickJobs();
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,
     scheduledCutoffCapture,
