@@ -120,9 +120,12 @@ describe('phm empties', () => {
 
   it('keeps JSON key order stable', async () => {
     const report = JSON.parse((await fixture()).out) as EmptiesReport;
-    expect(Object.keys(report)).toEqual(['schema', 'since_hours', 'metrics_path', 'metrics', 'finishes', 'empties', 'empty_share', 'tokens', 'tokens_unknown_jobs', 'malformed_lines', 'notes_missing', 'reasons']);
+    expect(Object.keys(report)).toEqual(['schema', 'since_hours', 'metrics_path', 'metrics', 'finishes', 'empties', 'empty_share', 'tokens', 'tokens_unknown_jobs', 'malformed_lines', 'notes_missing', 'reasons', 'families']);
     for (const reason of report.reasons) {
       expect(Object.keys(reason)).toEqual(['reason', 'label', 'count', 'share_of_finishes', 'tokens', 'tokens_unknown_jobs', 'lanes', 'prefixes', 'examples', 'next_step']);
+    }
+    for (const family of report.families) {
+      expect(Object.keys(family)).toEqual(['name', 'finishes', 'empties', 'empty_rate', 'wasted_tokens', 'tokens_unknown_jobs', 'recommendation']);
     }
     expect((await fixture()).out).toBe((await fixture('--json')).out);
   });
@@ -151,7 +154,7 @@ describe('phm empties', () => {
   it('says unknown and exits 1 when the metrics file is unreadable', async () => {
     const json = await run('--runs-dir', join(root, 'absent'));
     expect(json.code).toBe(1);
-    expect(JSON.parse(json.out)).toMatchObject({ metrics: 'unreadable', finishes: null, empties: null, empty_share: null, tokens: null, malformed_lines: null, reasons: [] });
+    expect(JSON.parse(json.out)).toMatchObject({ metrics: 'unreadable', finishes: null, empties: null, empty_share: null, tokens: null, malformed_lines: null, reasons: [], families: [] });
     const text = await run('--runs-dir', join(root, 'absent'), '--text');
     expect(text.out).toMatch(/^Empty finishes in the last 24 h: unknown\. Cannot read the job metrics file .*jobs\.jsonl\.$/);
   });
@@ -212,7 +215,51 @@ describe('ledgerFinishes and jobFamilies', () => {
 
   it('reports a readable but empty window as zero finishes with no share', () => {
     const report = buildEmptiesReport({ ledger: { finishes: [], malformed: 0 }, evidence: new Map(), hours: 24, metricsPath: '/fake/jobs.jsonl' });
-    expect(report).toMatchObject({ finishes: 0, empties: 0, empty_share: null, tokens: null });
+    expect(report).toMatchObject({ finishes: 0, empties: 0, empty_share: null, tokens: null, families: [] });
     expect(emptiesText(report)).toEqual(['No finishes recorded in the last 24 h (/fake/jobs.jsonl).']);
+  });
+});
+
+describe('empty job family rankings', () => {
+  const batch = (family: string, empty: number, total: number, tokens: number | null = 10) =>
+    Array.from({ length: total }, (_, i) => finish(`RQ-${family}-${i}`, i % 2 ? 'claude' : 'codex-personal', { empty: i < empty, tokens_total: i < empty ? tokens : 1_000_000 }));
+  const report = (rows: string[], hours = 24) => buildEmptiesReport({
+    ledger: ledgerFinishes(rows.join('\n'), NOW, hours), evidence: new Map(), hours, metricsPath: '/fake/jobs.jsonl',
+  });
+
+  it('ranks mixed families by rate, wasted tokens and name, across lanes and productive finishes', () => {
+    const rows = [...batch('RECUTCORE', 4, 4), finish('RQ-PHX-RECUTWEB', 'grok', { empty: false, tokens_total: 900_000 }),
+      ...batch('BRAVO', 4, 5, 100), ...batch('ALPHA', 4, 5, 100), ...batch('SMALL', 4, 4), ...batch('LOWER', 3, 5, 1_000_000)];
+    const result = report(rows);
+    expect(result.families.map(row => row.name)).toEqual(['SMALL', 'ALPHA', 'BRAVO', 'RECUT', 'LOWER']);
+    expect(result.families[3]).toEqual({ name: 'RECUT', finishes: 5, empties: 4, empty_rate: 0.8, wasted_tokens: 40, tokens_unknown_jobs: 0, recommendation: 'suppress' });
+    expect(result.families[4]).toMatchObject({ empty_rate: 0.6, recommendation: 'keep' });
+    expect(JSON.stringify(report([...rows].reverse()).families)).toBe(JSON.stringify(result.families));
+    expect(emptiesText(result)).toContain('Family ALPHA: 4/5 empty (80%), wasted 400 tokens. Suppress new jobs in this family.');
+    expect(emptiesText(result)).toContain('Family SMALL: 4/4 empty (100%), wasted 40 tokens. Collect at least five finishes before suppressing.');
+  });
+
+  it.each([[4, 4, 'observe'], [5, 3, 'keep'], [5, 4, 'suppress'], [5, 0, 'keep']] as const)(
+    'recommends correctly for %i finishes with %i empty', (total, empty, recommendation) => {
+      expect(report(batch('SAMPLE', empty, total)).families[0]).toMatchObject({ finishes: total, empties: empty, recommendation });
+    },
+  );
+
+  it('counts only the newest finish per job in the 24-hour window', () => {
+    const rows = [...batch('RECUT', 4, 5), finish('RQ-RECUT-0', 'claude', { empty: false }, 0),
+      finish('RQ-RECUT-old', 'claude', {}, 24.01), finish('RQ-RECUT-future', 'claude', {}, -1),
+      JSON.stringify({ event: 'launch', job: 'RQ-RECUT-live', ts: ts(0) })];
+    expect(report(rows).families[0]).toMatchObject({ finishes: 5, empties: 3, empty_rate: 0.6, recommendation: 'keep' });
+    expect(report(rows, 48).families[0]).toMatchObject({ finishes: 6, empties: 4, recommendation: 'suppress' });
+  });
+
+  it('preserves missing and partial token evidence and distinguishes measured zero waste', () => {
+    const rows = [...batch('UNKNOWN', 1, 1, null), ...batch('ZEROES', 1, 1, 0), ...batch('KNOWN', 1, 1, 20),
+      ...batch('PARTIAL', 1, 2, 20), finish('RQ-PARTIAL-2', 'claude'), ...batch('CLEAN', 0, 5)];
+    const families = report(rows).families;
+    expect(families.map(row => row.name)).toEqual(['KNOWN', 'ZEROES', 'UNKNOWN', 'PARTIAL', 'CLEAN']);
+    expect(families[2]).toMatchObject({ wasted_tokens: null, tokens_unknown_jobs: 1 });
+    expect(families[3]).toMatchObject({ wasted_tokens: 20, tokens_unknown_jobs: 1 });
+    expect(families[4]).toMatchObject({ wasted_tokens: 0, tokens_unknown_jobs: 0, recommendation: 'keep' });
   });
 });

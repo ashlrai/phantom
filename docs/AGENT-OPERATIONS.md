@@ -937,6 +937,16 @@ Leader replies (these need `--leader-seen <time>`). `phm home --json` prints
 schema `home.v1`: each field is `{state:"ok",value}` or `{state:"unknown",reason}`.
 It is read-only, and the desktop app opens on the same summary.
 
+`phm asks` lists what only Mason can do: a password, a 2FA code, a device
+approval or a payment. Each row has a short id, the kind, its age and one plain
+line. `phm asks answer <id> yes|no|done` records the answer once, with its
+source and time, on the existing needs-you ledger and bus; a repeat changes
+nothing. Agents raise one with `phm asks add <kind> "<request>"` and never put
+the secret itself in the request. Any other kind is refused: the fleet decides
+this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
+own private chat; the desktop Home view shows the same asks with Yes, No and
+Done buttons. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
+
 `phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
 published, PRs merged, empty jobs and the median time from publish to merge. It
 prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
