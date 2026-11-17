@@ -1,3 +1,27 @@
+# Frontier CLI discovery and daemon health
+
+`src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
+execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
+It rejects empty names and names containing `/`, searches PATH before common
+tool directories, `~/.npm-global/bin`, and the Node executable directory, and
+uses file metadata only (regular file with any execute bit). Options default to
+process PATH, HOME, and execPath. Returned paths are absolute. Engine discovery
+and absolute spawn-path resolution retain `which`/`where` first, then use this
+fallback; this does not change service PATH or admission policy.
+
+`src/core/daemon/guard-health.ts` exports `diagnoseFrontierClients(inventory,
+lookup?)`; the injected lookup now returns the executable resolution above or
+null rather than a boolean. Unavailable diagnoses retain `binaryOnPath` and add
+nullable `binaryPath`, nullable `binarySource`, and `cause`: `binary-not-found`,
+`auth-or-seat-not-admitted`, `policy-refused`, `resource-unavailable`,
+`not-selected`, `non-loopback-refused`, `probe-timeout`, or `unavailable`.
+Policy/resource/selection/refusal inventory reasons take precedence over binary
+absence. Admission is inferred, never authenticated by this metadata lookup.
+The health CLI bounds inventory discovery to 30 seconds; a timeout supplies a
+sanitized frontier error and null resolved inventory, preserving unknown health
+semantics and never itself recommending restart. See
+[daemon revival](docs/DAEMON-REVIVE.md).
+
 # Advisory routing pairing
 
 `run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
