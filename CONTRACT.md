@@ -22,6 +22,25 @@ sanitized frontier error and null resolved inventory, preserving unknown health
 semantics and never itself recommending restart. See
 [daemon revival](docs/DAEMON-REVIVE.md).
 
+# Resident off-tick jobs
+
+`buildBacklog` scans up to `BACKLOG_REPO_CONCURRENCY` (4) repositories at once,
+aggregating scanner results in input repository order before existing ranking
+and snapshot persistence. Scanner bounds and observation ordering are unchanged.
+
+`runTickPhase` accepts `detached?: boolean`: detached phases retain deadline,
+abort and grace semantics but do not consume the tick budget, update progress,
+or append to its ledger. `recordTickPhase(record)` appends metadata to an open
+ledger. `DaemonTickPhaseStatus` includes `off-tick`, excluded from tick outcomes;
+`DaemonTickPhase.offTick` carries run identity and previous settled metadata.
+`launchOffTickJob(name, run, opts)` synchronously records an off-tick launch or
+existing run. Jobs are single-flight until both bounded and inner work settle.
+`offTickJobsSnapshot()` returns metadata only; `cancelOffTickJobs(graceMs?)`
+aborts running jobs and bounds shutdown waiting.
+Resident non-once ticks enable `offTickMaintenance` (ignored for dry runs):
+self-heal and ancillary run single-flight in the background, and auto-merge
+precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
+
 # Advisory routing pairing
 
 `run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
