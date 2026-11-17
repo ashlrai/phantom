@@ -1882,6 +1882,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         def solo(c):
+            if c[2] == "devin":
+                selected = market_models.get("devin." + c[3]) or market_models.get("devin")
+                # A batch must not replace a free selected model with a differently priced model.
+                if selected and batch_sessions.model_for("devin", c[3], rd(c[4]), BS_CFG)[0] != selected: return True
             return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}), market_specs[c[0]].get("max_tier"))
         if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
@@ -1892,19 +1896,22 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                                   and work_market.serves_repo(market_view.get(l, {}), f[1]))
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
+    market_allowance = dict(_BUDGET_OV)
+    market_allowance["devin"] = dict(weekly_acu=work_market.read_devin_allowance(H, os.environ.get("ASHLR_HOME")))
     market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
                                         hold, market_models, BUS["quota"], JOBS_RAW,
-                                        jload(Q + "/adaptive.json", {}), NOW, allowance=_BUDGET_OV)
+                                        jload(Q + "/adaptive.json", {}), NOW, allowance=market_allowance)
     # Fresh use-it-all evidence that a window is going to waste outranks a preserve default this tick.
     for _l in LANES:
         _waste = waste_risk(UIA.get(_l), _l)
-        if _waste or pace_behind(UIA.get(_l)) is True:
+        if market_view[_l]["cost_class"] == "included" and (_waste or pace_behind(UIA.get(_l)) is True):
             market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
-    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES):
+    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view["devin"]["target"] > 0:
         market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
             l: dict(posture=v["posture"], posture_reason=v["posture_reason"],
                     projected_unused_pct=v["spend_down"]["projected_unused_pct"],
-                    hours_to_reset=v["spend_down"]["hours_to_reset"]) for l, v in market_view.items()}})
+                    hours_to_reset=v["spend_down"]["hours_to_reset"], cost_class=v["cost_class"],
+                    **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v}) for l, v in market_view.items()}})
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
@@ -1930,6 +1937,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         spec = market_specs[j]
         view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
+        # Cost is model/tier-specific and every claim reserves another session cap.
+        view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
+                                         market_models, BUS["quota"], JOBS_RAW, now=NOW,
+                                         allowance=market_allowance, tier=tier))
         for dest in LANES:
             if dest == "devin":
                 size = _size_hint(j, pf)
@@ -2063,6 +2074,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
         boost = waste_boost(UIA.get(lane), lane, tier, view[lane], spec.get("max_tier")) if not batch else None
+        if boost and lane == "devin" and (market_models.get("devin." + boost[0]) or market_models.get("devin")) != (market_models.get("devin." + tier) or market_models.get("devin")):
+            boost = None   # The cost receipt binds the selected model, not a differently priced tier.
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
         requested_tier = tier
         if boost: tier = boost[0]

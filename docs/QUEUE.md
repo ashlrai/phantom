@@ -141,6 +141,37 @@ With hours remaining to reset, projected unused allowance is
 or `spend_down_not_subscription`. The existing use-it-all tick override remains
 last, with reason `use_it_all_waste_risk` or `use_it_all_behind`.
 
+The Devin CLI lane derives an allowance-bounded cost class instead of trusting
+a `slots.json` cost override. It reads the existing published
+`~/.ashlr/devin/weekly-capacity.json` measurement (`phm capacity publish`),
+`devin.weeklyAcuAllowance` (falling back to the local budget's `acuBudgetTotal`),
+and the configured recurring `devin.weeklyResetAt` anchor. The measurement must
+be live, at most 15 minutes old, and belong to the configured window with a
+future reset. Unknown ACU values stay null. It counts as `included` only when
+`allowance - measured usage - reservations - reserveAcu >= maxAcuPerSession`.
+Reservations conservatively hold the full cap of unsettled local Devin tasks
+(including suspended/dismissed sessions and ambiguous creates), plus one cap
+per running dispatcher session. This can double-reserve a tracked worker;
+it protects usage since the weekly observation. Claims in the same tick each
+reserve another cap before the next decision. Missing budget or task inventory
+makes reservations unknown. No allowance, reset, measurement or sufficient
+headroom means `metered`, which cannot burn, including through host posture
+or use-it-all overrides. This classification grants no launch authority and
+does not change billing, plan settings or the launcher's spending gates.
+
+Selected SWE-2 Lightning/Flash CLI preview models are `included` with
+`zero_cost: true` and posture `burn` until 2026-12-01 05:00 UTC (the shared
+resource-live expiry). They need no ACU reservation. At expiry they become
+`metered`; `free_until` cannot extend them. Tier-specific model picks apply per
+job; a batch or tier boost cannot silently substitute a differently priced
+Devin model for the cost receipt's selected model.
+
+Devin receipts add `cost_class_reason`, `zero_cost` and nullable ACU `allowance`
+evidence. Reasons are `devin_within_allowance`, `devin_allowance_headroom`,
+`devin_usage_unknown`, `devin_usage_stale`, `devin_reset_unknown`,
+`devin_reset_expired`, `devin_allowance_unknown`, `devin_reservations_unknown`,
+`devin_free_preview` and `devin_preview_expired`.
+
 `work-market.v1` routing receipts include `posture_reason` and `spend_down` in
 each lane's ranking inputs. When allowance readings exist, one `event: posture`
 snapshot per market tick records all lane postures and projections, including
@@ -149,6 +180,8 @@ ticks without a routing decision. `phm route explain --json` returns nullable
 `hoursToReset`, using the newest posture snapshot in a bounded 256 KiB journal
 tail, or the newest routing decision if no snapshot exists. Missing or invalid
 evidence stays null. These ranking inputs never grant quota or eligibility.
+Devin's cost evidence is exposed there as `costClass`, `costClassReason`,
+`zeroCost` and `allowance` (ACU keys retain their receipt names).
 
 | Posture | bulk | standard | judgment |
 | --- | --- | --- | --- |
