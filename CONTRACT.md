@@ -730,3 +730,13 @@ Optional role, capabilities, machine/lane affinity and peer mappings persist in
 roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
+
+`fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
+`readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
+Read-only lists of the plugins and skills fleet agents have: Phantom plugins and
+Claude Code installed plugins; Claude Code, Codex and learned skills. Each row has
+`name`, `source`, `agents` (plain words), `enabled` (boolean or `'unknown'`) and
+`lastUsed` (`'unknown'`; no usage record exists yet). Each source reports
+`read`, `none` or `unknown`; an unreadable source adds no rows. Served by
+`phm plugins list --all --json`, `phm skills list --all --json` and
+`GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
