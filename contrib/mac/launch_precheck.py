@@ -30,7 +30,10 @@ def request_hash(job, repo, prompt):
                    and not re.fullmatch(r"P[0-9]+|(?:pool|tier|repo)=[^,]+", a.strip()))
     before, _, after = prompt.partition(tasks[0])
     before = re.sub(r"\AJob " + re.escape(job) + r" \(pool [^,\n]+, tier [^,\n]+, repo [^)\n]+\)\. Task from the Ashlr router queue, verbatim:\n\n", "", before)
-    return hashlib.sha256(json.dumps([repo, attrs, match[2], before, after], separators=(',', ':')).encode()).hexdigest()
+    # A repair job's identity names its PR; two repairs of different PRs are never the same request.
+    target = repair_target(job, repo)
+    ident = list(target.groups()[:2]) if target else None
+    return hashlib.sha256(json.dumps([repo, attrs, match[2], before, after, ident], separators=(',', ':')).encode()).hexdigest()
 
 
 def admission_history(rows, now):

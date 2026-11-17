@@ -15,6 +15,14 @@ def prompt(job, attrs='P1, pool=devin', text='Fix src/core/queue/store.ts retry 
 
 
 class EmptyJobAdmission(unittest.TestCase):
+    def test_repair_jobs_for_different_prs_are_different_requests(self):
+        a, b = 'RQ-FIXUP-phantom-41-aaaaaaa', 'RQ-FIXUP-phantom-42-aaaaaaa'
+        self.assertNotEqual(request_hash(a, 'phantom', prompt(a)), request_hash(b, 'phantom', prompt(b)))
+        c = 'RQ-REBASE-phantom-41-aaaaaaa'
+        self.assertNotEqual(request_hash(a, 'phantom', prompt(a)), request_hash(c, 'phantom', prompt(c)))
+        d = 'RQ-FIXUP-phantom-41-bbbbbbb'   # same PR and kind: still the same request
+        self.assertEqual(request_hash(a, 'phantom', prompt(a)), request_hash(d, 'phantom', prompt(d)))
+
     def test_identity_keeps_actionable_differences(self):
         key = request_hash('A', 'phantom', prompt('A'))
         self.assertEqual(key, request_hash('B', 'phantom', prompt('B', 'pool=codex-cmp, P0')))
