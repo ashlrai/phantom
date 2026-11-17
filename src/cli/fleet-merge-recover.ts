@@ -7,18 +7,21 @@ import { recutDropJob } from '../core/fleet/recut-drop-body.js';
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError, resolveDropJobRoot, writeDropJob } from '../core/fleet/drop-job-writer.js';
 import { cmdFleetDirtyLanded, type DirtyLandedPr } from './fleet-dirty-landed.js';
 import { mergeQueueAge, validMergeQueueAgeInput } from './fleet-merge-queue-age.js';
+import { reserveMergeRecoveryAttempt } from '../core/fleet/merge-recovery-budget.js';
 
 const USAGE = 'Usage: phm fleet merge-recover [--queue-input <snapshot.json>] [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. A queue snapshot prioritizes the oldest measured entries and reports their wait. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
 const REPO = 'ashlrai/phantom';
 /** Mason's own holds in ashlrai/phantom (AGENTS.md hold list); never auto-acted on. */
 export const PHANTOM_PR_HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
 const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest';
+const REPLACEMENT_LIMIT = 100;
 interface Pr { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
 export interface MergeRecoverDeps {
   gh?: CloudGh;
   inspect?: () => Promise<DirtyLandedPr[]>;
   exists?: (root: string, id: string) => Promise<boolean>;
   write?: typeof writeDropJob;
+  reserve?: typeof reserveMergeRecoveryAttempt;
   output?: (text: string) => void;
 }
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
@@ -66,28 +69,47 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
     for (const pr of [...prs].sort((a, b) => (ranks.get(a.number) ?? Infinity) - (ranks.get(b.number) ?? Infinity))) {
       if (PHANTOM_PR_HOLDS.has(pr.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
       const job = recutDropJob(pr, 0);
-      if ('reason' in job || !['main', 'master'].includes(pr.base)) continue;
+      if ('reason' in job) { rows.push({ pr: pr.number, action: job.reason }); continue; }
       // Stable across dates and processes; a changed source head is a new recovery.
       job.id = `MR${createHash('sha256').update(`${pr.number}:${pr.head}`).digest('hex').slice(0, 32).toUpperCase()}`;
-      job.body = job.body.replaceAll('master', pr.base);
       const title = `bridge: RQ-PHX-${job.id}`;
       try {
         const current = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
-        if (!valid(current)) throw new Error('invalid');
+        if (!valid(current) || current.number !== pr.number) throw new Error('invalid');
+        const sourceUnchanged = async () => {
+          const latest = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
+          return valid(latest) && latest.number === pr.number && latest.state === 'OPEN'
+            && latest.headRefOid === pr.head && latest.baseRefName === pr.base && !latest.isDraft && latest.mergeStateStatus === 'DIRTY';
+        };
         let action = 'source-changed';
         if (current.state !== 'OPEN') action = current.state.toLowerCase();
         else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && current.mergeStateStatus === 'DIRTY') {
-          const matches = await read(['pr', 'list', '--repo', REPO, '--state', 'all', '--search', `in:title "${title}"`, '--json', FIELDS]) as Pr[];
-          if (!Array.isArray(matches) || !matches.every(valid)) throw new Error('invalid');
+          const matches = await read(['pr', 'list', '--repo', REPO, '--state', 'all', '--limit', String(REPLACEMENT_LIMIT), '--search', `in:title "${title}"`, '--json', FIELDS]) as Pr[];
+          // A full page cannot prove there is no second replacement.
+          if (!Array.isArray(matches) || matches.length >= REPLACEMENT_LIMIT || !matches.every(valid)) throw new Error('invalid');
           const replacements = matches.filter(p => p.title === title);
           if (replacements.length > 1) throw new Error('ambiguous');
-          const replacement = replacements[0];
-          if (replacement) {
+          const match = replacements[0];
+          if (match) {
+            if (PHANTOM_PR_HOLDS.has(match.number)) { rows.push({ pr: pr.number, action: 'held' }); continue; }
+            // Search locates the PR; a direct read decides whether to re-arm it.
+            const replacement = await read(['pr', 'view', String(match.number), '--repo', REPO, '--json', FIELDS]) as Pr;
+            if (!valid(replacement) || replacement.number !== match.number) throw new Error('invalid');
+            if (replacement.title !== title || replacement.baseRefName !== pr.base) {
+              rows.push({ pr: pr.number, action: 'replacement-changed' }); continue;
+            }
             action = `replacement-${replacement.state.toLowerCase()}`;
             if (replacement.state === 'OPEN' && replacement.mergeStateStatus === 'DIRTY') action = 'replacement-conflict';
-            if (replacement.state === 'OPEN' && !replacement.isDraft && replacement.baseRefName === pr.base && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
+            if (replacement.state === 'OPEN' && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
               action = replacement.autoMergeRequest ? 'auto-merge-requested' : 'request-auto-merge';
+              if (!replacement.autoMergeRequest && !await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'merge', false)) {
+                rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
+              }
               if (apply && !replacement.autoMergeRequest) {
+                if (!await sourceUnchanged()) { rows.push({ pr: pr.number, action: 'source-changed' }); continue; }
+                if (!await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'merge', true)) {
+                  rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
+                }
                 const result = await gh(['pr', 'merge', String(replacement.number), '--repo', REPO, '--auto', '--match-head-commit', replacement.headRefOid]);
                 if (!result.ok) throw new Error('merge request');
                 action = 'auto-merge-requested';
@@ -96,12 +118,16 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
           } else if (await (deps.exists ?? dropJobExists)(resolveDropJobRoot(root), job.id)) action = 'recut-queued';
           else {
             if (queued >= 2) { rows.push({ pr: pr.number, action: 'capped' }); continue; }
+            if (!await sourceUnchanged()) { rows.push({ pr: pr.number, action: 'source-changed' }); continue; }
+            if (apply && !deps.write && await countQueuedDropJobPrompts(resolveDropJobRoot(root)) >= DROP_JOB_QUEUE_LIMIT) throw new Error('queue full');
+            if (!await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'recut', apply)) {
+              rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
+            }
             queued++;
             action = 'queue-recut';
             // The worker leaves edits uncommitted; the existing router publisher owns publication.
             job.body += `\nRecovery identity: ${title}. The sanctioned router publisher must use this exact PR title. Never bypass required checks or the merge queue.\n`;
             if (apply) {
-              if (!deps.write && await countQueuedDropJobPrompts(resolveDropJobRoot(root)) >= DROP_JOB_QUEUE_LIMIT) throw new Error('queue full');
               try { await (deps.write ?? writeDropJob)(resolveDropJobRoot(root), job); }
               catch (e) { if (!(e instanceof DropJobExistsError)) throw e; }
               action = 'recut-queued';

@@ -13,6 +13,11 @@ const readDigest = vi.hoisted(() => vi.fn());
 vi.mock('../src/core/leader/status-digest-sources.js', () => ({ gatherStatusDigestInput: readDigest }));
 vi.mock('../src/core/leader/status-digest.js', () => ({ buildStatusDigest: () => ['line one', 'line two', 'line three', 'line four', 'line five'] }));
 
+/** composeSlackStatusReply (#5781, #5435) deliberately appends sanitized evidence lines after the
+ * reply body; anything else after it is still a failure. */
+const EVIDENCE_LINE = /^(Work items( as of |: )|Runtime: |Fleet state: |Claims: )/;
+const evidenceOnly = (lines: string[]) => lines.every(l => EVIDENCE_LINE.test(l));
+
 const home = useTmpHome();
 const model = vi.fn(async () => { throw new Error('model seam called'); });
 const token = 'test-token';
@@ -39,7 +44,10 @@ afterEach(() => { setLeaderApiHooksForTest({}); setLeaderThreadDepsForTest(null)
 it('answers a short status ask from the digest and records both messages in order', async () => {
   const result = await call('POST', { text: 'Phantom status' });
   expect(result.status).toBe(200);
-  expect(result.body.reply.text).toMatch(/^Phantom status, .* ET\nline one\nline two\nline three\nline four\nline five$/);
+  const lines: string[] = result.body.reply.text.split('\n');
+  expect(lines[0]).toMatch(/^Phantom status, .* ET$/);
+  expect(lines.slice(1, 6)).toEqual(['line one', 'line two', 'line three', 'line four', 'line five']);
+  expect(evidenceOnly(lines.slice(6))).toBe(true);
   expect(result.body.reply).toMatchObject({ channel: 'verse', replyTo: result.body.message.id });
   expect(result.body.reply.delivery).toBeUndefined();
   expect(model).not.toHaveBeenCalled();
@@ -58,7 +66,9 @@ it('records the ask and replies with the fallback when the digest read fails', a
   readDigest.mockRejectedValue(new Error('read failed'));
   const result = await call('POST', { text: 'Phantom status' });
   expect(result.status).toBe(200);
-  expect(result.body.reply.text).toBe(OWNER_STATUS_FALLBACK);
+  const lines: string[] = result.body.reply.text.split('\n');
+  expect(lines[0]).toBe(OWNER_STATUS_FALLBACK);
+  expect(evidenceOnly(lines.slice(1))).toBe(true);
   expect(model).not.toHaveBeenCalled();
   const list = await call('GET');
   expect(list.body.messages.map((m: { id: string }) => m.id)).toEqual([result.body.message.id, result.body.reply.id]);

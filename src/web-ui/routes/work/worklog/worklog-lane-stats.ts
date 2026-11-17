@@ -3,6 +3,7 @@ import type { WorklogEntry } from '../../../../core/fleet/worklog.js';
 export function laneStats(entries: WorklogEntry[]) {
   const lanes = new Map<string, WorklogEntry[]>();
   for (const entry of entries) {
+    if (entry.kind !== 'merged') continue;
     const lane = entry.lane ?? 'unknown';
     const group = lanes.get(lane) ?? [];
     group.push(entry);

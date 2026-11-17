@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { OrderTraceJob, OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
 
@@ -14,6 +14,7 @@ const trace = (...jobs: OrderTraceJob[]): OrderTraceV1 => ({
 const job = (state: OrderTraceJob['state'], lane: string | null = 'claude', url: string | null = null): OrderTraceJob =>
   ({ id: 'RQ-PHX-FAKE01', lane, state, url });
 const contract = (t: OrderTraceV1 | null, acked = false, at = AT) => interjectOutcome(at, acked, t, NOW).contract;
+afterEach(() => vi.unstubAllEnvs());
 
 it('no job is RECEIVED, acked or not, and keeps the old stage and text', () => {
   expect(contract(null, true).state).toBe('RECEIVED');
@@ -26,6 +27,15 @@ it('uses the entry time as receivedAt when it parses, else unknown', () => {
   expect(contract(null, false, '2026-10-31T12:00:00Z').asOf).toBe('2026-10-31T12:00:00.000Z');
   expect(contract(null, false, '2026-11-01 00:08').asOf).toBe('2026-11-01T04:08:00.000Z');
   expect(contract(null, false, '—').asOf).toBe('unknown');
+});
+
+it.each(['UTC', 'America/Los_Angeles', 'Asia/Tokyo'])('reads inbox wall times in New York, not host TZ=%s', zone => {
+  vi.stubEnv('TZ', zone);
+  expect(contract(null, false, '2026-11-01 00:08').asOf).toBe('2026-11-01T04:08:00.000Z');
+  expect(contract(null, false, '2026-11-02 00:08').asOf).toBe('2026-11-02T05:08:00.000Z');
+  expect(contract(null, false, '2026-11-01T00:08:00-07:00').asOf).toBe('2026-11-01T07:08:00.000Z');
+  expect(contract(null, false, '2026-03-08 02:30').asOf).toBe('unknown');
+  expect(contract(null, false, '2026-02-30 12:00').asOf).toBe('unknown');
 });
 
 it('queued with a lane is RECEIVED missing the claim receipt', () => {

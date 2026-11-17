@@ -198,7 +198,7 @@ describe('operator documentation navigation', () => {
     }
   });
 
-  it.each(['fleet-health.md', 'VERIFY-CHANGE.md', 'ROUTING.md'])(
+  it.each(['BOTS.md', 'PR-CONFLICT-RESOLVER.md', 'SUBAGENTS.md', 'fleet-health.md', 'VERIFY-CHANGE.md', 'ROUTING.md'])(
     'links the source-only %s guide from the packaged documentation index', (guide) => {
       const root = packagedDocumentation();
       const index = readFileSync(join(root, 'docs/README.md'), 'utf8');
@@ -213,6 +213,21 @@ describe('operator documentation navigation', () => {
     expect(index).toContain('https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md');
     expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/README.md'] }).errors).toEqual([]);
     expect(checkDocumentation({ root: process.cwd(), entrypoints: ['docs/README.md'] }).errors).toEqual([]);
+  });
+
+  it('links the source-only Phantom Bots guide from packaged Devin documentation', () => {
+    const root = packagedDocumentation();
+    const devin = readFileSync(join(root, 'docs/DEVIN.md'), 'utf8');
+    expect(devin).toContain('https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/DEVIN.md'] }).errors).toEqual([]);
+  });
+
+  it('links the source-only desktop install guide from packaged runtime documentation', () => {
+    const root = packagedDocumentation();
+    const runtime = readFileSync(join(root, 'docs/RESIDENT-RUNTIME.md'), 'utf8');
+    expect(runtime).toContain('https://github.com/ashlrai/phantom/blob/master/desktop/README.md#upgrade-an-existing-managed-install');
+    expect(checkDocumentation({ root, mode: 'package', entrypoints: ['docs/RESIDENT-RUNTIME.md'] }).errors).toEqual([]);
+    expect(checkDocumentation({ root: process.cwd(), entrypoints: ['docs/RESIDENT-RUNTIME.md'] }).errors).toEqual([]);
   });
 
   it('keeps the source-only vision reachable from packaged guides without a missing package-relative target', () => {

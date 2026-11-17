@@ -52,6 +52,21 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Feed puts what the fleet did in one newest-first stream: merged PRs (title and
+repo), published releases, failures (main going red, a job failing or ending
+empty with its reason when known), incidents (dispatch incidents, lane holds,
+parked jobs) and Leader replies. Each card has a kind icon, a relative time and
+one link. `phm feed --json --since 1h --kind merged` and
+`GET /api/feed?since=1h&kind=merged` return the same `phantom.feed.v2` report
+(`version: 2`, `items`, `more`, `sources`); `--since` takes 1m to 7d or an ISO
+time within seven days, and `--limit` takes 1–1000 (default 30). The pane's kind
+filter and “Load more” call the same route. Per-tick dispatcher noise
+(`EMPTY_SIGNAL`, `LOADGATE warn`) is dropped, and a notice that repeats is one
+card with a count. The Feed reads existing journals only (jobs ledger,
+dispatch events, Leader plan log, outbox, guardian state); missing sources stay
+unknown. Main recoveries have no recorded time, so only red is shown. Empty reads
+show “Nothing new yet.”
+
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent
 merge list together. These links open the existing screens and preserve their
@@ -110,6 +125,7 @@ all adapters or granted desktop access.
 | Lane steering | Fleet Lanes; `fleet-control-api.ts` | `/api/verse/fleet/control/lanes`; `phm fleet lanes --json` | Existing mutation token and lane policy apply. |
 | Needs you | Fleet inbox, `UnifiedInboxCard`; `agent-bus-api.ts` | `/api/verse/agent-bus/needs-mason` and `/resolve`; `phm fleet needs --json` | Resolving records a reply on the bus; it does not execute an app action. |
 | Owner conversation | Comms inbox and owner thread; `owner-thread-api.ts` | `/api/verse/comms/owner-thread` and `/status`; `phm comms thread --json`, `phm comms status --json` | The HTTP owner thread is read-only. Configured channel and send policy still govern outbound replies. |
+| Known Mac apps | Fleet Host Apps; `MacAppsCard.tsx`, `apps-known.ts`, `apps-control-api.ts` | GET `/api/verse/apps/mac`, POST `/api/verse/apps/control`; `phm apps --json`, `phm apps open claude --json` | One row per app, one button (Open or Bring to front). No quit button; quit refuses all but Safari. |
 | Allowlisted app operations | Fleet Host Allowed apps; `AllowedAppsCard.tsx`, `apps-control-api.ts` | GET/POST `/api/verse/apps/control`; `phm apps list --json`, `phm apps request focus Cursor --json` | Previously CLI-only policy is now shared. Empty allowlist permits nothing. Per-app actions and request mode apply to every caller. |
 | App recovery diagnostics | Fleet Host Managed apps; `fleet-apps-api.ts` | `/api/verse/fleet/apps`, `/action`, `/recovery`; `phm fleet apps-status --json` | Existing fixed-catalog recovery is a separate host-script facility. It is not evidence of enrollment in the apps allowlist or a grant for general app control. |
 | Phantom self-control | Allowed apps request mode and existing `createPhantomSelfDrive` session adapter | `/api/verse/apps/control` queues app-level requests; `/api/verse/sessions` backs typed session work | Phantom stays on the screen-control denylist. Quit/open/focus requests do not call the launcher or desktop tools. |

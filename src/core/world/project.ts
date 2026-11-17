@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { FablePlan } from '../routing/fable-orchestrator.js';
+import type { LaneHistory } from '../usage/resource-live/types.js';
 import { FABLE_ORCHESTRATOR_MODEL } from '../routing/fable-orchestrator.js';
 /**
  * Pure world-model projection. Callers pass readings they already have.
@@ -16,9 +17,10 @@ import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type F
 export const MAX_STALE_INTENT_SPOTS = 20;
 const INTENT_SOURCE = 'ashlr.intent-ledger/v1';
 
-const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and runwayHours on usage.sensors.v1. Those keys are absent, so pace stays unknown.';
+const PACE_NEED = 'pacePerHour, requiredPacePerHour, and runwayHours (RQ-SENSORS-PACE-1) come from the burn-down plan in state/resource-live.json. They need a fresh plan, a known reset, and two readings in one window, so pace stays unknown until then.';
 
 export interface WorldProjectInput {
+  laneHistory?: Record<string, LaneHistory>;
   nowMs: number;
   fablePlan?: FablePlan;
   sensors: UsageSensorReport | null;
@@ -189,7 +191,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const paceHour = paceField(pacePerHour);
     const required = paceField(requiredPacePerHour);
     const runway = paceField(runwayHours);
-    return { lane: lane.lane, headroom, used, limit, remaining, resetAt, zeroCapacityUntil, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
+    return { lane: lane.lane, ...(input.laneHistory?.[lane.lane] ? { history: input.laneHistory[lane.lane] } : {}), headroom, used, limit, remaining, resetAt, zeroCapacityUntil, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
   });
   if (input.fablePlan) {
     const plan = input.fablePlan;

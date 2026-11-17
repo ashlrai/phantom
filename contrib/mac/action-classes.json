@@ -1,0 +1,95 @@
+{
+  "schema": "action-classes.v1",
+  "gates": [
+    "open",
+    "confined-launch",
+    "publish-pipeline",
+    "merge-queue",
+    "release-channel",
+    "channel-approval",
+    "operator",
+    "forbidden"
+  ],
+  "blastRadii": [
+    "none",
+    "worktree",
+    "host",
+    "fork",
+    "upstream",
+    "public",
+    "credentials",
+    "unknown"
+  ],
+  "reversibilities": [
+    "free",
+    "revertible",
+    "costly",
+    "irreversible"
+  ],
+  "classes": {
+    "read": {
+      "gate": "open",
+      "blastRadius": "none",
+      "reversibility": "free",
+      "summary": "Read-only observation of local state — status, queue, metrics and repo files inside allowed roots; nothing durable changes."
+    },
+    "write-worktree": {
+      "gate": "confined-launch",
+      "blastRadius": "worktree",
+      "reversibility": "free",
+      "summary": "An agent session writing inside its own git worktree; the launch confinement (.sb profiles, install gate) is the boundary and the reap deletes the tree."
+    },
+    "publish": {
+      "gate": "publish-pipeline",
+      "blastRadius": "upstream",
+      "reversibility": "revertible",
+      "summary": "Commit the worktree delta, push it to the operator fork and open an upstream PR through the publish.sh gate funnel; closing the PR reverts it."
+    },
+    "merge": {
+      "gate": "merge-queue",
+      "blastRadius": "public",
+      "reversibility": "costly",
+      "summary": "Land a reviewed change on the upstream default branch — a server-enforced protected merge or merge queue; undoing it needs a revert PR."
+    },
+    "close": {
+      "gate": "publish-pipeline",
+      "blastRadius": "upstream",
+      "reversibility": "free",
+      "summary": "Close an upstream PR through the same gated publish path; reopening restores the prior state."
+    },
+    "release": {
+      "gate": "release-channel",
+      "blastRadius": "public",
+      "reversibility": "costly",
+      "summary": "Tag, sign and publish a release — only the repo's sanctioned release workflow, never the generic publish path; a published artifact can only be superseded, not unpublished."
+    },
+    "external-comms": {
+      "gate": "channel-approval",
+      "blastRadius": "public",
+      "reversibility": "irreversible",
+      "summary": "Send a message on an outside channel (Slack, iMessage, briefs); each channel has its own reviewed approval path and a sent message cannot be unsent."
+    },
+    "secrets-touch": {
+      "gate": "forbidden",
+      "blastRadius": "credentials",
+      "reversibility": "irreversible",
+      "summary": "Create, read, rotate or expose secret material — reserved for the operator; autonomy never performs it."
+    }
+  },
+  "jobClassMap": {
+    "prefixes": [
+      ["RQ-DRAIN-", "merge"],
+      ["RQ-DESK-", "merge"],
+      ["RQ-CLOSE-", "close"],
+      ["CLOSE-", "close"]
+    ],
+    "default": "publish"
+  },
+  "publishableGates": ["publish-pipeline", "merge-queue"],
+  "leaderKinds": {
+    "work.dispatch": "write-worktree",
+    "cloud.launch": "write-worktree",
+    "devin.launch": "write-worktree",
+    "pr.close": "close"
+  }
+}

@@ -327,6 +327,12 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
     result.resolved++;
     return;
   }
+  // `yes 3f2a` / `no 3f2a` / `done 3f2a` answers an ask (phm asks); only Mason's own chat can.
+  const { handleTelegramAskReply } = await import('./telegram-ask-reply.js');
+  if (await handleTelegramAskReply(event, text, cfg, { send: sendTelegramMessage })) {
+    result.resolved++;
+    return;
+  }
   if (await handleSlashCommand(event, text, cfg)) return;
   // /fleet-status is the inbox bridge's to answer — even a reply to a Leader
   // message is a status request, never a mapped memo reply.

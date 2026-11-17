@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import { FleetHostPane } from './FleetHostPane.js';
+import { hostResponse } from './host-fetch.test-support.js';
 
 const snapshot = {
   v: 1, generatedAt: '', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
@@ -13,7 +14,7 @@ beforeEach(() => { evictAll(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 it('shows overloaded host load and the actionable warning first', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot, host: { load1: 194, load5: 180, load15: 160, cores: 18, ratio: 10.8 } })));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => hostResponse(url, { ...snapshot, host: { load1: 194, load5: 180, load15: 160, cores: 18, ratio: 10.8 } })));
   render(<FleetHostPane visible />);
   const text = await screen.findByText('Load 194 on 18 cores (10.8×)');
   expect(text.closest('[data-tone]')).toHaveAttribute('data-tone', 'bad');
@@ -21,7 +22,7 @@ it('shows overloaded host load and the actionable warning first', async () => {
   expect(screen.getByText(notice)).toBeInTheDocument();
 });
 it('shows unknown load without a warning for an older server', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot)));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => hostResponse(url, snapshot)));
   render(<FleetHostPane visible />);
   expect(await screen.findByText('Load unknown')).toBeInTheDocument();
   expect(screen.queryByText(notice)).not.toBeInTheDocument();

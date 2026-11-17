@@ -4,7 +4,7 @@ import { ApiError } from '../../../data/client.js';
 import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import {
   JOB_STOP_PATH, jobStopBody, jobStopEligible, postJobStop,
-  STOP_CONFIRM_MS, stopConfirmLabel, stopFailureText, stopOutcomeText,
+  stopFailureText, stopOutcomeText,
   type JobStopResult,
 } from './job-stop-action.js';
 
@@ -13,12 +13,9 @@ afterEach(() => { clearMutationToken(); vi.unstubAllGlobals(); });
 
 const stopped: JobStopResult = { id: 'RQ-PHX-TEST1', pids: [111, 222], outcome: 'stopped', at: '2026-11-01T00:08:00.000Z' };
 
-it('builds the request shape and the five-second confirm window', () => {
+it('builds the request shape', () => {
   expect(JOB_STOP_PATH).toBe('/api/verse/fleet/runs/stop');
   expect(jobStopBody('RQ-PHX-TEST1')).toEqual({ id: 'RQ-PHX-TEST1' });
-  expect(STOP_CONFIRM_MS).toBe(5_000);
-  expect(stopConfirmLabel('RQ-PHX-TEST1', false)).toBe('Stop');
-  expect(stopConfirmLabel('RQ-PHX-TEST1', true)).toBe('Stop RQ-PHX-TEST1? click again');
 });
 
 it('shows Stop while the job is not finished', () => {

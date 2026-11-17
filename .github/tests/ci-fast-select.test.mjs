@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import {
-  classifyPaths, plan, changedPaths, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
+  classifyPaths, plan, changedPaths, selectRelated, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
 } from '../scripts/ci-fast-select.mjs';
-import { failedTestFiles } from '../scripts/ci-fast-run.mjs';
+import { failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
 import { prNumber, related, attribute } from '../scripts/ci-fast-attribute.mjs';
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -77,6 +78,25 @@ test('dist-bound tests are deferred, not run without a build', (t) => {
   const r = plan({ cwd: dir, paths: ['src/core/gamma.ts'] });
   assert.deepEqual(r.tests, ['test/gamma.test.ts']);
   assert.deepEqual(r.deferred, ['test/gamma-dist.test.ts']);
+  assert.ok(!selectFallback({ cwd: dir }).tests.includes('test/gamma-dist.test.ts'));
+});
+
+test('the native gateway declares its build requirement and stays in the full lane', (t) => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const gateway = 'test/m31.gateway-native.test.ts';
+  const { dir: cwd, commit } = repo(t, {
+    [gateway]: readFileSync(join(root, gateway), 'utf8'),
+    'test/source-only.test.ts': 'export {};\n',
+  });
+  commit('native gateway suite');
+  const selected = selectRelated({ cwd, paths: [gateway] });
+  assert.deepEqual(selected.tests, []);
+  assert.deepEqual(selected.deferred, [gateway]);
+  assert.ok(!selectFallback({ cwd }).tests.includes(gateway));
+  const config = readFileSync(join(root, 'vitest.config.ts'), 'utf8');
+  assert.match(config, /include: \['test\/\*\*\/\*\.test\.ts'\]/);
+  const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(workflow, /run: npm run build[\s\S]*run: npm run test:ci -- \$\{\{ matrix\.test_args \}\}/);
 });
 
 test('a code change that maps to no test never skips: it falls back', (t) => {
@@ -124,10 +144,88 @@ test('changedPaths uses the merge-base diff and rejects a mismatched checkout', 
   assert.throws(() => changedPaths({ base: 'main', head, cwd: dir }), /exact commit SHAs/);
 });
 
+test('fallback shards share the runner instead of each taking every CPU', () => {
+  assert.equal(shardWorkers(4, 3), 1);
+  assert.equal(shardWorkers(16, 3), 5);
+  assert.equal(shardWorkers(2, 3), 1);
+  assert.equal(shardWorkers(8, 0), 8);
+});
+
 test('failed test files parse from vitest and node output', () => {
   const log = ' FAIL  |unit| test/a.test.ts > suite > case\nAssertionError\n × test/b.test.ts 12ms\n✗ .github/tests/c.test.mjs\n FAIL  |real-io| test/a.test.ts > other\n';
   assert.deepEqual(failedTestFiles(log), ['.github/tests/c.test.mjs', 'test/a.test.ts', 'test/b.test.ts']);
   assert.deepEqual(failedTestFiles('all passed'), []);
+});
+
+test('failed test files parse colored Vitest project badges without matching passing lines', () => {
+  const log = '\x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m \x1b[30m\x1b[42m unit \x1b[49m\x1b[39m test/authority-tier1-closure-310b.test.ts\x1b[2m > \x1b[22mTier-1 authority import closure (SPEC-310B §2)\n';
+  assert.deepEqual(failedTestFiles(log), ['test/authority-tier1-closure-310b.test.ts']);
+  assert.deepEqual(failedTestFiles(' FAIL  real-io test/a.test.ts > case\n × unit test/b.test.ts\n'), ['test/a.test.ts', 'test/b.test.ts']);
+  assert.deepEqual(failedTestFiles('\x1b[32m✓\x1b[39m \x1b[30m\x1b[42m unit \x1b[49m\x1b[39m test/passed.test.ts\n ✓ |unit| test/also-passed.test.ts\n'), []);
+});
+
+test('an explicit cap can keep more than the fast-gate maximum', (t) => {
+  const files = { 'src/core/wide.ts': 'export const w = 1;\n' };
+  for (let i = 0; i < 30; i += 1) files[`test/wide-${i}.test.ts`] = "import '../src/core/wide.js';\n";
+  const { dir, commit } = repo(t, files);
+  commit('seed');
+  const capped = selectRelated({ cwd: dir, paths: ['src/core/wide.ts'] });
+  const wide = selectRelated({ cwd: dir, paths: ['src/core/wide.ts'], cap: 100 });
+  assert.equal(capped.tests.length, MAX_RELATED_TESTS);
+  assert.equal(wide.tests.length, 30);
+  assert.ok(capped.capped > 0);
+  assert.equal(wide.capped, 0);
+});
+
+function fastGateSparsePatterns() {
+  const yml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../workflows/ci.yml'), 'utf8');
+  const start = yml.indexOf('\n  fast-gate:\n');
+  assert.ok(start > 0, 'fast-gate job');
+  const rest = yml.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[a-z0-9-]+:\n/);
+  const job = next < 0 ? rest : rest.slice(0, next + 1);
+  const marker = 'sparse-checkout: |';
+  const at = job.indexOf(marker);
+  assert.ok(at > 0, 'fast-gate sparse-checkout');
+  const patterns = [];
+  for (const line of job.slice(at + marker.length).split('\n').slice(1)) {
+    if (line.trim() === '') continue;
+    if (line.search(/\S/) < 12) break;
+    patterns.push(line.trim());
+  }
+  return patterns;
+}
+
+function coveredBySparse(file, patterns) {
+  return patterns.some((pattern) => file === pattern || file.startsWith(`${pattern}/`));
+}
+
+function relativeSpecifiers(text) {
+  return [...text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)['"](\.[^'"]+)['"]/g)].map((match) => match[1]);
+}
+
+test('a warm sparse checkout covers every import of ci-fast-select', () => {
+  // Runs while fast-gate is still sparse. A restored graph does not expand it.
+  // The select step runs while the fast-gate sparse checkout is still on.
+  // A restored dependency graph does not expand it, so every relative import
+  // has to be inside that list or the step cannot load the module.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const patterns = fastGateSparsePatterns();
+  const missing = [];
+  const seen = new Set();
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    if (!coveredBySparse(file, patterns)) missing.push(file);
+    const text = readFileSync(join(repoRoot, file), 'utf8');
+    for (const spec of relativeSpecifiers(text)) {
+      const next = normalize(join(dirname(file), spec)).replaceAll('\\', '/');
+      walk(next);
+    }
+  };
+  walk('.github/scripts/ci-fast-select.mjs');
+  assert.deepEqual(missing, []);
+  assert.ok(patterns.includes('test/config'));
 });
 
 test('merge group attribution maps a failing test to the PR whose commit touched its source', (t) => {
