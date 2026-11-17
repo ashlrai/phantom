@@ -411,6 +411,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'stranded': () => import('./fleet-stranded.js'),
   'stray-slots': () => import('./fleet-stray-slots.js'),
   'stray-stop': () => import('./fleet-stray-stop.js'),
+  'stuck': () => import('./fleet-stuck.js'),
   'stuck-fixes': () => import('./fleet-stuck-fixes.js'),
   'stuck-prs': () => import('./fleet-stuck-prs.js'),
   'superseded': () => import('./fleet-superseded.js'),
