@@ -156,24 +156,29 @@ describe('M440 dependency audit CI', () => {
             },
             {
               name: 'Audit root dependencies',
+              if: '${{ !cancelled() }}',
               run: 'bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json',
             },
             {
               name: 'Audit root production dependencies',
+              if: '${{ !cancelled() }}',
               run: 'bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev',
             },
             {
               name: 'Audit Raycast dependencies',
+              if: '${{ !cancelled() }}',
               'working-directory': 'src/raycast',
               run: 'bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json',
             },
             {
               name: 'Audit Raycast production dependencies',
+              if: '${{ !cancelled() }}',
               'working-directory': 'src/raycast',
               run: 'bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev',
             },
             {
               name: 'Audit desktop Cargo dependencies',
+              if: '${{ !cancelled() }}',
               run: 'cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429',
             },
           ],
@@ -493,6 +498,17 @@ exit "\${TEST_OSV_RC:-0}"
     }
   });
 
+  it('runs every audit after earlier failures while preserving failing outcomes', () => {
+    const auditSteps = steps.filter((step) => String(step.name).startsWith('Audit '));
+    expect(auditSteps).toHaveLength(5);
+    for (const step of auditSteps) {
+      // Override GitHub's implicit success() without masking failures or
+      // continuing a job the user cancelled.
+      expect(step.if, String(step.name)).toBe('${{ !cancelled() }}');
+      expect(step['continue-on-error']).toBeUndefined();
+    }
+  });
+
   it('pins RustSec tooling and fails on every vulnerability except the open GLib quarantine', () => {
     expect(steps[4]).toEqual({
       name: 'Install pinned cargo-audit',
@@ -505,6 +521,7 @@ exit "\${TEST_OSV_RC:-0}"
 
     expect(steps[11]).toEqual({
       name: 'Audit desktop Cargo dependencies',
+      if: '${{ !cancelled() }}',
       run: 'cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429',
     });
     expect(String(steps[11]?.run).match(/--ignore\s+RUSTSEC-/g)).toHaveLength(1);

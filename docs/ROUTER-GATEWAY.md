@@ -1,5 +1,7 @@
 # Router gateway
 
+See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
+
 The router gateway lets any agent ask for a model completion and have Phantom
 pick the seat. It runs the same seat router (`routeSeat`) the fleet uses, so a
 call gets the same checks as fleet work: the standing grant, the budget mode,
@@ -149,3 +151,22 @@ every seat failed, 2 bad request.
 
 Each routing decision is appended to the shadow decision log with source
 `gateway`, next to the daemon's and the Leader's.
+
+## Model verification
+
+`phm models verify` reports registry status, evidence age and the configured
+choices in `$ASHLR_RUNS_DIR/models.json` (default `~/.ashlr-runs/models.json`).
+JSON is the default; use `--text` for plain words. Unverified, retired or unknown
+choices exit 1, as do unreadable sources. Evidence older than 14 days is flagged
+for review; stale verified entries remain eligible. Output is sorted by ID/key.
+
+The gateway uses only exact verified IDs from [the registry](model-registry.json).
+Auto and offered pins skip unverified/retired models and try the next verified
+model offered by the same seat, retaining admission checks and logging the reason.
+No verified alternative means no call. A missing or invalid registry fails closed.
+To qualify a new model on release day, confirm its exact ID in official docs, add
+its URL as `verified_source`, the UTC date as `verified_at`, and set `status` to
+`verified`; unresolved IDs stay `unverified` with null evidence. Mark documented
+retirements `retired`. Discovery and page-text matches never promote status.
+This gate covers the gateway; legacy task routing and the advisory queue router
+are separate paths and are not yet protected by it.

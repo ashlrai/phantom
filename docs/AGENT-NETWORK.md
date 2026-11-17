@@ -41,6 +41,22 @@ install a runner or start background execution. On a configured Mac, repeat
 `phm node join --json` to recheck the route and local capacity using the saved
 identity. A primary or backup retains its role; repeat join never resets its witness.
 
+See every computer in one place, from the backup or primary:
+
+```sh
+phm nodes
+phm nodes --can-take claude --json
+```
+
+`phm nodes` prints one row per known computer: reachable or not, whether Phantom
+is running there, free memory, CPU headroom, lanes, running jobs and a
+plain-words state such as `ready for work` or `offline since 10:42`.
+`--can-take <lane>` lists only the computers that can take a job for that lane
+now. It is read only: it reads `tailscale status` and the node list already on
+this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
+the node list on another computer) is `unknown` with the reason. The desktop
+Computers pane shows the same rows as cards.
+
 Then run one bounded worker batch:
 
 ```sh

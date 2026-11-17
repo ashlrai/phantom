@@ -46,6 +46,29 @@ class MarketUnit(unittest.TestCase):
         lanes = view(claude={'capabilities': ['git', 'gh', 'node']})
         self.assertEqual(self.choose({'preferred_lane': 'claude', 'needs': ['gh']}, lanes)[0]['chosen_lane'], 'claude')
 
+    def test_provenance_only_follows_measured_posture(self):
+        provenance = dict(account_id='org-test', model='swe-2-high', window_start='1970-01-01T00:00:00Z', reset_at='1970-01-01T03:46:40Z')
+        for reading in ({}, {'used': 80}):
+            self.assertEqual(self.devin_view(reading=dict(reading, provenance=provenance))['devin']['provenance'], provenance)
+        for kwargs in ({'model': 'swe-2-flash'}, {'posture': 'preserve'}, {'free_until': 20000}):
+            self.assertNotIn('provenance', self.devin_view(reading={'provenance': provenance}, **kwargs)['devin'])
+        mismatch = self.devin_view(reading={'provenance': provenance}, model='swe-2-max')['devin']['provenance']
+        self.assertNotIn('model', mismatch)
+        self.assertEqual(mismatch['account_id'], 'org-test')
+        self.assertNotIn('provenance', self.devin_view(reading={'used': None, 'provenance': provenance})['devin'])
+
+    def test_budget_scope_normalizes_instants_and_rejects_identifiers(self):
+        reading = dict(weekly_used_pct=20, burn_pct_per_hour=0, reset_at=13600, as_of=10000,
+                       account_id='account-a', model='claude-opus', window_start='1970-01-01T00:00:00Z')
+        def entry():
+            return market.lane_view(['claude'], {'claude': {}}, {'claude': 0}, {'claude': 1}, set(), {}, {}, [],
+                                    now=10000, allowance={'claude': reading})['claude']['provenance']
+        self.assertEqual(entry(), dict(account_id='account-a', model='claude-opus',
+                                      window_start='1970-01-01T00:00:00.000Z', reset_at='1970-01-01T03:46:40.000Z'))
+        for invalid in ('name@example.com', '', '-invalid', 'a' * 129, 42):
+            reading.update(account_id=invalid, model=invalid)
+            self.assertNotIn('account_id', entry())
+            self.assertNotIn('model', entry())
     def devin_view(self, reading=None, model='swe-2-high', running=0, now=10000, **slot):
         weekly = dict(used=20, limit=100, in_flight=10, reserve=10, session_cap=10,
                       reset_at=13600, as_of=10000, burn_rate_per_hour=0, state='live')
@@ -310,6 +333,33 @@ class MarketUnit(unittest.TestCase):
 
 
 class MarketTick(unittest.TestCase):
+    def test_weekly_provenance_and_real_tick_match_shared_receipt(self):
+        home, q = self.fixture({'devin': 1})
+        root = self.devin_accounting(home)
+        fixtures = MAC / 'tests/fixtures/posture-provenance'
+        weekly = json.loads((fixtures / 'weekly-capacity.json').read_text())
+        (root / 'config.json').write_text(json.dumps({'devin': {'weeklyAcuAllowance': 50, 'weeklyResetAt': weekly['reset_at']}}))
+        path = root / 'devin/weekly-capacity.json'
+        path.write_text(json.dumps(weekly))
+        expected = {k: weekly[k] for k in ('account_id', 'model', 'window_start', 'reset_at')}
+        self.assertEqual(market.read_devin_allowance(home)['provenance'], expected)
+        wrapper = home / 'fixed_tick.py'
+        wrapper.write_text('import time, runpy\ntime.time = lambda: 1794916800.0\nrunpy.run_path(' + repr(str(MAC / 'dispatchd.py')) + ', run_name="__main__")\n')
+        result = tick(home, script=wrapper)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        emitted = next(r for r in self.rows(home) if r['event'] == 'posture')
+        committed = json.loads((fixtures / 'work-market-posture.json').read_text())
+        self.assertEqual(emitted['lanes']['devin'], committed['lanes']['devin'])
+        for invalid in ('name@example.com', '', '-invalid', 42):
+            path.write_text(json.dumps(dict(weekly, account_id=invalid, model=invalid)))
+            provenance = market.read_devin_allowance(home)['provenance']
+            self.assertEqual(provenance, {k: expected[k] for k in ('window_start', 'reset_at')})
+        for patch, missing in [({'source': 'other'}, set(expected)), ({'window_start': '2099-01-01'}, {'window_start'}),
+                               ({'window_start': 'invalid'}, {'window_start'}), ({'reset_at': '2026-11-17T14:00:00Z'}, {'reset_at'})]:
+            path.write_text(json.dumps(dict(weekly, **patch)))
+            provenance = market.read_devin_allowance(home)['provenance']
+            self.assertEqual(provenance, {k: v for k, v in expected.items() if k not in missing})
+
     def fixture(self, targets=None):
         slots = held_lanes()
         for lane, target in (targets or {'codex-personal': 1, 'claude': 1}).items():

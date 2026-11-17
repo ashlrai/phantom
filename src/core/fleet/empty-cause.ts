@@ -55,7 +55,8 @@ export const emptyCauseLine = (lane: string, cause: EmptyCause, count: number): 
 export const jobPrefix = (job: string): string => job.replace(/\d+$/, '') || job;
 
 export interface EmptyFinish { id: string; lane: string; wallSeconds: number | null }
-export interface EmptyEvidence { log: string | null; timedOut: boolean }
+/** `notes` is the job's own result notes (BRIDGE_NOTES.md), read by `phm empties` only. */
+export interface EmptyEvidence { log: string | null; timedOut: boolean; notes?: string | null }
 export interface EmptyCauseGroup {
   lane: string; cause: EmptyCause; prefix: string; count: number;
   examples: string[]; median_wall_seconds: number | null;
@@ -77,26 +78,41 @@ const text = (value: unknown): string => {
 };
 const seconds = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
-/** Pure: distinct jobs whose finish or outcome row says empty inside the window. */
-export function emptyFinishes(ledger: string, now: number, hours: number): EmptyFinish[] {
-  const jobs = new Map<string, EmptyFinish>();
+export interface LedgerRow { row: Record<string, unknown>; id: string; lane: string; at: number }
+
+/**
+ * Pure: in-window ledger rows that name a safe job id. `malformed` counts non-blank lines that are not JSON objects.
+ * `anyJob` also keeps rows with no job id (PR outcome rows are keyed by URL) under the id ''.
+ */
+export function ledgerRows(ledger: string, now: number, hours: number, anyJob = false): { rows: LedgerRow[]; malformed: number } {
+  const rows: LedgerRow[] = [];
+  let malformed = 0;
   for (const line of ledger.split(/\r?\n/)) {
+    if (!line.trim()) continue;
     let row: Record<string, unknown>;
     try {
       const value: unknown = JSON.parse(line);
-      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed++; continue; }
       row = value as Record<string, unknown>;
-    } catch { continue; }
+    } catch { malformed++; continue; }
+    const id = typeof row.job === 'string' ? row.job : row.id ?? (anyJob ? '' : null);
+    // The id names a log file, so refuse anything that could leave the runs dir.
+    if (typeof id !== 'string' || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
+    const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
+    if (!Number.isFinite(at) || at > now || at < now - hours * 3_600_000) continue;
+    rows.push({ row, id, lane: text(row.lane), at });
+  }
+  return { rows, malformed };
+}
+
+/** Pure: distinct jobs whose finish or outcome row says empty inside the window. */
+export function emptyFinishes(ledger: string, now: number, hours: number): EmptyFinish[] {
+  const jobs = new Map<string, EmptyFinish>();
+  for (const { row, id, lane } of ledgerRows(ledger, now, hours).rows) {
     const empty = row.empty === true && (row.event === 'finish' || row.event === 'outcome')
       || [row.event, row.outcome, row.state].includes('EMPTY_DONE');
     if (!empty) continue;
-    const id = typeof row.job === 'string' ? row.job : row.id;
-    // The id names a log file, so refuse anything that could leave the runs dir.
-    if (typeof id !== 'string' || !SAFE_ID.test(id)) continue;
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
-    if (!Number.isFinite(at) || at > now || at < now - hours * 3_600_000) continue;
     const seen = jobs.get(id);
-    const lane = text(row.lane);
     jobs.set(id, {
       id,
       lane: seen && seen.lane !== 'unknown' ? seen.lane : lane,
@@ -154,14 +170,14 @@ export function topEmptyCauses(summary: EmptyCauseSummary, n = 3): Array<{ cause
     .slice(0, n);
 }
 
-async function readText(path: string, max: number): Promise<string | null> {
+export async function readText(path: string, max: number): Promise<string | null> {
   try {
     const source = await readSource(path, max, true);
     return source.state === 'healthy' ? source.text : null;
   } catch { return null; }
 }
 
-async function exists(path: string): Promise<boolean> {
+export async function exists(path: string): Promise<boolean> {
   try { return (await readSource(path, 1, true)).state === 'healthy'; } catch { return false; }
 }
 

@@ -125,6 +125,20 @@ def _epoch(value):
     except (ValueError, OverflowError): return None
 
 
+def _scope_names(reading):
+    return {k: reading[k] for k in ("account_id", "model")
+            if isinstance(reading.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", reading[k])}
+
+
+def _iso_instant(value):
+    import datetime
+    epoch = _epoch(value)
+    if epoch is None: return None
+    try:
+        return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (ValueError, OverflowError, OSError): return None
+
+
 def read_devin_allowance(home, ashlr_home=None):
     """Read existing local metadata only. Missing/corrupt accounting never proves zero exposure."""
     from pathlib import Path
@@ -188,7 +202,15 @@ def read_devin_allowance(home, ashlr_home=None):
             raise ValueError("inventory changed")
         reserved = total
     except (OSError, ValueError): pass
-    return dict(used=number(weekly.get("used")), limit=limit, in_flight=reserved,
+    provenance = {}
+    if weekly.get("source") == "devin-api-v3-sessions":
+        provenance = _scope_names(weekly)
+        start = weekly.get("window_start")
+        if isinstance(start, str) and _epoch(start) is not None and observed is not None and _epoch(start) <= observed:
+            provenance["window_start"] = start
+        if measured_reset is not None and isinstance(weekly.get("reset_at"), str):
+            provenance["reset_at"] = weekly["reset_at"]
+    return dict(used=number(weekly.get("used")), limit=limit, in_flight=reserved, provenance=provenance,
                 reserve=number(budget.get("reserveAcu")), session_cap=number(budget.get("maxAcuPerSession")),
                 reset_at=measured_reset, as_of=observed,
                 state=weekly.get("state") if weekly.get("source") == "devin-api-v3-sessions" else None,
@@ -345,18 +367,31 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
                                burn_pct_per_hour=burn / limit * 100 if burn is not None and limit is not None and limit > 0 else None,
                                reset_at=weekly.get("reset_at"), as_of=weekly.get("as_of"))
         projection = spend_down(lane, view[lane]["cost_class"], reading, now)
+        provenance = {}
+        if lane == "devin" and isinstance(weekly, dict):
+            provenance = dict(weekly.get("provenance", {}))
+            selected = model or models.get("devin")
+            if isinstance(selected, str) and selected != provenance.get("model"):
+                provenance.pop("model", None)
+        elif isinstance(reading, dict):
+            provenance = _scope_names(reading)
+            for key in ("window_start", "reset_at"):
+                instant = _iso_instant(reading.get(key))
+                if instant is not None: provenance[key] = instant
         until = _epoch(slot.get("free_until"))
         reason = projection["reason"]
         if lane == "devin" and view[lane]["zero_cost"]:
             view[lane]["posture"], reason = "burn", "devin_free_preview"
         elif lane == "devin" and view[lane]["cost_class"] == "metered":
             view[lane]["posture"], reason = "balanced", view[lane]["cost_class_reason"]
+            if reason == "devin_allowance_headroom": view[lane]["provenance"] = provenance
         elif until is not None and number(now) is not None and now < until:
             reason = "free_until"
         elif slot.get("posture") in POSTURES:
             reason = "host_declared"
         elif projection["posture"] is not None:
             view[lane]["posture"] = projection["posture"]
+            view[lane]["provenance"] = provenance
         if view[lane]["cost_class"] == "metered" and view[lane]["posture"] == "burn":
             view[lane]["posture"], reason = "balanced", "spend_down_not_subscription"
         view[lane].update(posture_reason=reason, spend_down=projection)
