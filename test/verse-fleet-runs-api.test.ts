@@ -50,6 +50,18 @@ describe('fleet runs api', () => {
     expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
     expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
   });
+  it('serves the Tools matrix read-only, one lane with ?lane=, 404 for an unknown lane', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'tools-matrix-'));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const all = await request(api, { path: '/api/verse/fleet/runs/tools' });
+    expect(all.status).toBe(200);
+    // No slots or lane-tools.json: only the router's built-in claude declaration is known.
+    expect(all.wire).toMatchObject({ schema: 'tools.matrix.v1', parity: 'gaps', lanes: ['claude'] });
+    expect((all.wire as unknown as { topGaps: { need: string }[] }).topGaps[0]!.need).toBe('github-read');
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=claude' })).wire).toMatchObject({ lanes: ['claude'] });
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=nope' })).status).toBe(404);
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools', method: 'POST' })).status).toBe(405);
+  });
   it('mounts runs and live as separate families', () => {
     expect(workbenchFamilyFor(PATH)?.id).toBe('fleet-runs');
     expect(workbenchFamilyFor(INBOX)?.id).toBe('fleet-runs');

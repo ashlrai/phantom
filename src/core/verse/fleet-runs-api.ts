@@ -533,6 +533,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, path.endsWith('/plugins') ? readPluginsPanel() : readSkillsPanel());
       return true;
     }
+    // The Tools pane reads the same matrix as `phm tools --json [--lane L]`. Read-only.
+    if (path === '/api/verse/fleet/runs/tools') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const lane = new URL(req.url ?? '/', 'http://localhost').searchParams.get('lane') ?? undefined;
+      const { buildToolMatrix, loadToolParity } = await import('../fleet/tool-parity.js');
+      const matrix = buildToolMatrix(await loadToolParity({ runsDir: deps.runsDir ?? defaultRunsDir() }), lane);
+      if (!matrix) { sendJson(res, 404, { code: 'VERSE_NOT_FOUND', error: 'no such lane' }); return true; }
+      sendJson(res, 200, matrix);
+      return true;
+    }
     if (path === '/api/verse/fleet/runs/goals') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readGoals(deps.runsDir ?? defaultRunsDir()));

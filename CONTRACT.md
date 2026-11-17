@@ -1045,6 +1045,17 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
 
+`tools.matrix.v1` (`src/core/fleet/tool-parity.ts`): `buildToolMatrix(report, lane?)`,
+`formatToolMatrix(matrix, lane?)` and `loadToolParity({ runsDir?, home?, readers? })`.
+Which lane has which tool. Rows are capabilities (GitHub read/write, web search,
+browser, computer use, shell, package install) then named MCP servers, CLIs,
+skills and plugins; each cell is `{ value: yes|no|unknown, source }`. `scores`
+give each lane's share of yes rows; `topGaps` holds at most three gaps with one
+plain `fix`. `readers` (connectors, lane-tools, slots) are injectable for tests.
+Read-only. Served by `phm tools [--json] [--lane L]` and
+`GET /api/verse/fleet/runs/tools[?lane=L]` (404 for an unknown lane) for the
+desktop Tools pane.
+
 `src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
