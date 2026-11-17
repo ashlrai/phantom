@@ -12,7 +12,7 @@ import { listNativeTools } from '../src/core/mcp-native.js';
 const doc = readFileSync(join(process.cwd(), 'docs', 'MCP-TOOLS.md'), 'utf8');
 const intentSection = doc.split('## `intent_`')[1]?.split('\n## ')[0] ?? '';
 const docRows = new Map(
-  [...intentSection.matchAll(/^\| `(intent_[a-z0-9_]+)` \| (.+) \|$/gm)]
+  [...intentSection.matchAll(/^\| `(intent_[a-z0-9_]+)` \| (.+) \| [^|]+ \|$/gm)]
     .map((match) => [match[1]!, match[2]!] as const),
 );
 const registeredIntentTools = listNativeTools().filter((tool) => tool.name.startsWith('intent_'));
