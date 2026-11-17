@@ -35,6 +35,53 @@ Errors are fixed JSON objects and never echo input or provider errors.
 
 ## Request and eligibility
 
+See [Failover chains](#failover-chains) for optional job constraints and fallback planning.
+
+## Failover chains
+
+`phm route failover --input request.json --failed-lane seat --failure quota --json`
+plans and selects without launching anything. Optional `--attempted a,b` skips
+previous attempts; `--root` selects snapshots; `--record` requires request `job`
+and appends a receipt to `metrics/jobs.jsonl`. Exit 0 selects a lane, 2 refuses.
+All plans are `advisory:true`, `live:false` with `failover_dispatcher_unwired`.
+
+Optional request fields: `job`, `needs` (at most 32 capability names),
+`min_tier`, `max_cost_class` (local/included/metered), `data_class`
+(public/internal/confidential/restricted), and up to three unique pins:
+`"fallback":[{"lane":"backup","on":["quota","5xx","timeout","near_reset"]}]`.
+Pins preserve order but never bypass gates. Without pins, eligible candidates
+use the existing reset-first ranking; chains have at most three lanes and
+never include the primary. `fallback_pinned` / `fallback_ranked` identifies
+the source; `fallback_chain_empty` identifies an empty chain.
+
+Every lane must pass admission, available quota, valid slots/model/capacity,
+no hold, known running count and unsaturated slots, plus speed/mode adequacy.
+Job gates require advertised capabilities, adequate tier_hint and advertised
+slot tiers, cost at or below the ceiling, and sufficient data clearance
+(missing clearance means public). Failover defaults to an included cost ceiling:
+metered requires explicit `max_cost_class:"metered"`. Unknown cost/tier/capacity
+fails closed. Capacity needs `observedAt` ISO evidence no older than 900 seconds
+(at most 5 seconds future skew), non-null remainingPercent or positive credits,
+and no passed reset. Zero remaining without credits is exhausted. Local lanes
+codex-local/omlx require explicit pins. Primary selection is unchanged.
+
+Exclusions include `admission_blocked`, `quota_unavailable`, `slot_invalid`,
+`held`, `running_unknown`, `saturated`, `model_invalid`, `capacity_invalid`,
+`tier_inadequate`, `missing_capability`, `tier_below_minimum`,
+`tier_unavailable`, `tier_unknown`, `cost_class_unknown`, `cost_class_exceeded`,
+`data_class_exceeded`, `capacity_unknown`, `capacity_stale`, `capacity_exhausted`
+and `local_opt_in_required`. Selection skips attempted/failed lanes and mismatched
+`on` kinds, returning `failover_quota`, `failover_5xx`, `failover_timeout` or
+`failover_near_reset`; refusal returns `fallback_chain_exhausted`, plus
+`failure_unknown` for an unsupported failure kind.
+
+The pinned live dispatcher is NOT connected. A separately reviewed/re-pinned
+integration must classify failures, retain the original chain/attempt history,
+recheck fresh policy/admission/quota/capacity before every attempt, enforce
+single-job execution and bounded retries, and append receipts. No plan or CLI
+receipt is permission to spend, install or launch. Explain exposes nullable
+`fallback_chain` and the last three matching job receipts as `fallback_used`.
+
 The request requires `task_class`, `repo`, `tier_hint`, `lane_candidates`,
 `quota_state` and `machine_state`, with optional `mode`. Task classes use the existing
 [Jev vocabulary](JEV-INTEGRATION.md). Tiers are `frontier`, `work`, `mid`,

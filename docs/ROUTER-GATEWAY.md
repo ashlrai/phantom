@@ -1,5 +1,7 @@
 # Router gateway
 
+Provider-neutral [failover chains](ROUTING.md#failover-chains) are advisory and dispatcher-unwired.
+
 See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
 
 The router gateway lets any agent ask for a model completion and have Phantom
