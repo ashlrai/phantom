@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { readSlackEvidenceBundle } from '../src/core/agents/slack-evidence-bundle.js';
 import { readSlackRequestTrace } from '../src/core/agents/slack-request-trace.js';
 import { createFleetSlackTraceApi } from '../src/core/verse/fleet-slack-trace-api.js';
@@ -26,10 +27,10 @@ async function fixture() {
   const journal = join(runsDir, 'slack-bridge', 'journal.jsonl');
   const sends = join(stateRoot, 'messages.json');
   const row = (messageTs: string, at: string) => JSON.stringify({ at, decision: 'ingested', bus: 'posted',
-    channelId: channel, threadTs: thread, messageTs, text: sentinel });
+    channelId: channel, threadTs: thread, messageTs, requestId: fakeRequestId(`471s:${messageTs}`), text: sentinel });
   const journalBody = [row(target, '2024-11-07T12:00:00.000Z'),
     row(sibling, '2024-11-07T17:59:50.000Z')].join('\n') + '\n';
-  const sendsBody = JSON.stringify({ version: 1, messages: { fake: { channel, thread, state: 'sent',
+  const sendsBody = JSON.stringify({ version: 1, messages: { [replyKey(fakeRequestId(`471s:${target}`))]: { channel, thread, state: 'sent',
     ts: '1731002390.000100', clientId: sentinel } } });
   const restore = (path: string, body: string) => { rmSync(path, { recursive: true, force: true }); writeFileSync(path, body); };
   const restoreAll = () => { restore(journal, journalBody); restore(sends, sendsBody); };
@@ -105,7 +106,7 @@ it('distinguishes an empty readable store and applies truncation after exact sel
     counts: { total: 0, answered: 0 }, freshness: { verdict: 'unknown' }, truncated: false });
   const rows = Array.from({ length: 26 }, (_, i) => JSON.stringify({ at: '2024-11-07T12:00:00.000Z',
     decision: 'ingested', bus: 'posted', channelId: channel, threadTs: thread,
-    messageTs: `17310001${String(i).padStart(2, '0')}.000100` })).join('\n') + '\n';
+    messageTs: `17310001${String(i).padStart(2, '0')}.000100`, requestId: fakeRequestId(`471s:${i}`) })).join('\n') + '\n';
   f.restore(f.journal, rows);
   const all = await f.call();
   expect(all).toMatchObject({ counts: { total: 26 }, truncated: true });

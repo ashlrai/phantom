@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { fakeRequestId } from './helpers/slack-causal.js';
+import { leaderReplyEnvelopeId } from '../src/core/agents/slack-reply-identity.js';
 import { recordSlackObservation, slackJournalPath } from '../src/core/agents/slack-journal.js';
 import { slackThreadRef, type SlackBridgeConfig } from '../src/core/agents/slack-network.js';
 import { deliverSlackEnvelope, type SlackCall } from '../src/core/agents/slack-transport.js';
@@ -18,7 +20,8 @@ it('documents the persisted same-thread allocation and isolates selected channel
   const second = '1731000020.000100'; const reply = '1731000030.000100';
   for (const [channelId, messageTs] of [[channel, first], [channel, second], [other, first], [other, second]]) {
     expect(recordSlackObservation({ at: '2024-11-07T17:20:00.000Z', decision: 'ingested', bus: 'posted',
-      channelId, messageTs, threadTs: thread, authorId: 'U0FAKE472' }, { runsDir })).toBe('recorded');
+      channelId, messageTs, threadTs: thread, authorId: 'U0FAKE472',
+      requestId: fakeRequestId(`${channelId}:${messageTs}`) }, { runsDir })).toBe('recorded');
   }
   const config: SlackBridgeConfig = { bridgeId: 'slack', teamId: 'T0FAKE472', ownUserId: 'U0BOT472',
     ownBotId: 'B0BOT472', map: [{ topic: 'leader', channel }] };
@@ -32,7 +35,7 @@ it('documents the persisted same-thread allocation and isolates selected channel
     if (method === 'chat.postMessage') return { channel, ts: reply };
     throw new Error('FAKE-PRIVATE-DIAGNOSTIC-472');
   };
-  const delivery = await deliverSlackEnvelope({ id: 'fake-result-472', from: 'phantom:leader', to: 'leader',
+  const delivery = await deliverSlackEnvelope({ id: leaderReplyEnvelopeId(fakeRequestId(`${channel}:${first}`)), from: 'phantom:leader', to: 'leader',
     ttl: 60000, priority: 'P1', body: { kind: 'note', text: 'FAKE-PRIVATE-BODY-472',
       thread: slackThreadRef(config.teamId, channel, thread) } },
   { config, teamIdentities: [{ channel: 'slack', id: 'U0FAKE472' }], confirmedByMason: true, call, stateRoot });
@@ -53,8 +56,9 @@ it('documents the persisted same-thread allocation and isolates selected channel
       expect(JSON.stringify(result)).not.toContain(marker);
     }
   }
-  // Existing contract allocates an unbound sent receipt to the first eligible
-  // sibling. This is the observed defect, not proof of request association.
+  // The send is bound by the request's causal reply key: only the request whose
+  // id derives the stored key is answered; same-thread siblings and the other
+  // channel's identical timestamps are not.
   expect(results[0]!.rows[0]).toMatchObject({ outcome: 'answered', replyTs: reply });
   expect(results[0]!.counts).toEqual({ total: 1, answered: 1, uncertain: 0, busFailed: 0, unanswered: 0 });
   for (const result of results.slice(1)) {

@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { readSlackEvidenceBundle } from '../src/core/agents/slack-evidence-bundle.js';
 import type { SlackRequestTraceRead } from '../src/core/agents/slack-request-trace.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 const send = vi.hoisted(() => vi.fn());
 vi.mock('../src/core/web/api.js', () => ({ sendJson: send }));
 import { createFleetSlackTraceApi } from '../src/core/verse/fleet-slack-trace-api.js';
@@ -50,6 +51,7 @@ it('returns only scoped persisted evidence, retaining full counts and freshness 
       at: new Date(Date.UTC(2024, 10, 7, 17, i)).toISOString(), decision: 'ingested', bus: 'posted',
       channelId: i === 25 ? 'C0FAKE0002' : 'C0FAKE0001', threadTs: thread,
       messageTs: `17310000${String(i).padStart(2, '0')}.000100`, authorId: 'UFAKE', text: 'synthetic',
+      requestId: fakeRequestId(`447s:${i}`),
     })).join('\n') + '\n';
     writeFileSync(journalPath, journal);
     const read = vi.fn(() => empty);
