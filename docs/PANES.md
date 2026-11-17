@@ -24,6 +24,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-inbox` | Leaders' inbox | `mod+alt+i` | `src/web-ui/routes/verse/fleet-inbox/fleet-inbox.pane.tsx` |
 | `fleet-lanes` | Lanes | `mod+alt+n` | `src/web-ui/routes/verse/fleet-lanes/fleet-lanes.pane.tsx` |
 | `fleet-merges` | Merges | `mod+alt+o` | `src/web-ui/routes/verse/fleet-merges/fleet-merges.pane.tsx` |
+| `fleet-messages` | Messages | none | `src/web-ui/routes/verse/fleet-messages/fleet-messages.pane.tsx` |
 | `fleet-metrics` | Metrics | — | `src/web-ui/routes/verse/fleet-metrics/fleet-metrics.pane.tsx` |
 | `fleet-mission` | Mission | `mod+alt+k` | `src/web-ui/routes/verse/fleet-mission/fleet-mission.pane.tsx` |
 | `fleet-observe` | Observe | `mod+alt+v` | `src/web-ui/routes/verse/fleet-observe/fleet-observe.pane.tsx` |

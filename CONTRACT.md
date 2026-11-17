@@ -1,3 +1,44 @@
+# Lane allowance evidence
+
+`src/core/usage/lane-allowance.ts` exports pure `projectLaneAllowance(inputs,
+nowMs)` and read-only `readLaneAllowance({ runsDir?, weeklyFile?, nowMs? }?)`,
+returning `LaneAllowanceSnapshot` (`v: 1`, `asOf`, `lanes`). Inputs combine
+resource-live state/history, parsed posture evidence and published Devin weekly
+capacity. Runs default to `ASHLR_RUNS_DIR` or `~/.ashlr-runs`; `weeklyFile`
+overrides the Devin publication path. `LaneAllowanceInputs` and
+`LaneAllowanceRow` describe nullable usage, reset, age, history, posture and
+Devin preview evidence. Missing measurements stay null; stale values retain
+their age and reason. USD pools map to `api-credit`, included/metered posture
+classes pass through, and local, absent or unrecognized classes stay unknown.
+`GET /api/usage/lanes` returns this projection without refreshing providers.
+`postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
+the shared bounded journal parser, including optional `freePreview` and
+`previewExpiresAt` evidence; absent optional fields remain absent.
+
+# CI baseline evidence
+
+Failure groups add `runs: {pr: number, head: string, runId: number}[]`, linking
+only the failed job evidence to its workflow run and current PR head.
+`src/core/fleet/ci-rerun.ts` exports `CiRerunOptions` and
+`runCiRerunMaintenance(opts)`: injectable repositories, cancellation, GitHub,
+analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
+probable flakes are rerun, with durable pre-attempt deduplication and a global
+hourly cap (default ten). Shared-baseline queueing requires effective authority
+and inactive KILL. Cancellation returns/persists `status: 'aborted'`.
+`ciRerunPaths()` resolves journal/status files under the ASHLR state root;
+`readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts and
+lastHour attempts; `readCiRerunStatus(path?)` returns the persisted status or null.
+Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
+Resident off-tick ticks launch it only with repositories and an elapsed interval.
+The CLI `ci reruns [--json]` reads recent journal entries/counts without mutation.
+
+`src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
+read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
+scrubbed Vitest failure identities and summaries. `enqueueBaselineFixes(report,
+absoluteQueuePath)` explicitly writes deduplicated work-tier master-fix rows.
+`applyBaselineUpdates(report, gh?)` explicitly applies expected-head guarded
+updates only after current master test-pass and merged-fix ancestry evidence.
+Unknown evidence never authorizes mutation. See [CI baseline](docs/CI-BASELINE.md).
 # Frontier CLI discovery and daemon health
 
 `src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,

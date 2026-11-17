@@ -31,7 +31,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'comms-agent',
   'agentnet', 'amplify', 'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'growth', 'world', 'settings', 'drafts',
   'director', 'best-of-n', 'invent', 'ideas', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime', 'tune', 'tools',
+  'skills', 'universe', 'runtime', 'tune', 'tools', 'messages',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'console', 'local-runtime',
@@ -61,7 +61,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
   'trail',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
-  'estates', 'ci-metrics', 'daily-fix', 'main',
+  'estates', 'ci', 'ci-metrics', 'daily-fix', 'main',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
@@ -148,6 +148,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
+  'ci': ['baseline', 'reruns', '--repo', '--json', '--queue', '--queue-file', '--apply', '--help'],
   'ci-metrics': ['--json', '--help'],
   main: ['blame', '--repo', '--good', '--bad', '--check', '--timeout-ms', '--json', '--help'],
   'daily-fix': ['validate', 'filter', 'dispatch', 'parse-fixup', '--json', '--help'],
@@ -169,6 +170,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   tools: ['parity', 'requires', '--needs', '--text', '--help'],
+  messages: ['--since', '--agent', '--limit', '--text', '--help'],
   connectors: ['add', 'list', 'remove', 'show', 'import', 'run', 'exec', 'config', 'mesh', 'tool', '--json', '--help'],
   agentnet: ['peers', 'channels', 'identity', '--json', '--help'],
   amplify: ['status', 'tick', 'goal', '--json', '--help'],

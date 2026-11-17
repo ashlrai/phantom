@@ -2140,6 +2140,12 @@ async function main(): Promise<void> {
         process.exitCode = await cmdTools(rest);
         break;
       }
+
+      case 'messages': {
+        const { cmdMessages } = await import('./messages.js');
+        process.exitCode = await cmdMessages(rest);
+        break;
+      }
       case 'router': {
         const { cmdRouter } = await import('./router.js');
         process.exitCode = await cmdRouter(rest);
@@ -3297,6 +3303,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'ci': {
+        const { cmdCiBaseline } = await import('./ci-baseline.js');
+        process.exitCode = await cmdCiBaseline(rest);
         break;
       }
 

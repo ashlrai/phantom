@@ -1,0 +1,21 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.headline { margin: 0; font-family: var(--font-display); font-size: var(--text-sm-size); font-weight: 600; font-variant-numeric: tabular-nums; }
+.notice, .quiet { margin: 0; color: var(--text-secondary); }
+.conversations { display: flex; flex-direction: column; gap: var(--space-3); list-style: none; margin: 0; padding: 0; }
+.conversation { padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0 0 var(--space-1); color: var(--text-tertiary); font-size: var(--text-2xs-size); }
+.messages { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.message { display: grid; grid-template-columns: auto auto 1fr; gap: var(--space-2); align-items: baseline; width: 100%; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: left; }
+button.message { cursor: pointer; }
+button.message:hover, button.message:focus-visible { background: var(--surface-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+.time { color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kind { color: var(--text-secondary); text-transform: uppercase; font-size: var(--text-2xs-size); }
+.kind[data-kind='blocker'] { color: var(--status-danger-solid); }
+.kind[data-kind='handoff'] { color: var(--accent-500); }
+.body { min-width: 0; overflow-wrap: anywhere; }
+.who { color: var(--text-secondary); }
+.refs { color: var(--text-tertiary); }
+.talk { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.talk li { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.line { flex: 1 1 2rem; min-width: 2rem; border-bottom: 2px solid var(--accent-500); }
