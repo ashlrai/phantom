@@ -122,6 +122,25 @@ describe('runCosWorkOnce', () => {
       .toContain(`Approve chief-of-staff reply ${cosId}`);
   });
 
+  it('accepts an opted-in bounded peer plan while keeping the owner reply a draft', async () => {
+    const id = await enqueueCos();
+    const runner = fakeRunner({ output: JSON.stringify({ reply: 'Review planned.', peers: [] }) });
+    const result = await runCosWorkOnce({ runsDir, spawn: runner.spawn, candidates, peerPlan: {
+      session: { lane: 'test', sessionId: 'test', token: 'synthetic-session-only' }, options: { busRoot: runsDir },
+    } });
+    expect(result).toMatchObject({ outcome: 'drafted', peerMessages: [] });
+    expect(JSON.parse(await readFile(join(runsDir, 'cos', `${id}.json`), 'utf8')).text).toBe('Review planned.');
+    expect(runner.stdin()).toContain('at most 8');
+  });
+
+  it('blocks malformed peer plans instead of treating model output as sender authority', async () => {
+    await enqueueCos();
+    const runner = fakeRunner({ output: JSON.stringify({ reply: 'Bad plan', peers: [{ fromAgent: 'mason' }] }) });
+    expect(await runCosWorkOnce({ runsDir, spawn: runner.spawn, candidates, peerPlan: {
+      session: { lane: 'test', sessionId: 'test', token: 'synthetic-session-only' }, options: { busRoot: runsDir },
+    } })).toMatchObject({ outcome: 'blocked', reason: 'invalid-peer-plan' });
+  });
+
   it('blocks on a non-zero exit, writes no draft and never records stdout', async () => {
     const id = await enqueueCos();
     const runner = fakeRunner({ output: 'partial secret stdout', code: 1 });

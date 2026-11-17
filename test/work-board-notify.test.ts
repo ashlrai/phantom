@@ -78,13 +78,13 @@ describe('planNotifications', () => {
     expect(log).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps ASSIGNED with owner and claim receipt, one line naming the owner', () => {
+  it('keeps ASSIGNED with owner and claim receipt, one line naming both', () => {
     const plan = planNotifications([transition({
       evidence: { asOf: AT, source: 'claim:bus-claim:req-fake-1:4:1700', owner: 'fake-owner', claimReceipt: 'bus-claim:req-fake-1:4:1700' },
     })], new Set());
     expect(plan.dropped).toEqual([]);
     expect(plan.notices).toHaveLength(1);
-    expect(plan.notices[0]!.text).toBe(`ASSIGNED req-fake-1 as of ${AT} — fake-owner (source: claim:bus-claim:req-fake-1:4:1700)`);
+    expect(plan.notices[0]!.text).toBe(`ASSIGNED req-fake-1 as of ${AT} — fake-owner (claim bus-claim:req-fake-1:4:1700) (source: claim:bus-claim:req-fake-1:4:1700)`);
   });
 
   it('drops BLOCKED without a named dependency and VERIFIED without an artifact', () => {
@@ -103,7 +103,7 @@ describe('planNotifications', () => {
     const plan = planNotifications([blocked, verified], new Set());
     expect(plan.notices.map(n => n.text)).toEqual([
       `BLOCKED req-fake-1 as of ${AT} — fake-dep-123 (source: bus-reply:rb-1)`,
-      `VERIFIED req-fake-2 as of ${AT} — PR #4321 (source: bus-reply:rb-2)`]);
+      `VERIFIED req-fake-2 as of ${AT} — PR #4321 head fakeheadsha (source: bus-reply:rb-2)`]);
   });
 
   it('never posts RUNNING or RECEIVED transitions', () => {

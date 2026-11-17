@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { emptyJobs } from './empty-job-ledger.js';
 import { classifyEmptyLog, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
+export { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
 
 export const EMPTY_CLASSES = ['duplicate', 'already-done', 'too-broad', 'tests-timeout', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
 export type EmptyClass = typeof EMPTY_CLASSES[number];

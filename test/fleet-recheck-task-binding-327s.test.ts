@@ -74,6 +74,8 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readFleetBoard: () => healthyBoard,
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
+    listCoordination: () => ({ source: 'unavailable', claims: [] }),
+    listLiveWorkers: () => { throw new Error('absent'); },
     ...over,
   };
 }

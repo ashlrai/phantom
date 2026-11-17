@@ -48,7 +48,7 @@ The current README and landing-page screenshots come from a compiled Phantom bui
 
 ## Provider and tool identity marks
 
-The landing illustration identifies resources, not endorsements or active accounts. Claude, OpenAI, Grok and Ollama geometry is reused from the existing `ProviderLogo.tsx` Lobe Icons paths with the MIT notice alongside the new SVG assets. Devin retains the exact first-party vendor favicon already stored in `site/assets/devin-mark.svg`.
+The landing illustration identifies resources, not endorsements or active accounts. Claude, OpenAI, Grok and Ollama geometry is reused from the brand registry (`src/core/brand/registry.ts`, Lobe Icons paths; also Gemini and Cursor) with the MIT notice alongside the new SVG assets. Devin retains the exact first-party vendor favicon already stored in `site/assets/devin-mark.svg`.
 
 Vercel's triangle comes from its official [brand assets](https://vercel.com/geist/brands); Supabase's unchanged green icon comes from its official [brand kit](https://supabase.com/brand-assets.zip). These marks preserve vendor geometry and colors. Colored ghosts, routes and islands are Phantom's presentation, separate from the provider artwork. Vercel and Supabase appear as examples of configured tool connections; this scene does not provision either service.
 

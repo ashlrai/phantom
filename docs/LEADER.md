@@ -45,7 +45,7 @@ ashlr release-articles disable
 ```
 
 Enablement permits this maintenance lane, not a new grant. A current autonomous
-standing grant with exact `ashlrai/ashlar-landing` merge scope, an enrolled
+standing grant with exact `ashlrai/ashlr-landing` merge scope, an enrolled
 checkout and Stop off is required before it queues an article in the existing
 fleet task store. The resident standing tick calls the same maintenance path;
 dry runs and disabled/missing configuration do not probe providers or create
@@ -455,17 +455,27 @@ reads it.
 
 ## From the CLI
 
-`phm leader thread --json` shows the ordered conversation, including replies in
-`leader/MASON-OUTBOX.md` and the latest “Reply for Mason” block in each `leader/PLAN-LOG.md` entry
-under your runs directory. Reply blocks use their heading time; identical text
-appears once. These journals are read only. The desktop Leader pane and phone
-view show the same replies, including when the outbox cannot be written.
-For dated PLAN-LOG replies alone, newest first, use `phm leader replies --json --limit 20`.
-The reader checks the last 256 KiB of the journal; older replies may be omitted.
+`phm leader thread` shows one chat: your `leader/MASON-INBOX.md` entries and the
+leader's replies (`leader/MASON-OUTBOX.md` and the latest “Reply for Mason”
+block in each `leader/PLAN-LOG.md` entry), oldest first. It prints JSON by
+default (`id`, `ts`, `direction`, `channel`, `text`, `state`); add `--text` for
+plain lines and `--limit n` for the newest n (default 50). Each of your
+messages is `sent`, `received` (the planner acknowledged it), `answered` (a
+reply links to it) or `open-over-2h` (no linked reply after 2 hours). A reply
+links when its MASON-OUTBOX heading carries `[leader-network:reply-<id>]` or
+its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
+`skipped.malformedInbox`; an unreadable time is `null`, shown as unknown.
+`phm leader say "<text>"` sends through the verified local-owner inbox writer
+(the same path as `phm leader inbox --text`) and prints the new message id.
+The desktop inbox box and the phone box show the same chat above their Send.
+These journals are read only. `--follow` still streams the in-process Leader
+conversation. For dated PLAN-LOG replies alone, newest first, use
+`phm leader replies --json --limit 20`. Readers check the last 256 KiB of each
+journal; older entries may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
-ashlr leader thread [--limit 20] [--json]
+ashlr leader thread [--limit 20] [--text]
 ashlr leader answer <questionId> "yes, but only on ashlrcode"
 ashlr leader approve <actionId>
 ashlr leader veto <actionId> [--note "why"]      # or: veto --memo <memoId>

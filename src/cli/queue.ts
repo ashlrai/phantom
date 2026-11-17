@@ -4,11 +4,15 @@ import { readQueueVisits } from '../core/queue/journal.js';
 import { estimateQueueStats } from '../core/queue/stats.js';
 
 const HELP = `Usage: phm queue stuck [--json]
+       phm queue --json
+       phm queue batches [--runs <directory>] [--json]
        phm queue stats [--json] [--window <seconds>]
        phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
-       phm queue add|claim|done|block|replay|list|import|export [options]
+       phm queue coalesce [<file>] [--apply --out <directory>] [--json]
+       phm queue supersede [--json] [--apply]
+       phm queue add|claim|done|block|replay|list|import|export|spawn|promote|serve [options]
 
 stats: sliding windows over the local visit journal (~/.ashlr/queue/visits.jsonl).
   Windows default to 1h, 24h and 7d. Rates per second; wait in seconds.
@@ -80,17 +84,22 @@ async function cmdQueueReport(args: string[]): Promise<number> {
 }
 
 export async function cmdQueue(args: string[]): Promise<number> {
+  if (args.length === 1 && args[0] === '--json') return (await import('./queue-batches.js')).cmdQueueBatches(args);
   let command: string | undefined;
-  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-cost-class', '--impact']);
+  let commandIndex = -1;
+  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--') { command = args[i + 1]; break; }
+    if (arg === '--') { command = args[i + 1]; commandIndex = i + 1; break; }
     if (valueOptions.has(arg)) { i++; continue; }
-    if (!arg.startsWith('-')) { command = arg; break; }
+    if (!arg.startsWith('-')) { command = arg; commandIndex = i; break; }
   }
   if (command === 'yield') return (await import('./queue-yield.js')).cmdQueueYield(args.slice(args.indexOf('yield') + 1));
+  if (command === 'batches') return (await import('./queue-batches.js')).cmdQueueBatches(args.filter((_, i) => i !== commandIndex));
+  if (command === 'coalesce') return (await import('./queue-coalesce.js')).cmdQueueCoalesce(args.slice(args.indexOf('coalesce') + 1));
+  if (command === 'supersede') return (await import('./queue-supersede.js')).cmdQueueSupersede(args.slice(args.indexOf('supersede') + 1));
   if (command === 'dedupe') return (await import('./queue-dedupe.js')).cmdQueueDedupe(args.slice(args.indexOf('dedupe') + 1));
-  if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export'].includes(command ?? '') ||
+  if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export', 'spawn', 'promote', 'serve'].includes(command ?? '') ||
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
     return (await import('./job-queue.js')).cmdJobQueue(args);
   }

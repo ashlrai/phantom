@@ -379,7 +379,7 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.ok(autoTag.on.push.paths.includes('package.json'));
   assert.equal(autoTag.on.workflow_run.workflows[0], 'CI');
   assert.deepEqual(autoTag.permissions, {});
-  assert.equal(autoTag.concurrency.group, 'auto-tag-${{ github.repository }}');
+  assert.equal(autoTag.concurrency.group, 'auto-tag-${{ github.event_name == \'workflow_run\' && github.event.workflow_run.head_sha || github.sha }}');
   assert.equal(autoTag.concurrency['cancel-in-progress'], false);
   const tagJob = autoTag.jobs.tag;
   assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read', actions: 'write'});

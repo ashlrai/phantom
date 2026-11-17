@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { VerseContextFit, VersePreferences, VersePreferencesUpdate } from '../../../core/verse/types.js';
 import type { VerseCreateSessionRequest, VerseWorkspace } from '../../data/api-types.js';
@@ -136,7 +136,10 @@ describe('NewChatDialog — capacity at the point of choice', () => {
       creditsExpiresAt: new Date(now + 60_000).toISOString() } };
     render(<NewChatDialog initialManual open onClose={() => {}} projects={boot.projects} seats={[seat]} onCreate={() => {}} />);
     expect(screen.getByText('limit reached')).toBeInTheDocument();
-    expect(screen.getByText('2,000 credits available')).toHaveAttribute('title', 'Provider balance: 2,000 credits.');
+    const credits = screen.getByText('2,000 credits available');
+    expect(credits).toHaveAttribute('tabindex', '0');
+    fireEvent.focus(credits);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Provider balance: 2,000 credits.');
   });
 
   it('does not treat measured windows without original quota expiry as current', () => {

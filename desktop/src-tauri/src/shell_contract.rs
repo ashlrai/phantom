@@ -82,6 +82,8 @@ pub const THEME_EVENT: &str = "shell-theme";
 /// (`src/web-ui/routes/verse/shell/command-catalog.ts`), plus
 /// `open-session:<id>` built by `notify::ClickTarget::command`.
 pub const COMMAND_OPEN_SETTINGS: &str = "open-settings";
+/// View menu "Fleet"; navigation only, never starts or steers work.
+pub const COMMAND_OPEN_FLEET: &str = "open-fleet";
 pub const COMMAND_TOGGLE_THEME: &str = "toggle-theme";
 /// Tray "Needs you…" and a clicked "Needs you" / seat-health banner.
 pub const COMMAND_OPEN_NEEDS_YOU: &str = "open-needs-you";
@@ -402,6 +404,7 @@ mod tests {
     fn the_command_names_match_the_web_catalog() {
         // C0's DESKTOP_COMMAND_NAMES in routes/verse/shell/command-catalog.ts.
         assert_eq!(COMMAND_OPEN_SETTINGS, "open-settings");
+        assert_eq!(COMMAND_OPEN_FLEET, "open-fleet");
         assert_eq!(COMMAND_TOGGLE_THEME, "toggle-theme");
         assert_eq!(COMMAND_OPEN_NEEDS_YOU, "open-needs-you");
         assert_eq!(COMMAND_NEW_CHAT, "new-chat");
