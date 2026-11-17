@@ -356,6 +356,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'repo-rate': () => import('./fleet-repo-rate.js'),
   'report-ledger': () => import('./fleet-report-ledger.js'),
   'report-ledger-build': () => import('./fleet-report-ledger-build.js'),
+  'republish': () => import('./fleet-republish.js'),
   'research-digest': () => import('./fleet-research-digest.js'),
   'reserves': () => import('./fleet-reserves.js'),
   'reset-await': () => import('./fleet-reset-await.js'),
