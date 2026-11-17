@@ -131,6 +131,15 @@ describe('fleet advisory policy and weekly brief', () => {
 });
 
 describe('fleet metrics CLI', () => {
+  it('defaults to the typed hourly series for people and JSON callers', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    for (const args of [[], ['--json'], ['series', '--json']]) {
+      expect(await cmdFleetMetrics(args, { read: async () => '', now: () => nowMs })).toBe(0);
+      if (args.includes('--json')) expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'fleet.metrics-series.v1', mergesLastHour: 0 });
+    }
+    expect(await cmdFleetMetrics(['--json'], { read: async () => null, now: () => nowMs })).toBe(1);
+    expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ known: false, mergesLastHour: null });
+  });
   it('loads through the fleet registry and reports missing evidence with an unsuccessful status', async () => {
     expect((await FLEET_SUBCOMMAND_LOADERS.metrics!()).cmdFleetMetrics).toBe(cmdFleetMetrics);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -152,7 +161,7 @@ describe('fleet metrics CLI', () => {
   it('refuses unknown, repeated or out-of-range options before reading inputs', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const read = vi.fn(async () => '');
-    for (const args of [[], ['apply'], ['report', '--hours', '0'], ['report', '--hours', '2161'],
+    for (const args of [['series', '--hours', '24'], ['apply'], ['report', '--hours', '0'], ['report', '--hours', '2161'],
       ['suggest', '--apply'], ['report', '--jobs'], ['report', '--json', '--json']]) {
       expect(await cmdFleetMetrics(args, { read })).toBe(2);
     }
