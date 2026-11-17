@@ -898,7 +898,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
   { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
   { cmd: 'models [--json]',              desc: 'List local models (Ollama/LM Studio); marks the active one.', topic: 'run' },
-  { cmd: 'models verify [--json]',       desc: 'Check registry model IDs against official provider documentation.', topic: 'run' },
+  { cmd: 'models verify [--text]',       desc: 'Show model verification status and age (JSON by default).', topic: 'run' },
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
   { cmd: 'models start',                 desc: 'Best-effort start a locally-installed Ollama (never downloads).', topic: 'run' },
   { cmd: 'local-runtime <status|start|stop|restart|reshape|logs|resolve-model>', desc: 'Supervise the loopback llama-server serving runtime (parallel local fleet engine); manual and attended.', topic: 'run' },
@@ -951,7 +951,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'inbox submit <id> --yes',      desc: 'Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.', topic: 'autonomy' },
   { cmd: 'inbox reject <id>',            desc: 'Discard a pending proposal; applies nothing.', topic: 'autonomy' },
   { cmd: 'inbox --json',                 desc: 'Emit JSON for inbox list, show, approve, submit, or automerge results.', topic: 'autonomy' },
-  { cmd: 'ideas [--json]',               desc: 'List READY fleet ideas (RQ id, repo, lane, goal) from the vision and queue docs.', topic: 'autonomy' },
+  { cmd: 'ideas [--json|--text]',        desc: 'Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown.', topic: 'autonomy' },
   { cmd: 'drive [--once --dry-run] [--tick <seconds>]', desc: 'Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.', topic: 'autonomy' },
   { cmd: 'daemon start --once',          desc: 'Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.', topic: 'autonomy' },
   { cmd: 'daemon start --once --dry-run', desc: 'Plan only: which backlog items WOULD be worked (no swarm/proposal).', topic: 'autonomy' },
@@ -1165,6 +1165,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'wire status [claude|codex|cursor|gemini|all]', desc: 'Read-only report of whether each editor is wired to the ashlr gateway.', topic: 'integrations' },
   { cmd: 'wire --claude-md',             desc: 'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).', topic: 'integrations' },
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
+  { cmd: 'notify route <type> [--text]', desc: 'Preview an owner update route in JSON (default) or plain words; never sends.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
 
@@ -1204,6 +1205,9 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
   { cmd: 'settings appearance [set]', desc: 'Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.', topic: 'web' },
+
+  { cmd: 'pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]', desc: 'Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).', topic: 'web' },
+  { cmd: 'pages list [--json]',          desc: 'List published report pages, newest first.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },
