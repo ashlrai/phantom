@@ -30,6 +30,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { AshlrConfig } from '../src/core/types.js';
+import type { UsageSnapshot } from '../src/cli/usage.js';
+// Compile shared snapshot modules during collection, outside behavioral test deadlines.
+// The optional sections are loaded lazily by buildSnapshot; their behavior stays real.
+import { buildSnapshot } from '../src/core/dashboard.js';
+import '../src/core/web/fleet-status-cache.js';
+import '../src/core/web/visibility.js';
 import type {
   FrontierUsage,
   FrontierEngineUsage,
@@ -48,6 +54,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fs.rmSync(tmpHome, { recursive: true, force: true });
   process.env.HOME = origHome;
   vi.restoreAllMocks();
@@ -323,7 +330,6 @@ vi.mock('../src/core/daemon/state.js', () => ({
 
 describe('buildSnapshot — frontierUsage field', () => {
   it('snapshot includes frontierUsage with engines array', async () => {
-    const { buildSnapshot } = await import('../src/core/dashboard.js');
     const snapshot = await buildSnapshot(minimalCfg());
     expect(snapshot.frontierUsage).toBeDefined();
     expect(snapshot.frontierUsage).toMatchObject({
@@ -333,7 +339,6 @@ describe('buildSnapshot — frontierUsage field', () => {
   });
 
   it('frontierUsage.engines contains claude and codex by default', async () => {
-    const { buildSnapshot } = await import('../src/core/dashboard.js');
     const snapshot = await buildSnapshot(minimalCfg());
     const ids = snapshot.frontierUsage?.engines.map((e: FrontierEngineUsage) => e.engine) ?? [];
     expect(ids).toContain('claude');
@@ -341,7 +346,6 @@ describe('buildSnapshot — frontierUsage field', () => {
   });
 
   it('frontierUsage is typed as optional on DashboardSnapshot', async () => {
-    const { buildSnapshot } = await import('../src/core/dashboard.js');
     const snapshot = await buildSnapshot(minimalCfg());
     // Type-level: optional field is accessible without non-null assertion
     const fu = snapshot.frontierUsage;
@@ -349,7 +353,6 @@ describe('buildSnapshot — frontierUsage field', () => {
   });
 
   it('each engine entry in frontierUsage has callsToday as number', async () => {
-    const { buildSnapshot } = await import('../src/core/dashboard.js');
     const snapshot = await buildSnapshot(minimalCfg());
     for (const e of snapshot.frontierUsage?.engines ?? []) {
       expect(typeof e.callsToday).toBe('number');
@@ -402,6 +405,28 @@ describe('CLI registration', () => {
     } finally {
       console.error = origErr;
     }
+  });
+
+  it('usage JSON retains engine data and returns the exact desktop spend snapshot', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime('2026-11-17T12:00:00Z');
+    const dir = path.join(tmpHome, '.ashlr-runs', 'queue');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify({ schema: 'dispatchd.status.v1',
+      last_tick: '2026-11-17T12:00:00Z', budget: { 'codex-cmp': { use_it_all: {
+        known: true, stale: false, used_pct: 25, burn_pct_per_hour: 5, reset_at: '2026-11-17T22:00:00Z',
+      } } } }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { cmdUsage } = await import('../src/cli/usage.js');
+    const { readUsageSpend } = await import('../src/core/usage/spend.js');
+    expect(await cmdUsage(['--json'])).toBe(0);
+    const result: UsageSnapshot = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as UsageSnapshot;
+    expect(result.generatedAt).toMatch(/^2026-11-17T/);
+    expect(result.engines.map(row => row.engine)).toEqual(expect.arrayContaining(['claude', 'codex']));
+    expect(result.spend).toEqual(await readUsageSpend());
+    expect(result.spend.pools.find(row => row.pool === 'codex-cmp')).toMatchObject({
+      usedPercent: 25, burnPerHour: 5, projectedUnusedPercent: 25, verdict: 'behind',
+    });
   });
 
   it('cmdUsage returns 0 on --help', async () => {

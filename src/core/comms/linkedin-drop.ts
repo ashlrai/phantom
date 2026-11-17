@@ -1,8 +1,10 @@
 /**
  * LinkedIn drop folder reader: each LinkedIn message Mason (or a helper) saves
  * as `<runsDir>/comms/linkedin/inbox/<name>.json` — `{ id, from, text, at,
- * threadUrl? }` — becomes an item in the unified comms inbox. A message is
- * answered when `<runsDir>/comms/linkedin/answered/<id>` exists.
+ * threadUrl? }` — becomes an item in the unified comms inbox. Original exports
+ * `{ id, threadId, from: { name, profileUrl? }, text, receivedAt }` also work.
+ * Messages are suppressed by `answered/<id>` or `handled/<id>.handled` under
+ * the LinkedIn base directory; neither marker grants send authority.
  *
  * Reading is side-effect free: no network, no writes, no sends. The one write
  * is `markLinkedInAnswered`, an owner action that drops the answered marker.
@@ -49,6 +51,48 @@ const clean = (text: string, max: number): string => {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 };
 
+const hasContent = (value: unknown): value is string =>
+  typeof value === 'string' && value.replace(/\p{C}/gu, '').trim().length > 0;
+const ORIGINAL_ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
+
+/** Reject impossible calendar dates instead of letting Date roll them forward. */
+function originalTimestamp(raw: string): string | null {
+  const m = ORIGINAL_ISO.exec(raw);
+  if (m === null) return null;
+  const [, y, mo, d, h, mi, s, frac] = m;
+  const year = Number(y), month = Number(mo), day = Number(d);
+  const hour = Number(h), minute = Number(mi), second = Number(s);
+  const ms = frac === undefined ? 0 : Number(frac.padEnd(3, '0'));
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, ms);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day ||
+      date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) return null;
+  return date.toISOString();
+}
+
+type ParsedEnvelope = Omit<LinkedInMessage, 'threadUrl'>;
+const validId = (r: Record<string, unknown>): r is Record<string, unknown> & { id: string } =>
+  typeof r.id === 'string' && ID_PATTERN.test(r.id) && r.id.length <= ID_MAX;
+
+function parseFlatEnvelope(r: Record<string, unknown>): ParsedEnvelope | null {
+  if (!validId(r) || typeof r.from !== 'string' || typeof r.text !== 'string' ||
+      typeof r.at !== 'string' || !Number.isFinite(Date.parse(r.at))) return null;
+  return { id: r.id, from: r.from, text: r.text, at: new Date(Date.parse(r.at)).toISOString() };
+}
+
+/** Original exporter: threadId is required; profileUrl, when present, must be non-empty. */
+function parseOriginalEnvelope(r: Record<string, unknown>): ParsedEnvelope | null {
+  if (!validId(r) || typeof r.receivedAt !== 'string' || !hasContent(r.threadId) || !hasContent(r.text)) return null;
+  const from = r.from;
+  if (from === null || typeof from !== 'object' || Array.isArray(from)) return null;
+  const sender = from as Record<string, unknown>;
+  if (!hasContent(sender.name) || (sender.profileUrl !== undefined && !hasContent(sender.profileUrl))) return null;
+  const at = originalTimestamp(r.receivedAt);
+  if (at === null) return null;
+  return { id: r.id, from: sender.name, text: r.text, at };
+}
+
 export function linkedInDropDir(runsDir: string): string {
   return join(runsDir, 'comms', 'linkedin');
 }
@@ -73,18 +117,18 @@ export function readLinkedInDrop(options: LinkedInDropOptions = {}): LinkedInDro
       const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown;
       if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) { skipped++; continue; }
       const r = raw as Record<string, unknown>;
-      if (typeof r.id !== 'string' || !ID_PATTERN.test(r.id) || r.id.length > ID_MAX ||
-          typeof r.from !== 'string' || typeof r.text !== 'string' ||
-          typeof r.at !== 'string' || !Number.isFinite(Date.parse(r.at))) { skipped++; continue; }
-      if (seen.has(r.id)) { skipped++; continue; }
-      seen.add(r.id);
-      // The id passed ID_PATTERN, so it cannot escape the answered directory.
-      if (existsSync(join(base, 'answered', r.id))) continue;
+      const env = parseFlatEnvelope(r) ?? parseOriginalEnvelope(r);
+      if (env === null) { skipped++; continue; }
+      if (seen.has(env.id)) { skipped++; continue; }
+      seen.add(env.id);
+      // The id passed ID_PATTERN, so it cannot escape the marker directories.
+      if (existsSync(join(base, 'answered', env.id)) ||
+          existsSync(join(base, 'handled', `${env.id}.handled`))) continue;
       const msg: LinkedInMessage = {
-        id: r.id,
-        from: clean(r.from, FROM_MAX) || 'unknown',
-        text: clean(r.text, TEXT_MAX),
-        at: new Date(Date.parse(r.at)).toISOString(),
+        id: env.id,
+        from: clean(env.from, FROM_MAX) || 'unknown',
+        text: clean(env.text, TEXT_MAX),
+        at: env.at,
       };
       if (typeof r.threadUrl === 'string' && /^https:\/\/([a-z0-9-]+\.)?linkedin\.com\//i.test(r.threadUrl)) {
         msg.threadUrl = clean(r.threadUrl, URL_MAX);

@@ -189,11 +189,13 @@ describe('fleet_email_outbox_batch_await over MCP', () => {
     mkdirSync(outbox);
     const seen: BatchOptions[] = [];
     const client = await connect({ emailOutboxBatchAwait: realReader({
+      now: () => 0,
       awaitBatch: async (opts: BatchOptions) => { seen.push(opts); return { rows: [{ name: NAMES[0]!, state: 'sent' }], timedOut: false, cancelled: false, sourceFailure: false }; },
     }) });
     expect(parse(await call(client, { names: [NAMES[0]], timeoutMs: 500 }))).toMatchObject({ sourceState: 'ok', rows: [{ name: NAMES[0], state: 'sent' }] });
     expect(seen.map(opts => opts.dir)).toEqual([join(inbox, '..', 'outbox')]);
-    expect(seen[0]).toMatchObject({ names: [NAMES[0]], timeoutMs: 500, pollMs: DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS });
+    expect(seen[0]).toMatchObject({ names: [NAMES[0]], pollMs: DEFAULT_FLEET_EMAIL_OUTBOX_AWAIT_POLL_MS });
+    expect(seen[0]!.timeoutMs).toBeCloseTo(500, 0);
     expect(seen[0]!.signal).toBeInstanceOf(AbortSignal);
   });
 

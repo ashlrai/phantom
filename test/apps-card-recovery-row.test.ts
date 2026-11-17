@@ -31,6 +31,11 @@ it('route returns the newest retained outcome per app and rejects writes', async
     const { handleFleetAppsRecoveryApi } = await import('../src/core/verse/fleet-apps-recovery-api.js');
     const call = (method: string) => handleFleetAppsRecoveryApi({} as never, {} as never, {} as never, '/api/verse/fleet/apps/recovery', method);
     expect(await call('GET')).toBe(true);
+    expect(send.mock.calls[0]?.slice(1)).toEqual([200, { v: 1, apps: [] }]);
+    send.mockClear();
+    const { installFleetAppsRecoveryProviders } = await import('../src/core/fleet/app-recovery-install.js');
+    await installFleetAppsRecoveryProviders();
+    expect(await call('GET')).toBe(true);
     expect(send.mock.calls[0]?.slice(1)).toEqual([200, { v: 1, apps: [{ app: 'Codex', at: now, outcome: 'gave-up' }, { app: 'Claude', at: now, outcome: 'recovered' }] }]);
     await call('POST'); expect(send.mock.calls[1]?.[1]).toBe(405);
   } finally {

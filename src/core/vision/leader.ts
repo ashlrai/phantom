@@ -223,7 +223,10 @@ export interface LeaderModelRow {
 }
 
 /** Where evidence comes from. Every source may throw; a thrower is reported as unknown, never as zero. */
+type AmplifyEvidence = Pick<import('../amplify/snapshot.js').AmplifySnapshot, 'objective' | 'actions'>;
+
 export interface LeaderEvidenceSources {
+  amplify?(nowMs: number): Promise<AmplifyEvidence>;
   outcomes?(): import('./leader-outcomes.js').LeaderOutcomeEvidence;
   /** Recorded metadata only; source failure remains unknown. */
   executionFeedback?(nowMs: number): import('../fleet/execution-feedback.js').ExecutionFeedbackSnapshot;
@@ -250,6 +253,7 @@ export interface LeaderEvidenceSources {
 }
 
 export interface LeaderEvidence {
+  amplify?: AmplifyEvidence;
   outcomes?: import('./leader-outcomes.js').LeaderOutcomeEvidence;
   executionFeedback?: import('../fleet/execution-feedback-types.js').LeaderExecutionFeedback;
   grant: {
@@ -448,6 +452,10 @@ export async function gatherLeaderEvidence(sources: LeaderEvidenceSources, nowMs
       if (!complete) unknown.push('execution-feedback-partial');
     }
   }
+  let amplify: AmplifyEvidence | undefined;
+  if (sources.amplify) {
+    try { amplify = await sources.amplify(nowMs); } catch { unknown.push('amplify'); }
+  }
   // 3.15: the Leader's own standing notes (directive.self) — its words, so untrusted data.
   const selfNotes = attempt('self-directives', () => listSelfDirectives().map((d) => ({ id: d.id, text: d.text, since: d.createdAt.slice(0, 10) })));
   return {
@@ -474,6 +482,7 @@ export async function gatherLeaderEvidence(sources: LeaderEvidenceSources, nowMs
     ...(lessons ? { lessons } : {}),
     ...(playbooks && playbooks.length > 0 ? { playbooks } : {}),
     ...(executionFeedback ? { executionFeedback } : {}),
+    ...(amplify ? { amplify } : {}),
     ...(selfNotes && selfNotes.length > 0 ? { selfDirectives: selfNotes } : {}),
     unknown: [...new Set(unknown)].sort(),
   };
@@ -529,6 +538,7 @@ export function buildLeaderPrompt(
   const blocks = [
     untrustedBlock('STANDING GRANT (null = none: every action is a dry run)', evidence.grant),
     untrustedBlock('BUDGET POLICY', evidence.budget),
+    ...(evidence.amplify ? [untrustedBlock('AMPLIFY ADVISORY (proposals only; grants no authority)', evidence.amplify)] : []),
     untrustedBlock('SEAT HEADROOM (used % bucketed to 10)', evidence.seats),
     ...(evidence.executionFeedback ? [untrustedBlock('RECORDED EXECUTION OUTCOMES (producer success is not verification or merge; incomplete totals are unknown)', evidence.executionFeedback)] : []),
     untrustedBlock('GOALS AND FOCUS', evidence.goals),
@@ -959,28 +969,25 @@ export interface LeaderRunDeps {
   adviseActionClass?: LeaderActionAdvisor;
   /** Release-live announcement (release-live-announce.ts); absent in injected tests. */
   announceRelease?: () => Promise<unknown>;
-  /**
-   * RQ-SWE3-LEADERLOOP-1: records this tick's Leader-as-CEO board at
-   * <runs>/coordination/leader-board.json for `phm fleet board --leader`. Absent = the
-   * default local writer (fleet/leader-board.ts): loopback-safe, bounded,
-   * never throws. Injected in tests. Observations only — no authority.
-   */
-  board?: { record(nowMs: number): Promise<unknown> };
+  /** Offline advisory pass: its only write is metrics/amplify.jsonl. */
+  amplifyTick?: (nowMs: number) => Promise<void>;
 }
 
 export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<LeaderRunDeps> {
   const feedback = await import('../fleet/execution-feedback.js');
+  const amplifier = await import('../amplify/index.js');
+  let amplifySnapshot: import('../amplify/snapshot.js').AmplifySnapshot | null = null;
   // Trigger and prompt gathering in one tick share the same bounded inspection.
   // This cache belongs to this dependency instance, never another home/account.
   let feedbackRead: { at: number; root: string | undefined; snapshot: import('../fleet/execution-feedback.js').ExecutionFeedbackSnapshot } | null = null;
-  const [apply, seat, budgetStore, quarantine, quality, modelStats, reasoningApi, goalsStore, ledger, effective, cloudBacklog, lessons, playbookLanes] = await Promise.all([
+  const [apply, seat, budgetStore, quarantine, quality, modelStats, reasoning, goalsStore, ledger, effective, cloudBacklog, lessons, playbookLanes] = await Promise.all([
     loadDefaultLeaderDeps(),
     loadDefaultLeaderSeatDeps(cfg),
     import('../routing/budget-store.js'),
     import('../fleet/quarantine.js'),
     import('../fleet/quality-metrics.js'),
     import('../fleet/model-stats.js'),
-    import('../reasoning/reasoning-api.js'),
+    import('../reasoning/digest.js'),
     import('../goals/store.js'),
     import('../authority/ledger.js'),
     import('../authority/effective-config.js'),
@@ -997,7 +1004,12 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     cloudBacklog: { append: (items) => cloudBacklog.appendUserBacklogItems(items) },
     adviseActionClass: defaultLeaderActionAdvisor(cfg),
     announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
+    amplifyTick: async nowMs => { amplifySnapshot = await amplifier.amplifyTick(undefined, nowMs); },
     sources: {
+      amplify: async nowMs => {
+        const snapshot = amplifySnapshot?.at === new Date(nowMs).toISOString() ? amplifySnapshot : await amplifier.readAmplifyStatus(undefined, nowMs);
+        return { objective: snapshot.objective, actions: snapshot.actions };
+      },
       outcomes: () => apply.outcomes!.evidence(),
       executionFeedback: (nowMs) => {
         const root = process.env.ASHLR_HOME;
@@ -1039,7 +1051,7 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
           merged: m.merged,
           costUsd: Math.round(m.costUsd * 100) / 100,
         })),
-      reasoning: () => reasoningApi.computeReasoningDigest(14),
+      reasoning: () => reasoning.computeReasoningDigest(14),
       lessons: () => lessons.leaderLessons(),
       playbooks: () => playbookLanes.leaderPlaybookCatalog(),
     },
@@ -1479,44 +1491,15 @@ export interface LeaderTickResult {
 }
 
 /**
- * The board write a tick kicks off before its real work: reads local queue,
- * ledger and needs-Mason files only. Awaiting it here (it never rejects)
- * means `ashlr leader tick` lands the board before the process exits, while
- * the daemon's tick deadline still bounds any pathological read.
- */
-function recordLeaderBoardTick(deps: LeaderRunDeps, nowMs: number): Promise<void> {
-  const record = deps.board?.record;
-  try {
-    const job = record
-      ? Promise.resolve().then(() => record.call(deps.board, nowMs))
-      : import('../fleet/leader-board.js').then(m => m.recordLeaderBoard({ nowMs }));
-    return job.then(() => undefined, () => undefined);
-  } catch {
-    return Promise.resolve();
-  }
-}
-
-/**
  * One Leader tick — U5 calls this from the daemon's beforeTick (and `ashlr
  * leader tick` from the CLI). Fast by default: applies due class-B actions,
  * grades due moves, and STARTS a run when one is due without waiting for the
  * model (a memo can take minutes on a local model; a tick must not).
- *
- * Every tick — due or not, early return or not — also records the Leader
- * board (RQ-SWE3-LEADERLOOP-1): the structured `fleet.leader-board.v1`
- * state `phm fleet board --leader` and the fleet's autonomous readers consume.
  */
 export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
-  const boardJob = recordLeaderBoardTick(deps, deps.now());
-  try {
-    return await leaderTickOnce(deps, opts);
-  } finally {
-    await boardJob;
-  }
-}
-
-async function leaderTickOnce(deps: LeaderRunDeps, opts: { awaitRun?: boolean }): Promise<LeaderTickResult> {
   const nowMs = deps.now();
+  try { await deps.amplifyTick?.(nowMs); }
+  catch { console.error('leader tick: amplify advisory journal unavailable'); }
   // Both the resident daemon and CLI use this boundary. Away digests must
   // continue even when the daemon already consumed the ordinary memo cadence.
   // The private network worker lock fences overlapping background ticks.

@@ -197,3 +197,7 @@ Next, [define your own experiment](ASHLR-UNIVERSE.md),
 [commission an explicit native or local worker](RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity),
 or read the [North Star](NORTH-STAR.md). Keep the evaluator and acceptance criteria
 stronger than the candidate's claim about its own success.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

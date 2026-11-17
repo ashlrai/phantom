@@ -7,3 +7,8 @@
 .nextLine { flex-basis: 100%; }
 .chip { padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--status-unknown-bg); color: var(--status-unknown-fg); }
 .warning { color: var(--status-danger-fg); }
+/* Launch order: the text shrinks and wraps, the buttons stay whole and drop to their own line in a 390 px column. */
+.orderRow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; font-size: var(--text-xs-size); }
+.orderRow[data-superseded='true'] .orderText { opacity: 0.5; }
+.orderText { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+.orderActions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-left: auto; }

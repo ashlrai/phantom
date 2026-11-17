@@ -3,47 +3,61 @@
  * GET /api/verse/agent-bus[?after=0&limit=50] reads a cursor page (limit 1..100).
  * POST /api/verse/agent-bus appends exactly one BusEnvelope, with the normal
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
+ * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&limit=50] is the same
+ * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
  * Address labels are routing data, not authenticated sender or recipient identities.
  * sendJson sanitizes returned data, so HTTP output is not necessarily byte-identical
  * to the stored envelope. No caller may choose the storage root or clock.
+ * GET .../needs-mason/asks is `phm asks --json` (asks.v1); POST .../needs-mason/asks/answer
+ * takes {id, answer: yes|no|done} and records it once with source desktop (asks.answer.v1).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { mirrorLeaderPostToInbox } from '../fleet/bus-leader-inbox.js';
 import { CHANNEL_ACK_TIMEOUT_MS } from '../fleet/channel-envelope.js';
 import { listNeedsMason, type NeedsMasonResolveResult } from '../fleet/needs-mason-resolve.js';
 import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
+import { answerAsk, listAsks, type AskAnswerResult } from '../fleet/asks.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
 const PATH = '/api/verse/agent-bus';
 const NEEDS_MASON = `${PATH}/needs-mason`;
+const MESSAGES = `${PATH}/messages`;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
+const ASKS = `${NEEDS_MASON}/asks`;
+const ASKS_ANSWER = `${ASKS}/answer`;
 type NeedsMasonApiResult = NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' };
 export interface AgentBusApiDeps {
   append?: typeof appendBusInbox;
   list?: typeof listBusInboxAfter;
   inspect?: typeof inspectBusInbox;
+  messages?: typeof readAgentMessages;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
   needsMason?: {
     list: typeof listNeedsMason;
     resolve: (input: unknown) => NeedsMasonApiResult | Promise<NeedsMasonApiResult>;
   };
+  asks?: { list: typeof listAsks; answer: (id: unknown, answer: unknown) => Promise<AskAnswerResult> };
 }
+const ASK_STATUS_HTTP: Record<AskAnswerResult['status'], number> = {
+  answered: 200, 'already-answered': 200, refused: 403, unknown: 404, ambiguous: 409, invalid: 400, unavailable: 503,
+};
 
 /** Dependencies permit isolated store tests; the public handler uses the default store. */
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE) return false;
-    if (method !== (path === NEEDS_MASON_RESOLVE ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
+    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_ANSWER) return false;
+    if (method !== (path === NEEDS_MASON_RESOLVE || path === ASKS_ANSWER ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
     if (method === 'GET' && (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now())) {
@@ -57,7 +71,8 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     let params: URLSearchParams;
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
-    const allowed = method === 'GET' && path === PATH ? ['after', 'limit'] : [];
+    const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'limit'] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
@@ -65,8 +80,27 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
       if (path === `${PATH}/edges`) {
         const result = readFleetEdges();
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+      } else if (path === MESSAGES) {
+        const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
+          agent: params.get('agent') ?? undefined, limit: params.get('limit') ?? undefined });
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+        const result = (deps.messages ?? readAgentMessages)(parsed.query);
+        sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } else if (path === NEEDS_MASON) {
         sendJson(res, 200, { v: 1, items: (deps.needsMason?.list ?? listNeedsMason)() });
+      } else if (path === ASKS) {
+        // 200 even when the ledger is unreadable: asks.v1 says ledger: unavailable, so the card can show unknown.
+        sendJson(res, 200, (deps.asks?.list ?? listAsks)());
+      } else if (path === ASKS_ANSWER) {
+        let raw: string;
+        try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
+        let input: unknown;
+        try { input = JSON.parse(raw); } catch { input = null; }
+        const fields = input !== null && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null;
+        const outcome = fields && Object.keys(fields).every(key => key === 'id' || key === 'answer')
+          ? await (deps.asks?.answer ?? ((id, answer) => answerAsk(id, answer, 'desktop')))(fields.id, fields.answer)
+          : await answerAsk(undefined, undefined, 'desktop');
+        sendJson(res, ASK_STATUS_HTTP[outcome.status], outcome);
       } else if (path === NEEDS_MASON_RESOLVE) {
         let raw: string;
         try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }

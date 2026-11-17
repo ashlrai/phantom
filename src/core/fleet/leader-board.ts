@@ -1,12 +1,18 @@
 /**
- * core/fleet/leader-board.ts — the Leader-as-CEO board (RQ-SWE3-LEADERLOOP-1).
+ * core/fleet/leader-board.ts — the Leader-as-CEO board (RQ-SWE3-LEADERLOOP-1,
+ * writer recovered from PR #4070 head 370dd1728f467bd07c4e04511e6ca7ce5037844e).
  *
- * Every Leader tick records one structured board state at
- * `<runs>/coordination/leader-board.json`; `phm fleet board --leader` surfaces it. The
- * board is the observability backbone for autonomous operation: what the
+ * `recordLeaderBoard` writes one structured board state at
+ * `<runs>/coordination/leader-board.json`; the API reader
+ * (`readFleetBoard`/`fleetBoardResponse` in leader-journal.ts) serves it.
+ * The board is the observability backbone for autonomous operation: what the
  * lanes look like, how deep the queue is per tier, whether merges are
  * landing, whether conflicting PRs are piling up, and what is blocked on
  * Mason.
+ *
+ * RECOVERY STATUS. This restores the #4070 writer path only — the protected
+ * leader.ts tick hook and CLI dialect were not recovered, so nothing calls
+ * this at runtime yet; wiring the tick is an explicit owner follow-up.
  *
  * LOOPBACK-SAFE AND BOUNDED. Every input is a local file under the runs dir
  * (queue/ready.tsv, queue/jobs.jsonl, NEEDS-MASON.md) through the same
@@ -16,13 +22,13 @@
  * tick that produced it.
  *
  * CONFLICTING-PR PROXY. GitHub's mergeable flag needs a live `gh pr list`,
- * which a tick must not spend. Queuegen instead enqueues an
+ * which a tick must not spend. Queuegen enqueues an
  * `RQ-REBASE-<REPO>-<pr>-<sha7>` job only for PRs GitHub reports DIRTY, so a
  * distinct-PR count over ready.tsv's rebase rows is the fleet's own honest
- * local view of "PRs sitting in conflicts" — it drops to zero as rebase jobs
- * launch and land.
+ * local conflict view — it drops to zero as rebase jobs launch and land.
  */
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -30,21 +36,14 @@ import { randomUUID } from 'node:crypto';
 import { parseReadyTsv } from './lane-console.js';
 import { readSource } from './runs-parked-queue.js';
 import { getLaneQueueCounts } from './queue-counts.js';
-import { readNeedsMason } from './needs-mason-resolve.js';
+import { readNeedsMason, type NeedsMasonItem } from './needs-mason-resolve.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 
-import {
-  FLEET_BOARD_SCHEMA as LEADER_BOARD_SCHEMA, FLEET_BOARD_FILE as LEADER_BOARD_FILE,
-  fleetBoardPath as leaderBoardPath, readFleetBoard as readLeaderBoard,
-  type FleetBoardLane as LeaderBoardLane, type FleetBoardConflictSample as LeaderBoardConflictSample,
-  type FleetBoardConflictTrend as LeaderBoardConflictTrend, type FleetBoardV1 as LeaderBoardV1,
-} from './leader-journal.js';
-
-export { LEADER_BOARD_SCHEMA, LEADER_BOARD_FILE, leaderBoardPath, readLeaderBoard };
-export type { LeaderBoardLane, LeaderBoardConflictSample, LeaderBoardConflictTrend, LeaderBoardV1 };
-export type { FleetBoardRead as LeaderBoardRead } from './leader-journal.js';
+export const LEADER_BOARD_SCHEMA = 'fleet.leader-board.v1' as const;
+export const LEADER_BOARD_FILE = 'leader-board.json';
 
 const MAX_READY_BYTES = 2 * 1024 * 1024;
+const MAX_BOARD_BYTES = 256 * 1024;
 /** Rolling conflict observations kept on the board (a few hours of ticks). */
 const MAX_HISTORY = 96;
 const MAX_NEEDS_ITEMS = 10;
@@ -53,9 +52,61 @@ const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
 /** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId), anywhere in a queue row. */
 const REBASE_JOB_RE = /RQ-REBASE-([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-[0-9a-f]{7,40}/i;
 
+export interface LeaderBoardLane {
+  lane: string;
+  ready: number | null;
+  parked: number | null;
+  running: number | null;
+  mergesLastHour: number | null;
+  oldestWaitSeconds: number | null;
+}
+
+export interface LeaderBoardConflictSample {
+  at: string;
+  count: number;
+}
+
+export type LeaderBoardConflictTrend = 'rising' | 'falling' | 'flat' | 'unknown';
+
+export interface LeaderBoardV1 {
+  schema: typeof LEADER_BOARD_SCHEMA;
+  generatedAt: string;
+  lanes: LeaderBoardLane[];
+  /** READY rows by queue tier; 'unknown' covers rows naming no/invalid tier. null when ready.tsv was unreadable. */
+  queueDepthByTier: Record<string, number> | null;
+  /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
+  mergesLastHour: number | null;
+  conflictingPrs: {
+    /** Distinct PRs with an RQ-REBASE row queued; null when ready.tsv was unreadable. */
+    count: number | null;
+    /** count minus the previous recorded sample; null without one. */
+    delta: number | null;
+    trend: LeaderBoardConflictTrend;
+    history: LeaderBoardConflictSample[];
+  };
+  needsMason: {
+    status: 'available' | 'missing' | 'unavailable';
+    count: number;
+    items: NeedsMasonItem[];
+  };
+  sources: {
+    readyTsv: 'healthy' | 'missing' | 'degraded';
+    queueCounts: 'ok' | 'unavailable';
+    needsMason: 'available' | 'missing' | 'unavailable';
+  };
+}
+
+export type LeaderBoardRead =
+  | { status: 'ok'; board: LeaderBoardV1 }
+  | { status: 'missing' | 'unavailable'; board: null };
+
 export type LeaderBoardRecordResult =
   | { wrote: true; path: string; board: LeaderBoardV1 }
   | { wrote: false; path: string; reason: string };
+
+export function leaderBoardPath(runsDir: string): string {
+  return join(runsDir, 'coordination', LEADER_BOARD_FILE);
+}
 
 function defaultRunsDir(): string {
   return process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
@@ -129,6 +180,45 @@ function conflictTrend(history: readonly LeaderBoardConflictSample[]): { delta: 
   const delta = latest.count - previous.count;
   const first = samples[0]!.count;
   return { delta, trend: latest.count > first ? 'rising' : latest.count < first ? 'falling' : 'flat' };
+}
+
+// ---------------------------------------------------------------------------
+// Read
+// ---------------------------------------------------------------------------
+
+function parseBoard(text: string): LeaderBoardV1 | null {
+  try {
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    if (raw['schema'] !== LEADER_BOARD_SCHEMA || typeof raw['generatedAt'] !== 'string') return null;
+    return raw as unknown as LeaderBoardV1;
+  } catch {
+    return null;
+  }
+}
+
+/** Bounded, symlink-refusing read of the board file. */
+export async function readLeaderBoard(opts: { runsDir?: string } = {}): Promise<LeaderBoardRead> {
+  const path = leaderBoardPath(opts.runsDir ?? defaultRunsDir());
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await file.stat();
+    if (!info.isFile() || info.size > MAX_BOARD_BYTES) return { status: 'unavailable', board: null };
+    const bytes = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await file.read(bytes, offset, bytes.length - offset, offset);
+      if (!bytesRead) return { status: 'unavailable', board: null };
+      offset += bytesRead;
+    }
+    const board = parseBoard(bytes.toString('utf8'));
+    return board === null ? { status: 'unavailable', board: null } : { status: 'ok', board };
+  } catch (error) {
+    return { status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unavailable', board: null };
+  } finally {
+    await file?.close().catch(() => undefined);
+  }
 }
 
 /** The prior conflict history on disk — validated, never trusted past shape and bound. */

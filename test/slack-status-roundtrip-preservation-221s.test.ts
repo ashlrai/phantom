@@ -146,7 +146,7 @@ describe('Slack "Phantom status" round trip (PR #4667 preservation)', () => {
     expect((await readLeaderInbox(options)).inbox.entries).toEqual([]);
     // The answer is logged through the existing Leader reply record and bus.
     expect(readFileSync(join(runsDir(), 'leader', 'MASON-OUTBOX.md'), 'utf8')).toContain('Leader: Phantom status,');
-    const page = listBusInboxAfter(0, 50, { root: options.busRoot });
+    const page = listBusInboxAfter(0, 50, { root: options.busRoot, now: options.now });
     expect(page.status === 'ok' && page.messages.some(row => row.envelope.from === 'leader' &&
       (row.envelope.body as { kind?: string }).kind === 'leader-reply')).toBe(true);
 

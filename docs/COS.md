@@ -63,6 +63,16 @@ pass for a bounded window — a host timer (for example launchd) or an agent
 can start it once and queued tasks get drafted without a person. The loop
 only drafts; sending still needs digest approval.
 
+`--peer-plan` lets a drafted answer also hand bounded coordination requests
+(at most 8, direct to registered peers, with an optional deadline within 7 days)
+to peers through the agent peer bus. These are claims only and grant no
+execution authority. It is a dry run unless `--peer-apply` is also given; the
+peer session comes from `ASHLR_COS_PEER_LANE`, `ASHLR_COS_PEER_SESSION` and
+`ASHLR_COS_PEER_TOKEN`. KILL, paused comms, absent or expired peer identities
+and unregistered recipients suppress the send. Each sent plan is recorded once
+in `orchestration.json` (visible through `fleet_orchestration_read`), so a work
+item never sends twice.
+
 ## Approve
 
 Read the whole draft, including recipient, thread and text, before approving.

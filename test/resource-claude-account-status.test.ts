@@ -28,6 +28,19 @@ function mock(payload?: unknown, patch?: Partial<verify.VerifySubprocessResult>)
 }
 
 describe('Claude native account status', () => {
+  it('publishes an organization-only stable scope without native identity', async () => {
+    const subprocess = mock({ loggedIn: true, authMethod: 'claude.ai', email: 'fixture@example.invalid', orgId: 'org-fixture-123' });
+    const first = await probeClaudeAccountStatus(options());
+    expect(first.accountScope).toMatch(/^claude:[0-9a-f]{16}$/);
+    subprocess.mockResolvedValue(processResult({ loggedIn: true, authMethod: 'claude.ai', email: 'other@example.invalid', orgId: 'org-fixture-123' }));
+    expect((await probeClaudeAccountStatus(options())).accountScope).toBe(first.accountScope);
+    expect(JSON.stringify(first)).not.toContain('org-fixture-123');
+    expect(JSON.stringify(first)).not.toContain('fixture@example.invalid');
+  });
+  it.each([undefined, null, 42, 'a'.repeat(65), 'org fixture', 'sk-ant-fixture-123', 'eyJfixture123', 'a@b.c', 'ghp_fixture123', 'gho_fixture123', 'github_pat_fixture123', 'xoxfixture123', 'org.fixture123'])('omits unsafe organization scope %s', async (orgId) => {
+    mock({ loggedIn: true, authMethod: 'claude.ai', email: 'fixture@example.invalid', orgId });
+    expect((await probeClaudeAccountStatus(options())).accountScope).toBeNull();
+  });
   it.each([false, true])('preserves lifecycle identity without invoking it (null prototype: %s)', async (nullPrototype) => {
     const prepare = vi.fn();
     const lifecycle = Object.assign(Object.create(nullPrototype ? null : Object.prototype), { prepare });

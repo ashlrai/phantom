@@ -54,6 +54,7 @@ function deps(items: WorkBoardItem[], over: Partial<FleetRecheckDeps> = {}): Fle
     readRuntimeIdentity: () => runtime, readFleetBoard: () => ledger, readChannelHealth: () => channels,
     listWorkBoard: (): WorkBoardResult => ({ items, inbox: 'ok', truncated: false }),
     listCoordination: () => ({ source: 'unavailable', claims: [] }),
+    listLiveWorkers: () => { throw new Error('absent'); },
     ...over,
   };
 }
