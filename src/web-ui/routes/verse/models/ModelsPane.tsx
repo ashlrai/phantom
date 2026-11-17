@@ -59,7 +59,7 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
     {rows === undefined ? <CardNote tone={result.status === 'error' ? 'unknown' : 'muted'}>
       {result.status === 'error' ? 'Could not read the model registry, so its state is unknown.' : 'Checking models…'}
     </CardNote> : rows.length === 0 ? <CardNote>No models are registered yet. Add one with: phm models verify &lt;id&gt; --provider &lt;name&gt; --source &lt;official doc URL&gt;</CardNote>
-      : <table className={styles.table}>
+      : <div className={styles.tableScroll}><table className={styles.table}>
         <thead><tr><th scope="col">Model</th><th scope="col">Provider</th><th scope="col">Lanes</th><th scope="col">Status</th><th scope="col">Verified on</th><th scope="col">Source</th><th scope="col">Action</th></tr></thead>
         <tbody>{rows.map(row => {
           const state = states.get(row.id), busy = state !== undefined && 'busy' in state;
@@ -82,6 +82,6 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
             </td>
           </tr>;
         })}</tbody>
-      </table>}
+      </table></div>}
   </Card></div>;
 }
