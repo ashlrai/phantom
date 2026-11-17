@@ -331,6 +331,7 @@ Every command, grouped by topic.
     worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                              Show job launches, finishes and merges from the jobs ledger.
     library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                       Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    autonomy [--hours 24] [--json]                                                              Measure merges, human involvement, fleet improvements, releases and main health from local evidence.
     signals [--json]                                                                            Read real repository adoption signals.
     radar list|run|diff [--json]                                                                Observe public docs and package metadata; GET only, six-hour per-source floor.
     observe session <id> [--json]                                                               Read one roster session. Transcript stays unknown until desktop-operator registers a reader.
@@ -408,6 +409,7 @@ Every command, grouped by topic.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     autofix [--apply] [--dry-run] [--json] [--only <fixer>]                               Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.
+    nodes [--json] [--can-take <lane>]                                                    Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.
     node join|beat|enqueue|plan|pull|complete|status [--json]                             Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.
     node bootstrap --dry-run [--json]                                                     Plan a persistent Linux node; registry integration is a stub, no provisioning.
     sandbox list                                                                          List active git-worktree sandboxes (M21 safety foundation).

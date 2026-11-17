@@ -219,6 +219,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'MetricsFeed (schemaVersion 1); unknown measurements are null; refused input exits 2',
   },
   {
+    usage: 'phm nodes [--json] [--can-take <lane>]',
+    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, CPU headroom, lanes, running jobs and a plain-words state. --can-take lists the computers able to take a job for that lane now. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
+    safety: 'read',
+    jsonShape: '{schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,phantom,freeMemoryBytes,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?}',
+  },
+  {
     usage: 'phm node bootstrap --dry-run [--json]',
     description: 'Print persistent Linux node setup and future registry lease steps; no provisioning or registry calls. Exit 0 plan, 2 bad usage.',
     safety: 'read',
@@ -1188,6 +1194,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'disk [--wt-dir <abs>] [--json]', desc: 'Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.', topic: 'safety' },
   { cmd: 'disk-maint [--apply] [--json] [--only <class>] [--allow <class>]', desc: 'Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.', topic: 'safety' },
   { cmd: 'autofix [--apply] [--dry-run] [--json] [--only <fixer>]', desc: 'Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.', topic: 'safety' },
+  { cmd: 'nodes [--json] [--can-take <lane>]', desc: 'Your computers as one pool: which are reachable, running Phantom and ready for work. Read only.', topic: 'safety' },
   { cmd: 'node join|beat|enqueue|plan|pull|complete|status [--json]', desc: 'Join this computer to the node router: caps, owner-scoped jobs, fenced per-job leases.', topic: 'safety' },
   { cmd: 'node bootstrap --dry-run [--json]', desc: 'Plan a persistent Linux node; registry integration is a stub, no provisioning.', topic: 'safety' },
   { cmd: 'sandbox list',                 desc: 'List active git-worktree sandboxes (M21 safety foundation).', topic: 'safety' },
