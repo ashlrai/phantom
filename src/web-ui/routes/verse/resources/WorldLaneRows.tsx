@@ -16,6 +16,7 @@ import { openResources } from './resources-store.js';
 import { worldModelQuery } from './world-query.js';
 import { sameWorldLaneRow, WORLD_LANE_STALE_MS, worldLaneRows, type LaneEngine, type WorldLaneRow } from './world-lane-rows.js';
 import styles from './WorldLaneRows.module.css';
+import { BurnSparkline } from './BurnSparkline.js';
 
 const AGE_CLOCK_MS = 60_000;
 
@@ -133,6 +134,7 @@ const LaneButton = memo(function LaneButton({ row, expanded }: { row: WorldLaneR
           {expanded ? <span className={styles.forecast}>{row.forecastText}</span> : null}
         </span>
         {expanded ? <span className={styles.meta}>Used {row.usage} · left {row.remaining}</span> : null}
+        {expanded ? <BurnSparkline history={row.history} /> : null}
         {expanded ? <span className={styles.meta}>Burn {row.burn} · reset {row.reset}</span> : null}
         {expanded ? <span className={styles.source}>Source {row.source} · <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time></span> : null}
       </button>

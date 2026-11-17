@@ -652,6 +652,18 @@ repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
 
+## Per-lane measured history
+
+`resource-live/store.ts` exports `resourceHistoryPath`, `readResourceHistoryFile`,
+`parseResourceHistory`, `appendResourceHistory`; `history.ts` exports
+`summarizeHistory`, `projectLaneHistory`, `readLaneHistory`. Types:
+`ResourceHistoryPoint`, `ResourceHistoryFile`, `LaneHistory`, `RESOURCE_HISTORY_SCHEMA`.
+The private `<runs>/state/resource-live-history.json` (`resource-live.history.v1`)
+stores seven days, at most 2016 points per allowance, spaced at least five minutes.
+`ResourceLiveFeed.history` and `loadSensorReport().history` carry lane-keyed history;
+`WorldProjectInput.laneHistory` projects optional `WorldModel.sensors.lanes[].history`
+with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHistory`.
+
 ## Devin weekly capacity
 
 `src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,

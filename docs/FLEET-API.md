@@ -177,6 +177,16 @@ CLI has related, independently shaped views and controls: `phm fleet status`,
 from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 [inbox CLI](../src/cli/inbox.ts) for flags and authority gates.
 
+`phm fleet status` also reports disk use and the ten largest proven cleanup
+candidates. `--json` adds typed `disk` data (`fleet.disk-attribution.v1`):
+categories, per-job entries, source health and ranked `cleanupCandidates`.
+Sizes are logical bytes, not promised physical savings; missing or partial
+totals are `null` with a measured lower bound. Worktrees use the census safety
+checks; job logs, publish results, prompts and notes are measured by metadata
+only and retained as evidence. Active, dirty, protected and uncertain trees
+are never candidates. This command deletes nothing. Roots honor `ASHLR_WT_DIR`
+and `ASHLR_RUNS_DIR`; size walks and git probes have shared two-second budgets.
+
 ## Merge queue age from a snapshot
 
 Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
@@ -289,7 +299,13 @@ The Fleet screen shows a map of the Leader, reported lanes and active jobs.
 Run `phm fleet map --minutes 60 --json` for the `fleet.map.v2` graph (replaces
 the nested v1 tree). `GET /api/verse/fleet/control/map?minutes=60` serves the same
 contract to the existing 2D/3D views with a current read session; minutes is 1..1440.
-Nodes carry provider text badges; reporting edges point from child to parent.
+Every node and every edge carries a `provider` field: `Anthropic`, `OpenAI`,
+`Cognition`, `xAI`, `Google`, `Z.ai`, `Cursor`, `Local` or `unknown`. A job's
+provider comes from its model id, then its lane; an edge carries its sender's
+(`from`) provider. One function decides this, `providerFor` in
+`src/core/fleet/provider.ts`, and the 2D and 3D maps draw its badge on each
+agent and message line. A name it does not recognise is `unknown` and shows a
+neutral “?” badge, never a guess. Reporting edges point from child to parent.
 Session evidence preserves exact lanes and stale jobs; missing model/provider/health
 is `unknown`. The 2D map opens the existing job detail sheet. The 3D view retains
 machine placement and reads shared job labels and message counts.

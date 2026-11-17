@@ -5,6 +5,7 @@ import { session } from '../fixtures.test-support.js';
 import { getDockState, openDockPane, resetDockStore } from '../dock/dock-store.js';
 import * as registry from './pane-registry.js';
 import type { PaneDefinition, PaneProps } from './pane-registry.js';
+import { resetActivityForTest } from '../shell/useActivity.js';
 
 const modules = import.meta.glob('../**/*.pane.tsx');
 const registrations = new Map<string, PaneDefinition[]>();
@@ -54,8 +55,8 @@ beforeAll(async () => {
   ({ Dock } = await import('../dock/Dock.js'));
 }, 120_000);
 
-beforeEach(() => { localStorage.clear(); resetDockStore(); evictAll(); });
-afterEach(() => { cleanup(); evictAll(); vi.unstubAllGlobals(); });
+beforeEach(() => { localStorage.clear(); resetDockStore(); evictAll(); resetActivityForTest(); });
+afterEach(() => { cleanup(); evictAll(); resetActivityForTest(); vi.unstubAllGlobals(); });
 
 describe('all discovered panes together', () => {
   it('registers exactly one unique id per pane file', () => {
@@ -107,6 +108,18 @@ describe('all discovered panes together', () => {
         const view = render(<Body {...context} paneId={pane.id} visible presentation="column" requests={{ terminal: null, preview: null, diff: null }} />);
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
         expect(visibleText(view.container), `${pane.id} ${state}`).not.toBe('');
+        if (state === 'empty') {
+          const unavailable: Record<string, string> = {
+            feed: 'Running chat activity is unavailable.',
+            compute: 'No lane observations.',
+            'fleet-direct': 'Nodes not reported right now',
+            'fleet-host': 'Allowed apps are unavailable. Controls are disabled.',
+            goals: 'Could not read goals.',
+            ideas: 'Goal links unavailable.',
+            library: 'Pinned items unavailable.',
+          };
+          if (unavailable[pane.id]) expect(view.container).toHaveTextContent(unavailable[pane.id]!);
+        }
       }, 30_000);
     }
   }

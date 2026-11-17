@@ -266,7 +266,7 @@ describe('resource-live tick', () => {
     expect(JSON.stringify(byId(sidecar, 'gemini'))).not.toContain(':0');
     expect(result.polled).toHaveLength(RESOURCE_LIVE_ALLOWANCES.length);
     expect(statSync(resourceLivePath(runsDir)).mode & 0o777).toBe(0o600);
-    expect(readdirSync(join(runsDir, 'state'))).toEqual(['resource-live.json']);
+    expect(readdirSync(join(runsDir, 'state'))).toEqual(['resource-live-history.json', 'resource-live.json']);
   });
 
   it('falls through the source order and records which tier answered', async () => {
@@ -584,7 +584,7 @@ describe('feeds', () => {
   });
 
   it('yields nothing for a missing or malformed sidecar', async () => {
-    expect(await loadResourceLiveFeed(NOW, tmp())).toEqual({ readings: [], pace: [] });
+    expect(await loadResourceLiveFeed(NOW, tmp())).toEqual({ readings: [], pace: [], history: {} });
     expect(projectResourceLiveFeed('nope', NOW)).toEqual({ readings: [], pace: [] });
     expect(projectResourceLiveFeed({ schema: RESOURCE_LIVE_SCHEMA, readings: [unverified('devin')] }, NOW)).toEqual({ readings: [], pace: [] });
   });
