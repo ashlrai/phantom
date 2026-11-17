@@ -475,7 +475,7 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
 // usage-readings.log — latest journal row per pool.
 // ---------------------------------------------------------------------------
 
-interface UsageJournalRow {
+export interface UsageJournalRow {
   pool: string;
   pctUsed: number | null;
   resetAt: string | null;
@@ -601,7 +601,8 @@ function creditFor(
 // Snapshot assembly — never throws.
 // ---------------------------------------------------------------------------
 
-function defaultUsageLogPaths(queueDir: string): string[] {
+/** Queue copy first, then the $ASHLR_HOME journal (shared with the Ideas list). */
+export function defaultUsageLogPaths(queueDir: string): string[] {
   const configured = process.env['ASHLR_HOME'];
   const home = typeof configured === 'string' && configured.trim() !== '' && isAbsolute(configured)
     ? configured
