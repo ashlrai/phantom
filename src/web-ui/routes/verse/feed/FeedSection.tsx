@@ -94,6 +94,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const releaseStages = useQuery(releaseStagesQuery, { enabled: visible, freshMs: 300_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
+  const activityData = activity.data?.sources && Array.isArray(activity.data.running) ? activity.data : null;
   const refetchShared = useRefetch(sharedFeedQuery);
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
@@ -184,11 +185,11 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
       {activity.status === 'stale' ? <CardNote tone="unknown">Activity is stale; showing the last successful read.</CardNote> : null}
-      {activity.data && activity.data.sources.chats !== 'ok' ? <CardNote tone="unknown">Chat activity could not be fully read.</CardNote> : null}
-      {!activity.data ? <CardNote tone="unknown">{activity.status === 'unavailable' ? 'Running chat activity is unavailable.' : 'Loading running chats…'}</CardNote>
-        : activity.data.running.length === 0 ? activity.data.sources.chats === 'ok' ? <CardNote>No chats running in the latest activity snapshot.</CardNote> : null
+      {activityData && activityData.sources.chats !== 'ok' ? <CardNote tone="unknown">Chat activity could not be fully read.</CardNote> : null}
+      {!activityData ? <CardNote tone="unknown">{activity.data || activity.status === 'unavailable' ? 'Running chat activity is unavailable.' : 'Loading running chats…'}</CardNote>
+        : activityData.running.length === 0 ? activityData.sources.chats === 'ok' ? <CardNote>No chats running in the latest activity snapshot.</CardNote> : null
           : <ul className={styles.runningList}>
-            {activity.data.running.map(chat => <li key={chat.sessionId}>
+            {activityData.running.map(chat => <li key={chat.sessionId}>
               <button type="button" className={styles.runningButton} onClick={() => openChat(chat.sessionId)}>
                 <span>{chat.title || 'Untitled chat'}</span>
                 <span className={styles.runningDetail}>{chat.engine} · {liveLine(chat.live) ?? 'Running'}</span>
@@ -202,7 +203,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     {allDown
       ? <CardNote tone="unknown">The Feed is unavailable: none of its sources answered. It retries on its own.</CardNote>
       : failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
-    <CardNote tone="unknown">{shared.data ? `Unknown sources: ${Object.entries(shared.data.sources).filter(([, state]) => state === 'unknown').map(([name]) => name === 'leaderReplies' ? 'leader replies' : name).join(', ') || 'none'}.` : 'Shared feed sources are unknown.'}</CardNote>
+    <CardNote tone="unknown">{shared.data?.sources ? `Unknown sources: ${Object.entries(shared.data.sources).filter(([, state]) => state === 'unknown').map(([name]) => name === 'leaderReplies' ? 'leader replies' : name).join(', ') || 'none'}.` : 'Shared feed sources are unknown.'}</CardNote>
     {ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
     {loading ? <CardNote>Loading the feed…</CardNote>
       : !allDown && shown.length === 0

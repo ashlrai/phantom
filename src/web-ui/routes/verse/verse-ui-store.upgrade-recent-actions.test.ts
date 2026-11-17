@@ -30,7 +30,7 @@ describe('3.29.15 desktop recent actions upgrade', () => {
       active: 'browser',
       byChat: { 'chat-2': { open: true, tabs: ['terminal', 'browser'], active: 'browser', splitWith: 'terminal' } },
     };
-    const expectedSaved = { ...previous, recentActions: expectedActions, dock: expectedDock };
+    const expectedSaved = { ...previous, recentActions: expectedActions, dock: expectedDock, feedMutedKinds: [] };
 
     expect(ui.loadVerseUi()).toMatchObject({
       section: previous.section,
