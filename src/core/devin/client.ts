@@ -124,6 +124,8 @@ export interface DevinSession {
   statusDetail: string | null;
   /** null when omitted (create responses may omit it — see the module header). */
   acusConsumed: number | null;
+  /** `created_at` as epoch ms (integer seconds or ISO accepted); null when absent or unreadable. */
+  createdAtMs?: number | null;
   pullRequests: Array<{ url: string; state: string | null }>;
   tags: string[];
   title: string | null;
@@ -185,6 +187,16 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => {
   t.unref?.();
 });
 
+/** An API instant as epoch ms: integer seconds (below 1e11) or ms, or an ISO string. Anything else is null. */
+export function devinInstantMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value < 1e11 ? value * 1000 : value;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
 function isHttpsUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2048) return false;
   try {
@@ -244,6 +256,7 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
     if (typeof acus !== 'number' || !Number.isFinite(acus) || acus < 0) return null;
     acusConsumed = acus;
   }
+  const createdAtMs = devinInstantMs(raw['created_at']);
 
   const prs = raw['pull_requests'];
   const pullRequests: DevinSession['pullRequests'] = [];
@@ -267,6 +280,7 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
     status: status as DevinSessionStatus,
     statusDetail: typeof detail === 'string' ? detail.slice(0, 60) : null,
     acusConsumed,
+    createdAtMs,
     pullRequests,
     tags,
     title: typeof raw['title'] === 'string' ? raw['title'].slice(0, 200) : null,

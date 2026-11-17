@@ -1,11 +1,22 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { decidePairing, type PairingLane } from '../routing/pairing.js';
+import { validResetCalendarPool } from '../routing/reset-pressure.js';
 
 /** Counts accepted pool changes, excluding initial assignment and held proposals. */
 export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), now = Date.now() / 1000) {
   // Quality receipts are independent of per-job route residency and its move count.
   let laneQuality: unknown[] | null = null;
+  let pairing: ReturnType<typeof decidePairing> | null = null;
+  try {
+    const input = JSON.parse(await readFile(join(root, 'queue', 'pairing-lanes.json'), 'utf8'));
+    if (!Array.isArray(input?.lanes) || !input.lanes.every((row: PairingLane) => row &&
+      typeof row.lane === 'string' && row.lane.trim() && ['frontier', 'cheap'].includes(row.laneClass) &&
+      typeof row.available === 'boolean' && validResetCalendarPool(row.pool)) ||
+      new Set(input.lanes.map((row: PairingLane) => row.lane)).size !== input.lanes.length) throw new Error('Invalid pairing lanes');
+    pairing = decidePairing(input.lanes, now * 1000);
+  } catch { /* Missing evidence stays unknown. */ }
   try {
     const controller = JSON.parse(await readFile(join(root, 'queue', 'fleet-controller.json'), 'utf8'));
     if (Array.isArray(controller?.quality_receipts)) laneQuality = controller.quality_receipts;
@@ -22,8 +33,8 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
       return { job, pool: receipt.pool, decidedAt: receipt.decided_at, wasteReason: typeof receipt.waste_reason === 'string' ? receipt.waste_reason : null,
         'route-moves-per-hour': receipt.moves.filter(t => t > now - 3600 && t <= now).length };
     });
-    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality };
+    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing };
   } catch {
-    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality };
+    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing };
   }
 }

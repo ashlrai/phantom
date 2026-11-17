@@ -1,3 +1,12 @@
+# Advisory routing pairing
+
+`decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
+is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
+sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;
+implementation escalates only for an explicit implementation bottleneck.
+`explainRoutes(root, nowSeconds)` adds nullable `pairing` from the optional
+`queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
+
 # Phantom — shared core contract (M1/M2 baseline)
 
 This is the binding interface for Phantom's original index, launcher and
@@ -494,6 +503,21 @@ It shares the existing read-only queue parser through
 in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' | 'degraded'`
 and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
 report for unusable/incomplete input, and 2 indicates invalid arguments.
+
+The CLI also emits `train: GreenMergeTrain | null`. The pure
+`planGreenMergeTrain(prs: readonly MergeBatchPr[], run: MergeBatchRun, rows: readonly unknown[]): GreenMergeTrain`
+in `src/core/fleet/green-merge-train.ts` consumes the same validated snapshot and
+action report, with healthy hold/coverage reads required by its caller. A train
+has `authority: 'proposal-only'`, `validation: 'required-checks-on-combined-commit'`,
+`baseRef: string | null`, `members: {number, headSha}[]` and `deferred: {number, reason}[]`.
+It selects at most 16 ready enqueue actions in PR-number order, with one base,
+disjoint files, explicit OPEN/non-draft identities, matching full head OIDs,
+complete files confirmed by changedFiles, and nonempty, uncapped observed checks
+with no failures/pending entries and at least one success (completed skipped/neutral
+lanes are allowed). Missing/unhealthy queue or hold evidence produces null in the CLI.
+This proposes combined validation only: consumers must recheck head/base identities,
+required-check names/App identities, review, holds and Security policy through the
+existing protected merge queue. It grants no CI reuse or permission to merge.
 Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
 
 ## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
@@ -605,6 +629,18 @@ private journal is capped at 2,000 receipts and fails closed at capacity; state
 repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
+
+## Devin weekly capacity
+
+`src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
+`publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,
+`devinPreviewObservation`, `devinWeeklyWindow`, `devinWeeklyAllowance`, `devinWeeklyLine`
+and `DevinWeeklyCapacity { used, limit, remaining, limit_source, window_start, reset_at,
+burn_rate_per_hour, sessions, source, observed_at, state, reason }`. Unknown fields are
+`null`. `DevinSession.createdAtMs` (optional) and `devinInstantMs` come from
+`core/devin/client.ts`. Config: `devin.weeklyAcuAllowance`, `devin.weeklyResetAt`.
+`ResourceLiveSourceOptions` gains `readDevinWeekly`, `readDevinPublished` and
+`readDevinModels`. See [Devin weekly allowance](docs/RESOURCE-EVIDENCE.md#devin-weekly-allowance).
 
 ## Node host capacity
 
