@@ -39,7 +39,7 @@ const SNAPSHOT_QUERY = `query($name: String!, $cursor: String) {
     pullRequests(states: OPEN, first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        id number headRefOid baseRefName isDraft author { login }
+        id number title body updatedAt additions deletions headRefOid baseRefName isDraft author { login }
         mergeable mergeStateStatus reviewDecision isInMergeQueue
         autoMergeRequest { enabledAt }
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
@@ -154,6 +154,8 @@ function readSnapshot(gh, repo) {
       const files = (node.files?.nodes ?? []).map((file) => String(file?.path ?? ''));
       prs.push({
         id: String(node.id ?? ''),
+        title: String(node.title ?? ''), body: String(node.body ?? ''), updatedAt: String(node.updatedAt ?? ''),
+        additions: Number(node.additions), deletions: Number(node.deletions),
         number: Number(node.number),
         headSha: String(node.headRefOid ?? ''),
         baseRef: String(node.baseRefName ?? ''),
@@ -194,6 +196,7 @@ async function cycle(args) {
   const ensureOk = (payload) => { if (payload?.errors) throw new Error('refused'); };
   const summary = runMergeQueueCycle({
     readSnapshot: (repo) => readSnapshot(gh, repo),
+    readLeverageJobs: () => { try { return readFileSync(join(RUNS, 'metrics', 'jobs.jsonl'), 'utf8'); } catch { return null; } },
     enqueue: (_repo, pr) => ensureOk(run(ENQUEUE, pr)),
     updateBranch: (_repo, pr) => ensureOk(run(UPDATE, pr)),
     readQueueIds: () => readQueueIds(queue),

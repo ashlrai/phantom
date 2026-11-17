@@ -347,3 +347,24 @@ describe('runMergeQueueCycle', () => {
     expect(fake.state()).toEqual({ v: 1, attempts: {}, drained: {} });
   });
 });
+
+it('spends a shared cycle cap on the highest leverage PR across repositories', () => {
+  const other = 'ashlrai/locus';
+  const fake = makeIo({ snapshots: new Map([
+    [REPO, snap([pr({ title: 'chore: formatting' })])],
+    [other, snap([pr({ title: 'feat: unlock fleet capability' })], { repo: other })],
+  ]) });
+  runMergeQueueCycle(fake.io, { repos: [REPO, other], cycleCap: 1 });
+  expect(fake.calls.filter(call => call.startsWith('enqueue'))).toEqual([`enqueue ${other}#1@aaaaaaa`]);
+});
+
+it('waits for a red predecessor and for cross-repo dependencies to merge', () => {
+  const other = 'ashlrai/locus';
+  const fake = makeIo({ snapshots: new Map([
+    [REPO, snap([pr({ checks: 'FAILURE' }), pr({ number: 2, title: 'feat: unlock capability', body: `Depends on https://github.com/${REPO}/pull/1` })])],
+    [other, snap([pr({ title: 'feat: unlock capability', body: `Depends on https://github.com/${REPO}/pull/2` })], { repo: other })],
+  ]) });
+  const report = runMergeQueueCycle(fake.io, { repos: [REPO, other] });
+  expect(report.enqueued).toBe(0);
+  expect(report.repos.map(repo => repo.totals.dependency)).toEqual([1, 1]);
+});
