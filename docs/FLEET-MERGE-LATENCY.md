@@ -22,6 +22,16 @@ Missing enqueue still permits total readiness-to-merge measurement; it cannot
 establish the dominant delay. Queue execution includes any merge-group checks;
 these spans identify where time passed, not the cause between observations.
 
+Each row also has typed `status`: `stage`, `since`, `waiting_s`, and `delays_s`
+for queue, required checks and conflicts. These sum observed stage intervals,
+not unobserved lifetime delays; absent or ambiguous evidence is `null`.
+Simultaneous contradictory stages stay unknown. Queue entry and individual
+check successes cannot clear a blocker; `checks_passed` clears only checks.
+`eligible_to_merge_s` is completed readiness-to-merge time; `ready_wait_s` is
+open readiness age. Terminal PRs have no current wait, and measured intervals
+stop at merge or closure. The same report reaches the read-only desktop API at
+`/api/verse/fleet/merge-latency`. Required checks and sanctioned merge paths stay in place.
+
 The existing [merge queue loop](QUEUE.md#merge-queue-throughput-loop) repairs
 green, mergeable fleet PRs with auto-merge armed but no actual queue membership.
 It uses the normal head-pinned enqueue request, with the same holds, file gates
@@ -47,6 +57,18 @@ are based on observed transitions and do not establish the cause between samples
 merge, still queued now, and blocked on each reason. An unmeasurable span counts
 `missing`, never zero; in a measurable breakdown an absent reason is a measured
 zero. The plain report summarizes it in one `Time in each queue state` line.
+
+Start with `oldest_actionable_delay` in the JSON report, or the `Oldest actionable
+queue delay` line in plain output. It identifies one open PR, its enqueue time,
+seconds queued, blocker, typed `next_action` and plain recommendation. It considers
+all ages, with ties ordered by repo then PR number. Recorded checks, conflicts,
+review or other blockers need attention immediately; waits on the queue itself
+need attention at `--stalled-after`.
+Terminal PRs, missing or repeated enqueue times, and contradictory simultaneous
+states cannot become the recommendation. A single check success never clears
+other required checks; aggregate readiness can clear the blocker. Null means no
+actionable measured entry (check `known` for an unreadable ledger). Advice never
+rearms a retry or bypasses required checks, reviews or merge-queue rules.
 
 ## Bounded retry for transient queue failures
 

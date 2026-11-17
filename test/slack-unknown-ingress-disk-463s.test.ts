@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordSlackObservation, slackJournalPath, type SlackObservation } from '../src/core/agents/slack-journal.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { readSlackRequestTrace } from '../src/core/agents/slack-request-trace.js';
 
 const channel = 'C0FAKE4631';
@@ -20,7 +21,7 @@ describe('persisted unknown Slack ingress allocation', () => {
     const runsDir = join(root, 'runs');
     const stateRoot = join(root, 'state');
     const observation = (at: string, channelId: string, ingress?: SlackObservation['bus']): SlackObservation => ({
-      at, channelId, threadTs: thread, messageTs, decision: 'ingested',
+      at, channelId, threadTs: thread, messageTs, decision: 'ingested', requestId: fakeRequestId(`463s:${channelId}`),
       ...(ingress === undefined ? {} : { bus: ingress }),
     });
     for (const row of [
@@ -36,8 +37,9 @@ describe('persisted unknown Slack ingress allocation', () => {
       channel, thread, state, ts,
     });
     writeFileSync(storePath, JSON.stringify({ version: 1, messages: {
-      ['a'.repeat(64)]: receipt('a'.repeat(64), 'sent', replyTs),
-      ['b'.repeat(64)]: receipt('b'.repeat(64), 'attempted', '1700000030.000000'),
+      // Both receipts are keyed to the SAME-channel request; the sibling channel's request has its own key and no send.
+      [replyKey(fakeRequestId(`463s:${channel}`))]: receipt('a'.repeat(64), 'sent', replyTs),
+      [replyKey(fakeRequestId('463s:other'))]: receipt('b'.repeat(64), 'attempted', '1700000030.000000'),
     } }), { mode: 0o600 });
     const journalPath = slackJournalPath(runsDir);
     const before = [readFileSync(journalPath), readFileSync(storePath)];

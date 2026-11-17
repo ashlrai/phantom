@@ -29,6 +29,8 @@ export interface ClaudeAccountStatusResult {
   subscriptionType: string | null;
   /** Private comparison hint only; never publish the native identity or this hash. */
   accountHint: string | null;
+  /** Publishable scope derived only from a validated opaque organization id. */
+  accountScope: string | null;
   startedAt: string;
   finishedAt: string;
 }
@@ -76,10 +78,11 @@ export async function probeClaudeAccountStatus(options: ClaudeAccountStatusOptio
   try { pinned = validateClaudeAccountStatusOptions(options); } catch { throw new Error('Invalid Claude account status configuration'); }
   const started = performance.now(); const startedAt = new Date().toISOString();
   const result = (status: ClaudeAccountStatusResult['status'], reason: string,
-    metadata?: Pick<ClaudeAccountStatusResult, 'loggedIn' | 'authMethod' | 'subscriptionType' | 'accountHint'>): ClaudeAccountStatusResult => ({
+    metadata?: Pick<ClaudeAccountStatusResult, 'loggedIn' | 'authMethod' | 'subscriptionType' | 'accountHint' | 'accountScope'>): ClaudeAccountStatusResult => ({
     schemaVersion: 1, scope: 'claude-native-auth-status', status, reason,
     loggedIn: metadata?.loggedIn ?? null, authMethod: metadata?.authMethod ?? 'unknown',
     subscriptionType: metadata?.subscriptionType ?? null, accountHint: metadata?.accountHint ?? null,
+    accountScope: metadata?.accountScope ?? null,
     startedAt, finishedAt: new Date().toISOString(),
   });
   if (pinned.signal?.aborted) return result('cancelled', 'status-cancelled');
@@ -130,6 +133,9 @@ export async function probeClaudeAccountStatus(options: ClaudeAccountStatusOptio
       loggedIn: value.loggedIn, authMethod: method, subscriptionType,
       accountHint: method === 'claude.ai' && text(value.email) && text(value.orgId)
         ? createHash('sha256').update(JSON.stringify(['claude-native-auth-v1', value.email, value.orgId])).digest('hex') : null,
+      accountScope: method === 'claude.ai' && typeof value.orgId === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/.test(value.orgId) && !/^(?:sk-|sk_|eyJ|ghp_|gho_|github_pat_|xox)/i.test(value.orgId)
+        ? 'claude:' + createHash('sha256').update(JSON.stringify(['phantom-account-scope-v1', 'claude', value.orgId])).digest('hex').slice(0, 16) : null,
     });
   } catch { return invocationAttempted && !cleanupConfirmed
     ? result('uncertain', 'status-termination-uncertain') : result('failed', 'status-process-failed'); }

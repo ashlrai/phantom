@@ -1,4 +1,5 @@
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
+import { brandBadge, terminalColor } from '../core/brand/registry.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm fleet lane-slots [--json]
@@ -16,7 +17,8 @@ export async function cmdFleetLaneSlots(args: string[]): Promise<number> {
     slots: lane.capReason === 'No standing tick has reported lanes in the last 10 minutes.' ? null : lane.slots,
   }));
   const result = sanitizePublicJson({ schema: 'fleet.lane-slots.v1', lanes });
+  const color = terminalColor();
   console.log(args.includes('--json') ? JSON.stringify(result)
-    : lanes.map(lane => `${lane.lane}: ${lane.slots ?? 'unknown'} slots, ${lane.busy} working`).join('\n'));
+    : lanes.map(lane => `${brandBadge(lane.lane, color)}${lane.lane}: ${lane.slots ?? 'unknown'} slots, ${lane.busy} working`).join('\n'));
   return 0;
 }

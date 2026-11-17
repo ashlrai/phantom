@@ -5,6 +5,9 @@ import { readSource } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readLaunchCosts } from '../core/fleet/launch-cost.js';
 import { readLaunchVitals, type LaunchVitals } from '../core/fleet/launch-vitals.js';
+import { readEmptyCauses, topEmptyCauses, type EmptyCause } from '../core/fleet/empty-cause.js';
+import { stuckSummaryLine } from '../core/fleet/stuck-jobs.js';
+import { readStuckJobs } from './fleet-stuck.js';
 
 const number = z.number().finite();
 const diskSchema = z.object({
@@ -35,13 +38,18 @@ export async function readFleetVitals(root = join(homedir(), '.ashlr-runs'), now
 export interface HostVitals extends FleetVitals {
   launch: LaunchVitals;
   launchCost: Awaited<ReturnType<typeof readLaunchCosts>>;
+  /** Top three causes of empty jobs in the last 24 hours (`phm fleet empties` has the detail); total null = ledger unreadable. */
+  emptyCauses: { window_hours: 24; total: number | null; top: Array<{ cause: EmptyCause; count: number }> };
+  /** Jobs that keep being refused or failing and never launch (`phm fleet stuck` has the detail); count null = event log unreadable. */
+  stuck: { count: number | null; oldestAgeSeconds: number | null };
 }
 export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<HostVitals> {
-  const [disk, launch, launchCost] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root)]);
-  return { ...disk, launch, launchCost };
+  const [disk, launch, launchCost, empties, stuck] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root), readEmptyCauses(root, now, 24), readStuckJobs({ runsDir: root }, now)]);
+  return { ...disk, launch, launchCost, emptyCauses: { window_hours: 24, total: empties.total, top: topEmptyCauses(empties) },
+    stuck: { count: stuck.count, oldestAgeSeconds: stuck.oldestAgeSeconds } };
 }
 
-const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue and first-minute launch cost. Missing readings are unknown.';
+const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue, first-minute launch cost, the top three causes of empty jobs in 24 hours and how many jobs are stuck. Missing readings are unknown.';
 export async function cmdFleetVitals(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
   let root = join(homedir(), '.ashlr-runs'), json = false;
@@ -61,10 +69,15 @@ export async function cmdFleetVitals(args: string[]): Promise<number> {
     for (const row of report.disk?.directories ?? [])
       console.log(`${row.path}: ${row.size_gb ?? 'unknown'} GB; change ${row.delta_gb ?? 'unknown'} GB`);
     console.log(`Launch queue: ${report.launch.queued ?? 'unknown'} queued; reason ${report.launch.reason ?? 'unknown'}`);
+    console.log(`Next launch window: ${report.launch.nextWindowSeconds === null ? 'unknown' : `${report.launch.nextWindowSeconds} seconds`}`);
     for (const lane of report.launch.lanes) console.log(`${lane.lane}: ${lane.running ?? 'unknown'} running of ${lane.target ?? 'unknown'} target; ${lane.queued ?? 'unknown'} queued`);
     console.log(`Launch cost: ${report.launchCost.state} (source ${report.launchCost.source})`);
     for (const r of report.launchCost.launches)
       console.log(`${r.launchId} / ${r.lane}: ${r.status}; peak processes ${r.peakProcesses ?? 'unknown'}; mean CPU ${r.meanCpuPercentOneCore ?? 'unknown'}%; peak CPU ${r.peakCpuPercentOneCore ?? 'unknown'}%; ${r.sampledSeconds}/60s sampled`);
+    const empties = report.emptyCauses;
+    console.log(`Empty causes (24h): ${empties.total === null ? 'unknown' : empties.top.length
+      ? `${empties.top.map(c => `${c.cause} ${c.count}`).join(', ')} of ${empties.total}` : 'none'}`);
+    console.log(stuckSummaryLine(report.stuck));
   }
   return 0;
 }

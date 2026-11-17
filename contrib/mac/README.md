@@ -67,7 +67,9 @@ in the dispatcher; installing it needs a Security pin.
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
 free slots (`target - running - queued` above zero) it asks the feed scripts
 beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
-that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+that many `READY` lines. A line that declares no lane gets `pool=<lane>` as its
+hint; a lane the line declares for itself stays, because the dispatcher's shared
+market treats `pool=` as a preference and runs the line wherever capacity is. Ids already in the router queue or
 claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
 lines to `router-queue.md` under `ready.lock`, logging
 `SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next
@@ -137,8 +139,9 @@ is recorded as `local_mid_cap` in `admission.json`.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
-`GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 `GATE_PLACE_PER_CPU` (defaults to `GATE_LOAD_PER_CPU`), `GATE_JOB_CORES=1`,
+`GATE_WORKTREES_MAX=40` (floor), `GATE_WORKTREES_PER_CPU=4` (the live-worktree
+warning fires above max(floor, per-cpu × ncpu)), `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
 `GATE_PLACE_PER_CPU` below `GATE_LOAD_PER_CPU` tightens per-lane placement without tripping the node;
 the node-wide trip stays at `GATE_LOAD_PER_CPU`. `lane_placement.py` holds the pure room arithmetic.
@@ -209,6 +212,14 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+Status JSON lists observed publishers and startup markers in `reaping`;
+older markers appear in `reap_blocked` with `reason: "ownership-unknown"`.
+They remain protected and emit `REAP_SKIP ownership-unknown <job>` each tick.
+For terminal cleanup, `python3 contrib/mac/wt_closed_prune.py --json` previews
+eligible trees and per-job `skipped` reasons. `--apply --max 375` removes up to
+375 eligible trees, records `WT_REMOVED <job>` only after removal, and records
+`REAP_SKIP <reason> <job>` for retained trees. Missing evidence reports
+`known: false` and `unknown_reasons`; legacy markers still require fenced recovery.
 The reaper consults the job ledger before handoff: a merged outcome for the
 current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an
@@ -662,6 +673,13 @@ one-hour cap. Waiting jobs consume no precheck budget; due jobs wait if the
 budget is exhausted. One `precheck_parked` metric replaces repeated code 13
 skip events for unchanged inputs. A prompt or routing change resets the delay;
 a successful retry clears it. Other runnable jobs continue through the queue.
+Before claiming generated `RQ-FIXUP|REBASE|RECUT-<repo>-<pr>[-<sha7>]`
+repairs, dispatch reads the target PR through `locus exec -- gh pr view` with a
+three-second deadline. Closed or merged targets finish as `DONE-NOOP`; resolved
+conflicts or completed checks require the queued head, and FIXUP also requires
+the named failing check to remain present. Reasons are fixed codes in
+`metrics/jobs.jsonl` (`launched: false`); unknown evidence stays eligible and an
+exhausted precheck budget defers the repair. No model runs for retired repairs.
 Host installation still requires Security review and re-pinning. Preview without changing queue files:
 
 ```sh

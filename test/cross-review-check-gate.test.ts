@@ -132,3 +132,59 @@ describe('fleet cross-review head check gate', () => {
     expect(decision.checkDetail).not.toContain('\u001b');
   });
 });
+
+describe('tier1-verify end to end (RQ-TIER1-AGENTIC-1)', () => {
+  const tier1Diff = [
+    'diff --git a/src/core/authority/clamp.ts b/src/core/authority/clamp.ts', 'index 1111111..2222222 100644', '--- a/src/core/authority/clamp.ts', '+++ b/src/core/authority/clamp.ts',
+    '@@ -1 +1 @@', '-export const LIMIT = 2;', '+export const LIMIT = 3;',
+    'diff --git a/test/authority-clamp.test.ts b/test/authority-clamp.test.ts', 'index 3333333..4444444 100644', '--- a/test/authority-clamp.test.ts', '+++ b/test/authority-clamp.test.ts',
+    '@@ -0,0 +1 @@', '+it("clamps at 3", () => {});', '',
+  ].join('\n');
+  const tier1Policy: CrossReviewPolicy = {
+    ...policy,
+    reviewers: [
+      { pool: 'mac-b', model: 'local:fixture-a', bin: '/fixture/a', args: [], credentialEnv: [], timeoutMs: 1000 },
+      { pool: 'mac-c', model: 'local:fixture-b', bin: '/fixture/b', args: [], credentialEnv: [], timeoutMs: 1000 },
+    ],
+    tier1: { enabled: true, fullChecks: ['CI (Node 22, *'] },
+  };
+  beforeEach(() => {
+    writeFileSync(request.diffFile, tier1Diff);
+    reads.checks.mockResolvedValue({ runs: [run(), run('CI (Node 22, shard 1/4)', 'success', 'completed', '15368', 2)], statuses: [] });
+  });
+
+  it('asks two different seats (standard, then semantic) and arms auto-merge with the full suite green', async () => {
+    const asked: { pool: string; tier1: boolean }[] = [];
+    const { review, decision } = await runCrossReview(request, tier1Policy, {
+      runReviewer: async (reviewer, prompt) => {
+        asked.push({ pool: reviewer.pool, tier1: prompt.includes('Tier-1 authority code') });
+        return { ok: true, verdict: { verdict: 'approve', reasons: ['correct-and-scoped'] } };
+      },
+    });
+    expect(asked).toEqual([{ pool: 'mac-b', tier1: false }, { pool: 'mac-c', tier1: true }]);
+    expect(review.semantic).toMatchObject({ reviewerPool: 'mac-c', outcome: 'approve' });
+    expect(decision).toMatchObject({ action: 'enable-auto-merge', codes: ['verdict-approve', 'tier1-verified'], matchHeadCommit: HEAD });
+  });
+
+  it('waits for the full suite, and rejects a semantic out-of-scope verdict with a fix job', async () => {
+    reads.checks.mockResolvedValue({ runs: [run()], statuses: [] });
+    const approve = async () => ({ ok: true as const, verdict: { verdict: 'approve' as const, reasons: ['correct-and-scoped' as const] } });
+    expect((await runCrossReview(request, tier1Policy, { runReviewer: approve })).decision)
+      .toMatchObject({ action: 'hold', codes: ['tier1-full-ci-missing'], checkStatus: 'wait', matchHeadCommit: null });
+    const { decision } = await runCrossReview(request, tier1Policy, {
+      runReviewer: async (reviewer) => reviewer.pool === 'mac-c'
+        ? { ok: true, verdict: { verdict: 'reject', reasons: ['out-of-scope'] } } : approve(),
+    });
+    expect(decision).toMatchObject({ action: 'reject', codes: ['tier1-semantic-reject', 'semantic:out-of-scope'] });
+    expect(decision.fixJob).toMatch(/^- READY RQ-T1FIX-phantom-6102-aaaaaaa /);
+  });
+
+  it('never asks a model about a GATES v3 floor change', async () => {
+    writeFileSync(request.diffFile, 'diff --git a/contrib/mac/publish.sh b/contrib/mac/publish.sh\n--- a/contrib/mac/publish.sh\n+++ b/contrib/mac/publish.sh\n@@ -1 +1 @@\n-echo a\n+echo b\n');
+    const ask = vi.fn();
+    const { review, decision } = await runCrossReview(request, tier1Policy, { runReviewer: ask });
+    expect(ask).not.toHaveBeenCalled();
+    expect(review.outcome).toBe('skipped');
+    expect(decision).toMatchObject({ action: 'escalate', codes: expect.arrayContaining(['tier1-floor', 'floor-security-pin']) });
+  });
+});

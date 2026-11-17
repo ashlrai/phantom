@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic } from '../verse/preferences.js';
 import { isSlackChannelId, isSlackTs } from './slack-network.js';
+import { isSlackRequestId } from './slack-reply-identity.js';
 
 export const SLACK_JOURNAL_MAX_BYTES = 256 * 1024;
 const SLACK_JOURNAL_KEEP_BYTES = 192 * 1024;
@@ -47,6 +48,13 @@ export interface SlackObservation {
   reason?: string;
   /** Local bus append outcome for ingested events. */
   bus?: 'posted' | 'duplicate' | 'failed';
+  /**
+   * Leader request id (64 hex) of an owner request the Leader network
+   * positively routed to the Leader. Absent on legacy rows, on peer-path rows
+   * and on owner requests addressed to another agent: absence means a Leader
+   * reply identity is unknown, never that no reply exists.
+   */
+  requestId?: string;
 }
 
 export interface SlackJournalRead {
@@ -85,6 +93,7 @@ function sanitize(obs: SlackObservation): Record<string, string> | null {
   if (isSlackTs(obs.threadTs)) out['threadTs'] = obs.threadTs;
   if (boundedField(obs.reason)) out['reason'] = obs.reason;
   if (obs.bus === 'posted' || obs.bus === 'duplicate' || obs.bus === 'failed') out['bus'] = obs.bus;
+  if (isSlackRequestId(obs.requestId)) out['requestId'] = obs.requestId;
   return out;
 }
 
@@ -173,6 +182,7 @@ function projectObservation(row: Record<string, unknown>): SlackObservation | nu
   }
   const bus = row['bus'];
   if (bus !== undefined && bus !== 'posted' && bus !== 'duplicate' && bus !== 'failed') return null;
+  if (row['requestId'] !== undefined && !isSlackRequestId(row['requestId'])) return null;
   const out: SlackObservation = { at, decision };
   if (typeof row['envelopeId'] === 'string') out.envelopeId = row['envelopeId'];
   if (typeof row['eventId'] === 'string') out.eventId = row['eventId'];
@@ -182,6 +192,7 @@ function projectObservation(row: Record<string, unknown>): SlackObservation | nu
   if (isSlackTs(row['threadTs'])) out.threadTs = row['threadTs'];
   if (typeof row['reason'] === 'string') out.reason = row['reason'];
   if (bus === 'posted' || bus === 'duplicate' || bus === 'failed') out.bus = bus;
+  if (isSlackRequestId(row['requestId'])) out.requestId = row['requestId'];
   return out;
 }
 

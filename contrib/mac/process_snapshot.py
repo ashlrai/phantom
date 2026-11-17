@@ -37,6 +37,11 @@ def _bounded(args, timeout):
                 child.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
+            # Reap the killed child as well, so it does not linger as <defunct> under a long-lived caller.
+            try:
+                child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
         return subprocess.CompletedProcess(args, 124, '', 'process inspection timed out')
 
 

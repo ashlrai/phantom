@@ -11,6 +11,7 @@
  * "restart" returns identical evidence with no file mutation. Output stays
  * local evidence -- never a runtime reachability/claim/execution assertion.
  */
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,8 +49,9 @@ const EMPTY: SlackRequestTraceRead = { asOf: AS_OF, rows: [],
   counts: { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 },
   sources: { journal: 'ok', sends: 'ok' } };
 
+const rid = (channelId: string, ts: string) => fakeRequestId(`459s:${channelId}:${ts}`);
 const journalRow = (channelId: string, at: string, messageTs: string) => JSON.stringify({
-  at, decision: 'ingested', bus: 'posted', channelId, threadTs: THREAD, messageTs,
+  at, decision: 'ingested', bus: 'posted', channelId, threadTs: THREAD, messageTs, requestId: rid(channelId, messageTs),
   authorId: 'U0FAKE459S', text: 'PRIVATE-MARKER-J459S',
 });
 const JOURNAL = [
@@ -67,10 +69,10 @@ const sendRow = (channel: string, state: string, ts: string | undefined, marker:
   expiresAt: Date.parse(AS_OF) + 3_600_000, note: marker,
 });
 const STORE = { version: 1, messages: {
-  ['1'.repeat(64)]: sendRow(CH_A, 'sent', R_OLD, 'PRIVATE-MARKER-SEND-OLD-459S'),
-  ['2'.repeat(64)]: sendRow(CH_A, 'sent', R_TARGET, 'PRIVATE-MARKER-SEND-TARGET-459S'),
-  ['3'.repeat(64)]: sendRow(CH_B, 'sent', R_B, 'PRIVATE-MARKER-SEND-OTHER-459S'),
-  ['4'.repeat(64)]: sendRow(CH_A, 'attempted', ATTEMPT_TS, 'PRIVATE-MARKER-ATTEMPT-459S'),
+  [replyKey(rid(CH_A, M_OLD))]: sendRow(CH_A, 'sent', R_OLD, 'PRIVATE-MARKER-SEND-OLD-459S'),
+  [replyKey(rid(CH_A, M_TARGET))]: sendRow(CH_A, 'sent', R_TARGET, 'PRIVATE-MARKER-SEND-TARGET-459S'),
+  [replyKey(rid(CH_B, M_B))]: sendRow(CH_B, 'sent', R_B, 'PRIVATE-MARKER-SEND-OTHER-459S'),
+  [replyKey(rid(CH_A, M_ATTEMPT))]: sendRow(CH_A, 'attempted', ATTEMPT_TS, 'PRIVATE-MARKER-ATTEMPT-459S'),
 } };
 
 function fixture() {

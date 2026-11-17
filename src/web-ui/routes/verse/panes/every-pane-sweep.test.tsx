@@ -5,6 +5,7 @@ import { session } from '../fixtures.test-support.js';
 import { getDockState, openDockPane, resetDockStore } from '../dock/dock-store.js';
 import * as registry from './pane-registry.js';
 import type { PaneDefinition, PaneProps } from './pane-registry.js';
+import { resetActivityForTest } from '../shell/useActivity.js';
 
 const modules = import.meta.glob('../**/*.pane.tsx');
 const registrations = new Map<string, PaneDefinition[]>();
@@ -20,6 +21,8 @@ const emptyRuns = {
   mergesLastHour: { count: 0, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
 function emptyPayload(url: string): unknown {
+  const installed = /\/fleet\/runs\/(plugins|skills)$/.exec(url);
+  if (installed) return { schema: `fleet.${installed[1]}-panel.v1`, observedAt: '2026-01-01T00:00:00Z', sources: [], items: [] };
   if (url.includes('/fleet/runs') && !url.includes('/inbox')) return emptyRuns;
   if (url.includes('/fleet/live/bus')) return { v: 1, hops: [], hopsDropped: 0, lastHopAt: null, events: [], sources: { hops: 'healthy', events: 'healthy' } };
   if (url.includes('/ops/leader-journal')) return { v: 1, generatedAt: '2026-01-01T00:00:00Z', sources: { planLog: 'healthy', ingestLog: 'healthy', ingested: 'healthy' }, passes: [], ingest: [], ingested: [], rejectedLastHour: 0 };
@@ -54,16 +57,19 @@ beforeAll(async () => {
   ({ Dock } = await import('../dock/Dock.js'));
 }, 120_000);
 
-beforeEach(() => { localStorage.clear(); resetDockStore(); evictAll(); });
-afterEach(() => { cleanup(); evictAll(); vi.unstubAllGlobals(); });
+beforeEach(() => { localStorage.clear(); resetDockStore(); evictAll(); resetActivityForTest(); });
+afterEach(() => { cleanup(); evictAll(); resetActivityForTest(); vi.unstubAllGlobals(); });
 
 describe('all discovered panes together', () => {
-  it('registers exactly one unique id per pane file', () => {
+  it('registers the expected unique ids from every pane file', () => {
     expect(Object.keys(modules).length).toBeGreaterThanOrEqual(17);
-    const errors = [...registrations].filter(([, definitions]) => definitions.length !== 1);
+    const errors = [...registrations].filter(([path, definitions]) => definitions.length !== (path === '../fleet-installed/fleet-installed.pane.tsx' ? 2 : 1));
     expect(errors.map(([path, definitions]) => `${path}: ${definitions.length}`)).toEqual([]);
     const ids = [...registrations.values()].flat().map((definition) => definition.id);
     expect(ids.filter((id, index) => ids.indexOf(id) !== index)).toEqual([]);
+    expect(registrations.get('../fleet-installed/fleet-installed.pane.tsx')?.map(pane => pane.id)).toEqual(['fleet-plugins', 'fleet-skills']);
+    const titles = registry.listPanes().map(pane => pane.title);
+    expect(titles.filter((title, index) => titles.indexOf(title) !== index)).toEqual([]);
     for (const id of ids) expect(registry.getPane(id), id).not.toBeNull();
   });
 
@@ -96,17 +102,32 @@ describe('all discovered panes together', () => {
   for (const [path] of Object.entries(modules)) {
     for (const state of ['error', 'empty', '404'] as const) {
       it(`${path} renders visible content with ${state} API`, async () => {
-        const definition = registrations.get(path)?.[0];
-        expect(definition, path).toBeDefined();
-        const pane = registry.getPane(definition!.id)!;
-        const component = pane.component as typeof pane.component & { preload?: () => Promise<unknown> };
-        vi.stubGlobal('fetch', vi.fn(async (url: string) => state === 'empty'
-          ? Response.json(emptyPayload(String(url))) : new Response(null, { status: state === '404' ? 404 : 500 })));
-        await component.preload?.();
-        const Body = component;
-        const view = render(<Body {...context} paneId={pane.id} visible presentation="column" requests={{ terminal: null, preview: null, diff: null }} />);
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
-        expect(visibleText(view.container), `${pane.id} ${state}`).not.toBe('');
+        const definitions = registrations.get(path);
+        expect(definitions?.length, path).toBeGreaterThan(0);
+        for (const definition of definitions!) {
+          const pane = registry.getPane(definition.id)!;
+          const component = pane.component as typeof pane.component & { preload?: () => Promise<unknown> };
+          vi.stubGlobal('fetch', vi.fn(async (url: string) => state === 'empty'
+            ? Response.json(emptyPayload(String(url))) : new Response(null, { status: state === '404' ? 404 : 500 })));
+          await component.preload?.();
+          const Body = component;
+          const view = render(<Body {...context} paneId={pane.id} visible presentation="column" requests={{ terminal: null, preview: null, diff: null }} />);
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+          expect(visibleText(view.container), `${pane.id} ${state}`).not.toBe('');
+          if (state === 'empty') {
+            const unavailable: Record<string, string> = {
+              feed: 'Running chat activity is unavailable.',
+              compute: 'No lane observations.',
+              'fleet-direct': 'Nodes not reported right now',
+              'fleet-host': 'Allowed apps are unavailable. Controls are disabled.',
+              goals: 'Could not read goals.',
+              ideas: 'Goal links unavailable.',
+              library: 'Pinned items unavailable.',
+            };
+            if (unavailable[pane.id]) expect(view.container).toHaveTextContent(unavailable[pane.id]!);
+          }
+          view.unmount();
+        }
       }, 30_000);
     }
   }
