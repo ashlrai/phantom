@@ -1019,8 +1019,11 @@ the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
 `runConfiguredNodeBridge`, `NodeBridgeConfig` and `NodeBridgeRunOptions`.
 `DriveNodes.withdraw(jobId, owner)` returns a `WithdrawOutcome`
 (`withdrawn | held | completed | absent`). It fences a pending or lapsed job
-with a fresh token (`WITHDRAWN_RESULT`). `JobView.claimedBy` names the holder
-of a running claim. `src/core/drive/nodes/runner-packs.ts` exports
+with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;
+that marker, not the result or node ID, distinguishes a producer withdrawal
+from an accepted completion. `JobView.producerWithdrawn` exposes the marker,
+and `JobView.claimedBy` names the holder of a running claim.
+`src/core/drive/nodes/runner-packs.ts` exports
 `probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
 `<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and
 `NODE_RUNNER_PROTOCOL`, and `phm node run-once packs` prints them.
