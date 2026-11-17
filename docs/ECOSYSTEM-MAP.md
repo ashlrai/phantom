@@ -17,7 +17,7 @@ entrypoints in [package.json](../package.json). Historical `ashlr-hub` names
 below describe the dated inventory, not a separate current Phantom package.
 
 The repo's `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`,
-`ashlr`. This is the configured companion server list, not a fixed MCP tool
+`context7`, `ashlr`. This is the configured companion server list, not a fixed MCP tool
 count or proof of a live integration. See [the toolchain guide](AGENT-TOOLCHAIN.md)
 for roles and limits. Inspect the current CLI and gateway with:
 
