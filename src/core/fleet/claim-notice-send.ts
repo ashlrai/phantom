@@ -44,6 +44,8 @@ export interface ClaimNoticeSendDeps {
   readBoard: () => FleetBoard;
   /** Previous pass's snapshot; `null` (absent/corrupt) is a first pass. */
   readPrevSnapshot: () => ClaimThreadSnapshot | null;
+  /** Optional durable read that distinguishes absence from an outage. */
+  readPrevSnapshotState?: () => { state: 'absent' | 'unavailable' } | { state: 'available'; snapshot: ClaimThreadSnapshot };
   /** Persist the snapshot for the next diff; called only on a clean pass. */
   writePrevSnapshot: (snapshot: ClaimThreadSnapshot) => void;
   /** claimId+repo → exact source thread bindings. `null` means the durable
@@ -72,7 +74,7 @@ export interface ClaimNoticeDelivery {
 }
 
 export interface ClaimNoticePassResult {
-  status: 'completed' | 'dry-run' | 'board-unavailable' | 'ledger-unavailable' | 'bindings-unavailable';
+  status: 'completed' | 'dry-run' | 'board-unavailable' | 'ledger-unavailable' | 'bindings-unavailable' | 'prev-unavailable';
   reason?: string;
   /** True when there was no usable prior 'known' snapshot to diff against. */
   baselined: boolean;
@@ -95,7 +97,10 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
   const ledger = deps.readSentLedger();
   if (ledger === null) return empty('ledger-unavailable', 'sent-ledger-unreadable');
   const sent = new Set(ledger);
-  const prev: ClaimThreadSnapshot = deps.readPrevSnapshot()
+  let prevState: ReturnType<NonNullable<ClaimNoticeSendDeps['readPrevSnapshotState']>> | undefined;
+  try { prevState = deps.readPrevSnapshotState?.(); } catch { return empty('prev-unavailable', 'prev-snapshot-unreadable'); }
+  if (prevState?.state === 'unavailable') return empty('prev-unavailable', 'prev-snapshot-unreadable');
+  const prev: ClaimThreadSnapshot = (prevState ? (prevState.state === 'available' ? prevState.snapshot : null) : deps.readPrevSnapshot())
     ?? { state: 'unknown', claims: [], messages: [], asOf: now };
   const next: ClaimThreadSnapshot = {
     state: 'known', claims: board.claims, messages: board.messages, asOf: now,
@@ -293,26 +298,36 @@ const messageShape = (v: unknown): boolean => record(v)
   && bounded(v.id, 128) && bounded(v.from, 128) && bounded(v.to, 128) && bounded(v.body, 8192)
   && safeInt(v.at) && safeInt(v.expiresAt);
 
-/** The previous pass's board snapshot; `null` when absent, unreadable or
- * malformed — the caller treats that as a first pass and baselines rather
- * than replaying a corrupt past into threads. */
-export function readClaimNoticePrev(prevPath: string): ClaimThreadSnapshot | null {
+/** Distinguish a genuinely absent snapshot from history that cannot be trusted. */
+function readClaimNoticePrevState(prevPath: string): { state: 'absent' | 'unavailable' } | { state: 'available'; snapshot: ClaimThreadSnapshot } {
   const read = readPrivateFileCapped(prevPath, PREV_MAX_BYTES);
-  if (read === null || read.truncated) return null;
+  if (read === null) {
+    try { lstatSync(prevPath); } catch (error) {
+      return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unavailable' };
+    }
+    return { state: 'unavailable' };
+  }
+  if (read.truncated) return { state: 'unavailable' };
   try {
     const parsed = JSON.parse(read.text) as Record<string, unknown>;
     if (parsed.v !== 1 || (parsed.state !== 'known' && parsed.state !== 'unknown')
       || !Array.isArray(parsed.claims) || parsed.claims.length > SNAPSHOT_MAX_ROWS
       || !parsed.claims.every(claimShape)
       || !Array.isArray(parsed.messages) || parsed.messages.length > SNAPSHOT_MAX_ROWS
-      || !parsed.messages.every(messageShape) || !safeInt(parsed.asOf)) return null;
-    return {
+      || !parsed.messages.every(messageShape) || !safeInt(parsed.asOf)) return { state: 'unavailable' };
+    return { state: 'available', snapshot: {
       state: parsed.state,
       claims: parsed.claims as ClaimThreadSnapshot['claims'],
       messages: parsed.messages as ClaimThreadSnapshot['messages'],
       asOf: parsed.asOf,
-    };
-  } catch { return null; }
+    } };
+  } catch { return { state: 'unavailable' }; }
+}
+
+/** Compatibility reader: absent and unavailable snapshots both return null. */
+export function readClaimNoticePrev(prevPath: string): ClaimThreadSnapshot | null {
+  const result = readClaimNoticePrevState(prevPath);
+  return result.state === 'available' ? result.snapshot : null;
 }
 
 /** Persist this pass's snapshot atomically (temp file + rename); never
@@ -327,10 +342,11 @@ export function writeClaimNoticePrev(prevPath: string, snapshot: ClaimThreadSnap
 /** The durable state half of {@link ClaimNoticeSendDeps}; the caller still
  * supplies readBoard, send and now. */
 export function claimNoticeFileDeps(root = claimNoticeDir()): Pick<ClaimNoticeSendDeps,
-  'readPrevSnapshot' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger'> {
+  'readPrevSnapshot' | 'readPrevSnapshotState' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger'> {
   const paths = claimNoticePaths(root);
   return {
     readPrevSnapshot: () => readClaimNoticePrev(paths.prev),
+    readPrevSnapshotState: () => readClaimNoticePrevState(paths.prev),
     writePrevSnapshot: snapshot => writeClaimNoticePrev(paths.prev, snapshot),
     readBindings: () => readClaimThreadBindingsState(paths.bindings),
     readSentLedger: () => readClaimNoticeSent(paths.sent),
