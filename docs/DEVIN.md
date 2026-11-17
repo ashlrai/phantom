@@ -2,7 +2,7 @@
 
 # Devin in Phantom
 
-See [Phantom Bots](BOTS.md) for provider-neutral bot metadata and routing.
+See [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) for provider-neutral bot metadata and routing.
 
 ## Devin Review
 
