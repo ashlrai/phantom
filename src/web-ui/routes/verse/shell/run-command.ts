@@ -235,7 +235,7 @@ export function registerShellCommandHandlers(): () => void {
     ['section.ops', 'ops'],
   ];
   const offs = [
-    ...surfaces.map(([id, section]) => registerCommandHandler(id, () => setVerseSection(section))),
+    ...surfaces.map(([id, section]) => registerCommandHandler(id, () => setVerseSection(section, id === 'surface.fleet' ? 'fleet-map' : null))),
     ...(['leader', 'feed'] as const).map((view) => registerCommandHandler(`home.${view}`, () => {
       setHomeChoice(view);
       setVerseSection('live');

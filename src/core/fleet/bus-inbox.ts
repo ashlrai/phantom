@@ -13,7 +13,13 @@ export const BUS_INBOX_MAX_BYTES = 1024 * 1024;
 export const BUS_INBOX_MAX_MESSAGES = 1024;
 export const BUS_INBOX_MAX_READ = 100;
 export interface BusInboxOptions { root?: string; now?: () => number }
-export interface BusInboxReceipt { cursor: number; receivedAt: number; envelope: BusEnvelope }
+export interface BusInboxReadOptions extends BusInboxOptions { includeOriginalEnvelope?: boolean }
+export interface BusInboxReceipt {
+  cursor: number;
+  receivedAt: number;
+  envelope: BusEnvelope;
+  originalEnvelope?: BusEnvelope;
+}
 export interface BusInboxInspection {
   source: 'missing' | 'available' | 'unavailable';
   retainedCount: number | null;
@@ -38,6 +44,9 @@ function missing(path: string): boolean {
   try { lstatSync(path); return false; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true; throw new Error('Unavailable'); }
 }
+/** Shared with sibling bus ledgers (bus-transport-file.ts): exact-private path
+ * check that throws, and an ENOENT-only absence probe that throws otherwise. */
+export { privatePath as assertPrivateBusPath, missing as busPathMissing };
 /** Snapshot version 2 keeps a monotonic high-water cursor beside sparse rows. */
 const BUS_INBOX_SNAPSHOT_VERSION = 2;
 interface BusInboxStore {
@@ -46,6 +55,8 @@ interface BusInboxStore {
   /** Greatest cursor ever assigned; 0 while nothing has been posted. */
   highWater: number;
   bytes: number | null;
+  /** Rows dropped by a tolerant scan; strict loads throw instead. */
+  skipped: number;
 }
 function checkedRow(row: BusInboxReceipt, ids: Set<string>): BusInboxReceipt {
   if (!row || Object.keys(row).sort().join() !== 'cursor,envelope,receivedAt' ||
@@ -73,9 +84,11 @@ function readSnapshotText(file: string, root: string): { text: string; bytesRead
     if (attempt >= BUS_INBOX_READ_ATTEMPTS) throw new BusInboxChurnError('Bus inbox changed during read');
   }
 }
-function loadSnapshot(root: string): BusInboxStore {
+/** `tolerant` (read-only views) skips and counts a damaged row instead of
+ * failing the whole store; writers stay strict so damage is never rewritten. */
+function loadSnapshot(root: string, tolerant = false): BusInboxStore {
   const directory = join(root, 'bus-inbox'), file = join(directory, 'messages.json');
-  const absent: BusInboxStore = { source: 'missing', rows: [], highWater: 0, bytes: null };
+  const absent: BusInboxStore = { source: 'missing', rows: [], highWater: 0, bytes: null, skipped: 0 };
   if (missing(root)) return absent;
   privatePath(root, 'directory', root);
   if (missing(directory)) return absent;
@@ -89,11 +102,11 @@ function loadSnapshot(root: string): BusInboxStore {
     // the high-water mark. Reads migrate in memory only; the next append
     // rewrites version 2 atomically.
     if (snapshot.length > BUS_INBOX_MAX_MESSAGES) throw new Error('Unavailable');
-    const rows = snapshot.map((row: BusInboxReceipt, index) => {
+    const rows = keep(snapshot.map((row: BusInboxReceipt, index) => () => {
       if (!row || row.cursor !== index + 1) throw new Error('Unavailable');
       return checkedRow(row, ids);
-    });
-    return { source: 'available', rows, highWater: rows.length, bytes: read.bytesRead };
+    }), tolerant);
+    return { source: 'available', rows: rows.kept, highWater: snapshot.length, bytes: read.bytesRead, skipped: rows.skipped };
   }
   if (snapshot === null || typeof snapshot !== 'object' ||
     Object.keys(snapshot).sort().join() !== 'highWater,rows,version' ||
@@ -103,13 +116,34 @@ function loadSnapshot(root: string): BusInboxStore {
   const { highWater, rows: stored } = snapshot as { highWater: number; rows: unknown };
   if (!Array.isArray(stored) || stored.length > BUS_INBOX_MAX_MESSAGES) throw new Error('Unavailable');
   let ceiling = 0;
-  const rows = stored.map((row: BusInboxReceipt) => {
+  const rows = keep(stored.map((row: BusInboxReceipt) => () => {
     const receipt = checkedRow(row, ids);
     if (receipt.cursor <= ceiling || receipt.cursor > highWater) throw new Error('Unavailable');
     ceiling = receipt.cursor;
     return receipt;
-  });
-  return { source: 'available', rows, highWater, bytes: read.bytesRead };
+  }), tolerant);
+  return { source: 'available', rows: rows.kept, highWater, bytes: read.bytesRead, skipped: rows.skipped };
+}
+function keep(checks: (() => BusInboxReceipt)[], tolerant: boolean): { kept: BusInboxReceipt[]; skipped: number } {
+  const kept: BusInboxReceipt[] = [];
+  for (const check of checks) {
+    try { kept.push(check()); } catch (error) { if (!tolerant) throw error; }
+  }
+  return { kept, skipped: checks.length - kept.length };
+}
+
+export interface BusInboxScan { source: 'missing' | 'available' | 'unavailable'; rows: BusInboxReceipt[]; skipped: number }
+/** Read-only scan of every retained live receipt for views such as `phm messages`.
+ * A malformed row is skipped and counted, never fatal; a damaged file header,
+ * unsafe path or invalid clock still reads as unavailable. TTL is not rewritten. */
+export function scanBusInbox(options: BusInboxOptions = {}): BusInboxScan {
+  try {
+    const now = (options.now ?? Date.now)();
+    if (!Number.isSafeInteger(now) || now < 0) return { source: 'unavailable', rows: [], skipped: 0 };
+    const snapshot = loadSnapshot(rootPath(options), true);
+    const rows = snapshot.rows.filter(row => Math.max(0, now - row.receivedAt) < row.envelope.ttl);
+    return { source: snapshot.source, rows, skipped: snapshot.skipped };
+  } catch { return { source: 'unavailable', rows: [], skipped: 0 }; }
 }
 
 /** Observe retained capacity without creating or changing the store. Counts are
@@ -175,7 +209,7 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
  * safe; avoid adding TTL to receivedAt, which could exceed MAX_SAFE_INTEGER.
  * A clock before receipt counts as zero elapsed and cannot inflate the wire TTL.
  */
-export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOptions = {}): BusInboxPage {
+export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxReadOptions = {}): BusInboxPage {
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) return { status: 'invalid' };
   try {
     const now = (options.now ?? Date.now)();
@@ -188,7 +222,10 @@ export function listBusInboxAfter(after = 0, limit = 50, options: BusInboxOption
       nextCursor = row.cursor;
       const elapsed = Math.max(0, now - row.receivedAt);
       if (elapsed < row.envelope.ttl) {
-        messages.push({ ...row, envelope: { ...row.envelope, ttl: row.envelope.ttl - elapsed } });
+        const receipt: BusInboxReceipt = { cursor: row.cursor, receivedAt: row.receivedAt,
+          envelope: { ...row.envelope, ttl: row.envelope.ttl - elapsed } };
+        if (options.includeOriginalEnvelope) receipt.originalEnvelope = row.envelope;
+        messages.push(receipt);
       }
       if (messages.length === limit) break;
     }

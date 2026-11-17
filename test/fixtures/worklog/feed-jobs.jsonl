@@ -1,0 +1,10 @@
+{"event":"launch","job":"RQ-POOLS","repo":"phantom","lane":"work","model":"model-a","ts":"2026-11-09T09:00:00Z"}
+{"event":"launch","job":"RQ-POOLS","repo":"phantom","lane":"work","model":"model-a","ts":"2026-11-09T09:01:00Z"}
+{"event":"finish","job":"RQ-POOLS","exit_code":0,"empty":false,"ts":"2026-11-09T09:20:00Z"}
+{"event":"publish","job":"RQ-POOLS","url":"https://github.com/ashlrai/phantom/pull/6675","title":"Pools panel","ts":"2026-11-09T09:21:00Z"}
+{"event":"outcome","state":"MERGED","url":"https://github.com/ashlrai/phantom/pull/6675","ts":"2026-11-09T09:23:40Z","ttm_s":160}
+{"event":"launch","job":"RQ-COVERED","repo":"locus","lane":"fast","ts":"2026-11-09T09:30:00Z"}
+{"event":"finish","job":"RQ-COVERED","exit_code":0,"empty":true,"ts":"2026-11-09T09:40:00Z"}
+{"event":"outcome","job":"RQ-COVERED","lane":"fast","empty":true,"ts":"2026-11-09T09:40:00Z"}
+{"event":"launch","job":"RQ-BROKE","repo":"phantom","lane":"fast","ts":"2026-11-09T09:50:00Z"}
+{"event":"finish","job":"RQ-BROKE","exit_code":2,"empty":true,"ts":"2026-11-09T09:55:00Z"}

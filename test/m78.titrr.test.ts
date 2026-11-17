@@ -19,6 +19,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
+import { titrrTestRun } from '../src/core/run/orchestrator.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -121,7 +122,6 @@ function makeKnownDiffState(files: number) {
 
 describe('titrrTestRun — unit (real detectVerifyCommands)', () => {
   it('returns null for an empty directory (no package.json)', async () => {
-    const { titrrTestRun } = await import('../src/core/run/orchestrator.js');
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m78-'));
     try {
       await expect(titrrTestRun(emptyDir, makeConfig())).resolves.toBeNull();
@@ -131,7 +131,6 @@ describe('titrrTestRun — unit (real detectVerifyCommands)', () => {
   });
 
   it('returns null for package.json with no test script and no vitest dep', async () => {
-    const { titrrTestRun } = await import('../src/core/run/orchestrator.js');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ashlr-m78-notest-'));
     try {
       fs.writeFileSync(
@@ -145,7 +144,6 @@ describe('titrrTestRun — unit (real detectVerifyCommands)', () => {
   });
 
   it('never throws for a non-existent path', async () => {
-    const { titrrTestRun } = await import('../src/core/run/orchestrator.js');
     await expect(titrrTestRun('/nonexistent-m78-xyz', makeConfig())).resolves.toBeNull();
   });
 });

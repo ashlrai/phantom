@@ -61,6 +61,8 @@ export interface CosLoopPassEvent {
   pass: number;
   outcome: CosWorkResult['outcome'] | 'error';
   id?: string;
+  /** Fixed-word peer-plan status when the pass drafted with peer plans enabled; never message text. */
+  peerPlan?: string;
 }
 
 export type CosLoopObserver = (event: CosLoopPassEvent) => void | Promise<void>;
@@ -89,6 +91,8 @@ export interface RunCosLoopOptions {
   runsDir?: string;
   /** Per-pass runner kill deadline forwarded to runCosWorkOnce (default 10 min). */
   timeoutMs?: number;
+  /** Host opt-in forwarded to every pass: dry-run unless `apply`. See CosWorkOptions.peerPlan. */
+  peerPlan?: CosWorkOptions['peerPlan'];
   /** Pass seam; defaults to runCosWorkOnce. */
   work?: CosLoopWork;
   /** Sleep seam; must reject when the signal aborts so waiting stops at once. */
@@ -122,17 +126,19 @@ export async function runCosLoop(options: RunCosLoopOptions): Promise<CosLoopSum
   while (!signal.aborted && now() < deadline
     && (maxPasses === undefined || passes < maxPasses)) {
     let outcome: CosLoopPassEvent['outcome'];
-    let id: string | undefined;
+    let id: string | undefined, peerPlan: string | undefined;
     try {
       const result = await work({
         ...(options.runsDir === undefined ? {} : { runsDir: options.runsDir }),
         timeoutMs,
         now,
+        ...(options.peerPlan === undefined ? {} : { peerPlan: options.peerPlan }),
       });
       outcome = result.outcome;
       if (result.outcome === 'drafted' || result.outcome === 'blocked') {
         id = result.id;
         if (result.outcome === 'blocked') lastBlockedReason = result.reason;
+        else peerPlan = result.peerPlan?.status;
       }
     } catch {
       outcome = 'error';
@@ -149,7 +155,8 @@ export async function runCosLoop(options: RunCosLoopOptions): Promise<CosLoopSum
     } else errors += 1;
     if (outcome !== 'blocked') { blockedStreak = 0; streakReason = undefined; }
     if (options.onPass) {
-      await options.onPass({ pass: passes, outcome, ...(id === undefined ? {} : { id }) });
+      await options.onPass({ pass: passes, outcome, ...(id === undefined ? {} : { id }),
+        ...(peerPlan === undefined ? {} : { peerPlan }) });
     }
     // A dead runner slate stops the loop before any further sleep or pass.
     if (blockedStreak >= COS_LOOP_BLOCKED_STREAK_LIMIT) { stopped = true; break; }

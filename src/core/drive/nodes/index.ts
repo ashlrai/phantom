@@ -1,7 +1,8 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
-import { nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
+import { nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
+import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -26,6 +27,8 @@ export interface NodeProfile {
 
 /** Self-reported on each heartbeat. `auth` is the node's own local login status, never a token. */
 export interface NodeReport {
+  capacity?: NodeCapacitySample;
+  hostStats?: HostStats;
   usage?: number;
   slots?: number;
   auth?: NodeAuth;
@@ -46,9 +49,25 @@ export interface JobView {
   requires: string[];
   pack?: string;
   secrets: string[];
+  producerWithdrawn?: true;
+  /** Accepted completion's executor identity; no result body or fencing token. */
+  completedBy?: string;
+  /** Current holder of a running job's claim (lapsed or live); no fencing token. */
+  /** Status views only: the node holding a running claim. Never sent to a runner. */
+  claimedBy?: string;
+}
+
+/** Withdrawal result text; producerWithdrawn distinguishes it from a node result. */
+export const WITHDRAWN_RESULT = 'withdrawn';
+/** `withdrawn`: fenced terminal now (or earlier), safe to run elsewhere. `held`: a live claim still owns it. */
+export interface WithdrawOutcome {
+  state: 'withdrawn' | 'held' | 'completed' | 'absent';
+  /** Accepted node result reference, only for `completed`. */
+  result?: string;
 }
 
 export interface NodeView {
+  capacity?: NodeCapacitySample;
   nodeId: string;
   live: boolean;
   owners: string[];
@@ -143,6 +162,8 @@ export class DriveNodes implements QueueV1 {
    * this node after the old leader expires; a stale session must rejoin first.
    */
   heartbeat(session: NodeSession, report?: NodeReport): { leader: LeaderLease | null } | null {
+    if (report?.capacity !== undefined && !isNodeCapacity(report.capacity)) throw new Error('Invalid node capacity sample');
+    if (report?.hostStats !== undefined && !isHostStats(report.hostStats)) throw new Error('Invalid host stats');
     if (report?.usage !== undefined && !(Number.isSafeInteger(report.usage) && report.usage >= 0 && report.usage <= 1000)) {
       throw new Error('Invalid drive usage (integer permille 0-1000)');
     }
@@ -156,7 +177,9 @@ export class DriveNodes implements QueueV1 {
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
       if (report?.slots !== undefined) node.slots = report.slots;
+      if (report?.capacity !== undefined) { node.capacity = structuredClone(report.capacity); node.slots = report.capacity.slots; }
       if (report?.auth !== undefined) node.auth = report.auth;
+      if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {
         state.leader = { ...session, token: nextToken(state), expiresAt: now + this.leaderTtl };
       } else if (sameSession(previous, session)) {
@@ -219,6 +242,8 @@ export class DriveNodes implements QueueV1 {
       }
       const claim = { ...worker, jobId: job.id, token: nextToken(state), leaderToken: leader.token,
         expiresAt: now + this.claimTtl };
+      job.executionHostId = node.capacity?.hostId;
+      job.startedAt = now; delete job.completedAt;
       job.state = 'running';
       job.claim = claim;
       return { claim, job: this.jobView(job) };
@@ -227,7 +252,9 @@ export class DriveNodes implements QueueV1 {
 
   private jobView(job: NonNullable<NodesState['jobs'][number]>): JobView {
     return { id: job.id, owner: job.owner!, state: job.state, requires: [...(job.requires ?? [])],
-      ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])] };
+      ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])],
+      ...(job.producerWithdrawn ? { producerWithdrawn: true as const } : {}),
+      ...(job.state === 'completed' && job.claim ? { completedBy: job.claim.nodeId } : {}) };
   }
 
   /** The only read surface for a node or its operator: everything is filtered to the caller's
@@ -242,9 +269,11 @@ export class DriveNodes implements QueueV1 {
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
           caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
           heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? 0, auth: n.auth ?? 'unknown',
+          ...(n.capacity ? { capacity: n.capacity } : {}),
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
-      jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => this.jobView(j)),
+      jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
+        ...(j.state === 'running' && j.claim ? { claimedBy: j.claim.nodeId } : {}) })),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
     }));
   }
@@ -267,10 +296,13 @@ export class DriveNodes implements QueueV1 {
       const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
         j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId).length;
       if (node.slots !== undefined && active >= node.slots) return null;
+      if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
+      job.executionHostId = node.capacity?.hostId;
+      job.startedAt = now; delete job.completedAt;
       job.state = 'running';
       job.claim = claim;
       return claim;
@@ -286,14 +318,58 @@ export class DriveNodes implements QueueV1 {
     });
   }
 
+  /** Return a held claim unrun: the job is pending again, the old token is dead (renew and complete
+   * both refuse it) and the releasing session is not routed this job again only when `decline` is set (a permanent
+   * inability). A transient refusal (capacity, stop) leaves the job retryable by this session. Same fencing
+   * check as `complete`, so a stale or replaced holder cannot release a newer holder's claim.
+   */
+  release(claim: JobClaim, decline = false): boolean {
+    return this.transaction((state, now) => {
+      if (!this.currentClaim(state, claim, now)) return false;
+      const job = state.jobs.find(j => j.id === claim.jobId)!;
+      job.state = 'pending';
+      delete job.claim;
+      if (decline) job.declined = [...(job.declined ?? []).filter(s => s !== claim.session), claim.session].slice(-16);
+      return true;
+    });
+  }
+
   complete(claim: JobClaim, result: string): boolean {
     if (typeof result !== 'string' || Buffer.byteLength(result) > 64 * 1024) throw new Error('Invalid drive job result');
     return this.transaction((state, now) => {
       if (!this.currentClaim(state, claim, now)) return false;
       const job = state.jobs.find(j => j.id === claim.jobId)!;
+      job.completedAt = now;
       job.state = 'completed';
       job.result = result;
       return true;
+    });
+  }
+
+  /** Producer-side fence for a job in `owner`'s scope. A pending job, or one whose claim
+   * lapsed, becomes terminal under a fresh fencing token, so neither a later pull nor the
+   * old holder's renew/complete can succeed. A live claim is left alone (`held`). Idempotent.
+   */
+  withdraw(jobId: string, owner: string): WithdrawOutcome {
+    if (!validId(jobId) || !validId(owner)) throw new Error('Invalid drive job ID');
+    return this.transaction((state, now) => {
+      const job = state.jobs.find(j => j.id === jobId && j.owner === owner);
+      if (!job) return { state: 'absent' as const };
+      if (job.state === 'completed') {
+        return job.producerWithdrawn === true
+          ? { state: 'withdrawn' as const } : { state: 'completed' as const, result: job.result ?? '' };
+      }
+      const stored = job.claim;
+      const leader = this.liveLeader(state, now);
+      if (job.state === 'running' && stored && stored.expiresAt > now && this.liveNode(state, stored, now) &&
+          !!leader && stored.leaderToken === leader.token) return { state: 'held' as const };
+      const token = nextToken(state);
+      job.claim = { nodeId: WITHDRAWN_RESULT, session: token, jobId, token, leaderToken: token, expiresAt: now };
+      job.state = 'completed';
+      job.completedAt = now;
+      job.result = WITHDRAWN_RESULT;
+      job.producerWithdrawn = true;
+      return { state: 'withdrawn' as const };
     });
   }
 }

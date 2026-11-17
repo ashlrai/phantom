@@ -1,0 +1,42 @@
+{
+  "typecheckBeforeRepair": {
+    "exitCode": 127
+  },
+  "lintBeforeRepair": {
+    "exitCode": 2
+  },
+  "installWorktree": {
+    "exitCode": 0
+  },
+  "typecheckAfterRepair": {
+    "exitCode": 0
+  },
+  "checkDocs": {
+    "exitCode": 0
+  },
+  "verifyChanged": {
+    "exitCode": 0
+  },
+  "auditValidator": {
+    "exitCode": 0
+  },
+  "baselineTests": {
+    "exitCode": 1,
+    "passed": 99,
+    "failed": 9,
+    "filesPassed": 6,
+    "filesFailed": 2,
+    "reason": "connect EPERM 127.0.0.1"
+  },
+  "diagnostic": {
+    "exitCode": 1,
+    "failed": 1,
+    "unselected": 56,
+    "reason": "connect EPERM 127.0.0.1"
+  },
+  "fullLintAfterRepair": {
+    "status": "running",
+    "execSessionId": 89081,
+    "result": "unverified"
+  }
+}

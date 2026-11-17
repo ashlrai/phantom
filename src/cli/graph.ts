@@ -5,6 +5,7 @@ import { renderMermaid, MermaidLimitError } from './graph-mermaid.js';
 import { graphRoutePath } from '../core/graph/route-path.js';
 
 const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
+       phm graph status [--fleet <fleet.json>] [--seats <seats.json>] [--json]
        phm graph cycles [--json]
        phm graph <nodes|edges> [--agent <bare-agent-id>] [--json]
        phm graph export --format mermaid [--from <id>] [--to <id>]
@@ -33,6 +34,10 @@ const USAGE = `Usage: phm graph <nodes|edges|status> [--json]
   path        Find one directed shortest route in loaded data (default: 8 hops; 500 nodes).
               Example: phm graph path agent:one agent:two --edge-kind can-message --json
               Routes are advisory only and do not grant dispatch authority.
+  --fleet     Read a graph.v1 registry from an explicit fleet.v1 snapshot (status only).
+  --seats     Read an explicit seat snapshot (status only). Either snapshot option
+              selects registry output; omitted fleet defaults to ./fleet.json and
+              omitted seats use passive native metadata. Exit 1 if incomplete.
   --kind      Filter nodes by agent|engine-account|model|mcp, or edges by
               can-message|can-delegate|reviews|routes-to (exact match).
   --edge-kind Filter neighbors traversal to one exact edge kind (same values as edges --kind).
@@ -74,6 +79,8 @@ interface Options {
   to: string | null;
   agent: string | null;
   format: string | null;
+  fleet: string | null;
+  seats: string | null;
 }
 
 function isCommand(value: string): value is GraphCommand {
@@ -81,7 +88,7 @@ function isCommand(value: string): value is GraphCommand {
 }
 
 function parse(args: string[]): Options {
-  const options: Options = { command: null, json: false, help: false, nodeId: null, targetId: null, maxHops: 8, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null, agent: null, format: null };
+  const options: Options = { command: null, json: false, help: false, nodeId: null, targetId: null, maxHops: 8, direction: 'both', depth: 1, kind: null, edgeKind: null, from: null, to: null, agent: null, format: null, fleet: null, seats: null };
   let directionSeen = false;
   let depthSeen = false;
   let maxHopsSeen = false;
@@ -91,6 +98,16 @@ function parse(args: string[]): Options {
     else if ((arg === '--help' || arg === '-h') && !options.help) options.help = true;
     else if ((options.command === 'neighbors' || options.command === 'node') && arg === '--' && options.nodeId === null && i + 1 < args.length) {
       options.nodeId = args[++i]!;
+    } else if (options.command === 'status' && (arg === '--fleet' || arg === '--seats')) {
+      const key = arg === '--fleet' ? 'fleet' : 'seats';
+      const value = args[++i];
+      if (options[key] !== null || !value?.trim() || value.startsWith('-') || [...value].some(character => {
+        const code = character.charCodeAt(0);
+        return code < 32 || (code >= 127 && code <= 159);
+      })) {
+        throw new Error(`Invalid --${key} snapshot.`);
+      }
+      options[key] = value;
     } else if ((options.command === 'nodes' || options.command === 'edges') && arg === '--kind' && options.kind === null) {
       const value = args[++i];
       const kinds: readonly string[] = options.command === 'nodes' ? NODE_KINDS : EDGE_KINDS;
@@ -174,6 +191,13 @@ export async function cmdGraph(args: string[]): Promise<number> {
   }
 
   try {
+    if (options.command === 'status' && (options.fleet !== null || options.seats !== null)) {
+      const { cmdRegistryGraph } = await import('./registry-graph.js');
+      return await cmdRegistryGraph({
+        ...(options.fleet !== null ? { fleet: options.fleet } : {}),
+        ...(options.seats !== null ? { seats: options.seats } : {}),
+      }, options.json);
+    }
     const { loadGraph } = await import('../core/graph/loader.js');
     const graph = await loadGraph();
     if (graph.status === 'unavailable') {

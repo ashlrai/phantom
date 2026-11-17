@@ -98,6 +98,47 @@ curl -sS -L --max-time 15 -o /tmp/latest.json -w '%{http_code}\n' \
   https://github.com/ashlrai/phantom/releases/latest/download/latest.json
 ```
 
+## Currency verification record: v3.30.33 (2026-11-14)
+
+Read-only, unauthenticated, from a clean shell (no `gh`, no tokens, no
+publishing). Result: **complete and live**.
+
+```sh
+# 1. The release is latest, non-draft, and holds exactly the seven assets.
+curl -sS https://api.github.com/repos/ashlrai/phantom/releases/latest |
+  jq '{tag_name,draft,prerelease,target_commitish,published_at,
+       assets:[.assets[]|{name,size,state}]}'
+# tag_name v3.30.33, draft=false, prerelease=false,
+# target_commitish e33efae2e2404827c63542af0c321bec9542a1bf,
+# published_at 2026-11-14T11:19:13Z; all seven assets state=uploaded:
+#   Phantom_3.30.33_aarch64.app.tar.gz (62029536) + .sig (428)
+#   ashlr-phantom-3.30.33.tgz (31566528) + .sig (416)
+#   manifest.json (2779) + manifest.json.sig (400), latest.json (3992)
+
+# 2. The pinned updater endpoint resolves (redirect followed).
+curl -sS -L --max-time 20 -o latest.json -w '%{http_code}\n' \
+  https://github.com/ashlrai/phantom/releases/latest/download/latest.json   # 200
+
+# 3. Bytes bind: download the app archive and hash it.
+shasum -a 256 Phantom_3.30.33_aarch64.app.tar.gz
+# 6bad841a73ac1bf752c3b9d39747ce5b60a702887d5a7200219ea7a3ab5d9e94
+# == manifest.app.sha256; size 62029536 == manifest.app.bytes
+```
+
+Cross-checks that held: `latest.json.version` = `3.30.33`;
+`platforms["darwin-aarch64"].url` names the same-tag app archive;
+`platforms["darwin-aarch64"].signature` equals the published app `.sig`;
+`phantom.manifestText` equals the published `manifest.json` byte for byte;
+`manifest.json` is `schemaVersion: 2`, kind `phantom-paired-release`, version
+`3.30.33`. Minisign signature verification itself stays with the
+consumer/finalizer path (`minisign` was not installed for this check).
+
+Observation, not a defect: `latest.json` carries no `notes` or `pub_date`.
+The feed is produced inside the owner-controlled finalizer, so nothing was
+changed here. The desktop update panel therefore links the newest tag to its
+GitHub release page ("What shipped in vX.Y.Z") instead of depending on feed
+notes.
+
 ## Boundaries
 
 This document describes verification and consumption, not new authority.

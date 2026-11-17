@@ -29,7 +29,7 @@ class Config(unittest.TestCase):
     def test_shipped_file_turns_routing_on_and_drops_paid_lanes(self):
         cfg = bs.load_config(str(MAC / 'batch-sessions.json'))
         self.assertTrue(cfg['devin']['route'])
-        self.assertEqual(cfg['models']['codex']['default'], 'gpt-6.1-terra')
+        self.assertEqual(cfg['models']['codex']['default'], 'gpt-6.2-sol')
         self.assertEqual(cfg['models']['devin']['default'], 'swe-2-flash')
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'c.json'
@@ -54,9 +54,9 @@ class ModelMix(unittest.TestCase):
         self.assertEqual(bs.model_for('claude', 'frontier', 'Fix the typo', self.cfg)[0], 'opus')
         self.assertEqual(bs.model_for('claude', 'work', 'Rework the lease ARCHITECTURE', self.cfg)[0], 'opus')
 
-    def test_codex_terra_devin_flash_and_no_fable_pick(self):
-        self.assertEqual(bs.model_for('codex-personal', 'work', '', self.cfg)[0], 'gpt-6.1-terra')
-        self.assertEqual(bs.model_for('codex-cmp', 'frontier', '', self.cfg)[0], 'gpt-6.1-terra')
+    def test_codex_tiers_devin_flash_and_no_fable_pick(self):
+        self.assertEqual(bs.model_for('codex-personal', 'work', '', self.cfg)[0], 'gpt-6.2-sol')
+        self.assertEqual(bs.model_for('codex-cmp', 'frontier', '', self.cfg)[0], 'gpt-6.2-astra')
         self.assertEqual(bs.model_for('devin', 'work', '', self.cfg)[0], 'swe-2-flash')
         self.assertEqual(bs.model_for('codex-local', 'fast', '', self.cfg)[0], None)
         picks = {bs.model_for('claude', t, p, self.cfg)[0] for t in ('work', 'frontier') for p in ('', 'security')}
@@ -68,6 +68,23 @@ class ModelMix(unittest.TestCase):
         self.assertEqual(bs.devin_route('phantom', 101, self.cfg), 'size-not-sm')
         self.assertIsNone(bs.devin_route('phantom', 100, self.cfg))
         self.assertIsNone(bs.devin_route('locus', None, bs.load_config('/nonexistent')))   # routing off
+
+    def test_codex_lower_tiers_and_fallbacks(self):
+        for lane in ('codex-personal', 'codex-cmp'):
+            for tier in ('work', 'mid', 'fast', 'computer', '', 'unknown'):
+                self.assertEqual(bs.model_for(lane, tier, '', self.cfg)[0], 'gpt-6.2-sol')
+            self.assertEqual(bs.model_for(lane, 'frontier', '', bs.load_config('/nonexistent'))[0], 'gpt-6.2-astra')
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'config.json'
+            p.write_text(json.dumps({'schema': bs.SCHEMA, 'models': {'codex': {'default': 'operator-model'}}}))
+            cfg = bs.load_config(str(p))
+            self.assertEqual(bs.model_for('codex-personal', 'frontier', '', cfg)[0], 'operator-model')
+            p.write_text(json.dumps({'schema': bs.SCHEMA, 'models': {'codex': {'default': 'operator-model', 'frontier': 'operator-frontier'}}}))
+            cfg = bs.load_config(str(p))
+            self.assertEqual(bs.model_for('codex-personal', 'frontier', '', cfg)[0], 'operator-frontier')
+            self.assertEqual(bs.model_for('codex-personal', 'fast', '', cfg)[0], 'operator-model')
+            p.write_text(json.dumps({'schema': bs.SCHEMA, 'models': {'codex': {'frontier': 'bad; model'}}}))
+            self.assertEqual(bs.model_for('codex-personal', 'frontier', '', bs.load_config(str(p)))[0], 'gpt-6.2-astra')
         self.assertEqual(bs.size_of('- READY RQ-X (pool=devin, size<=80): x'), 80)
         self.assertIsNone(bs.size_of('mentions size 80 in prose'))
 
