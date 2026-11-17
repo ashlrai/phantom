@@ -269,4 +269,16 @@ describe('channel health default Slack reply binding', () => {
       },
     );
   }, 30_000);
+
+  it('a keyed row with unknown bus ingress never counts as answered', async () => {
+    const { bus: _bus, ...noBus } = request(ago(30), '1700000000.000100') as Record<string, unknown>;
+    await withSlackStores(
+      [noBus as ReturnType<typeof request>],
+      { [replyKey(rid('1700000000.000100'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
+      (s) => {
+        expect(s.state).toBe('DEGRADED');
+        expect(s.proof).toMatchObject({ requestCoverage: 'unproven', answeredCount: 0 });
+      },
+    );
+  }, 30_000);
 });

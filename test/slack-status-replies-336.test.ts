@@ -55,6 +55,16 @@ describe('slack status replies (336)', () => {
     expect(replies.unansweredSample).toEqual([{ channelId: CH, threadTs: THREAD, messageTs: SECOND, at: AT2 }]);
   });
 
+  it('a keyed exact-key sent reply with unknown bus ingress is uncertain, never answered or overdue', () => {
+    const p = setup();
+    recordSlackObservation({ at: AT1, decision: 'ingested', channelId: CH, messageTs: THREAD, threadTs: THREAD, requestId: rid(THREAD) }, { runsDir: p.runsDir });
+    recordSlackObservation({ at: AT2, decision: 'ingested', channelId: CH, messageTs: SECOND, threadTs: THREAD, requestId: rid(SECOND) }, { runsDir: p.runsDir });
+    writeStore(p.stateRoot, [{ key: key(THREAD), channel: CH, thread: THREAD, state: 'sent', ts: '1700000050.000100' }]);
+    const { replies } = status(p);
+    expect(replies).toMatchObject({ answered: 0, unanswered: 0, uncertainRequests: 2 });
+    expect(replies.unansweredSample).toEqual([]);
+  });
+
   it('never treats an attempted receipt as an answer', () => {
     const p = setup();
     ingest(p.runsDir, AT1, THREAD);

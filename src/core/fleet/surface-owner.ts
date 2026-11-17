@@ -15,10 +15,11 @@ const UNKNOWN = 'UNKNOWN';
 /**
  * Named slices of the tree an owner question can be asked about. Every entry
  * is a repo-relative literal path that must exist on the default branch —
- * test/fleet-surface-owner-379.test.ts fails if one rots. At most 12 each.
+ * test/fleet-surface-owner-379.test.ts fails if one rots. At most 13 each (slack-bridge owns 13: audience authority and reply identity are both owner-sensitive).
  */
 export const SURFACES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'slack-bridge': Object.freeze([
+    'src/core/agents/slack-audience.ts',
     'src/core/agents/slack-inbound.ts',
     'src/core/agents/slack-journal.ts',
     'src/core/agents/slack-leader.ts',

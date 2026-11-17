@@ -227,8 +227,11 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const unansweredByAge = binding.unanswered.filter((r) => r.requestId !== undefined && durable.has(r.requestId))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const unknownIngress = binding.unanswered.length - unansweredByAge.length;
+  // 'answered' also needs durable ingress; an exact key with unknown ingress is uncertain.
+  const answeredDurable = binding.answered.filter((r) => r.requestId !== undefined && durable.has(r.requestId)).length;
+  const answeredUnknownIngress = binding.answered.length - answeredDurable;
   const unverified = binding.unverified.length + failed.unverified.length;
-  const uncertain = binding.uncertain.length + unknownIngress;
+  const uncertain = binding.uncertain.length + unknownIngress + answeredUnknownIngress;
   const confirmedByMason = loadCommsConfirmation({ ...(options.commsPath ? { path: options.commsPath } : {}), ...(options.home ? { home: options.home } : {}) });
   const slackIds = slackIdentityCount(config);
   const ready = config.state === 'ok' && bridge !== undefined &&
@@ -260,7 +263,7 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
     replies: {
       state: journal.state === 'degraded' || sends.state === 'degraded' ? 'degraded'
         : journal.state === 'missing' && sends.state === 'missing' ? 'missing' : 'ok',
-      answered: binding.answered.length,
+      answered: answeredDurable,
       unanswered: unansweredByAge.length,
       oldestUnansweredAt: unansweredByAge[0]?.at ?? null,
       uncertainSends: sends.receipts.filter((r) => r.state === 'attempted').length,

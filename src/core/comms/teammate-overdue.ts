@@ -72,7 +72,7 @@ export async function noticeOverdueSlackRequests(opts: { runsDir: string; now?: 
       const key = `slack-overdue-${row.channelId}-${row.messageTs}`;
       if (keys.includes(key) || !opts.apply) { skipped++; continue; }
       const result = await postOwnerThreadNotice(row.failed
-        ? `BUS-FAILED: Slack request in ${row.channelId} (thread ${row.threadTs}) was received ${Math.floor(age / 60_000)} min ago but its bus ingress failed, so no durable receipt exists. Check: phm channels slack status --json`
+        ? `BUS-FAILED: Slack request in ${row.channelId} (thread ${row.threadTs}) was received ${Math.floor(age / 60_000)} min ago but its bus publish failed or was not confirmed; reply evidence for it may still exist. Check: phm channels slack status --json`
         : `Slack request in ${row.channelId} (thread ${row.threadTs}) has waited ${Math.floor(age / 60_000)} min with no reply under its Leader reply key. Check: phm channels slack status --json`, key, {
         runsDir: opts.runsDir, now: () => now, settings: emptyOwnerSettings(),
       });
