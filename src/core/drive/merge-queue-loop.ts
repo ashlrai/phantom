@@ -260,15 +260,20 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       }
       result.ok = true;
       result.mergeQueue = snapshot.mergeQueue;
-      const prs = snapshot.prs.slice().sort((a, b) => a.number - b.number);
       const seen = new Set<number>();
-      for (const pr of prs) {
-        if (seen.has(pr.number)) continue;
-        seen.add(pr.number);
+      const planned = snapshot.prs.slice().sort((a, b) => a.number - b.number)
+        .filter((pr) => {
+          if (seen.has(pr.number)) return false;
+          seen.add(pr.number);
+          return true;
+        }).map((pr) => ({ pr, action: classifyMergeQueuePr(pr, snapshot, {
+          fleet: authors.has(bareLogin(pr.author)), held: hold.has(`${shortName(repo)}#${pr.number}`),
+        }) }));
+      // Admit ready heads before slow branch updates or conflict resolution.
+      // Stable sorting preserves PR-number order within each group and its caps.
+      planned.sort((a, b) => Number(b.action === 'enqueue') - Number(a.action === 'enqueue'));
+      for (const { pr, action } of planned) {
         const tag = `${shortName(repo)}#${pr.number}`;
-        const action = classifyMergeQueuePr(pr, snapshot, {
-          fleet: authors.has(bareLogin(pr.author)), held: hold.has(tag),
-        });
         result.totals[action] = (result.totals[action] ?? 0) + 1;
         if (dryRun || (action !== 'enqueue' && action !== 'rebase' && action !== 'conflict')) continue;
 

@@ -78,6 +78,7 @@ test('dist-bound tests are deferred, not run without a build', (t) => {
   const r = plan({ cwd: dir, paths: ['src/core/gamma.ts'] });
   assert.deepEqual(r.tests, ['test/gamma.test.ts']);
   assert.deepEqual(r.deferred, ['test/gamma-dist.test.ts']);
+  assert.ok(!selectFallback({ cwd: dir }).tests.includes('test/gamma-dist.test.ts'));
 });
 
 test('a code change that maps to no test never skips: it falls back', (t) => {
