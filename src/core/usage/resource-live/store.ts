@@ -34,6 +34,9 @@ const amount = z.number().finite().nonnegative().nullable();
 const ids = RESOURCE_LIVE_ALLOWANCES.map(row => row.id) as [ResourceLiveId, ...ResourceLiveId[]];
 
 export const readingSchema = z.object({
+  account_id: z.string().trim().min(1).max(128).optional(),
+  model: z.string().trim().min(1).max(128).optional(),
+  window_start: instant.optional(),
   id: z.enum(ids),
   verified: z.boolean(),
   used: amount,
@@ -70,6 +73,9 @@ export function toReading(allowance: ResourceLiveAllowance, row: StoredReading &
   const measured = row.used !== null && row.limit !== null && row.limit > 0;
   return {
     id: row.id, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: true,
+    ...(row.account_id ? { account_id: row.account_id } : {}),
+    ...(row.model ? { model: row.model } : {}),
+    ...(row.window_start ? { window_start: row.window_start } : {}),
     used: row.used, limit: row.limit, unit: row.unit,
     used_pct: measured ? Math.min(100, Math.round(row.used! / row.limit! * 1000) / 10) : null,
     remaining: measured ? Math.max(0, Math.round((row.limit! - row.used!) * 1000) / 1000) : null,
