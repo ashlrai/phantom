@@ -2964,6 +2964,19 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'settings': {
+        if (wantsHelp(rest)) {
+          printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
+            ['phm settings appearance get [--json]', 'Read the four appearance settings'],
+            ['phm settings appearance set <key> <value> [--json]', 'Change one; a running app applies it live'],
+          ]);
+          process.exitCode = 0;
+          break;
+        }
+        process.exitCode = await (await import('./settings-appearance.js')).cmdSettings(rest);
+        break;
+      }
+
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
