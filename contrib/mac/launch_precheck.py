@@ -7,6 +7,32 @@ import subprocess
 from datetime import datetime
 
 
+def merged_jobs(rows):
+    """Exact job/repo receipts only; missing legacy repos use fleet-wide IDs."""
+    return {(repo.removeprefix("ashlrai/") if repo is not None else None, row['job'])
+            for row in rows if isinstance(row, dict) and row.get('launched') is not False
+            and row.get('event') == 'outcome' and row.get('state') == 'MERGED'
+            and isinstance(row.get('job'), str)
+            for repo in [row.get('repo')] if repo is None or isinstance(repo, str)}
+
+
+def request_hash(job, repo, prompt):
+    """Conservative identity: preserve case, PR targets, dependencies and scope.
+
+    Only scheduling fields differ safely. Continuations and other context count.
+    """
+    import hashlib
+    tasks = [line for line in prompt.splitlines() if line.startswith(job + " (")]
+    if len(tasks) != 1: return None
+    match = re.fullmatch(re.escape(job) + r" \(([^)]*)\):\s*(.{16,})", tasks[0])
+    if not match: return None
+    attrs = sorted(a.strip() for a in match[1].split(',') if a.strip()
+                   and not re.fullmatch(r"P[0-9]+|(?:pool|tier|repo)=[^,]+", a.strip()))
+    before, _, after = prompt.partition(tasks[0])
+    before = re.sub(r"\AJob " + re.escape(job) + r" \(pool [^,\n]+, tier [^,\n]+, repo [^)\n]+\)\. Task from the Ashlr router queue, verbatim:\n\n", "", before)
+    return hashlib.sha256(json.dumps([repo, attrs, match[2], before, after], separators=(',', ':')).encode()).hexdigest()
+
+
 def admission_history(rows, now):
     """24h resolved launches by (prefix, tier, lane); unmatched evidence stays unknown."""
     attempts, latest, urls, states = {}, {}, {}, {}

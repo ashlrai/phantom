@@ -42,7 +42,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, merged_jobs, request_hash
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1790,8 +1790,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
+    completed = merged_jobs(JOBS)
     for f in cand:
-        reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
+        reason = ("already-merged" if (f[1], f[0]) in completed or (None, f[0]) in completed
+                  else terminal_target(f[0], f[1], rd(f[4]), pr_states))
         if reason:
             admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
             metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason))
@@ -1799,6 +1801,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
     seen = set(); pc_n = 0; local_ok = None
+    claimed_requests = {}
+    active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
+                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in alive}
+    for owner, row in active_claims.items():
+        hashes = row.get('request_hashes', [])
+        if isinstance(hashes, list):
+            claimed_requests.update((h, owner) for h in hashes if isinstance(h, str))
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -1858,6 +1867,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        unique = []; hashes = {request_hash(f[0], f[1], rd(f[4]))}
+        for c in pool:
+            digest = request_hash(c['job'], c['repo'], c['prompt'])
+            if digest and (digest in hashes or digest in claimed_requests): continue
+            hashes.add(digest); unique.append(c)
+        pool = unique
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
@@ -1875,6 +1890,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
+        digest = request_hash(j, repo, rd(pf))
+        owner = claimed_requests.get(digest)
+        if owner and owner != j:
+            metric(dict(event="dispatch_deferred", job=j, repo=repo, reason="duplicate-request", repeatOf=owner))
+            rest.append(line); seen.add(j); continue
         if res and res.startswith("RESULT PR"):
             ev("SKIP_DONE %s already has a PR" % j); seen.add(j); continue
         target = drain_target(j, repo)
@@ -2030,7 +2050,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
+        hashes = [request_hash(c['job'], repo, c['prompt']) for c in batch[0]] if batch else [digest]
+        hashes = [h for h in hashes if h]
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane in ("codex-local", "omlx")
                       else ["/bin/bash", BATCH_LAUNCH] if batch else ["/bin/bash", R + "/bin/launch.sh"])
@@ -2045,6 +2067,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             CONC["fork_failures"].append(NOW); ev("FORK_FAILED %s %s (concurrency backoff)" % (j, type(e).__name__))
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
+        claimed_requests.update((h, j) for h in hashes)
         if reason and "waste_reason" not in route_state[j]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)
