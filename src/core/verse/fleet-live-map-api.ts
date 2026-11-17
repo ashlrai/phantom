@@ -26,10 +26,10 @@ export async function readFleetLiveMap(now = Date.now()): Promise<FleetLiveMap> 
   return sanitizePublicJson(buildFleetLiveMap({ org: org?.map ?? null, usage: org?.usage ?? null, computers, now })) as FleetLiveMap;
 }
 
-/** At most one `read` per interval; concurrent callers share the build in flight. A failed build is not kept. */
-export function throttledLiveMap(read: () => Promise<FleetLiveMap>, clock: () => number = Date.now, intervalMs = LIVE_MAP_MIN_INTERVAL_MS) {
-  let last: { at: number; value: Promise<FleetLiveMap> } | null = null;
-  return (): Promise<FleetLiveMap> => {
+/** At most one `read` per interval; concurrent callers share the build in flight. A failed build is not kept. Also throttles the Sessions read. */
+export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock: () => number = Date.now, intervalMs = LIVE_MAP_MIN_INTERVAL_MS) {
+  let last: { at: number; value: Promise<T> } | null = null;
+  return (): Promise<T> => {
     const now = clock();
     if (last && now - last.at < intervalMs && now >= last.at) return last.value;
     const value = read();

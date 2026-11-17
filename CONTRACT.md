@@ -1,3 +1,21 @@
+# Managed desktop CLI upgrade
+
+`src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
+(the consumer install ports plus `smokeVersion` and lowering-only
+`residentStop`), `ConsumerUpgradeOptions`, `ConsumerUpgradeResult`,
+`createConsumerUpgradeDependencies`, `inspectConsumerDesktopUpgrade` and
+`applyConsumerDesktopUpgrade`. Inspection returns frozen `desktop-upgrade.v1`
+observations and stages verified paired public artifacts privately. Apply
+consumes an invocation-owned admission once; it requires Stop/drain, stops the
+resident, switches the managed CLI pointer atomically and keeps the old release.
+`desktop-upgrade-journal.v1` records the previous/current release and version
+for explicit rollback. Neither mode replaces the native app, grants authority,
+or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
+its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
+install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
+The install module also exports its existing `directory`, `parents`, `owned`,
+`regular`, `write`, `sha`, `ioRead` and `packageReady` guards for shared use.
+
 # Lane allowance evidence
 
 `src/core/usage/lane-allowance.ts` exports pure `projectLaneAllowance(inputs,
@@ -233,6 +251,32 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Headless ACP seats
+
+`agents/acp-client.ts` exports `runAcpSeatTurn(opts: AcpSeatOptions,
+deps?: AcpSeatDeps): Promise<AcpSeatResult>`. Options provide command, args,
+cwd, prompt, exact model, async-capable qualifyModel, timeoutMs, optional signal
+and permission (`read-only` by default, or `allow`). Dependencies inject spawn
+and env. Results contain ok, code, text and optional message, sessionId and
+stopReason. Qualification fails closed before spawning, with no paid fallback.
+ACP config model selection defaults to exact values. Optional `planModelStep`
+has signature `(target: string, configOptions: unknown): AcpModelStep`, returning
+`{kind: 'set', configId, value}`, `{kind: 'done'}` or
+`{kind: 'unplannable', reason}`. Each set replans from the response configOptions;
+unplannable targets or more than four sets fail before prompting, without fallback.
+No model control leaves selection to the agent's launch arguments.
+Input lines and collected text are capped at 1 MiB each; stderr is discarded.
+Timeout and abort notify session/cancel and terminate the child.
+
+`devin/acp-seat.ts` exports `devinAcpSeatArgs(model): string[]`,
+`devinQualifiedFreeModel(catalog: DevinModelCatalog, model: string, nowMs?: number): boolean`
+and `runDevinAcpSeat(opts, deps?): Promise<AcpSeatResult>`. Wrapper options replace
+command/args/qualifyModel/planModelStep with cliPath and catalog. The wrapper
+uses nextDevinModelStep for family, effort and speed selection. Only exact free
+ids from a native (`cli`) catalog with a parseable fetchedAt no older than
+DEVIN_MODELS_MAX_AGE_MS and not in the future qualify (nowMs defaults to Date.now()).
+Cache, fallback, aliases and lightning do not qualify.
+
 ## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
 
 `agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
@@ -275,6 +319,29 @@ and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>
 and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
 Dispatch is a read-only preview unless apply is exactly true. Results use only
 the local bus and its current comms/participant allowlist, never a Slack send.
+
+Devin autoland (additive): `src/core/devin/autoland.ts` exports
+`runDevinAutoland({apply, cap?}, deps?) -> Promise<DevinAutolandResult>` and
+`setDevinAutolandPaused(paused)`. Results carry v:1, ok, mode, passId,
+decisions and landed count; scanned decisions aggregate skipped-session counts
+by not-ours/already-archived/not-finished. Decisions include reason and optional session,
+bundle attachment, PR, job, commit count and auto-merge metadata. Dependencies
+inject API, self identity, landing, command runner, clock, KILL and home.
+Cap defaults to 3 (1–10); dry runs never persist. Apply decisions append to
+autoland.jsonl. The client adds optional serviceUserId/isArchived and
+archiveSession(orgId, sessionId), returning a validated DevinSession using
+create retry policy. `autoland-timer.ts` exports ensureDevinAutolandTimer(deps?)
+and stopDevinAutolandTimer(); resident passes are single-flight and unrefed.
+The CLI adds `phm devin autoland [--apply] [--cap N] [--json]` and pause/resume.
+
+Devin landing (additive): `src/core/devin/land.ts` exports
+`landDevinSession(request: DevinLandRequest, deps?: DevinLandDeps): Promise<DevinLandResult>`
+and its parsers; `DevinClient` gains `listSessionAttachments(orgId, sessionId)`
+and `downloadAttachment(orgId, uuid, name, maxBytes)` (the key is never sent past
+the API's redirect), and `DevinFetch` init gains optional `redirect: 'manual'`.
+The CLI adds `phm devin land --session <id> [--repo <name>] [--base <b>] [--job <id>]
+[--bundle <name>] [--apply] [--json]`, a dry run unless `--apply`; it runs the
+pinned `publish.sh` unchanged and refuses repos outside its allowlist.
 
 ---
 
@@ -926,6 +993,22 @@ activity time; it is not a semantic completion claim. Remote claims never read
 local artifacts with matching job names. Missing sources and telemetry remain
 explicit; the map renders unknown placement and empty inventories without
 seeded sessions. All reads use the existing bounded regular-file readers.
+## Live sessions (`fleet.live-sessions.v1`)
+
+`src/core/fleet/live-sessions.ts` exports `buildLiveSessions(map, now,
+filter)` and `renderLiveSessionsText` (both pure);
+`src/core/fleet/live-sessions-read.ts` exports `readLiveSessions(options)` with
+an injectable `readMap`. `phm sessions [--lane] [--repo] [--json]` and
+`GET /api/verse/fleet/control/live-sessions` (optional `lane`, `repo`, each at
+most once; read session required) serve it. It projects the session map above;
+it adds no source. The session map gains `localNodeId`, and
+`fleet.sessions.v1` rows gain optional `lastOutputAt` (the `<job>.log` lstat
+mtime; absent from older servers). Rows cover launching, running, publishing
+and claim-only (`unknown`) sessions. Unknown text fields read `unknown`, unknown
+times are null, and `unknown` names the reason for each. `quiet` is true after
+10 minutes without output and null when that time is unknown.
+`throttledLiveMap` is now generic over its value type.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
@@ -1001,6 +1084,17 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
 
+`tools.matrix.v1` (`src/core/fleet/tool-parity.ts`): `buildToolMatrix(report, lane?)`,
+`formatToolMatrix(matrix, lane?)` and `loadToolParity({ runsDir?, home?, readers? })`.
+Which lane has which tool. Rows are capabilities (GitHub read/write, web search,
+browser, computer use, shell, package install) then named MCP servers, CLIs,
+skills and plugins; each cell is `{ value: yes|no|unknown, source }`. `scores`
+give each lane's share of yes rows; `topGaps` holds at most three gaps with one
+plain `fix`. `readers` (connectors, lane-tools, slots) are injectable for tests.
+Read-only. Served by `phm tools [--json] [--lane L]` and
+`GET /api/verse/fleet/runs/tools[?lane=L]` (404 for an unknown lane) for the
+desktop Tools pane.
+
 `src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
@@ -1012,3 +1106,18 @@ first-paint consumers observe it without importing pane definitions or shortcuts
 `readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
 `describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
 `createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
+
+### PR append-union conflict resolution
+
+`resolvePrConflicts(ConflictOptions): Promise<ConflictReport>` in
+`src/core/fleet/pr-conflict-resolver.ts` inspects one pinned open PR in a
+disposable git repository/worktree. The exact `APPEND_UNION_ALLOWLIST` and empty
+diff3 base regions constrain resolution; GATES v3 and holds override any
+configuration. Dry-run is the default. Apply runs generators and verification,
+then revalidates PR identity, holds and master before export or sanctioned
+publication. `ConflictReport.status` is `needs-agent`, `would-resolve`,
+`ready-supersede` or `published`; available scrubbed conflict hunks and failed
+command names remain evidence. No direct push fallback exists.
+`runPrConflictResolution(ConflictRunOptions): Promise<unknown>` reads GitHub and
+fleet hold evidence for the `pr.resolve-conflicts.v1` CLI envelope.
+See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).

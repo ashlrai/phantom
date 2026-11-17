@@ -53,7 +53,9 @@ export const REAL_IO_TEST_FILES = [
   'test/release-notes.test.ts', // Creates real Git merge history and invokes the release CLI through tsx.
   'test/release-status.test.ts', // Creates real Git tags and remote refs for release status reads.
   'test/verify-changed-master-overlay.test.ts', // Creates real Git branches and materializes master overlay fixtures.
+  'test/acp-seat-client.test.ts', // Real hermetic ACP stdio fixture subprocesses.
   'test/agents-app-adapters.test.ts', // Real fake-CLI shell subprocesses and session-record files.
+  'test/pr-resolve-conflicts.test.ts', // Creates real git histories/worktrees and imports verified supersede bundles.
   'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
@@ -74,6 +76,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
   'test/coordination-return-durable-retry-378s.test.ts', // Spawns a tsx child racing a concurrent owner return on the coordination lock.
   'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
+  'test/release-status.test.ts', // Local publication fixtures use real Git repositories and child processes.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
@@ -725,6 +728,8 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-agents-api-316.test.ts', // 3.16: real git worktree per agent behind /api/verse/agents (temp HOME + temp repo)
   'test/verse-retro-sweep-close-315.test.ts', // 3.15: real loopback startServer bind; close() stops the retro sweep schedule
   'test/devin-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/devin routes
+  'test/devin-land.test.ts', // real git repos, bundles, worktrees and a stub publish.sh subprocess
+  'test/devin-autoland.test.ts', // hermetic autoland journal and git bundle integration
   'test/automations-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/automations routes
   'test/cloud-pr-actions.test.ts', // 3.13: real loopback http server bind for the Needs-you land/close/update-branch routes
   'test/devin-evidence-triage-315.test.ts', // 3.15: real loopback http server bind for the Devin previews / close-with-reason / timeline routes
