@@ -2317,11 +2317,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { parseFeedQuery, readFeed } = await import('../feed.js');
+      const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
       const params = new URL(req.url ?? '', 'http://localhost').searchParams;
-      const query = parseFeedQuery(params.get('limit') ?? undefined, params.get('since') ?? undefined);
-      if (!query) sendJson(res, 400, { error: 'Use limit 1 to 1000 and since 1m to 7d.' });
-      else sendJson(res, 200, await readFeed(query.limit, query));
+      const query = parseFeedQuery({ limit: params.get('limit') ?? undefined, since: params.get('since') ?? undefined, kind: params.get('kind') ?? undefined });
+      if (!query) sendJson(res, 400, { error: FEED_QUERY_ERROR });
+      else sendJson(res, 200, await readFeed(query));
       return true;
     }
 
