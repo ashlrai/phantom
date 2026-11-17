@@ -121,6 +121,8 @@ export interface FleetRunsApiDeps {
   /** Superseded-PR report for GET VERSE_FLEET_SUPERSEDED_PATH; the default
    * lazy-imports the fleet reader so this module never loads gh machinery. */
   readSuperseded?: () => Promise<SupersededReadV1>;
+  /** `phm releases` report for GET /api/verse/fleet/runs/releases. Default: local Git under ~/Projects/ashlrai. */
+  readReleases?: () => Promise<unknown>;
   now?: () => number;
   /** Runs directory the inbox sink and the channel receipt store root at.
    * Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs — the same resolution
@@ -525,6 +527,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       const seen = new URL(req.url ?? '/', 'http://localhost').searchParams.get('leaderSeen');
       const { readHome } = await import('../fleet/home.js');
       sendJson(res, 200, await readHome({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), leaderSeenMs: seen ? Number(seen) : null }));
+      return true;
+    }
+    // The Home Releases card reads the same report as `phm releases`.
+    if (path === '/api/verse/fleet/runs/releases') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readReleases } = await import('../release/status.js');
+      sendJson(res, 200, await (deps.readReleases ?? (() => readReleases({ now: now() })))());
       return true;
     }
     // The Plugins and Skills panes read the same data as `phm plugins|skills list --all --json`.

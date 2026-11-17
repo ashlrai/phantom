@@ -482,6 +482,8 @@ lanes retain their separate ownership.
 Run `phm release status` for local tag age and unreleased commit counts across
 the seven enrolled repositories, or add `--json` for `phantom.release-status.v2`.
 Local refs may be stale; unavailable observations are `null`.
+For the next step per repo (whether the changelog covers the unreleased work), run
+`phm releases`; both read the same local Git evidence.
 `phm release status --file <path>` inspects a local release-train state file.
 
 ### Draft release notes

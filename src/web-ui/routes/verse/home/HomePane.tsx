@@ -1,6 +1,5 @@
-/** Home: the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view. */
-import type { ReactNode } from 'react';
-import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
+/** Home: the `phm home` summary (plus the `phm releases` card) as one column of plain cards. Each card has one action, which opens the existing detailed view. */
+import type { HomeSummary } from '../../../../core/fleet/home.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -11,18 +10,13 @@ import { setHomeChoice } from '../shell/home-view-store.js';
 import { readLastSeen } from '../shell/last-seen-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
+import { Card, Value } from './home-card.js';
 import styles from './home.module.css';
+import { ReleasesCard } from './ReleasesCard.js';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
 const query: QueryDef<HomeSummary> = { key: 'fleet-home', fetch: signal => apiGet(`/api/verse/fleet/runs/home?leaderSeen=${readLastSeen().leader}`, signal) };
 const openPane = (paneId: string) => { setFocusMode(false); setVerseSection('chat'); openDockPane(paneId); };
-
-function Value<T>({ field, children }: { field: HomeField<T>; children: (value: T) => ReactNode }) {
-  return field.state === 'ok' ? <>{children(field.value)}</> : <span data-unknown>Unknown: {field.reason}</span>;
-}
-function Card({ title, action, onOpen, children }: { title: string; action: string; onOpen: () => void; children: ReactNode }) {
-  return <section className={styles.card} aria-label={title}><h3>{title}</h3>{children}<button type="button" className={styles.action} onClick={onOpen}>{action}</button></section>;
-}
 
 export function HomePane({ visible }: PaneProps) {
   const read = useQuery(query, { enabled: visible, freshMs: 0 });
@@ -41,6 +35,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Main" action="Open Fleet" onOpen={() => setVerseSection('fleet')}>
       <Value field={home.main}>{repos => <ul>{repos.map(repo => <li key={repo.repo}>{repo.repo}: {repo.state}</li>)}</ul>}</Value>
     </Card>
+    <ReleasesCard visible={visible} />
     <Card title="Running jobs" action="Open Lanes" onOpen={() => openPane('fleet-lanes')}>
       <Value field={home.running}>{lanes => <ul>{lanes.map(lane => <li key={lane.lane}>{lane.lane}: {lane.running}{lane.target === null ? '' : ` of ${lane.target}`}</li>)}</ul>}</Value>
     </Card>
