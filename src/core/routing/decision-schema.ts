@@ -14,6 +14,10 @@ export const speedTierSchema = z.enum(['everyday', 'workhorse', 'premium']);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export const routeRequestSchema = z.object({
+  needs: z.array(z.string().regex(/^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$/)).optional(),
+  max_cost_class: z.enum(['local', 'included', 'metered']).optional(),
+  data_class: z.enum(['public', 'internal', 'confidential', 'restricted']).optional(),
+  work_class: z.enum(['bulk', 'standard', 'judgment']).optional(),
   task_class: z.enum(TASK_CLASSES),
   repo: routeIdSchema,
   tier_hint: routeTierSchema,
@@ -50,6 +54,12 @@ export type RouteRequest = z.infer<typeof routeRequestSchema>;
 export type RouteDecision = z.infer<typeof routeDecisionSchema>;
 export type RouteReason = z.infer<typeof routeReasonSchema>;
 export interface RouteCandidate {
+  capabilities?: string[];
+  cost_class?: 'local' | 'included' | 'metered';
+  data_class?: 'public' | 'internal' | 'confidential' | 'restricted';
+  work_classes?: Array<'bulk' | 'standard' | 'judgment'>;
+  tiers?: Array<'frontier' | 'work' | 'mid' | 'fast'>;
+  observed_at?: string;
   mode_tier: z.infer<typeof modelModeTierSchema> | null;
   capacity?: ResetCalendarPool;
   lane: string;

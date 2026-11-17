@@ -4,6 +4,8 @@
 
 # Phantom documentation
 
+- [Phantom Bots](BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
+
 - [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
 
 - [Append-union PR conflict resolver](PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.

@@ -34,7 +34,7 @@ Topic summary and discovery hints.
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
-    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
+    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, metrics, enroll, …)
     observability   Observability - cost, telemetry, audit (empties, home, asks, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
@@ -149,6 +149,7 @@ Every command, grouped by topic.
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
+    bots list|show|create --dry-run|explain [--json]                                                                                                              Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
     enroll add <repo> [--locus-firm]                                                                                                                              Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).
@@ -187,6 +188,7 @@ Every command, grouped by topic.
     daemon recover-state --dry-run|--execute                                                                                                                      Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).
     daemon resolve-state --dry-run|--execute                                                                                                                      Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.
     worker setup                                                                                                                                                  Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.
+    pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]                                                                                          Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md.
     prs triage [--repo ashlrai/<name>] [--limit N] --json                                                                                                         Read-only classification of open pull requests.
     fleet status [--json]                                                                                                                                         Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.
     graph status --fleet <file> [--seats <file>] [--json]                                                                                                         Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.

@@ -1,3 +1,19 @@
+# Phantom Bots and generic routing requirements
+
+- `agents/phantom-bot.ts`: `phantomBotSchema`, `PhantomBot`, `parsePhantomBot(value)`
+  validate strict `phantom-bot.v1` metadata with queue-compatible neutral requirements.
+  `listPhantomBots(home?)`, `readPhantomBot(id, home?)`, `planPhantomBot(value, home?)`
+  are read-only; planning refuses existing ids. `writePhantomBot(value, home?)`
+  creates a private record exclusively. `explainPhantomBot(bot, runs?, now?)` returns
+  primitives and advisory existing-router decision/alternatives without dispatch/writes.
+- `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on refusal/error;
+  live creation is refused. `--json` returns records/plans/explanations.
+- `routing/decision-schema.ts`: optional request `needs`, `max_cost_class`,
+  `data_class`, `work_class`; optional candidate capabilities/cost/data/work/tier
+  and observation evidence. Absent requirements preserve legacy routing behavior.
+  `decision-candidates.ts::routeCandidateRejections(request, candidate, nowMs)`
+  returns explicit generic evidence/admission reasons; rank uses the same checks.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`

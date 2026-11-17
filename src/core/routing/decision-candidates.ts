@@ -11,6 +11,12 @@ const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const slotSchema = z.object({
   target: count, hard_cap: count, effective_target: count.optional(), held: z.boolean().optional(),
 });
+const requirementsEvidence = z.object({
+  capabilities: z.array(z.string()).optional(), cost_class: z.enum(['local', 'included', 'metered']).optional(),
+  data_class: z.enum(['public', 'internal', 'confidential', 'restricted']).optional(),
+  work_classes: z.array(z.enum(['bulk', 'standard', 'judgment'])).optional(),
+  tiers: z.array(z.enum(['frontier', 'work', 'mid', 'fast'])).optional(), observed_at: z.string().datetime().optional(),
+});
 export interface RouteSources { models: unknown; slots: unknown; admission: unknown; capacity?: unknown; request?: unknown }
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -71,6 +77,7 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
     const capacity = rawCapacity === undefined ? undefined : { ...object(rawCapacity), pool: lane };
     if (capacity && !validResetCalendarPool(capacity)) continue;
     result.push({ lane, model: model.data, effort: effort.data, mode_tier: mode.success ? mode.data : null,
+      ...(requirementsEvidence.safeParse(slots[lane]).success ? requirementsEvidence.parse(slots[lane]) : {}),
       ...(capacity ? { capacity } : {}), ...modelPrior(model.data, tier) });
   }
   return result;
@@ -81,10 +88,40 @@ export function rankRouteCandidates(request: RouteRequest, candidates: readonly 
   const ranks = { everyday: 0, workhorse: 1, premium: 2 };
   const minimum = ranks[desired];
   return candidates.filter(c => {
+    if (routeCandidateRejections(request, c, nowMs).length) return false;
     const pool = c.capacity;
     if (pool && (pool.remainingPercent === 0 || pool.resetAt !== null && Date.parse(pool.resetAt) <= nowMs) && !((pool.creditBalance ?? 0) > 0)) return false;
     return request.mode ? c.mode_tier !== null && (request.mode === 'fusion' || MODE_RANK[c.mode_tier] >= MODE_RANK[request.mode])
       : ranks[c.speed_tier] >= minimum;
   }).sort((a, b) => compareSpendPriority(a.capacity, b.capacity, nowMs) ||
     a.cost_rank - b.cost_rank || a.latency_rank - b.latency_rank || a.lane.localeCompare(b.lane));
+}
+
+/** Generic requirements opt into evidence-only admission; legacy requests are unchanged. */
+export function routeCandidateRejections(request: RouteRequest, candidate: RouteCandidate, nowMs: number): string[] {
+  if (request.needs === undefined && request.max_cost_class === undefined && request.data_class === undefined && request.work_class === undefined) return [];
+  const reasons: string[] = [];
+  if (request.needs?.length && !candidate.capabilities) reasons.push('unknown capability');
+  else if (request.needs?.some(need => !candidate.capabilities?.includes(need))) reasons.push('missing capability');
+  const costs = ['local', 'included', 'metered'], data = ['public', 'internal', 'confidential', 'restricted'];
+  if (request.max_cost_class !== undefined) {
+    if (!candidate.cost_class) reasons.push('unknown cost class');
+    else if (costs.indexOf(candidate.cost_class) > costs.indexOf(request.max_cost_class)) reasons.push('cost class exceeded');
+  }
+  if (request.data_class !== undefined) {
+    if (!candidate.data_class) reasons.push('unknown data class');
+    else if (data.indexOf(candidate.data_class) < data.indexOf(request.data_class)) reasons.push('data class exceeded');
+  }
+  if (request.work_class !== undefined && !candidate.work_classes?.includes(request.work_class)) reasons.push(candidate.work_classes ? 'work class unsupported' : 'unknown work class');
+  if (!candidate.tiers) reasons.push('unknown tier capability');
+  else if (!candidate.tiers.includes(request.tier_hint)) reasons.push('tier unavailable');
+  const observed = Date.parse(candidate.observed_at ?? '');
+  if (!Number.isFinite(observed) || observed > nowMs || nowMs - observed > 15 * 60_000) reasons.push('capacity stale or unknown');
+  const pool = candidate.capacity;
+  if (!pool || pool.remainingPercent === null || pool.resetAt === null) reasons.push('capacity window unknown');
+  else {
+    if (pool.remainingPercent <= 0) reasons.push('quota exhausted');
+    if (Date.parse(pool.resetAt) <= nowMs) reasons.push('capacity window expired');
+  }
+  return reasons;
 }

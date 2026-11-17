@@ -23,7 +23,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     swarm           Swarm - specs + multi-agent fleets (spec, …)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
-    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
+    autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, metrics, enroll, …)
     observability   Observability - cost, telemetry, audit (empties, home, asks, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
@@ -136,6 +136,7 @@ Phantom - every command (phm or ashlr)
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
+    bots list|show|create --dry-run|explain [--json]                                                                                                              Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
     enroll add <repo> [--locus-firm]                                                                                                                              Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).
@@ -174,6 +175,7 @@ Phantom - every command (phm or ashlr)
     daemon recover-state --dry-run|--execute                                                                                                                      Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).
     daemon resolve-state --dry-run|--execute                                                                                                                      Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.
     worker setup                                                                                                                                                  Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.
+    pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]                                                                                          Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md.
     prs triage [--repo ashlrai/<name>] [--limit N] --json                                                                                                         Read-only classification of open pull requests.
     fleet status [--json]                                                                                                                                         Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.
     graph status --fleet <file> [--seats <file>] [--json]                                                                                                         Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.
@@ -238,7 +240,7 @@ Phantom - every command (phm or ashlr)
     devin connect [--org org-…]                                                                                                                                   Connect Devin (Cognition): paste the API key at a hidden prompt; it is verified and stored in the macOS Keychain, never in a file.
     devin launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Devin session that delivers a PR on ashlr-devin/<id> through the standing gates (spends ACUs, hard-capped per session; never merges).
     devin land --session <id> [--repo phantom] [--apply]                                                                                                          Land a Devin session's attached bundle + pr.md through the pinned fork-only publish.sh, then arm auto-merge unless publish.sh withheld it (dry run by default).
-    devin autoland [--apply] [--cap N] [--json]                                                                                                                  Land finished sessions owned by the connected key; pause/resume controls resident passes.
+    devin autoland [--apply] [--cap N] [--json]                                                                                                                   Land finished sessions owned by the connected key; pause/resume controls resident passes.
     routines list|status|run <id>|tick|migrate|launchd|run <file.json>|explain <id>|export|import|rebalance                                                       Routines: UTC-cron YAML schedules with executor failover; learned local-first placement runs; portable provider placement registry. See docs/ROUTINES.md.
     automations list|templates|add|enable|disable|remove                                                                                                          Automations: labelled issues, a red default branch, RRULE schedules, a local webhook or Telegram /task become tasks for the fleet, cloud, Devin or review - with queue, per-day, concurrency and spend limits.
     automations fire <id> [--dry-run]                                                                                                                             Check one automation's trigger now and dispatch what it finds through the lane's own gates (grant, KILL, budgets); --dry-run shows what would happen and writes nothing.

@@ -2,6 +2,8 @@
 
 # Devin in Phantom
 
+See [Phantom Bots](BOTS.md) for provider-neutral bot metadata and routing.
+
 ## Headless ACP seat client
 
 The core `agents/acp-client.ts` runner supports generic ACP v1 agents over
