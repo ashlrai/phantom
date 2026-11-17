@@ -101,6 +101,29 @@ and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
 Dispatch is a read-only preview unless apply is exactly true. Results use only
 the local bus and its current comms/participant allowlist, never a Slack send.
 
+Devin autoland (additive): `src/core/devin/autoland.ts` exports
+`runDevinAutoland({apply, cap?}, deps?) -> Promise<DevinAutolandResult>` and
+`setDevinAutolandPaused(paused)`. Results carry v:1, ok, mode, passId,
+decisions and landed count; scanned decisions aggregate skipped-session counts
+by not-ours/already-archived/not-finished. Decisions include reason and optional session,
+bundle attachment, PR, job, commit count and auto-merge metadata. Dependencies
+inject API, self identity, landing, command runner, clock, KILL and home.
+Cap defaults to 3 (1–10); dry runs never persist. Apply decisions append to
+autoland.jsonl. The client adds optional serviceUserId/isArchived and
+archiveSession(orgId, sessionId), returning a validated DevinSession using
+create retry policy. `autoland-timer.ts` exports ensureDevinAutolandTimer(deps?)
+and stopDevinAutolandTimer(); resident passes are single-flight and unrefed.
+The CLI adds `phm devin autoland [--apply] [--cap N] [--json]` and pause/resume.
+
+Devin landing (additive): `src/core/devin/land.ts` exports
+`landDevinSession(request: DevinLandRequest, deps?: DevinLandDeps): Promise<DevinLandResult>`
+and its parsers; `DevinClient` gains `listSessionAttachments(orgId, sessionId)`
+and `downloadAttachment(orgId, uuid, name, maxBytes)` (the key is never sent past
+the API's redirect), and `DevinFetch` init gains optional `redirect: 'manual'`.
+The CLI adds `phm devin land --session <id> [--repo <name>] [--base <b>] [--job <id>]
+[--bundle <name>] [--apply] [--json]`, a dry run unless `--apply`; it runs the
+pinned `publish.sh` unchanged and refuses repos outside its allowlist.
+
 ---
 
 ## src/core/types.ts — THE CONTRACT (types only)
