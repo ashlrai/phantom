@@ -171,6 +171,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
+- `src/core/subagent/`
 - `src/core/swarm/`
 - `src/core/teams/`
 - `src/core/toolgraph/`
