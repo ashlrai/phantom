@@ -515,6 +515,14 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readThroughput({ ...options, runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), now: now() }));
       return true;
     }
+    // The desktop Home view reads the same summary as `phm home`; leaderSeen is the reader's last-read time in epoch ms.
+    if (path === '/api/verse/fleet/runs/home') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const seen = new URL(req.url ?? '/', 'http://localhost').searchParams.get('leaderSeen');
+      const { readHome } = await import('../fleet/home.js');
+      sendJson(res, 200, await readHome({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), leaderSeenMs: seen ? Number(seen) : null }));
+      return true;
+    }
     // The Plugins and Skills panes read the same data as `phm plugins|skills list --all --json`.
     if (path === '/api/verse/fleet/runs/plugins' || path === '/api/verse/fleet/runs/skills') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
