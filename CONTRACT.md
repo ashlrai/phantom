@@ -804,3 +804,10 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `read`, `none` or `unknown`; an unreadable source adds no rows. Served by
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
+
+### Agent app adapters
+
+`src/core/agents/apps/`: `AgentAppAdapter` (`describe`, `launchTask`, `listSessions`,
+`readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
+`describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
+`createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
