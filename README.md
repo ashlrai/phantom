@@ -103,13 +103,13 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 
 | Group | Commands |
 | --- | --- |
-| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
+| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `commands`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
 | Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |
 | Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
 | Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations`, `ideas`, `agentnet`, `amplify`, `routines` |
-| Observability | `feed`, `wb`, `worklog`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
+| Observability | `feed`, `wb`, `worklog`, `home`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
 | Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `caps`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
 | Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
 | Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse`, `console` |

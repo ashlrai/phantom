@@ -18,6 +18,7 @@ import { activeEnrollmentLenses, canonicalEnrollmentPath, listEnrolled } from '.
 import { isMirrorPath } from '../fleet/mirrors.js';
 import { audit } from '../sandbox/audit.js';
 import { isTrivialItem } from './value-filter.js';
+import { backlogScanContext, type BacklogScanSnapshot } from './scan-snapshot.js';
 
 /**
  * 3.10: drop the fleet's own mirror clones from a DEFAULT scan set. A standing
@@ -397,6 +398,8 @@ function sanitizeScannerObservation(value: unknown): ScannerObservation | null {
   if (![
     'legacy-empty-result',
     'scanner-failed',
+    'scanner-deadline',
+    'phase-cancelled',
     'source-unavailable',
     'source-unreadable',
     'source-malformed',
@@ -513,7 +516,15 @@ async function getScanners(): Promise<ReadonlyArray<ScannerEntry>> {
   ];
 }
 
+export { createBacklogScanSnapshot } from './scan-snapshot.js';
+
 export const BACKLOG_REPO_CONCURRENCY = 4;
+export const BACKLOG_SCANNER_DEADLINE_MS = 45_000;
+
+export interface BacklogScanInvalidation {
+  repos?: string[];
+  scanners?: string[];
+}
 
 /**
  * Run all SCANNERS over each enrolled repo, aggregate, dedupe, score, persist,
@@ -525,6 +536,10 @@ export const BACKLOG_REPO_CONCURRENCY = 4;
  * - Never throws: any scanner error yields [] (enforced by scanner contract).
  */
 export async function buildBacklog(opts?: {
+  snapshot?: BacklogScanSnapshot;
+  invalidate?: BacklogScanInvalidation;
+  scannerDeadlineMs?: number;
+  signal?: AbortSignal;
   repos?: string[];
   minItemValue?: number;
   /** Persist the global backlog snapshot. Defaults to true for full enrolled scans only. */
@@ -579,8 +594,21 @@ export async function buildBacklog(opts?: {
 
   const allItems: WorkItem[] = [];
   const observations: ScannerObservation[] = [];
+  const skippedScanners: NonNullable<Backlog['skippedScanners']> = [];
+  let cancelScans: (() => void) | undefined;
+  const cancelled = new Promise<void>((resolve) => { cancelScans = resolve; });
+  opts?.signal?.addEventListener('abort', cancelScans!, { once: true });
+  const invalidRepos = new Set(opts?.invalidate?.repos?.map((repo) => resolve(repo)));
+  const invalidScanners = new Set(opts?.invalidate?.scanners);
+  if (opts?.snapshot) {
+    for (const key of opts.snapshot.results.keys()) {
+      const [repo, scannerId] = JSON.parse(key) as [string, string];
+      if (invalidRepos.has(repo) || invalidScanners.has(scannerId)) opts.snapshot.results.delete(key);
+    }
+  }
 
-  const repoResults: Array<Array<{ items: WorkItem[]; observations: ScannerObservation[] }>> = new Array(repos.length);
+  type ScannerResult = { items: WorkItem[]; observations: ScannerObservation[]; skipped?: NonNullable<Backlog['skippedScanners']>[number] };
+  const repoResults: ScannerResult[][] = new Array(repos.length);
   let nextRepo = 0;
   await Promise.all(Array.from({ length: Math.min(BACKLOG_REPO_CONCURRENCY, repos.length) }, async () => {
     while (nextRepo < repos.length) {
@@ -588,24 +616,58 @@ export async function buildBacklog(opts?: {
       const repo = repos[index]!;
       // Scanners retain their own bounds and error isolation.
       repoResults[index] = await Promise.all(
-        scanners.map(async ({ scanner, descriptor }) => {
-          try {
-            if (descriptor) {
-              const { runScannerWithObservations } = await import('./scanners.js');
-              return await runScannerWithObservations(descriptor, scanner, repo, cfg);
+        scanners.map(async ({ scanner, descriptor }, scannerIndex) => {
+          const scannerId = descriptor?.id ?? `scanner-${scannerIndex}`;
+          const key = JSON.stringify([repo, scannerId]);
+          const started = Date.now();
+          const controller = new AbortController();
+          let skipped = false;
+          const skip = (reason: 'scanner-deadline' | 'phase-cancelled'): ScannerResult => {
+            skipped = true;
+            controller.abort();
+            return { items: [], skipped: { repo, scannerId, reason, durationMs: Date.now() - started }, observations: [{
+              schemaVersion: 1, observedAt: new Date().toISOString(), repo, scannerId,
+              domain: descriptor?.domain ?? 'plugin', source: descriptor?.source ?? 'plugin',
+              status: 'unavailable', reason,
+            }] };
+          };
+          if (opts?.signal?.aborted) return skip('phase-cancelled');
+          const cached = opts?.snapshot?.results.get(key);
+          if (cached) return cached;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          let settled = false;
+          const stopped = new Promise<ScannerResult>((resolve) => {
+            timer = setTimeout(() => resolve(skip('scanner-deadline')), opts?.scannerDeadlineMs ?? BACKLOG_SCANNER_DEADLINE_MS);
+            void cancelled.then(() => { if (!settled) resolve(skip('phase-cancelled')); });
+          });
+          const work = backlogScanContext.run({ snapshot: opts?.snapshot, signal: controller.signal }, async () => {
+            try {
+              if (descriptor) {
+                const { runScannerWithObservations } = await import('./scanners.js');
+                if (controller.signal.aborted) return { items: [], observations: [] };
+                return await runScannerWithObservations(descriptor, scanner, repo, cfg);
+              }
+              return { items: await scanner(repo, cfg), observations: [] as ScannerObservation[] };
+            } catch {
+              return { items: [], observations: [] as ScannerObservation[] };
             }
-            return { items: await scanner(repo, cfg), observations: [] as ScannerObservation[] };
-          } catch {
-            // Belt-and-suspenders: scanners must not throw, but we catch anyway.
-            return { items: [] as WorkItem[], observations: [] as ScannerObservation[] };
-          }
+          });
+          const pending = Promise.race([work, stopped]).finally(() => {
+            settled = true;
+            clearTimeout(timer);
+            if (skipped && opts?.snapshot?.results.get(key) === pending) opts.snapshot.results.delete(key);
+          });
+          opts?.snapshot?.results.set(key, pending);
+          return pending;
         }),
       );
     }
   }));
+  opts?.signal?.removeEventListener('abort', cancelScans!);
   for (const [index, perScannerResults] of repoResults.entries()) {
     const repo = repos[index]!;
     for (const result of perScannerResults) {
+      if (result.skipped) skippedScanners.push(result.skipped);
       const items = result.items;
       allItems.push(...items.map((item) => ({ ...item, repo })));
       observations.push(...result.observations);
@@ -767,6 +829,7 @@ export async function buildBacklog(opts?: {
   const completeObservations = mergeConcurrentObservations(observations, undefined) ?? [];
   const observationsTruncated = completeObservations.length > MAX_PERSISTED_SCANNER_OBSERVATIONS;
   const backlog: Backlog = {
+    skippedScanners,
     generatedAt: now,
     snapshotId: randomBytes(16).toString('hex'),
     repos,
@@ -795,7 +858,7 @@ export async function buildBacklog(opts?: {
     action: 'backlog:refresh',
     repo: null,
     sandboxId: null,
-    summary: `backlog refreshed: ${repos.length} repo(s), ${deliverableItems.length} item(s)${filteredMsg}${dedupMsg}${verdictMsg}`,
+    summary: `backlog refreshed: ${repos.length} repo(s), ${deliverableItems.length} item(s); ${skippedScanners.length} scanner(s) skipped${filteredMsg}${dedupMsg}${verdictMsg}`,
     result: 'ok',
   });
 
