@@ -376,7 +376,9 @@ the item is simply inert — nothing breaks.
 window.__ASHLR_DESKTOP__?.reportTheme(resolvedTheme); // 'light' | 'dark'
 ```
 
-Call it once the theme resolves and on every change. The native window stores it
+Call it once the theme resolves and on every change, including the OS flipping
+light/dark while the preference is System (`trackThemeForShell` in
+`app/desktop-shell.ts` does both). The native window stores it
 next to the window geometry and paints the window background with the matching
 canvas colour (`#0b0b0d` dark / `#fafafa` light) **before the webview has
 painted** on the next launch. Without this call the app falls back to the macOS
