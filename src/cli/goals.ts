@@ -9,7 +9,7 @@
  * skip). The DEFAULT path is local + deterministic + read-mostly.
  *
  * Usage:
- *   ashlr goals [--json|--text]                         # fleet scorecard (src/cli/goals-view.ts)
+ *   ashlr goals [--json]                                # fleet scorecard (src/cli/goals-view.ts)
  *   ashlr goals add "<objective>" [--project <enrolled-repo>]
  *   ashlr goals list [--json]
  *   ashlr goals show <id> [--json]
