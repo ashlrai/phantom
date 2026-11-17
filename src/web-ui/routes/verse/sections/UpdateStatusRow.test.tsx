@@ -38,7 +38,7 @@ describe('Updates row', () => {
     const fetcher = server({}, 404); render(<ToastProvider><UpdateStatusRow /></ToastProvider>);
     expect(await screen.findByText(/Update status is not in this build yet/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/ops/self-update'))).toHaveLength(2));
   });
   it('rejects malformed data and never renders paths as shas', async () => {
     server({ ...facts, headSha: '/private/path' }); render(<ToastProvider><UpdateStatusRow /></ToastProvider>);

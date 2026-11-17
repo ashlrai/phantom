@@ -1,5 +1,16 @@
 # Resource readings and credit balances
 
+## Lane allowance cards
+
+The Resources drawer reads `GET /api/usage/lanes` to show each lane's recorded
+allowance, remaining amount, reset countdown and observation age alongside the
+router's burn, balanced or preserve posture. Missing readings remain unknown;
+stale readings keep their last values with a stale label, not fresh headroom.
+History sparklines use recorded samples. Devin cards separate weekly ACUs and
+in-flight reservations from the Lightning/Flash preview expiry; absent preview
+pricing evidence is unknown, never assumed free. API USD credit pools are
+tagged `api-credit`; local or unrecognized router cost classes stay unknown.
+
 ## Lane history
 
 `phm usage history --lane devin --json` reads full-resolution measured points;

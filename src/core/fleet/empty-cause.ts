@@ -80,8 +80,11 @@ const seconds = (value: unknown): number | null => typeof value === 'number' && 
 
 export interface LedgerRow { row: Record<string, unknown>; id: string; lane: string; at: number }
 
-/** Pure: in-window ledger rows that name a safe job id. `malformed` counts non-blank lines that are not JSON objects. */
-export function ledgerRows(ledger: string, now: number, hours: number): { rows: LedgerRow[]; malformed: number } {
+/**
+ * Pure: in-window ledger rows that name a safe job id. `malformed` counts non-blank lines that are not JSON objects.
+ * `anyJob` also keeps rows with no job id (PR outcome rows are keyed by URL) under the id ''.
+ */
+export function ledgerRows(ledger: string, now: number, hours: number, anyJob = false): { rows: LedgerRow[]; malformed: number } {
   const rows: LedgerRow[] = [];
   let malformed = 0;
   for (const line of ledger.split(/\r?\n/)) {
@@ -92,9 +95,9 @@ export function ledgerRows(ledger: string, now: number, hours: number): { rows: 
       if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed++; continue; }
       row = value as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const id = typeof row.job === 'string' ? row.job : row.id;
+    const id = typeof row.job === 'string' ? row.job : row.id ?? (anyJob ? '' : null);
     // The id names a log file, so refuse anything that could leave the runs dir.
-    if (typeof id !== 'string' || !SAFE_ID.test(id)) continue;
+    if (typeof id !== 'string' || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
     const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
     if (!Number.isFinite(at) || at > now || at < now - hours * 3_600_000) continue;
     rows.push({ row, id, lane: text(row.lane), at });

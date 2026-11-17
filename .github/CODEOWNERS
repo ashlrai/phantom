@@ -261,6 +261,7 @@
 /test/agent-bus-adapters.test.ts @masonwyatt23
 /test/agent-bus-api-mirror.test.ts @masonwyatt23
 /test/agent-network-policy.test.ts @masonwyatt23
+/test/agents-app-adapters.test.ts @masonwyatt23
 /test/amplify.test.ts @masonwyatt23
 /test/anthropic-messages-client.test.ts @masonwyatt23
 /test/ask-fanout-budget.test.ts @masonwyatt23
@@ -309,6 +310,7 @@
 /test/bus-wake-queue-custody.test.ts @masonwyatt23
 /test/channel-mirror-deadline-soln1.test.ts @masonwyatt23
 /test/channel-mirror-recovery-solu1.test.ts @masonwyatt23
+/test/ci-baseline.test.ts @masonwyatt23
 /test/claim-notice-cli-kill-resume-494s.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
 /test/claude-json-control-characters.test.ts @masonwyatt23
@@ -1066,6 +1068,7 @@
 /test/order-merge-notice-email-05.test.ts @masonwyatt23
 /test/order-state-channel-provenance-364s.test.ts @masonwyatt23
 /test/order-trace-merge-truth-360s.test.ts @masonwyatt23
+/test/order-work-state-provenance-533s.test.ts @masonwyatt23
 /test/outcome-core.test.ts @masonwyatt23
 /test/outcome-daemon-loop.test.ts @masonwyatt23
 /test/outcome-dispatch.test.ts @masonwyatt23
@@ -1198,6 +1201,7 @@
 /test/route-decision.test.ts @masonwyatt23
 /test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
+/test/router-catalog-refresh.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
 /test/router-gateway.test.ts @masonwyatt23

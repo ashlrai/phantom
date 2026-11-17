@@ -159,6 +159,7 @@ export interface AshlrConfig {
    * Entirely opt-in: a no-op when unset - notify() never posts without one.
    */
   notify?: NotifyTarget;
+  ciRerun?: { enabled?: boolean; intervalMinutes?: number; repos?: string[]; maxPerHour?: number };
   /**
    * M45: multi-backend engine fleet (v4 Foundry). ENTIRELY OPT-IN - when absent,
    * behavior is unchanged (builtin only; external engines run raw as today).

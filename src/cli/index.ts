@@ -2217,6 +2217,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'throughput': {
+        const { cmdThroughput } = await import('./throughput.js');
+        process.exitCode = await cmdThroughput(rest);
+        break;
+      }
+
       case 'jobs': {
         const { cmdJobs } = await import('./jobs-empty.js');
         process.exitCode = await cmdJobs(rest);
@@ -2391,6 +2397,11 @@ async function main(): Promise<void> {
 
       case 'pool': {
         process.exitCode = await (await import('./pool.js')).cmdPool(rest);
+        break;
+      }
+
+      case 'admission': {
+        process.exitCode = await (await import('./admission.js')).cmdAdmission(rest);
         break;
       }
 
@@ -2646,6 +2657,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'nodes': {
+        const { cmdNodes } = await import('./nodes.js');
+        process.exitCode = await cmdNodes(rest);
+        break;
+      }
+
       case 'node': {
         const cmdNode = await loadNodeCmd();
         process.exitCode = await cmdNode(rest);
@@ -2860,6 +2877,12 @@ async function main(): Promise<void> {
       case 'health': {
         const cmdHealth = await loadHealthCmd();
         process.exitCode = await cmdHealth(rest);
+        break;
+      }
+
+      case 'autonomy': {
+        const { cmdAutonomy } = await import('./autonomy.js');
+        process.exitCode = await cmdAutonomy(rest);
         break;
       }
 
@@ -3297,6 +3320,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'ci': {
+        const { cmdCiBaseline } = await import('./ci-baseline.js');
+        process.exitCode = await cmdCiBaseline(rest);
         break;
       }
 

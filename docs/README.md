@@ -4,6 +4,8 @@
 
 # Phantom documentation
 
+- [Router catalog refresh](ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
+
 Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
 
 | Start here | What you will do |
@@ -17,6 +19,8 @@ Phantom is an open-source workbench for running coding agents, coordinating a fl
 The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands use the same runtime. Historical Ashlr Verse and Universe names remain in research and compatibility guides. See [product naming](PHANTOM-BRAND.md). The [North Star](NORTH-STAR.md) describes a target, not deployed capability.
 
 ## Agents, start here
+
+- [CI baseline analyzer](CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
 
 Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
@@ -74,6 +78,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read the Growth chart series | [Growth charts](https://github.com/ashlrai/phantom/blob/master/docs/GROWTH.md) (`phm growth --json`) |
 | Triage mail and hold sends for the owner | [Comms agent](https://github.com/ashlrai/phantom/blob/master/docs/COMMS-AGENT.md) (`phm comms-agent status --json`) |
 | Read one owner thread across desktop, Telegram, email, iMessage and Slack | [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md) (`phm comms thread --json`) |
+| Operate Codex, Claude, Devin, Grok and Cursor apps from Phantom | [Agent app adapters](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-APPS.md) (`phm agents apps --json`) |
 | Resume a multi-turn agent session | [Agent sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md) (`phm sessions`) |
 | Model session batching, sub-agent fan-out, warm retention and swarm work generation | [Session economics — advisory design](https://github.com/ashlrai/phantom/blob/master/docs/strategy/SESSION-ECON.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |

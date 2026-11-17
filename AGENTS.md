@@ -30,6 +30,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 ## Tools for agents working here
 
+- CI baseline analysis: `phm ci baseline --json` groups fresh Vitest failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
+
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
   Grant a reviewed selection with `phm onboard --ecosystem --grant --plan <planId> --select lexicon,stack --json`.
   `--yes` never grants. Locked vaults offer existing-vault access; imports stay
@@ -102,6 +104,10 @@ installs the daily per-user job. The protect-list (`~/.codex*`, model weights,
 Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
+
+Router catalog refresh: `phm router catalog refresh --json` writes a review-only
+report and patch; `phm router catalog schedule` prints weekly user units.
+See [Router catalog](docs/ROUTER-CATALOG.md) for explicit apply and discovery rules.
 
 pass^k eval: `phm eval passk [--lane <lane:engine>]... [--trials N] [--k K]`
 runs the pinned golden set in `benchmarks/passk/` N times per task in clean
@@ -298,6 +304,12 @@ phm comms-agent status --json
 phm comms-agent run --lanes claude,local --json
 phm comms-agent drafts --json
 ```
+
+## Agent app adapters
+
+`phm agents apps [<id> launch|sessions|show|send|usage] --json` drives Codex,
+Claude, Devin, Grok and Cursor through one adapter interface: CLI adapters first,
+`<app>-desktop` fallbacks through the desktop operator's gates. See [AGENT-APPS](docs/AGENT-APPS.md).
 
 ## Agent sessions
 

@@ -4,7 +4,7 @@ import { CompactNavStrip } from './CompactNavStrip.js';
 
 const feed = vi.hoisted(() => ({ count: 0 }));
 vi.mock('../../../data/hooks.js', () => ({ useQuery: ({ key }: { key: string }) => ({
-  data: key === 'shared-feed' ? { items: Array.from({ length: feed.count }, (_, i) => ({
+  data: key === 'shared-feed' ? { schema: 'phantom.feed.v1', sources: { merges: 'unknown', releases: 'unknown', incidents: 'unknown', leaderReplies: 'available' }, items: Array.from({ length: feed.count }, (_, i) => ({
     kind: 'leader-reply', at: '2026-11-11T12:00:00Z', text: `Leader reply ${i}`,
   })) } : undefined,
 }) }));

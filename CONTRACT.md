@@ -1,4 +1,83 @@
+# Lane allowance evidence
+
+`src/core/usage/lane-allowance.ts` exports pure `projectLaneAllowance(inputs,
+nowMs)` and read-only `readLaneAllowance({ runsDir?, weeklyFile?, nowMs? }?)`,
+returning `LaneAllowanceSnapshot` (`v: 1`, `asOf`, `lanes`). Inputs combine
+resource-live state/history, parsed posture evidence and published Devin weekly
+capacity. Runs default to `ASHLR_RUNS_DIR` or `~/.ashlr-runs`; `weeklyFile`
+overrides the Devin publication path. `LaneAllowanceInputs` and
+`LaneAllowanceRow` describe nullable usage, reset, age, history, posture and
+Devin preview evidence. Missing measurements stay null; stale values retain
+their age and reason. Future observations have `freshness: invalid-future`,
+null usage/age and an invalid-timestamp reason. A lane name alone never proves
+cost. Fresh verified USD readings map to `api-credit`; included/metered receipt
+classes require fresh matching provenance, and unrecognized classes stay unknown.
+`GET /api/usage/lanes` returns this projection without refreshing providers.
+`postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
+the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
+ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
+`window_start` and `reset_at` as `lane`, `accountId`, `model`, `windowStart` and
+`resetAt`. Absent optional fields remain absent, including `freePreview` and
+`previewExpiresAt`; parsing does not establish freshness or grant free status.
+The resource-live reading parser preserves optional `account_id`, `model` and
+`window_start`; weekly capacity also accepts optional `account_id` and `model`.
+When weekly capacity supplies the usage, its own scope is required, never
+borrowed from a different sidecar reading. Receipt evidence must match that lane/account/model and window
+(reset or fixed expiry, and window start when present), be within the reading's
+15-minute freshness bound, and never be future-dated. Legacy unscoped receipts
+remain readable in route explanations but cannot establish allowance posture
+or cost; incomplete usage cannot establish posture.
+
+A free preview requires a verified `devin-cli-models-list` models reading with
+a positive count, a named Flash/Lightning model, a nonempty account matching
+the lane reading, a fresh non-future observation and an unexpired preview window.
+Receipt flags alone cannot grant it or extend the fixed preview deadline.
+Granted previews include `evidence: { observedAt, accountId, model }` so cards
+can age them out. Cards omit usage bars for missing usage and free countdowns
+for unproven previews; future measurements show clock skew, not zero age.
+
+# CI baseline evidence
+
+Failure groups add `runs: {pr: number, head: string, runId: number}[]`, linking
+only the failed job evidence to its workflow run and current PR head.
+`src/core/fleet/ci-rerun.ts` exports `CiRerunOptions` and
+`runCiRerunMaintenance(opts)`: injectable repositories, cancellation, GitHub,
+analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
+probable flakes are rerun, with durable pre-attempt deduplication and a global
+hourly cap (default ten). Shared-baseline queueing requires effective authority
+and inactive KILL. Cancellation returns/persists `status: 'aborted'`.
+`ciRerunPaths()` resolves journal/status files under the ASHLR state root;
+`readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts and
+lastHour attempts; `readCiRerunStatus(path?)` returns the persisted status or null.
+Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
+Resident off-tick ticks launch it only with repositories and an elapsed interval.
+The CLI `ci reruns [--json]` reads recent journal entries/counts without mutation.
+
+`src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
+read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
+scrubbed Vitest failure identities and summaries. `enqueueBaselineFixes(report,
+absoluteQueuePath)` explicitly writes deduplicated work-tier master-fix rows.
+`applyBaselineUpdates(report, gh?)` explicitly applies expected-head guarded
+updates only after current master test-pass and merged-fix ancestry evidence.
+Unknown evidence never authorizes mutation. See [CI baseline](docs/CI-BASELINE.md).
 # Frontier CLI discovery and daemon health
+
+## Router catalog refresh
+
+`DailyJobSpec` in `src/core/steward/schedule.ts` accepts optional `weekday`
+(0=Sunday through 6=Saturday). When absent, daily unit output is unchanged.
+When set, launchd receives Weekday and systemd receives a weekday-qualified
+OnCalendar expression and Weekly timer description. Invalid weekdays throw.
+
+`src/core/routing/catalog-refresh.ts` exports pure `diffCatalog(current,
+sources, patterns, now, dryRun?)`, returning `{report, data}`, deterministic
+`renderCatalog(data)` and `catalogPatch(before, after)`, and async
+`refreshCatalog(options?, deps?)`. Refresh writes versioned report/patch
+artifacts; only explicit apply writes the generated data file. Source runners,
+fetch, seat discovery, current data and time are injectable. Source failures
+are unknown; existing tiers and catalog entries are never removed or changed.
+Only lite/normal pattern tiers may be assigned to additions. Reports use schema
+`router.catalog-refresh.v1`.
 
 `src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
 execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
@@ -723,6 +802,15 @@ with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHist
 
 ## Devin weekly capacity
 
+`DevinWeeklyInput` and `DevinWeeklyDeps` accept optional `accountId` and `model`.
+`DevinWeeklyCapacity` emits optional `account_id` and `model`: the connected Devin
+org ID and configured fleet model, omitted when unknown. Explicit dependencies
+override these defaults. `devinWeeklyObservation` forwards these and `window_start`.
+`ResourceLiveObservation` accepts optional `account_id`, `model`, `window_start`;
+the engine retains them in verified readings and normalizes window instants like
+`reset_at`. Preview observations carry the first matched free model ID, never an
+account ID (the CLI catalog exposes none).
+
 `src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
 `publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,
 `devinPreviewObservation`, `devinWeeklyWindow`, `devinWeeklyAllowance`, `devinWeeklyLine`
@@ -878,3 +966,10 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
 first-paint consumers observe it without importing pane definitions or shortcuts.
+
+### Agent app adapters
+
+`src/core/agents/apps/`: `AgentAppAdapter` (`describe`, `launchTask`, `listSessions`,
+`readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
+`describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
+`createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
