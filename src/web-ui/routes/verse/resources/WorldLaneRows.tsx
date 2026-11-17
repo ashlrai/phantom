@@ -8,7 +8,7 @@
  */
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { WORLD_CACHE_TTL_MS } from '../../../../core/world/types.js';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
@@ -62,7 +62,7 @@ function Mark({ engine }: { engine: LaneEngine }) {
     case 'grok':
     case 'local':
     case 'devin':
-      return <ProviderLogo engine={engine} size={14} />;
+      return <BrandMark brand={engine} size={14} />;
     case 'cursor':
       return <span className={styles.monogram} aria-hidden="true">Cu</span>;
     case 'dot':
