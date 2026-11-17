@@ -9,6 +9,41 @@ from test_dispatchd import build, tick, queue_job, launch_stubs, lane_slot, disp
 
 
 class MergeYieldAdmission(unittest.TestCase):
+    def test_fresh_repairs_finish_without_claims_and_unresolved_work_launches(self):
+        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+            home = Path(tmp).resolve(); env = launch_stubs(home)
+            stub = home / 'stubbin/locus'
+            stub.write_text('#!/usr/bin/env python3\nimport json, sys\n'
+                            'n = int(sys.argv[6])\n'
+                            'json.dump(dict(number=n, state="CLOSED" if n == 41 else "OPEN", '
+                            'headRefOid="a"*40, mergeable="MERGEABLE", statusCheckRollup=['
+                            'dict(__typename="StatusContext", context="Merge Gate", state="SUCCESS" if n == 42 else "PENDING")]), sys.stdout)\n')
+            stub.chmod(0o755)
+            jobs = [f'RQ-{kind}-phantom-{pr}-aaaaaaa' for kind, pr in
+                    [('FIXUP', 41), ('FIXUP', 42), ('REBASE', 43), ('FIXUP', 44)]]
+            for job in jobs:
+                queue_job(home, job, 'codex-cmp')
+                (home / f'.ashlr-runs/queue/prompts/{job}.md').write_text(f'{job} (P1): check="Merge Gate"')
+            result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
+            ledger = [json.loads(line) for line in (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()]
+            for job, reason in zip(jobs, ['target_pr_closed', 'target_pr_checks_resolved', 'target_pr_conflicts_resolved']):
+                self.assertFalse(dispatched(home, job))
+                self.assertFalse(any(r.get('job') == job and r.get('event') in ('claim', 'launch', 'batch_claim') for r in ledger))
+                self.assertTrue(any(r.get('job') == job and r.get('state') == 'DONE-NOOP'
+                                    and r.get('reason') == reason and r.get('launched') is False for r in ledger))
+            self.assertTrue(dispatched(home, jobs[-1]))
+            self.assertEqual((home / '.ashlr-runs/queue/ready.tsv').read_text().strip(), '')
+
+    def test_repairs_wait_when_freshness_budget_is_exhausted(self):
+        with build(slots={'codex-cmp': lane_slot()}) as tmp:
+            home = Path(tmp).resolve(); env = launch_stubs(home)
+            job = 'RQ-FIXUP-phantom-42-aaaaaaa'
+            queue_job(home, job, 'codex-cmp')
+            result = tick(home, dict(env, TICK_BUDGET_S='-1'))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(dispatched(home, job))
+            self.assertIn(job, (home / '.ashlr-runs/queue/ready.tsv').read_text())
+
     def test_high_yield_launches_first_and_terminal_target_never_launches(self):
         stamp = datetime.fromtimestamp(time.time() - 60, timezone.utc).isoformat()
         rows = []
