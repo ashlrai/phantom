@@ -591,7 +591,6 @@
 /test/intent-merge-batch-recovery-09sql1.test.ts @masonwyatt23
 /test/intent-merge-batch-recovery-228s.test.ts @masonwyatt23
 /test/intent-merge-batch-restoration-09sqc1.test.ts @masonwyatt23
-/test/intent-merge-receipt-recovery-151.test.ts @masonwyatt23
 /test/intent-merge-snapshot-recovery-09spq1.test.ts @masonwyatt23
 /test/intent-merge-snapshot.recut-s130.test.ts @masonwyatt23
 /test/intent-native-edit-preservation-09sqa1.test.ts @masonwyatt23
