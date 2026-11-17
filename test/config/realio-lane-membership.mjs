@@ -43,6 +43,16 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
+  'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
+  'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
+  'test/m30.ci.test.ts', // Runs real Bash workflow checks and native tsgo compiler children.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real Git history for MCP snapshot replay reads.
+  'test/no-stray-source-artifacts-373.test.ts', // Runs git ls-files to inspect tracked source artifacts.
+  'test/recut-scripts-c497.test.ts', // Runs the desktop performance script in a real Node child.
+  'test/release-notes.test.ts', // Creates real Git merge history and invokes the release CLI through tsx.
+  'test/release-status.test.ts', // Creates real Git tags and remote refs for release status reads.
+  'test/verify-changed-master-overlay.test.ts', // Creates real Git branches and materializes master overlay fixtures.
   'test/agents-app-adapters.test.ts', // Real fake-CLI shell subprocesses and session-record files.
   'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.

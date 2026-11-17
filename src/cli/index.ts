@@ -2146,6 +2146,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdMessages(rest);
         break;
       }
+      case 'map': {
+        const { cmdMap } = await import('./map.js');
+        process.exitCode = await cmdMap(rest);
+        break;
+      }
       case 'router': {
         const { cmdRouter } = await import('./router.js');
         process.exitCode = await cmdRouter(rest);
@@ -2214,6 +2219,12 @@ async function main(): Promise<void> {
       case 'empties': {
         const { cmdEmpties } = await import('./empties.js');
         process.exitCode = await cmdEmpties(rest);
+        break;
+      }
+
+      case 'home': {
+        const { cmdHome } = await import('./home.js');
+        process.exitCode = await cmdHome(rest);
         break;
       }
 
@@ -3039,6 +3050,12 @@ async function main(): Promise<void> {
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
+        break;
+      }
+
+      case 'commands': {
+        const { cmdCommands } = await import('./commands.js');
+        process.exitCode = await cmdCommands(rest);
         break;
       }
 
