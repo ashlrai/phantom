@@ -1180,6 +1180,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'route fit --input <file|-> [--worktree <directory>] --json', desc: 'Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'admission explain [--json]', desc: 'Read existing admission inputs, the adaptive launch interval and its reason. Advisory; launches nothing.', topic: 'autonomy' },
+  { cmd: 'queue [--json]', desc: 'List queued jobs in launch order: position, id, repo, lane, tier, age and any newer cycle that replaces them.', topic: 'autonomy' },
+  { cmd: 'queue top|lane|drop <id> [<lane>] [--dry-run] [--json]', desc: 'Steer one queued job: move it to the front, to another lane, or out of the queue (kept in queue/dropped.tsv).', topic: 'autonomy' },
   { cmd: 'queue supersede [--json] [--apply]', desc: 'List queued jobs that a newer cycle of the same job replaces; --apply archives them.', topic: 'autonomy' },
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
