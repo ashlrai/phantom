@@ -366,6 +366,30 @@ pane that already shows its details: the worker log for a job, Lanes, Computers,
 Usage for a pool, or Leader. The map is 2D only, because no 3D library is a
 dependency.
 
+### Live sessions
+
+`phm sessions [--lane <lane>] [--repo <repo>] [--json]` lists every running
+agent session, grouped by lane. `--json` prints `fleet.live-sessions.v1`, and
+`GET /api/verse/fleet/control/live-sessions[?lane=<lane>][&repo=<repo>]`
+serves the same list to the desktop Sessions pane with a current read session.
+It adds no source of its own: it projects the session map behind
+`/api/verse/fleet/control/sessions` (the dispatch inventory joined with the
+computers in `fleet.compute.v1`).
+
+- `sessions[]`: `job`, `lane`, `model`, `repo`, `tier`, `status` (`launching`,
+  `running`, `publishing`, or `unknown` for a job only another computer's claim
+  names), `startedAt`, `ageSeconds`, `lastOutputAt` (the worker log's last
+  write), `lastOutputAgeSeconds`, `quiet` (no output for more than 10 minutes;
+  null when unknown), `prUrl`, `computer` (node id or `unknown`),
+  `thisComputer` and `unknown`, which maps each unknown field to the reason.
+- `counts` (`sessions`, `quiet`, `lanes`, `otherComputers`), `filter` and
+  `gaps`.
+
+Rows sort by lane order, then start time, then job id, with the same keys in
+the same order. The server reads the session map at most once every 5 seconds.
+Selecting a session in the pane opens the worker log, which has the existing
+pause and stop controls.
+
 ### Desktop workbench actions (WB-4)
 
 `POST /api/wb/v1/action` requires dispatch enabled, the existing mutation

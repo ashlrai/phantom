@@ -970,6 +970,22 @@ activity time; it is not a semantic completion claim. Remote claims never read
 local artifacts with matching job names. Missing sources and telemetry remain
 explicit; the map renders unknown placement and empty inventories without
 seeded sessions. All reads use the existing bounded regular-file readers.
+## Live sessions (`fleet.live-sessions.v1`)
+
+`src/core/fleet/live-sessions.ts` exports `buildLiveSessions(map, now,
+filter)` and `renderLiveSessionsText` (both pure);
+`src/core/fleet/live-sessions-read.ts` exports `readLiveSessions(options)` with
+an injectable `readMap`. `phm sessions [--lane] [--repo] [--json]` and
+`GET /api/verse/fleet/control/live-sessions` (optional `lane`, `repo`, each at
+most once; read session required) serve it. It projects the session map above;
+it adds no source. The session map gains `localNodeId`, and
+`fleet.sessions.v1` rows gain optional `lastOutputAt` (the `<job>.log` lstat
+mtime; absent from older servers). Rows cover launching, running, publishing
+and claim-only (`unknown`) sessions. Unknown text fields read `unknown`, unknown
+times are null, and `unknown` names the reason for each. `quiet` is true after
+10 minutes without output and null when that time is unknown.
+`throttledLiveMap` is now generic over its value type.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
