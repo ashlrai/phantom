@@ -2222,6 +2222,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'subagent': {
+        const { cmdSubagent } = await import('./subagent.js');
+        process.exitCode = await cmdSubagent(rest);
+        break;
+      }
+
       case 'asks': {
         const { cmdAsks } = await import('./asks.js');
         process.exitCode = await cmdAsks(rest);

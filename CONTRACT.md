@@ -1183,6 +1183,59 @@ first-paint consumers observe it without importing pane definitions or shortcuts
 `describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
 `createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
 
+## Cross-provider subagents (subagent.v1)
+
+`src/core/subagent/spawn.ts` exports `MAX_SUBAGENT_DEPTH = 3`, strict Zod
+`subagentRecordSchema`, `SubagentRecord`, `SubagentSpawnInput`, `SubagentOptions`,
+and these asynchronous APIs:
+
+- `planSubagentSpawn(input: SubagentSpawnInput, options?: SubagentOptions)` →
+  `{schema:'subagent.spawn.v1',ok,dry_run,applied:false,record,parent:{id,depth,kind:'root'|'subagent'},routing:{decision,eligible_lanes,excluded_lanes:[{lane,reason}]},reason_codes,next_step}`.
+- `listSubagents(parentId: string, options?: SubagentOptions)` →
+  `{schema:'subagent.list.v1',parent_id,count,subagents:SubagentRecord[]}`.
+- `readSubagentRecord(id: string, options?: SubagentOptions)` → `SubagentRecord|null`.
+- `writeSubagentRecord(record: SubagentRecord, options?: SubagentOptions)` → `void`.
+
+Options: `home`, `runsRoot`, `nowMs`, `kill:()=> 'active'|'inactive'|'unknown'`,
+`paused:()=>boolean`. Input: `parent_id`, `tier`, `task`, optional
+`tools_allowed`, `write_scope`, `max_tokens`, `max_cost_class`, `task_class`,
+`repo`, `apply`. Defaults and subset rules: [Subagents](docs/SUBAGENTS.md).
+Refusals are values, not exceptions. Storage failures may throw.
+
+Strict record fields: `schema:'subagent.v1'`, `id` (`sa-` + 16 random hex),
+`parent_id` (bounded session/job identifier), `depth` (positive integer),
+`tier` (`fast|mid|work|frontier`), `lane:string|null`, `model:string|null`,
+`tools_allowed` (read/search/edit/test/shell/web array), `write_scope:string[]`,
+`max_tokens` (positive integer), `max_cost_class` (`local|included|metered`),
+`state` (`planned|held|refused|running|completed|failed`), `result_ref:string|null`,
+`created_at` (ISO timestamp), `reason_codes:string[]`, `task_digest` (SHA-256 hex).
+No task content is stored. Dry-run writes nothing. Successful apply stores
+held only; no live execution, enqueue, queue file writes or paid model calls.
+
+`src/core/subagent/result.ts` exports:
+- `readSubagentResult(id: string, options?: SubagentOptions)` →
+  `{schema:'subagent.result.v1',id,found,state,result_ref,lane,depth,reason_codes}`;
+  missing records have null state/reference/lane/depth.
+- `recordSubagentResult(id: string, input:{state:'completed'|'failed',result_ref:string}, options?: SubagentOptions)`
+  → `{ok:boolean,reason:string|null}`. Only held/running may transition.
+  References match `^(run|pr|proposal|job|artifact):[A-Za-z0-9._:/#-]{1,200}$`.
+
+Subagent-pattern parent IDs (`^sa-[a-f0-9]{16}$`) require a valid stored record
+or refuse `parent-not-found`. Stored parents outside planned/held/running
+refuse `parent-state-invalid`. Both gates skip routing. Non-subagent parent
+IDs resolve as root sessions/jobs with fixed frontier tier,
+read/search/edit/test/shell tools, `**` write scope, 200000 tokens and
+included cost class.
+
+Reason codes: `parent-not-found`, `parent-state-invalid`, `depth-exceeded`, `scope-tools-not-subset`, `scope-write-not-subset`,
+`write-scope-invalid`, `scope-cost-not-subset`, `scope-tokens-not-subset`,
+`scope-tier-not-subset`, `tool-unknown`, `kill-engaged`, `paused`,
+`no-eligible-lane-quota`, `input-invalid`, `apply-inert-no-scoped-live-path`,
+plus existing router reason codes (including `admission-blocked`). Result
+updates may refuse with `not-found`, `state-transition-invalid`,
+`result-ref-invalid`. CLI uses sanitized public JSON and exit 0/1/2 for
+success/refusal-or-missing/usage.
+
 ### PR append-union conflict resolution
 
 `resolvePrConflicts(ConflictOptions): Promise<ConflictReport>` in
