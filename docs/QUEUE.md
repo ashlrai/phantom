@@ -620,6 +620,28 @@ Run `phm jobs retry-empty --dry-run` to preview READY lines for empty jobs from
  when moving the queue. A crash between recording a receipt and writing the
  queue can leave a job unqueued; inspect the queue before manual recovery.
 
+## Coalesce small jobs into batches
+
+Run `phm queue coalesce <file>` (or pipe queue lines on stdin) to merge small
+READY lines for the same repo into batch jobs, so one session takes several
+related tasks instead of one launch slot each. Lines join a batch only when
+they share repo, pool and tier and declare `size<=200` or less; a batch holds
+at most 8 tasks and the rest form the next batch. A batch id is derived from
+its member ids, and each batch lists the ids it replaces. P0 lines,
+`tier=frontier` lines, FIXUP ids, `src=leader` lines and lone lines stay as
+they are. Malformed READY lines stay as they are and are reported.
+
+Each batch also has a prompt: a numbered checklist of the tasks with their
+acceptance, then fixed rules (skip a task that is already covered and say so,
+ship the finished subset, end with no changes only when every task is already
+covered, run only the touched tests).
+
+The default is a dry run: one plain line per batch, or `--json` for the
+`phantom.queue-coalesce.v1` report. `--apply --out <directory>` first saves
+`router-queue.original.md`, then writes `router-queue.md` and
+`prompts/<batch id>.md` there. It never replaces existing files and never
+edits the input queue.
+
 ## Batch session results
 
 Run `phm queue batches` to see one plain summary of batch sessions, or
