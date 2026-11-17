@@ -12,7 +12,7 @@ const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE
 
 export async function cmdRouter(args: string[]): Promise<number> {
   if ((ROUTER_GATEWAY_VERBS as readonly string[]).includes(args[0] ?? '')) return cmdRouterGateway(args);
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || args.join(' ') === 'rank --help') {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || ['rank --help', 'rank -h'].includes(args.join(' '))) {
     console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}`); return 0;
   }
   let tier: EngineTier | undefined; let json = false; let routesFile: string | undefined;
