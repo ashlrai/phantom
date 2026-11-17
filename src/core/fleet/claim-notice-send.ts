@@ -22,7 +22,7 @@
  * ledger can never masquerade as a release flood. The ledger stores
  * dedupeKey + timestamp only — never message text, tokens or thread
  * contents. Labels grant no authority. */
-import { appendFileSync, chmodSync } from 'node:fs';
+import { appendFileSync, chmodSync, lstatSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { planClaimThreadNotices, type ClaimThreadBinding, type ClaimThreadNotice,
   type ClaimThreadSnapshot } from './claim-thread-notice.js';
@@ -44,10 +44,14 @@ export interface ClaimNoticeSendDeps {
   readBoard: () => FleetBoard;
   /** Previous pass's snapshot; `null` (absent/corrupt) is a first pass. */
   readPrevSnapshot: () => ClaimThreadSnapshot | null;
+  /** Optional durable read that distinguishes absence from an outage. */
+  readPrevSnapshotState?: () => { state: 'absent' | 'unavailable' } | { state: 'available'; snapshot: ClaimThreadSnapshot };
   /** Persist the snapshot for the next diff; called only on a clean pass. */
   writePrevSnapshot: (snapshot: ClaimThreadSnapshot) => void;
-  /** claimId+repo → exact source thread bindings. */
-  readBindings: () => readonly ClaimThreadBinding[];
+  /** claimId+repo → exact source thread bindings. `null` means the durable
+   * bindings are unreadable (not merely empty): the pass retains the pending
+   * transition instead of planning against an untrusted empty set. */
+  readBindings: () => readonly ClaimThreadBinding[] | null;
   /** Delivered dedupeKeys; `null` means the ledger cannot be trusted (refuse). */
   readSentLedger: () => ReadonlySet<string> | null;
   /** Ledger one delivered dedupeKey (timestamped row, no text). */
@@ -70,7 +74,7 @@ export interface ClaimNoticeDelivery {
 }
 
 export interface ClaimNoticePassResult {
-  status: 'completed' | 'dry-run' | 'board-unavailable' | 'ledger-unavailable';
+  status: 'completed' | 'dry-run' | 'board-unavailable' | 'ledger-unavailable' | 'bindings-unavailable' | 'prev-unavailable';
   reason?: string;
   /** True when there was no usable prior 'known' snapshot to diff against. */
   baselined: boolean;
@@ -93,13 +97,22 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
   const ledger = deps.readSentLedger();
   if (ledger === null) return empty('ledger-unavailable', 'sent-ledger-unreadable');
   const sent = new Set(ledger);
-  const prev: ClaimThreadSnapshot = deps.readPrevSnapshot()
+  let prevState: ReturnType<NonNullable<ClaimNoticeSendDeps['readPrevSnapshotState']>> | undefined;
+  try { prevState = deps.readPrevSnapshotState?.(); } catch { return empty('prev-unavailable', 'prev-snapshot-unreadable'); }
+  if (prevState?.state === 'unavailable') return empty('prev-unavailable', 'prev-snapshot-unreadable');
+  const prev: ClaimThreadSnapshot = (prevState ? (prevState.state === 'available' ? prevState.snapshot : null) : deps.readPrevSnapshot())
     ?? { state: 'unknown', claims: [], messages: [], asOf: now };
   const next: ClaimThreadSnapshot = {
     state: 'known', claims: board.claims, messages: board.messages, asOf: now,
   };
   const baselined = prev.state !== 'known';
-  const notices = planClaimThreadNotices(prev, next, deps.readBindings(), now);
+  // Unreadable bindings must not look like "no bindings": planning against []
+  // would drop the transition and then advance prev past it. Halt with prev,
+  // ledger and sends untouched so the transition replans after repair.
+  let bindings: readonly ClaimThreadBinding[] | null;
+  try { bindings = deps.readBindings(); } catch { bindings = null; }
+  if (bindings === null) return empty('bindings-unavailable', 'claim-bindings-unreadable');
+  const notices = planClaimThreadNotices(prev, next, bindings, now);
   const delivery = (notice: ClaimThreadNotice, result: ClaimNoticeDelivery['result'],
     extra: Partial<ClaimNoticeDelivery> = {}): ClaimNoticeDelivery =>
     ({ threadKey: notice.threadKey, state: notice.state, dedupeKey: notice.dedupeKey,
@@ -210,14 +223,19 @@ export function appendClaimNoticeSent(sentPath: string, dedupeKey: string, at: n
 }
 
 /** Delivered dedupeKeys; `null` when the ledger exists but cannot be
- * trusted (truncated, or any nonblank line that is not a valid v1 record —
+ * trusted (unreadable, truncated, or any nonblank line that is not a valid v1 record —
  * a torn write, an unsupported version or a malformed key means the file
  * may hide earlier deliveries, so a partial set must never masquerade as
  * complete). A missing ledger is an empty set; the file itself is never
  * repaired, truncated or deleted here — recovery stays with its owner. */
 export function readClaimNoticeSentRows(sentPath: string): Array<{ key: string; at: number }> | null {
   const read = readPrivateFileCapped(sentPath, LEDGER_MAX_BYTES);
-  if (read === null) return [];
+  if (read === null) {
+    try { lstatSync(sentPath); } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null;
+    }
+    return null;
+  }
   if (read.truncated) return null;
   const rows: Array<{ key: string; at: number }> = [];
   for (const line of read.text.split('\n')) {
@@ -236,12 +254,21 @@ export function readClaimNoticeSent(sentPath: string): Set<string> | null {
 }
 
 /** claimId+repo → thread bindings, last row wins per pair so a corrected
- * binding supersedes rather than colliding. Invalid rows are skipped;
- * an absent, unreadable, or over-budget file binds nothing (the planner drops every
- * notice instead of guessing a thread). */
-export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBinding[] {
+ * binding supersedes rather than colliding. Invalid rows are skipped.
+ * `null` = the durable file exists but cannot be trusted (over the byte or
+ * distinct-row budget, or present yet unopenable: a directory, symlink or
+ * unreadable file). A genuinely ABSENT or empty file is a known-empty set
+ * (`[]`): nothing was ever bound, so ordinary unbound work is dropped by the
+ * planner rather than stranded, and no destination is invented. */
+export function readClaimThreadBindingsState(bindingsPath: string): ClaimThreadBinding[] | null {
   const read = readPrivateFileCapped(bindingsPath, BINDINGS_MAX_BYTES);
-  if (read === null || read.truncated) return [];
+  if (read === null) {
+    try { lstatSync(bindingsPath); } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null;
+    }
+    return null;
+  }
+  if (read.truncated) return null;
   const bindings = new Map<string, ClaimThreadBinding>();
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
@@ -257,10 +284,16 @@ export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBindin
         ...(row.head !== undefined ? { head: row.head as string } : {}),
       };
       bindings.set(JSON.stringify([binding.claimId, binding.repo]), binding);
-      if (bindings.size > SNAPSHOT_MAX_ROWS) return [];
+      if (bindings.size > SNAPSHOT_MAX_ROWS) return null;
     } catch { /* skip a torn line */ }
   }
   return [...bindings.values()];
+}
+
+/** Compatibility reader: unavailable collapses to `[]` (binds nothing). The
+ * sender uses {@link readClaimThreadBindingsState} so it can tell the two apart. */
+export function readClaimThreadBindings(bindingsPath: string): ClaimThreadBinding[] {
+  return readClaimThreadBindingsState(bindingsPath) ?? [];
 }
 
 const claimShape = (v: unknown): boolean => record(v)
@@ -270,26 +303,36 @@ const messageShape = (v: unknown): boolean => record(v)
   && bounded(v.id, 128) && bounded(v.from, 128) && bounded(v.to, 128) && bounded(v.body, 8192)
   && safeInt(v.at) && safeInt(v.expiresAt);
 
-/** The previous pass's board snapshot; `null` when absent, unreadable or
- * malformed — the caller treats that as a first pass and baselines rather
- * than replaying a corrupt past into threads. */
-export function readClaimNoticePrev(prevPath: string): ClaimThreadSnapshot | null {
+/** Distinguish a genuinely absent snapshot from history that cannot be trusted. */
+function readClaimNoticePrevState(prevPath: string): { state: 'absent' | 'unavailable' } | { state: 'available'; snapshot: ClaimThreadSnapshot } {
   const read = readPrivateFileCapped(prevPath, PREV_MAX_BYTES);
-  if (read === null || read.truncated) return null;
+  if (read === null) {
+    try { lstatSync(prevPath); } catch (error) {
+      return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unavailable' };
+    }
+    return { state: 'unavailable' };
+  }
+  if (read.truncated) return { state: 'unavailable' };
   try {
     const parsed = JSON.parse(read.text) as Record<string, unknown>;
     if (parsed.v !== 1 || (parsed.state !== 'known' && parsed.state !== 'unknown')
       || !Array.isArray(parsed.claims) || parsed.claims.length > SNAPSHOT_MAX_ROWS
       || !parsed.claims.every(claimShape)
       || !Array.isArray(parsed.messages) || parsed.messages.length > SNAPSHOT_MAX_ROWS
-      || !parsed.messages.every(messageShape) || !safeInt(parsed.asOf)) return null;
-    return {
+      || !parsed.messages.every(messageShape) || !safeInt(parsed.asOf)) return { state: 'unavailable' };
+    return { state: 'available', snapshot: {
       state: parsed.state,
       claims: parsed.claims as ClaimThreadSnapshot['claims'],
       messages: parsed.messages as ClaimThreadSnapshot['messages'],
       asOf: parsed.asOf,
-    };
-  } catch { return null; }
+    } };
+  } catch { return { state: 'unavailable' }; }
+}
+
+/** Compatibility reader: absent and unavailable snapshots both return null. */
+export function readClaimNoticePrev(prevPath: string): ClaimThreadSnapshot | null {
+  const result = readClaimNoticePrevState(prevPath);
+  return result.state === 'available' ? result.snapshot : null;
 }
 
 /** Persist this pass's snapshot atomically (temp file + rename); never
@@ -304,12 +347,13 @@ export function writeClaimNoticePrev(prevPath: string, snapshot: ClaimThreadSnap
 /** The durable state half of {@link ClaimNoticeSendDeps}; the caller still
  * supplies readBoard, send and now. */
 export function claimNoticeFileDeps(root = claimNoticeDir()): Pick<ClaimNoticeSendDeps,
-  'readPrevSnapshot' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger'> {
+  'readPrevSnapshot' | 'readPrevSnapshotState' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger'> {
   const paths = claimNoticePaths(root);
   return {
     readPrevSnapshot: () => readClaimNoticePrev(paths.prev),
+    readPrevSnapshotState: () => readClaimNoticePrevState(paths.prev),
     writePrevSnapshot: snapshot => writeClaimNoticePrev(paths.prev, snapshot),
-    readBindings: () => readClaimThreadBindings(paths.bindings),
+    readBindings: () => readClaimThreadBindingsState(paths.bindings),
     readSentLedger: () => readClaimNoticeSent(paths.sent),
     appendSentLedger: (dedupeKey, at) => appendClaimNoticeSent(paths.sent, dedupeKey, at),
   };

@@ -128,6 +128,37 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
 
 `phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are the single owner thread across desktop, Telegram, email, iMessage and Slack. Inbound messages from the configured owner land in one ordered thread. A reply goes back to that channel and to the desktop thread, and nowhere else. Adapters stay disabled until configured. Secret fields are Phantom Secrets handle names. KILL and the comms pause halt every adapter. See [Owner thread](OWNER-THREAD.md).
 
+## Preview an update route
+
+`phm notify route approval` prints a JSON plan by default. Add `--text` for
+plain words. `--dry-run` is always on: this command never sends, queues,
+records a reply, reads credentials, or changes the shared owner thread.
+
+| Update type | Preferred channel | Fallback | When |
+| --- | --- | --- | --- |
+| `decision` | iMessage | Desktop | Now; reply YES or NO |
+| `approval` | iMessage | Desktop | Now; reply YES or NO |
+| `digest` | Email | Desktop | Now, for an already prepared digest |
+| `incident` | iMessage | Desktop | Now |
+| `merged` | Email | Desktop | Next digest |
+| `status` | Desktop | Email | Now on desktop; next digest if using email |
+
+The typed table and planner live in [`owner-channel.ts`](../src/core/comms/owner-channel.ts).
+Every plan names the existing `owner` thread. No second inbox or outbox is created.
+Availability is a supplied scenario, not a live probe: omitted channels stay
+`unknown`, including `wouldSendNow` for an immediate route with unknown health.
+Use `--unavailable imessage --available desktop` to preview an iMessage outage.
+These flags may repeat for different channels; contradictory or duplicate entries
+are refused. If both channels are unavailable, the channel is `null`, delivery is
+`blocked`, and `wouldSendNow` is false. Batched updates also report false.
+
+Decision and approval plans specify a one-word `YES` or `NO` reply and reference
+the existing `ownerAllowed` check, which accepts only the exact configured owner ID.
+The existing `acceptOwnerInbound` receiver enforces that check before recording
+messages. Availability flags never verify an identity or authorize sending.
+This preview does not wire one-word replies into approval execution or schedule
+digests. Actual adapters still enforce owner verification, KILL, pause and send policy.
+
 ## Unified inbox
 
 `phm comms inbox [--json]`

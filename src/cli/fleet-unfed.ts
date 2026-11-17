@@ -1,0 +1,59 @@
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { currentUnfed, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
+import { readTail, runsRoot } from '../core/metrics/loop-collect.js';
+
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
+/** The market log is mostly route decisions; the tail bounds the read. */
+const HISTORY_TAIL_BYTES = 32 * 1024 * 1024;
+const DEFAULT_WINDOW_HOURS = 24;
+const MAX_WINDOW_HOURS = 24 * 7;
+
+const USAGE = `Usage: phm fleet unfed [--window <hours>] [--json]
+Per-resource utilization of the shared work queue, and unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with the dispatcher's reason codes. Also folds the last <hours> (default 24, max 168) of unfed ticks from metrics/work-market.jsonl.
+Reads queue/status.json, queue/ready.tsv and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Read-only: no writes, no child processes, no network.
+Exit 1 when any lane is unfed now, 2 when status.json is unreadable.`;
+
+async function readBounded(path: string): Promise<string | null> {
+  try {
+    const info = await stat(path);
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error('unreadable or over read bound');
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/** Read-only: never changes holds, hints or launches work. */
+export async function cmdFleetUnfed(args: string[]): Promise<number> {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+    console.log(USAGE);
+    return 0;
+  }
+  let json = false;
+  let windowHours: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--json' && !json) json = true;
+    else if (args[i] === '--window' && windowHours === undefined && /^\d+(\.\d+)?$/.test(args[i + 1] ?? '')) {
+      windowHours = Number(args[++i]);
+      if (windowHours <= 0 || windowHours > MAX_WINDOW_HOURS) { console.error(USAGE); return 2; }
+    } else { console.error(USAGE); return 2; }
+  }
+  const root = runsRoot();
+  let report: UnfedReport;
+  try {
+    const status = await readBounded(join(root, 'queue', 'status.json'));
+    if (status === null) throw new Error('no status');
+    const ready = (await readBounded(join(root, 'queue', 'ready.tsv'))) ?? '';
+    const history = await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES);
+    report = { ...currentUnfed(status, ready), history: foldUnfedHistory(history, Date.now(), windowHours ?? DEFAULT_WINDOW_HOURS) };
+  } catch {
+    const error = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';
+    console.log(json ? JSON.stringify({ schema: FLEET_UNFED_SCHEMA, readOnly: true, error }) : error);
+    return 2;
+  }
+  if (json) console.log(JSON.stringify(report));
+  else for (const line of renderUnfed(report)) console.log(line);
+  return report.unfedLanes.length > 0 ? 1 : 0;
+}

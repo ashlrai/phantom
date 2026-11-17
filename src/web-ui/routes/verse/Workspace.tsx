@@ -101,7 +101,7 @@ import { useSeatsRefresh } from './useSeatsRefresh.js';
 import { useVerseLive, type VerseSessionView } from './useVerseSession.js';
 import { useVerseTranscript } from './useVerseTranscript.js';
 import styles from './Workspace.module.css';
-import { ProviderLogo } from '../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../components/primitives/BrandMark.js';
 
 // Opened on request only: kept out of the chat's first-paint chunk.
 const HandoffDialog = lazy(() => import('./context/HandoffDialog.js').then((m) => ({ default: m.HandoffDialog })));
@@ -517,7 +517,7 @@ export function Workspace(props: WorkspaceProps) {
               data-status={session.status} data-testid="chat-status"
               data-seat-capacity={flagged?.cls}>
               <span className={styles.engineTick} aria-hidden="true" />
-              <span className={styles.monogram} aria-hidden="true"><ProviderLogo engine={session.engine} size={13} /></span>
+              <span className={styles.monogram} aria-hidden="true"><BrandMark brand={session.engine} size={13} /></span>
               <span className={styles.seatText}>{statusWord}</span>
               {flagged ? <CapacityChip view={flagged} /> : null}
             </span>

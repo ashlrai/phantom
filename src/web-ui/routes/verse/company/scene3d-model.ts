@@ -4,6 +4,7 @@
  */
 import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
+import { providerFor, type Provider } from '../../../../core/fleet/provider.js';
 import { loadRatio } from './compute-model.js';
 
 export const MAX_AGENTS_PER_NODE = 12;
@@ -11,7 +12,7 @@ export const UNKNOWN_COLOR = '#8a8f98';
 export const AGENT_COLORS = { running: '#3fb950', idle: '#6e7f99', held: '#d29922', unknown: '#8a8f98' } as const;
 export type AgentKind = keyof typeof AGENT_COLORS | 'more';
 
-export interface SceneAgent { job: string; kind: AgentKind; label: string; node: number; base: number; top: number }
+export interface SceneAgent { job: string; kind: AgentKind; label: string; provider: Provider; node: number; base: number; top: number }
 export interface SceneNode { id: string; label: string; heat: number | null; color: string; dim: boolean; corners: number; center: number }
 export interface Scene {
   nodes: SceneNode[]; agents: SceneAgent[]; points: Float32Array; pointCount: number;
@@ -45,13 +46,13 @@ export function buildScene(nodes: ComputeNode[], jobs: MapSession[], now: number
     outNodes.push({ id: n.id, label: n.id.length > 18 ? `${n.id.slice(0, 17)}…` : n.id, heat: ratio, color: heatColor(ratio), dim: n.state === 'offline', corners, center });
     const list = (byNode.get(n.id) ?? []).sort((a, b) => a.job < b.job ? -1 : a.job > b.job ? 1 : 0);
     const shown = list.length > cap ? cap - 1 : list.length;
-    const place = (slot: number, job: string, kind: AgentKind, label: string) => {
+    const place = (slot: number, job: string, kind: AgentKind, label: string, provider = providerFor()) => {
       const ax = x + ((slot % COLS) - (COLS - 1) / 2) * (1.6 / COLS * 1.3), az = z + (Math.floor(slot / COLS) - 1) * 0.5;
       const base = pts.length / 3; pts.push(ax, 0, az, ax, 0.9, az);
-      agents.push({ job, kind, label, node: i, base, top: base + 1 });
+      agents.push({ job, kind, label, provider, node: i, base, top: base + 1 });
     };
     shownTotal += shown;
-    for (let k = 0; k < shown; k++) place(k, list[k]!.job, kindOf(list[k]!), list[k]!.job);
+    for (let k = 0; k < shown; k++) place(k, list[k]!.job, kindOf(list[k]!), list[k]!.job, providerFor(list[k]!.model, list[k]!.lane));
     if (list.length > shown) { overflow += list.length - shown; place(shown, '', 'more', `+${list.length - shown} more`); }
   });
   return { nodes: outNodes, agents, points: Float32Array.from(pts), pointCount: pts.length / 3, extent: Math.max(HALF * 2, cols * GAP, rows * GAP), overflow, shown: shownTotal };

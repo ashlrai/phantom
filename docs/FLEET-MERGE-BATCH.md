@@ -74,6 +74,21 @@ proven-disjoint. When the snapshot envelope's own read failed
 — a plan built on a failed read is never a clean-looking answer. Exit codes:
 0 plan produced, 1 no usable snapshot, 2 bad usage.
 
+## Green train proposals
+
+`phm fleet merge-batch-run --input open-prs.json --repo ashlrai/phantom --json`
+adds a `train` proposal to its action report. Include `state`, `baseRefName`,
+`changedFiles` and `statusCheckRollup` alongside the existing snapshot fields.
+With healthy queue and hold reads, it selects up to 16 ready merge actions on
+the same base with disjoint complete file lists, no failing/pending checks and at
+least one successful check (completed skipped/neutral daily lanes are allowed).
+Missing checks wait; `deferred` names each exclusion. Unreadable queue/hold evidence
+makes `train` null. Snapshot checks are observations, not required-check authority.
+The opportunity is one combined validation through the existing merge queue;
+this command neither configures batching nor runs CI. Revalidate heads, base,
+required checks/App identities, review and Security gates on the combined commit.
+Disjoint files can still interact semantically. No check or control is bypassed.
+
 ## Local lookahead preparation
 
 JSON output includes `preparations`, the next three eligible PRs in the

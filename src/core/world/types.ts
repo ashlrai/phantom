@@ -3,6 +3,8 @@
  * desktop. A missing or stale measurement is null. It is never stored as 0.
  */
 
+import type { LaneHistory } from '../usage/resource-live/types.js';
+
 export const WORLD_SCHEMA = 'ashlr.world-model/v1' as const;
 export const WORLD_CACHE_TTL_MS = 15_000;
 
@@ -36,6 +38,7 @@ export interface WorldModel {
   sensors: {
     lanes: Array<{
       lane: string;
+      history?: LaneHistory;
       model?: string;
       role?: 'planning-orchestration';
       claudeWeeklyUsedPercent?: Field<number>;

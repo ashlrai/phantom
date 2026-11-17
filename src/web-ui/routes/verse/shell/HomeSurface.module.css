@@ -6,6 +6,8 @@
   min-height: 0;
   overflow: hidden;
 }
+/* `display: flex` above outranks the UA `[hidden]` rule, so say it again. */
+.home[hidden] { display: none; }
 .home > * { flex: 1; min-height: 0; }
 
 /* Narrow window: the thread takes the full width, and the composer is pinned

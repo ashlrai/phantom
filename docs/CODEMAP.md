@@ -81,14 +81,17 @@ imports, individual files, semantics or contract coverage.
 - `src/core/ask/`
 - `src/core/ask-flow/`
 - `src/core/authority/`
+- `src/core/autofix/`
 - `src/core/automations/`
 - `src/core/autonomy/`
 - `src/core/autopilot/`
+- `src/core/brand/`
 - `src/core/bridge/`
 - `src/core/caps/`
 - `src/core/ci/`
 - `src/core/classify/`
 - `src/core/cloud/`
+- `src/core/commands/`
 - `src/core/comms/`
 - `src/core/comms-agent/`
 - `src/core/connectors/`
@@ -156,6 +159,8 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router/`
+- `src/core/router-gateway/`
 - `src/core/routines/`
 - `src/core/routing/`
 - `src/core/routing-eval/`
@@ -167,6 +172,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
+- `src/core/subagent/`
 - `src/core/swarm/`
 - `src/core/teams/`
 - `src/core/toolgraph/`

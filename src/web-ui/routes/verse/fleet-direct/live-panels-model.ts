@@ -69,7 +69,7 @@ function releasesPanel(releases: OpsReleasesV1 | null): LivePanel {
 }
 
 function nodesPanel(nodes: NodesSnapshot | null): LivePanel {
-  if (!nodes) return down('nodes', 'Nodes', 'Nodes');
+  if (!nodes || !Array.isArray(nodes.nodes)) return down('nodes', 'Nodes', 'Nodes');
   if (nodes.nodes.length === 0) {
     return nodes.error ? panel('nodes', 'Nodes', 'error', `Node inventory: ${nodes.error}`) : panel('nodes', 'Nodes', 'empty', 'No nodes have joined');
   }

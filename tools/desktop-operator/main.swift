@@ -165,8 +165,8 @@ func findApp(_ query: String) -> NSRunningApplication? {
     }
 }
 
-func windowList() -> [[String: Any]] {
-    let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+func windowList(onScreenOnly: Bool = true) -> [[String: Any]] {
+    let options: CGWindowListOption = onScreenOnly ? [.optionOnScreenOnly, .excludeDesktopElements] : [.optionAll, .excludeDesktopElements]
     return CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
 }
 
@@ -177,15 +177,41 @@ struct WindowRow {
     let windowId: Int
     let focused: Bool
     let pid: Int
+    var width: Double = 0
+    var height: Double = 0
+    var area: Double { width * height }
 }
 
-func visibleWindows(appFilter: String?) -> [WindowRow] {
+// A native-fullscreen or overlay-title-bar app owns companion windows that
+// are as wide as the screen and about 30pt tall. They sit first in z-order,
+// carry the app title, and hold no content: capturing one yields a sliver and
+// makes a healthy app look hollow. Anything this short is chrome, not content.
+let chromeStripHeight = 64.0
+
+func isChromeStrip(_ row: WindowRow) -> Bool {
+    row.height > 0 && row.height < chromeStripHeight
+}
+
+/// The window a caller means when it names an app and no title: the largest
+/// one that is not a chrome strip. Z-order breaks ties, so the frontmost of
+/// two equal windows still wins. Strips are returned only when nothing else exists.
+func contentWindow(_ rows: [WindowRow]) -> WindowRow? {
+    let content = rows.filter { !isChromeStrip($0) }
+    let pool = content.isEmpty ? rows : content
+    var best: WindowRow?
+    for row in pool where best == nil || row.area > best!.area { best = row }
+    return best
+}
+
+func visibleWindows(appFilter: String?, onScreenOnly: Bool = true) -> [WindowRow] {
     let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
     var rows: [WindowRow] = []
     var sawFront = false
-    for info in windowList() {
+    for info in windowList(onScreenOnly: onScreenOnly) {
         let layer = info[kCGWindowLayer as String] as? Int ?? 0
         if layer != 0 { continue }
+        // Off-screen listings include fully transparent backing windows.
+        if (info[kCGWindowAlpha as String] as? Double ?? 1) <= 0 { continue }
         let pid = info[kCGWindowOwnerPID as String] as? Int ?? 0
         let owner = NSRunningApplication(processIdentifier: pid_t(pid))
         let name = owner?.localizedName ?? (info[kCGWindowOwnerName as String] as? String ?? "")
@@ -199,7 +225,14 @@ func visibleWindows(appFilter: String?) -> [WindowRow] {
         let id = info[kCGWindowNumber as String] as? Int ?? 0
         let focused = !sawFront && front == pid_t(pid)
         if focused { sawFront = true }
-        rows.append(WindowRow(app: name, bundleId: bundle, title: title, windowId: id, focused: focused, pid: pid))
+        var row = WindowRow(app: name, bundleId: bundle, title: title, windowId: id, focused: focused, pid: pid)
+        // kCGWindowBounds is already a dictionary. Cast that value, do not rebuild [String: Double].
+        if let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+           let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) {
+            row.width = Double(rect.width)
+            row.height = Double(rect.height)
+        }
+        rows.append(row)
     }
     return rows
 }
@@ -224,6 +257,9 @@ struct AxWalk {
     var nodes = 0
     var truncated = false
     var secure = false
+    /// Nodes below the window that carry a label or a value. Role names alone
+    /// ("AXWindow Phantom", "AXGroup") are structure, not something to read.
+    var content = 0
 }
 
 func walk(_ element: AXUIElement, depth: Int, into state: inout AxWalk) {
@@ -245,6 +281,7 @@ func walk(_ element: AXUIElement, depth: Int, into state: inout AxWalk) {
         .filter { !$0.isEmpty }
         .joined(separator: " ")
     if !line.isEmpty { state.parts.append(line) }
+    if depth > 0 && !(label.isEmpty && value.isEmpty) { state.content += 1 }
     for child in elements(copyAttribute(element, kAXChildrenAttribute as String)) {
         walk(child, depth: depth + 1, into: &state)
     }
@@ -290,8 +327,8 @@ func pointOverTarget(_ point: CGPoint, pid: pid_t) -> Bool {
         let layer = info[kCGWindowLayer as String] as? Int ?? 0
         if layer != 0 { continue }
         // kCGWindowBounds is already a dictionary. Cast that value, do not rebuild [String: Double].
-        guard let bounds = info[kCGWindowBounds as String] as? CFDictionary,
-              let rect = CGRect(dictionaryRepresentation: bounds) else { continue }
+        guard let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { continue }
         if !rect.contains(point) { continue }
         let owner = info[kCGWindowOwnerPID as String] as? Int ?? -1
         return owner == Int(pid)
@@ -394,10 +431,14 @@ func requireWindow(pid: pid_t, title: String?) -> WindowRow {
     if settingsTitle(title) { fail("denied", "System Settings privacy panes are closed to desktop control.") }
     let rows = visibleWindows(appFilter: nil).filter { $0.pid == Int(pid) }
     if let title {
-        guard let row = rows.first(where: { $0.title == title }) else { fail("failed", "That window is not visible.") }
+        guard let row = contentWindow(rows.filter { $0.title == title }) else { fail("failed", "That window is not visible.") }
         return row
     }
-    guard let row = rows.first else { fail("failed", "That app has no visible window.") }
+    if let row = contentWindow(rows), !isChromeStrip(row) { return row }
+    // Only strips are on screen: the app is fullscreen on another Space. Its
+    // content window still exists and can be captured by id.
+    let everywhere = visibleWindows(appFilter: nil, onScreenOnly: false).filter { $0.pid == Int(pid) }
+    guard let row = contentWindow(everywhere) ?? contentWindow(rows) else { fail("failed", "That app has no visible window.") }
     return row
 }
 
@@ -426,7 +467,7 @@ case "list-apps":
     emit(["ok": true, "apps": runningApps().map(appRecord)])
 case "windows":
     if !accessibilityGranted(prompt: false) { permission("accessibility") }
-    let rows = visibleWindows(appFilter: appName).filter { !bundleClosed($0.bundleId) && !settingsTitle($0.title) }
+    let rows = visibleWindows(appFilter: appName).filter { !bundleClosed($0.bundleId) && !settingsTitle($0.title) && !isChromeStrip($0) }
     emit(["ok": true, "windows": rows.map { row in
         var record: [String: Any] = [
             "app": row.app,
@@ -434,6 +475,8 @@ case "windows":
             "windowId": row.windowId,
             "focused": row.focused,
             "pid": row.pid,
+            "width": Int(row.width),
+            "height": Int(row.height),
         ]
         if let bundle = row.bundleId { record["bundleId"] = bundle }
         return record
@@ -446,12 +489,20 @@ case "read":
     if tree.secure && tree.parts.isEmpty { fail("secure_field", "Secure text fields are not read.") }
     var text = tree.parts.joined(separator: "\n")
     var source = "ax"
-    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        if !screenGranted(prompt: false) { permission("screen_recording") }
-        let row = requireWindow(pid: app.processIdentifier, title: windowTitle)
-        if let image = capture(windowId: row.windowId) {
-            text = recognize(fitted(image))
-            source = "ocr"
+    // A webview that has not published its accessibility tree walks as a
+    // window and an empty group. That is not the app's text, so read pixels.
+    if tree.content == 0 {
+        if screenGranted(prompt: false) {
+            let row = requireWindow(pid: app.processIdentifier, title: windowTitle)
+            if let image = capture(windowId: row.windowId) {
+                let seen = recognize(fitted(image))
+                if !seen.isEmpty {
+                    text = seen
+                    source = "ocr"
+                }
+            }
+        } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            permission("screen_recording")
         }
     }
     emit([
@@ -531,6 +582,22 @@ case "screenshot":
         "height": scaled.height,
         "ocrText": recognize(scaled),
     ])
+case "self-test":
+    // Pure checks of window selection. Needs no grant and touches no app.
+    func row(_ id: Int, _ w: Double, _ h: Double) -> WindowRow {
+        WindowRow(app: "A", bundleId: nil, title: "A", windowId: id, focused: false, pid: 1, width: w, height: h)
+    }
+    let strip = row(1, 1920, 30), full = row(2, 1920, 1080), small = row(3, 480, 300), twin = row(4, 1920, 1080)
+    let checks: [(String, Bool)] = [
+        ("fullscreen strip loses to the content window", contentWindow([strip, strip, full])?.windowId == 2),
+        ("largest content window wins", contentWindow([small, full])?.windowId == 2),
+        ("z-order breaks an equal-size tie", contentWindow([full, twin])?.windowId == 2),
+        ("a strip is returned only when alone", contentWindow([strip])?.windowId == 1),
+        ("no rows means no window", contentWindow([]) == nil),
+        ("unknown bounds are not a strip", !isChromeStrip(row(5, 0, 0))),
+    ]
+    let failed = checks.filter { !$0.1 }.map { $0.0 }
+    emit(["ok": failed.isEmpty, "checks": checks.count, "failed": failed, "binary": binaryName])
 default:
     fail("failed", "unknown desktop-operator op")
 }

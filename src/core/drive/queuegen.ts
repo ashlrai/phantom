@@ -285,7 +285,7 @@ export function rebaseLine(repo: string, pr: QueuegenPr, conflicts: readonly str
   const shown = conflicts.slice(0, 8);
   const suffix = conflicts.length > shown.length ? ` +${conflicts.length - shown.length} more` : '';
   const file = shown[0] ?? '';
-  const text = `REBASE ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="merge-tree" acceptance="git merge-tree --write-tree ${noWs(pr.baseSha, 40)} ${noWs(pr.headSha, 40)}" conflicts="${quoted(shown.join(', '), 400)}${suffix}": resolve every listed conflict against the base and push to the head branch. https://github.com/${repo}/pull/${pr.number}`;
+  const text = `REBASE ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="merge-tree" acceptance="git merge-tree --write-tree ${noWs(pr.baseSha, 40)} ${noWs(pr.headSha, 40)}" conflicts="${quoted(shown.join(', '), 400)}${suffix}": first run phm pr resolve-conflicts --repo ${repo} --pr ${pr.number} --json; use --apply for proven append unions. Follow a ready-supersede bundle plan through publish.sh; needs-agent requires resolving the reported hunks. Push only through the sanctioned publisher to the PR head. https://github.com/${repo}/pull/${pr.number}`;
   return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}, max-files=${scope.maxFiles}, size<=${scope.maxLines}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 

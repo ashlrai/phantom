@@ -12,6 +12,7 @@
 # usage_source and a usage_missing reason when nothing was recorded.
 import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from typing import TypedDict
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 # A kernel-held claim serializes the complete tick, including liveness sampling and
@@ -42,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -61,6 +62,7 @@ def gate_limit(name, default):
     except ValueError: return default
 GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 2.0)
 GATE_PROCS_MAX = gate_limit("GATE_PROCS_MAX", 2500); GATE_WORKTREES_MAX = gate_limit("GATE_WORKTREES_MAX", 40)
+GATE_WORKTREES_PER_CPU = gate_limit("GATE_WORKTREES_PER_CPU", 4)   # live-worktree warning: max(floor, per-cpu x ncpu)
 GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 2); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
 GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
 GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
@@ -974,7 +976,8 @@ def reap_batch(j, wt, lane, wall_s):
     if not m or m.get("reaped"): return None
     members = _members(m); repo = m.get("repo", "")
     notes = rd(wt + "/BRIDGE_NOTES.md")
-    outcomes = batcher.parse_outcomes(notes, [x["job"] for x in members])
+    details = batcher.parse_details(notes, [x["job"] for x in members])
+    outcomes = {job: detail["outcome"] for job, detail in details.items()}
     done = m.get("handled") if isinstance(m.get("handled"), dict) else {}
     retry = 0
     for x in members:
@@ -983,10 +986,12 @@ def reap_batch(j, wt, lane, wall_s):
         o = outcomes[x["job"]]
         if o in ("done", "skipped") and not member_prepared(x["job"], j):
             o = outcomes[x["job"]] = "deferred"   # no worktree was prepared: nothing of its own to publish
+            details[x["job"]] = {"outcome": o, "reason": "Member worktree was not prepared for this session."}
         metric({"event": "task_outcome", "job": x["job"], "batch": j, "lane": lane, "repo": repo, "outcome": o,
-                "model": x.get("model")})
+                "model": x.get("model"), "reason": details[x["job"]]["reason"]})
         if o in batcher.RETRY: retry += requeue_member(x, j, repo)
         else: handoff_member(x, j)
+        m.setdefault("results", {})[x["job"]] = details[x["job"]]
         _handled(m, j, x["job"], o)
     old, new, why = batcher.tune(batch_tuning, lane, outcomes, wall_s, os.path.exists(RUN + "/" + j + ".timeout"), batch_stats(), NOW)
     batcher.save_json(BATCH_TUNING_PATH, batch_tuning)
@@ -1167,7 +1172,9 @@ for bp in glob.glob(R + "/*.base"):
     if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
-    if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+    # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
+    published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
+    if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
         if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
         if _rc(j) is None and not result(j):
             target = drain_target(j, _job_repo(j))
@@ -1210,7 +1217,9 @@ def reap_worktrees():
         if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
         try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
         except Exception: recent = NOW
-        if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+        # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
+        published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
+        if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
             if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
             if _rc(j) is None and not result(j):
                 target = drain_target(j, _job_repo(j))
@@ -1312,6 +1321,7 @@ def admission_gate():
     growth = max(0, swap_gb - min(v[1] for v in samples)) if samples and swap_gb is not None else 0
     if swap_gb is not None: samples.append([NOW, swap_gb])
     load_max = GATE_LOAD_PER_CPU * ncpu
+    wts_max = int(max(GATE_WORKTREES_MAX, GATE_WORKTREES_PER_CPU * ncpu))
     if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f (%g x ncpu)" % (load1, load_max, GATE_LOAD_PER_CPU))
     if g["off_switch_ignored"]: g["warnings"].append("LOADGATE_OFF present and ignored")
     if procs > GATE_PROCS_MAX: g["warnings"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
@@ -1323,8 +1333,8 @@ def admission_gate():
     g.update(memory_pressure=pressure, pressure_min=GATE_PRESSURE_MIN, swap_gb=swap_gb, swap_growth_gb=growth,
              swap_growth_max_gb=GATE_SWAP_GROWTH_GB, swap_window_s=GATE_SWAP_WINDOW_S, swap_samples=samples,
              disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, claim_limit=MAX_LAUNCH_PER_TICK,
-             procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
-    if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
+             procs_max=GATE_PROCS_MAX, worktrees_max=wts_max, tick_max_s=GATE_TICK_MAX_S)
+    if wts > wts_max: g["warnings"].append("worktrees %d > %d" % (wts, wts_max))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
     g.update(load5=_l5, load15=_l15)
@@ -1444,11 +1454,31 @@ def waste_risk(projection, lane):
     risk = projection.get("waste_risk")
     return risk if risk in ("medium", "high") else None
 
-def waste_boost(projection, lane, tier):
+class TierUpgrade(TypedDict):
+    job: str
+    lane: str
+    from_tier: str
+    to_tier: str
+    reason: str
+
+def pace_behind(projection):
+    if (not isinstance(projection, dict) or projection.get("known") is not True
+            or projection.get("stale") is not False or type(projection.get("behind")) is not bool): return None
+    return projection["behind"]
+
+def waste_boost(projection, lane, tier, executor, ceiling=None):
+    # A tier change never grants paid usage or bypasses the selected executor's contract.
+    # A job's max_tier is binding: spare capacity never lifts it past its declared ceiling.
+    if ceiling and tier == ceiling: return None
+    if (executor.get("cost_class") != "included" or executor.get("held")
+            or executor.get("auth_failed") or executor.get("backoff") or executor.get("quota") == 0): return None
+    boosted = {"mid": "work", "work": "frontier"}.get(tier)
+    if not boosted or boosted not in executor.get("tiers", []): return None
+    if tier == "work" and pace_behind(projection) is True:
+        return boosted, "use-it-all behind pace: work -> frontier (yield policy)"
     risk = waste_risk(projection, lane)
     if not risk: return None
-    boosted = {"mid": "work", "work": "frontier"}.get(tier)
-    return (boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)) if boosted else None
+    return boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)
 
 # The host-owned projection is advisory and expires after two minutes.
 UIA = {}
@@ -1601,7 +1631,7 @@ _FC_PREV = FC_STATE["level"]
 BUS = fc.build_readings(NOW, load=(GATE["load1"], GATE.get("load5"), GATE.get("load15")), ncpu=GATE["ncpu"], mem_free_pct=free,
     memory_pressure=GATE["memory_pressure"], swap_gb=GATE["swap_gb"], swap_growth_gb=GATE["swap_growth_gb"] if GATE["swap_gb"] is not None else None,
     swap_window_s=GATE_SWAP_WINDOW_S, procs=GATE["procs"], worktrees=GATE["worktrees"], disk_free_gb=disk_free_gb, disk_gate=DISK_GATE,
-    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE_WORKTREES_MAX},
+    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE["worktrees_max"]},
     queue_by_lane=qdepth, queue_by_tier=fc.tier_depth([l for l in lines if not parked_row(l)], TIERS),
     quota=fc.lane_quota(_BUDGET_OV, LANES), merge=fc.merge_stats(JOBS_RAW, NOW), holds=sorted(hold))
 FC_WOULD_LEVEL, FC_STATE, FC_WHY = fc.shed_level(BUS, FC_STATE, NOW)
@@ -1719,6 +1749,7 @@ conc_adjusted(concurrency.decide(CONC, fc.concurrency_signals(BUS, GATE_LOAD_PER
 tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
+tier_upgrades: list[TierUpgrade] = []
 GCAP = global_cap()
 
 # Weekly quota pacing (RQ-PACE-TO-RESET): routine claims defer when a lane's
@@ -1782,10 +1813,20 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     ready_ranks = _ready_repo_ranks()
-    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
+    yield_groups, pr_states = admission_history(JOBS, NOW)
+    admission = {f[0]: admission_rank(f[0], f[3], f[2], yield_groups) for f in cand}
+    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
-    seen = set(); pc_n = 0; local_ok = None
+    for f in cand:
+        reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
+        if reason:
+            admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
+            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason, launched=False))
+            ev("DONE-NOOP %s [%s]" % (f[0], reason))
+    jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
+    cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
+    seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -1829,6 +1870,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         m = f[0]
         return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
+                and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
@@ -1843,17 +1885,38 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                             "chars": len(text), "f": f, "prompt": text}
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
-        if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        def solo(c):
+            if c[2] == "devin":
+                selected = market_models.get("devin." + c[3]) or market_models.get("devin")
+                # A batch must not replace a free selected model with a differently priced model.
+                if selected and batch_sessions.model_for("devin", c[3], rd(c[4]), BS_CFG)[0] != selected: return True
+            return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}), market_specs[c[0]].get("max_tier"))
+        if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
-        has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
+        has_capacity = lambda l: (not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
+                                  and work_market.serves_repo(market_view.get(l, {}), f[1]))
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
+    market_allowance = dict(_BUDGET_OV)
+    market_allowance["devin"] = dict(weekly_acu=work_market.read_devin_allowance(H, os.environ.get("ASHLR_HOME")))
     market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
                                         hold, market_models, BUS["quota"], JOBS_RAW,
-                                        jload(Q + "/adaptive.json", {}), NOW)
+                                        jload(Q + "/adaptive.json", {}), NOW, allowance=market_allowance)
+    # Fresh use-it-all evidence that a window is going to waste outranks a preserve default this tick.
+    for _l in LANES:
+        _waste = waste_risk(UIA.get(_l), _l)
+        if market_view[_l]["cost_class"] == "included" and (_waste or pace_behind(UIA.get(_l)) is True):
+            market_view[_l].pop("provenance", None)
+            market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
+    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view["devin"]["target"] > 0:
+        market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
+            l: dict(lane=l, **v.get("provenance", {}), posture=v["posture"], posture_reason=v["posture_reason"],
+                    projected_unused_pct=v["spend_down"]["projected_unused_pct"],
+                    hours_to_reset=v["spend_down"]["hours_to_reset"], cost_class=v["cost_class"],
+                    **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v}) for l, v in market_view.items()}})
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
@@ -1879,6 +1942,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         spec = market_specs[j]
         view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
+        # Cost is model/tier-specific and every claim reserves another session cap.
+        view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
+                                         market_models, BUS["quota"], JOBS_RAW, now=NOW,
+                                         allowance=market_allowance, tier=tier))
         for dest in LANES:
             if dest == "devin":
                 size = _size_hint(j, pf)
@@ -1893,8 +1960,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 elif _size_hint(j, pf) > 60 or (tier == "mid" and local_mid >= LOCAL_MID_CAP):
                     view[dest]["unavailable"] = "local_scope_unavailable"
         decision, receipt = work_market.choose(j, spec, tier, view, route_state.get(j), NOW, route_decision)
+        market_rejects[j] = {} if decision["chosen_lane"] else {r["lane"]: r["reason_codes"] for r in decision["rejected_lanes"]}
         if len(launched) >= GATE["claim_limit"] or sum(running.values()) >= GCAP:
             decision["chosen_lane"] = None; decision["reason_codes"].append("global_admission")
+            market_rejects[j] = dict.fromkeys(view, ["global_admission"])
         market_metric(decision)
         if view.get(f[2], {}).get("quota") == 0:
             advice = handoff_advice(j, f[2], "quota-exhausted", decision["chosen_lane"])
@@ -1908,7 +1977,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if why: ev("DEVIN_ROUTE %s %s -> %s" % (j, why, lane))
         if lane != f[2] and f[2] in LANES:
             FC_MOVES.append((j, f[2], lane))
-            ev("FLEET_REBALANCE %s %s->%s (shared market)" % (j, f[2], lane))
+            ev("FLEET_REBALANCE %s %s->%s (shared market: %s)" % (j, f[2], lane, (decision["override"] or {}).get("reason", "placement_moved")))
         f[2] = lane; line = "\t".join(f); s = slots[lane]
         # Persist at actual claim below, after prechecks and batch formation.
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
@@ -1938,6 +2007,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
+        if repair_target(j, repo):
+            # Repairs must cross the freshness boundary before claiming or batching.
+            if pc_n >= PC_MAX or over_budget():
+                rest.append(line); continue
+            pc_n += 1
+            reason = repair_freshness(j, repo, rd(pf), H, _run)
+            if reason:
+                metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                            reason=reason, launched=False))
+                ev("DONE-NOOP %s [%s]" % (j, reason)); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
         if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
@@ -1968,7 +2047,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 seen.add(c["job"])
                 open(RUN + "/" + c["job"] + ".batch-attempts", "w").write(str(batch_attempts(c["job"]) + 1))
                 metric({"event": "batch_claim", "job": c["job"], "batch": bid, "repo": repo, "lane": lane, "tier": c["tier"],
-                        "area": area, "model": c["model"]})
+                        "area": area, "model": c["model"],
+                        **({"lane_hint": c["lane"], "lane_override": "batch_session"} if c["lane"] != lane else {})})
             ev("BATCH %s %d tasks repo=%s area=%s lane=%s size_target=%d" % (bid, len(members), repo, area, lane, size))
             j = bid; s = slots[lane]; line = "\t".join([bid, repo, lane, tier, pf]); batches.append({"job": bid, "tasks": len(members)})
             batch = (members, lane, size)
@@ -1998,8 +2078,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
-        boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
+        boost = waste_boost(UIA.get(lane), lane, tier, view[lane], spec.get("max_tier")) if not batch else None
+        if boost and lane == "devin" and (market_models.get("devin." + boost[0]) or market_models.get("devin")) != (market_models.get("devin." + tier) or market_models.get("devin")):
+            boost = None   # The cost receipt binds the selected model, not a differently priced tier.
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
+        requested_tier = tier
         if boost: tier = boost[0]
         for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
             prior = route_state.get(route_job)
@@ -2017,7 +2100,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
+        # The job ledger says why a claim left its hinted lane; the full ranking stays in work-market.jsonl.
+        override = decision["override"] if not batch and decision["override"] and decision["override"]["to"] == lane else None
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier,
+                    **({"lane_hint": override["from"], "lane_override": override["reason"],
+                        "lane_hint_blocked_by": override["preferred_lane_blocked_by"]} if override else {})))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane in ("codex-local", "omlx")
                       else ["/bin/bash", BATCH_LAUNCH] if batch else ["/bin/bash", R + "/bin/launch.sh"])
@@ -2036,6 +2123,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)
             ev("ROUTE_BOOST %s %s %s" % (j, lane, reason))
+        if boost:
+            tier_upgrades.append({"job": j, "lane": lane, "from_tier": requested_tier, "to_tier": tier, "reason": reason})
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         if target: drain_targets.add(target)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
@@ -2043,8 +2132,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap,
                 "batch_size": len(batch[0]) if batch else None})
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
+    _waiting = [(market_specs[f[0]].get("preferred_lane"), market_rejects.get(f[0]))
+                for f in (l.split("\t") for l in rest if not parked_row(l)) if f[0] in market_specs]
+    _stopped = None
 else:
     rest = lines
+    _waiting = [(f[2] or None, None) for f in (l.split("\t") for l in rest if not parked_row(l))
+                if len(f) >= 5 and JID.fullmatch(f[0]) and f[3] in TIERS]
+    _stopped = "admission_stopped"
+# Unfed capacity: executors left with free slots while runnable rows waited under another lane's hint.
+# Counts and reason codes only. One audit row per tick, and only when some lane was unfed.
+UNFED = work_market.unfed_capacity({l: {"running": running[l], "target": tgt(l), "held": bool(slots[l].get("held") or l in hold)}
+                                    for l in LANES}, _waiting, _stopped)
+if UNFED["unfed_lanes"]: market_metric(UNFED)
 FC_MODE = "enforce" if FC_ENFORCE else "shadow"
 FC_LEDGER = fc.ledger_record(NOW, BUS, PLAN, FC_MODE, W.mutations, FC_MOVES, fc.ambiguous_holds(slots, LANES),
                              shadow=PLAN_WOULD if PLAN_WOULD is not PLAN else None)
@@ -2078,6 +2178,21 @@ concurrency.save(CONC_PATH, CONC)
 
 # Finished-worktree discovery/sorting runs at most every ten minutes. Drain the
 # cached priority list after launches each tick so cadence cannot throttle merges.
+# Terminal cleanup is independent of publishing, even when publish is held.
+# Helpers are installed only through reviewed host machinery; never run repo copies.
+_disk_stamp = Q + "/.disk-maintenance.stamp"
+if not os.path.exists(_disk_stamp) or NOW - os.path.getmtime(_disk_stamp) >= 600:
+    open(_disk_stamp, "w").close()
+    for _helper, _args in [("disk-growth.py", ["--json"])] + [
+            ("wt_closed_prune.py", ["--apply", "--json", "--wtroot", root])
+            for root in (WTROOT, R + "/wt") if os.path.isdir(root)]:
+        _script = R + "/bin/" + _helper
+        if os.path.isfile(_script) and not os.path.islink(_script):
+            try:
+                with os.fdopen(os.open(Q + "/disk-maintenance.log", os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW, 0o600), "a") as _output:
+                    spawn([sys.executable, "-I", "-B", _script] + _args, stdin=subprocess.DEVNULL,
+                          stdout=_output, stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError: log("disk maintenance unavailable: " + _helper)
 # Stamp before
 # starting so a timeout does not cause a costly retry on every dispatcher tick.
 _reap_stamp = Q + "/.worktree-reap.stamp"
@@ -2375,6 +2490,12 @@ for p in glob.glob(R + "/*.publish"):
     m = re.search(r"RESULT PR (https://github.com/\S+/pull/\d+)", rd(p))
     if m: pubs.append((os.path.getmtime(p), os.path.basename(p)[:-8], m.group(1)))
 pubs.sort(reverse=True)
+# A legacy mkdir marker proves a claim, not an active reaper. Preserve it until
+# all writers support fenced recovery; make that unknown ownership visible.
+reap_markers = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
+active_reaping = publish_processes | {j for j in reap_markers if _reap_starting(j)}
+reap_blocked = [{"job": j, "reason": "ownership-unknown"} for j in sorted(reap_markers - active_reaping) if JID.fullmatch(j)]
+for item in reap_blocked: ev("REAP_SKIP %s %s" % (item["reason"], item["job"]))
 evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
@@ -2386,7 +2507,10 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                     "effective_target": tgt(l), "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
-      "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
+      "tier_upgrades_this_tick": tier_upgrades,
+      "unfed_capacity": UNFED,
+      "use_it_all_behind": {l: pace_behind(UIA.get(l)) for l in LANES},
+      "reaping": sorted(active_reaping), "reap_blocked": reap_blocked, "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],
       "recent_events": evs,
       "concurrency": {"cap": CONC["cap"], "floor": CONC_FLOOR, "ceiling": CONC_CEILING, "zones": CONC.get("zones"),

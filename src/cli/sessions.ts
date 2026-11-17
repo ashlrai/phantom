@@ -1,7 +1,8 @@
 /**
- * `phm sessions`: MCP gateway sessions (list, revoke) and resumable agent
- * sessions (create, show, resume, terminate; list shows both kinds).
- * Thin handler: logic lives in src/core/gateway-sessions.ts and
+ * `phm sessions`: every running fleet agent session (no verb), MCP gateway
+ * sessions (list, revoke) and resumable agent sessions (create, show, resume,
+ * terminate; list shows both kinds). Thin handler: logic lives in
+ * src/core/fleet/live-sessions.ts, src/core/gateway-sessions.ts and
  * src/core/agents/session.ts.
  */
 import { parseArgs } from 'node:util';
@@ -10,8 +11,14 @@ import {
   AgentSessionError, createAgentSession, getAgentSession, listAgentSessions, resumeAgentSession, terminateAgentSession,
   type AgentSession, type SessionErrorCode,
 } from '../core/agents/session.js';
+import { renderLiveSessionsText, SESSION_FILTER_RE } from '../core/fleet/live-sessions.js';
+import { readLiveSessions } from '../core/fleet/live-sessions-read.js';
 
 const USAGE = `Usage:
+  phm sessions [--lane <lane>] [--repo <repo>] [--json]
+                                      Every running agent session in the fleet: job, lane,
+                                      model, repo, tier, age, last output (quiet after
+                                      10 min), PR and computer. Read only.
   phm sessions list [--json]          Show gateway sessions and agent sessions
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
   phm sessions create --agent <id> --agent-version <n> --environment <id> --job <queue-job-id> [--dir <queue-directory>] [--json]
@@ -97,13 +104,37 @@ async function runAgentVerb(verb: string, args: string[], json: boolean): Promis
   }
 }
 
+/** `phm sessions [--lane L] [--repo R] [--json]`: the live list. The reader is injectable for tests. */
+export async function cmdLiveSessions(args: string[], read: typeof readLiveSessions = readLiveSessions): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { process.stdout.write(USAGE); return 0; }
+  let values: { json?: boolean; lane?: string; repo?: string };
+  try {
+    ({ values } = parseArgs({ args, strict: true, allowPositionals: false,
+      options: { json: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${USAGE}`);
+    return 2;
+  }
+  for (const key of ['lane', 'repo'] as const) {
+    if (values[key] !== undefined && !SESSION_FILTER_RE.test(values[key])) {
+      process.stderr.write(`--${key} takes a ${key} name such as claude or phantom.\n${USAGE}`);
+      return 2;
+    }
+  }
+  const list = await read({ lane: values.lane ?? null, repo: values.repo ?? null });
+  console.log(values.json ? JSON.stringify(list, null, 2) : renderLiveSessionsText(list));
+  return 0;
+}
+
 export async function cmdSessions(args: string[]): Promise<number> {
+  // No verb: the live list. `--json` alone stays the live list too; `list --json` is the gateway list.
+  if (args[0] === undefined || args[0].startsWith('-')) return cmdLiveSessions(args);
   const json = args.includes('--json');
   const rest = args.filter(arg => arg !== '--json');
   const [sub, ...more] = rest;
   if (sub === undefined || sub === '--help' || sub === '-h' || sub === 'help') {
     process.stdout.write(USAGE);
-    return sub === undefined ? 2 : 0;
+    return 0;
   }
   if (more.includes('--help') || more.includes('-h')) { process.stdout.write(USAGE); return 0; }
 

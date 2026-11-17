@@ -14,6 +14,16 @@ liveCount, expiredCount }`.  Read endpoints need a current read session and
 return 401 if absent or expired; `source` is `missing` when the store has
 not yet been created, and `unavailable` when the store is unhealthy (503).
 
+To see what agents are saying to each other, run `phm messages` (JSON by
+default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
+`--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
+`since`, `agent` and `limit` params. Both return `agent-messages.v1`: newest
+first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
+unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
+`summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
+counted in `skipped`, never fatal. It reads the same store; it is not a
+second bus.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
@@ -161,6 +171,7 @@ Nothing is moved or rewritten. Each existing directory keeps its role:
 | --- | --- | --- |
 | `$ASHLR_HOME/fleet/bus-inbox/` | The one bus store | None |
 | `$ASHLR_HOME/fleet/agent-identities/` | New: identity and channel registry | Created on first `id register` |
+| `$ASHLR_HOME/fleet/bus-transport/acks.json` | Ack ledger for the file-bus transport | Created on first transport `ack` |
 | `~/.ashlr-runs/bus/wake-queue.jsonl` | Wake hints, same row shape | None |
 | `$ASHLR_HOME/fleet/bus/hops.jsonl` | Hop log for wakes | None |
 | `$ASHLR_HOME/bus-mailbox/` (`phm bus send\|inbox\|ack`) | Per-recipient mailbox with acks, kept for its current users | Do not copy; see below |
@@ -182,10 +193,85 @@ To move an agent onto the unified bus:
    mailbox records into the store is not supported: it would duplicate ids and
    lose acknowledgment state.
 
+## Transports and routing
+
+`src/core/fleet/bus-transport.ts` puts every carrier of agent-to-agent traffic
+behind one interface, so the local CLI lanes and external agent services are
+pluggable transports on this bus rather than separate paths. It is a library:
+no daemon or CLI command runs it yet, and it ships no external transport.
+
+**Transport.** A `BusTransport` has `id`, `boundary` (`local` or `external`)
+and four calls: `send(envelope)`, `poll(since)`, `ack(id)` and `health()`
+(`up`, `degraded` or `down`). The transport envelope has `id`, `from`, `to`,
+`kind` (a protocol v1 kind: `task`, `result`, `review`, `status`,
+`question`), `priority` (`P0`-`P3`), `body` (opaque untrusted JSON),
+`correlationId` and `ttlMs`. On the wire it is an ordinary six-field bus
+envelope whose body is `{ protocol: { version: 1, kind }, correlation_id,
+payload }`, so it passes the same validation and size cap as any other post.
+
+**File-bus transport.** `createFileBusTransport({ addresses })` in
+`bus-transport-file.ts` sends with `appendBusInbox` and polls cursor pages
+from the same store; it adds no second message store. `addresses` are the
+labels that consumer reads (exact, `*`, or a `prefix*`). Poll returns only
+transport-shaped envelopes for those labels that the consumer has not acked.
+Acks live in `bus-transport/acks.json` (0600, writer lock, atomic replace),
+pruned on each ack to messages the store still keeps alive, so the ledger
+never outgrows the store and an id reused after reclaim is not pre-acked.
+Health is `down` when the store or ledger is unreadable and `degraded` at 90%
+of the store's capacity.
+
+**External adapter shape.** `createExternalAgentTransport({ id, client })` in
+`bus-transport-external.ts` wraps a host-supplied `ExternalAgentClient` (the
+remote service's own API) as an `external` transport. Each call is bounded by a
+timeout that aborts the client's signal. Inbound envelopes are revalidated and
+invalid ones dropped. Client error text never reaches a report; a client marks
+a failure permanent by throwing `ExternalTransportError(false)`. Tests use a
+fake client only.
+
+**Routing.** `createBusRouter({ routes, deadLetter })` takes routes of
+`{ transport, roles, priority }`. An agent addresses a role in `to`; the router
+probes the health of every transport serving that role (a throw or timeout is
+`down`), drops `down` ones, and tries the rest in order: `up` before
+`degraded`, then lower `priority`, then registration order. A retryable
+failure fails over to the next live transport in the same attempt; a permanent
+refusal removes that transport for this message. Between attempts it waits
+`base * factor^(attempt-1)` capped at `maxMs` (default 500 ms, x2, 30 s) and
+resends with the TTL reduced by elapsed time. Success returns a delivery
+receipt: transport id, the transport's own receipt, `duplicate`, and the
+attempt log.
+
+**Dead letters.** After `maxAttempts` (default 5) the message is dead-lettered
+with reason `exhausted`; `expired` when its TTL runs out first; `no-route` when
+no transport serves the role. `createFileDeadLetterSink()` records a `status`
+envelope addressed to `bus.dead-letter` in the same store, holding the
+original envelope (or only its routing metadata when it would not fit) and the
+attempt log; read it with a file transport whose addresses include
+`bus.dead-letter`. The report says `recorded: false` if the sink failed, in
+which case the caller still holds the message.
+
+**Egress is off by default.** Outbound to any human or external service needs
+an explicit owner decision, enforced twice:
+
+- the router never selects an `external` transport, or probes its health,
+  unless it was built with `egress: { ownerApproved: true }` (strictly `true`);
+  when only external transports serve a role it returns `held` and nothing is
+  sent or stored;
+- the external adapter refuses `send`, `poll` and `ack`, and reports `down`,
+  without contacting the service unless it was built with the same flag.
+
+The router's `hold` defaults to `localBusHold`: the kill switch and
+communications pause that every local bus write already honours. Either one
+returns `held` before any transport is touched. The file transport and file
+dead-letter sink check the same gate for callers that bypass the router.
+
 ## Desktop app
 
 The Bus pane in the desktop app includes a Durable bus tab that reads and
 writes the same `~/.ashlr-runs` store the API endpoints target.
+The Messages pane shows the same `agent-messages.v1` read as a timeline
+grouped by conversation, with an agent filter; clicking a message with a job
+opens that job's log. The Org pane draws one line per conversation between
+two agents in the last 15 minutes.
 
 ## v2
 
@@ -217,6 +303,32 @@ Print it: `ashlr agents bus contract --json` (read-only, no bus access).
 - `status`: `active`, `idle`, `offline`, `disabled`.
 
 ### 2. Body kinds
+
+#### Flat mesh observations
+
+`phm agents mesh status --json` reads the identity registry and retained presence
+observations without probing apps or writing state. Each row includes a directly
+addressable `agent:<handle>`, lane, last-seen time, current task and source.
+Unknown providers and unobserved timestamps are `null`. These are observations,
+never authentication or execution authority.
+
+The live console publishes local observations once a minute:
+desktop roster-hook windows, CLI job claims, and iMessage teammate loop/task
+metadata. No message bodies, contact handles, credentials or result tokens are published.
+Existing v2 `context` bodies carry JSON observation text on `fleet.mesh`; no new
+bus kind or provider is introduced. Observations expire from the bus after ten
+minutes and become unknown after two minutes without a refresh. Registered agents
+remain visible when observations expire. A healthy source clears departed tasks;
+an unavailable source reports unknown. iMessage last-seen means a peer result,
+not a successful local poll. Desktop last-seen means a visible window observation.
+One row represents each claim owner (aggregating concurrent claims) or desktop
+session (keyed by the hook's app/window-title pair). Desktop collection has a five-second deadline; a stalled
+desktop source does not prevent CLI or teammate observations.
+
+`phm agentnet peers mesh --json` and `phm agentnet peers work-feed --json` expose
+these shared projections to every enrolled, authenticated peer, independent of
+lane or role. Private inboxes keep their recipient checks. Routine local DMs use
+`phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
 
 `body.kind` is one of:
 
@@ -378,3 +490,5 @@ are not authenticated identities. Broadcasts to `leaders`, human/external
 messages and self-messages are excluded. The local bus retains and expires
 messages, so these links are not a complete history; A2A events are not yet
 included. A missing or unreadable bus reports unknown edges, not an empty list.
+
+Group-chat projection: [Agent group chat](AGENT-CHAT.md) documents the scoped CLI and local read API.

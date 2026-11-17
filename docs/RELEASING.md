@@ -340,6 +340,10 @@ only after its original-asset qualification and required Stop/drain and Quit.
 An npm version, GitHub release or downloaded archive does not establish installed
 startup acceptance. Use the [desktop install guide](../desktop/README.md#install)
 for supported paths and the locally signed, non-notarized app limitations.
+For an existing managed CLI, see [managed upgrades](../desktop/README.md#upgrade-an-existing-managed-install):
+`phm desktop install --upgrade` plans the switch; explicit `--apply` uses resident
+stop but never restarts it. Journaled `--rollback` is separate from release
+publication. Any Touch ID grant and resident restart remain owner actions.
 
 Website promotion, provider sign-ins, spending permissions and resident fleet
 activation are separate verified operations. Neither this guide nor a version
@@ -479,13 +483,32 @@ lanes retain their separate ownership.
 
 ### Check release status
 
-Run `phm release status` for a read-only table across the seven enrolled Ashlr
-repositories, or add `--json` for the `phantom.release-status.v1` report. The
-latest tag is GitHub's most recently listed tag; assets belong to the release
-for that tag, and unreleased commits count commits on the default branch ahead
-of it. The Phantom row also shows the HTTP status of the public updater feed.
-`Unknown` (JSON `null`) means the observation could not be made, including when
-a tag has no GitHub release. Other repositories have no updater feed check.
-GitHub access uses the existing `gh` authentication. The command changes no
-release settings. `phm release status --file <path>` continues to inspect a
-local release-train state file.
+`phm release status` emits `phantom.release-status.v2` JSON by default; use
+`--text` for people. The existing `repos` rows remain; `release` contains the
+same Phantom fields as the Fleet goals Release card and its **See log** action.
+Only local refs, `release-sign/last-released-tag` and SHA-bound autorun receipts
+and logs are read. No network checks run. Tags alone do not prove publication;
+publication time needs a saved release record. Missing evidence is JSON `null`.
+Signed assets and updater HTTP are the last recorded check, dated `recordedAt`.
+Merged PRs count distinct merge/squash PR numbers on the default branch's first
+parent history; shallow or unavailable history is unknown. The planned candidate
+and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
+(the train's five-minute default); an overdue ETA stays overdue, not a promise
+to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
+`--file <path>` still inspects a saved release-train state file.
+
+### Draft release notes
+
+Run `phm release notes` inside a repository for Markdown since its latest
+reachable stable version tag, or choose `--since v3.30.35`. It reads the current
+branch's mainline, including squash and ordinary GitHub PR merges. Fetch history
+and tags first when the requested range is unavailable. No network calls occur.
+`--json` returns `phantom.release-notes.v1` with `since`, `head`, `summary` and
+ordered `groups` (New, Improved, Fixed, Internal); entries carry text, PRs and
+commit SHAs. Direct commits without a PR retain their short SHA in Markdown.
+Opaque subjects use touched files as context, without inferring user benefits.
+Add `--write` to prepend notes inside `CHANGELOG.md`'s existing `Unreleased`
+section. Repeated writes replace only the generated block, preserving manual
+entries and release history. New/Improved become Added/Changed in the changelog.
+No version, tag, release or workflow is changed. Invalid flags exit 2; unreadable
+history or an unsupported changelog exits 1 (JSON errors have `ok: false`).

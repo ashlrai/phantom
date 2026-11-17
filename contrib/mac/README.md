@@ -67,7 +67,9 @@ in the dispatcher; installing it needs a Security pin.
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
 free slots (`target - running - queued` above zero) it asks the feed scripts
 beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
-that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+that many `READY` lines. A line that declares no lane gets `pool=<lane>` as its
+hint; a lane the line declares for itself stays, because the dispatcher's shared
+market treats `pool=` as a preference and runs the line wherever capacity is. Ids already in the router queue or
 claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
 lines to `router-queue.md` under `ready.lock`, logging
 `SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next
@@ -126,7 +128,8 @@ is recorded as `local_mid_cap` in `admission.json`.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
-`GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
+`GATE_WORKTREES_MAX=40` (floor), `GATE_WORKTREES_PER_CPU=4` (the live-worktree
+warning fires above max(floor, per-cpu × ncpu)), `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
 `dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
 swap samples and the `admit` or `stop` decision. Signal fixtures
@@ -195,6 +198,14 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+Status JSON lists observed publishers and startup markers in `reaping`;
+older markers appear in `reap_blocked` with `reason: "ownership-unknown"`.
+They remain protected and emit `REAP_SKIP ownership-unknown <job>` each tick.
+For terminal cleanup, `python3 contrib/mac/wt_closed_prune.py --json` previews
+eligible trees and per-job `skipped` reasons. `--apply --max 375` removes up to
+375 eligible trees, records `WT_REMOVED <job>` only after removal, and records
+`REAP_SKIP <reason> <job>` for retained trees. Missing evidence reports
+`known: false` and `unknown_reasons`; legacy markers still require fenced recovery.
 The reaper consults the job ledger before handoff: a merged outcome for the
 current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an
@@ -648,6 +659,13 @@ one-hour cap. Waiting jobs consume no precheck budget; due jobs wait if the
 budget is exhausted. One `precheck_parked` metric replaces repeated code 13
 skip events for unchanged inputs. A prompt or routing change resets the delay;
 a successful retry clears it. Other runnable jobs continue through the queue.
+Before claiming generated `RQ-FIXUP|REBASE|RECUT-<repo>-<pr>[-<sha7>]`
+repairs, dispatch reads the target PR through `locus exec -- gh pr view` with a
+three-second deadline. Closed or merged targets finish as `DONE-NOOP`; resolved
+conflicts or completed checks require the queued head, and FIXUP also requires
+the named failing check to remain present. Reasons are fixed codes in
+`metrics/jobs.jsonl` (`launched: false`); unknown evidence stays eligible and an
+exhausted precheck budget defers the repair. No model runs for retired repairs.
 Host installation still requires Security review and re-pinning. Preview without changing queue files:
 
 ```sh
@@ -950,16 +968,22 @@ This supplies jobs only; it does not recut, merge, install, or publish anything.
 
 ### Disk growth
 
-Run `python3 contrib/mac/disk-growth.py --json` periodically to sample free disk
-space and directory sizes. `--budget-seconds` bounds the total time spent in
+Run `phm fleet vitals [--json]` to read disk sizes and changes since the previous
+sample (null means unknown; samples older than 15 minutes are marked stale).
+`python3 contrib/mac/disk-growth.py --json` samples free disk and each direct
+directory under `~/.ashlr-runs` and `~/Projects/ashlrai/wt`, without following
+symlinks or reading file contents. `--budget-seconds` bounds the total time spent in
 `du` (default 10 seconds). The sampler retains 48 readings under
 `~/.ashlr-runs/queue`; it does not delete sampled files. The dispatcher copies
 its latest report to `autopilot.disk` in `status.json` on the next tick. Install
 and schedule the sampler through the normal reviewed host machinery; this source
-change does not install it. Rates compare against the oldest retained reading;
-missing or timed-out directory measurements are omitted, and a null projection
-means there is not yet evidence of a positive disk burn rate. Directory sizes
-overlap: worktree totals include their `node_modules` and `target` directories.
+change does not install it. The dispatcher starts the installed sampler and
+closed-worktree reaper every ten minutes, independent of disk pressure. The
+reaper preserves kept, active, dirty and unknown worktrees; Git removes eligible
+MERGED/CLOSED worktrees without force. Security review and re-pinning are required
+before live installation; stopped ticks or unavailable helpers cannot meet the
+15-minute target. Rates and signed directory deltas use the latest prior sample;
+missing or timed-out measurements are null, never zero.
 
 ### Read merge latency
 

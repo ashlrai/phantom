@@ -75,6 +75,7 @@ export function PinToggle({ kind, pinRef, title, visible = true }: { kind: Libra
 export function PinnedGroup({ visible = true }: { visible?: boolean }) {
   const pins = useQuery(libraryPinsQuery, { enabled: visible });
   if (pins.error && !pins.data) return <CardNote tone="danger">Could not read pins: {failure(pins.error)}</CardNote>;
+  if (pins.data && !Array.isArray(pins.data.pins)) return <CardNote tone="danger">Pinned items unavailable.</CardNote>;
   if (!pins.data?.pins.length) return null;
   return (
     <section className={styles.section} aria-label="Pinned">

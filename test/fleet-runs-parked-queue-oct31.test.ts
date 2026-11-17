@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseParkedState, parsePrecheckSkips, readFleetQueue } from '../src/core/fleet/runs-parked-queue.js';
+
+import { cmdFleetRunsRead } from '../src/cli/fleet-runs-read.js';
 
 const fixture = resolve('test/fixtures/runs-parked-queue');
 const now = new Date(2026, 9, 31, 12).getTime();
@@ -25,6 +27,62 @@ describe('fleet parked queue', () => {
     expect(result.skips[0]!.at).toMatch(/^2026-10-31T08:00:00[+-]\d\d:\d\d$/);
     expect(JSON.stringify(result)).not.toContain('/Users/');
     expect(JSON.stringify(result)).not.toContain('prompts/');
+  });
+  it('reports repeated RESTOCK skips before display limits, keeping reasons and windows separate', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'queue-health-'));
+    try {
+      await mkdir(join(dir, 'queue'));
+      const ready = 'READY\tJOB-STATUS\tcodex-personal\tmid\tphantom\n' +
+        'JOB-READY\tphantom\tcodex-personal\tmid\tprompt.md\n' +
+        'JOB-PARKED\tphantom\tPARKED-DEP.codex-personal\tmid\tprompt.md\n';
+      const skips = [
+        '2026-10-31 08:00:00\tRESTOCK\t13\tbusy',
+        '2026-10-31 10:00:00\tRESTOCK\t13\tbusy',
+        '2026-10-31 09:00:00\tRESTOCK\t13\tbusy',
+        '2026-10-31 11:00:00\tRESTOCK\t13\theld',
+        '2026-10-31 11:00:00\tRESTOCK\t14\tbusy',
+        '2026-10-29 10:00:00\tRESTOCK\t13\tbusy',
+        '2026-11-01 10:00:00\tRESTOCK\t13\tbusy',
+        'bad time\tRESTOCK\t13\tbusy',
+        '2026-10-31 10:00:00\tRESTOCK\t13\t/private/path',
+      ].join('\n');
+      await writeFile(join(dir, 'queue/ready.tsv'), ready);
+      await writeFile(join(dir, 'queue/precheck-skips.tsv'), skips);
+      const result = await readFleetQueue({ runsDir: dir, now: () => now, limit: 1 });
+      expect(result.skips).toHaveLength(1);
+      expect(result.health).toEqual({ schema: 'fleet.queue-health.v1', windowHours: 24,
+        counts: { ready: 2, parked: 1, skips: 5, repeatedSkipGroups: 1 },
+        repeatedSkips: [{ job: 'RESTOCK', code: '13', reason: 'busy', count: 3,
+          lastAt: expect.stringMatching(/^2026-10-31T10:00:00[+-]\d\d:\d\d$/) }] });
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const unavailable = async (): Promise<never> => { throw new Error('unused'); };
+        const deps = { parked: async () => result, runs: unavailable, journal: unavailable };
+        expect(await cmdFleetRunsRead('parked', ['--json'], deps)).toBe(0);
+        expect(JSON.parse(String(output.mock.calls[0]?.[0])).health).toEqual(result.health);
+        output.mockClear();
+        expect(await cmdFleetRunsRead('parked', [], deps)).toBe(0);
+        expect(output.mock.calls.flat().join('\n')).toContain('RESTOCK: skipped 3 times (13: busy)');
+        output.mockClear();
+        expect(await cmdFleetRunsRead('parked', ['--json', '--lane', 'codex-personal'], deps)).toBe(0);
+        expect(JSON.parse(String(output.mock.calls[0]?.[0])).health.repeatedSkips).toEqual([]);
+      } finally { output.mockRestore(); }
+      expect(JSON.stringify(result.health)).not.toContain('/private');
+      expect(await readFile(join(dir, 'queue/ready.tsv'), 'utf8')).toBe(ready);
+      expect(await readFile(join(dir, 'queue/precheck-skips.tsv'), 'utf8')).toBe(skips);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it('keeps unavailable queue health unknown and measured empty evidence at zero', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'queue-health-'));
+    try {
+      expect((await readFleetQueue({ runsDir: dir, now: () => now })).health?.counts)
+        .toEqual({ ready: null, parked: null, skips: null, repeatedSkipGroups: null });
+      await mkdir(join(dir, 'queue'));
+      await writeFile(join(dir, 'queue/ready.tsv'), '');
+      await writeFile(join(dir, 'queue/precheck-skips.tsv'), '');
+      expect((await readFleetQueue({ runsDir: dir, now: () => now })).health?.counts)
+        .toEqual({ ready: 0, parked: 0, skips: 0, repeatedSkipGroups: 0 });
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
   it('recognizes states and handles unparseable timestamps and unsafe skip fields', () => {
     expect(parseParkedState('PARKED-BYHAND.codex-local')).toEqual({ parked: true, reason: 'BYHAND', lane: 'codex-local' });

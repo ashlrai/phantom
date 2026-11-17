@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { cmdRouterCatalog, ROUTER_CATALOG_USAGE } from './router-catalog.js';
 import { readPoolBudgets } from '../core/fleet/pool-budget-store.js';
 import { BUDGET_POOLS, type BudgetPool } from '../core/fleet/pool-budget.js';
 import { LANE_BACKENDS, rankLanes, type LaneEvalScores, type LaneResourceSnapshot, type LaneSlots } from '../core/fleet/lane-rank.js';
@@ -11,9 +12,10 @@ const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE
   'FILE maps pools to routeBackend decisions. Omitted routes are unknown. Reads budgets; prioritizes lanes without imminent forecast exhaustion. Never reserves or dispatches.';
 
 export async function cmdRouter(args: string[]): Promise<number> {
+  if (args[0] === 'catalog') return cmdRouterCatalog(args.slice(1));
   if ((ROUTER_GATEWAY_VERBS as readonly string[]).includes(args[0] ?? '')) return cmdRouterGateway(args);
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || args.join(' ') === 'rank --help') {
-    console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}`); return 0;
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || ['rank --help', 'rank -h'].includes(args.join(' '))) {
+    console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}\n\n${ROUTER_CATALOG_USAGE}`); return 0;
   }
   let tier: EngineTier | undefined; let json = false; let routesFile: string | undefined;
   const slots: LaneSlots = {};
