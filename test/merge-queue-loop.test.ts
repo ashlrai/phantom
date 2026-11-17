@@ -183,7 +183,7 @@ describe('runMergeQueueCycle', () => {
       pr({ number: 4, checks: 'FAILURE' }),
     ]) });
     const summary = runMergeQueueCycle(fake.io, { repos: [REPO] });
-    expect(fake.calls).toEqual([`read ${REPO}`, `update ${REPO}#1@bbbbbbb`, `enqueue ${REPO}#3@aaaaaaa`]);
+    expect(fake.calls).toEqual([`read ${REPO}`, `enqueue ${REPO}#3@aaaaaaa`, `update ${REPO}#1@bbbbbbb`]);
     expect(summary).toMatchObject({ enqueued: 1, rebased: 1, drained: 1, failed: 0, repoErrors: 0, capped: false });
     expect(summary.repos[0]!.totals).toEqual({ enqueue: 1, rebase: 1, conflict: 1, red: 1 });
     expect(fake.lines).toHaveLength(1);
@@ -204,6 +204,73 @@ describe('runMergeQueueCycle', () => {
     expect(fake.lines).toEqual([]);
     expect(fake.saves()).toBe(0);
     expect(summary.repos[0]!.totals).toEqual({ enqueue: 1, rebase: 1, conflict: 1 });
+  });
+
+  it.each([false, true])('removes recovery latency before enrollment (update failure=%s)', (updateFails) => {
+    // All heads are observed at NOW. Fixed I/O costs model an older 60s
+    // branch update and 90s conflict resolver ahead of two 100ms enrollments.
+    const fixture = [
+      pr({ number: 1, mergeState: 'BEHIND', checks: 'NONE', autoMerge: true }),
+      pr({ number: 2, mergeable: 'CONFLICTING', mergeState: 'DIRTY', autoMerge: true }),
+      pr({ number: 3, autoMerge: true }), pr({ number: 4, autoMerge: true }),
+      pr({ number: 5, inMergeQueue: true, checks: 'PENDING', autoMerge: true }),
+    ];
+    const measure = (serial: boolean) => {
+      let at = NOW;
+      const snapshots = only(fixture);
+      const fake = makeIo({ snapshots, now: () => at });
+      const latency: number[] = [];
+      fake.io.updateBranch = () => {
+        at += 60_000;
+        if (updateFails) throw new Error('transient provider failure');
+      };
+      fake.io.resolveConflict = () => { at += 90_000; return 'real'; };
+      fake.io.enqueue = (_repo, head) => {
+        expect([head.autoMerge, head.headSha]).toEqual([true, sha('a')]);
+        expect([3, 4]).toContain(head.number);
+        at += 100;
+        latency.push(at - NOW);
+      };
+      // Replay the previous ascending-PR schedule through the same executor,
+      // one snapshot row at a time; batch mode uses the new scheduling order.
+      const reports = (serial ? fixture.map((head) => [head]) : [fixture]).map((heads) => {
+        snapshots.set(REPO, snap(heads));
+        return runMergeQueueCycle(fake.io, { repos: [REPO] });
+      });
+      expect(reports.reduce((n, r) => n + r.failed, 0)).toBe(Number(updateFails));
+      expect(reports.reduce((n, r) => n + r.drained, 0)).toBe(1);
+      expect(reports.reduce((n, r) => n + (r.repos[0]?.totals.queued ?? 0), 0)).toBe(1);
+      expect(fake.lines).toHaveLength(1);
+      expect(fixture.every((head) => head.autoMerge)).toBe(true);
+      return latency;
+    };
+    expect(measure(true)).toEqual([150_100, 150_200]);
+    expect(measure(false)).toEqual([100, 200]);
+  });
+
+  it('keeps a failed enrollment bounded while admitting other ready PRs before recovery', () => {
+    let at = NOW;
+    const candidate = pr({ number: 2, autoMerge: true });
+    const snapshots = only([
+      pr({ number: 1, mergeState: 'DIRTY', mergeable: 'CONFLICTING' }),
+      candidate, pr({ number: 3, autoMerge: true }),
+    ]);
+    const failures = new Set([2]);
+    const fake = makeIo({ snapshots, failEnqueue: failures, now: () => at });
+    fake.io.resolveConflict = () => {
+      expect(fake.calls).toEqual([`read ${REPO}`, `enqueue ${REPO}#2@aaaaaaa`, `enqueue ${REPO}#3@aaaaaaa`]);
+      return 'real';
+    };
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).toMatchObject({ enqueued: 1, failed: 1, drained: 1 });
+    expect(fake.logs.join('\n')).not.toContain('secret');
+    failures.clear();
+    snapshots.set(REPO, snap([candidate, pr({ number: 3, inMergeQueue: true, autoMerge: true })]));
+    at += MIN;
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).enqueued).toBe(0);
+    at = NOW + 15 * MIN;
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).enqueued).toBe(1);
+    snapshots.set(REPO, snap([pr({ ...candidate, inMergeQueue: true })]));
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).repos[0]?.totals).toEqual({ queued: 1 });
   });
 
   it('does not double-append a drain refix-loop already queued for the same head', () => {
