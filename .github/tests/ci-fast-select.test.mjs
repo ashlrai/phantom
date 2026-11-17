@@ -139,6 +139,13 @@ test('failed test files parse from vitest and node output', () => {
   assert.deepEqual(failedTestFiles('all passed'), []);
 });
 
+test('failed test files parse colored Vitest project badges without matching passing lines', () => {
+  const log = '\x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m \x1b[30m\x1b[42m unit \x1b[49m\x1b[39m test/authority-tier1-closure-310b.test.ts\x1b[2m > \x1b[22mTier-1 authority import closure (SPEC-310B §2)\n';
+  assert.deepEqual(failedTestFiles(log), ['test/authority-tier1-closure-310b.test.ts']);
+  assert.deepEqual(failedTestFiles(' FAIL  real-io test/a.test.ts > case\n × unit test/b.test.ts\n'), ['test/a.test.ts', 'test/b.test.ts']);
+  assert.deepEqual(failedTestFiles('\x1b[32m✓\x1b[39m \x1b[30m\x1b[42m unit \x1b[49m\x1b[39m test/passed.test.ts\n ✓ |unit| test/also-passed.test.ts\n'), []);
+});
+
 test('an explicit cap can keep more than the fast-gate maximum', (t) => {
   const files = { 'src/core/wide.ts': 'export const w = 1;\n' };
   for (let i = 0; i < 30; i += 1) files[`test/wide-${i}.test.ts`] = "import '../src/core/wide.js';\n";
