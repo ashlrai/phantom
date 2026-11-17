@@ -2412,8 +2412,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { readFeed } = await import('../feed.js');
-      sendJson(res, 200, await readFeed());
+      const { parseFeedQuery, readFeed } = await import('../feed.js');
+      const params = new URL(req.url ?? '', 'http://localhost').searchParams;
+      const query = parseFeedQuery(params.get('limit') ?? undefined, params.get('since') ?? undefined);
+      if (!query) sendJson(res, 400, { error: 'Use limit 1 to 1000 and since 1m to 7d.' });
+      else sendJson(res, 200, await readFeed(query.limit, query));
       return true;
     }
 
