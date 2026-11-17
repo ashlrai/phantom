@@ -60,16 +60,18 @@ export interface DevinClientOptions {
 }
 
 export class DevinApiError extends Error {
+  readonly errorCode: string | null;
   readonly code: DevinFailureCode;
   readonly status: number | null;
   /** Absolute provider retry deadline, carried only by organization-consumption reads. */
   readonly retryAfterAt: number | null;
-  constructor(code: DevinFailureCode, message: string, status: number | null = null, retryAfterAt: number | null = null) {
+  constructor(code: DevinFailureCode, message: string, status: number | null = null, retryAfterAt: number | null = null, errorCode: string | null = null) {
     super(message);
     this.name = 'DevinApiError';
     this.code = code;
     this.status = status;
     this.retryAfterAt = retryAfterAt;
+    this.errorCode = errorCode;
   }
 }
 
@@ -446,6 +448,24 @@ export function parseConsumptionRetryAfter(value: string | null, now = Date.now(
 
 type RetryPolicy = 'read' | 'create';
 
+const DEVIN_PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
+export interface DevinPrReview {
+  status: 'pending' | 'running' | 'completed' | 'errored' | 'cancelled' | 'skipped';
+  repo_path: string;
+  pr_number: number;
+  commit_sha: string;
+  created_at: string;
+}
+
+export function parseDevinPrReview(raw: unknown): DevinPrReview | null {
+  if (!isRecord(raw) || typeof raw['status'] !== 'string' || !['pending', 'running', 'completed', 'errored', 'cancelled', 'skipped'].includes(raw['status']) ||
+      typeof raw['repo_path'] !== 'string' || !/^github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw['repo_path']) ||
+      !Number.isSafeInteger(raw['pr_number']) || (raw['pr_number'] as number) < 1 ||
+      typeof raw['commit_sha'] !== 'string' || !/^[a-fA-F0-9]{40,64}$/.test(raw['commit_sha']) ||
+      typeof raw['created_at'] !== 'string' || !Number.isFinite(Date.parse(raw['created_at']))) return null;
+  return { status: raw['status'] as DevinPrReview['status'], repo_path: raw['repo_path'], pr_number: raw['pr_number'] as number, commit_sha: raw['commit_sha'], created_at: raw['created_at'] };
+}
+
 export class DevinClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -519,7 +539,15 @@ export class DevinClient {
       }
       const code = failureForStatus(response.status);
       const detail = problemDetail(text, this.apiKey);
-      lastError = new DevinApiError(code, detail ? `${STATUS_SENTENCES[code]} Devin said: ${detail}` : STATUS_SENTENCES[code], response.status, consumptionRetry && code === 'rate-limited' ? parseConsumptionRetryAfter(response.headers.get('retry-after')) : null);
+      let errorCode: string | null = null;
+      try {
+        const value: unknown = JSON.parse(text)?.error_code;
+        if (typeof value === 'string') {
+          const clean = scrubSecrets(redactKnownValues(value, [this.apiKey])).replace(/\bcog_[A-Za-z0-9_-]+/g, '').slice(0, 64);
+          if (/^[A-Za-z0-9_.-]+$/.test(clean)) errorCode = clean;
+        }
+      } catch { /* Non-JSON errors have no provider code. */ }
+      lastError = new DevinApiError(code, detail ? `${STATUS_SENTENCES[code]} Devin said: ${detail}` : STATUS_SENTENCES[code], response.status, consumptionRetry && code === 'rate-limited' ? parseConsumptionRetryAfter(response.headers.get('retry-after')) : null, errorCode);
       const retryable = code === 'rate-limited' || (policy === 'read' && code === 'server');
       if (!retryable || attempt === this.retries) throw lastError;
       const consumptionWait = consumptionRetry && code === 'rate-limited' && lastError.retryAfterAt !== null
@@ -535,6 +563,21 @@ export class DevinClient {
   /** GET /v3/self — https://docs.devin.ai/api-reference/v3/self/self */
   async getSelf(): Promise<DevinSelf> {
     const parsed = parseDevinSelf(await this.request('GET', '/self', undefined, 'read'));
+    if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  async triggerPrReview(orgId: string, prUrl: string): Promise<DevinPrReview> {
+    if (!DEVIN_PR_URL.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
+    const parsed = parseDevinPrReview(await this.request('POST', `/organizations/${checkOrg(orgId)}/pr-reviews`, { pr_url: prUrl }, 'create'));
+    if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  async getPrReview(orgId: string, prUrl: string, commitSha?: string): Promise<DevinPrReview> {
+    if (!DEVIN_PR_URL.test(prUrl)) throw new DevinApiError('invalid-request', 'Invalid GitHub PR URL.');
+    const query = new URLSearchParams({ pr_url: prUrl, ...(commitSha ? { commit_sha: commitSha } : {}) });
+    const parsed = parseDevinPrReview(await this.request('GET', `/organizations/${checkOrg(orgId)}/pr-reviews?${query}`, undefined, 'read'));
     if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
     return parsed;
   }
@@ -696,10 +739,14 @@ export class DevinClient {
    */
   async downloadAttachment(orgId: string, uuid: string, name: string, maxBytes: number): Promise<Buffer> {
     const org = checkOrg(orgId);
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uuid) || !/^[A-Za-z0-9._-]{1,255}$/.test(name) || name.includes('..')) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uuid) || typeof name !== 'string' || name.length < 1 || name.length > 255
+      || name.includes('/') || name.includes('\\') || name === '..' || name.includes('\0')) {
       throw new DevinApiError('invalid-request', 'That is not a Devin attachment.');
     }
-    let url = `${this.baseUrl}/organizations/${encodeURIComponent(org)}/attachments/${encodeURIComponent(uuid)}/${encodeURIComponent(name)}`;
+    let nameSegment: string;
+    try { nameSegment = encodeURIComponent(name); }
+    catch { throw new DevinApiError('invalid-request', 'That is not a Devin attachment.'); }
+    let url = `${this.baseUrl}/organizations/${encodeURIComponent(org)}/attachments/${encodeURIComponent(uuid)}/${nameSegment}`;
     let headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
     for (let hop = 0; hop < 3; hop += 1) {
       const controller = new AbortController();

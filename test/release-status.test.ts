@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatReleaseStatus, getLocalReleaseStatus, getReleaseStatus } from '../src/core/release/status.js';
 import { cmdRelease } from '../src/cli/release.js';
-import { cadenceMinutesFromEnv } from '../src/core/release/train.js';
+import { cadenceMinutesFromEnv, TRAIN_SCHEMA } from '../src/core/release/train.js';
 
 describe('release status', () => {
   it('reads local tags and default branch commits and reports missing evidence', async () => {
@@ -31,7 +31,7 @@ describe('release status', () => {
 });
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 function fixture(at = '2026-11-17T12:00:00Z') {
   const root = mkdtempSync(join(tmpdir(), 'release-cadence-')); roots.push(root);
   const repoPath = join(root, 'phantom'), runsDir = join(root, 'runs'), dir = join(runsDir, 'release-sign', 'autorun');
@@ -82,6 +82,8 @@ it('keeps bare tags, shallow counts, missing publication times and invalid caden
   expect(await getLocalReleaseStatus(f.deps)).toMatchObject({ latestPublishedTag: 'v1.0.0', publishedAt: null, mergedPrsSinceTag: null });
 });
 it('defaults the CLI to stable JSON, accepts text and preserves file inspection', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'release-cli-')); roots.push(root);
+  vi.stubEnv('ASHLR_RUNS_DIR', join(root, 'runs'));
   const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
   expect(await cmdRelease(['status'])).toBe(0);
   expect(JSON.parse(String(out.mock.calls.at(-1)?.[0]))).toMatchObject({ schema: 'phantom.release-status.v2', release: { autorun: { rc: null, reason: null } } });
@@ -89,4 +91,17 @@ it('defaults the CLI to stable JSON, accepts text and preserves file inspection'
   vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   expect(await cmdRelease(['status', '--text', '--json'])).toBe(2);
   expect(await cmdRelease(['status', 'extra'])).toBe(2);
+});
+it('inspects a supplied release state file whose relative name starts with a dash', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'release-cli-file-')); roots.push(root);
+  const previous = process.cwd();
+  writeFileSync(join(root, '-release.json'), JSON.stringify({ schema: TRAIN_SCHEMA, stopped: true, steps: {}, stages: {} }));
+  const out = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+  process.chdir(root);
+  try {
+    expect(await cmdRelease(['status', '--file', '-release.json'])).toBe(0);
+    expect(JSON.parse(String(out.mock.calls.at(-1)?.[0]))).toMatchObject({
+      schema: TRAIN_SCHEMA, ok: true, state: { stopped: true },
+    });
+  } finally { process.chdir(previous); }
 });

@@ -906,6 +906,27 @@ stores seven days, at most 2016 points per allowance, spaced at least five minut
 `WorldProjectInput.laneHistory` projects optional `WorldModel.sensors.lanes[].history`
 with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHistory`.
 
+## Devin Review
+
+`DevinClient.triggerPrReview(orgId, prUrl): Promise<DevinPrReview>` posts a manual
+review (create retry policy); `getPrReview(orgId, prUrl, commitSha?)` reads the
+latest review. `parseDevinPrReview(unknown)` fails closed to null.
+`DevinPrReview` retains the required provider fields: status, repo_path,
+pr_number, commit_sha and created_at. `DevinApiError.errorCode: string | null`
+is a scrubbed provider ProblemDetail code, limited to 64 safe characters.
+
+`src/core/devin/pr-review.ts` exports `parseDevinPrRef`, `DevinPrRef`,
+`planDevinPrReview`, `devinPrReviewKey`, `triggerDevinPrReviewOnce`,
+`DevinPrReviewDeps`, `DevinPrReviewResult`, `DevinPrReviewReason`,
+`readDevinReviewFindings`, `DevinReviewFindings`, `DevinReviewSignal` and
+`fleetDevinReview`. Requests reserve a repo/PR/head key under a local store lock
+before contact; ambiguous outcomes cannot be retried. Unknown weekly allowance
+refuses contact; quota errors stop further requests that local day.
+Config `devin.review.maxPerDay` defaults to 5; 0 disables review requests.
+`MergeAutopilotPr.devinReview?: DevinReviewSignal | null` and injectable
+`MergeAutopilotDeps.devinReview` expose advisory evidence only: classification
+and merge gates are unchanged. Dry runs neither contact Devin nor journal.
+
 ## Devin weekly capacity
 
 `DevinWeeklyInput` and `DevinWeeklyDeps` accept optional `accountId` and `model`.

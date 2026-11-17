@@ -52,7 +52,7 @@ export async function cmdRelease(args: string[]): Promise<number> {
   }
   const fileFlag = rest.indexOf('--file');
   const file = fileFlag >= 0 ? rest[fileFlag + 1] : undefined;
-  if ((args.includes('--json') && args.includes('--text')) || (rest.length !== (fileFlag === 1 ? 3 : 1)) || (fileFlag >= 0 && (!file || file.startsWith('-')))) {
+  if ((args.includes('--json') && args.includes('--text')) || (rest.length !== (fileFlag === 1 ? 3 : 1)) || (fileFlag >= 0 && !file)) {
     process.stderr.write(`${RELEASE_USAGE}\n`);
     return 2;
   }
