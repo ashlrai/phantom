@@ -1,25 +1,20 @@
 # Empty job reasons
 
-Run `phm fleet empties --since 24h --json` to see why jobs ended empty. Omit `--json` for plain lines; `--since` accepts a positive number of hours such as `24h` and defaults to 24 hours. `--runs-dir <directory>` reads another runs dir (default `~/.ashlr-runs`). The command is read-only and does not change filler or dispatch rules.
+Run `phm fleet empties` for JSON, or `phm fleet empties --human` for a short table and the top five families by empty launches. `--since 24h` selects a trailing window (default 24 hours, maximum 2160); `--jobs <jobs.jsonl>` selects a metrics file. `--runs-dir <directory>` sets the default ledger and result-notes root (default `~/.ashlr-runs`).
 
-## Typed causes
+`fleet.empties.v2` includes every EMPTY finish, family/lane counts, `byCause`, and `topFamilies`. A family is the job ID without trailing digits. `--json` remains accepted. MCP `fleet_empties` returns the same report with optional `hours`, no paths. Its existing 64 KiB limit applies; use fewer hours or the CLI for large windows.
 
-For each job whose `finish` or `outcome` row in `metrics/jobs.jsonl` says `empty: true` (or is marked `EMPTY_DONE`), the command reads the final 40 lines of the worker log `<job>.log` beside `<job>.publish` and tags one cause, first match wins:
-
-| Cause | Matched in the final log lines |
+| Cause | Required evidence |
 | --- | --- |
-| `precheck_skip` | `precheck code=…`, `precheck exit`, `precheck skip` |
-| `sandbox_denied` | `operation not permitted`, `gh not logged in`, `not logged into any GitHub hosts`, a sandbox deny |
-| `tool_missing` | `command not found`, `spawn <tool> ENOENT`, `is not installed` |
-| `model_error` | usage or rate limit, `overloaded`, `API Error`, HTTP 429/5xx status, context exceeded |
-| `no_candidate` | `NO CANDIDATE`, `already on master` |
-| `timeout` | the dispatcher's `queue/run/<job>.timeout` marker (checked first), or `timed out` |
-| `unknown` | anything else, including a missing, archived-only or symlinked log |
+| `already-done-on-main` | An exact cause value or a full line such as `Already merged into main.` (also master) |
+| `needed-gh-or-network` | An exact cause value or a full line such as `gh not logged in`, `gh: command not found`, or `Network unavailable.` |
+| `refused-by-precheck` | An exact cause value or a full line such as `Precheck refused the job.` |
+| `too-fast-to-have-worked` | A nonnegative measured duration under 60 seconds, with no conflicting or more specific cause |
+| `scope-unclear` | An exact cause value or a full line such as `Scope was unclear.` |
+| `unknown` | Missing, conflicting, or unsupported evidence; generic `no candidate` is insufficient |
 
-Only the tail is read because the head of a log echoes the prompt. A sandbox denial outranks a worker's "no candidate" verdict, since a worker that cannot run `gh` often concludes there is nothing to do.
+Evidence comes from metrics `cause`/`reason` or an explicit `notes_path`/`notesPath` on the finish or its launch. Lines may start with `Cause:`, `Empty cause:`, or `Reason:`. Only complete lines within the first 2,999 characters of a regular file up to 12,000 bytes are considered. Paths resolve inside the runs directory; missing, oversized, symlinked or escaping paths are counted in `notesMissing`. Notes and paths are never emitted; logs and prompts are not read. Fleet vitals keeps its legacy log diagnostic.
 
-The JSON `causes` object holds `total` (null when the ledger is unreadable), `logs_missing`, `by_cause`, `groups` (lane, cause and job-id prefix with `count`, two `examples` and `median_wall_seconds` from the ledger `wall_s`) and `top`, one plain line per lane and cause, for example `claude: 4 jobs ended empty because gh or a file was blocked in the sandbox`. `phm fleet vitals` shows the three most frequent causes in the last 24 hours.
+Finishes are selected by timestamp; launches before the window can supply duration and lane. Repeated launches stay separate; exact duplicates are ignored. Outcome-only EMPTY records are used when no finish exists. A successful publish URL in the same attempt conflicts with EMPTY cause evidence and yields `unknown`. `wall_s` supplies duration, otherwise a unique launch/finish pair. The under-60 label describes timing, not a proven root cause.
 
-## Recorded reasons
-
-The report also groups the ledger's own `lane`, `repo` and `reason` fields on outcome rows with `empty: true` and rows marked `EMPTY_DONE`, ranks the five most frequent reasons and suggests a filler rule for each. Missing or blank fields are `unknown`; it does not deduplicate multiple outcome rows for one attempt. An unreadable or oversized ledger returns `known: false` and `total: null`; a readable ledger with no matching rows returns zero. Suggested rules are prompts for review, not automatic changes.
+`emptyRate` is EMPTY finishes divided by finishes with explicit empty/nonempty evidence (or a single finish with a recorded publish URL), also exposed as `measured`; no measurements means null. `launches` counts launches inside the window separately. `finished` includes unmeasured finishes. Malformed rows are counted and skipped, so counts cover observed valid evidence. Unreadable or oversized metrics (64 MiB maximum) return `known:false`, null totals and CLI exit 1; an empty readable window returns zero totals and exit 0. JSON keys and ranking ties have stable order. Invalid arguments exit 2.
