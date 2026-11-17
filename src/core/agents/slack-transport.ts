@@ -9,6 +9,7 @@ import { ensurePrivateDirectory, readPrivateFileCapped, writePrivateFileAtomic }
 import { evaluateSlackAudience, slackOutboundPlan, slackSendDecision, type SlackAudienceSnapshot, type SlackMemberSnapshot } from './slack-audience.js';
 import { ingestSlackSocketMessage, slackEventToBus, unwrapSlackSocketEnvelope, type SlackIngestContext } from './slack-inbound.js';
 import { isSlackChannelId, isSlackTs, type SlackBridgeConfig } from './slack-network.js';
+import { readSlackWorkStatus, slackWorkStatusLine } from './slack-status.js';
 import type { TeamIdentity } from './channel-policy.js';
 import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 import type { SlackInboundDecision } from './slack-inbound.js';
@@ -128,7 +129,7 @@ function readSendStore(path: string): SendStore {
 /** Persist intent BEFORE the single post. An ambiguous post is only reconciled, never replayed. */
 export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
   config: SlackBridgeConfig; teamIdentities: readonly TeamIdentity[]; confirmedByMason: boolean;
-  call: SlackCall; stateRoot?: string;
+  call: SlackCall; stateRoot?: string; runsDir?: string; busRoot?: string; leaderRequestId?: string;
   readPolicy?: () => SlackDeliveryPolicy | undefined;
   signal?: AbortSignal;
 }): Promise<SlackDelivery> {
@@ -182,9 +183,12 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
     const expiresAt = Date.now() + checked.value.ttl;
     if (!Number.isSafeInteger(expiresAt)) return { status: 'refused', reason: 'invalid-message-lifetime' };
     const receipt: SendReceipt = { digest, clientId: randomUUID(), channel: planned.plan.channel, state: 'attempted', expiresAt, ...(planned.plan.threadTs ? { thread: planned.plan.threadTs } : {}) };
+    const work = receipt.thread ? readSlackWorkStatus({ runsDir: input.runsDir, busRoot: input.busRoot,
+      channelRef: `slack:${input.config.teamId}:${receipt.channel}:${receipt.thread}` }) : undefined;
     store.messages[key] = receipt;
     writePrivateFileAtomic(path, JSON.stringify(store));
     const result = await input.call('chat.postMessage', { channel: receipt.channel, text: planned.plan.text, client_msg_id: receipt.clientId,
+      ...(work ? { attachments: [{ text: slackWorkStatusLine(work, { ...checked.value.body as RecordValue, requestId: input.leaderRequestId }), mrkdwn_in: [] }] } : {}),
       ...(receipt.thread ? { thread_ts: receipt.thread } : {}), unfurl_links: false, unfurl_media: false });
     if (result.channel !== receipt.channel || !isSlackTs(result.ts)) return { status: 'uncertain', reason: 'delivery-response-unproved' };
     receipt.state = 'sent'; receipt.ts = result.ts;

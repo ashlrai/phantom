@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordSlackObservation } from '../src/core/agents/slack-journal.js';
-import { buildSlackBridgeStatus } from '../src/core/agents/slack-status.js';
+import { buildSlackBridgeStatus, readSlackWorkStatus, slackWorkStatusLine } from '../src/core/agents/slack-status.js';
+
+import { appendBusInbox, type BusEnvelope } from '../src/core/fleet/bus-inbox.js';
+import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import { postBusReply } from '../src/core/fleet/bus-reply-post.js';
 
 const CH = 'C0TESTCHAN1';
 const THREAD = '1700000000.000100';
@@ -15,7 +19,7 @@ const DIGEST = 'a'.repeat(64);
 const CLIENT = '11111111-1111-1111-1111-111111111111';
 
 const roots: string[] = [];
-afterEach(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'slack-replies-336-'));
@@ -105,4 +109,38 @@ describe('slack status replies (336)', () => {
     expect(text).not.toContain(DIGEST);
     expect(text).not.toContain(CLIENT);
   });
+});
+
+// Same durable stores and classifier used by the fleet work board.
+it('labels receipt, assignment, running, dependency and verification from exact work evidence', () => {
+  const p = setup(), busRoot = join(p.runsDir, 'bus');
+  const now = Date.now(), channelRef = `slack:T0TEST:${CH}:${THREAD}`;
+  const opts = { ...p, busRoot, now: () => new Date(now), channelRef };
+  const request: BusEnvelope = { id: 'fake-status-request', from: 'fake-owner', to: 'leader', priority: 'P1', ttl: 600_000,
+    channel: 'slack', channel_ref: channelRef, external: false,
+    sender: { agent_id: 'fake-owner', vendor: 'fake', human: true, team: true }, body: { kind: 'note', text: 'status' } };
+  expect(appendBusInbox(request, { root: busRoot, now: () => now }).status).toBe('posted');
+  const line = () => slackWorkStatusLine(readSlackWorkStatus(opts), { inReplyTo: request.id });
+  expect(line()).toBe('RECEIVED; owner unknown; claim unknown; fleet as of unknown');
+  vi.spyOn(Date, 'now').mockReturnValue(now);
+  const claim = mutateBusWorkClaim({ action: 'acquire', root: busRoot, id: request.id, owner: 'fake-worker', leaseMs: 60_000 });
+  expect(claim.status).toBe('acquired');
+  expect(line()).toBe(`RUNNING; owner fake-worker; claim bus-claim:fake-status-request:1:${now}; fleet as of unknown`);
+  expect(mutateBusWorkClaim({ action: 'complete', root: busRoot, id: request.id, token: claim.token }).status).toBe('completed');
+  expect(line()).toMatch(/^ASSIGNED; owner fake-worker; claim bus-claim:fake-status-request:1:/);
+  expect(postBusReply(request.id, 'fake-block', { blocked: { dependency: 'review <@FAKE>\nneeded' } }, { root: busRoot, now: () => now }).outcome).toBe('posted');
+  expect(line()).toBe('BLOCKED; dependency review ?@FAKE? needed; fleet as of unknown');
+  expect(postBusReply(request.id, 'fake-verified', { verified: { pr: 42, head: 'abcdef123' } }, { root: busRoot, now: () => now }).outcome).toBe('posted');
+  expect(line()).toBe('VERIFIED; PR 42; head abcdef123; fleet as of unknown');
+  expect(JSON.stringify(readSlackWorkStatus(opts))).not.toContain(claim.token!);
+  expect(slackWorkStatusLine(readSlackWorkStatus(opts), { inReplyTo: 'different-request' })).toMatch(/^UNKNOWN;/);
+  expect(readSlackWorkStatus({ ...opts, channelRef: `slack:T0OTHER:${CH}:${THREAD}` }).items).toEqual([]);
+  expect(buildSlackBridgeStatus(opts).work).toEqual(readSlackWorkStatus(opts));
+});
+
+it.each(['not-json', '{}', '{"last_tick":"tomorrow"}', '{"last_tick":"2999-01-01T00:00:00Z"}'])('keeps unavailable fleet time unknown: %s', raw => {
+  const p = setup();
+  mkdirSync(join(p.runsDir, 'queue'), { recursive: true });
+  writeFileSync(join(p.runsDir, 'queue/status.json'), raw);
+  expect(readSlackWorkStatus({ ...p, busRoot: join(p.runsDir, 'missing'), now: () => NOW }).asOf).toBeNull();
 });
