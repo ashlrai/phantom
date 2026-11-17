@@ -43,6 +43,13 @@ precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
 
 # Advisory routing pairing
 
+`explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
+256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
+following). Its `lanes` map contains `posture`, `postureReason`, nullable
+`projectedUnusedPct` and nullable `hoursToReset`. The newest `work-market.v1`
+posture event wins, falling back to the newest route decision's ranking inputs
+only when no posture event exists. Missing or invalid evidence returns null.
+
 `run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
 model classifications and their capability order. `ModelEntry.modeTier` is
 required and excludes fusion (a composition). `RouteRequest.mode?` requests a

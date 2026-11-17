@@ -24,6 +24,38 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def test_spend_down_projection_and_precedence(self):
+        reading = dict(weekly_used_pct=20, burn_pct_per_hour=0, reset_at=13600, as_of=10000)
+        def lanes(reading, **slot):
+            return market.lane_view(['claude'], {'claude': slot}, {'claude': 0}, {'claude': 2},
+                                    set(), {}, {}, [], now=10000, allowance={'claude': reading})
+        for burn, expected, reason in [(0, 'burn', 'projected_unused'), (75, 'balanced', 'on_pace'),
+                                       (91, 'preserve', 'projected_exhaustion')]:
+            entry = lanes(dict(reading, burn_pct_per_hour=burn))['claude']
+            self.assertEqual(entry['posture'], expected)
+            self.assertEqual(entry['posture_reason'], 'spend_down_' + reason)
+            self.assertEqual(entry['spend_down']['hours_to_reset'], 1)
+        for bad in [None, {}, dict(reading, burn_pct_per_hour=None), dict(reading, as_of=8199),
+                    dict(reading, as_of=10061), dict(reading, reset_at=10000),
+                    dict(reading, weekly_used_pct=101), dict(reading, burn_pct_per_hour=-1),
+                    dict(reading, burn_pct_per_hour=float('nan')), dict(reading, reset_at='bad')]:
+            entry = lanes(bad)['claude']
+            self.assertEqual(entry['posture'], 'preserve')
+            self.assertEqual(entry['posture_reason'], 'spend_down_unknown')
+            self.assertIsNone(entry['spend_down']['projected_unused_pct'])
+        self.assertEqual(lanes(reading, posture='balanced')['claude']['posture_reason'], 'host_declared')
+        free = lanes(reading, posture='preserve', free_until=10001)['claude']
+        self.assertEqual((free['posture'], free['posture_reason']), ('burn', 'free_until'))
+        metered = lanes(reading, cost_class='metered')['claude']
+        self.assertEqual(metered['posture'], 'preserve')
+        self.assertEqual(metered['posture_reason'], 'spend_down_not_subscription')
+        self.assertIsNone(market.spend_down('claude-api', 'metered', reading, 10000)['posture'])
+        iso = dict(reading, reset_at='1970-01-01T03:46:40Z', as_of='1970-01-01T02:46:40Z')
+        self.assertEqual(market.spend_down('claude', 'included', iso, 10000)['posture'], 'burn')
+        result, _ = self.choose(lanes=lanes(reading))
+        self.assertEqual(result['ranking_inputs']['claude']['posture_reason'], 'spend_down_projected_unused')
+        self.assertEqual(result['ranking_inputs']['claude']['spend_down']['projected_unused_pct'], 80)
+
     def choose(self, spec=None, lanes=None, record=None, now=10000):
         req = market.requirements(['j', 'phantom', '', 'work', 'p', json.dumps(spec or {})])
         return market.choose('j', req, 'work', lanes or view(), record, now, decide)
@@ -229,6 +261,22 @@ class MarketTick(unittest.TestCase):
     def run_tick(self, home):
         result = tick(home)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_measured_allowance_changes_tick_posture_and_receipt(self):
+        home, q = self.fixture()
+        now = time.time()
+        (q / 'budget-overrides.json').write_text(json.dumps({'claude': {
+            'weekly_used_pct': 20, 'burn_pct_per_hour': 1, 'reset_at': now + 3600, 'as_of': now}}))
+        self.add(home, 'RQ-SPEND-DOWN', lane='codex-personal', preferred_lane='codex-personal')
+        self.run_tick(home)
+        rows = self.rows(home)
+        snapshot = next(r for r in rows if r['event'] == 'posture')['lanes']['claude']
+        self.assertEqual(snapshot['posture'], 'burn')
+        self.assertEqual(snapshot['posture_reason'], 'spend_down_projected_unused')
+        self.assertGreater(snapshot['projected_unused_pct'], 78)
+        route = next(r for r in rows if r['event'] == 'route_decision')
+        self.assertEqual(route['chosen_lane'], 'claude')
+        self.assertEqual(route['ranking_inputs']['claude']['posture_reason'], 'spend_down_projected_unused')
 
     def test_no_lane_and_saturated_preference_use_both_executors(self):
         home, q = self.fixture()

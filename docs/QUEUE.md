@@ -124,6 +124,32 @@ is free by default. Fresh `use-it-all.v1` evidence that an executor's window is
 at waste risk or behind pace also reads as `burn` for that tick, so a preserved
 window that would otherwise expire unused takes volume.
 
+Fresh measured `queue/budget-overrides.json` allowance also sets posture for
+`included` subscriptions only (never metered/API-credit or local lanes).
+Per-lane `weekly_used_pct` (0–100), finite nonnegative `burn_pct_per_hour`
+(including measured zero), `reset_at` and `as_of` are required. Times accept
+epoch seconds or ISO timestamps; observations older than 30 minutes, more than
+60 seconds in the future, or already elapsed resets are unknown.
+With hours remaining to reset, projected unused allowance is
+`max(0, 100 - weekly_used_pct - burn_pct_per_hour * hours)` (see
+[projected waste](AMPLIFY.md)). At least 10 percentage points unused selects
+`burn` (`spend_down_projected_unused`); projected consumption above 110% selects
+`preserve` (`spend_down_projected_exhaustion`); otherwise `balanced`
+(`spend_down_on_pace`). Precedence is unexpired `free_until`, valid host-declared
+`posture`, measured spend-down, then built-in defaults. Reasons are `free_until`,
+`host_declared`, or the spend-down code; defaults retain `spend_down_unknown`
+or `spend_down_not_subscription`. The existing use-it-all tick override remains
+last, with reason `use_it_all_waste_risk` or `use_it_all_behind`.
+
+`work-market.v1` routing receipts include `posture_reason` and `spend_down` in
+each lane's ranking inputs. When allowance readings exist, one `event: posture`
+snapshot per market tick records all lane postures and projections, including
+ticks without a routing decision. `phm route explain --json` returns nullable
+`posture.lanes` with `posture`, `postureReason`, `projectedUnusedPct` and
+`hoursToReset`, using the newest posture snapshot in a bounded 256 KiB journal
+tail, or the newest routing decision if no snapshot exists. Missing or invalid
+evidence stays null. These ranking inputs never grant quota or eligibility.
+
 | Posture | bulk | standard | judgment |
 | --- | --- | --- | --- |
 | `burn` | best | best | neutral |
