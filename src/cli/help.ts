@@ -189,6 +189,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ v: 1, dryRun, action, outcome, job, pids } | { v: 1, dryRun, error }',
   },
   {
+    usage: 'phm job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]',
+    description: 'Steer one fleet job. Appends one idempotent request to queue/job-control.jsonl for the dispatcher; a live stop and a queued move apply at once. move refuses a held or full lane. Exit 0 requested or applied, 1 refused, unknown or unavailable, 2 usage.',
+    safety: 'append',
+    jsonShape: 'fleet.job.control.v1 { schema, action, job, lane, status: requested|applied|refused|unknown, reason, requestId, at, dryRun, duplicate }',
+  },
+  {
     usage: 'phm budget show [--json]',
     description: 'Read per-pool budget buckets, burn rates, resets and provenance. Unknown is never zero.',
     safety: 'read',
@@ -1156,6 +1162,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
   { cmd: 'queue batches [--runs <directory>] [--json]', desc: 'Show each batch line’s PR, empty reason, failure or unknown result.', topic: 'observability' },
   { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
+  { cmd: 'job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]', desc: 'Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.', topic: 'observability' },
   { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
