@@ -1,5 +1,17 @@
 # Resource readings and credit balances
 
+## Lane history
+
+`phm usage history --lane devin --json` reads full-resolution measured points;
+`--lane` accepts an allowance id, dispatch lane or sensor lane. `--runs-dir <abs>`
+selects another runs directory. Missing history is an empty successful result.
+The private `state/resource-live-history.json` keeps seven days, up to 2016 points
+per allowance, skipping observations less than five minutes apart. Unverified
+polls add nothing. Devin weekly readings feed the `devin` allowance automatically.
+The Resources rail selects the last real point per hour and leaves gaps unconnected.
+Burn requires at least fifteen minutes of contiguous measurements within six hours
+in one reset window; a decrease or gap over thirty minutes breaks the window.
+
 Phantom keeps each account's subscription windows, native credit units, captured dollar balances, and operator estimates separate. The resource sidebar uses the same live capacity model as the resource drawer. Refreshing a reading does not renew its original observation or expiration.
 
 Summary counts describe accounts **with current usage** and accounts whose usage is
