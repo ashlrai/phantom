@@ -7,6 +7,7 @@ import { JOB_ID_RE } from '../../verse/fleet-job-log/job-id.js';
 import { formatDuration, laneStats } from './worklog-lane-stats.js';
 import type { WorklogKind, WorklogReport, WorklogRow } from '../../../../core/fleet/worklog.js';
 import styles from './WorklogView.module.css';
+import { EmptyJobsPanel } from '../../verse/growth/EmptyJobsPanel.js';
 
 const KINDS: Record<WorklogKind, string> = { merged: 'Merged', launched: 'Launched', finished: 'Finished', empty: 'No change', leader: 'Leader', incident: 'Incidents' };
 const SOURCES: Record<keyof WorklogReport['sources'], string> = { jobs: 'Job results', events: 'Dispatch events', leader: 'Leader replies' };
@@ -106,5 +107,6 @@ export function WorklogView() {
         </tbody></table>
       </details>
     </>}
+    <EmptyJobsPanel />
   </main>;
 }
