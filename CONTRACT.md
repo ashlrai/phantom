@@ -194,6 +194,32 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Headless ACP seats
+
+`agents/acp-client.ts` exports `runAcpSeatTurn(opts: AcpSeatOptions,
+deps?: AcpSeatDeps): Promise<AcpSeatResult>`. Options provide command, args,
+cwd, prompt, exact model, async-capable qualifyModel, timeoutMs, optional signal
+and permission (`read-only` by default, or `allow`). Dependencies inject spawn
+and env. Results contain ok, code, text and optional message, sessionId and
+stopReason. Qualification fails closed before spawning, with no paid fallback.
+ACP config model selection defaults to exact values. Optional `planModelStep`
+has signature `(target: string, configOptions: unknown): AcpModelStep`, returning
+`{kind: 'set', configId, value}`, `{kind: 'done'}` or
+`{kind: 'unplannable', reason}`. Each set replans from the response configOptions;
+unplannable targets or more than four sets fail before prompting, without fallback.
+No model control leaves selection to the agent's launch arguments.
+Input lines and collected text are capped at 1 MiB each; stderr is discarded.
+Timeout and abort notify session/cancel and terminate the child.
+
+`devin/acp-seat.ts` exports `devinAcpSeatArgs(model): string[]`,
+`devinQualifiedFreeModel(catalog: DevinModelCatalog, model: string, nowMs?: number): boolean`
+and `runDevinAcpSeat(opts, deps?): Promise<AcpSeatResult>`. Wrapper options replace
+command/args/qualifyModel/planModelStep with cliPath and catalog. The wrapper
+uses nextDevinModelStep for family, effort and speed selection. Only exact free
+ids from a native (`cli`) catalog with a parseable fetchedAt no older than
+DEVIN_MODELS_MAX_AGE_MS and not in the future qualify (nowMs defaults to Date.now()).
+Cache, fallback, aliases and lightning do not qualify.
+
 ## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
 
 `agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
