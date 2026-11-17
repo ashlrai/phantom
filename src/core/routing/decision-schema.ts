@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import { TASK_CLASSES } from '../decide/registry.js';
+import { MODE_TIERS, type ModeTier } from '../run/model-mode-data.js';
+import type { ResetCalendarPool } from './reset-pressure.js';
+
+export const modeTierSchema = z.enum(MODE_TIERS);
+export const modelModeTierSchema = modeTierSchema.exclude(['fusion']);
+export const routeModelSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/);
 
 export const routeTierSchema = z.enum(['frontier', 'work', 'mid', 'fast']);
 export const routeIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/);
@@ -11,6 +17,7 @@ export const routeRequestSchema = z.object({
   task_class: z.enum(TASK_CLASSES),
   repo: routeIdSchema,
   tier_hint: routeTierSchema,
+  mode: modeTierSchema.optional(),
   lane_candidates: z.array(routeIdSchema).max(64),
   quota_state: z.record(routeIdSchema, z.enum(['available', 'exhausted', 'unknown'])),
   machine_state: z.object({
@@ -27,20 +34,24 @@ export const routeReasonSchema = z.enum([
   'local-fast', 'jev', 'local-strong', 'schema-invalid', 'schema-retry',
   'backend-unavailable', 'deadline', 'deterministic-fallback',
   'admission-blocked', 'no-candidates', 'single-candidate', 'adequate-tier',
+  'mode-tier', 'reset-pressure', 'free-capacity', 'cheapest', 'cost-prior',
 ]);
 export const routeDecisionSchema = z.object({
   lane: routeIdSchema.nullable(),
-  model: routeIdSchema.nullable(),
+  model: routeModelSchema.nullable(),
+  mode_tier: modelModeTierSchema.nullable().default(null),
   effort: effortSchema.nullable(),
   speed_tier: speedTierSchema.nullable(),
   reason_codes: z.array(routeReasonSchema).min(1).max(16),
-}).strict().refine(d => [d.lane, d.model, d.effort, d.speed_tier].every(v => v === null)
+}).strict().refine(d => [d.lane, d.model, d.effort, d.speed_tier, d.mode_tier].every(v => v === null)
   || [d.lane, d.model, d.effort, d.speed_tier].every(v => v !== null), 'Incomplete route');
 
 export type RouteRequest = z.infer<typeof routeRequestSchema>;
 export type RouteDecision = z.infer<typeof routeDecisionSchema>;
 export type RouteReason = z.infer<typeof routeReasonSchema>;
 export interface RouteCandidate {
+  mode_tier: z.infer<typeof modelModeTierSchema> | null;
+  capacity?: ResetCalendarPool;
   lane: string;
   model: string;
   effort: z.infer<typeof effortSchema>;
@@ -50,6 +61,8 @@ export interface RouteCandidate {
   latency_rank: number;
 }
 export interface RouteReport extends RouteDecision {
+  requested_mode: ModeTier | null;
+  capacity: ResetCalendarPool | null;
   schema: 'route.decision.v1';
   advisory: true;
   path: 'local-fast' | 'jev' | 'local-strong' | 'fallback';

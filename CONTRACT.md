@@ -1,5 +1,23 @@
 # Advisory routing pairing
 
+`run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
+model classifications and their capability order. `ModelEntry.modeTier` is
+required and excludes fusion (a composition). `RouteRequest.mode?` requests a
+minimum model class, independently of queue `tier_hint`; unknown models need
+`models.json["mode.<model>"]`. `RouteDecision.mode_tier` is the selected class
+or null. `RouteReport` includes `requested_mode` and nullable capacity evidence.
+`decideRoute(raw, sources, {backends?, signal?, nowMs?})` returns a
+`RouteReport` or, for fusion, `route.pairing.v1` with `mode_tier: fusion`.
+Fusion assigns ultra judgment and lite/normal implementation through
+`decidePairing`. Assignments add nullable `model` and `mode_tier`.
+`RouteSources` adds optional `capacity` and `request` snapshots, loaded from
+`queue/route-capacity.json` and `queue/route-request.json`. `explainRoutes`
+adds nullable `decision`, recomputed without model calls from those snapshots.
+Among eligible lanes: closest future reset with positive allowance, then
+zero marginal cost, then cheapest known marginal cost; unknown cost sorts last.
+`ResetCalendarPool.costPerMTok?` is nonnegative marginal USD/M tokens, not
+subscription sticker price. Reset-calendar lanes now sort by reset before pace.
+
 `decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
 is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
 sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;
@@ -8,6 +26,16 @@ implementation escalates only for an explicit implementation bottleneck.
 `queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
 
 # Phantom — shared core contract (M1/M2 baseline)
+
+Resource-live sources accept optional `usage.liveSources` configuration (see
+[resource evidence](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity)).
+`ResourceLiveReading.confidence` is `high | medium | low | null`, derived from
+the source tier; old sidecars without it remain readable. Observations may
+carry `stale_after`, which can shorten but never extend the 15-minute TTL.
+`DaemonCapacityPublisherDeps.refreshResourceLive?(cfg)` refreshes the rail after
+a publisher cycle; production wiring is daemon-only and disabled in tests.
+`OperatorUsagePageReader.read(provider, usageUrl)` returns a nullable observation;
+the shipped implementation always returns null and is opt-in only.
 
 This is the binding interface for Phantom's original index, launcher and
 identity modules (the package was formerly named ashlr-hub). Do not change these

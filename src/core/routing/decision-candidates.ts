@@ -2,13 +2,16 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { effortSchema, routeIdSchema, type RouteCandidate, type RouteRequest } from './decision-schema.js';
+import { effortSchema, modelModeTierSchema, routeModelSchema, type RouteCandidate, type RouteRequest } from './decision-schema.js';
+import { modelModeTier } from '../run/model-catalog.js';
+import { MODE_RANK } from '../run/model-mode-data.js';
+import { compareSpendPriority, validResetCalendarPool } from './reset-pressure.js';
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const slotSchema = z.object({
   target: count, hard_cap: count, effective_target: count.optional(), held: z.boolean().optional(),
 });
-export interface RouteSources { models: unknown; slots: unknown; admission: unknown }
+export interface RouteSources { models: unknown; slots: unknown; admission: unknown; capacity?: unknown; request?: unknown }
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
@@ -26,17 +29,21 @@ export async function loadRouteSources(root: string): Promise<RouteSources> {
       } finally { await fd.close(); }
     } catch { return null; }
   };
-  const [models, slots, admission] = await Promise.all([
+  const [models, slots, admission, capacity, request] = await Promise.all([
     read(join(root, 'models.json')), read(join(root, 'queue/slots.json')), read(join(root, 'queue/admission.json')),
+    read(join(root, 'queue/route-capacity.json')),
+    read(join(root, 'queue/route-request.json')),
   ]);
-  return { models, slots, admission };
+  return { models, slots, admission, ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }) };
 }
 
 /** Directive's model table is a policy prior. Unknown models have no inferred price/latency. */
 export function modelPrior(model: string, tier: RouteRequest['tier_hint']): Pick<RouteCandidate, 'speed_tier' | 'cost_rank' | 'latency_rank'> {
-  if (/astra|fable/i.test(model)) return { speed_tier: 'premium', cost_rank: 3, latency_rank: 3 };
-  if (/opus/i.test(model) || (/sol/i.test(model) && tier === 'work')) return { speed_tier: 'workhorse', cost_rank: 2, latency_rank: 2 };
-  if (/sol|sonnet/i.test(model)) return { speed_tier: 'everyday', cost_rank: 1, latency_rank: 1 };
+  const mode = modelModeTier(model);
+  if (mode) {
+    const rank = MODE_RANK[mode] + 1;
+    return { speed_tier: mode === 'ultra' ? 'premium' : mode === 'normal' ? 'workhorse' : 'everyday', cost_rank: rank, latency_rank: rank };
+  }
   return { speed_tier: tier === 'frontier' ? 'premium' : tier === 'work' ? 'workhorse' : 'everyday', cost_rank: 4, latency_rank: 4 };
 }
 
@@ -54,19 +61,30 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
     const family = lane.startsWith('codex-') && lane !== 'codex-local' ? 'codex' : lane;
     const tier = request.tier_hint;
     const raw = [models[`${lane}.${tier}`], models[lane], models[`${family}.${tier}`], models[family]].find(Boolean);
-    const model = routeIdSchema.safeParse(raw);
+    const model = routeModelSchema.safeParse(raw);
     const rawEffort = models[`effort.${lane}.${tier}`] || models[`effort.${family}.${tier}`];
     const effort = effortSchema.safeParse(rawEffort ?? (tier === 'frontier' ? 'xhigh' : 'high'));
     if (!model.success || !effort.success) continue;
-    result.push({ lane, model: model.data, effort: effort.data, ...modelPrior(model.data, tier) });
+    const configuredMode = models[`mode.${model.data}`];
+    const mode = modelModeTierSchema.safeParse(configuredMode ?? modelModeTier(model.data));
+    const rawCapacity = object(sources.capacity)[lane];
+    const capacity = rawCapacity === undefined ? undefined : { ...object(rawCapacity), pool: lane };
+    if (capacity && !validResetCalendarPool(capacity)) continue;
+    result.push({ lane, model: model.data, effort: effort.data, mode_tier: mode.success ? mode.data : null,
+      ...(capacity ? { capacity } : {}), ...modelPrior(model.data, tier) });
   }
   return result;
 }
 
-export function rankRouteCandidates(request: RouteRequest, candidates: readonly RouteCandidate[]): RouteCandidate[] {
+export function rankRouteCandidates(request: RouteRequest, candidates: readonly RouteCandidate[], nowMs = Date.now()): RouteCandidate[] {
   const desired = request.tier_hint === 'frontier' ? 'premium' : request.tier_hint === 'work' ? 'workhorse' : 'everyday';
   const ranks = { everyday: 0, workhorse: 1, premium: 2 };
   const minimum = ranks[desired];
-  return candidates.filter(c => ranks[c.speed_tier] >= minimum).sort((a, b) =>
-    ranks[a.speed_tier] - ranks[b.speed_tier] || a.cost_rank - b.cost_rank || a.latency_rank - b.latency_rank || a.lane.localeCompare(b.lane));
+  return candidates.filter(c => {
+    const pool = c.capacity;
+    if (pool && (pool.remainingPercent === 0 || pool.resetAt !== null && Date.parse(pool.resetAt) <= nowMs) && !((pool.creditBalance ?? 0) > 0)) return false;
+    return request.mode ? c.mode_tier !== null && (request.mode === 'fusion' || MODE_RANK[c.mode_tier] >= MODE_RANK[request.mode])
+      : ranks[c.speed_tier] >= minimum;
+  }).sort((a, b) => compareSpendPriority(a.capacity, b.capacity, nowMs) ||
+    a.cost_rank - b.cost_rank || a.latency_rank - b.latency_rank || a.lane.localeCompare(b.lane));
 }
