@@ -19,3 +19,8 @@
 .badge[data-status='on-track'] { color: var(--success-500, var(--text-primary)); }
 .badge[data-status='behind'] { color: var(--warning-500, var(--text-primary)); }
 .badge[data-status='unknown'] { font-style: italic; }
+
+@media (width < 720px) {
+  .steer { flex-direction: column; align-items: stretch; }
+  .root header { flex-direction: column; }
+}

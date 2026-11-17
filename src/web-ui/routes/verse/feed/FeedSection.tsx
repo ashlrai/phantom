@@ -52,6 +52,7 @@ import { useVerseUi } from '../useVerseUi.js';
 import { setFeedMutedKinds } from '../verse-ui-store.js';
 import { isFeedItemVisible } from './feed-mute.js';
 import styles from './feed.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
 const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: signal => apiGet('/api/verse/comms/gmail-triage/archive-plan', signal) };
@@ -182,7 +183,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     return () => { if (newestAt.current) markSeen(newestAt.current); };
   }, [visible, markSeen]);
 
-  return <div className={styles.root}>
+  return <div className={`${styles.root} ${compact.view}`}>
     {!sharedReady && awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
     {!sharedReady ? <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
