@@ -1,0 +1,12 @@
+{
+  "sourceRoots": ["src"],
+  "dispatch": null,
+  "schema": "schema/config.schema.json",
+  "binaries": ["example"],
+  "envPrefixes": ["EXAMPLE_"],
+  "toolPrefixes": ["example_"],
+  "historicalPrefixes": ["docs/archive/"],
+  "helpSnapshots": ["docs/cli-help.txt"],
+  "envSources": [],
+  "external": {}
+}
