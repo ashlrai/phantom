@@ -2726,6 +2726,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
+  console.log(`    phm fleet spend [--json]   ${cyan('# spend-down per pool: on pace, behind or unknown before reset')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);

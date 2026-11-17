@@ -182,12 +182,9 @@ function renderTable(usage: import('../core/usage/frontier-usage.js').FrontierUs
 export async function cmdUsage(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { printUsage(); return 0; }
   if (args[0] === 'spend') {
-    if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage spend [--json]'); return 2; }
-    const { readUsageSpend } = await import('../core/usage/spend.js');
-    const spend = await readUsageSpend();
-    if (args[1] === '--json') console.log(JSON.stringify(spend, null, 2));
-    else for (const row of spend.pools) console.log(row.reason ? `${row.pool}: unknown (${row.reason})` : `${row.pool}: ${row.usedPercent}% used; reset ${row.resetAt}; ${row.hoursLeft!.toFixed(1)} hours left; ${row.burnPerHour}% per hour; ${row.projectedUnusedPercent!.toFixed(1)}% unused at reset`);
-    return 0;
+    // Same verb as `phm fleet spend`; one printer for both spellings.
+    const { cmdFleetSpend } = await import('./fleet-spend.js');
+    return cmdFleetSpend(args.slice(1));
   }
   if (args[0] === 'pace') {
     if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage pace [--json]'); return 2; }
