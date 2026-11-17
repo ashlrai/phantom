@@ -24,7 +24,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (empties, throughput, jobs, …)
+    observability   Observability - cost, telemetry, audit (empties, home, asks, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -289,6 +289,7 @@ Phantom - every command (phm or ashlr)
     issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
     route decide --input <file|-> [--root <directory>] --json                                                                                                     Suggest a schema-validated route without changing launch behavior.
+    map [--json]                                                                                                                                                  The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. Read only.
     messages [--since 15m] [--agent <name>] [--limit <n>] [--text]                                                                                                What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR.
     tools parity [--text]                                                                                                                                         Which lane declares which tool (GitHub read/write, web search, browser, shell, package install, MCP servers). Unknown is never missing.
     tools requires --needs <need,...> [--text]                                                                                                                    List the lanes that can run a job with these needs, e.g. --needs github-read,browser.
@@ -302,6 +303,8 @@ Phantom - every command (phm or ashlr)
 
   Observability - cost, telemetry, audit
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
+    home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
+    asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
     throughput [--hours 24] [--by lane|repo|tier] [--text]                                      Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
     jobs empty [--since 24h] [--json]                                                           Explain empty jobs from local notes and logs.
     radar list|run|diff [--json]                                                                Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
