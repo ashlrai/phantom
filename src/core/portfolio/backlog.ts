@@ -513,12 +513,14 @@ async function getScanners(): Promise<ReadonlyArray<ScannerEntry>> {
   ];
 }
 
+export const BACKLOG_REPO_CONCURRENCY = 4;
+
 /**
  * Run all SCANNERS over each enrolled repo, aggregate, dedupe, score, persist,
  * and return the Backlog.
  *
  * - Default repos = listEnrolled() (DEFAULT EMPTY => items: []).
- * - Bounded concurrency: repos scanned sequentially; scanners within a repo
+ * - Bounded concurrency: at most BACKLOG_REPO_CONCURRENCY repos; scanners within a repo
  *   run in parallel (each scanner is individually bounded + never throws).
  * - Never throws: any scanner error yields [] (enforced by scanner contract).
  */
@@ -578,25 +580,31 @@ export async function buildBacklog(opts?: {
   const allItems: WorkItem[] = [];
   const observations: ScannerObservation[] = [];
 
-  // Repos scanned sequentially to avoid thundering-herd on gh/npm APIs.
-  for (const repo of repos) {
-    // Scanners within each repo run in parallel; each is bounded + never throws.
-    // cfg is threaded so scanners that consult flags (e.g. scanTodos checks
-    // cfg.foundry.scanTodos) receive the live config rather than undefined.
-    const perScannerResults = await Promise.all(
-      scanners.map(async ({ scanner, descriptor }) => {
-        try {
-          if (descriptor) {
-            const { runScannerWithObservations } = await import('./scanners.js');
-            return await runScannerWithObservations(descriptor, scanner, repo, cfg);
+  const repoResults: Array<Array<{ items: WorkItem[]; observations: ScannerObservation[] }>> = new Array(repos.length);
+  let nextRepo = 0;
+  await Promise.all(Array.from({ length: Math.min(BACKLOG_REPO_CONCURRENCY, repos.length) }, async () => {
+    while (nextRepo < repos.length) {
+      const index = nextRepo++;
+      const repo = repos[index]!;
+      // Scanners retain their own bounds and error isolation.
+      repoResults[index] = await Promise.all(
+        scanners.map(async ({ scanner, descriptor }) => {
+          try {
+            if (descriptor) {
+              const { runScannerWithObservations } = await import('./scanners.js');
+              return await runScannerWithObservations(descriptor, scanner, repo, cfg);
+            }
+            return { items: await scanner(repo, cfg), observations: [] as ScannerObservation[] };
+          } catch {
+            // Belt-and-suspenders: scanners must not throw, but we catch anyway.
+            return { items: [] as WorkItem[], observations: [] as ScannerObservation[] };
           }
-          return { items: await scanner(repo, cfg), observations: [] as ScannerObservation[] };
-        } catch {
-          // Belt-and-suspenders: scanners must not throw, but we catch anyway.
-          return { items: [] as WorkItem[], observations: [] as ScannerObservation[] };
-        }
-      }),
-    );
+        }),
+      );
+    }
+  }));
+  for (const [index, perScannerResults] of repoResults.entries()) {
+    const repo = repos[index]!;
     for (const result of perScannerResults) {
       const items = result.items;
       allItems.push(...items.map((item) => ({ ...item, repo })));

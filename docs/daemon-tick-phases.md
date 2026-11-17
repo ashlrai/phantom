@@ -38,12 +38,32 @@ in flight `tickInProgress` names the phase currently running.
 | `timeout`   | the stage exceeded its deadline; cancelled, then left detached |
 | `skipped`   | intentionally not run (`error` says why, e.g. `no-frontier`)   |
 | `running`   | in-progress snapshot only — never persisted                    |
+| `off-tick`  | work handed to a resident background job; the tick did not wait |
+
+For `off-tick`, `durationMs: 0` is handoff metadata, not a work result.
+`offTick` carries `state` (`started` or `running`), `run`, `since`, and the
+previous settlement's `lastStatus`, `lastDurationMs`, `lastSettledAt` and
+`lastError` when available. These entries do not affect the tick outcome.
+
+Resident non-dry-run ticks keep self-heal and ancillary maintenance in-tick.
+Self-heal holds the outward mutation fence while verifying repositories, and
+its post-heal backlog refresh runs before selection. Ancillary's regression
+sentinel also holds that fence across verification and any bisect/revert.
+Reflection is a separate single-flight off-tick job in resident ticks; it
+writes only learning reports and append-only genome entries and does not take
+the outward mutation fence. A job that ignores cancellation remains
+single-flight until its work settles; shutdown cancels running jobs with
+bounded waiting. Once ticks keep reflection in-tick; dry-run ticks skip
+maintenance.
+Resident non-dry-run ticks run auto-merge before backlog-refresh; backlog scans
+at most four repositories concurrently, aggregating results in repository
+input order before existing ranking.
 
 ## Tick outcomes
 
 `.tick.outcome` folds the phases plus whole-tick failure into one word:
 
-- `ok` — every phase settled clean.
+- `ok` — every awaited phase settled clean (off-tick handoffs are excluded).
 - `degraded` — at least one phase threw.
 - `timeout` — at least one phase hit its deadline, or the whole tick was
   abandoned at the resident deadline.
@@ -65,7 +85,7 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `self-heal`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`; 4 min cycle budget, 2 min per repo |
 | `invent`         | 3 min            | `TICK_PHASE_INVENT_MS`; frontier probe ≤30 s            |
 | `ancillary`      | 5 min            | `TICK_PHASE_MAINTENANCE_MS`                             |
-| `reflection`     | 3 min            | `TICK_PHASE_REFLECTION_MS` (nested inside `ancillary`)  |
+| `reflection`     | 3 min            | `TICK_PHASE_REFLECTION_MS`; separate resident off-tick job |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |
 | `dispatch-plan`  | 60 s             | `TICK_PHASE_DISPATCH_PLAN_MS`                           |

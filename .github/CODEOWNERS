@@ -357,6 +357,7 @@
 /test/daemon-state-resolution-clock.test.ts @masonwyatt23
 /test/daemon-tick-budget.test.ts @masonwyatt23
 /test/daemon-tick-loop.test.ts @masonwyatt23
+/test/daemon-tick-offload.test.ts @masonwyatt23
 /test/daemon-tick-unblock.test.ts @masonwyatt23
 /test/decide-critics-315.test.ts @masonwyatt23
 /test/decide-judge-manager-315.test.ts @masonwyatt23
