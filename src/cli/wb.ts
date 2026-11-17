@@ -77,6 +77,7 @@ export async function cmdWb(args: string[]): Promise<number> {
     return 0;
   }
   if (verb === 'secrets') {
+    if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
     if (args.slice(1).some(arg => arg !== '--json')) { console.error(HELP); return 2; }
     return cmdSecrets(args.slice(1));
   }

@@ -1,5 +1,4 @@
-import { ConfirmDialog } from '../../inbox/ConfirmDialog.js';
-import { useJobStop } from '../fleet-job-log/use-job-stop.js';
+import { JobControls } from '../fleet-job-log/JobControls.js';
 import { useEffect, useId, useState } from 'react';
 import { Button } from '../../../components/primitives/Button.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
@@ -18,6 +17,8 @@ import { busTellPrefill, requestBusPost } from '../fleet-bus/bus-post-request.js
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { jobBusMentions, mentionSummary } from './job-bus-mentions.js';
 import { changesHeadline, collisionTell, sortFiles, type FleetJobChangesV1 } from '../fleet-job-log/worker-changes-model.js';
+import { costHeadline } from '../fleet-job-log/worker-cost-model.js';
+import { jobCostQuery } from '../fleet-job-log/worker-cost-queries.js';
 import { openInterjectDialog } from './interject-dialog-store.js';
 import { sheetActions, steerPrefill } from './job-sheet-actions.js';
 import { jobDetailQuery, notInBuild } from './workers-card-queries.js';
@@ -33,8 +34,6 @@ const fileStatus: Record<FleetJobChangesV1['files'][number]['status'], string> =
 export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: string | null; onClose: () => void }) {
   const id = useId();
   const [notice, setNotice] = useState('');
-  const [confirmStop, setConfirmStop] = useState(false);
-  const stop = useJobStop(job);
   useEffect(() => {
     if (notice !== 'Copied') return;
     const timer = setTimeout(() => setNotice(''), 2_000);
@@ -44,6 +43,8 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   const read = useQuery(query);
   const changesQuery = jobChangesQuery(job);
   const changes = useQuery(changesQuery, { freshMs: 0 });
+  const costQuery = jobCostQuery(job);
+  const cost = useQuery(costQuery, { freshMs: 0 });
   const notesQuery = jobTextQuery(job, 'notes');
   const notes = useQuery(notesQuery, { freshMs: 0 });
   const validRepo = repo && repo.match(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)?.[0] === repo
@@ -61,6 +62,7 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
   }, 10_000);
   usePollWhileVisible(() => { void runQuery(query.key, () => query.fetch()); }, 5_000, { enabled: !notInBuild(read.error) });
   usePollWhileVisible(() => { void runQuery(changesQuery.key, () => changesQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
+  usePollWhileVisible(() => { void runQuery(costQuery.key, () => costQuery.fetch()); }, 5_000, { enabled: read.data?.state === 'running' });
   usePollWhileVisible(() => { void runQuery(notesQuery.key, () => notesQuery.fetch()); }, 10_000, { enabled: read.data?.state === 'running' });
   const busUnavailable = agentBusMissing() || !!busStatus.error || !!busPage.error || busStatus.data === null
     || (busStatus.data !== undefined && (busStatus.data.source !== 'available' || busStatus.data.retainedCount === null)) || busPage.data === null;
@@ -80,8 +82,8 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
     <div role="group" aria-label="Job actions" className={styles.actions}>
       {sheetActions(job, d, d?.state).map(action => action.href
         ? <a key={action.id} href={action.href} target="_blank" rel="noopener noreferrer">{action.label}</a>
-        : <Button key={action.id} size="sm" disabled={action.id === 'stop' && stop.busy} onClick={() => {
-          if (action.id === 'stop') { stop.clear(); setConfirmStop(true); return; }
+        : action.id === 'stop' ? <JobControls key={action.id} job={job} lane={d?.lane} onDone={() => { void runQuery(query.key, () => query.fetch()); }} />
+        : <Button key={action.id} size="sm" onClick={() => {
           if (action.id === 'log') { requestWorkerLogJob(job); openDockPane('worker-log'); }
           else { openInterjectDialog({ prefill: steerPrefill(job, d?.lane) }); }
           onClose();
@@ -90,10 +92,6 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
         requestBusPost(busTellPrefill(job, d)); openDockPane('fleet-bus'); onClose();
       }}>Tell on bus</Button>
     </div>
-    {stop.text && <p role="status">{stop.text}</p>}
-    <ConfirmDialog open={confirmStop} onClose={() => setConfirmStop(false)} title={`Stop ${job}?`}
-      body="This stops the job’s running processes." confirmLabel="Yes, stop" destructive busy={stop.busy}
-      onConfirm={() => { setConfirmStop(false); void stop.run(); }} />
     {notInBuild(read.error) ? <p>Job detail is not in this build yet.</p> : read.error ? <p>Job detail unavailable.</p> : !d ? <SkeletonLine /> : <>
       <LaunchLaneNote requestedLane={d.requestedLane} launchedLane={d.launchedLane ?? d.lane} laneReason={d.laneReason} />
       <dl className={styles.facts}>{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><span aria-label={`${label} ${value ?? 'unknown'}`}>{value ?? '—'}</span>{label === 'Branch' && value ? <> <Button size="sm" onClick={() => void copyBranch(value)}>Copy</Button> <span role="status">{notice}</span></> : null}</dd></div>)}</dl>
@@ -113,6 +111,19 @@ export function JobDetailSheet({ job, repo, onClose }: { job: string; repo?: str
             {changes.data.files.length > 40 && <p>+{changes.data.files.length - 40} more</p>}
             {changes.data.truncated && <p>Showing a limited set of changes.</p>}
           </>}
+        </>}
+      </section>
+      <section aria-label="Cost">
+        <h3>Cost</h3>
+        {cost.error ? <p role="status">Cost unavailable</p> : cost.data === null ? <p>Cost is not in this build yet</p> : !cost.data ? <SkeletonLine /> : <>
+          <p>{costHeadline(cost.data)}</p>
+          {cost.data.calls.length === 0 ? <p>No recorded model calls.</p> : <ul>
+            {cost.data.calls.map((call, index) => <li key={`${call.at ?? 'unknown'}-${index}`}><code>
+              {call.at ?? 'unknown'} · {call.model ?? 'unknown'} · {call.inputTokens === null ? 'unknown' : call.inputTokens.toLocaleString('en-US')}→{call.outputTokens === null ? 'unknown' : call.outputTokens.toLocaleString('en-US')} · {call.costUsd === null ? 'unknown' : `$${call.costUsd.toFixed(4)}`}{call.estimated ? ' (est.)' : ''}{call.error ? ' · error' : ''}
+            </code></li>)}
+          </ul>}
+          {cost.data.jobTotals.finishes > 0 ? <p>Worker-reported tokens_total {cost.data.jobTotals.tokensTotal === null ? 'unknown' : cost.data.jobTotals.tokensTotal.toLocaleString('en-US')} across {cost.data.jobTotals.finishes} finish {cost.data.jobTotals.finishes === 1 ? 'event' : 'events'}.</p> : null}
+          {cost.data.truncated && <p>Showing the most recent read window.</p>}
         </>}
       </section>
       <section aria-label="Bridge notes">

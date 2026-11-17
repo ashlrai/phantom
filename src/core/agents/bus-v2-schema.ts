@@ -20,20 +20,20 @@ export const WORK_STATUSES = [
   'queued', 'running', 'idle', 'rescheduled', 'blocked', 'done', 'failed', 'terminated',
 ] as const;
 export const BODY_KINDS = [
-  'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.release', 'wake',
+  'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.result', 'work.release', 'wake',
 ] as const;
 
 /** Same shape as v1 routing labels: printable ASCII, 1-128 chars. */
-const label = z.string().regex(/^[\x21-\x7e]{1,128}$/, 'printable ASCII label, 1-128 chars');
+const label = z.string().regex(/^[\x21-\x7e]{1,128}(?![\s\S])/, 'printable ASCII label, 1-128 chars');
 /** A wake target is a name, never a URL or credential: no scheme, query, userinfo or long opaque runs. */
 const wakeTarget = z.string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, 'label only: letters, digits, . _ : -')
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\s\S])/, 'label only: letters, digits, . _ : -')
   .refine((s) => !/[A-Za-z0-9]{32,}/.test(s), 'looks like a secret, not a label');
-const repoSlug = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'owner/name');
+const repoSlug = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?![\s\S])/, 'owner/name');
 const text = z.string().min(1).max(BUS_V2_TEXT_MAX);
 const epochMs = z.number().int().nonnegative().safe();
 const leaseMs = z.number().int().min(CLAIM_MIN_LEASE_MS).max(CLAIM_MAX_LEASE_MS);
-const claimToken = z.string().regex(/^[a-f0-9]{64}$/, '64 lowercase hex chars');
+const claimToken = z.string().regex(/^[a-f0-9]{64}(?![\s\S])/, '64 lowercase hex chars');
 
 export const providerSchema = z.enum(PROVIDERS);
 
@@ -41,7 +41,7 @@ export const participantSchema = z.object({
   participantId: label,
   provider: providerSchema,
   displayName: z.string().trim().min(1).max(128),
-  capabilities: z.array(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)).max(32),
+  capabilities: z.array(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}(?![\s\S])/)).max(32),
   wake: z.object({ kind: z.enum(WAKE_KINDS), target: wakeTarget }).strict(),
   status: z.enum(PARTICIPANT_STATUSES),
 }).strict();
@@ -59,24 +59,25 @@ const REPO = '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+';
 
 function hasControl(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
-    if (s.charCodeAt(i) < 0x20) return true;
+    if (s.charCodeAt(i) < 0x20 || s.charCodeAt(i) === 0x7f || s.charCodeAt(i) === 0x2028 || s.charCodeAt(i) === 0x2029) return true;
   }
   return false;
 }
 
 /** Parse a resource claim key; undefined when malformed. Repo names compare case-insensitively. */
 export function parseClaimKey(key: string): ParsedClaimKey | undefined {
-  let m = new RegExp(`^repo:(${REPO})$`).exec(key);
+  if (hasControl(key)) return undefined;
+  let m = new RegExp(`^repo:(${REPO})(?![\\s\\S])`).exec(key);
   if (m) return { kind: 'repo', repo: m[1]!.toLowerCase() };
-  m = new RegExp(`^path:(${REPO}):([^\\0]{1,256})$`).exec(key);
+  m = new RegExp(`^path:(${REPO}):([^\\0]{1,256})(?![\\s\\S])`).exec(key);
   if (m) {
     const glob = m[2]!;
-    if (glob.startsWith('/') || glob.split('/').includes('..') || hasControl(glob)) return undefined;
+    if (glob.startsWith('/') || glob.split('/').includes('..')) return undefined;
     return { kind: 'path', repo: m[1]!.toLowerCase(), glob };
   }
-  m = /^queue:([\x21-\x7e]{1,128})$/.exec(key);
+  m = /^queue:([\x21-\x7e]{1,128})(?![\s\S])/.exec(key);
   if (m) return { kind: 'queue', queue: m[1]! };
-  m = new RegExp(`^pr:(${REPO})#([1-9][0-9]{0,8})$`).exec(key);
+  m = new RegExp(`^pr:(${REPO})#([1-9][0-9]{0,8})(?![\\s\\S])`).exec(key);
   if (m) return { kind: 'pr', repo: m[1]!.toLowerCase(), number: Number(m[2]) };
   return undefined;
 }
@@ -179,6 +180,15 @@ export const contextBodySchema = z.object({
 export const workPostBodySchema = z.object({
   kind: z.literal('work.post'), jobId, title: z.string().min(1).max(256), provider: providerSchema.optional(),
   repo: repoSlug, claimKeys: z.array(claimKeySchema).max(16),
+  dispatch: z.object({ tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+    scope: text.max(4000), acceptance: text.max(2000) }).strict().optional(),
+}).strict();
+export const workResultBodySchema = z.object({
+  kind: z.literal('work.result'), jobId, claimKey: claimKeySchema,
+  queueId: z.string().regex(/^peer-work-[a-f0-9]{32}$/),
+  receiptId: z.string().regex(/^pw-[a-f0-9]{32}$/),
+  outcome: z.enum(['reserved', 'admitted', 'complete', 'failed']),
+  reason: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
 }).strict();
 export const workClaimBodySchema = z.discriminatedUnion('op', [
   z.object({ kind: z.literal('work.claim'), op: z.literal('acquire'), jobId: jobId.optional(),
@@ -200,7 +210,7 @@ export const wakeBodySchema = z.object({
 /** Validates `envelope.body` for v2 messages. v1 bodies without a v2 kind stay valid v1 bodies. */
 export const busBodySchema = z.union([
   noteBodySchema, contextBodySchema, workPostBodySchema, workClaimBodySchema,
-  workStatusBodySchema, workReleaseBodySchema, wakeBodySchema,
+  workStatusBodySchema, workResultBodySchema, workReleaseBodySchema, wakeBodySchema,
 ]);
 export type BusBody = z.infer<typeof busBodySchema>;
 

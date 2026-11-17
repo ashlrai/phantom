@@ -52,10 +52,14 @@ function parse(value: unknown): Request | null {
   return { ...b, action, dryRun: b.dryRun !== false } as Request;
 }
 const owned = (uid: number) => !process.getuid || uid === process.getuid();
+// Windows has no POSIX permission bits: stat() reports 0o666/0o777 whatever mkdir/open asked for, so
+// the mode checks would refuse every file there (and fail the server start with --allow-dispatch).
+// Same precedent as sandbox/policy.ts and web/host-summary.ts; ownership/nlink/type checks stay.
+const modeBitsApply = () => process.platform !== 'win32';
 async function privateDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
   const s = await lstat(path);
-  if (!s.isDirectory() || !owned(s.uid) || (s.mode & 0o077)) throw new Error('Unsafe directory');
+  if (!s.isDirectory() || !owned(s.uid) || (modeBitsApply() && (s.mode & 0o077))) throw new Error('Unsafe directory');
 }
 /** Store the already-issued server capability; never mint another token. */
 export async function storeWbToken(directory: string, token: string): Promise<void> {
@@ -63,7 +67,7 @@ export async function storeWbToken(directory: string, token: string): Promise<vo
   const file = await open(join(directory, 'token'), constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
   try {
     const s = await file.stat();
-    if (!s.isFile() || !owned(s.uid) || s.nlink !== 1 || (s.mode & 0o777) !== 0o600) throw new Error('Unsafe token file');
+    if (!s.isFile() || !owned(s.uid) || s.nlink !== 1 || (modeBitsApply() && (s.mode & 0o777) !== 0o600)) throw new Error('Unsafe token file');
     await file.truncate(0);
     await file.writeFile(token);
     await file.sync();
@@ -73,7 +77,7 @@ async function audit(directory: string, action: Action | 'invalid', outcome: str
   const file = await open(join(directory, 'audit.jsonl'), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
   try {
     const s = await file.stat();
-    if (!s.isFile() || !owned(s.uid) || s.nlink !== 1 || (s.mode & 0o777) !== 0o600) throw new Error('Unsafe audit');
+    if (!s.isFile() || !owned(s.uid) || s.nlink !== 1 || (modeBitsApply() && (s.mode & 0o777) !== 0o600)) throw new Error('Unsafe audit');
     await file.writeFile(JSON.stringify({ v: 1, at: new Date().toISOString(), action, outcome }) + '\n');
     await file.sync();
   } finally { await file.close(); }

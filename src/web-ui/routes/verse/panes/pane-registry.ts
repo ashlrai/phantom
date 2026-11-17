@@ -55,6 +55,7 @@ import {
 } from '../shell/command-keys.js';
 import { PANE_ID_RE, type DockPresentation } from '../shell/dock-catalog.js';
 import type { DiffPaneRequest, PreviewOpenRequest, TerminalOpenRequest, TurnFileChange } from '../shell/slots.js';
+import { publishRegisteredPaneIds } from './pane-presence.js';
 
 // ===========================================================================
 // The contract
@@ -306,6 +307,7 @@ function publish(): void {
   effective = next;
   // Order, then first registration: a stable menu no matter which module loaded first.
   snapshot = Object.freeze([...next.values()].sort((a, b) => a.order - b.order || firstSeen.indexOf(a.id) - firstSeen.indexOf(b.id)));
+  publishRegisteredPaneIds(next.keys());
   for (const listener of [...listeners]) listener();
 }
 

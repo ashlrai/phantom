@@ -1,4 +1,5 @@
 import { selectedOutcomeAdmissionCurrent } from './outcome-admission.js';
+import { resolveExecutable } from './tool-path.js';
 import { checkHostHeadroom } from './host-headroom.js';
 /**
  * engines.ts — M11: hardened per-engine adapters.
@@ -235,10 +236,11 @@ export function resolveBinAbsolute(bin: string): string {
   try {
     const probe = process.platform === 'win32' ? 'where' : 'which';
     const out = execFileSync(probe, [bin], { encoding: 'utf8', timeout: 2_000 }).trim().split('\n')[0]?.trim();
-    return out && out.length > 0 ? out : bin;
+    if (out) return out;
   } catch {
-    return bin;
+    // Fall through to metadata discovery for resident service environments.
   }
+  return resolveExecutable(bin)?.path ?? bin;
 }
 
 export function engineInstalled(engine: EngineId, cfg?: AshlrConfig): boolean {
@@ -301,7 +303,7 @@ export function engineInstalled(engine: EngineId, cfg?: AshlrConfig): boolean {
       execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore', timeout: 2_000 });
       return true;
     } catch {
-      // try next
+      if (resolveExecutable(bin)) return true;
     }
   }
   return false;
@@ -1098,6 +1100,20 @@ async function spawnEngineInner(
         return;
       }
       if (observedGroupState === 'present') {
+        // A direct child (no caller-owned group) can exit while its session
+        // watchdog still holds the extra pipe, so `close` lags `exit`. The
+        // stall or cancel reason already recorded is the cause; do not replace
+        // it with an authority failure once the leader is gone.
+        const leaderGone = leaderExited || child.exitCode !== null || child.signalCode !== null;
+        if (!ownsProcessGroup && leaderGone && terminationReason && terminationReason !== 'error-exit') {
+          settle({
+            ok: false,
+            ...captured,
+            error: `terminated (${terminationReason})`,
+            terminationReason,
+          });
+          return;
+        }
         settle({
           ok: false,
           ...captured,

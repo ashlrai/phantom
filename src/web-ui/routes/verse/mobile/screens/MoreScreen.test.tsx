@@ -10,6 +10,7 @@ import { VERSE_LAYOUT_STORAGE_KEY } from '../../../../app/console-mode.js';
 import { clearMutationToken, getMutationToken, hasMutationHold, setMutationToken } from '../../../../data/auth-store.js';
 import { evictAll } from '../../../../data/cache.js';
 import { clearRemoteSessionForTest, probeRemoteSession } from '../../../../data/remote-session.js';
+import { getAppearance, resetAppearance } from '../../../../data/appearance-store.js';
 import { getTheme, setTheme } from '../../../../data/theme-store.js';
 import { APP_VERSION } from '../../sections/app-version.js';
 import { resetGuard } from '../../shell/guard-store.js';
@@ -39,6 +40,7 @@ afterEach(() => {
   resetGuard();
   resetMobileToastsForTest();
   setTheme('system');
+  resetAppearance();
   try {
     window.localStorage.removeItem(VERSE_LAYOUT_STORAGE_KEY);
   } catch {
@@ -121,6 +123,23 @@ describe('MoreScreen — rows and settings', () => {
     expect(getTheme()).toBe('dark');
     expect(screen.getByRole('button', { name: 'Dark' })).toHaveAttribute('aria-pressed', 'true');
     expect(system).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('accent, text size and density chips apply the shared appearance live', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Teal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Large' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Compact' }));
+    const a = getAppearance();
+    expect([a.accentH, a.accentS, a.accentL]).toEqual([168, 70, 38]);
+    expect(a.uiScale).toBe('large');
+    expect(a.density).toBe('compact');
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue('--accent-h')).toBe('168');
+    expect(root.getAttribute('data-ui-scale')).toBe('large');
+    expect(root.getAttribute('data-density')).toBe('compact');
+    expect(screen.getByRole('button', { name: 'Teal' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Indigo' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('the desktop layout remembers the choice and opens the workbench', () => {

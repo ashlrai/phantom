@@ -1,0 +1,62 @@
+.root { padding: var(--space-6); color: var(--text-primary); min-width: 0; overflow: auto; }
+.root header > p:first-child { letter-spacing: var(--tracking-label); font-family: var(--font-display); font-size: var(--text-2xs-size); color: var(--text-secondary); }
+.root h2 { font-size: var(--text-2xl-size); line-height: var(--text-2xl-line); letter-spacing: var(--tracking-display); margin: var(--space-1) 0; }
+.root h3 { font-size: var(--text-md-size); margin: var(--space-2) 0; overflow-wrap: anywhere; }
+.root p { font-size: var(--text-sm-size); color: var(--text-secondary); margin: var(--space-2) 0; }
+.root header > p:last-child { margin-top: 0; }
+.root p[role='alert'] { color: var(--status-danger-fg); }
+.root p, .root small { line-height: 1.5; }
+.root small { color: var(--text-secondary); }
+.toolbar { display: flex; gap: var(--space-2) var(--space-3); flex-wrap: wrap; align-items: center; margin: var(--space-3) 0; font-size: var(--text-sm-size); }
+.toolbar label { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); }
+.root button { cursor: pointer; color: inherit; font: inherit; font-size: var(--text-sm-size); border: 1px solid var(--border-default); background: var(--bg-surface); border-radius: var(--radius-md); padding: var(--space-1) var(--space-3); transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard); }
+.root button:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); }
+.root button:disabled { color: var(--text-disabled); cursor: default; }
+/* Pressed is a filled state. The focus ring below stays the only outline, so the two never look alike. */
+.root button[aria-pressed=true] { border-color: var(--accent-500); background: var(--bg-hover); }
+.toolbar button { min-height: var(--control-h-sm); }
+.root button:focus-visible, .root input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.quota { display: flex; gap: var(--space-3); overflow-x: auto; padding: var(--space-2) 0 var(--space-4); }
+.quota article { display: grid; gap: var(--space-1); min-width: 240px; border-left: 3px solid var(--status-unknown-solid); border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-xs); padding: var(--space-3) var(--space-4); font-size: var(--text-xs-size); background: var(--bg-surface); }
+.quota article strong { font-size: var(--text-sm-size); }
+/* The edge is the reading: green only for a confirmed quota, amber for a hold, red for a refused one. A lane nobody has measured is dimmed, not coloured. */
+.quota article[data-state='ok'] { border-left-color: var(--status-success-solid); }
+.quota article[data-state='held'] { border-left-color: var(--status-warning-solid); }
+.quota article[data-state='blocked'] { border-left-color: var(--status-danger-solid); }
+.quota article[data-state='unknown'] span { color: var(--text-secondary); }
+.hosts { margin: 0 0 var(--space-4); }
+.hostRows { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.host { display: grid; gap: var(--space-1); flex: 1 1 280px; min-width: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-xs); font-size: var(--text-xs-size); background: var(--bg-surface); border-left: 3px solid var(--status-success-solid); overflow-wrap: anywhere; }
+.host h4 { margin: 0; }
+.host[data-over='true'] { border-left-color: var(--status-danger-solid); }
+.host[data-over='unknown'] { border-left-color: var(--status-unknown-solid); }
+.viewport { padding: var(--space-3) 0; }
+.viewport > summary { cursor: pointer; width: fit-content; margin-bottom: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm-size); }
+.viewport > summary:hover { color: var(--text-primary); }
+.scene { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-5); }
+.scene3d { margin: 0 0 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); background: var(--bg-surface); overflow: hidden; }
+.scene3d canvas { display: block; width: 100%; touch-action: none; cursor: grab; }
+.scene3d figcaption { padding: 8px 12px; font-size: var(--text-2xs-size); color: var(--text-secondary); }
+.machine { flex-basis: 320px; min-width: 240px; max-width: 680px; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); background: var(--bg-surface); box-shadow: var(--shadow-sm); border-top: 4px solid var(--status-unknown-solid); }
+.machine[data-heat='cool'] { border-top: 4px solid var(--status-success-solid); }
+.machine[data-heat='warm'] { border-top: 4px solid var(--status-warning-solid); }
+.machine[data-heat='hot'] { border-top: 4px solid var(--status-danger-solid); }
+.machine > p { font-size: var(--text-xs-size); margin: var(--space-2) 0; }
+.machine > h3 + p { color: var(--text-primary); }
+.cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap: 8px; max-height: 250px; overflow: auto; }
+.cores svg { width: 100%; height: 32px; color: var(--accent-500); }
+.capacity { display: grid; gap: 5px; font-size: var(--text-xs-size); padding: 12px 0; border-block: 1px solid var(--border-subtle); }
+.capacity meter { width: 100%; }
+.lane h4 { font-size: var(--text-xs-size); letter-spacing: var(--tracking-label); color: var(--text-secondary); margin: var(--space-3) 0 var(--space-2); }
+.root .token { display: grid; gap: var(--space-1); text-align: left; margin: var(--space-2) 0; width: 100%; padding: var(--space-2) var(--space-3); overflow-wrap: anywhere; }
+.token span, .token small { font-size: var(--text-2xs-size); }
+.token[data-state='running'] { border-left: 3px solid var(--status-success-solid); animation: working 3s ease-in-out infinite; }
+/* Held is a decision someone made; unknown is a missing reading. They no longer share amber. */
+.token[data-state='held'] { border-left: 3px solid var(--status-warning-solid); }
+.token[data-state='unknown'] { border-left: 3px dotted var(--status-unknown-solid); }
+.token[data-state='queued'] { border-left: 3px dashed var(--status-unknown-solid); }
+.token[data-state='idle'] { border-left: 3px solid var(--status-unknown-solid); }
+.detail { margin-top: var(--space-6); padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); }
+@keyframes working { 50% { box-shadow: 0 0 0 2px var(--status-success-bg); } }
+@media (prefers-reduced-motion: reduce) { .token[data-state='running'] { animation: none; } .root button { transition: none; } }
+@media (max-width: 600px) { .root { padding: var(--space-3); } .machine { min-width: 0; flex-basis: 100%; } .host { flex-basis: 100%; } }

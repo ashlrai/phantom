@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { createSlackLeaderAdapter, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
 import { isStatusAsk } from '../src/core/fleet/status-ask.js';
 import { openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
-import { isOwnerStatusRequest, ownerStatusReply } from '../src/core/agents/owner-status-reply.js';
+import { isOwnerStatusRequest, ownerStatusReply, type OwnerStatusDeps } from '../src/core/agents/owner-status-reply.js';
+import type { WorkBoardResult } from '../src/core/comms/work-board.js';
+import type { RuntimeSnapshot } from '../src/core/fleet/runtime-snapshot.js';
 
 vi.setConfig({ testTimeout: 30_000 });
 // Ingest now awaits the unified owner-thread receipt (~1-2 s cold); poll past it.
@@ -14,6 +16,31 @@ let root: string;
 let options: { configDir: string; runsDir: string; busRoot: string; now: () => number };
 const configText = `[mason]\nidentities=[{channel="slack",id="U0FAKEOWNER"}]\n[team]\nidentities=[{channel="slack",id="U0FAKEOWNER"},{channel="slack",id="U0FAKEPEER"}]\n[slack]\nbridge_id="slack"\nteam_id="T0FAKETEAM"\nown_user_id="U0FAKEBOT"\nown_bot_id="B0FAKEBOT"\nbot_token_ref="phm_SLACK_AGENTNET_BOT_TOKEN"\napp_token_ref="phm_SLACK_AGENTNET_APP_TOKEN"\n[[slack.map]]\ntopic="leaders"\nchannel="D0FAKELEADER"\n`;
 const STATUS_TEXT = 'Phantom status, 21:00 ET\nShipped (last 12h): none';
+const STATUS_BOARD: WorkBoardResult = {
+  items: [{
+    id: 'work-1', channel: 'slack', channelRef: 'T0FAKETEAM/D0FAKELEADER/1793920000.000001',
+    receivedAt: '2026-11-06T01:59:00.000Z', state: 'BLOCKED', asOf: '2026-11-06T02:00:00.000Z',
+    source: 'bus', missing: ['named owner'], owner: null, claimReceipt: null,
+  }],
+  inbox: 'ok',
+  truncated: false,
+  claims: 'available',
+};
+const STATUS_SNAPSHOT: RuntimeSnapshot = {
+  host: 'status-host',
+  tailnetName: 'status-tailnet',
+  installedVersion: '3.30.35',
+  pid: 1,
+  uptimeSeconds: 2,
+  platform: 'linux',
+  arch: 'x64',
+  stateRoot: '~/.ashlr-runs',
+  lastFleetStateRead: { mtime: '2026-11-06T01:59:30.000Z', ageSeconds: 30 },
+  coordination: { state: 'healthy', activeClaims: 2, newestReturnAgeSeconds: 15 },
+  execution: { state: 'known', running: 1, claimedNoWorker: 1, unknown: 0 },
+  asOf: '2026-11-06T02:00:00.000Z',
+  reasons: [],
+};
 
 function slackEvent(text: string, user = 'U0FAKEOWNER', eventId = 'Ev-status') {
   return { type: 'events_api', envelope_id: `${eventId}-delivery`, payload: { team_id: 'T0FAKETEAM', event_id: eventId, event: {
@@ -44,10 +71,16 @@ function fakeCall(input: { post?: () => Promise<Record<string, unknown>>; ownerI
 const posts = (call: SlackCall) => vi.mocked(call).mock.calls.filter(row => row[0] === 'chat.postMessage');
 
 /** Drives ingestSlackLeaderEnvelope through the real authenticated socket mapper. */
-async function receive(call: SlackCall, brief: (runsDir: string, now: Date) => Promise<string>, payload: unknown, acknowledged = true) {
+async function receive(
+  call: SlackCall,
+  brief: (runsDir: string, now: Date) => Promise<string>,
+  payload: unknown,
+  acknowledged = true,
+  statusReaders: Pick<OwnerStatusDeps, 'board' | 'snapshot'> = {},
+) {
   let settled = false;
   const policy = readSlackDeliveryPolicy(options)!;
-  const adapter = createSlackLeaderAdapter({ ...options, call, statusReply: ownerStatusReply({ brief }) });
+  const adapter = createSlackLeaderAdapter({ ...options, call, statusReply: ownerStatusReply({ brief, ...statusReaders }) });
   const handlers: Record<string, (event: { data?: unknown }) => void> = {};
   const socket = { readyState: 1, addEventListener: (type: string, callback: (event: { data?: unknown }) => void) => { handlers[type] = callback; }, send: vi.fn(), close: vi.fn() };
   await openSlackSocket({ call, config: policy.config, ingest: { config: policy.config, teamIdentities: policy.teamIdentities, runsDir: options.runsDir, busRoot: options.busRoot },
@@ -71,8 +104,25 @@ describe('status ask parity', () => {
   });
   it('answers a verified owner in the same Slack thread', async () => {
     const call = fakeCall();
-    await receive(call, async () => 'Morning leader brief\nShipped (last 12h): none', slackEvent("how's the fleet?"));
+    await receive(
+      call,
+      async () => 'Morning leader brief\nShipped (last 12h): none',
+      slackEvent("how's the fleet?"),
+      true,
+      { board: () => STATUS_BOARD, snapshot: async () => STATUS_SNAPSHOT },
+    );
     await vi.waitFor(() => expect(posts(call)).toHaveLength(1), { timeout: WAIT_MS });
-    expect(posts(call)[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: '1793920000.000001', text: `Leader: ${STATUS_TEXT}` });
+    expect(posts(call)[0]?.[1]).toMatchObject({
+      channel: 'D0FAKELEADER',
+      thread_ts: '1793920000.000001',
+      text: [
+        `Leader: ${STATUS_TEXT}`,
+        'Work items as of 21:00 ET: 1 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED',
+        'BLOCKED work-1 (slack): missing named owner',
+        'Runtime: status-host (status-tailnet) v3.30.35 as of 2026-11-06T02:00:00.000Z',
+        'Fleet state: last write 30s ago',
+        'Claims: 2 live (1 running, 1 no worker), newest return 15s ago',
+      ].join('\n'),
+    });
   });
 });

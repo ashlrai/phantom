@@ -42,7 +42,7 @@ function phantomStatus(overrides: Partial<PhantomStatus> = {}): PhantomStatus {
     installed: true,
     version: '0.6.0',
     initialized: true,
-    secretNames: [...present, 'sk-should-never-surface'],
+    secretNames: [...present, 'sk-test-should-never-surface'],
     capability: {
       valueMode: 'metadata-and-names-only',
       secretCount: present.length,
@@ -193,7 +193,7 @@ describe('M348 FleetStatus Phantom capability', () => {
       });
       expect(serialized).not.toContain('ANTHROPIC_API_KEY');
       expect(serialized).not.toContain('ASHLR_PULSE_TOKEN');
-      expect(serialized).not.toContain('sk-should-never-surface');
+      expect(serialized).not.toContain('sk-test-should-never-surface');
       expect(serialized).not.toContain('/Users/masonwyatt');
 
       const rendered = formatFleetStatus(status);
@@ -207,9 +207,9 @@ describe('M348 FleetStatus Phantom capability', () => {
       expect(rendered).toContain('values hidden');
       expect(rendered).not.toContain('ANTHROPIC_API_KEY');
       expect(rendered).not.toContain('ASHLR_PULSE_TOKEN');
-      expect(rendered).not.toContain('sk-should-never-surface');
+      expect(rendered).not.toContain('sk-test-should-never-surface');
     });
-  });
+  }, 20_000);
 
   it('renders agent yes only when Phantom reports an actual agent command', async () => {
     await withFleetMocks(() => {

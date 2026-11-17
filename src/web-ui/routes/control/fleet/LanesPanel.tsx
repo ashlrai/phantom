@@ -82,7 +82,7 @@ export function LanesPanel() {
   const selected = lanes.find((lane) => lane.lane === selectedLane);
 
   return (
-    <section className={styles.section} aria-label="Engineering lanes">
+    <section className={styles.section} aria-label="Engineering lanes" title="GET /api/fleet/lanes · lanes[].credit / queueDepth / liveJobs / mergesPerHour; sources shown below">
       <h2 className={styles.sectionTitle}>Engineering lanes</h2>
       {query.status === 'loading' && !snapshot ? (
         <SkeletonLine width="70%" />

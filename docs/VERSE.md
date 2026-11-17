@@ -41,6 +41,32 @@ Leave the change uncommitted.” Review the actual diff and verification results
 a completion message alone does not establish delivery. Fleet activation is
 optional and separate from this interactive session.
 
+## Work log
+
+Open **Work → Work log** for one feed of what the fleet did in the last six
+hours, newest first and grouped by hour: merges, launches, finishes, jobs that
+ended with no change, leader replies and incidents, one plain line each. Tap a
+chip to show one kind, and tap a job to see its state, branch and last log
+lines. The page reads well on a phone, updates every five seconds while
+visible, keeps your filters, and offers Retry after a read failure. A source
+that cannot be read is listed as unknown with the reason. When nothing is
+recorded it says so and offers the last 24 hours.
+
+Agents can read the same feed with
+`phm worklog --json --hours 6 --kind merged`, or
+`GET /api/worklog?hours=6&kind=merged`. Filters are optional: `kind` is one of
+merged, launched, finished, empty, leader or incident, `repo` and `lane` match
+exactly, and `hours` defaults to 6 (the older `since=6h` form still works).
+The typed `worklog.v3` report has `rows`, `sources`, `entries` and
+`malformedLines`. Each row has `at`, `kind`, job, lane, repo, one plain-words
+`text`, an optional PR `url` and `count`: consecutive same-kind events from one
+job collapse into one row. Rows come from the existing `metrics/jobs.jsonl`
+reader, the dispatch events reader (incidents, lane holds, parked jobs) and
+the leader plan log reply reader. `sources` reports each of the three as `ok`
+or `unknown` with a reason; rows from an unknown source are absent, not zero.
+`entries` keeps the per-event ledger records with model and merge timing.
+PR opened requires recorded PR evidence; a finish alone stays Finished.
+
 ## Workspaces and resources
 
 The two primary workspaces are **Work with me** and **Work for me**.
@@ -969,7 +995,7 @@ types, reads or stores a credential.
 ### The Leader
 
 The Leader is the fleet's planning agent, and since 3.14 you talk to it: one
-conversation across Mind (⌘4), Telegram and `ashlr leader say`, with standing
+conversation across Mind (⌘4) and Telegram, with standing
 directives, answers to its questions and early approvals. The full guide is
 [`docs/LEADER.md`](LEADER.md).
 

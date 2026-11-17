@@ -45,7 +45,7 @@ it('joins queued, launched and published jobs; refreshes cached bodies and newes
   ]));
   await writeFile(metrics, [published, { ...published, url: 'https://example.invalid/pr/1', ts: '2026-10-30T10:00:00Z' }].map(x => JSON.stringify(x)).join('\n'));
   trace = await readOrderTrace({ runsDir: root });
-  expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'healthy' });
+  expect(trace.sources).toEqual({ inbox: 'healthy', prompts: 'healthy', publishes: 'healthy', queue: 'missing' });
   expect(trace.orders.find(o => o.key === '10-31 00:13')?.jobs).toContainEqual({ id: published.job, state: 'published', lane: 'fake-lane', url: published.url });
   expect(trace.orders.find(o => o.key === '10-30 23:49')?.jobs).toEqual([]);
   await writeFile(prompt, "Serves Mason's Oct 30 23:49 order.");
@@ -61,7 +61,7 @@ it('preserves inbox orders without prompt or metrics directories', async () => {
   expect(trace.orders).toHaveLength(2);
   expect(trace.orders.every(o => o.jobs.length === 0)).toBe(true);
   const missing = await readOrderTrace({ runsDir: join(root, 'absent') });
-  expect(missing.sources).toEqual({ inbox: 'missing', prompts: 'missing', publishes: 'missing' });
+  expect(missing.sources).toEqual({ inbox: 'missing', prompts: 'missing', publishes: 'missing', queue: 'missing' });
 });
 it('caps bodies by newest mtime and ignores citations past 16 KiB', async () => {
   await fixture();

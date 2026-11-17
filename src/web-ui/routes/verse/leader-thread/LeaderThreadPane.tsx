@@ -79,7 +79,7 @@ function laneEventStorage(): Storage | null {
 function LineView({ line, match, current }: { line: LabeledLine; match?: boolean; current?: boolean }) {
   const leader = line.who === 'leader';
   const iso = Number.isFinite(line.at) ? new Date(line.at).toISOString() : null;
-  const clock = iso ? clockTime(iso) : '—';
+  const clock = iso ? clockTime(iso) : 'unknown';
   if (line.quiet === 'status-ask') {
     return <p className={styles.note} data-find-match={match || undefined} data-find-current={current || undefined}>You asked for status · <span className={leaderStyles.channel}>{lineSourceLabel(line.source)}</span> · <time dateTime={iso ?? undefined}>{clock}</time></p>;
   }
@@ -431,9 +431,13 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   if (loading) {
     body = <p className={leaderStyles.placeholder} aria-busy="true">Reading the conversation…</p>;
   } else if (empty) {
-    body = <p className={leaderStyles.placeholder} data-tone={threadMissing ? 'unknown' : undefined}>
-      {needsYouOnly ? 'Nothing needs you right now.' : threadMissing ? (read!.reason ?? 'The Leader conversation did not answer.') : 'No conversation or interjections yet — reply below or post to the inbox from any channel.'}
-    </p>;
+    // A server that cannot answer is a different fact from a quiet thread, and must not read as "all clear".
+    body = threadMissing && !needsYouOnly
+      ? <p className={leaderStyles.placeholder} data-tone="unknown">{read!.reason ?? 'The Leader conversation did not answer.'}</p>
+      : <div className={leaderStyles.empty}>
+        <p className={leaderStyles.emptyTitle}>{needsYouOnly ? 'Nothing needs you right now.' : 'All quiet'}</p>
+        {needsYouOnly ? null : <p className={leaderStyles.emptyBody}>No conversation or interjections yet — reply below or post to the inbox from any channel.</p>}
+      </div>;
   } else {
     body = items.map(item => {
       if (item.type === 'day') return <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>;
@@ -450,33 +454,41 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     <ActionStatus actions={actions} />
     <section className={styles.overview} aria-label="Leader overview">
       <h2>Engineering leader</h2>
-      {summary.lines.length ? <ul aria-label="CEO summary">{summary.lines.map((line, index) => <li key={index}>{line}</li>)}</ul>
-        : <p>CEO summary unavailable.</p>}
-      <p><strong>Current bottleneck:</strong> {bottleneck ?? 'Unknown'}</p>
+      {summary.lines.length ? <ul className={styles.summary} aria-label="CEO summary">{summary.lines.map((line, index) => <li key={index}>{line}</li>)}</ul>
+        : <p className={styles.unknown}>CEO summary unavailable.</p>}
+      {/* A named bottleneck is the one thing here that asks for attention; an unknown one must not look like it. */}
+      <p className={styles.bottleneck} data-tone={bottleneck ? 'warning' : 'unknown'}><strong>Current bottleneck:</strong> {bottleneck ?? 'Unknown'}</p>
       <LeaderOfficeStrip view={office.data?.value ?? null} />
-      <details>
+      <details className={styles.laneHealth}>
         <summary>Lane health</summary>
-        {health?.lanes.length ? <ul>{health.lanes.map(lane => <li key={lane.lane}>
+        {health?.lanes.length ? <ul>{health.lanes.map(lane => <li key={lane.lane} data-stuck={stuckBadge(lane) ? 'true' : undefined}>
           <strong>{lane.lane}</strong>: {laneHealthLine(lane)}{stuckBadge(lane) ? ` · ${stuckBadge(lane)}` : ''}
-        </li>)}</ul> : <p>Lane health unavailable.</p>}
+        </li>)}</ul> : <p className={styles.unknown}>Lane health unavailable.</p>}
       </details>
     </section>
     <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
-    <header><DotReplyAge visible={visible} /> <button type="button" disabled={checkingStatus} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button> <button type="button" aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button> <button type="button" onClick={() => setFindOpen(true)}>Find</button></header>
-    {findOpen ? <div onKeyDown={event => {
+    <header className={styles.toolbar}>
+      <DotReplyAge visible={visible} />
+      <button type="button" className={styles.tool} disabled={checkingStatus} aria-busy={checkingStatus || undefined} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button>
+      <button type="button" className={styles.tool} aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button>
+      <button type="button" className={styles.tool} onClick={() => setFindOpen(true)}>Find</button>
+      <span className={styles.toolbarMeta}>
+        <span>{busRows.length} bus replies</span>
+        {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
+      </span>
+    </header>
+    {findOpen ? <div className={styles.findBar} onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFind(); }
     }}>
       <input ref={findRef} aria-label="Find in conversation" value={findQuery} onChange={event => { setFindQuery(event.target.value); setFindIndex(0); }} onKeyDown={event => {
         if (event.key === 'Enter') { event.preventDefault(); setFindIndex(stepMatch(currentIndex, matches.length, event.shiftKey ? -1 : 1)); }
       }} />
       <span role="status">{matches.length ? `${currentIndex + 1} of ${matches.length}` : 'No matches'}</span>
-      <button type="button" onClick={() => setFindIndex(stepMatch(currentIndex, matches.length, -1))}>Prev</button>
-      <button type="button" onClick={() => setFindIndex(stepMatch(currentIndex, matches.length, 1))}>Next</button>
-      <button type="button" onClick={closeFind}>Close</button>
+      <button type="button" className={styles.tool} onClick={() => setFindIndex(stepMatch(currentIndex, matches.length, -1))}>Prev</button>
+      <button type="button" className={styles.tool} onClick={() => setFindIndex(stepMatch(currentIndex, matches.length, 1))}>Next</button>
+      <button type="button" className={styles.tool} onClick={closeFind}>Close</button>
     </div> : null}
-    {statusNow !== null ? <section aria-label="Status now" role="status"><p style={{ whiteSpace: 'pre-wrap' }}>{statusNow}</p><button type="button" onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
-    <p className={styles.note}>{busRows.length} bus replies</p>
-    {busUnavailable ? <p className={styles.note} role="status">Durable bus unavailable</p> : null}
+    {statusNow !== null ? <section className={styles.statusNow} aria-label="Status now" role="status"><p>{statusNow}</p><button type="button" className={styles.tool} onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} replyGap={ownerRead.replyGap} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
@@ -495,7 +507,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <div className={styles.replyRow}>
         <textarea ref={inputRef} aria-label="Reply to the Leader" placeholder="Reply to the Leader…" value={draft} maxLength={6000}
           disabled={sending || actions.readOnly} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
-        <button type="submit" disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
+        <button type="submit" className={styles.send} disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
       </div>
       {hints.length ? <ul className={styles.note} aria-label="Composer commands">
         {hints.map(hint => <li key={hint.name}><code>{hint.usage}</code> {hint.summary}</li>)}
@@ -504,7 +516,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         <p>{INBOX_HELD_SENTENCE} Only Mason edits this file.</p>
         <CopyPill text={COMMS_TOML_PATH} what="the comms.toml path" />
         <CopyPill text={COMMS_CONFIRM_LINE} what="the comms.toml confirmation line" />
-        <button type="button" disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>
+        <button type="button" className={styles.tool} disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>
       </div> : null}
       {failure ? <p className={styles.replyFailure} role="alert">{failure}</p> : null}
     </form>

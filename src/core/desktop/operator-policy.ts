@@ -33,7 +33,7 @@ export const SCREEN_RECORDING_PANE = 'System Settings > Privacy & Security > Scr
 export const SCREEN_RECORDING_LEGACY_PANE = 'Screen Recording';
 
 export const DESKTOP_OPERATOR_BUILD =
-  'swiftc -O -framework ApplicationServices -framework Cocoa -framework Vision -o ~/.ashlr/bin/desktop-operator tools/desktop-operator/main.swift';
+  'swiftc -O -target arm64-apple-macos13.0 -framework ApplicationServices -framework Cocoa -framework Vision -o ~/.ashlr/bin/desktop-operator tools/desktop-operator/main.swift';
 
 /** Matches computer.rs MAX_SCROLL. */
 export const MAX_SCROLL = 50;
@@ -83,7 +83,7 @@ export const OPERATOR_ROSTER: readonly OperatorRosterApp[] = [
   { id: 'devin', names: DESKTOP_APP_PROFILES.devin.names, bundleIds: DESKTOP_APP_PROFILES.devin.bundleIds },
   { id: 'codex', names: DESKTOP_APP_PROFILES.codex.names, bundleIds: DESKTOP_APP_PROFILES.codex.bundleIds },
   { id: 'claude', names: DESKTOP_APP_PROFILES.claude.names, bundleIds: DESKTOP_APP_PROFILES.claude.bundleIds },
-  { id: 'grok', names: ['Grok', 'Grok Bot'], bundleIds: ['ai.x.grok', 'com.xai.grok'] },
+  { id: 'grok', names: ['Grok', 'Grok Bot'], bundleIds: ['ai.x.grok', 'com.xai.grok', 'com.anysphere.sand'] },
   { id: 'cursor', names: ['Cursor'], bundleIds: ['com.todesktop.230313mzl4w4u92'] },
 ];
 
