@@ -85,6 +85,7 @@ export interface ResourceLiveReading {
   lane: string | null;
   class: ResourceLiveClass;
   verified: boolean;
+  confidence: 'high' | 'medium' | 'low' | null;
   used: number | null;
   limit: number | null;
   unit: ResourceLiveUnit | null;

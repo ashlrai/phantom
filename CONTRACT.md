@@ -9,6 +9,16 @@ implementation escalates only for an explicit implementation bottleneck.
 
 # Phantom — shared core contract (M1/M2 baseline)
 
+Resource-live sources accept optional `usage.liveSources` configuration (see
+[resource evidence](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity)).
+`ResourceLiveReading.confidence` is `high | medium | low | null`, derived from
+the source tier; old sidecars without it remain readable. Observations may
+carry `stale_after`, which can shorten but never extend the 15-minute TTL.
+`DaemonCapacityPublisherDeps.refreshResourceLive?(cfg)` refreshes the rail after
+a publisher cycle; production wiring is daemon-only and disabled in tests.
+`OperatorUsagePageReader.read(provider, usageUrl)` returns a nullable observation;
+the shipped implementation always returns null and is opt-in only.
+
 This is the binding interface for Phantom's original index, launcher and
 identity modules (the package was formerly named ashlr-hub). Do not change these
 exported signatures without updating this file. Later milestones pin their own
