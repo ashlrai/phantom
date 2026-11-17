@@ -41,6 +41,24 @@ Leave the change uncommitted.” Review the actual diff and verification results
 a completion message alone does not establish delivery. Fleet activation is
 optional and separate from this interactive session.
 
+## Work log
+
+Open **Work → Work log** to see job launches, finishes and merges, newest first.
+Choose a repo or lane to narrow the last 24 hours. The page updates every five
+seconds while visible, keeps your filters, and offers Retry after a read failure.
+An empty list says when no events match.
+
+Agents can read the same records with
+`phm worklog --json --lane work --repo phantom --since 1h`, or
+`GET /api/worklog?lane=work&repo=phantom&since=1h`. Filters are optional;
+`since` accepts positive hours, including fractions, and defaults to `24h`.
+The typed `worklog.v2` report has `entries` and `malformedLines`. Each entry
+has `kind`, `at`, job, repo, lane, model and an optional PR link; merge timing
+is null for other events. It extends the existing `metrics/jobs.jsonl` reader.
+PR opened requires recorded PR evidence; a finish alone stays Finished.
+Malformed records are skipped and counted. A missing ledger yields an empty
+list; an unreadable ledger reports an error (CLI exit 1, API 503).
+
 ## Workspaces and resources
 
 The two primary workspaces are **Work with me** and **Work for me**.
