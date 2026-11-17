@@ -84,12 +84,23 @@ export type NeedsMasonReadResult =
   | { status: 'available' | 'missing'; items: NeedsMasonItem[] }
   | { status: 'unavailable'; items: NeedsMasonItem[] };
 
-/** Read the ledger without confusing an unavailable file with an empty one. */
-export function readNeedsMason(options: NeedsMasonOptions = {}): NeedsMasonReadResult {
+export interface NeedsMasonLedgerItem extends NeedsMasonItem { resolved: boolean }
+export type NeedsMasonLedgerResult =
+  | { status: 'available' | 'missing'; items: NeedsMasonLedgerItem[] }
+  | { status: 'unavailable'; items: NeedsMasonLedgerItem[] };
+
+/** Every ledger item in file order, open and resolved, so callers can answer a repeat idempotently. */
+export function readNeedsMasonLedger(options: NeedsMasonOptions = {}): NeedsMasonLedgerResult {
   const result = readTextResult(fileOf(options));
   if (result.status !== 'ok') return { status: result.status, items: [] };
   const { candidates, resolved } = scan(result.text);
-  return { status: 'available', items: candidates.filter(item => !resolved.has(item.id)) };
+  return { status: 'available', items: candidates.map(item => ({ ...item, resolved: resolved.has(item.id) })) };
+}
+
+/** Read the ledger without confusing an unavailable file with an empty one. */
+export function readNeedsMason(options: NeedsMasonOptions = {}): NeedsMasonReadResult {
+  const ledger = readNeedsMasonLedger(options);
+  return { status: ledger.status, items: ledger.items.filter(item => !item.resolved).map(({ id, text }) => ({ id, text })) };
 }
 
 /** Items still waiting on Mason, as the glance reader sees them. */
