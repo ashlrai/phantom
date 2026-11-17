@@ -30,6 +30,8 @@
  * host adapter is scripts/merge-queue-loop.mjs.
  */
 
+import { rankPrLeverage } from '../fleet/pr-leverage.js';
+
 import {
   FLEET_AUTHOR,
   REFIX_CYCLE_CAP,
@@ -50,6 +52,11 @@ export type MergeQueueChecks = 'SUCCESS' | 'PENDING' | 'EXPECTED' | 'FAILURE' | 
 export interface MergeQueuePr {
   /** GraphQL node id; the mutations address the PR by it. */
   id: string;
+  title?: string;
+  body?: string;
+  updatedAt?: string;
+  additions?: number;
+  deletions?: number;
   number: number;
   headSha: string;
   baseRef: string;
@@ -75,7 +82,7 @@ export interface MergeQueueRepoSnapshot {
 
 export type MergeQueueAction =
   | 'enqueue' | 'rebase' | 'conflict'
-  | 'queued' | 'wait' | 'red' | 'blocked' | 'pinned' | 'no-queue' | 'skip';
+  | 'reconcile' | 'dependency' | 'queued' | 'wait' | 'red' | 'blocked' | 'pinned' | 'no-queue' | 'skip';
 
 export interface MergeQueueState {
   v: 1;
@@ -87,6 +94,7 @@ export interface MergeQueueState {
 
 export interface MergeQueueIo {
   readSnapshot(repo: string): MergeQueueRepoSnapshot;
+  readLeverageJobs?(): string | null;
   /** enqueuePullRequest(pullRequestId, expectedHeadOid). */
   enqueue(repo: string, pr: MergeQueuePr): void;
   /** updatePullRequestBranch(pullRequestId, expectedHeadOid, updateMethod: MERGE). */
@@ -121,6 +129,7 @@ export interface MergeQueueOptions {
 }
 
 export interface MergeQueueRepoResult {
+  leverage?: Pick<ReturnType<typeof rankPrLeverage>, 'ranked' | 'clusters' | 'mergeOrder'>;
   repo: string;
   ok: boolean;
   mergeQueue: boolean;
@@ -245,30 +254,49 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
   };
 
   try {
+    const snapshots: { repo: string; snapshot: MergeQueueRepoSnapshot; result: MergeQueueRepoResult }[] = [];
     for (const repo of repos) {
       const result: MergeQueueRepoResult = {
         repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], rebased: [], resolved: [], drained: [], failed: [],
       };
       summary.repos.push(result);
-      let snapshot: MergeQueueRepoSnapshot;
       try {
-        snapshot = io.readSnapshot(repo);
+        const snapshot = io.readSnapshot(repo);
+        if (snapshot.prs.some(pr => !Number.isSafeInteger(pr.number) || pr.number < 1)) throw new Error('invalid PR');
+        result.ok = true; result.mergeQueue = snapshot.mergeQueue;
+        snapshots.push({ repo, snapshot, result });
       } catch {
         summary.repoErrors++;
         io.log(`MERGEQ_GH_ERROR read ${repo}`);
-        continue;
       }
-      result.ok = true;
-      result.mergeQueue = snapshot.mergeQueue;
-      const prs = snapshot.prs.slice().sort((a, b) => a.number - b.number);
-      const seen = new Set<number>();
-      for (const pr of prs) {
-        if (seen.has(pr.number)) continue;
-        seen.add(pr.number);
+    }
+    let jobs: string | null = null;
+    try { jobs = io.readLeverageJobs?.() ?? null; } catch { /* Missing history is unknown. */ }
+    const work = snapshots.flatMap(item => item.snapshot.prs.map(pr => ({ ...item, pr, url: `https://github.com/${item.repo}/pull/${pr.number}` })));
+    const leverage = rankPrLeverage(work.map(({ pr, url }) => ({ ...pr, url, mergeStateStatus: pr.mergeState,
+      files: pr.filesTruncated ? undefined : pr.files.map(path => ({ path })) })), jobs, now);
+    const scores = new Map(leverage.ranked.map(pr => [pr.url, pr.score]));
+    const order = new Map(leverage.mergeOrder.map((url, index) => [url, index]));
+    const reconcile = new Set(leverage.clusters.flatMap(cluster => cluster.reconcile));
+    const blocked = new Set(leverage.dependencyBlocked);
+    const submitted = new Set(work.filter(item => item.pr.inMergeQueue).map(item => item.url));
+    for (const { repo, result } of snapshots) result.leverage = {
+      ranked: leverage.ranked.filter(pr => pr.repo === repo), clusters: leverage.clusters.filter(c => c.strongest.startsWith(`https://github.com/${repo}/`)),
+      mergeOrder: leverage.mergeOrder.filter(url => url.startsWith(`https://github.com/${repo}/`)),
+    };
+    work.sort((a, b) => (order.get(a.url) ?? order.size) - (order.get(b.url) ?? order.size)
+      || (scores.get(b.url) ?? 0) - (scores.get(a.url) ?? 0) || a.pr.number - b.pr.number);
+    const seen = new Set<string>();
+    for (const { repo, snapshot, result, pr, url } of work) {
+        if (seen.has(url)) continue;
+        seen.add(url);
         const tag = `${shortName(repo)}#${pr.number}`;
-        const action = classifyMergeQueuePr(pr, snapshot, {
+        let action = classifyMergeQueuePr(pr, snapshot, {
           fleet: authors.has(bareLogin(pr.author)), held: hold.has(tag),
         });
+        if (action === 'enqueue' && reconcile.has(url)) action = 'reconcile';
+        if (action === 'enqueue' && (blocked.has(url) || leverage.dependencies[url]!.some(dep =>
+          !submitted.has(dep) || !dep.startsWith(`https://github.com/${repo}/`)))) action = 'dependency';
         result.totals[action] = (result.totals[action] ?? 0) + 1;
         if (dryRun || (action !== 'enqueue' && action !== 'rebase' && action !== 'conflict')) continue;
 
@@ -319,10 +347,9 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
           io.log(`MERGEQ_GH_ERROR ${action} ${repo}#${pr.number}`);
           continue;
         }
-        if (action === 'enqueue') { result.enqueued.push(pr.number); summary.enqueued++; }
+        if (action === 'enqueue') { result.enqueued.push(pr.number); summary.enqueued++; submitted.add(url); }
         else { result.rebased.push(pr.number); summary.rebased++; }
         io.log(`MERGEQ_${action.toUpperCase()} ${repo}#${pr.number} head=${pr.headSha.slice(0, 7)}`);
-      }
     }
     io.log(`MERGEQ_CYCLE enqueued=${summary.enqueued} rebased=${summary.rebased} resolved=${summary.resolved} drained=${summary.drained} ` +
       `failed=${summary.failed} repoErrors=${summary.repoErrors} capped=${summary.capped ? 1 : 0} dryRun=${dryRun ? 1 : 0}`);

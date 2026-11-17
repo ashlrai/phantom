@@ -393,3 +393,5 @@ canonical release guide for required hosted qualification and publication.
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
 - [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+
+- [PR leverage and daily delta](PR-LEVERAGE.md): portfolio ranking, merge sequencing and an evidence-based daily scoreboard.

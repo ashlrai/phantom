@@ -49,6 +49,7 @@
     "schema",
     "CHANGELOG.md",
     "docs/README.md",
+    "docs/PR-LEVERAGE.md",
     "docs/SIGNALS.md",
     "docs/FLEET-API.md",
     "docs/model-registry.json",
