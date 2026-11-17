@@ -11,6 +11,12 @@
 .root button:focus-visible, .root input:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
 .quota { display: flex; gap: 12px; overflow-x: auto; padding: 8px 0 16px; }
 .quota article { display: grid; gap: 5px; min-width: 240px; border-left: 3px solid var(--status-unknown-solid); padding: 10px 14px; font-size: var(--text-xs-size); background: var(--bg-surface); }
+.hosts { margin: 0 0 16px; }
+.hostRows { display: flex; flex-wrap: wrap; gap: 12px; }
+.host { display: grid; gap: 5px; flex: 1 1 280px; min-width: 0; padding: 10px 14px; font-size: var(--text-xs-size); background: var(--bg-surface); border-left: 3px solid var(--status-success-solid); overflow-wrap: anywhere; }
+.host h4 { margin: 0; }
+.host[data-over='true'] { border-left-color: var(--status-danger-solid); }
+.host[data-over='unknown'] { border-left-color: var(--status-unknown-solid); }
 .viewport { padding: 12px; }
 .viewport > summary { cursor: pointer; margin-bottom: 12px; }
 .scene { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 22px; }
@@ -36,4 +42,4 @@
 .detail { margin-top: 24px; padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); }
 @keyframes working { 50% { box-shadow: 0 0 0 2px var(--status-success-bg); } }
 @media (prefers-reduced-motion: reduce) { .token[data-state='running'] { animation: none; } }
-@media (max-width: 600px) { .root { padding: 12px; } .machine { min-width: 200px; } }
+@media (max-width: 600px) { .root { padding: 12px; } .machine { min-width: 0; flex-basis: 100%; } .host { flex-basis: 100%; } }
