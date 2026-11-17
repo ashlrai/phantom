@@ -338,8 +338,8 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/disk-runway') {
     return (await import('./fleet-disk-runway-api.js')).handleFleetDiskRunwayApi(ctx, req, res, path, method);
   }
-  // The Ideas view: ranked bottlenecks (GET) and "Queue it" (POST, gated in the module).
-  if (path === '/api/verse/fleet/control/ideas' || path === '/api/verse/fleet/control/ideas/queue') {
+  // The Ideas view: ranked bottlenecks and suggested jobs (GET), and "Queue it" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/ideas' || path === '/api/verse/fleet/control/ideas/queue' || path === '/api/verse/fleet/control/ideas/bets') {
     return (await import('./fleet-ideas-api.js')).handleFleetIdeasApi(ctx, req, res, path, method);
   }
   if (path === '/api/verse/fleet/control/merge-graph') {
