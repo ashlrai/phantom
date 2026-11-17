@@ -20,7 +20,6 @@ import { describe, expect, it } from 'vitest';
 import { buildStepPlan } from '../scripts/build-desktop-nightly.mjs';
 import {
   DESKTOP_NIGHTLY_STEPS,
-  NPM_BUILD_STEPS,
   RELEASE_BUILD_OUTPUTS,
   matchesBuildOutput,
   undeclaredBuildOutputs,
@@ -40,7 +39,8 @@ function probe(output: string): string {
 
 describe('release build output inventory', () => {
   it('declares exactly the commands `npm run build` runs, in order', () => {
-    expect(pkg.scripts.build.split(' && ')).toEqual(NPM_BUILD_STEPS.map((step) => step.command));
+    expect(pkg.scripts.build).toBe('node scripts/build.mjs');
+    expect(readFileSync(join(REPO_ROOT, 'scripts/build.mjs'), 'utf8')).toContain('steps = NPM_BUILD_STEPS');
   });
 
   it('never regenerates a tracked file during the build', () => {
