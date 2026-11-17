@@ -6,17 +6,21 @@ import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { fleetOrgMap, mapWindowMinutes, type FleetOrgMap } from '../fleet/org-map.js';
 import { fleetOrgTree, type FleetOrgTree } from '../fleet/org-tree.js';
 import { readFleetRunsDirState } from '../fleet/runs-dir-state.js';
-import { readResourceLedger } from '../fleet/runs-resource-ledger.js';
+import { readResourceLedger, type ResourceLedgerV1 } from '../fleet/runs-resource-ledger.js';
 
-export async function readFleetOrgMap(minutes = 60): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
+/** The org map, its tree and the pool-usage ledger it was built from (`phm map` also draws the ledger's resources). */
+export async function readFleetOrgSources(minutes = 60): Promise<{ map: FleetOrgMap & { tree: FleetOrgTree }; usage: ResourceLedgerV1 | null }> {
   mapWindowMinutes(String(minutes));
   const now = Date.now(), clock = { now: () => now };
   const settled = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : null;
-  const [live, sessions, runs, usage] = await Promise.allSettled([buildFleetLiveSnapshot(), getFleetSessions(clock), readFleetRunsDirState(clock), readResourceLedger(clock)]);
+  const [live, sessions, runs, ledger] = await Promise.allSettled([buildFleetLiveSnapshot(), getFleetSessions(clock), readFleetRunsDirState(clock), readResourceLedger(clock)]);
   const messages = readFleetEdges({ ...clock, windowMinutes: minutes });
-  const snapshot = settled(live)?.snapshot ?? null;
+  const snapshot = settled(live)?.snapshot ?? null, usage = settled(ledger);
   const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now });
-  return { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage: settled(usage), engineLanes: snapshot?.lanes }) };
+  return { map: { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes }) }, usage };
+}
+export async function readFleetOrgMap(minutes = 60): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
+  return (await readFleetOrgSources(minutes)).map;
 }
 export function createFleetOrgMapApi(read = readFleetOrgMap): ApiModule {
   return async (ctx, req, res, path, method) => {
