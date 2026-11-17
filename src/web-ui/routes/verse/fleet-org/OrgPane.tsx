@@ -10,6 +10,9 @@ import { fleetUsageRunsQuery } from '../fleet-usage/fleet-usage-queries.js';
 import { leaderOfficeQuery } from '../leader-thread/leader-office-data.js';
 import { OrgAvatar } from './OrgAvatar.js';
 import { buildOrgRoster, type OrgMember, type OrgStatus } from './org-roster.js';
+import { talkingNow, who } from '../fleet-messages/messages-model.js';
+import { talkingNowQuery } from '../fleet-messages/messages-query.js';
+import messageStyles from '../fleet-messages/fleet-messages.module.css';
 import styles from './fleet-org.module.css';
 
 const POLL_MS = 10_000;
@@ -56,6 +59,22 @@ function Tier({ title, members, empty }: { title: string; members: OrgMember[]; 
   </section>;
 }
 
+/** One line per agent-to-agent conversation in the last 15 minutes (same read as `phm messages --since 15m`). */
+function TalkingNow({ visible }: { visible: boolean }) {
+  const read = useQuery(talkingNowQuery, { enabled: visible, freshMs: 0 });
+  const lines = useMemo(() => talkingNow(read.data?.messages ?? []), [read.data]);
+  const known = read.data && read.data.source !== 'unavailable';
+  return <section className={styles.tier} aria-label="Talking now">
+    <h3 className={styles.title}>Talking now · last 15 minutes</h3>
+    {read.data === undefined && !read.error ? <p className={styles.quiet}>Reading agent messages…</p>
+      : !known ? <p className={styles.quiet}>Agent messages unknown.</p>
+      : lines.length === 0 ? <p className={styles.quiet}>No agents talking right now.</p>
+      : <ul className={messageStyles.talk}>{lines.map(l => <li key={l.conversation}>
+        <span>{who(l.a)}</span><span className={messageStyles.line} role="img" aria-label={`${l.a.name} and ${l.b.name}: ${l.messages} message${l.messages === 1 ? '' : 's'}`} /><span>{who(l.b)}</span>
+      </li>)}</ul>}
+  </section>;
+}
+
 const SOURCE_NAMES = { office: 'org chart', lanes: 'fleet lanes', roster: 'claims', seats: 'models' } as const;
 
 export function OrgPane({ visible }: PaneProps) {
@@ -63,7 +82,7 @@ export function OrgPane({ visible }: PaneProps) {
   const runs = useQuery(fleetUsageRunsQuery, { enabled: visible, freshMs: 0 });
   const roster = useQuery(rosterQuery, { enabled: visible, freshMs: 0 });
   const seats = useQuery(seatsQuery, { enabled: visible, freshMs: 0 });
-  const refetch = [useRefetch(leaderOfficeQuery), useRefetch(fleetUsageRunsQuery), useRefetch(rosterQuery), useRefetch(seatsQuery)];
+  const refetch = [useRefetch(leaderOfficeQuery), useRefetch(fleetUsageRunsQuery), useRefetch(rosterQuery), useRefetch(seatsQuery), useRefetch(talkingNowQuery)];
   usePollWhileVisible(() => refetch.forEach(r => r()), POLL_MS, { enabled: visible });
 
   const loading = [office, runs, roster, seats].some(q => q.data === undefined && q.status !== 'error');
@@ -79,5 +98,6 @@ export function OrgPane({ visible }: PaneProps) {
     <Tier title="Leader" members={[org.leader]} empty="" />
     <Tier title="Executives" members={org.executives} empty="No executives reported." />
     <Tier title="Teammates" members={org.teammates} empty="No lanes reported." />
+    <TalkingNow visible={visible} />
   </div>;
 }

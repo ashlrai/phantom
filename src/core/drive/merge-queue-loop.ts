@@ -3,8 +3,8 @@
  * repos. Three moves per fleet-authored PR, decided by `classifyMergeQueuePr`:
  *
  *  - enqueue: required checks green, mergeable, not yet queued, and the base
- *    branch has a GitHub merge queue. The host calls `enqueuePullRequest`
- *    with `expectedHeadOid`, so a head that moved since the read is refused
+ *    branch has a GitHub merge queue. The host calls `gh pr merge --auto`
+ *    with `--match-head-commit`, so a head that moved since the read is refused
  *    by GitHub instead of queueing an unchecked revision. The merge queue
  *    re-runs every required check on the merge group; nothing here merges.
  *  - rebase: BEHIND in a repo without a merge queue, or BEHIND with no checks
@@ -61,6 +61,7 @@ export interface MergeQueuePr {
   reviewDecision: string | null;
   inMergeQueue: boolean;
   autoMerge: boolean;
+  activeOwner?: boolean;
   files: string[];
   filesTruncated: boolean;
 }
@@ -75,7 +76,15 @@ export interface MergeQueueRepoSnapshot {
 
 export type MergeQueueAction =
   | 'enqueue' | 'rebase' | 'conflict'
-  | 'queued' | 'wait' | 'red' | 'blocked' | 'pinned' | 'no-queue' | 'skip';
+  | 'queued' | 'wait' | 'red' | 'blocked' | 'pinned' | 'no-queue' | 'skip' | 'owned';
+
+export interface MergeQueueLatency {
+  headSha: string;
+  state: MergeQueueAction;
+  since: number;
+  observedAt: number;
+  stateMs: Partial<Record<MergeQueueAction, number>>;
+}
 
 export interface MergeQueueState {
   v: 1;
@@ -83,11 +92,12 @@ export interface MergeQueueState {
   attempts: Record<string, { pr: string; action: 'enqueue' | 'rebase' | 'resolve'; at: number }>;
   /** Drain ids this loop appended (refix shares the id space via the queue). */
   drained: Record<string, number>;
+  latency?: Record<string, MergeQueueLatency>;
 }
 
 export interface MergeQueueIo {
   readSnapshot(repo: string): MergeQueueRepoSnapshot;
-  /** enqueuePullRequest(pullRequestId, expectedHeadOid). */
+  /** Head-pinned auto-merge enrollment; GitHub still enforces the merge queue. */
   enqueue(repo: string, pr: MergeQueuePr): void;
   /** updatePullRequestBranch(pullRequestId, expectedHeadOid, updateMethod: MERGE). */
   updateBranch(repo: string, pr: MergeQueuePr): void;
@@ -130,6 +140,7 @@ export interface MergeQueueRepoResult {
   resolved: number[];
   drained: number[];
   failed: number[];
+  latency: Array<MergeQueueLatency & { number: number }>;
 }
 
 export interface MergeQueueSummary {
@@ -165,6 +176,7 @@ export function classifyMergeQueuePr(
   if (!scope.fleet || scope.held || pr.isDraft || pr.baseRef !== repo.defaultBranch) return 'skip';
   if (!SHA.test(pr.headSha) || !pr.id) return 'skip';
   if (pr.inMergeQueue) return 'queued';
+  if (pr.activeOwner) return 'owned';
   if (pr.mergeable === 'CONFLICTING' || pr.mergeState === 'DIRTY') return 'conflict';
   if (pr.checks === 'FAILURE' || pr.checks === 'ERROR') return 'red';
   if (pr.mergeable === 'UNKNOWN' || pr.mergeState === 'UNKNOWN') return 'wait';
@@ -200,6 +212,16 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
   }
   for (const [key, at] of Object.entries((row['drained'] ?? {}) as Record<string, unknown>)) {
     if (Number.isSafeInteger(at)) state.drained[key] = at as number;
+  }
+  const actions = new Set<MergeQueueAction>(['enqueue', 'rebase', 'conflict', 'queued', 'wait', 'red', 'blocked', 'pinned', 'no-queue', 'skip', 'owned']);
+  for (const [key, raw] of Object.entries((row['latency'] ?? {}) as Record<string, MergeQueueLatency>)) {
+    if (raw && typeof raw.headSha === 'string' && SHA.test(raw.headSha) && actions.has(raw.state)
+      && Number.isSafeInteger(raw.since) && raw.since >= 0 && Number.isSafeInteger(raw.observedAt) && raw.observedAt >= raw.since
+      && raw.stateMs && typeof raw.stateMs === 'object' && !Array.isArray(raw.stateMs)
+      && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && ms >= 0)) {
+      (state.latency ??= {})[key] = { headSha: raw.headSha, state: raw.state,
+        since: raw.since, observedAt: raw.observedAt, stateMs: { ...raw.stateMs } };
+    }
   }
   return state;
 }
@@ -247,19 +269,24 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
   try {
     for (const repo of repos) {
       const result: MergeQueueRepoResult = {
-        repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], rebased: [], resolved: [], drained: [], failed: [],
+        repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], rebased: [], resolved: [], drained: [], failed: [], latency: [],
       };
       summary.repos.push(result);
       let snapshot: MergeQueueRepoSnapshot;
       try {
         snapshot = io.readSnapshot(repo);
       } catch {
+        for (const key of Object.keys(state.latency ?? {})) if (key.startsWith(`${repo}#`)) delete state.latency![key];
         summary.repoErrors++;
         io.log(`MERGEQ_GH_ERROR read ${repo}`);
         continue;
       }
       result.ok = true;
       result.mergeQueue = snapshot.mergeQueue;
+      const observedAt = io.now();
+      for (const key of Object.keys(state.latency ?? {})) {
+        if (key.startsWith(`${repo}#`) && !snapshot.prs.some(pr => key === `${repo}#${pr.number}`)) delete state.latency![key];
+      }
       const seen = new Set<number>();
       const planned = snapshot.prs.slice().sort((a, b) => a.number - b.number)
         .filter((pr) => {
@@ -274,6 +301,16 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       planned.sort((a, b) => Number(b.action === 'enqueue') - Number(a.action === 'enqueue'));
       for (const { pr, action } of planned) {
         const tag = `${shortName(repo)}#${pr.number}`;
+        const key = `${repo}#${pr.number}`, previous = state.latency?.[key];
+        const latency: MergeQueueLatency = previous?.headSha === pr.headSha && observedAt >= previous.observedAt
+          ? { ...previous, stateMs: { ...previous.stateMs } }
+          : { headSha: pr.headSha, state: action, since: observedAt, observedAt, stateMs: {} };
+        latency.stateMs[latency.state] = (latency.stateMs[latency.state] ?? 0) + observedAt - latency.observedAt;
+        if (latency.state !== action) latency.since = observedAt;
+        latency.state = action;
+        latency.observedAt = observedAt;
+        (state.latency ??= {})[key] = latency;
+        result.latency.push({ number: pr.number, ...latency });
         result.totals[action] = (result.totals[action] ?? 0) + 1;
         if (dryRun || (action !== 'enqueue' && action !== 'rebase' && action !== 'conflict')) continue;
 

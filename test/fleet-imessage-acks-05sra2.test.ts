@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -29,9 +29,25 @@ describe('fleet imessage-acks', () => {
       expect(result.out).not.toMatch(/FAKE_|receipt|extra/);
       expect(result.out).toContain('unknown');
       if (args.length) {
-        expect(JSON.parse(result.out)).toMatchObject({ sourceState: 'ok', deliveryProof: false, malformedRows: 0, rows: [{ rowid: 1, delivery: 'recorded-not-sent' }, { rowid: 2, delivery: 'unknown' }] });
-      } else expect(result.out).toContain('does not establish delivery');
+        expect(JSON.parse(result.out)).toMatchObject({ sourceState: 'ok', deliveryProof: false, malformedRows: 0, rows: [{ rowid: 1, delivery: 'unknown' }, { rowid: 2, delivery: 'unknown' }] });
+      } else expect(result.out).toContain('do not establish delivery');
     }
+  });
+  it('preserves legacy journal bytes and never trusts claimed proof or native outcomes', async () => {
+    const { dir, file } = fixture();
+    const labels = ['recorded-not-sent', 'sent', 'delivered', 'failed', 'native-success', 'unknown'];
+    const original = labels.map((delivery, index) => row(index + 1, {
+      delivery, deliveryProof: true, nativeReturn: { ok: true },
+      handle: 'FAKE_PRIVATE_HANDLE', error: 'FAKE_PRIVATE_ERROR', text: 'FAKE_PRIVATE_BODY',
+    })).join('\n') + '\n';
+    writeFileSync(file, original);
+    const result = await run(dir, ['--json']);
+    const report = JSON.parse(result.out);
+    expect(report.deliveryProof).toBe(false);
+    expect(report.rows).toHaveLength(labels.length);
+    expect(report.rows.every((entry: { delivery: string }) => entry.delivery === 'unknown')).toBe(true);
+    expect(result.out).not.toMatch(/FAKE_|nativeReturn|handle|error|text/);
+    expect(readFileSync(file, 'utf8')).toBe(original);
   });
   it('limits rows, bounds the tail, and counts malformed and torn records', async () => {
     const { dir, file } = fixture();

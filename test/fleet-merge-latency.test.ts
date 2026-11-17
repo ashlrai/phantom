@@ -10,6 +10,69 @@ const reader = (...rows: unknown[]) => async () => rows.map(r => typeof r === 's
 const SHA = 'a'.repeat(40);
 afterEach(() => vi.restoreAllMocks());
 
+it('selects the oldest actionable queue delay across all ages with deterministic repo and PR ties', async () => {
+  const rows = [ev(2, 'queued', 200000), ev(2, 'conflict', 100, { head_sha: SHA }),
+    ev(1, 'queued', 200000), ev(1, 'blocked', 100, { reason: 'required_checks' }),
+    { ...ev(1, 'queued', 200000), repo: 'ashlrai/another' },
+    ev(3, 'queued', 300000), ev(3, 'merged', 100), ev(4, 'queued', 200), ev(4, 'conflict', 100)];
+  const report = await fleetMergeLatency(reader(...rows), now, 1);
+  expect(report.oldest_actionable_delay).toMatchObject({ repo: 'ashlrai/another', pr: 1,
+    since: ago(200000), waiting_s: 200000, reason: 'queue', next_action: 'inspect_queue' });
+  expect((await fleetMergeLatency(reader(...rows.reverse()), now, 1)).oldest_actionable_delay).toEqual(report.oldest_actionable_delay);
+  const sameRepo = await fleetMergeLatency(reader(...rows.filter(row => row.repo === 'ashlrai/phantom')), now, 1);
+  expect(sameRepo.oldest_actionable_delay).toMatchObject({ pr: 1, next_action: 'inspect_checks' });
+  expect(formatMergeLatency(sameRepo)).toContain('Oldest actionable queue delay: ashlrai/phantom#1 (200000s queued). Next: Inspect');
+  const fractional = await fleetMergeLatency(reader(ev(1, 'queued', 100.1), ev(2, 'queued', 100.9)), now, 1, 100);
+  expect(fractional.oldest_actionable_delay).toMatchObject({ pr: 2, since: ago(100.9), waiting_s: 100 });
+});
+
+it.each(['pending', 'failure'])('keeps a required %s observation actionable after another check succeeds', async conclusion => {
+  const report = await fleetMergeLatency(reader(ev(1, 'queued', 100),
+    ev(1, 'check_observed', 90, { required: true, conclusion }),
+    ev(1, 'check_observed', 80, { required: true, conclusion: 'success' })), now);
+  expect(report.oldest_actionable_delay).toMatchObject({ pr: 1, waiting_s: 100,
+    reason: 'required_checks', next_action: 'inspect_checks', recommendation: expect.stringContaining('keep every required check enabled') });
+  const cleared = await fleetMergeLatency(reader(ev(1, 'queued', 100),
+    ev(1, 'blocked', 90, { reason: 'required_checks' }), ev(1, 'checks_passed', 80)), now);
+  expect(cleared.oldest_actionable_delay).toBeNull();
+});
+
+it('recommends conflict repair without rearming an already requested recut or bypassing the queue', async () => {
+  const report = await fleetMergeLatency(reader(ev(1, 'queued', 500), ev(1, 'conflict', 400, { head_sha: SHA }),
+    ev(1, 'recut_requested', 300, { head_sha: SHA })), now);
+  expect(report.oldest_actionable_delay).toMatchObject({ reason: 'conflict', next_action: 'resolve_conflicts',
+    recommendation: expect.stringContaining('Inspect existing recut requests') });
+  expect(report.oldest_actionable_delay?.recommendation).toContain('rerun required checks through the merge queue');
+  expect(report.retryable_conflicts).toEqual([]);
+  expect(report.blocked_conflicts).toMatchObject([{ pr: 1, reason: 'already-requested' }]);
+});
+
+it('excludes terminal and ambiguous queue records and ignores unrelated checks and future evidence', async () => {
+  const report = await fleetMergeLatency(reader(
+    ev(1, 'queued', 10000), { ...ev(1, 'merged', 5), at: undefined }, ev(1, 'conflict', 1),
+    ev(2, 'queued', 10000), ev(2, 'closed', 5),
+    ev(3, 'queued', 10000), ev(3, 'queued', 9000), ev(3, 'conflict', 5),
+    ev(4, 'queued', 100), ev(4, 'check_observed', 5, { required: false, conclusion: 'failure' }),
+    ev(5, 'queued', 100), ev(5, 'blocked', -5, { reason: 'review' }),
+    ev(6, 'queued', 100), ev(6, 'blocked', 5, { reason: 'conflict' }), ev(6, 'eligible', 5),
+    ev(7, 'blocked', 10000, { reason: 'review' }), // no measured queue entry
+  ), now);
+  expect(report.oldest_actionable_delay).toBeNull();
+  expect(formatMergeLatency(report)).toContain('Oldest actionable queue delay: none observed.');
+  expect((await fleetMergeLatency(async () => null, now)).oldest_actionable_delay).toBeNull();
+  expect((await fleetMergeLatency(reader(), now)).oldest_actionable_delay).toBeNull();
+});
+
+it('uses the stall threshold for ordinary queue waits and exposes the same recommendation through CLI JSON', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const read = reader(ev(1, 'queued', 99), ev(2, 'queued', 100), ev(2, 'eligible', 10));
+  expect(await cmdFleetMergeLatency(['--json', '--stalled-after', '100'], { read, now })).toBe(0);
+  expect(JSON.parse(log.mock.calls[0]![0] as string).oldest_actionable_delay).toMatchObject({ pr: 2,
+    waiting_s: 100, next_action: 'inspect_queue', recommendation: expect.stringContaining('without bypassing its requirements') });
+  const review = await fleetMergeLatency(reader(ev(1, 'queued', 100), ev(1, 'blocked', 10, { reason: 'review' })), now);
+  expect(review.oldest_actionable_delay).toMatchObject({ next_action: 'address_review' });
+});
+
 it('measures readiness before queue admission and identifies the dominant delay', async () => {
   const report = await fleetMergeLatency(reader(
     ev(1, 'eligible', 1000), ev(1, 'auto_merge_enabled', 1000), ev(1, 'queued', 100), ev(1, 'merged', 10),

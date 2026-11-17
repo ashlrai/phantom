@@ -52,6 +52,15 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Feed puts merges, release announcements, blocked jobs and Leader replies in
+one newest-first stream. Each shared row has a time and one link to its source.
+`phm feed --json --since 1h` and `GET /api/feed?since=1h` return the same typed
+items; `--since` accepts whole minutes, hours or days up to seven days, and
+`--limit` accepts 1–1000 (default 30). Reads cover bounded local journal tails,
+not complete history. Missing sources stay unknown. Release times are recorded
+announcement times, not installation evidence; blocked events record when a job
+was parked, not whether it is still blocked. Empty reads show “Nothing new yet.”
+
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent
 merge list together. These links open the existing screens and preserve their
