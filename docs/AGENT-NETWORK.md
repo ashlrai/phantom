@@ -396,3 +396,5 @@ not work-launch authority; replies must carry the preceding message's `replyTo`.
 The ninth hop and repeated origin/pair escalate to the human queue. See the
 [peer mesh contract](contracts/CONTRACT-AGENTNET-PEERBUS.md) for enrollment,
 limits, CoS opt-in, delivery results and the separate Security handoff.
+
+See [Slack host credential boundary](SLACK-CREDENTIAL-INJECTION.md) for the injected-reference contract and its verification limits.
