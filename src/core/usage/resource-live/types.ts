@@ -10,6 +10,22 @@
  */
 
 export const RESOURCE_LIVE_SCHEMA = 'resource-live.v1' as const;
+export const RESOURCE_HISTORY_SCHEMA = 'resource-live.history.v1' as const;
+export interface ResourceHistoryPoint {
+  observed_at: string; used: number; left: number | null; limit: number;
+  unit: ResourceLiveUnit | null; reset_at: string | null; source: string;
+  source_tier: ResourceLiveTier | null; confidence: ResourceLiveReading['confidence'];
+}
+export interface ResourceHistoryFile {
+  schema: typeof RESOURCE_HISTORY_SCHEMA;
+  allowances: Partial<Record<ResourceLiveId, ResourceHistoryPoint[]>>;
+}
+export interface LaneHistory {
+  points: Array<{ observedAt: string; used: number; left: number | null; limit: number;
+    unit: ResourceLiveUnit | null; source: string; confidence: ResourceLiveReading['confidence']; gapBefore: boolean }>;
+  burn: { perHour: number; from: string; to: string } | null;
+  exhaustAt: string | null; resetAt: string | null;
+}
 /** A reading older than this is not current. Same bound usage.sensors.v1 uses. */
 export const RESOURCE_LIVE_STALE_MS = 15 * 60_000;
 

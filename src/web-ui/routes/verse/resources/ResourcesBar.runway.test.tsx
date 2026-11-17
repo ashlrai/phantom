@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { evictAll } from '../../../data/cache.js';
+import { evictAll, getQuerySnapshot } from '../../../data/cache.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
 import { SectionVisibilityProvider } from '../shell/section-visibility.js';
 import { capacity, nativeSeat } from '../seat-fixtures.test-support.js';
@@ -8,6 +8,7 @@ import { useCapacityData } from '../usage/CapacityStrip.js';
 import { readings, recordReading, resetReadings, type PersonalReading } from '../usage/codex-burn-model.js';
 import { personalReader } from '../usage/codex-burn-queries.js';
 import { ResourcesBar } from './ResourcesBar.js';
+import { observeQuery } from '../fleet-observe/observe-queries.js';
 import { RESOURCE_ORDER_KEY, reloadResourceOrderForTest } from './resource-order.js';
 import { closeResources, reloadResourcesUiForTest, RESOURCES_STORAGE_KEY } from './resources-store.js';
 
@@ -26,7 +27,7 @@ beforeEach(() => {
   vi.mocked(useCapacityData).mockReturnValue({ seats: [nativeSeat(capacity(), { id: 'codex-seat', engine: 'codex', label: 'Codex seat' })],
     health: null, budget: null, loading: false, refreshing: false, readFailed: false, rosterUnavailable: false, pendingSeatIds: [] });
   vi.mocked(personalReader).mockReturnValue(async () => ({ missing: false, reading, sourceState: 'healthy' }));
-  installFetch(() => json({}));
+  installFetch(() => json({}, 404));
 });
 afterEach(() => {
   cleanup(); resetReadings(); evictAll(); vi.restoreAllMocks(); vi.unstubAllGlobals();
@@ -41,6 +42,21 @@ function mount() {
 }
 
 describe('personal Codex runway in the resources bar', () => {
+  it.each([{ windows: [] }, { windows: [{ lane: 'codex-personal', headroom: null }] }])('accepts observe windows (%j)', async ({ windows }) => {
+    const snapshot = { usage: { windows } };
+    installFetch(call => call.path === '/api/verse/observe' ? json(snapshot) : json({}, 404));
+    const view = mount();
+    await waitFor(() => expect(getQuerySnapshot(observeQuery.key).data).toEqual(snapshot));
+    expect(within(view.container).queryByText('Usage observations unavailable.')).not.toBeInTheDocument();
+  });
+
+  it.each([null, {}, { usage: {} }, { usage: { windows: {} } }, { usage: { windows: [null] } }])('survives malformed observe data (%j)', async snapshot => {
+    installFetch(call => call.path === '/api/verse/observe' ? json(snapshot) : json({}, 404));
+    const view = mount();
+    await waitFor(() => expect(within(view.container).getByText('Usage observations unavailable.')).toBeInTheDocument());
+    expect(within(view.container).getByRole('group', { name: 'Resources at a glance' })).toBeInTheDocument();
+  });
+
   it('shows the projected time and pace from shared history', async () => {
     recordReading(earlier, NOW); recordReading(reading, NOW);
     const view = mount();
