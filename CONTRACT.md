@@ -624,6 +624,18 @@ repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
 
+## Devin weekly capacity
+
+`src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
+`publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,
+`devinPreviewObservation`, `devinWeeklyWindow`, `devinWeeklyAllowance`, `devinWeeklyLine`
+and `DevinWeeklyCapacity { used, limit, remaining, limit_source, window_start, reset_at,
+burn_rate_per_hour, sessions, source, observed_at, state, reason }`. Unknown fields are
+`null`. `DevinSession.createdAtMs` (optional) and `devinInstantMs` come from
+`core/devin/client.ts`. Config: `devin.weeklyAcuAllowance`, `devin.weeklyResetAt`.
+`ResourceLiveSourceOptions` gains `readDevinWeekly`, `readDevinPublished` and
+`readDevinModels`. See [Devin weekly allowance](docs/RESOURCE-EVIDENCE.md#devin-weekly-allowance).
+
 ## Node host capacity
 
 `assessNodeCapacity(ramBytes, memory, freeDiskBytes, light?, options?)` and
