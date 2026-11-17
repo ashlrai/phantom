@@ -5,6 +5,9 @@
 import type { ResourceLiveId, ResourceLiveTier, ResourceLiveUnit } from './types.js';
 
 export interface ResourceLiveObservation {
+  account_id?: string;
+  model?: string;
+  window_start?: string;
   used: number | null;
   limit: number | null;
   unit: ResourceLiveUnit;

@@ -250,6 +250,13 @@ describe('reset rule', () => {
 });
 
 describe('resource-live tick', () => {
+  it('passes measured scope through and normalizes its window', async () => {
+    const runsDir = tmp();
+    await runResourceLiveTick({ runsDir, nowMs: NOW, activeLanes: () => new Set(), sources: sourcesOf({
+      devin: [fixed({ account_id: 'org-test', model: 'swe-2-high', window_start: iso(NOW - HOUR).replace('.000Z', '+00:00') })],
+    }) });
+    expect(byId(stored(runsDir), 'devin')).toMatchObject({ verified: true, account_id: 'org-test', model: 'swe-2-high', window_start: iso(NOW - HOUR) });
+  });
   it('writes every allowance with source and observed time, and nulls for unverified ones', async () => {
     const runsDir = tmp();
     const result = await runResourceLiveTick({ runsDir, nowMs: NOW, activeLanes: () => new Set(), sources: sourcesOf({
