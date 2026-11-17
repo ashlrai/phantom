@@ -158,7 +158,7 @@ Phantom - every command (phm or ashlr)
     inbox submit <id> --yes                                                                                                                                       Records non-interactive caller intent, not an authenticated human receipt; all verification and remote gates remain.
     inbox reject <id>                                                                                                                                             Discard a pending proposal; applies nothing.
     inbox --json                                                                                                                                                  Emit JSON for inbox list, show, approve, submit, or automerge results.
-    ideas [--json]                                                                                                                                                List READY fleet ideas (RQ id, repo, lane, goal) from the vision and queue docs.
+    ideas [--json|--text]                                                                                                                                         Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown.
     drive [--once --dry-run] [--tick <seconds>]                                                                                                                   Supervise the Mac queue through an installed host bridge; dry-run plans only. See docs/DRIVE.md.
     daemon start --once                                                                                                                                           Currently refuses before effects because compiled daemon trust roots are empty; use owner-invoked run/swarm or the dry-run form.
     daemon start --once --dry-run                                                                                                                                 Plan only: which backlog items WOULD be worked (no swarm/proposal).
@@ -288,6 +288,7 @@ Phantom - every command (phm or ashlr)
     issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
     route decide --input <file|-> [--root <directory>] --json                                                                                                     Suggest a schema-validated route without changing launch behavior.
+    messages [--since 15m] [--agent <name>] [--limit <n>] [--text]                                                                                                What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR.
     tools parity [--text]                                                                                                                                         Which lane declares which tool (GitHub read/write, web search, browser, shell, package install, MCP servers). Unknown is never missing.
     tools requires --needs <need,...> [--text]                                                                                                                    List the lanes that can run a job with these needs, e.g. --needs github-read,browser.
     route fit --input <file|-> [--worktree <directory>] --json                                                                                                    Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.
@@ -379,6 +380,7 @@ Phantom - every command (phm or ashlr)
     wire status [claude|codex|cursor|gemini|all]                                     Read-only report of whether each editor is wired to the ashlr gateway.
     wire --claude-md                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
     notify test                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
+    notify route <type> [--text]                                                     Preview an owner update route in JSON (default) or plain words; never sends.
     stack [status|list|providers|recommend|scan|doctor|add|apply]                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
     ecosystem doctor [--json] [--deep]                                               Read-only sibling-repository health scan across the ecosystem.
 
@@ -410,16 +412,18 @@ Phantom - every command (phm or ashlr)
     demo [--no-cleanup] [--json]                                                          Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.
 
   Surfaces - TUI + web dashboard
-    top [--once] [--json]           Read-only per-pool capacity and reset pressure snapshot.
-    tui [--once]                    Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
-    dash [--once]                   Alias of `tui` - interactive terminal dashboard.
-    dashboard [--stop|--status]     Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
-    serve [--port N]                Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
-    serve --open                    Start dashboard and open browser automatically.
-    serve --allow-dispatch          Enable guarded POST /api/run + web inbox approve/reject (prints session token).
-    console [--port N] [--no-open]  Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
-    verse [--port N] [--no-open]    Alias of `console` (the original name; same flags). Opens /verse/, the same page.
-    settings appearance [set]       Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
+    top [--once] [--json]                                                  Read-only per-pool capacity and reset pressure snapshot.
+    tui [--once]                                                           Interactive terminal dashboard (alias: dash). --once renders one frame and exits.
+    dash [--once]                                                          Alias of `tui` - interactive terminal dashboard.
+    dashboard [--stop|--status]                                            Open the persistent fleet dashboard service (ai.ashlr.serve); --status/--stop inspect or unload it (no install/repair - resident mutation is withheld).
+    serve [--port N]                                                       Start local web dashboard + JSON API on 127.0.0.1 (default port 7777).
+    serve --open                                                           Start dashboard and open browser automatically.
+    serve --allow-dispatch                                                 Enable guarded POST /api/run + web inbox approve/reject (prints session token).
+    console [--port N] [--no-open]                                         Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
+    verse [--port N] [--no-open]                                           Alias of `console` (the original name; same flags). Opens /verse/, the same page.
+    settings appearance [set]                                              Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
+    pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]  Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).
+    pages list [--json]                                                    List published report pages, newest first.
 
   Scaffold - new projects + shipping
     new <name> [opts]   Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).
