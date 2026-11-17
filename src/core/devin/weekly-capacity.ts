@@ -33,6 +33,8 @@ const MAX_PAGES = 25;
 export type DevinWeeklyState = 'live' | 'stale' | 'unmeasured';
 
 export interface DevinWeeklyCapacity {
+  account_id?: string;
+  model?: string;
   used: number | null;
   limit: number | null;
   remaining: number | null;

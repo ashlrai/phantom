@@ -515,6 +515,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readGoals(deps.runsDir ?? defaultRunsDir()));
       return true;
     }
+    if (path === '/api/verse/fleet/runs/autonomy') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readAutonomy } = await import('../fleet/autonomy.js');
+      sendJson(res, 200, await readAutonomy({ runsDir: deps.runsDir ?? defaultRunsDir(), now: now() }));
+      return true;
+    }
     // The desktop Goals view reads the same scorecard as `phm goals`.
     if (path === '/api/verse/fleet/runs/goal-scorecard') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }

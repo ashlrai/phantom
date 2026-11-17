@@ -2863,6 +2863,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'autonomy': {
+        const { cmdAutonomy } = await import('./autonomy.js');
+        process.exitCode = await cmdAutonomy(rest);
+        break;
+      }
+
       case 'goals': {
         // Bare `goals` (or only --json/--text) is the fleet scorecard; every subcommand is M28.
         if (rest.every(arg => arg === '--json' || arg === '--text')) {
@@ -3297,6 +3303,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'ci': {
+        const { cmdCiBaseline } = await import('./ci-baseline.js');
+        process.exitCode = await cmdCiBaseline(rest);
         break;
       }
 
