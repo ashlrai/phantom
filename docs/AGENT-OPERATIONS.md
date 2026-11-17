@@ -436,8 +436,21 @@ Check each command's root options before comparing evidence from different proce
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
-| `phm resources [--json]`, `phm usage`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
+| `phm resources [--json]`, `phm usage [--json]`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage --json` preserves engine totals and adds `spend`, the desktop Resources snapshot described below. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
+
+### Desktop pool usage
+
+Resources → Spend down shows used share, reset time, burn per hour and projected
+unused capacity for each pool, with `on pace`, `behind`, `exhausted` or `unknown`.
+`phm usage --json` returns these same numbers in `spend` (`v: 1`, `asOf`, `pools`),
+also available directly from `phm usage spend --json` and `GET /api/usage/spend`.
+Each row keeps `pool`, `unit`, `usedPercent`, `resetAt`, `burnPerHour`,
+`projectedUnusedPercent`, `projectedUnusedUsd` and the existing `verdict` keys.
+Percent burn means percentage points per hour; gifts use USD per hour and expiry.
+Missing, stale or malformed status reads produce nulls, displayed as unknown.
+The seven core pools remain visible, including the Claude API gift and local;
+other recorded pools remain supported. Local has no inferred quota or reset.
 
 ### Metrics levers
 
