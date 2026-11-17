@@ -3,13 +3,14 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { FleetHostPane } from './FleetHostPane.js';
+import { hostResponse } from './host-fetch.test-support.js';
 
 const fixture: FleetRuns = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'degraded', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
   lastTick: '2026-10-31T11:59:00Z', paused: true, memFreePct: 22, diskFreeGb: 12, switches: ['KILL'], claudeLane: 'DOWN: offline',
   lanes: [], workers: [], leaders: [], orchestratorAgents: 2, publishesLastHour: [], mergesLastHour: { count: null, items: [] }, events: [], codexPersonal: null, inbox: [], drop: null,
 };
-const serve = (data: unknown, status = 200) => vi.stubGlobal('fetch', vi.fn(async () => Response.json(data, { status })));
+const serve = (data: unknown, status = 200) => vi.stubGlobal('fetch', vi.fn(async (url: string) => hostResponse(url, data, status)));
 beforeEach(() => { evictAll(); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -29,12 +30,12 @@ it('explains a missing endpoint and allows refresh', async () => {
   serve({}, 404); render(<FleetHostPane visible />);
   expect(await screen.findByText('The fleet runs API has not landed in this build yet.')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/verse/fleet/runs')).toHaveLength(2);
 });
 
 it('keeps the last reading when refresh fails and shows empty switches', async () => {
   const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ ...fixture, switches: [], paused: false, claudeLane: null })).mockResolvedValueOnce(new Response(null, { status: 500 }));
-  vi.stubGlobal('fetch', fetchMock); render(<FleetHostPane visible />);
+  vi.stubGlobal('fetch', vi.fn((url: string) => url === '/api/verse/fleet/runs' ? fetchMock() : Promise.resolve(hostResponse(url, null)))); render(<FleetHostPane visible />);
   expect(await screen.findByText('No switches set')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await screen.findByText('Fleet runs could not refresh. Showing the last reading.')).toBeInTheDocument();

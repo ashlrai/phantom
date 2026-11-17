@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSlackLeaderAdapter, ingestSlackLeaderEnvelope, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
 import { readLeaderInbox, tickLeaderNetwork } from '../src/core/agents/leader-network-runtime.js';
+import { buildSlackBridgeStatus } from '../src/core/agents/slack-status.js';
+import { readSlackRequestTrace } from '../src/core/agents/slack-request-trace.js';
 import { openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
 import { OWNER_STATUS_FALLBACK, ownerStatusReply, type OwnerStatusDeps } from '../src/core/agents/owner-status-reply.js';
 import type { RuntimeSnapshot } from '../src/core/fleet/runtime-snapshot.js';
@@ -58,7 +60,7 @@ function fakeCall(input: { post?: () => Promise<Record<string, unknown>>; ownerI
     if (method === 'conversations.info') return { channel: { id: body.channel, is_im: true, context_team_id: 'T0FAKETEAM' } };
     if (method === 'conversations.members') return { members: ['U0FAKEBOT', 'U0FAKEOWNER'], response_metadata: { next_cursor: '' } };
     if (method === 'users.info') return { user: { id: body.user, team_id: 'T0FAKETEAM', is_bot: input.ownerIsBot === true || body.user === 'U0FAKEBOT' } };
-    if (method === 'chat.postMessage') return input.post ? input.post() : { channel: body.channel, ts: '1793920002.000001' };
+    if (method === 'chat.postMessage') return input.post ? input.post() : { channel: body.channel, ts: `${options.now() / 1000 + 1}.000001` };
     if (method === 'conversations.replies' || method === 'conversations.history') return { messages: [] };
     throw new Error('unexpected-synthetic-method');
   });
@@ -72,7 +74,7 @@ async function receive(call: SlackCall, brief: (runsDir: string, now: Date) => P
   const adapter = createSlackLeaderAdapter({ ...options, call, statusReply: ownerStatusReply({ brief, ...statusDeps }) });
   const handlers: Record<string, (event: { data?: unknown }) => void> = {};
   const socket = { readyState: 1, addEventListener: (type: string, callback: (event: { data?: unknown }) => void) => { handlers[type] = callback; }, send: vi.fn(), close: vi.fn() };
-  await openSlackSocket({ call, config: policy.config, ingest: { config: policy.config, teamIdentities: policy.teamIdentities, runsDir: options.runsDir, busRoot: options.busRoot },
+  await openSlackSocket({ call, config: policy.config, ingest: { config: policy.config, teamIdentities: policy.teamIdentities, runsDir: options.runsDir, busRoot: options.busRoot, now: () => new Date(options.now()) },
     leaderAdapter: { ...adapter, route: async envelope => { try { return await adapter.route(envelope); } finally { settled = true; } } }, connect: () => socket });
   handlers.message!({ data: JSON.stringify(payload) });
   await vi.waitFor(() => expect(settled).toBe(true), { timeout: WAIT_MS });
@@ -82,6 +84,8 @@ async function receive(call: SlackCall, brief: (runsDir: string, now: Date) => P
 
 describe('owner "Phantom status" auto-answer over Slack', () => {
   it('answers the verified owner once in the same thread and still records the ask for the Leader', async () => {
+    mkdirSync(join(options.runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'queue/status.json'), JSON.stringify({ last_tick: '2026-11-06T01:59:00Z' }));
     const call = fakeCall();
     const statusReply = vi.fn(async () => STATUS_TEXT);
     await receive(call, statusReply, slackEvent('Phantom status'));
@@ -90,6 +94,16 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     expect(statusReply).toHaveBeenCalledWith(options.runsDir, new Date(options.now()));
     expect(posts(call)[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: '1793920000.000001', text: `Leader: ${STATUS_TEXT}\n${WORK_LINE}\n${SNAPSHOT_LINES}` });
     expect((await readLeaderInbox(options)).inbox.entries[0]?.text).toContain('Phantom status');
+    expect(posts(call)[0]?.[1]?.attachments).toEqual([{ text:
+      'RECEIVED; owner unknown; claim unknown; fleet as of 2026-11-06T01:59Z from fleet tick (stale, background only)', mrkdwn_in: [] }]);
+    const statusOptions = { ...options, configPath: join(options.configDir, 'agent-network.toml'),
+      commsPath: join(options.configDir, 'comms.toml'), stateRoot: join(options.runsDir, 'slack-transport'), now: () => new Date(options.now() + 2000) };
+    await vi.waitFor(() => expect(buildSlackBridgeStatus(statusOptions).replies.answered).toBe(1), { timeout: WAIT_MS });
+    expect(buildSlackBridgeStatus(statusOptions).work).toMatchObject({ asOf: '2026-11-06T01:59:00.000Z', inbox: 'ok',
+      items: expect.arrayContaining([expect.objectContaining({ state: 'RECEIVED', channelRef: threadRef, owner: null, claimReceipt: null })]) });
+    expect(buildSlackBridgeStatus(statusOptions).work.items).toHaveLength(1);
+    expect(readSlackRequestTrace(statusOptions).rows).toEqual([expect.objectContaining({ ingress: 'posted', outcome: 'answered',
+      channelId: 'D0FAKELEADER', threadTs: '1793920000.000001', messageTs: '1793920001.000001', replyTs: `${options.now() / 1000 + 1}.000001` })]);
 
     // (b) A redelivered duplicate neither recomposes nor posts again, and the
     // Leader's own worker does not generate a second answer for the same ask.
@@ -99,6 +113,17 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     expect(generate).not.toHaveBeenCalled();
     expect(statusReply).toHaveBeenCalledOnce();
     expect(posts(call)).toHaveLength(1);
+    expect(readSlackRequestTrace(statusOptions).counts).toMatchObject({ total: 1, answered: 1 });
+  });
+
+  it('records a failed owner bus append without claiming it received or answered the request', async () => {
+    writeFileSync(options.busRoot, 'synthetic unavailable bus', { mode: 0o600 });
+    const call = fakeCall(), brief = vi.fn(async () => STATUS_TEXT);
+    await receive(call, brief, slackEvent('Phantom status'));
+    expect(brief).not.toHaveBeenCalled();
+    expect(posts(call)).toHaveLength(0);
+    expect(readSlackRequestTrace({ runsDir: options.runsDir, stateRoot: join(options.runsDir, 'slack-transport'),
+      now: () => new Date(options.now()) }).rows).toEqual([expect.objectContaining({ ingress: 'failed', outcome: 'bus-failed' })]);
   });
 
   it('leaves ordinary owner requests to the Leader with no auto reply', async () => {

@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SentReceipt } from '../src/core/agents/slack-reply-binding.js';
+import { slackSendStoreKey } from '../src/core/agents/slack-reply-identity.js';
 import type { SlackSendReceiptRead } from '../src/core/agents/slack-send-receipts.js';
 import { appendClaimNoticeSent, claimNoticePaths } from '../src/core/fleet/claim-notice-send.js';
 import { readClaimNoticeView } from '../src/core/fleet/claim-notice-view.js';
@@ -15,6 +17,10 @@ const claim = { id: 'claim-fake-445', repo: 'ashlrai/phantom', task: 'fake task'
 const threadKey = 'T00000000/C00000000/1700000000.000100';
 const channel = 'C00000000';
 const threadTs = '1700000000.000100';
+const noticeDedupeKey = JSON.stringify(['VERIFIED', claim.repo, claim.id, 'agent', 5, 'tail']);
+const noticeReceiptKey = slackSendStoreKey(
+  `claim-notice-${createHash('sha256').update(noticeDedupeKey).digest('hex').slice(0, 24)}`,
+);
 const board = (): FleetBoard =>
   ({ schema: 'fleet.coordination.v1', state: 'known', claims: [], messages: [], proposals: [], expiredClaims: 0 });
 const dirs: string[] = [];
@@ -34,13 +40,12 @@ function seed(dir: string) {
   writeFileSync(paths.bindings,
     `${JSON.stringify({ v: 1, claimId: claim.id, repo: claim.repo, threadKey, pr: 1, head: 'abcdef1' })}\n`,
     { mode: 0o600 });
-  appendClaimNoticeSent(paths.sent,
-    JSON.stringify(['VERIFIED', claim.repo, claim.id, 'agent', 5, 'tail']), at);
+  appendClaimNoticeSent(paths.sent, noticeDedupeKey, at);
 }
 
 const store = (receipts: SentReceipt[]): SlackSendReceiptRead => ({ state: 'ok', receipts });
 const receipt = (over: Partial<SentReceipt> = {}): SentReceipt =>
-  ({ channel, thread: threadTs, state: 'sent', ts: tsAt(now - 30_000), ...over });
+  ({ key: noticeReceiptKey, channel, thread: threadTs, state: 'sent', ts: tsAt(now - 30_000), ...over });
 
 async function deliveryOf(dir: string, receipts: SentReceipt[]) {
   const view = await readClaimNoticeView({ runsRoot: dir, now: () => now, readBoard: board,

@@ -2,6 +2,7 @@
 
 Every run targets a temp --bin directory under a temp HOME; the real ~/.ashlr-runs/bin is never read or written.
 """
+import ast
 import hashlib
 import json
 import os
@@ -84,6 +85,21 @@ class ManifestTests(SyncTestBase):
         by = {e.get('name') or Path(e['src']).name: e['class'] for e in m['files']}
         for n in PINNED:
             self.assertEqual(by.get(n), 'pinned', n)
+
+    def test_managed_python_imports_have_managed_sibling_sources(self):
+        """A scratch sync must include local helpers required by shipped scripts."""
+        entries = json.loads(MANIFEST.read_text())['files']
+        managed = {e['src'] for e in entries if e['class'] == 'managed'}
+        for source in sorted(managed):
+            path = ROOT / source
+            if path.suffix != '.py': continue
+            for node in ast.walk(ast.parse(path.read_text())):
+                modules = ([a.name for a in node.names] if isinstance(node, ast.Import) else
+                           [node.module] if isinstance(node, ast.ImportFrom) and node.module else [])
+                for module in modules:
+                    sibling = path.with_name(module.split('.')[0] + '.py')
+                    if sibling.is_file():
+                        self.assertIn(sibling.relative_to(ROOT).as_posix(), managed, source)
 
 
 class PlanTests(SyncTestBase):

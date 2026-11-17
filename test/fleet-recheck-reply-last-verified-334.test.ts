@@ -48,7 +48,7 @@ function deps(items: WorkBoardItem[]): FleetRecheckDeps {
 
 function withLast(v: FleetRecheck, owner: string): FleetRecheck {
   return { ...v, sections: { ...v.sections, task: { ...v.sections.task, lastVerified: {
-    id: 'fake-done-1', owner, claimReceipt: 'bus-claim:fake-done-1:1:1', asOf: ISO, source: 'bus-reply:fake',
+    id: 'fake-done-1', owner, claimReceipt: 'bus-claim:fake-done-alpha', asOf: ISO, source: 'bus-reply:fake',
   } } } };
 }
 
@@ -57,7 +57,8 @@ describe('formatRecheckReply last verified line', () => {
     const lines = formatRecheckReply(await readFleetRecheck(deps([done]))).split('\n');
     const i = lines.findIndex(l => l.startsWith('Task: none'));
     expect(i).toBeGreaterThan(-1);
-    expect(lines[i + 1]).toBe(LINE);
+    expect(lines[i + 1]).toBe('Peers: none in 24h');
+    expect(lines[i + 2]).toBe(LINE);
     expect(lines[lines.length - 1]).toMatch(/^BLOCKED on:/);
   });
 
@@ -80,24 +81,24 @@ describe('formatRecheckReply last verified line', () => {
     expect(reply).not.toContain('routed');
   });
 
-  it('drops the line, not the verdict, when over the cap', async () => {
+  it('drops earlier optional lines before Last verified and keeps the verdict', async () => {
     const base = await readFleetRecheck(deps([]));
     const blocked = (n: number): FleetRecheck => ({ ...base, overall: { ...base.overall, state: 'BLOCKED', missing: ['m'.repeat(n)] } });
-    // Size the reason so the reply fits only without the evidence line.
-    // The Computers line is dropped first, so size against the reply without it.
-    const room = 880 - formatRecheckReply(blocked(0)).split('\n').filter(l => !l.startsWith('Computers:')).join('\n').length;
-    const v = withLast(blocked(room), 'agent-alpha');
-    expect(formatRecheckReply(blocked(room)).length).toBeLessThanOrEqual(900);
-    const reply = formatRecheckReply(v);
-    expect(reply).toBe(formatRecheckReply(blocked(room)));
-    expect(reply).not.toContain('Last verified');
-    expect(reply.split('\n')[0]).toMatch(/^Phantom recheck BLOCKED/);
-    expect(reply).not.toContain('…');
-    // A 700-char reason also stays within the cap with the line absent.
-    const long = formatRecheckReply(withLast(blocked(700), 'agent-alpha'));
-    expect(long.length).toBeLessThanOrEqual(900);
-    expect(long).not.toContain('Last verified');
-    expect(long.split('\n')[0]).toMatch(/^Phantom recheck BLOCKED/);
+    let droppedEarlier = false;
+    for (let n = 80; n < 700; n += 1) {
+      const text = formatRecheckReply(withLast(blocked(n), 'agent-alpha'));
+      const verdict = text.split('\n').at(-1) ?? '';
+      if (text.length <= 900 && text.includes('Last verified:') && !text.includes('Computers:') && verdict.startsWith('BLOCKED on:')) {
+        droppedEarlier = true;
+        expect(text).not.toContain('…');
+        break;
+      }
+    }
+    expect(droppedEarlier).toBe(true);
+    const huge = formatRecheckReply(withLast(blocked(700), 'agent-alpha'));
+    expect(huge.length).toBeLessThanOrEqual(900);
+    expect(huge.split('\n')[0]).toMatch(/^Phantom recheck BLOCKED/);
+    expect(huge.split('\n').at(-1)).toMatch(/^BLOCKED on:/);
   });
 
   it('reaches the Slack reply path', async () => {

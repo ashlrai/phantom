@@ -102,7 +102,7 @@ export async function cmdFleetSlackTrace(
     if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
-        `${row.outcome.toUpperCase()}${row.replyTs !== undefined ? ` reply=${row.replyTs}` : ''}`);
+        `${row.outcome.toUpperCase()}${row.evidence === 'unverified' ? ' (reply identity unverified)' : ''}${row.replyTs !== undefined ? ` reply=${row.replyTs}` : ''}`);
     }
   }
   const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';

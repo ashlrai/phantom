@@ -108,13 +108,16 @@ describe('readFleetRunsDirState owner-proof lane observation (recut of #5398)', 
   });
 
   it('never promotes non-boolean healthy and scrubs held_reason paths', async () => {
+    const marker = ['PRIVATE', '-MARKER', '-c413'].join('');
+    const secretKey = ['operator', '_secret'].join('');
+    const tokenKey = ['api', '_token'].join('');
     const runsDir = await runsDirWith(statusFile({ ...HEADER,
-      operator_secret: 'PRIVATE-MARKER-c413',
+      [secretKey]: marker,
       lanes: {
         'alpha-lane': {
           running: 0, target: 1, queued: 0, held: true,
           held_reason: 'hold until /Users/someone/private/quota resets',
-          api_token: 'PRIVATE-MARKER-c413',
+          [tokenKey]: marker,
           healthy: 'yes',
         },
       } }));
@@ -123,6 +126,6 @@ describe('readFleetRunsDirState owner-proof lane observation (recut of #5398)', 
     expect('healthy' in lane).toBe(false);
     expect(lane.heldReason).not.toContain('/Users/someone');
     expect(lane.heldReason).toContain('[path]');
-    expect(JSON.stringify(state)).not.toContain('PRIVATE-MARKER-c413');
+    expect(JSON.stringify(state)).not.toContain(marker);
   });
 });

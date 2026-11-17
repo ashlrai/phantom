@@ -61,13 +61,14 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
     console.log(JSON.stringify(result, null, json ? undefined : 2));
   };
   if (sub === 'returns') {
-    const result = projectCoordinationReturns(readFleetBoard(), Date.now());
+    const now = (deps.now ?? Date.now)();
+    const result = projectCoordinationReturns(readFleetBoard({ reap: false, now }), now);
     output(result);
     return result.state === 'known' ? 0 : 1;
   }
   if (sub === 'board' || sub === 'inbox') {
     if (sub === 'inbox' && !value('agent')) return invalid();
-    const board = readFleetBoard();
+    const board = readFleetBoard({ reap: false, now: (deps.now ?? Date.now)() });
     output(sub === 'board' ? board : { schema: board.schema, state: board.state, messages: board.messages.filter(m => m.to === value('agent') || m.to === 'all'), proposals: board.proposals.filter(p => p.to === value('agent')) });
     return board.state === 'known' ? 0 : 1;
   }

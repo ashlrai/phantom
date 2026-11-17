@@ -152,8 +152,10 @@ describe('cmdHelp routing', () => {
 
   it('names Phantom in console help while retaining the compatible command and route', async () => {
     expect(await cmdHelp(['web'])).toBe(0);
-    expect(output()).toContain('Open the Phantom console at /verse/');
+    expect(output()).toContain('console [--port N] [--no-open]');
+    expect(output()).toContain('Open the Phantom console at /app/');
     expect(output()).toContain('verse [--port N] [--no-open]');
+    expect(output()).toContain('Opens /verse/, the same page.');
   });
 
   it('help <topic> → full table for that topic with examples', async () => {

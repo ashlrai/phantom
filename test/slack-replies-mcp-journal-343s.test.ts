@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { createFleetServer } from '../src/mcp/fleet-server.js';
 import { recordSlackObservation } from '../src/core/agents/slack-journal.js';
 import { buildSlackBridgeStatus } from '../src/core/agents/slack-status.js';
@@ -15,6 +16,7 @@ const ts = (iso: string) => `${Math.floor(Date.parse(iso) / 1000)}.000100`;
 const [A, B, C] = [ts('2026-11-12T22:20:00Z'), ts('2026-11-12T22:21:00Z'), ts('2026-11-12T22:10:00Z')]; // C: wrong thread, no request
 let home = '';
 const runsDir = () => join(home, 'runs');
+const rid = (t: string) => fakeRequestId(`343s:${t}`);
 const stateRoot = () => join(home, 'fleet', 'slack-transport');
 
 beforeEach(() => {
@@ -43,31 +45,32 @@ async function readTool(): Promise<Record<string, unknown>> {
   }
 }
 /** Production store shape (version 1, 64-hex keys), written by the private atomic writer. */
-function writeReceipts(rows: Array<{ channel: string; state: 'attempted' | 'sent'; thread?: string; ts?: string }>): void {
+function writeReceipts(rows: Array<{ key?: string; channel: string; state: 'attempted' | 'sent'; thread?: string; ts?: string }>): void {
   ensurePrivateDirectory(stateRoot());
-  const messages = Object.fromEntries(rows.map((row, i) => [String(i).padStart(64, '0'),
+  const messages = Object.fromEntries(rows.map(({ key, ...row }, i) => [key ?? String(i).padStart(64, '0'),
     { digest: 'a'.repeat(64), clientId: '11111111-1111-1111-1111-111111111111', expiresAt: NOW_MS + 864e5, ...row }]));
   writePrivateFileAtomic(join(stateRoot(), 'messages.json'), JSON.stringify({ version: 1, messages }));
 }
 it('answers only the request whose thread gets a durable sent receipt, across reconnection', async () => {
   const seen = [['2026-11-12T22:20:00.000Z', A], ['2026-11-12T22:21:00.000Z', B]] as const;
   for (const [at, t] of seen) {
-    recordSlackObservation({ at, decision: 'ingested', channelId: CH, messageTs: t, threadTs: t, bus: 'posted' }, { runsDir: runsDir() });
+    recordSlackObservation({ at, decision: 'ingested', channelId: CH, messageTs: t, threadTs: t, bus: 'posted', requestId: rid(t) }, { runsDir: runsDir() });
   }
   const [reqA, reqB] = seen.map(([at, t]) => ({ channelId: CH, threadTs: t, messageTs: t, at }));
 
   // An attempted receipt is intent, never an answer: both requests stay unanswered.
-  writeReceipts([{ channel: CH, thread: A, state: 'attempted' }]);
+  // The exact key for A was attempted, so A is uncertain; B has no matching key and stays unanswered.
+  writeReceipts([{ key: replyKey(rid(A)), channel: CH, thread: A, state: 'attempted' }]);
   expect(await readTool()).toEqual({
-    asOf: new Date(NOW_MS).toISOString(), state: 'ok', answered: 0, unanswered: 2, oldestUnansweredAt: reqA!.at,
-    uncertainSends: 1, rejected: 0, futureDated: 0, unansweredSample: [reqA, reqB],
+    asOf: new Date(NOW_MS).toISOString(), state: 'ok', answered: 0, unanswered: 1, oldestUnansweredAt: reqB!.at,
+    uncertainSends: 1, unverified: 0, uncertainRequests: 1, rejected: 0, futureDated: 0, unansweredSample: [reqB], busFailed: 0, busFailedSample: [],
   });
 
   // Clock advances: thread A gets a sent reply; a sent reply on thread C reaches no request.
   vi.setSystemTime(NOW_MS + 60_000);
   writeReceipts([
-    { channel: CH, thread: A, state: 'sent', ts: ts('2026-11-12T22:26:00Z') },
-    { channel: CH, thread: C, state: 'sent', ts: ts('2026-11-12T22:27:00Z') },
+    { key: replyKey(rid(A)), channel: CH, thread: A, state: 'sent', ts: ts('2026-11-12T22:26:00Z') },
+    { key: replyKey(rid(C)), channel: CH, thread: C, state: 'sent', ts: ts('2026-11-12T22:27:00Z') },
   ]);
   const after = await readTool();
   expect(after).toMatchObject({

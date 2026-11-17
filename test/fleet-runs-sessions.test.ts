@@ -183,6 +183,26 @@ describe('parseSessionMetrics', () => {
 // ---------------------------------------------------------------------------
 
 describe('getFleetSessions', () => {
+  it('counts a published cloud job as finished even with a fresh base, no log and no exit code', async () => {
+    const dir = await runsDir({
+      'queue/run/JOB-CLOUD.line': line('JOB-CLOUD', 'phantom', 'devin', 'work'),
+      'queue/run/JOB-CLOUD.dispatched': epoch(ANCHOR - 60 * S),
+      'JOB-CLOUD.base': 'base\n',
+      'JOB-CLOUD.publish': 'RESULT PR https://github.com/ashlrai/phantom/pull/77\n',
+      'queue/run/JOB-FLY.line': line('JOB-FLY', 'phantom', 'devin', 'work'),
+      'queue/run/JOB-FLY.dispatched': epoch(ANCHOR - 60 * S),
+      'JOB-FLY.base': 'base\n',
+    });
+    for (const j of ['JOB-CLOUD', 'JOB-FLY']) {
+      await touch(join(dir, `queue/run/${j}.line`), ANCHOR - 65 * S);
+      await touch(join(dir, `${j}.base`), ANCHOR - 30 * S);
+    }
+    await touch(join(dir, 'JOB-CLOUD.publish'), ANCHOR - 20 * S);
+    const snap = await getFleetSessions({ ...opts, runsDir: dir, runPs: noPs });
+    expect(byJob(snap, 'JOB-CLOUD')).toMatchObject({ status: 'finished', outcome: 'pr', prUrl: 'https://github.com/ashlrai/phantom/pull/77' });
+    expect(byJob(snap, 'JOB-FLY')?.status).toBe('launching'); // in flight: still active
+  });
+
   it('classifies queued, parked, launching, running, exited, stale and finished sessions', async () => {
     const baseMtime = ANCHOR - 500 * S;
     const dir = await runsDir({

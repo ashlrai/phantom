@@ -16,6 +16,7 @@ import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { validLeaderInboxReceipt, type LeaderInboxAppender, type LeaderInboxRequest } from './leader-inbox-writer.js';
+import { leaderReplyEnvelopeId } from './slack-reply-identity.js';
 
 export const LEADER_BRIDGE_ID = 'leader-network';
 export const LEADER_AWAY_MS = 72 * 60 * 60 * 1000;
@@ -198,7 +199,7 @@ export function createLeaderNetwork(options: LeaderNetworkOptions) {
     finally { if (timer) clearTimeout(timer); }
   }
   function replyEnvelope(id: string, route: Pick<Route, 'channel' | 'channelRef'>, text: string): BusEnvelope {
-    return { id: `leader-reply-${id.slice(0, 32)}`, from: 'leader', to: 'mason', priority: 'P0', ttl: CHANNEL_BUS_TTL_MS, body: { kind: 'leader-reply', requestId: id, text: `Leader: ${text}` }, channel: route.channel, channel_ref: route.channelRef, sender: { agent_id: 'leader', vendor: 'phantom', human: false, team: true }, external: false, origin_bridge: LEADER_BRIDGE_ID };
+    return { id: leaderReplyEnvelopeId(id), from: 'leader', to: 'mason', priority: 'P0', ttl: CHANNEL_BUS_TTL_MS, body: { kind: 'leader-reply', requestId: id, text: `Leader: ${text}` }, channel: route.channel, channel_ref: route.channelRef, sender: { agent_id: 'leader', vendor: 'phantom', human: false, team: true }, external: false, origin_bridge: LEADER_BRIDGE_ID };
   }
   return {
     async pending(): Promise<{ requestId: string; envelope: BusEnvelope; replyText?: string }[]> {

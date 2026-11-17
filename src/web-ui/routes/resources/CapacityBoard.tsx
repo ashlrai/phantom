@@ -2,7 +2,7 @@ import type { ResourceConsoleSnapshot, ResourceConsoleGroup } from '../../../cor
 import type { ResourceObservation } from '../../../core/resources/pool-policy.js';
 import { PROVIDER_LABELS, providerOfName } from '../../../core/fabric/provider-cards.js';
 import { Meter } from '../../components/primitives/Meter.js';
-import { ProviderMark } from './ProviderMark.js';
+import { BrandMark } from '../../components/primitives/BrandMark.js';
 import { StatusBadge } from '../../components/primitives/StatusBadge.js';
 import styles from './ResourcePoolView.module.css';
 
@@ -87,7 +87,7 @@ function CapacityLane({ group, snapshot, selectedWorkerId, onSelect, historical 
   const vendor = workers.map((worker) => providerOfName(worker.provider)).find((id) => id !== null) ?? null;
   return <section className={styles.capacityLane} aria-label={`Capacity group ${group.capacityKey}`}>
     <div className={styles.capacitySource}>
-      {vendor ? <ProviderMark provider={vendor} label={PROVIDER_LABELS[vendor]} />
+      {vendor ? <span className={styles.sourceGlyph}><BrandMark brand={vendor} size={18} title={`${PROVIDER_LABELS[vendor]} mark`} /></span>
         : <span className={styles.sourceGlyph} aria-hidden="true">⇄</span>}<h3>{group.capacityKey}</h3>
       <p className={styles.slotCount}><strong>{resourceNumber(group.occupiedSlots)}</strong> / {group.maxConcurrent} occupied</p>
       <p className={styles.caption}>{workers.length} {workers.length === 1 ? 'worker' : 'workers sharing capacity'}</p>
