@@ -116,10 +116,12 @@ uses the saved identity and preserves primary/backup roles. SSH trust and each
 provider's local sign-in remain prerequisites; join does not discover devices or
 install a runner.
 
-The 16 GiB Air has a two-slot RAM ceiling; the 8 GiB Pro has one. Reserve at least
-4 GiB or 30% of RAM, whichever is larger, and budget 4 GiB per job. Memory below
-30% available, swap in use, disk below 20 GB free or unknown telemetry holds
-admission; runtime pressure stops the worker. A worker launches one bounded batch
+Reserve at least 4 GiB or 30% of RAM, whichever is larger. The advertised
+`codex-file` budget is 1 GiB per slot (11 slots at 16 GiB; 4 at 8 GiB), capped
+at 64; unknown pack RAM estimates remain 4 GiB. Kernel memory pressure must be
+normal, free-memory/swap readings must be measured, and disk must have at least
+20 GB free. Unknown telemetry holds admission; runtime pressure stops the worker.
+A worker launches one bounded batch
 of up to its RAM slot ceiling concurrently under one session, waits for every
 started slot, then leaves. No permanent supervisor is installed. Disk telemetry
 covers the home filesystem; the runner's existing DISKGUARD must also cover
@@ -127,6 +129,29 @@ checkout and artifact volumes. Pressure checks target three seconds, subject to
 bounded synchronous telemetry and SSH delays. These checks add to DISKGUARD.
 Use independent per-node lanes; no sharded-inference speedup has been measured.
 iPad Pro and phone are mobile control surfaces, not compute nodes.
+
+Worker identities on the same OS account share that physical host budget through
+atomic slot leases, even with different `ASHLR_HOME` directories. The registry is
+`~/.ashlr-runs/node-host-slots/<hardware-digest>/<boot-uuid>/`, using the OS account
+home rather than the process `HOME`. New directories are 0700 and lease files 0600;
+symlinks, ambiguous identity, malformed state and unsafe permissions hold admission.
+The lowest free slot is leased before pull and released only after runner close.
+Exhaustion reports `slots: 0, held: host-slots-exhausted`; unmeasured registry state
+reports `host-slots-unmeasured`. `phm node status --json` includes local `capacity`.
+Heartbeats send the same slot count in `--slots` and in the capacity sample: this
+session's running jobs plus the host's free slots. Host-slot and CPU holds send
+zero slots without a sample, so the pool shows that host's capacity as unknown.
+Reservations are never stolen on timeout or worker PID death: a detached runner
+may still be alive. After a crash, drain/stop all workers and runners before any
+manual registry cleanup; a reboot selects a fresh boot directory automatically.
+All sibling workers must run the coordinated build. Different OS accounts need
+a separately commissioned shared registry; per-account budgets must not be added.
+
+The optional trusted per-pack resource hint is `memory-bound` or `cpu-bound`.
+`codex-file` and `shell-check` ignore load average. `omlx-chat` requires measured
+CPU parallelism and load, with room for one additional runnable task. Missing CPU
+telemetry reports `cpu-unmeasured`; insufficient headroom reports `cpu-pressure`.
+The worker checks the actual claimed pack before spawn and throughout execution.
 
 Share reviewed project MCP and skill files with the same checkout revision, and
 credential-free Phantom connector profiles with local vault bindings. There is no
