@@ -22,6 +22,10 @@ A worker's own `EMPTY_REASON` line outranks everything except a precheck skip, a
 
 Missing data is never shown as zero: `tokens` is null when no job recorded any, and every count is null with `metrics: "unreadable"` (exit 1) when the metrics file cannot be read. Output holds job ids, lane names, counts and fixed sentences only, never note or log text.
 
+`families` ranks all job families by `empty_rate` (empty finishes divided by all finishes), then `wasted_tokens` descending, then name for ties. It uses the same window: 24 hours by default, adjustable with `--since`. Each row has `name`, `finishes`, `empties`, `empty_rate`, `wasted_tokens`, `tokens_unknown_jobs` and `recommendation`. Family membership uses all finishes, including productive jobs. Wasted tokens sum only empty jobs' recorded tokens; missing measurements remain null (sorted last), partial sums carry an unknown-job count, and a family with no empties has zero waste. An unreadable or empty window has `families: []`.
+
+The recommendation is `suppress` only above 60% empty with at least five finishes, `observe` below five finishes, and `keep` otherwise. These are suggestions; the report changes no queue rules. `--text` shows the top three families with empties and the same recommendations in plain words. Use `phm empties --json` for the complete typed report.
+
 ## Detail by lane: `phm fleet empties`
 
 Run `phm fleet empties --since 24h --json` to see why jobs ended empty. Omit `--json` for plain lines; `--since` accepts a positive number of hours such as `24h` and defaults to 24 hours. `--runs-dir <directory>` reads another runs dir (default `~/.ashlr-runs`). The command is read-only and does not change filler or dispatch rules.

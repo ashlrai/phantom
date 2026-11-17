@@ -57,6 +57,7 @@ import { LaneTargetError, setLaneTarget } from '../fleet/runs-lane-targets.js';
 import { parseReleaseCommand, renderReleaseReply, type ReleaseReply } from './telegram-release-command.js';
 import { runTelegramJobCommand, renderJobCommandReply } from './telegram-job-command.js';
 import { runTelegramNeedsCommand, renderNeedsCommandReply } from './telegram-needs-command.js';
+import { isVerifiedTelegramOwner } from './telegram-ask-reply.js';
 import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { stopJob } from '../fleet/job-stop.js';
@@ -1022,10 +1023,7 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
     const request = parseReleaseCommand(text);
     // The durable Telegram inbox retains exactly the identity evidence checked
     // by the transport for every command. Fail closed for injected/old events.
-    const chatId = cfg.comms?.telegram?.chatId;
-    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
-    if (request && Number.isSafeInteger(id) && event.fromChatId === chatId &&
-        event.privateChat === true && event.senderUserId === id) {
+    if (request && isVerifiedTelegramOwner(event, cfg)) {
       let result: ReleaseReply;
       try {
         const state = await releaseLaneHold(request.lane, { reason: 'telegram' });
@@ -1042,10 +1040,7 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
     }
   }
   if (cmd === 'stop' || cmd === 'reassign') {
-    const chatId = cfg.comms?.telegram?.chatId;
-    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
-    if (Number.isSafeInteger(id) && event.fromChatId === chatId &&
-        event.privateChat === true && event.senderUserId === id) {
+    if (isVerifiedTelegramOwner(event, cfg)) {
       const result = await runTelegramJobCommand(text, { stopJob, reassignQueuedJobs });
       const sent = await replyTo(event, renderJobCommandReply(result), cfg);
       if (!sent.ok) throw new Error('Telegram acknowledgement failed');
@@ -1053,10 +1048,7 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
     return true;
   }
   if (cmd === 'needs' || cmd === 'resolve') {
-    const chatId = cfg.comms?.telegram?.chatId;
-    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
-    if (Number.isSafeInteger(id) && event.fromChatId === chatId &&
-        event.privateChat === true && event.senderUserId === id) {
+    if (isVerifiedTelegramOwner(event, cfg)) {
       const result = await runTelegramNeedsCommand(text, { list: listNeedsMason, resolve: (request, opts) => resolveNeedsMasonWithInbox(request, opts) });
       const sent = await replyTo(event, renderNeedsCommandReply(result), cfg);
       if (!sent.ok) throw new Error('Telegram acknowledgement failed');
@@ -1071,10 +1063,7 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
       return true;
     }
     // Match /release's retained identity evidence before making a write.
-    const chatId = cfg.comms?.telegram?.chatId;
-    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
-    if (Number.isSafeInteger(id) && event.fromChatId === chatId &&
-        event.privateChat === true && event.senderUserId === id) {
+    if (isVerifiedTelegramOwner(event, cfg)) {
       let result: HoldReply;
       try {
         const state = await placeLaneHold(request.lane, { minutes: request.minutes, reason: request.reason, changedBy: 'telegram' });
@@ -1095,10 +1084,7 @@ export async function handleSlashCommand(event: InboundEvent, text: string, cfg:
     // The same retained identity evidence as /release: the configured positive
     // private-chat ID, the exact sender and the exact chat. Injected or old
     // events missing it fail closed before any write.
-    const chatId = cfg.comms?.telegram?.chatId;
-    const id = typeof chatId === 'string' && /^[1-9]\d*$/.test(chatId) ? Number(chatId) : NaN;
-    if (request && Number.isSafeInteger(id) && event.fromChatId === chatId &&
-        event.privateChat === true && event.senderUserId === id) {
+    if (request && isVerifiedTelegramOwner(event, cfg)) {
       let result: TargetReply;
       try {
         const state = await setLaneTarget(request.lane, request.target, { changedBy: 'telegram' });

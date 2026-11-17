@@ -5,6 +5,7 @@ import { validateDropJob } from './drop-job-writer.js';
 export function recutDropJob(pr: DirtyLandedPr, nowMs: number) {
   if (pr.base !== 'main' && pr.base !== 'master') return { reason: 'base' } as const;
   if (pr.diffAnomaly) return { reason: 'diff-anomaly' } as const;
+  if (pr.class === 'landed') return { reason: 'already-present-on-base' } as const;
   if (pr.class !== 'needs-recut' && pr.class !== 'partly-landed') return { reason: 'class' } as const;
   if (!/^bridge: RQ-PHX-/.test(pr.title)) return { reason: 'title' } as const;
   if (!pr.remainingPaths.length) return { reason: 'empty' } as const;

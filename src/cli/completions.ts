@@ -19,7 +19,7 @@ import { makeColors, isTty } from './ui.js';
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
   'graph',
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'empties', 'throughput', 'home', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'empties', 'throughput', 'home', 'asks', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -78,6 +78,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'constitution', 'wb', 'caps',
   // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
   'pages',
+  // The typed command catalog the desktop palette also lists (RQ-CMDPALN17TQ8).
+  'commands',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
@@ -186,6 +188,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   roadmap: ['run', 'resume', 'status'],
   seams: ['status'],
   completions: ['zsh', 'bash'],
+  commands: ['--json', '--help'],
   plugins: ['init', 'list', 'info', 'enable', 'disable'],
   skills: ['list', 'audit'],
   pages: ['publish', 'list', '--json', '--help'],

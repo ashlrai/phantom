@@ -77,6 +77,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{ ok, ruleCount, referenceCount, filesChecked, diagnostics: [{ path, line, id, kind }] }',
   },
+  { usage: 'phm commands [--json]', description: 'List every user-facing command with its description, argument forms and whether it changes state. Unclassified commands report changesState true. Read-only; exit 0, 2 usage.', safety: 'read', jsonShape: 'phantom.commands.v1 {schema,commands:[{name,description,arguments:[form],changesState,needsInput}]}' },
   { usage: 'phm check [--base <ref>] [--json]', description: 'In the Phantom repository, run incremental typechecks, cached lint and affected tests concurrently. Development feedback only; run the gate for release checks.', safety: 'append', jsonShape: '{ok, mode, base, durationMs, steps}' },
   { usage: 'phm tune prepare <reviewed-samples.jsonl> <new-output-directory> <scrub.pl> | evaluate <paired-report.json>', description: 'Prepare scrub-gated local-model datasets or assess paired evaluation evidence; never train or activate a lane.', safety: 'append', jsonShape: 'Dataset counts/hashed task IDs or paired evaluation decision' },
   {
@@ -220,8 +221,9 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
   { usage: 'phm jobs retry-empty --dry-run|--apply [--file <router-queue.md>] [--json]', description: 'Preview or queue one scoped retry per eligible empty job.', safety: 'append', jsonShape: 'jobs.retry-empty.v1 {applied,lines}' },
-  { usage: 'phm empties [--since 24h] [--text] [--metrics <file>] [--runs-dir <directory>] [--notes-dir <directory>]', description: 'Why jobs finished with no change, grouped by reason, with share of all finishes, tokens, the lanes and job families most affected and one next step each. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'empties.v1 {since_hours,metrics_path,metrics,finishes,empties,empty_share,tokens,tokens_unknown_jobs,malformed_lines,notes_missing,reasons:[{reason,label,count,share_of_finishes,tokens,tokens_unknown_jobs,lanes,prefixes,examples,next_step}]}' },
+  { usage: 'phm empties [--since 24h] [--text] [--metrics <file>] [--runs-dir <directory>] [--notes-dir <directory>]', description: 'Why jobs finished with no change, grouped by reason, with share of all finishes, tokens, and one next step each. Families rank by empty rate and wasted tokens; recommend suppression above 60% with at least five finishes. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'empties.v1 {since_hours,metrics_path,metrics,finishes,empties,empty_share,tokens,tokens_unknown_jobs,malformed_lines,notes_missing,reasons:[{reason,label,count,share_of_finishes,tokens,tokens_unknown_jobs,lanes,prefixes,examples,next_step}],families:[{name,finishes,empties,empty_rate,wasted_tokens,tokens_unknown_jobs,recommendation}]}' },
   { usage: 'phm home [--json] [--leader-seen <time>]', description: 'Is the fleet healthy and moving, in one glance: merged PRs, median time to merge, main per repo, running jobs per lane, the resource most at risk of going unused, the last 5 work-log items and unread Leader replies. A missing source prints as unknown with the reason.', safety: 'read', jsonShape: 'home.v1 {health,headline,mergedLastHour,merged24h,medianMergeSeconds,main,running,atRisk,worklog,unreadLeaderReplies}' },
+  { usage: 'phm asks [--json] | phm asks answer <id> yes|no|done [--json] | phm asks add password|2fa|device|payment <request> [--json]', description: 'Things only Mason can do (password, 2FA, device approval, payment), answered with one word. Lists open asks; answer records yes, no or done once with source and time; any other kind is refused: the fleet decides this itself.', safety: 'append', jsonShape: 'asks.v1 {asOf,ledger,count,asks:[{id,shortId,kind,request,created,ageSeconds}],fleetDecides}; answer: asks.answer.v1 {status,id,kind,answer,source,answeredAt,reason}' },
   { usage: 'phm throughput [--hours 24] [--by lane|repo|tier] [--text] [--metrics <file>] [--runs-dir <directory>]', description: 'What the fleet produced hour by hour: jobs launched, PRs published, PRs merged, empty jobs and the median publish-to-merge time, with totals, a headline and whether main is green. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'throughput.v1 {as_of,since,hours,by,metrics_path,metrics,malformed_lines,main,headline,totals,buckets:[{start,launched,published,merged,finished,empty,empty_rate,median_publish_to_merge_s,merge_time_unknown}],groups:[{name,totals,buckets}]}' },
   { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
@@ -232,9 +234,9 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   },
   {
     usage: 'phm nodes [--json] [--can-take <lane>]',
-    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, CPU headroom, lanes, running jobs and a plain-words state. --can-take lists the computers able to take a job for that lane now. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
+    description: 'One row per known computer: reachable or not, whether Phantom is running there, free memory, CPU headroom, lanes, running jobs and a plain-words state. --can-take lists ready computers and recommends a remote computer, falling back to this computer when ready. Unknown facts stay unknown with a reason. Exit 0, 2 bad usage.',
     safety: 'read',
-    jsonShape: '{schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,phantom,freeMemoryBytes,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?}',
+    jsonShape: '{schemaVersion:1, asOf, self, registry, nodes:[{name,isSelf,reachable,lastSeen,phantom,freeMemoryBytes,cpuHeadroomPercent,lanes,jobsRunning,freeSlots,stateCode,state}], reasons, canTake?, placement?:{lane,node,target,reason,explanation}}',
   },
   {
     usage: 'phm node bootstrap --dry-run [--json]',
@@ -869,6 +871,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
   { cmd: 'empties [--since 24h] [--text]', desc: 'Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.', topic: 'observability' },
   { cmd: 'home [--json]', desc: 'Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.', topic: 'observability' },
+  { cmd: 'asks [--json] | asks answer <id> yes|no|done', desc: 'What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.', topic: 'observability' },
   { cmd: 'throughput [--hours 24] [--by lane|repo|tier] [--text]', desc: 'Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.', topic: 'observability' },
   { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
@@ -914,6 +917,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
   { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
+  { cmd: 'commands [--json]',            desc: 'List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
   { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes. list --all adds Claude Code plugins (the Plugins pane).', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },
