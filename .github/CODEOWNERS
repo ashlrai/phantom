@@ -1219,6 +1219,7 @@
 /test/routing-interactive-scope.test.ts @masonwyatt23
 /test/routing-off-policy-research.test.ts @masonwyatt23
 /test/routing-outcome-learning.test.ts @masonwyatt23
+/test/routing-pairing.test.ts @masonwyatt23
 /test/routing-readiness-314.test.ts @masonwyatt23
 /test/routing-router-weights.test.ts @masonwyatt23
 /test/routing-seat-router.test.ts @masonwyatt23
