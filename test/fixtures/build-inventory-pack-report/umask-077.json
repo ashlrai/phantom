@@ -1,0 +1,12 @@
+[
+  {
+    "path": "dist/api/bot-templates.d.ts",
+    "size": 564,
+    "mode": 384
+  },
+  {
+    "path": "dist/api/bot-templates.js",
+    "size": 2535,
+    "mode": 384
+  }
+]
