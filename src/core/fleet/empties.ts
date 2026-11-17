@@ -11,13 +11,15 @@ import { join } from 'node:path';
 import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerRows, readText, type EmptyCause, type EmptyEvidence } from './empty-cause.js';
 import { REASON_LINE, TIMEOUT_EXITS } from './lane-empty-causes.js';
 
-export const EMPTY_REASONS = ['already_on_master', 'no_eligible_target', 'blocked_tool', 'precheck_skip', 'timeout', 'model_error', 'unknown'] as const;
+export const EMPTY_REASONS = ['already_on_master', 'no_eligible_target', 'no_diff', 'blocked_tool', 'tool_missing', 'precheck_skip', 'timeout', 'model_error', 'unknown'] as const;
 export type EmptyReason = (typeof EMPTY_REASONS)[number];
 
 const LABEL: Record<EmptyReason, string> = {
   already_on_master: 'already on master',
   no_eligible_target: 'no eligible target found',
+  no_diff: 'no diff',
   blocked_tool: 'blocked tool',
+  tool_missing: 'missing tool',
   precheck_skip: 'precheck skip',
   timeout: 'timeout',
   model_error: 'model limit or error',
@@ -65,11 +67,12 @@ const STATED: Record<string, EmptyReason> = {
 };
 // Rule order of empty-cause.ts: a denial outranks the "nothing to do" verdict it often causes.
 const BY_CAUSE: ReadonlyArray<readonly [EmptyCause, EmptyReason | null]> = [
-  ['precheck_skip', 'precheck_skip'], ['sandbox_denied', 'blocked_tool'], ['tool_missing', 'blocked_tool'],
+  ['precheck_skip', 'precheck_skip'], ['sandbox_denied', 'blocked_tool'], ['tool_missing', 'tool_missing'],
   ['model_error', 'model_error'], ['no_candidate', null], ['timeout', 'timeout'],
 ];
 const ALREADY = /\balready (?:on|in|landed|merged|done|implemented|fixed|covered|shipped|exists)\b|\bno changes? (?:is |are |was |were )?needed\b|\bduplicate of\b|\b(?:existing|open) (?:pr|pull request)\b[^\n]{0,60}\bcover/i;
 const NO_TARGET = /\bNO[ _-]CANDIDATE\b|\bno (?:eligible |conflicting |matching |open )?(?:targets?|candidates?|prs?|pull requests?)\b[^\n]{0,30}\b(?:found|left|remain(?:s|ing)?)\b|\bnothing (?:left )?to (?:do|fix|recut|change)\b/i;
+const NO_DIFF = /\bno[ _-]diff\b|\bno changes? (?:made|produced)\b|\bnothing to commit\b|\bworking tree clean\b/i;
 
 /** Pure: one reason per empty finish. Notes are read whole; only the log's final lines count (its head echoes the prompt). */
 export function classifyEmptyReason(finish: Pick<EmptiesFinish, 'skipped' | 'exitCode' | 'poolError'>, evidence: EmptyEvidence): EmptyReason {
@@ -88,7 +91,8 @@ export function classifyEmptyReason(finish: Pick<EmptiesFinish, 'skipped' | 'exi
     if (causes.includes(cause)) return reason ?? (already ? 'already_on_master' : 'no_eligible_target');
   }
   if (already) return 'already_on_master';
-  return texts.some(text => NO_TARGET.test(text)) ? 'no_eligible_target' : 'unknown';
+  if (texts.some(text => NO_TARGET.test(text))) return 'no_eligible_target';
+  return texts.some(text => NO_DIFF.test(text)) ? 'no_diff' : 'unknown';
 }
 
 export interface EmptiesCount { name: string; count: number }
@@ -116,6 +120,8 @@ export interface EmptiesReport {
   tokens_unknown_jobs: number | null;
   malformed_lines: number | null;
   notes_missing: number | null;
+  /** Top three empty-job families across all reasons in the window; null when unreadable. */
+  top_families: EmptiesCount[] | null;
   /** Every reason, most frequent first; empty when the metrics file is unreadable. */
   reasons: EmptiesReason[];
 }
@@ -153,7 +159,9 @@ function nextStep(reason: EmptyReason, family: string, lane: string, count: numb
   switch (reason) {
     case 'already_on_master': return `Stop queuing ${family} jobs: the work is already on master. Check master before queuing more.`;
     case 'no_eligible_target': return `Stop queuing ${family} jobs: no eligible target is left.`;
+    case 'no_diff': return `Review ${family} prompts and result notes to find why workers produced no change.`;
     case 'blocked_tool': return `Fix tool access on lane ${lane} (for example GitHub sign-in), or send ${family} jobs to a lane that has it.`;
+    case 'tool_missing': return `Install the required tool on lane ${lane}, or send ${family} jobs to a lane that has it.`;
     case 'precheck_skip': return `Remove ${family} jobs from the queue: the precheck already skips them.`;
     case 'timeout': return `Split ${family} jobs into smaller ones, or raise the time limit on lane ${lane}.`;
     case 'model_error': return `Pause lane ${lane} until its model limit or API error clears, then retry these jobs.`;
@@ -169,7 +177,7 @@ export function buildEmptiesReport(input: {
 }): EmptiesReport {
   const head = { schema: 'empties.v1', since_hours: input.hours, metrics_path: input.metricsPath } as const;
   if (input.ledger === null) {
-    return { ...head, metrics: 'unreadable', finishes: null, empties: null, empty_share: null, tokens: null, tokens_unknown_jobs: null, malformed_lines: null, notes_missing: null, reasons: [] };
+    return { ...head, metrics: 'unreadable', finishes: null, empties: null, empty_share: null, tokens: null, tokens_unknown_jobs: null, malformed_lines: null, notes_missing: null, top_families: null, reasons: [] };
   }
   const { finishes, malformed } = input.ledger;
   const empties = finishes.filter(finish => finish.empty);
@@ -198,7 +206,8 @@ export function buildEmptiesReport(input: {
     ...head, metrics: 'ok', finishes: finishes.length, empties: empties.length,
     empty_share: finishes.length ? share(empties.length, finishes.length) : null,
     ...tokensOf(empties),
-    malformed_lines: malformed, notes_missing: empties.filter(noNotes).length, reasons,
+    malformed_lines: malformed, notes_missing: empties.filter(noNotes).length,
+    top_families: jobFamilies(empties.map(job => job.id)).slice(0, 3), reasons,
   };
 }
 
@@ -207,7 +216,7 @@ const percent = (value: number): string => `${Math.round(value * 100)}%`;
 const tokenText = (tokens: number | null, unknownJobs: number): string => tokens === null ? 'tokens unknown'
   : `${tokens.toLocaleString('en-US')} tokens${unknownJobs ? ` (${plural(unknownJobs, 'job')} unknown)` : ''}`;
 
-/** Pure: the `--text` view. At most 17 lines: one summary, two per reason seen, two for gaps. */
+/** Pure: the `--text` view. At most 20 lines: one summary, two per reason seen, one for gaps. */
 export function emptiesText(report: EmptiesReport): string[] {
   const window = `the last ${report.since_hours} h`;
   if (report.finishes === null || report.empties === null) return [`Empty finishes in ${window}: unknown. Cannot read the job metrics file ${report.metrics_path}.`];
@@ -219,8 +228,10 @@ export function emptiesText(report: EmptiesReport): string[] {
     lines.push(`${reason.label}: ${plural(reason.count, 'job')}, ${percent(reason.share_of_finishes)} of finishes, ${tokenText(reason.tokens, reason.tokens_unknown_jobs)}. Lanes: ${list(reason.lanes)}. Jobs: ${list(reason.prefixes)}.`);
     lines.push(`  Next: ${reason.next_step}`);
   }
-  if (report.notes_missing) lines.push(`${plural(report.notes_missing, 'empty job')} left no notes, so their reason comes from the log alone.`);
-  if (report.malformed_lines) lines.push(`${plural(report.malformed_lines, 'metrics line')} could not be read and ${report.malformed_lines === 1 ? 'was' : 'were'} skipped.`);
+  const gaps: string[] = [];
+  if (report.notes_missing) gaps.push(`${plural(report.notes_missing, 'empty job')} left no notes, so their reason comes from the log alone.`);
+  if (report.malformed_lines) gaps.push(`${plural(report.malformed_lines, 'metrics line')} could not be read and ${report.malformed_lines === 1 ? 'was' : 'were'} skipped.`);
+  if (gaps.length) lines.push(gaps.join(' '));
   return lines;
 }
 

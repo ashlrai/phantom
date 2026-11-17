@@ -7,7 +7,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm empties [--since 24h] [--text] [--metrics <file>] [--runs-dir <directory>] [--notes-dir <directory>]
 Why jobs finished with no change, grouped by reason: already on master, no eligible target found,
-blocked tool, precheck skip, timeout, model limit or error, and unknown. Each reason shows its count,
+no diff, blocked tool, missing tool, precheck skip, timeout, model limit or error, and unknown. Each reason shows its count,
 share of all finishes, tokens spent, the lanes and job families most affected, and one next step.
 Prints JSON (schema empties.v1); --text prints at most 20 plain lines. Read-only.
   --since <n>h|<n>d   window to report, default 24h
