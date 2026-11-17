@@ -1,6 +1,7 @@
 /**
  * Lane tool parity: which lane declares which tool, and which lanes can take a
- * job that needs a given set of tools. Backs `phm tools parity|requires`.
+ * job that needs a given set of tools. Backs `phm tools`, `phm tools parity|requires`
+ * and the desktop Tools panel (GET /api/tools), so every surface reads one source.
  *
  * Declarations only, never a live probe. A capability no source declares is
  * `unknown`, and unknown is never shown or counted as missing: only an explicit
@@ -9,8 +10,8 @@
  *
  * Sources, later ones win per field (MCP server names are unioned):
  *   1. router: DECLARED_LANE_CAPABILITIES (gh -> github-read, browser -> browser)
- *   2. connectors: ~/.phantom/connectors/profile.toml MCP connectors with an
- *      explicit lane list (an empty list is discovery, not a grant, so it is skipped)
+ *   2. connectors: ~/.phantom/connectors/profile.toml MCP, CLI and plugin connectors
+ *      with an explicit lane list (an empty list is discovery, not a grant, so it is skipped)
  *   3. lane-tools.json: `<runs>/queue/lane-tools.json`, the host's own declarations
  * Lanes come from `<runs>/queue/slots.json` plus any lane a source names.
  */
@@ -21,27 +22,32 @@ import { isAbsolute, join } from 'node:path';
 import { DECLARED_LANE_CAPABILITIES } from './lane-capabilities.js';
 
 /** Fixed column order; JSON output follows it. github-write means through the bridge publish path, not gh in the worker. */
-export const TOOL_CAPABILITIES = ['github-read', 'github-write', 'web-search', 'browser', 'shell', 'package-install'] as const;
+export const TOOL_CAPABILITIES = ['github-read', 'github-write', 'web-search', 'browser', 'computer-use', 'shell', 'package-install'] as const;
 export type ToolCapability = typeof TOOL_CAPABILITIES[number];
 export type ToolValue = 'yes' | 'no' | 'unknown';
-/** A capability name, or `mcp:<server>` for one MCP server. */
-export type ToolNeed = ToolCapability | `mcp:${string}`;
+/** Named tool kinds a lane lists by name: MCP servers, CLIs, skills and plugins. */
+export const NAMED_TOOL_KINDS = ['mcp', 'cli', 'skill', 'plugin'] as const;
+export type NamedToolKind = typeof NAMED_TOOL_KINDS[number];
+/** A capability name, or `<kind>:<name>` for one named tool, e.g. `mcp:context7`, `skill:review`. */
+export type ToolNeed = ToolCapability | `${NamedToolKind}:${string}`;
 
-export interface LaneToolDeclaration {
-  capabilities?: Partial<Record<ToolCapability, boolean | null>>;
-  /** MCP server names the lane gets. Absent or null: not declared. */
-  mcp?: readonly string[] | null;
-}
+/** Per kind: the names the lane gets. Absent or null: not declared. */
+export type LaneToolDeclaration = { capabilities?: Partial<Record<ToolCapability, boolean | null>> } & { [K in NamedToolKind]?: readonly string[] | null };
 export interface ToolSource { name: 'router' | 'connectors' | 'lane-tools.json'; lanes: Readonly<Record<string, LaneToolDeclaration>> }
 export type SourceState = 'healthy' | 'missing' | 'degraded';
 
-export interface ToolParityLane { lane: string; capabilities: Record<ToolCapability, ToolValue>; mcp: string[] | null }
+export type ToolParityLane = { lane: string; capabilities: Record<ToolCapability, ToolValue> } & { [K in NamedToolKind]: string[] | null } & {
+  /** Per need, the source a yes or no was read from. Unknown needs have no entry. */
+  from: Record<string, string>;
+};
 export interface ToolParityReport {
   schema: 'tools.parity.v1';
   /** full: every lane declares every tool; gaps: some lane is declared to lack one; unknown: no gaps, but not everything is declared. */
   parity: 'full' | 'gaps' | 'unknown';
   capabilities: ToolCapability[];
   mcpServers: string[];
+  /** Every row in fixed order: capabilities, then named tools by kind and name. */
+  needs: ToolNeed[];
   lanes: ToolParityLane[];
   gaps: Array<{ need: ToolNeed; lanes: string[] }>;
   unknown: Array<{ need: ToolNeed; lanes: string[] }>;
@@ -65,21 +71,44 @@ export function routerToolSource(): ToolSource {
 export function buildToolParity(input: { lanes?: readonly string[]; sources: readonly ToolSource[]; states?: ToolParityReport['sources'] }): ToolParityReport {
   const names = new Set(input.lanes ?? []);
   for (const source of input.sources) for (const lane of Object.keys(source.lanes)) names.add(lane);
+  /** Per lane and kind, the last source that declared a list; a list without an item says "no" for it. */
+  const listedBy = new Map<string, Partial<Record<NamedToolKind, string>>>();
   const lanes = [...names].filter(lane => LANE_RE.test(lane)).sort(byName).map((lane): ToolParityLane => {
     const capabilities = Object.fromEntries(TOOL_CAPABILITIES.map(c => [c, 'unknown'])) as Record<ToolCapability, ToolValue>;
-    let mcp: Set<string> | null = null;
+    const named = new Map<NamedToolKind, Set<string>>();
+    const listed: Partial<Record<NamedToolKind, string>> = {};
+    listedBy.set(lane, listed);
+    const from: Record<string, string> = {};
     for (const source of input.sources) {
       const declared = source.lanes[lane];
       for (const c of TOOL_CAPABILITIES) {
         const value = declared?.capabilities?.[c];
-        if (typeof value === 'boolean') capabilities[c] = value ? 'yes' : 'no';
+        if (typeof value === 'boolean') { capabilities[c] = value ? 'yes' : 'no'; from[c] = source.name; }
       }
-      if (Array.isArray(declared?.mcp)) for (const server of declared.mcp) if (MCP_RE.test(server)) (mcp ??= new Set()).add(server);
+      for (const kind of NAMED_TOOL_KINDS) {
+        const list = declared?.[kind];
+        if (!Array.isArray(list)) continue;
+        const set = named.get(kind) ?? new Set<string>();
+        named.set(kind, set);
+        listed[kind] = source.name;
+        for (const item of list) if (MCP_RE.test(item)) { set.add(item); from[`${kind}:${item}`] = source.name; }
+      }
     }
-    return { lane, capabilities, mcp: mcp ? [...mcp].sort(byName) : null };
+    const row = { lane, capabilities } as ToolParityLane;
+    for (const kind of NAMED_TOOL_KINDS) { const set = named.get(kind); row[kind] = set ? [...set].sort(byName) : null; }
+    row.from = from;
+    return row;
   });
-  const mcpServers = [...new Set(lanes.flatMap(l => l.mcp ?? []))].sort(byName);
-  const needs: ToolNeed[] = [...TOOL_CAPABILITIES, ...mcpServers.map(s => `mcp:${s}` as const)];
+  const namedNeeds = NAMED_TOOL_KINDS.flatMap(kind => [...new Set(lanes.flatMap(l => l[kind] ?? []))].sort(byName).map(n => `${kind}:${n}` as ToolNeed));
+  for (const lane of lanes) {
+    const listed = listedBy.get(lane.lane)!;
+    for (const need of namedNeeds) {
+      const source = listed[namedKind(need)!];
+      if (!(need in lane.from) && source) lane.from[need] = source;
+    }
+    lane.from = Object.fromEntries(Object.entries(lane.from).sort(([a], [b]) => byName(a, b)));
+  }
+  const needs: ToolNeed[] = [...TOOL_CAPABILITIES, ...namedNeeds];
   const collect = (want: ToolValue) => needs
     .map(need => ({ need, lanes: lanes.filter(l => laneHas(l, need) === want).map(l => l.lane) }))
     .filter(row => row.lanes.length > 0);
@@ -87,14 +116,21 @@ export function buildToolParity(input: { lanes?: readonly string[]; sources: rea
   const unknown = collect('unknown');
   return {
     schema: 'tools.parity.v1', parity: gaps.length ? 'gaps' : unknown.length || !lanes.length ? 'unknown' : 'full',
-    capabilities: [...TOOL_CAPABILITIES], mcpServers, lanes, gaps, unknown, sources: input.states ?? input.sources.map(s => ({ name: s.name, state: 'declared' as const })),
+    capabilities: [...TOOL_CAPABILITIES], mcpServers: namedNeeds.filter(n => n.startsWith('mcp:')).map(n => n.slice(4)),
+    needs, lanes, gaps, unknown, sources: input.states ?? input.sources.map(s => ({ name: s.name, state: 'declared' as const })),
   };
 }
 
-/** One lane's value for one need. An MCP server is `no` only when the lane declares a server list without it. */
+/** One lane's value for one need. A named tool is `no` only when the lane declares a list of that kind without it. */
 export function laneHas(lane: ToolParityLane, need: ToolNeed): ToolValue {
-  if (need.startsWith('mcp:')) return lane.mcp === null ? 'unknown' : lane.mcp.includes(need.slice(4)) ? 'yes' : 'no';
+  const kind = namedKind(need);
+  if (kind) { const list = lane[kind]; return list == null ? 'unknown' : list.includes(need.slice(kind.length + 1)) ? 'yes' : 'no'; }
   return lane.capabilities[need as ToolCapability] ?? 'unknown';
+}
+
+function namedKind(need: string): NamedToolKind | null {
+  const kind = need.slice(0, Math.max(0, need.indexOf(':')));
+  return (NAMED_TOOL_KINDS as readonly string[]).includes(kind) ? kind as NamedToolKind : null;
 }
 
 /** Parse `github-read,browser,mcp:context7`. Returns null with the bad word when a need is not recognised. */
@@ -102,8 +138,9 @@ export function parseToolNeeds(text: string): { needs: ToolNeed[] } | { error: s
   const words = [...new Set(text.split(',').map(w => w.trim()).filter(Boolean))];
   if (!words.length) return { error: 'No needs given.' };
   for (const word of words) {
-    const ok = (TOOL_CAPABILITIES as readonly string[]).includes(word) || (word.startsWith('mcp:') && MCP_RE.test(word.slice(4)));
-    if (!ok) return { error: `Unknown need "${word.slice(0, 40)}". Use ${TOOL_CAPABILITIES.join(', ')} or mcp:<server>.` };
+    const kind = namedKind(word);
+    const ok = (TOOL_CAPABILITIES as readonly string[]).includes(word) || (kind !== null && MCP_RE.test(word.slice(kind.length + 1)));
+    if (!ok) return { error: `Unknown need "${word.slice(0, 40)}". Use ${TOOL_CAPABILITIES.join(', ')} or mcp:|cli:|skill:|plugin:<name>.` };
   }
   return { needs: words as ToolNeed[] };
 }
@@ -132,7 +169,7 @@ export function toolRequires(report: ToolParityReport, needs: readonly ToolNeed[
   return out;
 }
 
-const SHORT: Record<ToolCapability, string> = { 'github-read': 'gh-read', 'github-write': 'gh-write', 'web-search': 'search', browser: 'browser', shell: 'shell', 'package-install': 'install' };
+const SHORT: Record<ToolCapability, string> = { 'github-read': 'gh-read', 'github-write': 'gh-write', 'web-search': 'search', browser: 'browser', 'computer-use': 'computer', shell: 'shell', 'package-install': 'install' };
 const cell = (v: ToolValue): string => (v === 'unknown' ? '?' : v);
 const MAX_ROWS = 14;
 
@@ -184,8 +221,8 @@ async function readSmall(path: string): Promise<string | null> {
 }
 
 /**
- * `{ "v": 1, "lanes": { "<lane>": { "github-read": true, "browser": false, "mcp": ["context7"] } } }`.
- * Fields other than booleans (or a string array for mcp) are ignored, not guessed.
+ * `{ "v": 1, "lanes": { "<lane>": { "github-read": true, "browser": false, "mcp": ["context7"], "skill": ["review"] } } }`.
+ * Fields other than booleans (or a string array for mcp, cli, skill, plugin) are ignored, not guessed.
  */
 export function parseLaneTools(raw: unknown): ToolSource['lanes'] | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -197,35 +234,61 @@ export function parseLaneTools(raw: unknown): ToolSource['lanes'] | null {
     const row = value as Record<string, unknown>;
     const capabilities: Partial<Record<ToolCapability, boolean>> = {};
     for (const c of TOOL_CAPABILITIES) if (typeof row[c] === 'boolean') capabilities[c] = row[c] as boolean;
-    const mcp = Array.isArray(row.mcp) && row.mcp.every(s => typeof s === 'string') ? row.mcp as string[] : null;
-    out[lane] = { capabilities, mcp };
+    const decl: LaneToolDeclaration = { capabilities };
+    for (const kind of NAMED_TOOL_KINDS) {
+      const list = row[kind];
+      decl[kind] = Array.isArray(list) && list.every(s => typeof s === 'string') ? list as string[] : null;
+    }
+    out[lane] = decl;
   }
   return out;
 }
 
-export interface ToolParityOptions { runsDir?: string; home?: string }
+/** Each reader fails on its own. Tests inject fixtures here instead of touching disk. */
+export interface ToolParityReaders {
+  /** Connector profile entries: id, kind and the lanes they name. */
+  connectors?: () => Promise<ReadonlyArray<{ id: string; kind: string; lanes: readonly string[] }>>;
+  /** Raw lane-tools.json text, or null when the file is absent. */
+  laneTools?: () => Promise<string | null>;
+  /** Lane ids and the state of the slots file they came from. */
+  slots?: () => Promise<{ lanes: string[]; sourceState: SourceState }>;
+}
+export interface ToolParityOptions { runsDir?: string; home?: string; readers?: ToolParityReaders }
 
-/** Read every source; each fails on its own and is reported as missing or degraded. */
+const CONNECTOR_KIND: Readonly<Record<string, NamedToolKind>> = { 'mcp-stdio': 'mcp', 'mcp-http': 'mcp', cli: 'cli', plugin: 'plugin' };
+
+/** Read every source; each fails on its own and is reported as missing or degraded. Never installs, enables or changes anything. */
 export async function loadToolParity(opts: ToolParityOptions = {}): Promise<ToolParityReport> {
   const runs = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const readers: Required<ToolParityReaders> = {
+    connectors: async () => (await (await import('../connectors/profile.js')).readProfile(opts.home)).connectors,
+    laneTools: async () => {
+      if (!isAbsolute(runs)) throw new Error('runs dir must be absolute');
+      return readSmall(join(runs, 'queue', 'lane-tools.json'));
+    },
+    slots: async () => {
+      const targets = await (await import('./runs-lane-targets.js')).readLaneTargets({ runsDir: runs });
+      return { lanes: targets.lanes.map(l => l.lane), sourceState: targets.sourceState };
+    },
+    ...opts.readers,
+  };
   const states: ToolParityReport['sources'] = [{ name: 'router', state: 'declared' }];
   const sources: ToolSource[] = [routerToolSource()];
 
   try {
-    const { readProfile } = await import('../connectors/profile.js');
-    const profile = await readProfile(opts.home);
+    const connectors = await readers.connectors();
     const lanes: Record<string, LaneToolDeclaration> = {};
-    for (const c of profile.connectors) {
-      if (c.kind !== 'mcp-stdio' && c.kind !== 'mcp-http') continue;
-      for (const lane of c.lanes) lanes[lane] = { mcp: [...(lanes[lane]?.mcp ?? []), c.id] };
+    for (const c of connectors) {
+      const kind = CONNECTOR_KIND[c.kind];
+      if (!kind) continue;
+      for (const lane of c.lanes) { const decl = (lanes[lane] ??= {}); decl[kind] = [...(decl[kind] ?? []), c.id]; }
     }
     sources.push({ name: 'connectors', lanes });
-    states.push({ name: 'connectors', state: profile.connectors.length ? 'healthy' : 'missing' });
+    states.push({ name: 'connectors', state: connectors.length ? 'healthy' : 'missing' });
   } catch { states.push({ name: 'connectors', state: 'degraded' }); }
 
   try {
-    if (!isAbsolute(runs)) throw new Error('runs dir must be absolute');
-    const text = await readSmall(join(runs, 'queue', 'lane-tools.json'));
+    const text = await readers.laneTools();
     const lanes = text === null ? null : parseLaneTools(JSON.parse(text));
     if (lanes) sources.push({ name: 'lane-tools.json', lanes });
     states.push({ name: 'lane-tools.json', state: text === null ? 'missing' : lanes ? 'healthy' : 'degraded' });
@@ -233,11 +296,92 @@ export async function loadToolParity(opts: ToolParityOptions = {}): Promise<Tool
 
   let laneIds: string[] = [];
   try {
-    const { readLaneTargets } = await import('./runs-lane-targets.js');
-    const targets = await readLaneTargets({ runsDir: runs });
-    laneIds = targets.lanes.map(l => l.lane);
-    states.push({ name: 'slots.json', state: targets.sourceState });
+    const slots = await readers.slots();
+    laneIds = slots.lanes;
+    states.push({ name: 'slots.json', state: slots.sourceState });
   } catch { states.push({ name: 'slots.json', state: 'degraded' }); }
 
   return buildToolParity({ lanes: laneIds, sources, states });
+}
+
+export interface ToolCell { value: ToolValue; /** Where a yes or no was read from; null when no source declares it. */ source: string | null }
+export interface ToolMatrixRow { need: ToolNeed; kind: 'capability' | NamedToolKind; label: string; cells: Record<string, ToolCell> }
+export interface ToolLaneScore { lane: string; /** Whole percent of rows that are yes. */ score: number; yes: number; no: number; unknown: number }
+export interface ToolGap { need: ToolNeed; label: string; state: 'missing' | 'unknown'; lanes: string[]; fix: string }
+/** The `phm tools` view and the desktop Tools panel: rows by lane, a score per lane and the top gaps. */
+export interface ToolMatrix {
+  schema: 'tools.matrix.v1';
+  parity: ToolParityReport['parity'];
+  lanes: string[];
+  rows: ToolMatrixRow[];
+  scores: ToolLaneScore[];
+  /** At most three: declared-missing first, then the most-unknown; most lanes first, then row order. */
+  topGaps: ToolGap[];
+  sources: ToolParityReport['sources'];
+}
+
+const LABEL: Record<ToolCapability, string> = {
+  'github-read': 'GitHub read', 'github-write': 'GitHub write', 'web-search': 'Web search', browser: 'Browser',
+  'computer-use': 'Computer use', shell: 'Shell', 'package-install': 'Package install',
+};
+const KIND_LABEL: Record<NamedToolKind, string> = { mcp: 'MCP server', cli: 'CLI', skill: 'Skill', plugin: 'Plugin' };
+export function toolLabel(need: ToolNeed): string {
+  const kind = namedKind(need);
+  return kind ? `${KIND_LABEL[kind]} ${need.slice(kind.length + 1)}` : LABEL[need as ToolCapability] ?? need;
+}
+
+/** One plain sentence; advice only, never applied. */
+function gapFix(need: ToolNeed, state: ToolGap['state'], lanes: readonly string[]): string {
+  const who = lanes.length === 1 ? lanes[0]! : `${lanes.length} lanes`;
+  const kind = namedKind(need);
+  const record = kind ? `list "${need.slice(kind.length + 1)}" under "${kind}"` : `set "${need}": true`;
+  return state === 'missing'
+    ? `Add ${toolLabel(need)} to the launch config of ${who}, then ${record} in <runs>/queue/lane-tools.json.`
+    : `Check ${toolLabel(need)} on ${who} and record yes or no in <runs>/queue/lane-tools.json.`;
+}
+
+/** Pure projection of a parity report. `lane` narrows every part to that lane; an unknown lane yields null. */
+export function buildToolMatrix(report: ToolParityReport, lane?: string): ToolMatrix | null {
+  const picked = lane === undefined ? report.lanes : report.lanes.filter(l => l.lane === lane);
+  if (lane !== undefined && !picked.length) return null;
+  const rows = report.needs.map((need): ToolMatrixRow => ({
+    need, kind: namedKind(need) ?? 'capability', label: toolLabel(need),
+    cells: Object.fromEntries(picked.map(l => [l.lane, { value: laneHas(l, need), source: l.from[need] ?? null }])),
+  }));
+  const scores = picked.map((l): ToolLaneScore => {
+    const values = report.needs.map(n => laneHas(l, n));
+    const yes = values.filter(v => v === 'yes').length;
+    return { lane: l.lane, score: values.length ? Math.round((100 * yes) / values.length) : 0, yes, no: values.filter(v => v === 'no').length, unknown: values.filter(v => v === 'unknown').length };
+  });
+  const ranked = (state: ToolGap['state'], value: ToolValue) => rows
+    .map(row => ({ row, lanes: picked.filter(l => row.cells[l.lane]!.value === value).map(l => l.lane) }))
+    .filter(x => x.lanes.length)
+    .sort((a, b) => b.lanes.length - a.lanes.length)
+    .map(({ row, lanes }): ToolGap => ({ need: row.need, label: row.label, state, lanes, fix: gapFix(row.need, state, lanes) }));
+  return {
+    schema: 'tools.matrix.v1', parity: report.parity, lanes: picked.map(l => l.lane), rows, scores,
+    topGaps: [...ranked('missing', 'no'), ...ranked('unknown', 'unknown')].slice(0, 3), sources: report.sources,
+  };
+}
+
+/** Human view: one line per lane score, then the top gaps. `--lane` shows that lane's list instead. */
+export function formatToolMatrix(m: ToolMatrix, lane?: string): string {
+  const mark = (v: ToolValue): string => (v === 'unknown' ? '?' : v);
+  const lines: string[] = [];
+  if (lane) {
+    const s = m.scores[0]!;
+    lines.push(`${lane}: ${s.score}% of ${m.rows.length} tools (${s.yes} yes, ${s.no} no, ${s.unknown} unknown).`);
+    for (const row of m.rows) { const c = row.cells[lane]!; lines.push(`  ${mark(c.value).padEnd(4)}${row.label}${c.source ? `  (${c.source})` : ''}`); }
+  } else {
+    lines.push(`Tools: ${m.lanes.length} lane(s), ${m.rows.length} tool(s), parity ${m.parity}.`);
+    if (!m.lanes.length) lines.push('No lanes found.');
+    const width = Math.max(4, ...m.lanes.map(l => l.length)) + 2;
+    for (const s of m.scores) lines.push(`  ${s.lane.padEnd(width)}${`${s.score}%`.padStart(4)}  ${s.yes} yes, ${s.no} no, ${s.unknown} unknown`);
+  }
+  lines.push(m.topGaps.length ? 'Top gaps:' : 'Top gaps: none.');
+  m.topGaps.forEach((g, i) => lines.push(`  ${i + 1}. ${g.label} ${g.state} on ${g.lanes.join(', ')}. ${g.fix}`));
+  const unread = m.sources.filter(s => s.state === 'degraded').map(s => s.name);
+  if (unread.length) lines.push(`Could not read: ${unread.join(', ')}.`);
+  lines.push(lane ? '? = not declared. Full matrix: phm tools --json' : 'One lane: phm tools --lane <lane>. Full matrix: phm tools --json');
+  return lines.join('\n');
 }

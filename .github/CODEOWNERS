@@ -368,6 +368,7 @@
 /test/decide-resource-choice.test.ts @masonwyatt23
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
+/test/desktop-consumer-upgrade.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
 /test/desktop-operator-screenshot-mcp.test.ts @masonwyatt23
 /test/desktop-operator.test.ts @masonwyatt23
@@ -1336,6 +1337,7 @@
 /test/verse-merge-latency-api.test.ts @masonwyatt23
 /test/verse-merge-pace-api-02.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
+/test/verse-outcomes-api-reissue.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23
 /test/verse-resources-ready-314.test.ts @masonwyatt23
 /test/verse-search-budget-31n.test.ts @masonwyatt23

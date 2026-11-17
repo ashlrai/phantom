@@ -50,6 +50,18 @@ describe('fleet runs api', () => {
     expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
     expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
   });
+  it('serves the Tools matrix read-only, one lane with ?lane=, 404 for an unknown lane', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'tools-matrix-'));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const all = await request(api, { path: '/api/verse/fleet/runs/tools' });
+    expect(all.status).toBe(200);
+    // No slots or lane-tools.json: only the router's built-in claude declaration is known.
+    expect(all.wire).toMatchObject({ schema: 'tools.matrix.v1', parity: 'gaps', lanes: ['claude'] });
+    expect((all.wire as unknown as { topGaps: { need: string }[] }).topGaps[0]!.need).toBe('github-read');
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=claude' })).wire).toMatchObject({ lanes: ['claude'] });
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=nope' })).status).toBe(404);
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools', method: 'POST' })).status).toBe(405);
+  });
   it('mounts runs and live as separate families', () => {
     expect(workbenchFamilyFor(PATH)?.id).toBe('fleet-runs');
     expect(workbenchFamilyFor(INBOX)?.id).toBe('fleet-runs');
@@ -132,5 +144,29 @@ describe('fleet runs api', () => {
       expect(result.status).toBe(status);
       expect(result.wire!.code).toBe(status === 422 ? 'INBOX_REFUSED' : 'INBOX_UNAVAILABLE');
     }
+  });
+});
+
+describe('worktrees route (Home Disk card)', () => {
+  const WORKTREES = '/api/verse/fleet/runs/worktrees';
+  const report = { schema: 'worktrees.v1', counts: { total: 3, safe: 1 }, rows: [] };
+  it('serves the phm worktrees report, reads at most once a minute and is GET only', async () => {
+    let tick = NOW;
+    const read = vi.fn(async () => report as never);
+    const api = createFleetRunsApi(deps({ now: () => tick, readWorktrees: read }));
+    expect(await request(api, { path: WORKTREES })).toMatchObject({ handled: true, status: 200, wire: report });
+    tick += 30_000;
+    await request(api, { path: WORKTREES });
+    expect(read).toHaveBeenCalledTimes(1);
+    tick += 61_000;
+    await request(api, { path: WORKTREES });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect((await request(api, { path: WORKTREES, method: 'POST', body: {} })).status).toBe(405);
+  });
+  it('answers 503 with a fixed code when the read fails, then retries on the next call', async () => {
+    const read = vi.fn().mockRejectedValueOnce(new Error('/private/path')).mockResolvedValue(report);
+    const api = createFleetRunsApi(deps({ readWorktrees: read }));
+    expect(await request(api, { path: WORKTREES })).toMatchObject({ status: 503, wire: { code: 'WORKTREES_UNAVAILABLE' } });
+    expect((await request(api, { path: WORKTREES })).status).toBe(200);
   });
 });

@@ -104,6 +104,10 @@ export interface FleetSessionV1 {
   /** Finished sessions only: publish/exit outcome. */
   outcome: FleetSessionOutcome | null;
   prUrl: string | null;
+  /** Newest write to the worker's own `<job>.log` (lstat mtime): when the
+   *  agent last printed anything. Null when no regular log file was found.
+   *  Optional only because older servers do not send it. */
+  lastOutputAt?: string | null;
 }
 
 export interface FleetSessionsDispatcherV1 {
@@ -530,7 +534,7 @@ function emptySession(job: string): FleetSessionV1 {
     pid: null, live: 'no', exitCode: null, timedOut: false,
     enqueuedAt: null, claimedAt: null, launchedAt: null, startedAt: null, finishedAt: null,
     elapsedSeconds: null, durationSeconds: null, queueWaitSeconds: null,
-    tokensTotal: null, wallSeconds: null, diffLines: null, outcome: null, prUrl: null,
+    tokensTotal: null, wallSeconds: null, diffLines: null, outcome: null, prUrl: null, lastOutputAt: null,
   };
 }
 
@@ -799,6 +803,7 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
     const metaProbe = await probe(join(root, `${draft.job}.base.meta`));
 
     session.model = attemptLaunch?.launchModel ?? null;
+    session.lastOutputAt = logProbe.kind === 'file' && logProbe.mtimeMs !== null ? iso(logProbe.mtimeMs) : null;
     session.exitCode = m!.rc ?? attemptFinish?.exitCode ?? null;
 
     // Timestamps: marker content first (exact epochs), file mtimes next,

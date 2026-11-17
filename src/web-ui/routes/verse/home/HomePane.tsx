@@ -1,4 +1,4 @@
-/** Home: the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Asks card (`phm asks`) leads when Mason is needed. */
+/** Home: the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Asks card (`phm asks`) leads when Mason is needed and the Disk card (`phm worktrees`) closes the column. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
 import { apiGet } from '../../../data/client.js';
@@ -12,6 +12,7 @@ import { readLastSeen } from '../shell/last-seen-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { AsksCard } from './AsksCard.js';
+import { DiskCard } from './DiskCard.js';
 import styles from './home.module.css';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
@@ -58,5 +59,6 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>
+    <DiskCard visible={visible} />
   </section>;
 }

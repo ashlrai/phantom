@@ -28,6 +28,7 @@ import { loadAppsRecoveryIncident } from '../fleet/apps-recovery-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
+import type { WorktreesReport } from '../fleet/worktrees.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
 import { VERSE_FLEET_RUNS_CONTROL_PATH, isJobControlAction } from '../fleet/job-control-types.js';
@@ -108,6 +109,8 @@ const VERSE_FLEET_SUPERSEDED_PATH: typeof import('../fleet/superseded-read.js').
 
 export interface FleetRunsApiDeps {
   laneModels?: () => Promise<LaneModelSnapshot>;
+  /** Home's Disk card; default is readWorktrees('list') from core/fleet/worktrees. */
+  readWorktrees?: () => Promise<WorktreesReport>;
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
@@ -434,6 +437,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // jobs.jsonl tail /api/fleet/activity serves). A missing or malformed
   // ledger yields an empty map — workers then carry no overrun field and the
   // composite read still succeeds.
+  let worktreesRead: { at: number; read: Promise<WorktreesReport> } | null = null;
   let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
   let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
   function overrunMedians(): Promise<ReadonlyMap<string, number>> {
@@ -527,10 +531,34 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readHome({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), leaderSeenMs: seen ? Number(seen) : null }));
       return true;
     }
+    // Home's Disk card reads the same report as `phm worktrees --json`; read-only (removal stays in the CLI).
+    if (path === '/api/verse/fleet/runs/worktrees') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      // One read per minute at most: each read may run `git status` on hundreds of candidates.
+      if (!worktreesRead || now() - worktreesRead.at > 60_000) {
+        const read = deps.readWorktrees ? deps.readWorktrees()
+          : import('../fleet/worktrees.js').then(m => m.readWorktrees('list', { now: now(), ...(deps.runsDir ? { runsRoot: deps.runsDir } : {}) }));
+        worktreesRead = { at: now(), read };
+        read.catch(() => { if (worktreesRead?.read === read) worktreesRead = null; });
+      }
+      try { sendJson(res, 200, await worktreesRead.read); }
+      catch { sendJson(res, 503, { code: 'WORKTREES_UNAVAILABLE' }); }
+      return true;
+    }
     // The Plugins and Skills panes read the same data as `phm plugins|skills list --all --json`.
     if (path === '/api/verse/fleet/runs/plugins' || path === '/api/verse/fleet/runs/skills') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, path.endsWith('/plugins') ? readPluginsPanel() : readSkillsPanel());
+      return true;
+    }
+    // The Tools pane reads the same matrix as `phm tools --json [--lane L]`. Read-only.
+    if (path === '/api/verse/fleet/runs/tools') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const lane = new URL(req.url ?? '/', 'http://localhost').searchParams.get('lane') ?? undefined;
+      const { buildToolMatrix, loadToolParity } = await import('../fleet/tool-parity.js');
+      const matrix = buildToolMatrix(await loadToolParity({ runsDir: deps.runsDir ?? defaultRunsDir() }), lane);
+      if (!matrix) { sendJson(res, 404, { code: 'VERSE_NOT_FOUND', error: 'no such lane' }); return true; }
+      sendJson(res, 200, matrix);
       return true;
     }
     if (path === '/api/verse/fleet/runs/goals') {

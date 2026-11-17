@@ -16,6 +16,8 @@ export interface MapSession extends Pick<FleetSessionV1, 'job' | 'lane' | 'model
 }
 export interface FleetSessionMap extends FleetSessionsV1 {
   computeAt: string;
+  /** The compute node id of the computer that answered (compute-view's `localNodeId`). */
+  localNodeId: string;
   mapSessions: MapSession[];
   mapRecent: MapSession[];
 }
@@ -77,5 +79,5 @@ export async function readFleetSessionMap(options: {
       } catch { /* absent/invalid per-job evidence remains explicitly unknown */ }
     }
   }));
-  return { ...inventory, computeAt: compute.generatedAt, mapSessions: sessions, mapRecent: recent, truncated };
+  return { ...inventory, computeAt: compute.generatedAt, localNodeId: compute.localNodeId, mapSessions: sessions, mapRecent: recent, truncated };
 }
