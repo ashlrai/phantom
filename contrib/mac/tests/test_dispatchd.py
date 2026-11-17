@@ -795,6 +795,9 @@ class DispatchPriorityTests(unittest.TestCase):
         tmp = build(slots=slots)
         self.addCleanup(tmp.cleanup)
         home = Path(tmp.name).resolve()
+        gh = home / 'stubbin/gh'
+        gh.write_text('#!/usr/bin/python3\nimport json, sys\nprint(json.dumps(dict(url=sys.argv[3], state="OPEN")))\n')
+        gh.chmod(0o755)
         return home, launch_stubs(home)
 
     def claims(self, home):

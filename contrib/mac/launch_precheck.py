@@ -1,4 +1,4 @@
-"""Shared fail-open launch precheck; errors and usage never retire work."""
+"""Shared launch precheck; unavailable PR evidence defers work, never retires it."""
 import json
 import os
 import re
@@ -27,6 +27,8 @@ def admission_history(rows, now):
             matches = [k for k in latest if k[1] == job]
             if len(matches) == 1: key = matches[0]  # finish/publish rows omit repo
         event, state = row.get("event"), row.get("state", row.get("outcome"))
+        if event == "outcome" and state == "MERGED" and repo:
+            states[(repo.removeprefix("ashlrai/"), job)] = "MERGED"
         url = row.get("url", row.get("prUrl"))
         if not isinstance(url, str): url = None
         if event == "outcome" and url and state in ("MERGED", "CLOSED", "OPEN"):
@@ -65,17 +67,23 @@ def admission_rank(job, tier, lane, groups):
                 reason="observed_merge_rate_24h" if known else "unknown_outcomes" if results else "unknown_sample", outcome="ready")
 
 
-def terminal_target(job, repo, prompt, states):
+def target_pr_urls(job, repo, prompt):
     # Only explicit task-envelope targets or the refix producer's exact ID count;
     # incidental PR references in prose must never retire new work.
     task = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
     envelope = task.split("):", 1)[0] if "):" in task else ""
-    targets = re.findall(r"(?:^|[(,\s])pr=([1-9][0-9]*)(?=[,\s)]|$)", envelope, re.I)
+    targets = re.findall(r"(?:^|[(,\s])(?:pr|parent[_-]pr)=([1-9][0-9]*)(?=[,\s)]|$)", envelope, re.I)
     drain = re.fullmatch(r"RQ-DRAIN-" + re.escape(repo) + r"-([1-9][0-9]*)-[0-9a-fA-F]{7}", job)
     if drain: targets.append(drain.group(1))
-    if len(set(targets)) != 1: return None
-    state = states.get("https://github.com/ashlrai/%s/pull/%s" % (repo, targets[0]))
-    return "target_pr_" + state.lower() if state in ("MERGED", "CLOSED") else None
+    return sorted({"https://github.com/ashlrai/%s/pull/%s" % (repo, n) for n in targets})
+
+
+def terminal_target(job, repo, prompt, states):
+    if states.get((repo, job)) == "MERGED": return "job_already_merged"
+    for url in target_pr_urls(job, repo, prompt):
+        state = states.get(url)
+        if state in ("MERGED", "CLOSED"): return "target_pr_" + state.lower()
+    return None
 
 # RQ-EMPTYJOBYIELDQ8: a job id whose last EMPTY_STREAK finishes in jobs.jsonl all
 # came back empty repeats work that already yielded nothing — retire it instead
@@ -166,10 +174,34 @@ def run(cmd, timeout, **kwargs):
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
+def queue_freshness(job, repo, prompt, states, lookup):
+    """Terminal evidence retires work; unavailable evidence defers it, never completes it."""
+    reason = terminal_target(job, repo, prompt, states)
+    if reason: return "DONE-NOOP", reason
+    for url in target_pr_urls(job, repo, prompt):
+        state = lookup(url)
+        if state in ("MERGED", "CLOSED"): return "DONE-NOOP", "target_pr_" + state.lower()
+        if state != "OPEN": return "deferred", "target_pr_lookup_unavailable"
+    return "ready", None
+
+
+def lookup_pr_state(url, runner=run):
+    try:
+        result = runner(["gh", "pr", "view", url, "--json", "url,state"], 2)
+        row = json.loads(result.stdout)
+        if result.returncode == 0 and row.get("url") == url and row.get("state") in ("OPEN", "MERGED", "CLOSED"):
+            return row["state"]
+    except Exception:
+        pass
+    return None  # Never retain subprocess output, which may contain credentials.
+
+
 def precheck(job, repo, prompt, home, runs, runner=run):
     try:
         task = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
         if not task: return None
+        outcome, reason = queue_freshness(job, repo, prompt, {}, lambda url: lookup_pr_state(url, runner))
+        if outcome != "ready": return (10 if outcome == "DONE-NOOP" else 13, reason)
         streak = empty_streaks(runs + "/metrics/jobs.jsonl").get(job, 0)
         if streak >= EMPTY_STREAK:
             return (EMPTY_CODE, "empty_streak_%dx" % streak)

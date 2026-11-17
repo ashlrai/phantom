@@ -26,6 +26,9 @@ def metrics(home, event):
 
 class Batching(unittest.TestCase):
     def test_terminal_target_is_removed_before_batch_leases(self):
+        gh = self.home / 'stubbin/gh'
+        gh.write_text('#!/usr/bin/python3\nimport json, sys\nprint(json.dumps(dict(url=sys.argv[3], state="OPEN")))\n')
+        gh.chmod(0o755)
         for job in ('RQ-Q-A', 'RQ-Q-B', 'RQ-Q-C'):
             self.queue(job, f'{job} (pr={42 if job == "RQ-Q-B" else 43}): edit src/core/queue/store.ts')
         from datetime import datetime, timezone

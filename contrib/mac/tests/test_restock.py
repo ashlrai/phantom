@@ -48,7 +48,7 @@ def build(md, repos=('phantom',), running=0, queued=0, slots=None, lanes_status=
 
 
 def restock(home, *args):
-    env = {'HOME': str(home), 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
+    env = {'HOME': str(home), 'PATH': str(home / 'stubbin') + ':' + os.environ.get('PATH', '/usr/bin:/bin')}
     return subprocess.run([sys.executable, '-B', str(SCRIPT), *args],
                           env=env, capture_output=True, text=True, timeout=60)
 
@@ -601,6 +601,9 @@ class NoopCutTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         env = launch_stubs(home)
         runs = home / '.ashlr-runs'; q = runs / 'queue'; metrics = runs / 'metrics/jobs.jsonl'
+        gh = home / 'stubbin/gh'
+        gh.write_text('#!/usr/bin/python3\nimport json, sys\nprint(json.dumps(dict(url=sys.argv[3], state="OPEN")))\n')
+        gh.chmod(0o755)
         (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
         now = datetime.now(timezone.utc) - timedelta(seconds=1)
         records = [dict(event='outcome', state=state, job=f'RQ-PR-{n}', repo='phantom',
