@@ -49,6 +49,7 @@ export interface JobView {
   requires: string[];
   pack?: string;
   secrets: string[];
+  producerWithdrawn?: true;
   /** Accepted completion's executor identity; no result body or fencing token. */
   completedBy?: string;
   /** Current holder of a running job's claim (lapsed or live); no fencing token. */
@@ -56,7 +57,7 @@ export interface JobView {
   claimedBy?: string;
 }
 
-/** Result body recorded when a producer withdraws a job no node holds; it is never a node result. */
+/** Withdrawal result text; producerWithdrawn distinguishes it from a node result. */
 export const WITHDRAWN_RESULT = 'withdrawn';
 /** `withdrawn`: fenced terminal now (or earlier), safe to run elsewhere. `held`: a live claim still owns it. */
 export interface WithdrawOutcome {
@@ -252,6 +253,7 @@ export class DriveNodes implements QueueV1 {
   private jobView(job: NonNullable<NodesState['jobs'][number]>): JobView {
     return { id: job.id, owner: job.owner!, state: job.state, requires: [...(job.requires ?? [])],
       ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])],
+      ...(job.producerWithdrawn ? { producerWithdrawn: true as const } : {}),
       ...(job.state === 'completed' && job.claim ? { completedBy: job.claim.nodeId } : {}) };
   }
 
@@ -354,7 +356,7 @@ export class DriveNodes implements QueueV1 {
       const job = state.jobs.find(j => j.id === jobId && j.owner === owner);
       if (!job) return { state: 'absent' as const };
       if (job.state === 'completed') {
-        return job.result === WITHDRAWN_RESULT && job.claim?.nodeId === WITHDRAWN_RESULT
+        return job.producerWithdrawn === true
           ? { state: 'withdrawn' as const } : { state: 'completed' as const, result: job.result ?? '' };
       }
       const stored = job.claim;
@@ -366,6 +368,7 @@ export class DriveNodes implements QueueV1 {
       job.state = 'completed';
       job.completedAt = now;
       job.result = WITHDRAWN_RESULT;
+      job.producerWithdrawn = true;
       return { state: 'withdrawn' as const };
     });
   }

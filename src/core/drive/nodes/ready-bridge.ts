@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync, writeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
-import { WITHDRAWN_RESULT, type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
+import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
@@ -136,7 +136,9 @@ export function planNodeBridge(input: {
     const spec = row.spec ?? {};
     const lane = typeof spec['preferred_lane'] === 'string' ? spec['preferred_lane'] : row.lane;
     const cap = remoteLaneCap(lane);
-    const needs = Array.isArray(spec['needs']) ? spec['needs'].map(String) : [];
+    const rawNeeds = spec['needs'];
+    const needsValid = rawNeeds === undefined || (Array.isArray(rawNeeds) && rawNeeds.every(n => typeof n === 'string'));
+    const needs = Array.isArray(rawNeeds) && needsValid ? rawNeeds as string[] : [];
     const target = cap ? remotePackFor(row.job, cap) : null;
     const requires = cap && target ? [...new Set([cap, `pack:${target.pack}`, ...needs])] : [];
     const reasons: string[] = [];
@@ -149,8 +151,10 @@ export function planNodeBridge(input: {
       if (LOCAL_LANES.has(lane) || LOCAL_LANES.has(row.lane)) reasons.push('local_execution_required');
       else if (!cap) reasons.push('lane_not_remote');
       const dc = spec['data_class'];
-      if (typeof dc === 'string' && (DATA_CLASSES[dc] ?? 99) > DATA_CLASSES[REMOTE_CLEARANCE]!) reasons.push('data_class_exceeded');
+      if (dc !== undefined && (typeof dc !== 'string' || !Object.prototype.hasOwnProperty.call(DATA_CLASSES, dc))) reasons.push('data_class_invalid');
+      else if (typeof dc === 'string' && DATA_CLASSES[dc]! > DATA_CLASSES[REMOTE_CLEARANCE]!) reasons.push('data_class_exceeded');
       if (UNVERIFIABLE.some(k => spec[k] !== undefined)) reasons.push('requirement_unverifiable');
+      if (!needsValid) reasons.push('needs_invalid');
       if (needs.some(n => !validCap(n))) reasons.push('need_not_routable');
     }
     seen.add(row.job);
@@ -303,7 +307,7 @@ export interface NodeBridgeOptions {
 function leaseAction(m: Manifest, job: JobView | undefined, now: number, ttl: number): string {
   if (m.state === 'completed') return 'keep-completed';
   if (!job) return 'requeue';
-  if (job.state === 'completed') return job.completedBy === WITHDRAWN_RESULT ? 'requeue' : 'complete';
+  if (job.state === 'completed') return job.producerWithdrawn === true ? 'requeue' : 'complete';
   if (job.state === 'running') return 'check-lease';
   return now - m.createdAt >= ttl ? 'withdraw-requeue' : 'wait';
 }
@@ -315,58 +319,96 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     nodes: [], rows: [], leases: [], claimed: [], requeued: [], completed: [], lostRace: [] };
   report.inert = !owner ? 'bridge-owner-unset' : opts.inert !== undefined && opts.inert !== null ? opts.inert
     : nodeBridgeReadiness(host) ?? (opts.router ? null : 'router-unavailable');
-  let view: { nodes: NodeView[]; jobs: JobView[] } = { nodes: [], jobs: [] };
-  if (owner && opts.router) {
-    try { view = opts.router.view(owner); } catch { report.inert ??= 'router-unavailable'; }
-  }
   const ttl = opts.pendingTtlMs ?? NODE_BRIDGE_PENDING_TTL_MS;
-  const manifests = readManifests(host);
-  report.leases = manifests.map(m => {
-    const job = view.jobs.find(j => j.id === m.routerJobId);
-    return { job: m.job, leaseOwner: m.id, routerJobId: m.routerJobId, state: m.state, routerState: job?.state ?? null,
-      action: leaseAction(m, job, now, ttl) };
-  });
-  const bridged = new Set(manifests.map(m => m.job));
-  const plan = planNodeBridge({ rows: readRows(host).rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
-    nodes: view.nodes, jobs: view.jobs, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
-  report.nodes = plan.nodes;
-  report.rows = plan.rows;
-  if (!opts.apply || report.inert || !owner || !opts.router) return report;
-  const router = opts.router;
+  const emptyView = { nodes: [], jobs: [] };
+  const readView = (): { nodes: NodeView[]; jobs: JobView[] } => {
+    if (!owner || !opts.router) return emptyView;
+    try { return opts.router.view(owner); } catch { report.inert ??= 'router-unavailable'; return emptyView; }
+  };
+  const recordSnapshot = (view: { nodes: NodeView[]; jobs: JobView[] }, manifests: Manifest[], fresh: { text: string; rows: ReadyRow[] }) => {
+    report.leases = manifests.map(m => {
+      const job = view.jobs.find(j => j.id === m.routerJobId);
+      return { job: m.job, leaseOwner: m.id, routerJobId: m.routerJobId, state: m.state, routerState: job?.state ?? null,
+        action: leaseAction(m, job, now, ttl) };
+    });
+    const bridged = new Set(manifests.map(m => m.job));
+    const plan = planNodeBridge({ rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
+      nodes: view.nodes, jobs: view.jobs, ...(opts.maxPerPass !== undefined ? { maxPerPass: opts.maxPerPass } : {}) });
+    report.nodes = plan.nodes;
+    report.rows = plan.rows;
+    return plan;
+  };
 
-  // 1. Router side first: withdraw fences any lapsed/unclaimed job before its row returns.
-  const requeue: Manifest[] = [];
-  for (const m of manifests) {
-    const action = report.leases.find(l => l.leaseOwner === m.id)!.action;
-    if (action === 'keep-completed' || action === 'wait') continue;
-    let outcome: WithdrawOutcome;
-    try { outcome = router.withdraw(m.routerJobId, owner); } catch { continue; }
-    if (outcome.state === 'withdrawn' || outcome.state === 'absent') requeue.push(m);
-    else if (outcome.state === 'completed') {
-      writeAtomic(join(batchesDir(host), `${m.id}.json`), JSON.stringify({ ...m, state: 'completed', completedAt: now, result: (outcome.result ?? '').slice(0, 200) }) + '\n');
-      report.completed.push(m.job);
-    }
+  if (!opts.apply || report.inert || !owner || !opts.router) {
+    recordSnapshot(readView(), readManifests(host), readRows(host));
+    return report;
   }
-  const claims = plan.rows.filter(r => r.offload);
-  if (!requeue.length && !claims.length) return report;
   if (opts.signal?.aborted) { report.held = 'aborted'; return report; }
 
-  // 2. Queue side under dispatchd's own locks.
+  const router = opts.router;
   const lock = await (opts.lock ?? flockDispatcher)(queueDir(host), opts.signal);
   if ('busy' in lock) { report.held = lock.busy; return report; }
-  const staged: { decision: BridgeRowDecision; manifest: Manifest }[] = [];
   try {
+    if (opts.signal?.aborted) { report.held = 'aborted'; return report; }
+    const view = readView();
+    const manifests = readManifests(host);
     const fresh = readRows(host);
+    const plan = recordSnapshot(view, manifests, fresh);
+    if (report.inert) return report;
+
+    const requeue: Manifest[] = [];
+    for (const m of manifests) {
+      const action = report.leases.find(l => l.leaseOwner === m.id)!.action;
+      if (action === 'keep-completed' || action === 'wait') continue;
+      let outcome: WithdrawOutcome;
+      try { outcome = router.withdraw(m.routerJobId, owner); } catch { continue; }
+      if (outcome.state === 'withdrawn' || outcome.state === 'absent') requeue.push(m);
+      else if (outcome.state === 'completed') {
+        writeAtomic(join(batchesDir(host), `${m.id}.json`), JSON.stringify({ ...m, state: 'completed', completedAt: now, result: (outcome.result ?? '').slice(0, 200) }) + '\n');
+        report.completed.push(m.job);
+      }
+    }
+
+    const claims = plan.rows.filter(r => r.offload);
+    if (!requeue.length && !claims.length) return report;
+    if (opts.signal?.aborted) { report.held = 'aborted'; return report; }
+
+    let safeRequeue = requeue;
+    if (requeue.length) {
+      let currentView: { nodes: NodeView[]; jobs: JobView[] };
+      try { currentView = router.view(owner); } catch {
+        report.held = 'router-unavailable';
+        return report;
+      }
+      const currentManifests = readManifests(host);
+      safeRequeue = requeue.filter(m => {
+        const currentManifest = currentManifests.find(current => current.id === m.id && current.job === m.job &&
+          current.line === m.line && current.routerJobId === m.routerJobId && current.owner === m.owner);
+        if (!currentManifest) return false;
+        const job = currentView.jobs.find(current => current.id === m.routerJobId);
+        return !job || (job.state === 'completed' && job.producerWithdrawn === true);
+      });
+    }
+
     const lines = fresh.text.split('\n');
     if (lines.at(-1) === '') lines.pop();
-    for (const m of requeue) {
-      if (!leaseHeldBy(host, m.job, m.id)) { try { unlinkSync(join(batchesDir(host), `${m.id}.json`)); } catch { /* gone */ } continue; }
+    const toRequeue: Manifest[] = [];
+    for (const m of safeRequeue) {
+      if (!leaseHeldBy(host, m.job, m.id)) {
+        try { unlinkSync(join(batchesDir(host), `${m.id}.json`)); } catch { /* gone */ }
+        continue;
+      }
       if (!lines.some(l => l.split('\t')[0] === m.job)) lines.push(m.line);
-      writeAtomic(join(queueDir(host), 'ready.tsv'), lines.map(l => l + '\n').join(''));
+      toRequeue.push(m);
+    }
+    if (toRequeue.length) writeAtomic(join(queueDir(host), 'ready.tsv'), lines.map(l => l + '\n').join(''));
+    for (const m of toRequeue) {
       unlinkSync(join(runDir(host), `${m.job}.batched`));
       try { unlinkSync(join(batchesDir(host), `${m.id}.json`)); } catch { /* gone */ }
       report.requeued.push(m.job);
     }
+
+    const staged: { decision: BridgeRowDecision; manifest: Manifest }[] = [];
     for (const decision of claims) {
       const row = fresh.rows.find(r => r.job === decision.job);
       const id = bridgeLeaseOwner(decision.job);
@@ -385,14 +427,13 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       const taken = new Set(staged.map(s => s.manifest.line));
       writeAtomic(join(queueDir(host), 'ready.tsv'), lines.filter(l => !taken.has(l)).map(l => l + '\n').join(''));
     }
-  } finally { await lock.release(); }
 
-  // 3. Publish to the router. A failed enqueue leaves 'claimed'; the next pass withdraws (absent) and requeues.
-  for (const { decision, manifest } of staged) {
-    let enqueued = false;
-    try { enqueued = router.enqueue(manifest.routerJobId, { owner, requires: decision.requires, pack: decision.pack! }); } catch { /* next pass */ }
-    if (enqueued) writeAtomic(join(batchesDir(host), `${manifest.id}.json`), JSON.stringify({ ...manifest, state: 'offloaded' }) + '\n');
-    report.claimed.push(decision.job);
-  }
-  return report;
+    for (const { decision, manifest } of staged) {
+      let enqueued = false;
+      try { enqueued = router.enqueue(manifest.routerJobId, { owner, requires: decision.requires, pack: decision.pack! }); } catch { /* next pass */ }
+      if (enqueued) writeAtomic(join(batchesDir(host), `${manifest.id}.json`), JSON.stringify({ ...manifest, state: 'offloaded' }) + '\n');
+      report.claimed.push(decision.job);
+    }
+    return report;
+  } finally { await lock.release(); }
 }

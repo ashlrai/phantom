@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
-import { bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
+import { bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
 import { probeRunnerPacks } from '../src/core/drive/nodes/runner-packs.js';
@@ -74,6 +74,34 @@ describe('ready.tsv -> node router bridge', () => {
       'RQ-REVIEW-CL': ['lane_mismatch'], 'RQ-REVIEW-DV': ['lane_not_remote'], 'RQ-FEAT-W': ['pack_inert'],
       'RQ-REVIEW-T': ['requirement_unverifiable'] });
     expect(report.claimed).toEqual([]);
+  });
+
+  it('rejects inherited and non-string data classes', async () => {
+    const f = fixture([
+      row('RQ-REVIEW-DC-INHERITED', 'codex-cmp', { data_class: 'constructor' }),
+      row('RQ-REVIEW-DC-NONSTRING', 'codex-cmp', { data_class: 4 }),
+    ]);
+    const report = await f.pass(false);
+    const reasons = Object.fromEntries(report.rows.map(r => [r.job, r.reasons]));
+    expect(reasons).toMatchObject({
+      'RQ-REVIEW-DC-INHERITED': ['data_class_invalid'],
+      'RQ-REVIEW-DC-NONSTRING': ['data_class_invalid'],
+    });
+    expect(report.rows.every(r => !r.offload)).toBe(true);
+  });
+
+  it('isolates malformed needs to their row', async () => {
+    const f = fixture([
+      row('RQ-REVIEW-NEEDS', 'codex-cmp', { needs: [{ toString: null }] }),
+      row('RQ-REVIEW-GOOD'),
+    ]);
+    const report = await f.pass(false);
+    const reasons = Object.fromEntries(report.rows.map(r => [r.job, r.reasons]));
+    expect(reasons).toMatchObject({
+      'RQ-REVIEW-NEEDS': ['needs_invalid'],
+      'RQ-REVIEW-GOOD': [],
+    });
+    expect(report.rows.find(r => r.job === 'RQ-REVIEW-GOOD')!.offload).toBe(true);
   });
 
   it('refuses rows past free slots and treats unknown slots as unknown, not zero', async () => {
@@ -156,6 +184,50 @@ describe('ready.tsv -> node router bridge', () => {
     expect(out).toBe('False');
   });
 
+  it('serializes two passes while a staged manifest is waiting for publication', async () => {
+    const f = fixture([row('RQ-REVIEW-RACE')]);
+    const baseRouter = localBridgeRouter(f.nodes);
+    let held = false;
+    const lock = async () => {
+      if (held) return { busy: 'bridge-pass-busy' };
+      held = true;
+      return { release: async () => { held = false; } };
+    };
+    let secondPass: ReturnType<typeof runNodeBridge> | undefined;
+    const router: BridgeRouter = {
+      view: owner => baseRouter.view(owner),
+      withdraw: (jobId, owner) => baseRouter.withdraw(jobId, owner),
+      enqueue: (jobId, spec) => {
+        secondPass ??= f.pass(true, { router, lock });
+        return baseRouter.enqueue(jobId, spec);
+      },
+    };
+
+    const first = await f.pass(true, { router, lock });
+    const second = await secondPass!;
+    expect(first.claimed).toEqual(['RQ-REVIEW-RACE']);
+    expect(second.held).toBe('bridge-pass-busy');
+    expect(second.requeued).toEqual([]);
+    expect(f.ready()).toBe('');
+    expect(f.nodes.view(['ashlr']).jobs).toHaveLength(1);
+    expect(existsSync(f.lease('RQ-REVIEW-RACE'))).toBe(true);
+  });
+
+  it('rechecks the ready row under lock before claiming its planned pack', async () => {
+    const f = fixture([row('RQ-REVIEW-LOCKED')]);
+    const changed = row('RQ-REVIEW-LOCKED', 'codex-local');
+    const lock = async () => {
+      writeFileSync(join(f.host.runsRoot, 'queue', 'ready.tsv'), `${changed}\n`);
+      return { release: async () => {} };
+    };
+
+    const report = await f.pass(true, { lock });
+    expect(report.claimed).toEqual([]);
+    expect(report.rows[0]).toMatchObject({ offload: false, reasons: ['local_execution_required'] });
+    expect(f.ready()).toBe(`${changed}\n`);
+    expect(f.nodes.view(['ashlr']).jobs).toEqual([]);
+  });
+
   it('derives pack caps from the runner probe, never from config', async () => {
     const reply = (stdout: unknown, status = 0) => (() => ({ status, stdout })) as unknown as typeof spawnSync;
     expect(probeRunnerPacks('/runner', reply(JSON.stringify({ protocol: 'phm-node-worker/v1',
@@ -171,6 +243,21 @@ describe('ready.tsv -> node router bridge', () => {
     expect((await fixture([row('RQ-REVIEW-A')], [{ id: 'muse-w2', caps, slots: 1 }]).pass(false)).rows[0]!.offload).toBe(true);
     expect((await fixture([row('RQ-REVIEW-A')], [{ id: 'muse-w2', caps: ['codex'], slots: 1 }]).pass(false)).rows[0]!.reasons)
       .toEqual(['node_pack_unsupported']);
+  });
+
+  it('does not mistake a completed node result for a producer withdrawal', async () => {
+    const f = fixture([row('RQ-REVIEW-WITHDRAWN')], [{ id: 'withdrawn', caps: READ, slots: 1 }]);
+    await f.pass();
+    const pulled = f.nodes.pull(f.sessions.get('withdrawn')!)!;
+    expect(f.nodes.complete(pulled.claim, 'withdrawn')).toBe(true);
+    expect(f.nodes.withdraw(pulled.job.id, 'ashlr')).toEqual({ state: 'completed', result: 'withdrawn' });
+
+    f.advance(61_000);
+    const report = await f.pass();
+    expect(report.leases[0]).toMatchObject({ routerState: 'completed', action: 'complete' });
+    expect(report.completed).toEqual(['RQ-REVIEW-WITHDRAWN']);
+    expect(report.requeued).toEqual([]);
+    expect(f.ready()).toBe('');
   });
 
   it('stays inert with a reason code until the installed dispatcher honors the lease protocol', async () => {

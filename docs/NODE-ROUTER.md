@@ -121,22 +121,28 @@ dispatcher needs no change:
 
 1. It holds `queue/dispatchd.tick.lock` without waiting (a running tick wins
    and the pass reports `held: dispatcher-tick-busy`), then `queue/ready.lock`.
-2. It re-reads the row, checks that no `.batched`, `.dispatched`, `.reaping` or
-   `.line` marker and no worktree exists, and writes
+   Apply passes keep both locks through reconciliation and router publication;
+   a second pass cannot reconcile a staged manifest before its enqueue finishes.
+2. Under those locks, it reads the router view and ready rows, checks that no
+   `.batched`, `.dispatched`, `.reaping` or `.line` marker and no worktree exists, and writes
    `queue/batches/RQ-BATCH-NODE-<hash>.json` (schema `phantom.node-bridge.v1`).
    Then it creates `queue/run/<job>.batched` with `O_EXCL` and removes the row
    from `ready.tsv`. dispatchd skips a leased row (`SKIP_BATCHED`). Its
    `LEASE_ORPHANED` sweep keeps a lease whose `RQ-BATCH-` owner has a manifest.
    Restock and the batcher skip leased rows.
-3. After releasing the locks, it enqueues router job `ready:<job>:<attempt>`
-   with the lane cap, the pack cap and any `needs`. It never adds secret values.
+3. It enqueues router job `ready:<job>:<attempt>` with the lane cap, the pack
+   cap and any `needs` before releasing the locks. It never adds secret values.
 4. Each later pass calls `phm node withdraw` for running jobs and for pending
    jobs older than `pendingTtlMs`. Withdraw leaves a live claim alone. It
    finishes a pending or lapsed job with a fresh fencing token, so the old
    holder's `renew` and `complete` fail and no node can pull the job again. Only
-   then does the row go back to `ready.tsv` and the lease get released, under
-   both locks. An accepted completion keeps its lease and manifest as a
-   tombstone, so the row is never relaunched.
+   after re-reading the manifest and router view under both locks does the row
+   go back to `ready.tsv` and the lease get released. An accepted completion
+   keeps its lease and manifest as a tombstone, so the row is never relaunched.
+
+A ready row with a `needs` value other than an array of strings, or a
+`data_class` that is not a string own key of `DATA_CLASSES`, stays local with
+`needs_invalid` or `data_class_invalid`, respectively.
 
 The bridge does nothing and reports `inert` with one of these reason codes:
 `bridge-owner-unset`, `bridge-disabled` (when `--apply` is used without
@@ -148,7 +154,8 @@ lacks the lease protocol), `router-unavailable`, `not-pool-primary` or
 (`callPool`). A demoted primary never claims.
 
 A row stays local with one of these reasons: `invalid_row`,
-`invalid_requirements`, `duplicate_row`, `host_bound_job` (`RQ-FIX-MAIN-`,
+`invalid_requirements`, `data_class_invalid`, `needs_invalid`,
+`duplicate_row`, `host_bound_job` (`RQ-FIX-MAIN-`,
 `RQ-REL-`, `RQ-DESK-`, `RQ-BATCH-`), `local_claim_present`, `exclusive`,
 `local_execution_required` (`codex-local`, `omlx`), `lane_not_remote` (`devin`,
 `claude-api`), `data_class_exceeded` (above `internal`, the clearance
