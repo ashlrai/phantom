@@ -41,7 +41,9 @@ export type DevinFetch = (url: string, init: {
   headers: Record<string, string>;
   body?: string;
   signal: AbortSignal;
-}) => Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string> }>;
+  /** Only attachment downloads set this ('manual'), so the key never follows a redirect. */
+  redirect?: 'manual';
+}) => Promise<{ status: number; headers: { get(name: string): string | null }; text(): Promise<string>; arrayBuffer?(): Promise<ArrayBuffer> }>;
 
 export interface DevinClientOptions {
   /** The `cog_` key, read by the caller from custody / the Keychain. */
@@ -128,6 +130,15 @@ export interface DevinSession {
   tags: string[];
   title: string | null;
   structuredOutput: Record<string, unknown> | null;
+}
+
+/** SessionAttachment — https://docs.devin.ai/v3-openapi.yaml (SessionAttachment) */
+export interface DevinSessionAttachment {
+  attachmentId: string;
+  name: string;
+  url: string;
+  source: 'devin' | 'user';
+  contentType: string | null;
 }
 
 /**
@@ -275,6 +286,21 @@ export function parseDevinSession(raw: unknown): DevinSession | null {
 }
 
 /** PaginatedResponse[SessionResponse] — https://docs.devin.ai/api-reference/concepts/pagination. Unparseable items are dropped. */
+/** Array of SessionAttachment; any malformed row fails the whole read closed. */
+export function parseDevinSessionAttachments(raw: unknown): DevinSessionAttachment[] | null {
+  if (!Array.isArray(raw) || raw.length > 1000) return null;
+  const out: DevinSessionAttachment[] = [];
+  for (const row of raw) {
+    if (!isRecord(row)) return null;
+    const { attachment_id: id, name, url, source, content_type: contentType } = row;
+    if (typeof id !== 'string' || id === '' || id.length > 200 || typeof name !== 'string' || name === '' || name.length > 255
+      || !isHttpsUrl(url) || (source !== 'devin' && source !== 'user')
+      || (contentType !== undefined && contentType !== null && typeof contentType !== 'string')) return null;
+    out.push({ attachmentId: id, name, url, source, contentType: typeof contentType === 'string' ? contentType : null });
+  }
+  return out;
+}
+
 export interface DevinSessionPage {
   items: DevinSession[];
   endCursor: string | null;
@@ -621,6 +647,64 @@ export class DevinClient {
     }
     // Empty/nonterminal responses are not evidence that provider spend stopped.
     return parsed;
+  }
+
+  /** GET /v3/organizations/{org_id}/sessions/{devin_id}/attachments — https://docs.devin.ai/v3-openapi.yaml (handle_get_session_attachments) */
+  async listSessionAttachments(orgId: string, sessionId: string): Promise<DevinSessionAttachment[]> {
+    const org = checkOrg(orgId);
+    const id = checkSessionId(sessionId);
+    const parsed = parseDevinSessionAttachments(await this.request('GET', `/organizations/${encodeURIComponent(org)}/sessions/${encodeURIComponent(id)}/attachments`, undefined, 'read'));
+    if (!parsed) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed);
+    return parsed;
+  }
+
+  /**
+   * GET /v3/organizations/{org_id}/attachments/{uuid}/{name} — "Returns a 307
+   * redirect … to a presigned S3 URL". The key goes only to the API; the
+   * redirect target is fetched without it, and must be https.
+   * https://docs.devin.ai/v3-openapi.yaml (handle_download_attachment)
+   */
+  async downloadAttachment(orgId: string, uuid: string, name: string, maxBytes: number): Promise<Buffer> {
+    const org = checkOrg(orgId);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uuid) || !/^[A-Za-z0-9._-]{1,255}$/.test(name) || name.includes('..')) {
+      throw new DevinApiError('invalid-request', 'That is not a Devin attachment.');
+    }
+    let url = `${this.baseUrl}/organizations/${encodeURIComponent(org)}/attachments/${encodeURIComponent(uuid)}/${encodeURIComponent(name)}`;
+    let headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
+    for (let hop = 0; hop < 3; hop += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs * 6);
+      timer.unref?.();
+      let response: Awaited<ReturnType<DevinFetch>>;
+      let bytes: Buffer | null = null;
+      try {
+        response = await this.fetchImpl(url, { method: 'GET', headers, redirect: 'manual', signal: controller.signal });
+        if (response.status >= 200 && response.status < 300) {
+          if (!response.arrayBuffer) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed, response.status);
+          bytes = Buffer.from(await response.arrayBuffer());
+        }
+      } catch (error) {
+        if (error instanceof DevinApiError) throw error;
+        throw new DevinApiError('network', STATUS_SENTENCES.network);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (bytes) {
+        if (bytes.length > maxBytes) throw new DevinApiError('unparsed', 'The Devin attachment is larger than allowed.', response.status);
+        return bytes;
+      }
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) throw new DevinApiError('unparsed', STATUS_SENTENCES.unparsed, response.status);
+        const next = new URL(location, url).toString();
+        if (!isHttpsUrl(next)) throw new DevinApiError('unparsed', 'The Devin attachment redirect is not https.', response.status);
+        url = next;
+        headers = {};
+        continue;
+      }
+      throw new DevinApiError(failureForStatus(response.status), STATUS_SENTENCES[failureForStatus(response.status)], response.status);
+    }
+    throw new DevinApiError('unparsed', 'The Devin attachment redirected too many times.');
   }
 }
 
