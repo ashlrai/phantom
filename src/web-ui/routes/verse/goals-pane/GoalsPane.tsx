@@ -38,14 +38,15 @@ export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'vi
     return prBacklogGoal(rows, previous);
   }, [prBacklog.data]);
 
-  const goalsFailed = Boolean(goals.error) && goals.data === undefined;
+  const malformedGoals = goals.data !== undefined && !Array.isArray(goals.data);
+  const goalsFailed = malformedGoals || Boolean(goals.error) && goals.data === undefined;
   const missionFailed = Boolean(mission.error) && mission.data === undefined;
   const lines = openGoals(goals.data ?? []).map(goalLine);
   const loading = goals.data === undefined && !goalsFailed;
 
   return (
     <div className={styles.root}>
-      {goals.data ? <h2 className={styles.headline}>{goalsHeadline(goals.data)}</h2> : null}
+      {!malformedGoals && goals.data ? <h2 className={styles.headline}>{goalsHeadline(goals.data)}</h2> : null}
       <p className={styles.mission}>
         {missionFailed
           ? 'Mission state unavailable'
@@ -59,7 +60,7 @@ export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'vi
       <GoalAddForm />
       {goalsFailed ? <CardNote tone="danger">{goals.error?.message ?? 'Could not read goals.'}</CardNote> : null}
       {loading ? <CardNote>Loading goals</CardNote> : null}
-      {goals.data && lines.length === 0 ? (
+      {!malformedGoals && goals.data && lines.length === 0 ? (
         <CardNote>No open goals. Add one above, or with `ashlr goals add "&lt;objective&gt;"`.</CardNote>
       ) : null}
       {lines.map(line => (

@@ -28,7 +28,7 @@ const fraction = (goal: GoalSummary): number | null => {
 
 /** Goals still in play: active first, then planning, then paused, then furthest along. */
 export function openGoals(goals: readonly GoalSummary[]): GoalSummary[] {
-  return goals
+  return (Array.isArray(goals) ? goals : [])
     .filter(g => g.status !== 'done' && g.status !== 'archived')
     .sort((a, b) => rank(a.status) - rank(b.status) || (fraction(b) ?? -1) - (fraction(a) ?? -1));
 }

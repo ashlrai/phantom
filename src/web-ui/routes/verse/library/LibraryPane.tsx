@@ -231,14 +231,15 @@ function LeaderFiles({ visible }: { visible: boolean }) {
 export function LibraryPane({ visible = true }: { visible?: boolean }) {
   const sessions = useQuery(verseSessionsQuery, { enabled: visible });
   const handoffs = useQuery(handoffsQuery, { enabled: visible, freshMs: 30_000 });
-  const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
+  const malformedSessions = sessions.data !== undefined && !Array.isArray(sessions.data);
+  const projects = useMemo(() => recentProjects(Array.isArray(sessions.data) ? sessions.data : []), [sessions.data]);
   return (
     <div className={styles.root}>
       <PinnedGroup visible={visible} />
       <CosMemorySection visible={visible} />
       <section className={styles.section} aria-label="Memory">
         <h2>Memory</h2>
-        {sessions.error && !sessions.data ? (
+        {malformedSessions ? <CardNote tone="danger">Project list unavailable.</CardNote> : sessions.error && !sessions.data ? (
           <CardNote tone="danger">Could not list projects: {errorSentence(sessions.error)}</CardNote>
         ) : projects.length === 0 ? (
           <CardNote>{sessions.data ? 'No projects yet. Start a chat to give Phantom something to remember.' : 'Loading…'}</CardNote>

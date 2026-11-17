@@ -151,6 +151,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const [selection, select] = useState<string | null>(null);
   const [history, setHistory] = useState<Record<string, CoreHistory>>({});
   const data = compute.data;
+  const laneRows = Array.isArray(lanes.data?.lanes) ? lanes.data.lanes : [];
   useEffect(() => {
     if (!data) return;
     setHistory(old => Object.fromEntries(data.nodes.filter(n => n.stats).map(n => [n.id, advanceCores(old[n.id], n.stats!, Date.parse(data.generatedAt))])));
@@ -193,7 +194,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       return read.status === 'error' ? <p key={String(label)} role="alert">{String(label)} refresh failed. {read.data ? 'Last reading retained; may be stale.' : 'No data available.'}</p> : null;
     })}
     <p>{data ? `Compute observed ${data.generatedAt} · ${recordedAt(data.generatedAt, now)}${data.truncated ? ' · partial inventory' : ''}` : 'No compute data yet.'}</p>
-    <div className={styles.quota} aria-label="Lane quota strip">{!lanes.data?.lanes.length && <p>No lane observations.</p>}{lanes.data?.lanes.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
+    <div className={styles.quota} aria-label="Lane quota strip">{!laneRows.length && <p>No lane observations.</p>}{laneRows.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
       <strong>{l.lane}</strong><span>{shown(l.liveJobs)} running / {shown(l.slotTarget)} target / {shown(data?.lanes[l.lane]?.hardCap)} hard cap</span>
       <span>quota_ok: {data?.lanes[l.lane]?.quotaOk == null ? 'unknown' : String(data.lanes[l.lane]!.quotaOk)} · {l.credit.label}</span>
       <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
