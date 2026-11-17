@@ -15,6 +15,7 @@ import { workBoardQuery } from '../fleet-board/work-board-section.js';
 import { agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { hourOutcomes, lanePresence, queueFlow, recordedAt, shown, usedFraction } from './company-model.js';
+import { CompanyOverview } from './CompanyOverview.js';
 import styles from './company.module.css';
 
 const flowQuery = queueStatsQuery(3600);
@@ -53,9 +54,11 @@ export function CompanyPane({ visible, host }: PaneProps) {
 
   return <div className={styles.company}>
     <header className={styles.heading}><div><span className={styles.eyebrow}>Phantom · Company</span><h2>One company. Shared progress.</h2></div>
-      <nav aria-label="Company details">{[['fleet-mission', 'Mission'], ['fleet-queue', 'Queue'], ['fleet-observe', 'Sessions'], ['fleet-merges', 'PRs'], ['fleet-bus', 'Agent bus']].map(([pane, label]) =>
+      <nav aria-label="Company details">{[['fleet-compute', 'Fleet map'], ['fleet-mission', 'Mission'], ['fleet-queue', 'Queue'], ['fleet-observe', 'Sessions'], ['fleet-merges', 'PRs'], ['fleet-bus', 'Agent bus']].map(([pane, label]) =>
         <button type="button" key={pane} onClick={() => open(pane!)}>{label}</button>)}</nav>
     </header>
+
+    <CompanyOverview enabled={enabled} sessions={sessions} />
 
     <Panel title="Leader line" query={missionQuery} enabled={enabled}>{data => <>
       <p className={styles.verdict} data-health={data.overview.health}>{data.overview.headline || 'Fleet health unknown.'}</p>

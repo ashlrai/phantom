@@ -1,7 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { arch, homedir, hostname, platform } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { readClaimExecution, type ClaimExecutionReport } from './claim-execution-evidence.js';
+import { PROCESS_SNAPSHOT_MAX_AGE_MS, readClaimExecution, type ClaimExecutionReport } from './claim-execution-evidence.js';
 import { readFleetBoard } from './coordination.js';
 import { projectCoordinationReturns } from './coordination-returns-view.js';
 import { defaultStatePath } from './main-red-age.js';
@@ -12,6 +12,27 @@ import { treeVersionFromPackageJson } from '../verse/release-version-guard.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const UNKNOWN = 'UNKNOWN';
+/** Largest epoch-millisecond instant `Date` can represent (±8.64e15 ms). */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+/** An epoch-millisecond timestamp the coordination ledger itself writes. */
+const epochMs = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_EPOCH_MS;
+/** A finite epoch-millisecond clock sample inside the Date-representable range. */
+const boundedClockMs = (ms: number): boolean => Number.isFinite(ms) && ms >= 0 && ms <= MAX_EPOCH_MS;
+/**
+ * Live-claim qualification for the summary count, mirroring the temporal
+ * contract of `temporallyQualified` in claim-execution-evidence.ts: both
+ * timestamps must be valid epoch milliseconds, `expiresAt` must fall
+ * strictly after `claimedAt`, and `claimedAt` must sit at or before the
+ * observation instant. A future-dated, reversed or out-of-range claim is
+ * dropped by the execution join, so it must not inflate `activeClaims`.
+ */
+const isLiveClaimAt = (claim: unknown, nowMs: number): boolean => {
+  if (claim === null || typeof claim !== 'object') return false;
+  const { claimedAt, expiresAt } = claim as { claimedAt?: unknown; expiresAt?: unknown };
+  return epochMs(claimedAt) && epochMs(expiresAt) && expiresAt > claimedAt &&
+    claimedAt <= nowMs && expiresAt > nowMs;
+};
 const identity = defaultRuntimeIdentityDeps();
 const defaultExecution = (snapshot?: { board: typeof readFleetBoard; now: () => number }): Promise<ClaimExecutionReport> =>
   readClaimExecution(snapshot ?? { board: defaults.board, now: defaults.now });
@@ -66,9 +87,12 @@ export interface RuntimeSnapshot {
 }
 
 /** One read-only snapshot; failures never expose raw exceptions or store contents.
- * `asOf` is a settled execution report's own join instant (sampled after the
- * worker read), else the completion clock, else entry — every reported age and
- * claim count is evaluated at `asOf`, so an expired claim is never RUNNING. */
+ * `asOf` is a qualified execution report's own join instant — accepted only
+ * when it parses to an instant at or before the post-read completion clock
+ * and within PROCESS_SNAPSHOT_MAX_AGE_MS of it — else the completion clock,
+ * else entry. Every reported age and claim count is evaluated at `asOf`, so
+ * an expired claim is never RUNNING and a retained or future-dated report
+ * never supplies RUNNING counts or moves the observation clock. */
 export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<RuntimeSnapshot> {
   const now = deps.now();
   const reasons: string[] = [];
@@ -116,6 +140,17 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     state: 'UNKNOWN', running: 0, claimedNoWorker: 0, unknown: 0,
   };
   let evidence: ClaimExecutionReport | null = null;
+  // The completion clock for response qualification. The captured-board join
+  // samples the injected clock after its worker read settles — joinNow keeps
+  // the last sample; an independent injected reader gets one post-settle
+  // sample below. Either way a report's own asOf is checked against a clock
+  // that postdates the read, never against itself.
+  let settledMs: number | null = null;
+  const joinNow = (): number => {
+    const sample = deps.now();
+    if (boundedClockMs(sample)) settledMs = sample;
+    return sample;
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const deadline = new Promise<null>(resolve => {
@@ -135,7 +170,7 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
         if (board === null) throw new Error('unavailable captured board');
         return board;
       },
-      now: deps.now,
+      now: joinNow,
     }) : deps.execution!;
     evidence = await Promise.race([readExecution(), deadline]);
     if (evidence === null) execution.reason = 'execution: read deadline exceeded';
@@ -147,12 +182,31 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
     }
   } catch { execution.reason = 'execution: read failed'; }
   finally { if (timer !== undefined) clearTimeout(timer); }
-  // Settle the advertised instant: a settled report's join instant; without
-  // evidence the completion clock; a broken clock keeps the entry instant.
-  const bounded = (ms: number): boolean => Number.isFinite(ms) && ms >= 0 && ms <= 8_640_000_000_000_000;
+  if (settledMs === null) {
+    try { const sample = deps.now(); if (boundedClockMs(sample)) settledMs = sample; } catch { /* keep the entry instant */ }
+  }
+  const completionMs = settledMs ?? now;
+  // Response-clock qualification: the report's own asOf must be a parseable
+  // instant at or before the completion clock and within
+  // PROCESS_SNAPSHOT_MAX_AGE_MS of it — the same freshness bound the join
+  // applies to process snapshots. A retained, future or invalid report is
+  // rejected wholesale: UNKNOWN execution with no affirmative counts, and the
+  // advertised instant stays at the completion clock, never the report's.
   const evidenceInstant = evidence === null ? Number.NaN : Date.parse(evidence.asOf);
-  let asOfMs = bounded(evidenceInstant) ? evidenceInstant : now;
-  if (!bounded(evidenceInstant)) { try { const t = deps.now(); if (bounded(t)) asOfMs = t; } catch { /* keep the entry instant */ } }
+  const reportReason = evidence === null ? undefined
+    : !boundedClockMs(evidenceInstant) ? 'execution: report asOf missing or invalid'
+    : !boundedClockMs(completionMs) ? 'execution: observation clock unavailable'
+    : evidenceInstant > completionMs ? 'execution: report asOf ahead of observation clock'
+    : completionMs - evidenceInstant > PROCESS_SNAPSHOT_MAX_AGE_MS ? 'execution: report asOf older than freshness bound'
+    : undefined;
+  if (evidence !== null && reportReason !== undefined) {
+    execution = { state: 'UNKNOWN', running: 0, claimedNoWorker: 0, unknown: 0, reason: reportReason };
+  }
+  // Settle the advertised instant: a qualified report's own join instant;
+  // otherwise the completion clock; a broken clock degrades every age to
+  // UNKNOWN rather than moving the observation to an untrusted report.
+  const candidate = evidence !== null && reportReason === undefined ? evidenceInstant : completionMs;
+  const asOfMs = boundedClockMs(candidate) ? candidate : boundedClockMs(now) ? now : 0;
   const age = (ms: number): number | typeof UNKNOWN =>
     Number.isFinite(ms) && ms <= asOfMs ? Math.floor((asOfMs - ms) / 1000) : UNKNOWN;
   const lastFleetStateRead: { mtime: string; ageSeconds: number | string } = { mtime: UNKNOWN, ageSeconds: UNKNOWN };
@@ -165,7 +219,7 @@ export async function readRuntimeSnapshot(deps: FleetRuntimeDeps): Promise<Runti
   // claim expiring mid-read is dead at the advertised instant — never RUNNING.
   if (board !== null && board.state === 'known') {
     coordination.state = 'known';
-    coordination.activeClaims = board.claims.filter(claim => claim.expiresAt > asOfMs).length;
+    coordination.activeClaims = board.claims.filter(claim => isLiveClaimAt(claim, asOfMs)).length;
     const newest = projectCoordinationReturns(board, asOfMs).returns[0];
     if (newest) coordination.newestReturnAgeSeconds = age(Date.parse(newest.at));
     if (coordination.newestReturnAgeSeconds === UNKNOWN) coordination.reason = 'no readable retained return at or before asOf';

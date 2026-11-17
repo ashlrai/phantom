@@ -980,14 +980,14 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
   // Trigger and prompt gathering in one tick share the same bounded inspection.
   // This cache belongs to this dependency instance, never another home/account.
   let feedbackRead: { at: number; root: string | undefined; snapshot: import('../fleet/execution-feedback.js').ExecutionFeedbackSnapshot } | null = null;
-  const [apply, seat, budgetStore, quarantine, quality, modelStats, reasoningApi, goalsStore, ledger, effective, cloudBacklog, lessons, playbookLanes] = await Promise.all([
+  const [apply, seat, budgetStore, quarantine, quality, modelStats, reasoning, goalsStore, ledger, effective, cloudBacklog, lessons, playbookLanes] = await Promise.all([
     loadDefaultLeaderDeps(),
     loadDefaultLeaderSeatDeps(cfg),
     import('../routing/budget-store.js'),
     import('../fleet/quarantine.js'),
     import('../fleet/quality-metrics.js'),
     import('../fleet/model-stats.js'),
-    import('../reasoning/reasoning-api.js'),
+    import('../reasoning/digest.js'),
     import('../goals/store.js'),
     import('../authority/ledger.js'),
     import('../authority/effective-config.js'),
@@ -1051,7 +1051,7 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
           merged: m.merged,
           costUsd: Math.round(m.costUsd * 100) / 100,
         })),
-      reasoning: () => reasoningApi.computeReasoningDigest(14),
+      reasoning: () => reasoning.computeReasoningDigest(14),
       lessons: () => lessons.leaderLessons(),
       playbooks: () => playbookLanes.leaderPlaybookCatalog(),
     },

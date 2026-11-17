@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { AshlrConfig } from '../types.js';
 import { imessageStateDir } from '../integrations/imessage.js';
 import { QueueStore } from '../queue/store.js';
+import type { QueueJob } from '../queue/schema.js';
 import { killSwitchOn } from '../sandbox/policy.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory } from '../verse/preferences.js';
@@ -18,6 +19,7 @@ import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateM
 const SCHEMA = 'imessage.teammate-tasks.v1';
 const MAX_BYTES = 4 * 1024 * 1024;
 const DAY = 86400000;
+const WITHDRAWAL = 'Operator withdrew unsent teammate task';
 const PEERS = {
   dot: { senderId: 'imessage:e2e0809f8676fb7d', declared: 'Codex-backed; can claim RQ jobs (owner-described)' },
   instinct: { senderId: 'imessage:f5228be7cfedb6cb', declared: 'Independent agent; own GitHub access; PR rebase/triage (owner-described)' },
@@ -39,7 +41,7 @@ const inputSchema = z.object({
 }).strict();
 const taskSchema = inputSchema.extend({
   token: z.string().regex(/^[a-f0-9]{32}$/), createdAt: millis,
-  state: z.enum(['queued', 'sending', 'pending', 'replied', 'expired']), attemptedAt: millis.optional(),
+  state: z.enum(['queued', 'sending', 'pending', 'replied', 'expired', 'cancelled']), attemptedAt: millis.optional(),
   receipt: z.object({ rowid, sent: z.boolean(), delivered: z.boolean(), error: z.number().finite() }).strict().optional(),
   result: z.object({ rowid, status: z.enum(['DONE', 'BLOCKED', 'FAILED']), summary: safeText(1600), at: millis }).strict().optional(),
   metrics: z.array(z.enum(['launch', 'finish'])).max(2).default([]),
@@ -49,7 +51,8 @@ const taskSchema = inputSchema.extend({
   && (!['pending', 'replied'].includes(task.state) || task.receipt?.sent === true && task.receipt.error === 0)
   && (task.state === 'replied') === (task.result !== undefined)
   && (!task.result || task.result.rowid > task.receipt!.rowid)
-  && (!task.settled || ['replied', 'expired'].includes(task.state)));
+  && (task.state !== 'cancelled' || task.attemptedAt === undefined && !task.receipt && task.metrics.length === 0)
+  && (!task.settled || ['replied', 'expired', 'cancelled'].includes(task.state)));
 const storeSchema = z.object({ v: z.literal(1), tasks: z.array(taskSchema).max(1024),
   attempts: z.object({ dot: z.array(millis).max(24), instinct: z.array(millis).max(24) }).strict(),
 }).strict().refine(store => new Set(store.tasks.map(task => task.jobId)).size === store.tasks.length
@@ -90,26 +93,47 @@ async function locked<T>(options: TeammateTaskOptions, operation: () => Promise<
   if (held.state !== 'acquired') throw new Error('Teammate tasks busy');
   try { return await operation(); } finally { releaseLocalStoreLock(held.lock); }
 }
-const owner = (task: Task) => `imsg:${task.peer}`;
-const acceptance = (task: Task) => `RESULT ${task.jobId} ${task.token}; peer report only, independent verification required`;
+const owner = (task: { peer: string }) => `imsg:${task.peer}`;
+const acceptance = (task: { jobId: string; token: string }) => `RESULT ${task.jobId} ${task.token}; peer report only, independent verification required`;
+/** The queue identity fields a teammate task reserves; internal evidence, never serialized publicly. */
+export interface TeammateTaskQueueIdentity {
+  jobId: string; peer: string; repo: string; scope: string; token: string;
+}
+/**
+ * The exact queue-job identity syncQueue enforces on write, shared with the
+ * read-only fleet MCP binding projection so both prove the same tuple: a
+ * same-id/owner/repo row carrying a different scope or RESULT token is not
+ * this task. Scope and token must never enter public output.
+ */
+export function teammateQueueJobMatchesIdentity(job: QueueJob, identity: TeammateTaskQueueIdentity): boolean {
+  return job.acceptance === acceptance(identity) && job.claims.at(-1)?.owner === owner(identity)
+    && job.repo === identity.repo && job.scope === identity.scope;
+}
+/** Internal jobId → reserved-identity index for the fleet MCP binding read; never serialized. */
+export function teammateTaskQueueIdentities(options: TeammateTaskOptions = {}): Map<string, TeammateTaskQueueIdentity> {
+  return new Map(load(options).tasks.map(task => [task.jobId, {
+    jobId: task.jobId, peer: task.peer, repo: task.repo, scope: task.scope, token: task.token,
+  }]));
+}
 /** A claim is reserved at insertion, so a lane hint cannot hand this task to a local executor. */
 async function syncQueue(task: Task, options: TeammateTaskOptions): Promise<void> {
   const queue = new QueueStore(join(paths(options).runs, 'queue'));
   let job = (await queue.read()).jobs.find(job => job.id === task.jobId);
+  if (!job && task.state === 'cancelled') throw new Error('Teammate queue claim conflict');
   if (!job) job = await queue.add({ id: task.jobId, status: 'CLAIMED', priority: 'P2', tier: 'work',
     repo: task.repo, scope: task.scope, acceptance: acceptance(task), deps: [], preferred_lane: `imsg-${task.peer}`,
     // QueueStore owns wall-clock claim/finish times; the injected task clock only
     // governs transport deadlines, cooldowns and evidence timestamps.
     needs: ['imessage'], exclusive: true, claims: [{ owner: owner(task), claimedAt: new Date().toISOString() }] });
-  if (job.acceptance !== acceptance(task) || job.claims.at(-1)?.owner !== owner(task)
-    || job.repo !== task.repo || job.scope !== task.scope) throw new Error('Teammate queue claim conflict');
-  const terminal = task.state === 'replied' || task.state === 'expired';
-  const reason = task.state === 'expired' ? 'Teammate deadline elapsed; remote execution is unknown'
+  if (!teammateQueueJobMatchesIdentity(job, task)) throw new Error('Teammate queue claim conflict');
+  const terminal = ['replied', 'expired', 'cancelled'].includes(task.state);
+  const reason = task.state === 'cancelled' ? WITHDRAWAL : task.state === 'expired' ? 'Teammate deadline elapsed; remote execution is unknown'
     : task.result?.status !== 'DONE' ? `Teammate reported ${task.result?.status}; review private result` : undefined;
   const expected = terminal ? reason ? 'BLOCKED' : 'DONE' : 'CLAIMED';
   if (terminal && job.status === 'CLAIMED' && !job.claims.at(-1)?.finishedAt) {
     await queue.finish(task.jobId, owner(task), { reason });
-  } else if (job.status !== expected || (!terminal && job.claims.at(-1)?.finishedAt)) throw new Error('Teammate queue claim changed');
+  } else if (job.status !== expected || (!terminal && job.claims.at(-1)?.finishedAt)
+    || task.state === 'cancelled' && (job.blockedReason !== WITHDRAWAL || !job.claims.at(-1)?.finishedAt)) throw new Error('Teammate queue claim changed');
 }
 function view(task: Task) {
   // Operational output never includes scopes, outgoing bodies, raw handles or result text.
@@ -147,6 +171,42 @@ export async function enqueueTeammateTask(input: TeammateTaskInput, cfg: AshlrCo
     return { schema: SCHEMA, state: task.state, dryRun: false, task: view(task) };
   };
   return options.apply ? locked(options, enqueue) : enqueue();
+}
+/** Withdraw a local reservation only; this operation never asserts a remote stop. */
+export async function cancelTeammateTask(jobId: string, options: TeammateTaskOptions = {}) {
+  if (!inputSchema.shape.jobId.safeParse(jobId).success) throw new Error('Invalid teammate job id');
+  const cancel = async () => {
+    const store = load(options);
+    const task = store.tasks.find(task => task.jobId === jobId);
+    if (!task) return { schema: SCHEMA, state: 'unavailable', reason: 'Teammate task not found' };
+    if (!['queued', 'cancelled'].includes(task.state) || task.attemptedAt !== undefined || task.receipt || task.metrics.length
+      || task.state !== 'cancelled' && Date.parse(task.deadline) <= (options.now ?? Date.now)()) {
+      return { schema: SCHEMA, state: 'refused', reason: 'Cancellation cannot prove a remote stop' };
+    }
+    const metricsDir = join(paths(options).runs, 'metrics');
+    const metrics = read(join(metricsDir, 'jobs.jsonl'), metricsDir, 32 * 1024 * 1024) ?? '';
+    let launched: boolean;
+    try {
+      if (metrics && !metrics.endsWith('\n')) throw new Error();
+      launched = metrics.split('\n').filter(Boolean).some(line => {
+        const row = JSON.parse(line);
+        return row.event === 'launch' && (row.job === jobId || row.event_id === `imsg:${task.token}:launch`);
+      });
+    } catch { throw new Error('Teammate launch evidence unavailable'); }
+    if (launched) return { schema: SCHEMA, state: 'refused', reason: 'Cancellation cannot prove a remote stop' };
+    const job = (await new QueueStore(join(paths(options).runs, 'queue')).read()).jobs.find(job => job.id === jobId);
+    if (!job || !teammateQueueJobMatchesIdentity(job, task)
+      || !(job.status === 'CLAIMED' && !job.claims.at(-1)?.finishedAt
+        || task.state === 'cancelled' && job.status === 'BLOCKED' && job.blockedReason === WITHDRAWAL && job.claims.at(-1)?.finishedAt)) {
+      return { schema: SCHEMA, state: 'refused', reason: 'Teammate queue claim changed' };
+    }
+    if (!options.apply) return { schema: SCHEMA, state: task.state === 'cancelled' ? 'cancelled' : 'planned', dryRun: true, task: view(task) };
+    // Checkpoint first: a queue failure leaves a durable, non-dispatchable tombstone.
+    if (task.state !== 'cancelled') { task.state = 'cancelled'; save(store, options); }
+    await syncQueue(task, options);
+    return { schema: SCHEMA, state: 'cancelled', dryRun: false, task: view(task) };
+  };
+  return options.apply ? locked(options, cancel) : cancel();
 }
 function existingInput(task: Task): TeammateTaskInput {
   return { jobId: task.jobId, peer: task.peer, kind: task.kind, scope: task.scope, repo: task.repo, prRefs: task.prRefs, format: task.format, deadline: task.deadline };
@@ -199,6 +259,7 @@ export async function runTeammateTasks(cfg: AshlrConfig, options: TeammateTaskOp
       if (task.settled) continue;
       let now = clock();
       await syncQueue(task, options);
+      if (task.state === 'cancelled') continue;
       const senderId = PEERS[task.peer].senderId;
       const approved = !killSwitchOn() && !!(options.approved ?? approvedTeammateHandle)(senderId, cfg, options);
       if (task.state === 'sending' && approved) {
@@ -260,7 +321,7 @@ export async function runTeammateTasks(cfg: AshlrConfig, options: TeammateTaskOp
       if (task.state === 'pending') { metric(task, 'launch', options); save(store, options); }
     }
     save(store, options);
-    report.pending = store.tasks.filter(task => !['replied', 'expired'].includes(task.state)).length;
+    report.pending = store.tasks.filter(task => !['replied', 'expired', 'cancelled'].includes(task.state)).length;
     return { ...report, state: report.pending ? 'pending' : 'healthy' };
   });
 }

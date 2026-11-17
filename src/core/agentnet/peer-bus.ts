@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { workPostBodySchema } from '../agents/bus-v2-schema.js';
 import { localWriteGate } from '../agents/send-gate.js';
 import { configuredSlackCall, readSlackDeliveryPolicy } from '../agents/slack-leader.js';
 import { evaluateSlackAudience } from '../agents/slack-audience.js';
@@ -22,7 +23,9 @@ export const peerRequestSchema = z.object({
   toAgent: callsignSchema.optional(), channel: z.string().regex(/^[CG][A-Z0-9]{2,32}(?![\s\S])/).optional(),
   kind: z.enum(['task', 'review', 'handoff', 'query', 'social']), text: z.string().trim().min(1).max(12_000),
   refs: z.array(reference).max(32).default([]), threadId: reference.optional(), replyTo: idSchema.optional(),
-}).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel));
+  work: workPostBodySchema.optional(),
+}).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel))
+  .refine(r => !r.work || (r.kind === 'task' && Boolean(r.toAgent) && scrubSecrets(JSON.stringify(r.work)) === JSON.stringify(r.work)));
 export type PeerRequest = z.input<typeof peerRequestSchema>;
 export const rowSchema = z.object({ id: idSchema, fromAgent: callsignSchema, target: reference, origin: idSchema,
   digest: z.string().regex(/^[a-f0-9]{64}(?![\s\S])/), hopCount: z.number().int().min(1).max(8), threadId: reference, at: z.number().int().nonnegative() }).strict();
@@ -90,8 +93,10 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
       if (result.status === 'posted') appendNeedsMasonLine(paths.runsDir, `Agentnet loop/hop cap: ${origin}; inspect the agent bus.`);
       return { status: 'escalated', reason: 'loop-or-hop-cap', origin };
     }
-    // Channel sends debit every enrolled recipient pair as well as the channel.
-    const targets = recipient ? [recipient.callsign] : [target, ...peers.filter(p => p.callsign !== sender.callsign && audience.members.some(m => m.id === p.userId)).map(p => p.callsign)];
+    // Channel sends debit every currently eligible recipient pair as well as the channel.
+    const eligible = recipient ? [] : peers.filter(p => p.callsign !== sender.callsign &&
+      p.expiresAt > now && p.teamId === sender.teamId && audience.members.some(m => m.id === p.userId));
+    const targets = recipient ? [recipient.callsign] : [target, ...eligible.map(p => p.callsign)];
     if (targets.some(t => live.filter(r => r.fromAgent === sender.callsign && r.target === t && now - r.at < PEER_WINDOW_MS).length >= PEER_PAIR_LIMIT)) return { status: 'refused', reason: 'pair-rate-limit' };
     if (live.length + targets.length > 1024) return { status: 'refused', reason: 'peer-store-full' };
     const threadId = parent?.threadId ?? request.threadId ?? origin;
@@ -101,7 +106,7 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     const message = { fromAgent: sender.callsign, ...(recipient ? { toAgent: recipient.callsign } : { channel: mapping.channel }),
       kind: request.kind, text: scrubSecrets(request.text), refs: request.refs, threadId, origin, hopCount };
     const envelope = { id, from: sender.callsign, to: recipient?.callsign ?? mapping.topic, priority: 'P2' as const,
-      ttl: 86_400_000, body: { kind: 'peer.message', peer: message } };
+      ttl: 86_400_000, body: request.work ?? { kind: 'peer.message', peer: message } };
     const digest = createHash('sha256').update(JSON.stringify(envelope)).digest('hex');
     const row: Row = { id, fromAgent: sender.callsign, target, origin, hopCount, threadId, at: now, digest };
     // Reserve before publication. A crash may consume capacity, never allow a duplicate send.
@@ -112,13 +117,16 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     // The generic Slack drain refuses peer.message. Only this bound broker may adapt it.
     if (!policy.confirmedByMason) return { status: 'drafted', id, origin, hopCount, slack: 'approval-required' };
     const delivery = await deliverSlackEnvelope({ ...envelope, to: mapping.topic,
-      body: { kind: 'note', text: JSON.stringify(message), thread: threadId } }, { ...policy, call, signal,
+      body: { kind: 'note', text: JSON.stringify(request.work ?? message), thread: threadId } }, { ...policy, call, signal,
       stateRoot: join(directory, 'slack'), readPolicy: () => {
         try {
           const latestPolicy = policyReader();
           const bindings = readPeerBindings(paths.bindings), at = (options.now ?? Date.now)();
           const fresh = authenticatePeer(bindings, session, at);
-          if (recipient && !bindings.some(p => JSON.stringify(p) === JSON.stringify(recipient) && p.expiresAt > at)) return undefined;
+          // A debited binding revoked, replaced or expired mid-flight cancels the post; the audience is never narrowed.
+          for (const bound of recipient ? [recipient] : eligible) {
+            if (!bindings.some(p => JSON.stringify(p) === JSON.stringify(bound) && p.expiresAt > at)) return undefined;
+          }
           if (JSON.stringify(fresh) !== JSON.stringify(sender) || localWriteGate()) return undefined;
           return latestPolicy;
         } catch { return undefined; }
@@ -134,9 +142,14 @@ export function readPeerInbox(session: PeerSession, after = 0, options: PeerBusO
   const peer = authenticatePeer(readPeerBindings(paths.bindings), session, now);
   const file = join(paths.busRoot, 'agentnet', 'coordination.json');
   const rows = existsSync(file) ? z.array(rowSchema).max(1024).parse(readPeerJson(file, paths.busRoot)) : [];
-  const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now });
+  const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now, includeOriginalEnvelope: true });
   if (page.status !== 'ok') return page;
-  return { ...page, messages: page.messages.filter(receipt => rows.some(row => row.id === receipt.envelope.id &&
-    row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
-    row.digest === createHash('sha256').update(JSON.stringify(receipt.envelope)).digest('hex'))) };
+  const messages = page.messages.filter(receipt => {
+    const original = receipt.originalEnvelope;
+    return original !== undefined && rows.some(row => row.id === original.id &&
+      row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
+      receipt.receivedAt === row.at &&
+      row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex'));
+  }).map(({ cursor, receivedAt, envelope }) => ({ cursor, receivedAt, envelope }));
+  return { ...page, messages };
 }

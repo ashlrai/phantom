@@ -14,6 +14,7 @@ import { defaultPoolReachDeps, readPoolReach } from '../core/fleet/pool-reach.js
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
 import { projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
 import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
@@ -23,7 +24,9 @@ import {
 } from './fleet-inbox.js';
 import { parseFleetRuntimeArgs, readFleetRuntime } from './fleet-runtime.js';
 import { SURFACES } from '../core/fleet/surface-owner.js';
-import { NOTE as PEER_LEDGER_NOTE, parseFleetPeerLedgerArgs, readFleetPeerLedger } from './fleet-peer-ledger.js';
+import { NOTE as SESSION_HANDOFF_NOTE, parseFleetSessionHandoffArgs, readFleetSessionHandoff } from './fleet-session-handoff.js';
+import { NOTE as PEER_LEDGER_NOTE, parseFleetPeerLedgerArgs, readFleetPeerLedger, type FleetPeerLedgerArgs } from './fleet-peer-ledger.js';
+import { NOTE as BRIDGE_CHECK_NOTE, parseFleetBridgeCheckArgs, readFleetBridgeCheck } from './fleet-bridge-check.js';
 import { parseFleetSurfaceOwnerArgs, readFleetSurfaceOwner } from './fleet-surface-owner.js';
 import { parseFleetClaimExecutionArgs, readFleetClaimExecution } from './fleet-claim-execution.js';
 import { readFleetLanes } from './fleet-lanes.js';
@@ -56,6 +59,7 @@ import { JOB_OVERLAP_MIN_IDS } from '../core/fleet/job-overlap.js';
 import { parseFleetJobOverlapArgs, readFleetJobOverlap, type FleetJobOverlapArgs } from './fleet-job-overlap.js';
 import { MAX_FLEET_JOB_CURRENT_BATCH_IDS, parseFleetJobCurrentBatchArgs, readFleetJobCurrentBatch, type FleetJobCurrentBatchArgs } from './fleet-job-current-batch.js';
 import { DEFAULT_FLEET_INTENT_LIMIT, MAX_FLEET_INTENT_LIMIT, parseFleetIntentReadArgs, readFleetIntent, type FleetIntentReadArgs } from './fleet-intent-read.js';
+import { DEFAULT_FLEET_ORCHESTRATION_LIMIT, MAX_FLEET_ORCHESTRATION_LIMIT, parseFleetOrchestrationReadArgs, readFleetOrchestration, type FleetOrchestrationReadArgs } from './fleet-orchestration-read.js';
 import { INTENT_STATUSES } from '../core/intent/schema.js';
 import { parseFleetJobCurrentArgs, readFleetJobCurrent,
   type FleetJobCurrentArgs } from './fleet-job-current.js';
@@ -85,6 +89,10 @@ import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
+import { DEFAULT_FLEET_IMESSAGE_TASKS, MAX_FLEET_IMESSAGE_TASKS, parseFleetImessageTasksArgs,
+  readFleetImessageTasks, type FleetImessageTasksArgs } from './fleet-imessage-tasks.js';
+import { parseFleetSlackEvidenceArgs, readFleetSlackEvidence,
+  type FleetSlackEvidenceArgs } from './fleet-slack-evidence.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -212,8 +220,8 @@ const readFleetPoolReach = (read: () => Promise<unknown> = async () => readPoolR
 /** Slack reply binding: the `replies` section of the offline bridge status plus its `at`. */
 async function readSlackRepliesEvidence() {
   const status = buildSlackBridgeStatus();
-  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample } = status.replies;
-  return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, rejected, futureDated, unansweredSample };
+  const { state, answered, unanswered, oldestUnansweredAt, uncertainSends, unverified, uncertainRequests, rejected, futureDated, unansweredSample, busFailed, busFailedSample } = status.replies;
+  return { asOf: status.at, state, answered, unanswered, oldestUnansweredAt, uncertainSends, unverified, uncertainRequests, rejected, futureDated, unansweredSample, busFailed, busFailedSample };
 }
 
 /** Bounded Slack-replies read. A throw or timeout is reported as status
@@ -237,6 +245,26 @@ async function readFleetSlackReplies(
   }
 }
 
+/** Read the desktop claim-notice evidence without exposing reader failures. */
+async function readFleetClaimNotices(
+  read: () => Promise<unknown> = () => readClaimNoticeView(),
+): Promise<unknown> {
+  const timeout = Symbol('claim-notices-timeout');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(timeout), 5_000);
+      }),
+    ]);
+  } catch (error) {
+    return { status: 'unknown', reason: error === timeout ? 'claim-notices-timeout' : 'claim-notices-unavailable' };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export interface FleetReaders {
   stagingScanner?: StagingScanner;
   stagingInventory?: (input: FleetStagingInventoryArgs) => Promise<unknown>;
@@ -247,7 +275,8 @@ export interface FleetReaders {
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
   workBoard?: (input: FleetWorkBoardArgs) => Promise<unknown>;
   runtime?: () => Promise<unknown>;
-  peerLedger?: () => unknown;
+  peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
+  sessionHandoff?: (input: { job: string }) => unknown;
   surfaceOwner?: (surface: string) => Promise<unknown>;
   claimExecution?: () => Promise<unknown>;
   runtimeIdentity?: () => Promise<unknown>;
@@ -257,6 +286,7 @@ export interface FleetReaders {
   reviewPick?: (args: FleetReviewPickArgs) => Promise<unknown>;
   orderState?: (args: FleetOrderStateArgs) => Promise<unknown>;
   slackReplies?: () => Promise<unknown>;
+  claimNotices?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
@@ -291,13 +321,17 @@ export interface FleetReaders {
   commsReadiness?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
+  imessageTasks?: (input: FleetImessageTasksArgs) => Promise<unknown>;
+  slackEvidence?: (input: FleetSlackEvidenceArgs) => Promise<unknown>;
   ciResumeInputs?: (input: FleetCiResumeInputsArgs) => Promise<unknown>;
   ciReceiptAwait?: (input: FleetCiReceiptAwaitArgs, signal: AbortSignal) => Promise<unknown>;
   ciReceiptAwaitBatch?: (input: FleetCiReceiptAwaitBatchArgs, signal: AbortSignal) => Promise<unknown>;
   releaseCandidate?: (input: FleetReleaseCandidateArgs) => Promise<unknown>;
+  orchestrationRead?: (input: FleetOrchestrationReadArgs) => Promise<unknown>;
   intentRead?: (input: FleetIntentReadArgs) => Promise<unknown>;
   recheck?: () => Promise<unknown>;
   recheckHistory?: (input: FleetRecheckHistoryArgs) => Promise<unknown>;
+  bridgeCheck?: () => Promise<unknown>;
 }
 
 /** SDK transport injection permits a real protocol round trip without a child. */
@@ -424,7 +458,16 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     {
       name: 'fleet_peer_ledger',
       description: PEER_LEDGER_NOTE,
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      inputSchema: { type: 'object', properties: {
+        fromAgent: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+        target: { type: 'string', pattern: '^[a-zA-Z0-9_.:/#-]{1,128}$' },
+      }, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_session_handoff',
+      description: SESSION_HANDOFF_NOTE,
+      inputSchema: { type: 'object', properties: { job: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$' } }, required: ['job'], additionalProperties: false },
       annotations,
     },
     {
@@ -464,9 +507,31 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_claim_notices',
+      description: 'Read the same Slack claim-notice evidence as the desktop view: bound threads, sent notices and pending ASSIGNED / RELEASED / BLOCKED / VERIFIED notices. A `sent` row means a durable bus note was written, not that Slack delivered it; pending rows are a dry-run plan. Authority none: never sends, ledgers or writes. The read is bounded to 5 seconds; a throw or timeout returns { status: "unknown", reason } without thrown text. Takes no arguments; any argument is refused.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_slack_replies',
       description: 'Read the Slack reply binding: which ingested Slack requests have a same-thread `sent` receipt (answered) and which do not (unanswered), with state, oldestUnansweredAt, uncertainSends, rejected, futureDated, a capped unansweredSample (channelId, threadTs, messageTs, at) and asOf, from the same replies section as the Slack bridge status. Lets an agent tell RECEIVED from answered. Evidence only; it grants no send, dispatch or merge authority, and an `attempted` send is never counted as an answer. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented answered or unanswered count. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_slack_evidence',
+      description: 'Read the durable Slack evidence bundle for one thread through the same readSlackEvidenceBundle collector as `phm fleet slack-evidence` — never a second join: the bundle keeps its schema, scope, thread, asOf, rows, counts, sources (journal and sends state) and optional freshness verdict verbatim — persisted local journal and send-store evidence only, never proof of current runtime reachability, durable task ownership, execution, or a live claim. `thread` is a required Slack thread timestamp, `channelId` an optional Slack channel id restricting rows to that channel (counts and freshness recomputed from the filtered rows, matching `--channel` on the CLI), `messageTs` an optional Slack message timestamp that requires `channelId` and selects exactly one request — rows, counts and freshness are recomputed for the selected message only and the result echoes `selection`, matching `--message` on the CLI — and `maxAgeSeconds` an optional positive integer freshness bound reported as fresh/stale/unknown; a collector failure returns fixed unavailable evidence with the requested selection and no raw exception or private path. No caller directory, root, cwd, path, send, enqueue or claim option is accepted, and the tool never sends, enqueues, claims, probes or writes anything.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          thread: { type: 'string', pattern: '^\\d{1,20}\\.\\d{1,10}$', description: 'Exact Slack thread root timestamp such as 1731000000.000100.' },
+          channelId: { type: 'string', pattern: '^[CDG][A-Z0-9]{2,32}$', description: 'Optional Slack channel id such as C0123ABCDEF; restricts the bundle to that channel.' },
+          messageTs: { type: 'string', pattern: '^\\d{1,20}\\.\\d{1,10}$', description: 'Optional Slack message timestamp such as 1731000010.000100; requires channelId and selects exactly one request, matching --message on the CLI.' },
+          maxAgeSeconds: { type: 'integer', minimum: 1, description: 'Optional positive safe-integer freshness bound; omitted returns no freshness verdict.' },
+        },
+        required: ['thread'],
+        additionalProperties: false,
+      },
       annotations,
     },
     {
@@ -620,6 +685,20 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_INTENT_LIMIT, default: DEFAULT_FLEET_INTENT_LIMIT, description: 'list only: maximum rows returned.' },
         },
         required: ['action'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_orchestration_read',
+      description: 'Read the leader orchestration journal: specialist assignment receipts newest assignedAt first, with global status counts and every unresolved reserved receipt. Optional exact status/job filters and limit (default 25, max 100) apply to receipts; total counts matching rows before the limit. Missing state reports source:missing; corrupt or invalid state is a tool error. Authority is none. No caller path, root, environment or command; never writes, locks or sends.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['reserved', 'admitted', 'complete'] },
+          job: { type: 'string', maxLength: 64 },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_ORCHESTRATION_LIMIT, default: DEFAULT_FLEET_ORCHESTRATION_LIMIT },
+        },
         additionalProperties: false,
       },
       annotations,
@@ -810,6 +889,19 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_imessage_tasks',
+      description: 'Read the local teammate task ledger through the same listTeammateTasks collector as `phm fleet imessage-tasks list` — never a second store, reader or dispatcher: each row is projected to jobId, peer, resource, state, claimKey, createdAt/attemptedAt/deadline timestamps, the sanitized transport receipt (rowid, sent, delivered, error) and the peer-reported result (rowid, status, at, evidence) — never the envelope token, scope, format, result summary, handles, message bodies or filesystem paths. `jobId` is an optional exact selector applied before `limit` truncation (1–100, default 20, newest matches kept in collector order); an unmatched selector reports matched:false and never another task. Ledger presence is reported separately (present, missing, unavailable) so a missing or corrupt store never poses as a healthy empty assignment, and a collector failure is fixed unavailable evidence without raw exception text. Task states are local ledger states verbatim: queued is never RUNNING, a DONE result is peer-reported and unverified, and a sent receipt is never delivery proof. Reads the server-owned runs root only; no caller directory, root, cwd, path, config, send, enqueue, poll or claim option is accepted, and the tool never sends, enqueues, dispatches, claims, writes or alters comms configuration.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          jobId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$', description: 'Exact job id selector such as RQ-PHX-EXAMPLE-1; applied before limit truncation.' },
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_IMESSAGE_TASKS, default: DEFAULT_FLEET_IMESSAGE_TASKS },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
       name: 'fleet_ci_resume_inputs',
       description: 'Plan which CI jobs may reuse passing input-tree receipts after a fix — the RESUME-FROM-FAILURE order — through the same shared planCiResumeInputs planner as `phm fleet ci-resume-inputs`, never a second digest algorithm. Takes the version-1 manifest and prior-receipts documents inline as JSON objects (each at most 1 MiB serialized, never file paths) plus hexadecimal base and head revisions. Per job it returns the planner\'s structured reuse-or-rerun decision, fixed reasons, reproduced base and head input digests, covered and shared changed paths and the matched prior receipt; unknown or unmapped coverage stays a rerun. The repository is the server\'s own cwd: no caller cwd, filesystem path, executable, environment or git option is accepted. Read-only: git objects only (rev-parse, ls-tree, diff-tree), the working tree is never read, and the tool never posts a status or check, writes a receipt, dispatches a workflow or mutates CI.',
       inputSchema: {
@@ -925,11 +1017,17 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       },
       annotations,
     },
+    {
+      name: 'fleet_bridge_check',
+      description: BRIDGE_CHECK_NOTE,
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
   ] }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_slack_replies' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -974,25 +1072,33 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const gmailArchivePlanLatestArgs = name === 'fleet_gmail_archive_plan_latest' ? parseFleetGmailArchivePlanLatestArgs(args) : null;
     const imessagePathArgs = name === 'fleet_imessage_path' ? parseFleetImessagePathArgs(args) : null;
     const imessageAcks = name === 'fleet_imessage_acks' ? parseFleetImessageAcksArgs(args) : null;
+    const imessageTasks = name === 'fleet_imessage_tasks' ? parseFleetImessageTasksArgs(args) : null;
+    const slackEvidenceArgs = name === 'fleet_slack_evidence' ? parseFleetSlackEvidenceArgs(args) : null;
     const ciResumeInputs = name === 'fleet_ci_resume_inputs' ? parseFleetCiResumeInputsArgs(args) : null;
     const ciReceiptAwait = name === 'fleet_ci_receipt_await' ? parseFleetCiReceiptAwaitArgs(args) : null;
     const ciReceiptAwaitBatch = name === 'fleet_ci_receipt_await_batch' ? parseFleetCiReceiptAwaitBatchArgs(args) : null;
+    const orchestrationRead = name === 'fleet_orchestration_read' ? parseFleetOrchestrationReadArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
+    const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
+    const peerLedgerArgs = name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) : null;
     const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
     const recheckHistory = name === 'fleet_recheck_history' ? parseFleetRecheckHistoryArgs(args) : null;
     const releaseCandidate = name === 'fleet_release_candidate' ? parseFleetReleaseCandidateArgs(args) : null;
     if (name === 'fleet_review_pick' ? reviewPick === null :
         name === 'fleet_order_state' ? orderState === null :
         name === 'fleet_work_board' ? workBoard === null :
+        name === 'fleet_orchestration_read' ? orchestrationRead === null :
         name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
         name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
-        name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) === null :
+        name === 'fleet_peer_ledger' ? peerLedgerArgs === null :
+        name === 'fleet_session_handoff' ? sessionHandoffArgs === null :
         name === 'fleet_surface_owner' ? surfaceOwner === null :
         name === 'fleet_claim_execution' ? claimExecution === null :
         name === 'fleet_recheck' ? recheckArgs === null :
         name === 'fleet_recheck_history' ? recheckHistory === null :
+        name === 'fleet_bridge_check' ? parseFleetBridgeCheckArgs(args) === null :
         name === 'fleet_release_candidate' ? releaseCandidate === null :
         name === 'fleet_staging_inventory' ? fleetStagingInventory === null :
         name === 'fleet_staging_inventory_retry' ? retry === null :
@@ -1003,6 +1109,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
+        name === 'fleet_imessage_tasks' ? imessageTasks === null :
+        name === 'fleet_slack_evidence' ? slackEvidenceArgs === null :
         name === 'fleet_email_diagnosis' ? emailDiagnosisArgs === null :
         name === 'fleet_gmail_triage_latest' ? gmailTriageLatestArgs === null :
         name === 'fleet_disk_forecast' ? diskForecastArgs === null :
@@ -1044,7 +1152,8 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_coordination_claims' ? readFleetCoordinationClaims()
         : name === 'fleet_coordination_returns' ? readFleetCoordinationReturns()
         : name === 'fleet_runtime' ? await (readers.runtime ?? readFleetRuntime)()
-        : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)()
+        : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)(peerLedgerArgs as FleetPeerLedgerArgs)
+        : name === 'fleet_session_handoff' ? (readers.sessionHandoff ?? readFleetSessionHandoff)(sessionHandoffArgs!)
         : name === 'fleet_surface_owner' ? await (readers.surfaceOwner ?? readFleetSurfaceOwner)(surfaceOwner!.surface)
         : name === 'fleet_claim_execution' ? await (readers.claimExecution ?? readFleetClaimExecution)()
         : name === 'fleet_runtime_identity' ? await (readers.runtimeIdentity ?? readFleetRuntimeIdentity)()
@@ -1053,11 +1162,13 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_pool_reach' ? await readFleetPoolReach(readers.poolReach)
         : name === 'fleet_review_pick' ? await (readers.reviewPick ?? readFleetReviewPick)(reviewPick as FleetReviewPickArgs)
         : name === 'fleet_order_state' ? await (readers.orderState ?? readFleetOrderState)(orderState as FleetOrderStateArgs)
+        : name === 'fleet_claim_notices' ? await readFleetClaimNotices(readers.claimNotices)
         : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
         : name === 'fleet_recheck' ? await (readers.recheck ?? (() => readFleetRecheckTool()))()
         : name === 'fleet_recheck_history' ? await (readers.recheckHistory ?? readFleetRecheckHistoryTool)(recheckHistory as FleetRecheckHistoryArgs)
+        : name === 'fleet_bridge_check' ? await (readers.bridgeCheck ?? readFleetBridgeCheck)()
         : name === 'fleet_usage_resets' ? await (readers.usageResets ?? readFleetUsageResets)()
         : name === 'fleet_reset_group_await' ? await (readers.resetGroupAwait ?? readFleetResetGroupAwait)(resetGroupAwait as FleetResetGroupAwaitArgs)
         : name === 'fleet_reset_await' ? await (readers.resetAwait ?? readFleetResetAwait)(resetAwait as FleetResetAwaitArgs)
@@ -1090,9 +1201,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
+        : name === 'fleet_imessage_tasks' ? await (readers.imessageTasks ?? readFleetImessageTasks)(imessageTasks as FleetImessageTasksArgs)
+        : name === 'fleet_slack_evidence' ? await (readers.slackEvidence ?? readFleetSlackEvidence)(slackEvidenceArgs as FleetSlackEvidenceArgs)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
+        : name === 'fleet_orchestration_read' ? await (readers.orchestrationRead ?? readFleetOrchestration)(orchestrationRead as FleetOrchestrationReadArgs)
         : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : name === 'fleet_work_board' ? await (readers.workBoard ?? readFleetWorkBoard)(workBoard as FleetWorkBoardArgs)

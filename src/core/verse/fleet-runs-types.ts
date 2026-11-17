@@ -17,6 +17,8 @@ export interface FleetRunsV1 {
   codexPersonal: { usedPct: number|null; resetsAt: string|null; asOf: string|null } | null;
   inbox: Array<{ at: string; source: string; text: string }>;
   outbox?: Array<{ at: string; text: string }>;
+  /** Additive: the Leader chat (inbox + replies, time-ordered, with state); absent when either journal was unread. */
+  leaderChat?: import('../fleet/leader-chat-types.js').LeaderChat;
   drop: { pending: Array<{ lane: string; file: string }>; done: number } | null;
 }
 export interface FleetRunsInboxBody { text: string; source?: string }

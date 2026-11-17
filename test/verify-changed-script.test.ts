@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { collectChangedPaths, selectChangedFiles } from '../scripts/verify-changed.mjs';
+import { collectChangedPaths, masterMovedAuthorityDrift, selectChangedFiles } from '../scripts/verify-changed.mjs';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn(), spawnSync: vi.fn() }));
 
@@ -26,6 +26,18 @@ describe('changed verification selection', () => {
       expect(selectChangedFiles([path], []).authorityDrift).toBe(true);
     }
     expect(selectChangedFiles(['docs/a.md', 'src-other/a.ts'], []).authorityDrift).toBe(false);
+  });
+
+  it('selects authority drift for shipped scripts, which the Tier-1 closure also walks', () => {
+    expect(selectChangedFiles(['scripts/evaluators/x.mjs'], []).authorityDrift).toBe(true);
+    expect(selectChangedFiles(['scripts-other/x.mjs'], []).authorityDrift).toBe(false);
+  });
+
+  it('flags a master that moved a drift-relevant path since the merge-base, and ignores docs-only movement', () => {
+    const exec = (out: string) => vi.fn().mockReturnValueOnce('abc123\n').mockReturnValueOnce(out);
+    expect(masterMovedAuthorityDrift('/r', exec('docs/a.md\0README.md\0') as never)).toBe(false);
+    expect(masterMovedAuthorityDrift('/r', exec('docs/a.md\0src/core/x.ts\0') as never)).toBe(true);
+    expect(masterMovedAuthorityDrift('/r', exec('') as never)).toBe(false);
   });
 
   it('checks web changes including assets, but not similarly named directories', () => {

@@ -18,6 +18,10 @@ phm skills list --status verified --limit 10
 One obvious path: `list` is read-only and needs no setup. It prints the newest
 revision of each skill, newest first.
 
+To see every skill fleet agents have (Claude Code and Codex user skills plus
+these learned cards), run `phm skills list --all --json`. The desktop Skills
+pane shows the same list. A source that cannot be read says `unknown`.
+
 ```json
 {
   "schemaVersion": 1,

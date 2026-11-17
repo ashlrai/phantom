@@ -22,7 +22,11 @@ async function call(method = 'GET', allowDispatch = true) {
 
 describe('GET /api/verse/comms/gmail-triage/archive-plan', () => {
   it('serves null before a save and the saved plans after', async () => {
-    expect((await call()).body).toEqual({ schema: GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA, latest: null });
+    expect((await call()).body).toEqual({
+      schema: GMAIL_ARCHIVE_PLAN_LATEST_SCHEMA,
+      latest: null,
+      evidence: { scope: 'unknown', liveInboxTargetState: 'unknown', archiveExecution: 'unverified' },
+    });
     writeGmailArchivePlanLatest(runsDir, { inbox: 'inbox-a', unread: 120, target: 100, archiveCount: 20, topSenders: [{ sender: 'sender@example.com', count: 12 }] });
     const { status, body } = await call();
     expect(status).toBe(200);

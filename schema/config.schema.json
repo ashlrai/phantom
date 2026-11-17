@@ -18,6 +18,16 @@
     "tools"
   ],
   "properties": {
+    "ciRerun": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "intervalMinutes": { "type": "number", "minimum": 1, "default": 10 },
+        "repos": { "type": "array", "items": { "type": "string", "pattern": "^[\\w-][\\w.-]*/[\\w-][\\w.-]*$" } },
+        "maxPerHour": { "type": "integer", "minimum": 0, "default": 10 }
+      }
+    },
     "version": {
       "type": "integer",
       "minimum": 1,

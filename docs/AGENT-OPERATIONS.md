@@ -29,6 +29,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -49,8 +50,9 @@ name it explicitly or use `gate:full`. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
 **Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and — unless the change is
-docs-only — the quick typecheck, all on Ubuntu. `Merge Gate` is the one
+the secret-shape scan, lane classification, and quick typecheck with
+CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
+all on Ubuntu. `Merge Gate` is the one
 required check and fails unless exactly that selection ran and every full lane
 was skipped. No pull request or merge-queue commit may occupy a macOS or
 Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
@@ -336,8 +338,10 @@ inline terminal approval and explicit Phantom fleet handoff are described in
 ### MCP server
 
 `phm mcp` runs the MCP aggregation gateway on stdio. Its subcommands are `list`,
-`doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`
-and `ecosystem [--write] [--json]`.
+`doctor` (exit 1 when a required server is down), `install <claude|ashlrcode>`,
+`ecosystem [--write] [--json]` and `fleet`. The last starts the separate
+read-only fleet server; discover its observation tools with MCP `tools/list`.
+See the [fleet MCP onramp](FLEET-MCP-ONRAMP.md).
 
 `phm wire [claude|codex|cursor|all] [--config <path>] [--json]` registers the
 gateway as server `ashlr-hub` with command `ashlr` and args `["mcp"]`. It backs
@@ -387,7 +391,8 @@ the resident daemon under an active grant. See
 
 ### Where state lives
 
-Everything is under `~/.ashlr/`. Verified paths:
+Runtime state uses several roots. The paths below are relative to
+`$ASHLR_HOME` (default `~/.ashlr/`):
 
 | Path | Contents |
 | --- | --- |
@@ -401,6 +406,11 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
 | `bus/` | shared task board state (`phm bus thread|task`, `phm fleet bus`) |
 | `bus-mailbox/` | durable local message mailboxes (`phm bus send|inbox|ack`) |
+| `fleet/bus-inbox/` | cursor-based Agent Bus (`phm comms bus`, HTTP and fleet MCP) |
+
+Host queue, metrics, specialist coordination and iMessage state normally live
+under `~/.ashlr-runs/`; connector profiles use `~/.phantom/connectors/`.
+Check each command's root options before comparing evidence from different processes.
 
 [RELIABILITY.md](RELIABILITY.md#where-state-lives) lists the rest
 (`enrollment.json`, `daemon.json`, `inbox/`, `sandboxes/`, `audit/`).
@@ -426,8 +436,21 @@ Everything is under `~/.ashlr/`. Verified paths:
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
-| `phm resources [--json]`, `phm usage`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
+| `phm resources [--json]`, `phm usage [--json]`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage --json` preserves engine totals and adds `spend`, the desktop Resources snapshot described below. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
+
+### Desktop pool usage
+
+Resources → Spend down shows used share, reset time, burn per hour and projected
+unused capacity for each pool, with `on pace`, `behind`, `exhausted` or `unknown`.
+`phm usage --json` returns these same numbers in `spend` (`v: 1`, `asOf`, `pools`),
+also available directly from `phm usage spend --json` and `GET /api/usage/spend`.
+Each row keeps `pool`, `unit`, `usedPercent`, `resetAt`, `burnPerHour`,
+`projectedUnusedPercent`, `projectedUnusedUsd` and the existing `verdict` keys.
+Percent burn means percentage points per hour; gifts use USD per hour and expiry.
+Missing, stale or malformed status reads produce nulls, displayed as unknown.
+The seven core pools remain visible, including the Claude API gift and local;
+other recorded pools remain supported. Local has no inferred quota or reset.
 
 ### Metrics levers
 
@@ -498,6 +521,19 @@ Mac job refreshes health, levers and PR links every five minutes and at load.
 Generation does not install or activate jobs. Use an installed `phm` executable
 that resolves Node on launchd's PATH. When the driver snapshot producer lands,
 adapt it to this contract; the report and relay need no transport changes.
+
+### Fleet graph, orchestration and teammate evidence
+
+The desktop Graph pane shows lane/worker relationships and live seat state.
+The Channels pane shows the Leader orchestration journal. The
+[fleet coordination guide](FLEET-COORDINATION.md) covers their CLI and MCP
+readers, advisory assignment previews, and the distinction between the router
+topology and the engine/account registry graph.
+
+For iMessage, use the [intake and teammate guide](IMESSAGE.md): it covers
+local replies, fleet-originated scoped tasks, unsent-task cancellation, and
+counts-only path, acknowledgement and latency readers. Ordinary intake polling
+does not activate teammate delivery.
 
 ### Stop and pause
 
@@ -764,6 +800,7 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
+| Is the fleet on track (merges, publish-to-merge, empty finishes, mains, releases, pools)? | `phm goals` (plain words, behind first) or `phm goals --json` (`fleet.goal-scorecard.v2` with `version`: target, value, as-of, source, 24 h and 7 d trend, status text such as `unknown: <reason>`); the desktop Goals view shows the same rows |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
 | Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
@@ -891,6 +928,38 @@ The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
 excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm home` answers one question: is the fleet healthy and moving? It prints a
+headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
+merged PRs, median time to merge, main per repo, running jobs per lane, the
+resource most at risk of going unused, the last 5 work-log items and unread
+Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
+with the one-word answers each takes. `phm home --json` prints schema `home.v1`
+(the `schema` field is the version): each field is `{state:"ok",value}` or
+`{state:"unknown",reason}`. It is read-only. The desktop app and the phone's
+first screen show this summary and nothing else.
+
+`phm asks` lists what only Mason can do: a password, a 2FA code, a device
+approval or a payment. Each row has a short id, the kind, its age and one plain
+line. `phm asks answer <id> yes|no|done` records the answer once, with its
+source and time, on the existing needs-you ledger and bus; a repeat changes
+nothing. Agents raise one with `phm asks add <kind> "<request>"` and never put
+the secret itself in the request. Any other kind is refused: the fleet decides
+this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
+own private chat; the desktop Home view shows the same asks with Yes, No and
+Done buttons. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
+
+`phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
+published, PRs merged, empty jobs and the median time from publish to merge. It
+prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
+"38 merged in the last 6 hours, median 2m 50s", `totals`, one entry in `buckets`
+per hour and `groups` by lane. `--hours N` sets the window (1 to 168, default 24),
+`--by repo` or `--by tier` changes the grouping and `--text` prints plain lines.
+It reads `~/.ashlr-runs/metrics/jobs.jsonl` and the main-guardian status, and
+changes nothing. Each PR counts once. A value that was not measured is `null`
+(or "unknown"), never zero; lines that are not JSON are skipped and counted in
+`malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
+Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`).
 
 `phm fleet repo-rate --json` reads merged PR outcomes from
 `~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's

@@ -76,7 +76,7 @@ export const DESKTOP_APP_PROFILES: Readonly<Record<DesktopAppId, DesktopAppProfi
     composer: /ask|message|task|follow.?up|prompt|codex/i, send: /^(send|submit|run)$/i, stop: /^(stop|interrupt|cancel)/i, approval: /^(approve|allow|deny|reject)/i,
   },
   devin: {
-    id: 'devin', names: ['Devin'], bundleIds: ['ai.cognition.devin', 'com.cognition.devin'],
+    id: 'devin', names: ['Devin'], bundleIds: ['ai.cognition.devin', 'com.cognition.devin', 'com.exafunction.windsurf'],
     composer: /task|message|describe|ask|prompt|devin/i, send: /^(send|submit|start|create)/i, stop: /^(stop|pause|cancel)/i, approval: null,
   },
 };
@@ -176,7 +176,7 @@ export interface DesktopAppAdapterOptions {
 
 export type TreeRead = { ok: true; entries: AxEntry[]; truncated?: boolean } | { ok: false; error: string };
 
-async function readTree(call: ToolCall, bundle: string, maxDepth: number): Promise<TreeRead> {
+export async function readTree(call: ToolCall, bundle: string, maxDepth: number): Promise<TreeRead> {
   const res = await call('computer_ax_tree', { app: bundle, max_depth: maxDepth });
   if (res.isError) return { ok: false, error: toText(res).slice(0, 300) };
   return { ok: true, entries: parseAxTree(toText(res)), truncated: /\btruncated\b/.test(toText(res)) };

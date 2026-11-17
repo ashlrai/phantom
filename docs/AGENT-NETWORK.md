@@ -41,6 +41,30 @@ install a runner or start background execution. On a configured Mac, repeat
 `phm node join --json` to recheck the route and local capacity using the saved
 identity. A primary or backup retains its role; repeat join never resets its witness.
 
+See every computer in one place, from the backup or primary:
+
+```sh
+phm nodes
+phm nodes --can-take claude --json
+```
+
+`phm nodes` prints one row per known computer: reachable or not, whether Phantom
+is running there, free memory, CPU headroom, lanes, running jobs and a
+plain-words state such as `ready for work` or `offline since 10:42`.
+`--can-take <lane>` lists only the computers that can take a job for that lane
+now and recommends one: ready remote computers first, most free slots first,
+then name to break ties. If none qualifies, it falls back to this computer only
+when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
+`target` (`remote`, `local`, `none`), `reason` (`remote-ready`, `local-only`,
+`local-fallback`, `no-ready-node`) and a plain explanation. Unknown reachability
+or slots, stale mirrors and expired lane advertisements cannot qualify a node.
+The typed `chooseNodeForLane` API also accepts `{ localOnly: true }` to keep
+explicitly local work here. This is advice; it does not reserve or launch work.
+It is read only: it reads `tailscale status` and the node list already on
+this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
+the node list on another computer) is `unknown` with the reason. The desktop
+Computers pane shows the same rows as cards.
+
 Then run one bounded worker batch:
 
 ```sh
@@ -111,7 +135,10 @@ outside this change; any such integration needs its separate security review.
 The runner must be an absolute, owned executable with safe ancestors, checked by
 the existing Drive executable validator. It is invoked as `<runner> run`, receives
 one JSON object on stdin with `protocol: "phm-node-worker/v1"`, the existing node
-`job` view and its `claim`, and must return exactly one bounded JSON object:
+`job` view and its `claim`, plus an optional `providerBinaries` receipt naming the
+absolute provider binary the worker's probe signed in with (see
+[node runner](NODES.md#reference-runner-security-review-before-installation)), and
+must return exactly one bounded JSON object:
 
 ```json
 {"resultRef":"branch:example-1"}
@@ -121,11 +148,16 @@ The result reference must satisfy the existing node identifier grammar. The runn
 owns pack resolution, sandboxed execution on the requested locally signed-in lane,
 and artifact storage accessible to the primary. Its stdout is limited to 4096
 bytes and stderr is discarded. A successful process without a valid result
-reference is not completion. The worker forwards only the reference, never raw
+reference is not completion. A reply with `packError` or `codex: "error"`, or a
+nonzero exit, releases the lease for retry; two consecutive failures of one pack
+decline it for the session. The worker forwards only the reference, never raw
 provider transcripts. The runner must not publish, resolve copied credentials or
 perform unfenced external effects. It must pass the claim token to any effect sink
 that accepts effects; a preflight lease check alone cannot fence external effects.
 No runner executable is installed by this change.
+The [reference runner](NODES.md#reference-runner-security-review-before-installation)
+provides `phm node run-once` for the fixed `shell-check` and `omlx-chat` packs;
+its operator-owned wrapper requires Security review before installation.
 
 Workers target a three-second renewal and pressure-check interval; bounded
 synchronous telemetry probes and SSH operations can delay a check. They hold on local `~/.ashlr-runs/PAUSE` or `KILL`,
@@ -185,9 +217,11 @@ truncated session counts are lower bounds, and missing evidence stays unknown.
 Quota `used_frac` is derived from observed remaining percent; reset-pending
 readings are unknown rather than fresh quota.
 
-Specialist callsigns and per-agent memory freshness are not exposed in this
-checkout, so the roster falls back to lanes. The chief-of-staff brief remains
-pending; the existing mission is shown separately. Channel assignments show
+The Company view uses a lane roster; it does not display specialist callsigns
+or per-agent memory freshness. Its chief-of-staff brief panel remains pending;
+the existing mission is shown separately. Specialist assignments are available
+separately in the Channels pane's Leader orchestration journal (see
+[fleet coordination](FLEET-COORDINATION.md)). Channel assignments show
 recorded owners and channel references, not proven Slack membership or current
 reachability. Unread counts and channel-creation proposals stay unknown because
 the existing JSON endpoints do not expose them. Unexpired bus messages are
@@ -242,6 +276,19 @@ phm channels slack map --json
 phm channels slack map --topic leaders --json
 phm channels slack map --topic leaders --snapshot ./slack-audience.json --json
 ```
+
+Ask `Phantom status` in the mapped Slack conversation. Each threaded reply
+carries a plain state line: RECEIVED, ASSIGNED (owner and claim), RUNNING,
+BLOCKED (dependency), or VERIFIED (PR and head). Missing evidence says unknown.
+`phm channels slack status --json` exposes the same typed `work` projection:
+receipt IDs, states, owner/claim, dependency, PR/head and `asOf` from the live
+`queue/status.json` last tick. Missing or future fleet time is null, rendered
+as unknown; it is never replaced with the reply clock. Work states use the
+existing work-board rules (RUNNING means a live work lease). A sent reply proves
+delivery, not verified work. Replies without an exact receipt match say UNKNOWN.
+Owner ingress and same-thread delivery are joined in `replies`; duplicate owner
+delivery does not add another request. Reads are bounded; `work.truncated` marks
+a partial list. The status line is a plain-text Slack attachment below the reply.
 
 `status` reports the config parse, bridge and workspace ids, `phm_` reference
 names (never values), journal counts and the next step. `map` prints the
@@ -433,3 +480,5 @@ deduplication record and plan an explicit archival migration before that limit.
 Expired tasks become BLOCKED in the shared queue. Expiry does not cancel remote
 work; its outcome remains unknown. Only receipted sends count as fleet launches,
 and only those attempts produce finish metrics. No task result is a MERGED event.
+
+See [Slack host credential boundary](SLACK-CREDENTIAL-INJECTION.md) for the injected-reference contract and its verification limits.

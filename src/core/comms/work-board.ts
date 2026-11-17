@@ -81,6 +81,7 @@ function isRequest(row: BusInboxReceipt): boolean {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return true;
   const record = body as Record<string, unknown>;
+  if (record.kind === 'leader-reply' && typeof record.requestId === 'string') return false;
   return (record['inReplyTo'] === undefined || record['inReplyTo'] === null)
     && (record['in_reply_to'] === undefined || record['in_reply_to'] === null);
 }

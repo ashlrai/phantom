@@ -162,7 +162,7 @@ They do not install an unreleased source feature or activate the dormant daemon.
 
 ### Install from source
 
-The npm install is [in the README](../README.md#the-cli). To run from a checkout instead:
+The npm install is [in the README](../README.md#quickstart). To run from a checkout instead:
 
 ```sh
 git clone https://github.com/ashlrai/phantom

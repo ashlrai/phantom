@@ -29,11 +29,13 @@ const usage = 'Usage: ashlr fleet claim-notices [--dry-run] [--json]\n'
   + 'dedupe key once-only; a failed send leaves the snapshot unchanged so the next pass\n'
   + 'retries. --dry-run prints the plan without sending or writing.';
 
-interface SlackThread { teamId: string; channelId: string; threadTs: string }
+export interface SlackThread { teamId: string; channelId: string; threadTs: string }
 
 /** Both thread-ref grammars on master: `slack:<team>:<channel>:<rootTs>`
- * (slack-network) and `<team>/<channel>/<threadTs>` (slack-bus-ingress). */
-function parseNoticeThreadRef(ref: string): SlackThread | null {
+ * (slack-network) and `<team>/<channel>/<threadTs>` (slack-bus-ingress).
+ * Exported for the read-only claim-notice delivery view, which must parse a
+ * bound threadKey exactly the way the real sender does. */
+export function parseNoticeThreadRef(ref: string): SlackThread | null {
   const parsed = parseSlackThreadRef(ref);
   if (parsed) return { teamId: parsed.teamId, channelId: parsed.channelId, threadTs: parsed.rootTs };
   const parts = ref.split('/');
@@ -75,13 +77,14 @@ export function claimNoticeSlackSender(
     });
     if (!checked.ok) return { ok: false, reason: 'invalid-envelope' };
     const post = appendBusInbox(checked.value, { root: busRoot });
+    // Only 'posted' or an identical 'duplicate' proves this notice was
+    // durably enqueued. 'conflict' means a DIFFERENT envelope already holds
+    // the deterministic id: the bus cannot prove destination, thread, body
+    // or provenance equivalence, so it is an honest failure the pass keeps
+    // pending and retries rather than a receipt the ledger may claim.
     if (post.status === 'posted' || post.status === 'duplicate') {
       return { ok: true, receipt: `bus-note:${post.id}` };
     }
-    // 'conflict' can only mean an earlier pass already posted this dedupeKey
-    // (the id is a pure function of it) with the previous as-of text — the
-    // logical notice was durably enqueued, so the ledger may catch up.
-    if (post.status === 'conflict') return { ok: true, receipt: `bus-note:${noticeEnvelopeId(dedupeKey)}` };
     return { ok: false, reason: `bus-${post.status}` };
   };
 }

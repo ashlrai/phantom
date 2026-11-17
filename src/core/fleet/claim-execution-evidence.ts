@@ -7,9 +7,9 @@
  *
  * A claim names a job when its id (checked first) or its task text carries
  * an `RQ-…` token. A worker matches a named job when `worker.job` equals the
- * token exactly (case-sensitive) and, when both repos are non-empty, the
- * worker repo's last path segment equals the claim repo's last segment —
- * launch.sh passes a bare repo name while claims carry `owner/repo`. Only a
+ * token exactly (case-sensitive) and both repos have valid identities. Bare
+ * launcher names match the repo part of `owner/repo`; two qualified names
+ * must match in full. Only a
  * record satisfying the process reader's contract — a positive safe-integer
  * pid, string job/repo/lane/tier and a null-or-non-negative-safe-integer
  * ageSeconds — is usable live-worker evidence: malformed matching records
@@ -18,8 +18,19 @@
  * matching workers the youngest ageSeconds wins; a first match is kept on
  * ties.
  *
- * Rows cover only live claims (`expiresAt > now`), newest `claimedAt` first,
- * capped at 50. A row is RUNNING only when the process table read healthy
+ * Rows cover only temporally qualified live claims, newest `claimedAt`
+ * first, capped at 50. A claim qualifies only when both timestamps are
+ * epoch milliseconds the coordination ledger itself would write (safe
+ * non-negative integers within the Date-representable range), `claimedAt`
+ * sits at or before the observation, and `expiresAt` falls strictly after
+ * both `claimedAt` and the observation — the same liveness policy the
+ * claims section of fleet-recheck applies, minus its presentation fields.
+ * A claim failing this is not live evidence: it is dropped before the row
+ * cap and displaces no valid claim, and it can never produce RUNNING or
+ * CLAIMED_NO_WORKER; when at least one claim is dropped this way the report
+ * carries the fixed sanitized reason 'claim timestamps invalid'. A sane
+ * interval that simply expired still drops silently, as before. A row is
+ * RUNNING only when the process table read healthy
  * AND a usable worker matches; CLAIMED_NO_WORKER when none does; UNKNOWN
  * when the process table is unavailable or malformed, the claim names no
  * job id, or every matching worker record is malformed. A RUNNING row
@@ -59,7 +70,15 @@ export const CLAIM_EXECUTION_SCHEMA = 'fleet.claim-execution.v1';
 export const PROCESS_SNAPSHOT_MAX_AGE_MS = 60_000;
 const UNKNOWN = 'UNKNOWN';
 const MAX_ROWS = 50;
-const JOB_ID_RE = /\bRQ-[A-Z0-9][A-Z0-9-]{2,80}\b/;
+const JOB_ID_RE = /^RQ-[A-Z0-9][A-Z0-9-]{2,80}$/;
+/**
+ * A maximal run of job-token characters. `-` is token-internal, so `\b` cannot
+ * delimit it: an overlength token would match a shorter prefix ending at an
+ * internal hyphen. The run is matched whole, then JOB_ID_RE validates the
+ * supported shape and length; the lookahead keeps a run glued to a longer
+ * word (letters, digits, `_` or `-`) from counting as a token.
+ */
+const JOB_ID_RUN_RE = /\bRQ-[A-Z0-9][A-Z0-9-]*(?![A-Za-z0-9_-])/g;
 const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REPO_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 
@@ -97,8 +116,35 @@ export interface ClaimExecutionDeps {
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
+/** Largest epoch-millisecond instant `Date` can represent (±8.64e15 ms). */
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
+
+/**
+ * An epoch-millisecond timestamp the coordination ledger itself writes:
+ * `timestamp()` in coordination.ts accepts safe non-negative integers, and
+ * the Date-representable bound keeps out-of-range values from qualifying.
+ */
+const epochMs = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n <= MAX_EPOCH_MS;
+
+/**
+ * Bounded temporal qualification before a claim can contribute live
+ * execution evidence. Returns 'live' only when both timestamps are valid
+ * epoch milliseconds, `claimedAt` is at or before the observation, and
+ * `expiresAt` is strictly after both `claimedAt` and the observation.
+ * 'expired' is a sane interval that simply ended (dropped silently, as
+ * before); anything else — missing, nonfinite, out-of-range, reversed or
+ * future-dated times — is 'invalid' and earns the fixed sanitized reason.
+ */
+const temporallyQualified = (claim: ClaimLike, nowMs: number): 'live' | 'expired' | 'invalid' => {
+  if (!epochMs(claim.claimedAt) || !epochMs(claim.expiresAt) || claim.expiresAt <= claim.claimedAt || claim.claimedAt > nowMs) {
+    return 'invalid';
+  }
+  return claim.expiresAt > nowMs ? 'live' : 'expired';
+};
+
 const iso = (n: unknown): string =>
-  new Date(finite(n) && n >= 0 && n <= 8_640_000_000_000_000 ? n : 0).toISOString();
+  new Date(finite(n) && n >= 0 && n <= MAX_EPOCH_MS ? n : 0).toISOString();
 
 const text = (s: unknown): string => (typeof s === 'string' ? s : '');
 
@@ -108,18 +154,27 @@ const label = (value: unknown, allowSlash = false): string => {
   return (allowSlash ? REPO_LABEL_RE : LABEL_RE).test(v) && scrubSecrets(v) === v ? v : UNKNOWN;
 };
 
-const lastSegment = (repo: string): string => {
-  const parts = repo.split('/').filter(part => part.length > 0);
-  return parts.length === 0 ? '' : parts[parts.length - 1]!;
+/** Accept a bare repository or one owner/repository pair, without unsafe labels. */
+const repository = (value: unknown): string[] | null => {
+  const v = text(value);
+  const parts = v.split('/');
+  return v.length <= 128 && parts.length <= 2 && parts.every(part => LABEL_RE.test(part)) &&
+    scrubSecrets(v) === v ? parts : null;
 };
 
 /** Loose claim shape so an injected or future-schema row can never throw here. */
 interface ClaimLike { id: unknown; agent: unknown; repo: unknown; task: unknown; claimedAt: unknown; expiresAt: unknown }
 const claimLike = (v: unknown): v is ClaimLike => v !== null && typeof v === 'object';
 
-/** The first `RQ-…` token in claim.id, then claim.task; null when neither names one. */
+/** The first whole supported `RQ-…` token in claim.id, then claim.task; null when neither names one. */
 function jobIdOf(claim: { id: unknown; task: unknown }): string | null {
-  return JOB_ID_RE.exec(text(claim.id))?.[0] ?? JOB_ID_RE.exec(text(claim.task))?.[0] ?? null;
+  for (const source of [claim.id, claim.task]) {
+    for (const match of text(source).matchAll(JOB_ID_RUN_RE)) {
+      const token = match[0].replace(/-+$/, '');
+      if (JOB_ID_RE.test(token)) return token;
+    }
+  }
+  return null;
 }
 
 const ageOf = (worker: LiveWorker): number =>
@@ -162,6 +217,7 @@ interface WorkerMatch {
   best: LiveWorker | null;
   /** True when at least one nominally matching record was malformed. */
   malformedMatch: boolean;
+  invalidRepository: boolean;
 }
 
 /**
@@ -170,22 +226,28 @@ interface WorkerMatch {
  * can answer UNKNOWN instead of claiming a healthy absence.
  */
 function workerFor(jobId: string, claimRepo: string, workers: unknown[]): WorkerMatch {
-  const claimSegment = lastSegment(claimRepo);
+  const claimIdentity = repository(claimRepo);
   let best: LiveWorker | null = null;
   let malformedMatch = false;
+  let invalidRepository = false;
   for (const candidate of workers) {
     if (candidate === null || typeof candidate !== 'object') continue;
     const worker = candidate as LiveWorker;
     if (worker.job !== jobId) continue;
-    const workerSegment = lastSegment(text(worker.repo));
-    if (claimSegment !== '' && workerSegment !== '' && workerSegment !== claimSegment) continue;
+    const workerIdentity = repository(worker.repo);
+    if (claimIdentity === null || workerIdentity === null) {
+      invalidRepository = true;
+      continue;
+    }
+    if (claimIdentity[claimIdentity.length - 1] !== workerIdentity[workerIdentity.length - 1] ||
+        (claimIdentity.length === 2 && workerIdentity.length === 2 && claimIdentity[0] !== workerIdentity[0])) continue;
     if (!usableWorkerEvidence(worker)) {
       malformedMatch = true;
       continue;
     }
     if (best === null || ageOf(worker) < ageOf(best)) best = worker;
   }
-  return { best, malformedMatch };
+  return { best, malformedMatch, invalidRepository };
 }
 
 /**
@@ -208,16 +270,22 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
   if (ledgerKnown) {
     const workerList: unknown[] | null =
       processes === 'healthy' ? (Array.isArray(workers!.workers) ? workers!.workers : null) : null;
+    let invalidClaims = 0;
     const live = ((Array.isArray(board!.claims) ? board!.claims : []) as unknown[])
       .filter(claimLike)
-      .filter(claim => finite(claim.expiresAt) && claim.expiresAt > nowMs)
+      .filter(claim => {
+        const verdict = temporallyQualified(claim, nowMs);
+        if (verdict === 'invalid') invalidClaims += 1;
+        return verdict === 'live';
+      })
       .sort((a, b) => (finite(b.claimedAt) ? b.claimedAt : 0) - (finite(a.claimedAt) ? a.claimedAt : 0))
       .slice(0, MAX_ROWS);
+    if (invalidClaims > 0) reasons.add('claim timestamps invalid');
     for (const claim of live) {
       const expiresAt = finite(claim.expiresAt) ? claim.expiresAt : nowMs;
       const jobId = jobIdOf(claim);
       const row: ClaimExecutionRow = {
-        claimId: label(claim.id), agent: label(claim.agent), repo: label(claim.repo, true),
+        claimId: label(claim.id), agent: label(claim.agent), repo: repository(claim.repo) === null ? UNKNOWN : label(claim.repo, true),
         jobId: jobId === null ? null : label(jobId), state: 'UNKNOWN', worker: null,
         expiresInSeconds: Math.floor((expiresAt - nowMs) / 1000),
       };
@@ -227,8 +295,10 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
         reasons.add('process table: malformed worker list');
       } else if (jobId === null) {
         reasons.add('claim names no job id');
+      } else if (repository(claim.repo) === null) {
+        reasons.add('repository identity invalid');
       } else {
-        const { best: match, malformedMatch } = workerFor(jobId, text(claim.repo), workerList);
+        const { best: match, malformedMatch, invalidRepository } = workerFor(jobId, text(claim.repo), workerList);
         if (match !== null) {
           row.state = 'RUNNING';
           row.worker = {
@@ -236,6 +306,8 @@ export function joinClaimExecution(board: FleetBoard | null, workers: LiveWorker
             lane: label(match.lane), tier: label(match.tier),
             ageSeconds: finite(match.ageSeconds) ? match.ageSeconds : null,
           };
+        } else if (invalidRepository) {
+          reasons.add('repository identity invalid');
         } else if (malformedMatch) {
           reasons.add('matching worker evidence malformed');
         } else {

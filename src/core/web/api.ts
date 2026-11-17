@@ -1,4 +1,6 @@
+import { agentChatResponse } from './agent-chat-route.js';
 import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
+import { passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
 /**
  * core/web/api.ts — M14 JSON API handler.
  *
@@ -23,6 +25,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *   GET /api/daemon            -> strict provenance-bearing daemon observation
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
+ *   GET /api/bots/templates    -> starter bot templates; GET /api/bots -> bots created from them
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -30,6 +33,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *   POST /api/open             -> openInEditor/openInFinder for an enrolled repo path (M100)
  *   POST /api/fleet/pause      -> engage the fleet kill switch
  *   POST /api/fleet/resume     -> clear the fleet kill switch
+ *   POST /api/bots             -> create a bot from a template (profile, doctrine, memory seed, disabled crons)
  *   POST /api/daemon/service/repair -> fail closed pending signed repair authority
  *
  * SECURITY:
@@ -49,7 +53,7 @@ import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { timingSafeEqual, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
 import { realpathSync } from 'node:fs';
 
@@ -90,6 +94,7 @@ import {
 import { serviceStatus } from '../daemon/service.js';
 import { daemonServiceInstallOptions } from '../daemon/service-config.js';
 import { buildNodesSnapshot } from '../nodes/view.js';
+import type { NodeProfile } from '../drive/nodes/profiles.js';
 import { buildFleetStatus, readFleetDaemonStatus } from '../fleet/status.js';
 import { getCachedFleetStatus, primeFleetStatusCache } from './fleet-status-cache.js';
 // M61: Mission Control aggregator.
@@ -123,6 +128,8 @@ import { handleGrowthApi, isGrowthPath } from '../verse/growth-api.js';
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
 import { handleWbApi, isWbApiPath } from './wb-read-api.js';
+
+export { DEFAULT_MAX_BODY_BYTES, passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
 
 // ---------------------------------------------------------------------------
 // SSE registry — shared across all open SSE connections so server.ts can
@@ -737,51 +744,10 @@ async function buildVisionMissionSnapshot(cfg: AshlrConfig): Promise<Record<stri
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Write a JSON response. Never throws. */
-export function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  try {
-    const boundedBody = body && typeof body === 'object' && 'error' in body && (body as { error: unknown }).error != null
-      ? { ...body, error: String((body as { error: unknown }).error).slice(0, 512) }
-      : body;
-    const payload = JSON.stringify(sanitizePublicJson(boundedBody) ?? null);
-    res.writeHead(status, {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(payload);
-  } catch {
-    try {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-      }
-      res.end('{"error":"internal error"}');
-    } catch {
-      // Socket already closed — swallow.
-    }
-  }
-}
-
 /** Write a 500 JSON error. Never throws. */
 function send500(res: ServerResponse, msg = 'internal error'): void {
   void msg; // retained at call sites for private diagnostics; never disclose it.
   sendJson(res, 500, { code: 'INTERNAL_ERROR', error: 'internal server error' });
-}
-
-/**
- * Constant-time string comparison to defend against timing attacks.
- * Returns true iff a === b (both strings, same bytes).
- */
-function safeEqual(a: string, b: string): boolean {
-  try {
-    // Both must be the same byte length for timingSafeEqual.
-    const ba = Buffer.from(a, 'utf8');
-    const bb = Buffer.from(b, 'utf8');
-    if (ba.length !== bb.length) return false;
-    return timingSafeEqual(ba, bb);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -791,46 +757,6 @@ function safeEqual(a: string, b: string): boolean {
 function parseWindow(raw: string | undefined): '1d' | '7d' | '30d' {
   if (raw === '1d' || raw === '7d' || raw === '30d') return raw;
   return '7d';
-}
-
-/** The default request-body cap every POST route shares. */
-export const DEFAULT_MAX_BODY_BYTES = 65_536;
-
-/**
- * Safely read the full request body as a string (bounded to 64 KB unless a
- * route passes its own cap). Rejects on oversized or errored requests.
- *
- * Exported so src/core/verse/verse-api.ts shares the exact same body cap. The
- * `maxBytes` override exists for ONE route (POST /api/verse/memory), whose
- * payload is a file that may itself be 64 KiB before JSON escaping; every
- * other caller keeps the default.
- *
- * Chunks are kept as raw bytes and decoded ONCE at the end. Decoding each
- * chunk on its own turns a multi-byte UTF-8 character that straddles a chunk
- * boundary into two U+FFFD replacement characters — silent corruption that
- * grows likelier the bigger the body (an em dash in a 100 KB memory file).
- */
-export function readBody(req: IncomingMessage, maxBytes: number = DEFAULT_MAX_BODY_BYTES): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let tooLarge = false;
-
-    req.on('data', (chunk: Buffer | string) => {
-      if (tooLarge) return;
-      const b = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
-      total += b.length;
-      if (total > maxBytes) {
-        tooLarge = true;
-        chunks.length = 0;
-        reject(new Error('request body too large'));
-        return;
-      }
-      chunks.push(b);
-    });
-    req.on('end', () => { if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8')); });
-    req.on('error', reject);
-  });
 }
 
 /**
@@ -846,40 +772,6 @@ function getQueryParam(url: string, name: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * Read a single request header value (collapsing the string[] form Node uses
- * for repeated headers down to its first entry). Returns '' when absent.
- */
-function headerValue(req: IncomingMessage, name: string): string {
-  const raw = req.headers[name];
-  if (Array.isArray(raw)) return raw[0] ?? '';
-  return raw ?? '';
-}
-
-/**
- * The shared gate for the two mutating routes (POST /api/run and the web inbox
- * approve/reject). Enforces, in order:
- *   1. constant-time x-ashlr-token match  -> 401 on mismatch
- *   2. Content-Type: application/json     -> 415 otherwise (CSRF defence in
- *      depth; the token is the real control)
- * Writes the failure response itself and returns false when the request should
- * NOT proceed; returns true when both checks pass.
- *
- * Exported so src/core/verse/verse-api.ts's POST routes use the identical gate.
- */
-export function passesMutationGate(req: IncomingMessage, res: ServerResponse, token: string): boolean {
-  if (!safeEqual(headerValue(req, 'x-ashlr-token'), token)) {
-    sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
-    return false;
-  }
-  const contentType = headerValue(req, 'content-type');
-  if (!contentType.toLowerCase().trim().startsWith('application/json')) {
-    sendJson(res, 415, { error: 'Content-Type must be application/json' });
-    return false;
-  }
-  return true;
 }
 
 /**
@@ -1323,6 +1215,12 @@ export async function handleApi(
     readProjections?: ReadProjectionReader;
     usageResourcesApi?: import('../verse/api-modules.js').ApiModule;
     mergeLatencyApi?: import('../verse/api-modules.js').ApiModule;
+    /**
+     * Injected by server.ts so the Tier-1 import closure does not absorb the bot template
+     * store or the live node capacity readers (test/authority-tier1-closure-310b.test.ts).
+     */
+    botTemplatesApi?: (req: IncomingMessage, res: ServerResponse, ctx: { token: string; allowDispatch: boolean }) => Promise<boolean>;
+    nodeProfiles?: readonly NodeProfile[];
   },
 ): Promise<boolean> {
   const path = reqPath(req);
@@ -1335,7 +1233,18 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === '/api/agents/chat') {
+      const response = agentChatResponse(method, req.url ?? '');
+      sendJson(res, response.code, response.body);
+      return true;
+    }
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
+    if (path.startsWith('/api/bots') && ctx.botTemplatesApi && await ctx.botTemplatesApi(req, res, ctx)) return true;
+    if (path === '/api/usage/lanes' && method === 'GET') {
+      const { readLaneAllowance } = await import('../usage/lane-allowance.js');
+      sendJson(res, 200, await readLaneAllowance());
+      return true;
+    }
     if (path === '/api/usage/spend' && method === 'GET') {
       const { readUsageSpend } = await import('../usage/spend.js');
       sendJson(res, 200, await readUsageSpend());
@@ -1966,7 +1875,8 @@ export async function handleApi(
 
     if (path === '/api/fleet/release-chain' && method === 'GET') {
       const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
+      const { getLocalReleaseStatus } = await import('../fleet/release-chain-status.js');
+      sendJson(res, 200, { ...releaseChainResponse(), release: await getLocalReleaseStatus() });
       return true;
     }
 
@@ -1977,17 +1887,20 @@ export async function handleApi(
       return true;
     }
 
-    // Read-only release-chain status: same local signing/feed evidence as
-    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
-    if (path === '/api/fleet/release-chain' && method === 'GET') {
-      const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
-      return true;
-    }
-
     if (path === '/api/worklog' && method === 'GET') {
-      const { readWorklog } = await import('../fleet/worklog.js');
-      try { sendJson(res, 200, await readWorklog()); }
+      const { readWorklog, filterWorklog, worklogHours, WORKLOG_KINDS } = await import('../fleet/worklog.js');
+      const param = (name: string) => getQueryParam(req.url ?? '', name);
+      const kind = param('kind');
+      let hours: number;
+      try { hours = worklogHours(param('hours') ?? param('since')); }
+      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 6.' }); return true; }
+      if (kind && !(WORKLOG_KINDS as readonly string[]).includes(kind)) { sendJson(res, 400, { error: `Use one kind: ${WORKLOG_KINDS.join(', ')}.` }); return true; }
+      try {
+        const report = await readWorklog(hours);
+        report.rows = filterWorklog(report.rows, param('repo'), param('lane'), kind);
+        report.entries = filterWorklog(report.entries, param('repo'), param('lane'));
+        sendJson(res, 200, report);
+      }
       catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }
       return true;
     }
@@ -2129,6 +2042,33 @@ export async function handleApi(
         return true;
       }
       sendJson(res, 200, await getFleetJobActivity(id));
+      return true;
+    }
+
+    // fleet.job.tail.v1 — the `phm job tail` snapshot (status words, header,
+    // ledger events, redacted last N log lines). Same read class as above.
+    if (path === '/api/fleet/job/tail' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobTail } = await import('../fleet/runs-job-tail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 120) {
+        sendJson(res, 400, { error: 'valid job id and lines (1..120) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobTail(id, { lines }));
+      return true;
+    }
+
+    if (path === '/api/fleet/job/cost' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobCost } = await import('../fleet/runs-job-cost.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      if (!id || !isFleetJobId(id)) {
+        sendJson(res, 400, { error: 'valid job id required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobCost(id));
       return true;
     }
 
@@ -2331,7 +2271,7 @@ export async function handleApi(
     // `phm approvals --json`). Read class, behind the read-session gate.
     if (path === '/api/approvals' && method === 'GET') {
       const team = getQueryParam(req.url ?? '/', 'team');
-      sendJson(res, 200, buildApprovalsProjection(team || undefined));
+      sendJson(res, 200, await buildApprovalsProjection(team || undefined));
       return true;
     }
 
@@ -2384,8 +2324,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { readFeed } = await import('../feed.js');
-      sendJson(res, 200, await readFeed());
+      const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
+      const params = new URL(req.url ?? '', 'http://localhost').searchParams;
+      const query = parseFeedQuery({ limit: params.get('limit') ?? undefined, since: params.get('since') ?? undefined, kind: params.get('kind') ?? undefined });
+      if (!query) sendJson(res, 400, { error: FEED_QUERY_ERROR });
+      else sendJson(res, 200, await readFeed(query));
       return true;
     }
 
@@ -2394,7 +2337,7 @@ export async function handleApi(
     // and secret-free by construction (src/core/nodes/view.ts); same read class
     // as /api/control.
     if (path === '/api/nodes' && method === 'GET') {
-      sendJson(res, 200, buildNodesSnapshot());
+      sendJson(res, 200, buildNodesSnapshot({ profiles: ctx.nodeProfiles ?? [] }));
       return true;
     }
 

@@ -162,10 +162,42 @@ if [ -e "$G1F" ] || [ -L "$G1F" ]; then
   echo "NOTE G1 mode pinned tree $G1T parent $G1P"; fi
 if [ -n "$G1R" ]; then echo "G1 category3=$G1R"; [ -n "$G1T" ] || { echo "RESULT ABORT g1-pass-required category3=$G1R"; exit 1; }; else echo "G1 not-required"; G1OK=1; fi
 PD=".github .envrc .vscode .husky"; { [ -n "$G1T" ] || [ "$G1OK" = 1 ]; } && PD=".envrc .vscode .husky"
+# RQ-PUBLISH-WORKTREE-SCOPE-1: the job's fork point. When HEAD was cut from an older main than BASE, a bare soft reset
+# keeps the OLD tree in the index, so the PR diff re-reverts every main change since (the +2876/42-file, exec.ts-deletion PRs).
+MB=""; [ "$IM" = 1 ] || { MB=$(git merge-base "$BASE" HEAD 2>/dev/null) && [[ "$MB" =~ ^[0-9a-f]{40,64}$ ]] || { echo "RESULT ABORT no-merge-base"; exit 1; }; }
 [ "$IM" = 1 ] || { [ "$(git rev-parse HEAD)" = "$BASE" ] || git reset --soft "$BASE"; }
 NOTES=""; [ -f BRIDGE_NOTES.md ] && { NOTES=$(cat BRIDGE_NOTES.md); mv BRIDGE_NOTES.md $R/$J.notes.md; }
 GD=$(git status --porcelain -uall -- $PD | cut -c4-); [ -n "$GD" ] && { echo "NOTE PROTECTED_DRIFT reverted: $(echo $GD)"; for d in $PD; do git checkout "$BASE" -- $d 2>/dev/null; git clean -fdq -- $d; done; echo "$GD" | grep -q "^\.github/workflows" && { echo "RESULT ABORT workflow-drift"; exit 1; }; }
-git add -A
+# >>> SCOPED_STAGE
+# Stage ONLY the job's change set, never ambient worktree state. Change set = paths whose worktree content differs from the
+# job's fork point $MB (tracked edits/deletions, committed or not) + untracked, non-ignored files that are not scratch-shaped
+# (*.backup *.bak *.orig *.rej *.patch *.diff *.swp *~ .DS_Store). If $R/$J.files exists (the job's work-claim changed-file
+# list, one repo-relative path per line, written ops-side) it is authoritative: only listed paths are staged. Everything else
+# stays uncommitted and is reported. The index is first reset to $BASE so stale index state cannot leak into the diff.
+scoped_stage() {
+  local mf="$R/$J.files" cand sel skipped=""
+  git reset -q "$BASE" -- . || return 1
+  cand=$(mktemp "${TMPDIR:-/tmp}/scope.XXXXXX") || return 1   # NUL-separated lists live in files (command substitution drops NULs)
+  sel="$cand.sel"
+  { git diff --no-ext-diff --no-textconv --no-renames --name-only -z "$MB" && git ls-files -o --exclude-standard -z; } > "$cand" || { rm -f "$cand"; return 1; }
+  if [ -f "$mf" ] && [ ! -L "$mf" ]; then
+    # manifest mode: validate (relative, no .., no control chars), then intersect with the candidates
+    perl -e 'my %m; open(my $f,"<",$ARGV[0]) or exit 2; while(<$f>){chomp; next unless length; if(m{^/}||m{(^|/)\.\.(/|$)}||/[\x00-\x1f]/){exit 3} s{^\./}{}; s{/+$}{}; $m{$_}=1}
+      local $/="\0"; while(<STDIN>){chomp; print "$_\0" if $m{$_}}' "$mf" < "$cand" > "$sel" || { rm -f "$cand" "$sel"; echo "RESULT ABORT scope-manifest-invalid"; exit 1; }
+  else
+    perl -e 'local $/="\0"; while(<STDIN>){chomp; next if m{(^|/)(\.DS_Store|[^/]*(\.(backup|bak|orig|rej|patch|diff|swp)|~))$}; print "$_\0"}' < "$cand" > "$sel" || { rm -f "$cand" "$sel"; return 1; }
+  fi
+  # report what was left out (candidates not selected)
+  skipped=$(perl -e 'my %s; { open(my $f,"<",$ARGV[0]); local $/="\0"; while(<$f>){chomp; $s{$_}=1} } local $/="\0"; my @x; while(<STDIN>){chomp; push @x,$_ unless $s{$_}} print join(" ",@x[0..($#x<19?$#x:19)]), (@x>20?" ...(+".(@x-20).")":"")' "$sel" < "$cand")
+  [ -z "$skipped" ] || echo "NOTE SCOPE_EXCLUDED not staged: $skipped"
+  # literal pathspecs: no globbing/magic from file names
+  if [ -s "$sel" ]; then
+    perl -e 'local $/="\0"; while(<STDIN>){chomp; print ":(literal)$_\0"}' < "$sel" > "$sel.p" && git add -A --pathspec-from-file="$sel.p" --pathspec-file-nul || { rm -f "$cand" "$sel" "$sel.p"; return 1; }
+  fi
+  rm -f "$cand" "$sel" "$sel.p"
+}
+# <<< SCOPED_STAGE
+if [ "$IM" = 1 ]; then git add -A; else scoped_stage || { echo "RESULT ABORT scoped-stage"; exit 1; }; fi
 verify_dependency_links || { echo "RESULT ABORT dependency-directory-link-or-index-unavailable"; exit 1; }
 FILES=$(git diff --cached --name-only "$BASE"); [ -z "$FILES" ] && [ "$IM" = 0 ] && { echo "RESULT EMPTY"; exit 0; }
 [ "$IM" = 0 ] || [ -z "$FILES" ] || { echo "RESULT ABORT integrated-unreviewed-delta"; exit 1; }
@@ -262,8 +294,26 @@ if [ -n "${PUBLISH_JUDGE_CMD:-}" ] && [ -z "$SENS" ] && [ -z "$G1T" ]; then
 fi
 if [ $JUDGE_OK = 0 ]; then echo "NOTE AUTO_MERGE skipped judge (leader review)"
 elif [ -z "$SENS" ] && [ -z "$G1T" ]; then
-  if ME=$(gh pr merge "$URL" --repo $REPO --auto 2>&1 >/dev/null); then echo "AUTO_MERGE on"
-  elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
-  else echo "NOTE AUTO_MERGE skipped-or-failed"; fi
+  # RQ-ARM-CI-GATE-1: arm only on a SAFE verdict for the PR's actual head (see arm_gate.py). The head comes from the API only: never guessed
+  # from local shas. RED = leader review; PENDING/UNKNOWN = bounded deferral (re-evaluated by `arm_gate.py sweep`), never an arm.
+  # Nothing is weakened: this only withholds arming that cannot succeed yet. Every arm is pinned to the sha that was judged.
+  HEADSHA=$(gh pr view "$URL" --repo $REPO --json headRefOid -q .headRefOid 2>/dev/null || true)
+  if ! printf '%s' "$HEADSHA" | grep -qE '^[0-9a-f]{40}$'; then echo "NOTE AUTO_MERGE not armed: PR head unknown (API read failed); leader review"
+  else
+    AG=$(python3 -I -B "$R/bin/arm_gate.py" check --repo "$REPO" --sha "$HEADSHA" --wait "${ARM_GATE_WAIT:-180}" 2>&1); AGRC=$?
+    HEAD2=$(gh pr view "$URL" --repo $REPO --json headRefOid -q .headRefOid 2>/dev/null || true)
+    if [ "$HEAD2" != "$HEADSHA" ]; then echo "NOTE AUTO_MERGE not armed: PR head changed or unreadable during the gate wait; leader review"
+    elif [ $AGRC = 1 ]; then echo "NOTE AUTO_MERGE skipped ci-red ($AG); leader review"
+    elif [ $AGRC != 0 ]; then
+      python3 -I -B "$R/bin/arm_gate.py" defer --dir "$R/arm-deferred" --repo "$REPO" --pr "$URL" --sha "$HEADSHA" --job "$J" --deadline-s "${ARM_GATE_DEFER_S:-3600}" >/dev/null 2>&1 \
+        && echo "NOTE AUTO_MERGE deferred ($AG); arm_gate.py sweep re-evaluates" || echo "NOTE AUTO_MERGE not armed: gate not SAFE ($AG) and deferral unavailable; leader review"
+    elif AG=$(python3 -I -B "$R/bin/arm_gate.py" check --repo "$REPO" --sha "$HEADSHA" 2>&1); AGRC=$?; [ $AGRC != 0 ]; then   # final pre-arm re-check (late rerun / new check)
+      if [ $AGRC = 1 ]; then echo "NOTE AUTO_MERGE skipped ci-red on final re-check ($AG); leader review"
+      else python3 -I -B "$R/bin/arm_gate.py" defer --dir "$R/arm-deferred" --repo "$REPO" --pr "$URL" --sha "$HEADSHA" --job "$J" --deadline-s "${ARM_GATE_DEFER_S:-3600}" >/dev/null 2>&1 \
+        && echo "NOTE AUTO_MERGE deferred after final re-check ($AG); arm_gate.py sweep re-evaluates" || echo "NOTE AUTO_MERGE not armed: final re-check not SAFE ($AG) and deferral unavailable; leader review"; fi
+    elif ME=$(gh pr merge "$URL" --repo $REPO --auto --match-head-commit "$HEADSHA" 2>&1 >/dev/null); then echo "AUTO_MERGE on"
+    elif printf '%s' "$ME" | grep -qiE 'merge method|not allowed|required when not running interactively' && gh pr merge "$URL" --repo $REPO --auto --squash --match-head-commit "$HEADSHA" >/dev/null 2>&1; then echo "AUTO_MERGE on (squash fallback)"
+    else echo "NOTE AUTO_MERGE skipped-or-failed"; fi
+  fi
 else echo "NOTE AUTO_MERGE skipped sensitive"; fi
 echo "RESULT PR $URL SENS=[$SENS]"

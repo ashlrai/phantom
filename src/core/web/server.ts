@@ -26,11 +26,14 @@ import { join, dirname } from 'node:path';
 import type { AshlrConfig, WebServerOptions, WebServerHandle } from '../types.js';
 import { handleUsageResourcesApi } from '../verse/usage-resources-api.js';
 import { handleMergeLatencyApi } from '../verse/merge-latency-api.js';
+import { handleBotTemplates } from '../../api/bot-templates.js';
+import { NODE_PROFILES } from '../drive/nodes/profiles.js';
 import { handleApi, drainSseConnections, drainSseSession, invalidateWebReadCaches } from './api.js';
 import { createReadProjectionWorker, type ReadProjectionReader } from './read-projections.js';
 import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
 import { isPhoneShellPath, serveStatic } from './static.js';
+import { isPagesApiPath, pagesApiGetResponse, PAGE_SLUG_RE } from '../cos/pages.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
 import { isPreviewFramePath } from '../verse/preview.js';
@@ -196,6 +199,25 @@ export async function startServer(
       if (path === PHANTOM_PING_PATH) { sendJson(res, 200, { ok: true }); return; }
     }
 
+    // Stable report links enter the hash router; report content still requires
+    // read authority at /api/pages, just like the other console views.
+    if (method === 'GET' && (path === '/pages' || path === '/pages/'
+      || (path.startsWith('/pages/') && PAGE_SLUG_RE.test(path.slice('/pages/'.length))))) {
+      res.writeHead(302, { Location: `/next/#${path === '/pages/' ? '/pages' : path}`, 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
+    // Published report pages (`phm pages publish`): read-only payloads under
+    // the same read authority the gate above just checked. Dispatched here
+    // rather than inside handleApi so the Tier-1 import closure of api.ts is
+    // untouched; non-GET traffic falls through to handleApi and 404s.
+    if (method === 'GET' && isPagesApiPath(path)) {
+      const out = pagesApiGetResponse(path);
+      sendJson(res, out.status, out.body);
+      return;
+    }
+
     // ── 2. API routes ──────────────────────────────────────────────────────
     // handleApi is async; wrap to catch errors without crashing the server.
     handleApi(req, res, cfg, {
@@ -205,6 +227,8 @@ export async function startServer(
       readProjections: readProjections ?? undefined,
       usageResourcesApi: handleUsageResourcesApi,
       mergeLatencyApi: handleMergeLatencyApi,
+      botTemplatesApi: handleBotTemplates,
+      nodeProfiles: NODE_PROFILES,
     })
       .then((handled) => {
         // A mutation can partially succeed and still return 409/500 (for

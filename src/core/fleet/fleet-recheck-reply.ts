@@ -110,7 +110,7 @@ export function formatRecheckReply(r: FleetRecheck): string {
     `Runtime: ${scrub(runtime.host)} · ${scrub(runtime.installedVersion)} · fleet state ${age}`
       + `${runtime.fleetState.stale === true ? ' · stale' : ''} (${runtime.state})`,
     ...(withComputers && computers !== null ? [computers] : []),
-    ...(withComputers && withPool ? [pool] : []),
+    ...(withPool ? [pool] : []),
     `Claims: ${claims.active === null ? 'unknown' : claims.active} live, top: ${top} (${claims.state})`,
     `Bridge: slack ${channel('slack')}, imessage ${channel('imessage')}`
       + `${bridge.missingBridge === null ? '' : ` · missing: ${scrub(bridge.missingBridge)}`} (${bridge.state})`,
@@ -129,15 +129,17 @@ export function formatRecheckReply(r: FleetRecheck): string {
         ? `BLOCKED on: ${missing}`
         : `UNKNOWN: ${missing}`,
   ].join('\n');
+  // Drop optional evidence in this order, keeping the verdict line whole:
+  // Peers, coverage, Owners, Orders, Pool, Computers, Running job, Last verified.
   let text = build(true, true, true, true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(true, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(false, true, true, true, true);
-  if (text.length > REPLY_MAX) text = build(false, true, true, true);
-  if (text.length > REPLY_MAX) text = build(false, true, true, false);
-  if (text.length > REPLY_MAX) text = build(false, true, false, false);
-  if (text.length > REPLY_MAX) text = build(false, false, false, false);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, true, false);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, true, false, false);
+  if (text.length > REPLY_MAX) text = build(true, true, true, true, true, false, false, false);
+  if (text.length > REPLY_MAX) text = build(false, true, true, true, true, false, false, false);
+  if (text.length > REPLY_MAX) text = build(false, true, true, true, false, false, false, false);
+  if (text.length > REPLY_MAX) text = build(false, true, true, false, false, false, false, false);
+  if (text.length > REPLY_MAX) text = build(false, true, false, false, false, false, false, false);
+  if (text.length > REPLY_MAX) text = build(false, false, false, false, false, false, false, false);
   // Oversized core evidence must not crowd out a complete verdict line.
   // An oversized verdict reason itself retains the existing ellipsis cap.
   if (text.length > REPLY_MAX) {
