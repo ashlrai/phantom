@@ -276,6 +276,51 @@ export interface DaemonHealthClient {
   model: string | null;
 }
 
+/** Why a frontier client did not resolve: the inventory reason plus whether its CLI is on PATH. */
+export interface DaemonHealthClientDiagnosis {
+  id: string;
+  engine: string;
+  reason: string;
+  /** null when the engine has no CLI binary to look for (local, grok-cli). */
+  binaryOnPath: boolean | null;
+}
+
+export interface DaemonHealthFrontierDiagnostics {
+  unavailable: DaemonHealthClientDiagnosis[];
+  /** Set when the inventory itself could not be read (config or resolver threw). */
+  error?: string;
+}
+
+const FRONTIER_CLI_BINARY: Record<string, string> = { codex: 'codex', claude: 'claude' };
+
+/** PATH lookup by metadata only: never launches the CLI or reads its auth. */
+export function binaryOnPath(name: string, pathValue: string | undefined = process.env['PATH']): boolean {
+  for (const dir of (pathValue ?? '').split(':').filter(Boolean)) {
+    try {
+      const meta = statSync(join(dir, name));
+      if (meta.isFile() && (meta.mode & 0o111) !== 0) return true;
+    } catch { /* not in this dir */ }
+  }
+  return false;
+}
+
+export function diagnoseFrontierClients(
+  inventory: ReadonlyArray<{ id: string; engine: string; available: boolean; reason: string }>,
+  onPath: (name: string) => boolean = binaryOnPath,
+): DaemonHealthClientDiagnosis[] {
+  return inventory.filter((client) => !client.available).map((client) => {
+    const binary = FRONTIER_CLI_BINARY[client.engine];
+    return { id: client.id, engine: client.engine, reason: client.reason, binaryOnPath: binary ? onPath(binary) : null };
+  });
+}
+
+function frontierDetail(diagnostics: DaemonHealthFrontierDiagnostics): string {
+  if (diagnostics.error) return `frontier inventory unreadable: ${diagnostics.error}`;
+  const parts = diagnostics.unavailable.map((client) =>
+    `${client.id}: ${client.reason}${client.binaryOnPath === false ? ` ('${FRONTIER_CLI_BINARY[client.engine]}' not on PATH)` : ''}`);
+  return parts.length > 0 ? `no frontier client resolved (${parts.join('; ')})` : 'no frontier client resolved';
+}
+
 export interface DaemonHealthDeps {
   nowMs?: number;
   liveness?: () => DaemonLivenessV1;
@@ -296,12 +341,16 @@ export interface DaemonHealth {
   logAgeMs: number | null;
   logState: 'fresh' | 'stale' | 'missing' | 'unknown';
   frontierClientsResolved: DaemonHealthClient[] | null;
+  /** Each unresolved client and why; present when diagnostics were supplied. */
+  frontierClientsUnavailable?: DaemonHealthClientDiagnosis[];
   paused: boolean | null;
   killed: boolean | null;
   healthy: boolean;
   supervisor: {
     restartRecommended: boolean;
     reason: 'healthy' | 'dead' | 'log-stale' | 'paused' | 'killed' | 'unknown' | 'logs-missing' | 'frontier-unavailable';
+    /** Concrete cause for 'frontier-unavailable' and an unreadable inventory. */
+    detail?: string;
   };
 }
 
@@ -319,6 +368,7 @@ function readLogMtime(name: string): number | null | undefined {
 export function readDaemonHealth(
   frontierClientsResolved: DaemonHealthClient[] | null,
   deps: DaemonHealthDeps = {},
+  frontier?: DaemonHealthFrontierDiagnostics,
 ): DaemonHealth {
   const nowMs = deps.nowMs ?? Date.now();
   const live = (deps.liveness ?? probeDaemonLiveness)();
@@ -357,10 +407,15 @@ export function readDaemonHealth(
     logAgeMs,
     logState,
     frontierClientsResolved,
+    ...(frontier ? { frontierClientsUnavailable: frontier.unavailable } : {}),
     paused: pause === 'unknown' ? null : pause === 'paused',
     killed: kill === 'unknown' ? null : kill === 'active',
     healthy: live.alive === true && logState === 'fresh' && pause === 'running' &&
       kill === 'inactive' && frontierClientsResolved !== null && frontierClientsResolved.length > 0,
-    supervisor: { restartRecommended: reason === 'dead' || reason === 'log-stale', reason },
+    supervisor: {
+      restartRecommended: reason === 'dead' || reason === 'log-stale', reason,
+      ...(frontier && (reason === 'frontier-unavailable' || (reason === 'unknown' && frontier.error))
+        ? { detail: frontierDetail(frontier) } : {}),
+    },
   };
 }
