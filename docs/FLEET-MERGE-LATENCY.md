@@ -48,6 +48,18 @@ merge, still queued now, and blocked on each reason. An unmeasurable span counts
 `missing`, never zero; in a measurable breakdown an absent reason is a measured
 zero. The plain report summarizes it in one `Time in each queue state` line.
 
+Start with `oldest_actionable_delay` in the JSON report, or the `Oldest actionable
+queue delay` line in plain output. It identifies one open PR, its enqueue time,
+seconds queued, blocker, typed `next_action` and plain recommendation. It considers
+all ages, with ties ordered by repo then PR number. Recorded checks, conflicts,
+review or other blockers need attention immediately; waits on the queue itself
+need attention at `--stalled-after`.
+Terminal PRs, missing or repeated enqueue times, and contradictory simultaneous
+states cannot become the recommendation. A single check success never clears
+other required checks; aggregate readiness can clear the blocker. Null means no
+actionable measured entry (check `known` for an unreadable ledger). Advice never
+rearms a retry or bypasses required checks, reviews or merge-queue rules.
+
 ## Bounded retry for transient queue failures
 
 An open PR whose recorded auto-merge request was dropped shows under

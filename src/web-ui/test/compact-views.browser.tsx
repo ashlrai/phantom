@@ -15,7 +15,7 @@ const fixtures: Record<string, unknown> = {
   '/api/feed': { schema: 'phantom.feed.v1', items: [{ id: 'merge:1', kind: 'merge', at, text: long, href: 'https://github.com/ashlrai/phantom/pull/1' }], sources: { merges: 'available', releases: 'available', incidents: 'available', leaderReplies: 'available' } },
   '/api/verse/accounts': { accounts: [{ id: 'c1', label: long, provider: 'claude', state: 'observed', authentication: 'signed-in', reconnectCommand: 'ashlr auth login claude', windows: [{ id: 'weekly', label: long, usedPercent: 58, measured: true, resetDescription: long }] }] },
   '/api/verse/fleet/runs': { v: 1, generatedAt: at, sources: {}, lanes: [{ lane: long, running: 1, target: 2, tokensLastHour: 500 }] },
-  '/api/worklog': { schema: 'worklog.v2', malformedLines: 1, entries: [{ kind: 'merged', at, job: long, repo: long, lane: long, model: long, url: 'https://github.com/ashlrai/phantom/pull/1', openToMergeSeconds: 90 }] },
+  '/api/worklog': { schema: 'worklog.v3', hours: 6, sources: {jobs:{state:'ok'},events:{state:'ok'},leader:{state:'ok'}}, rows: [{at, kind:'merged', job:long, repo:long, lane:long, text:'Merged work '+long, url:'https://github.com/ashlrai/phantom/pull/1', count:1}], malformedLines: 1, entries: [{ kind: 'merged', at, job: long, repo: long, lane: long, model: long, url: 'https://github.com/ashlrai/phantom/pull/1', openToMergeSeconds: 90 }] },
 };
 const views = { Goals: <GoalsPane />, 'Goals page': <GoalsView />, Feed: <FeedSection />, Usage: <FleetUsagePane {...{ visible: true } as PaneProps} />, 'Work log': <WorklogView />, 'Feed actions': <FeedSection /> };
 const paths = ['/api/goals', '/api/goals', '/api/feed', '/api/verse/accounts', '/api/worklog', '/api/feed'];
@@ -50,7 +50,7 @@ if (!name) {
     assert(!!root.querySelector(ready[index]!), `${name}: populated view did not render`);
     if (name === 'Goals') [...root.querySelectorAll('button')].find(b => b.textContent === 'Steer')!.click();
     if (name === 'Feed actions') root.querySelector('summary')!.click();
-    if (name === 'Work log') root.querySelector('tbody button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    if (name === 'Work log') { root.querySelector('summary')!.click(); root.querySelector('tbody button')!.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
     await frame(); await document.fonts.ready;
     assert(innerWidth === 390, `${name}: viewport is ${innerWidth}`);
     assert(requests.includes(paths[index]!), `${name}: existing data endpoint was not used`);

@@ -1,6 +1,7 @@
 import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { readThroughput, throughputOptions } from '../fleet/throughput.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
@@ -20,7 +21,8 @@ import { createPhantomMergeWindow, type MergeWindowRunner } from '../fleet/phant
 import { readHostLoad } from '../fleet/host-load.js';
 import { createChannelReceiver, CHANNEL_REQUEST_ID_PATTERN } from '../fleet/channel-envelope.js';
 import { createLocalChannelDedupeStore, type ChannelDedupeStore } from '../fleet/channel-dedupe-store.js';
-import type { InboxAppendResult } from '../fleet/mason-inbox.js';
+import type { InboxAppendResult, InboxEntry } from '../fleet/mason-inbox.js';
+import type { OutboxEntry } from '../fleet/mason-outbox.js';
 import { parseInboxReadQuery, projectInboxRead, VERSE_FLEET_RUNS_INBOX_READ_LIMIT_MAX } from './fleet-inbox-read.js';
 import { loadAppsRecoveryIncident } from '../fleet/apps-recovery-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
@@ -339,6 +341,8 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     return { ...result, entries: entries.slice(0, query.limit).reverse() };
   }
   async function build(): Promise<FleetRunsV1> {
+    // Filled by the readers below (closures), so a holder rather than narrowed lets.
+    const chatSource: { inbox?: InboxEntry[]; acks?: ReturnType<typeof readInboxAckStates>; replies?: OutboxEntry[] } = {};
     const result: FleetRunsV1 = {
       v: 1, generatedAt: new Date(now()).toISOString(), sources: { runsDir: 'degraded', workers: 'degraded', inbox: 'degraded', codex: 'degraded', merges: 'degraded' },
       lastTick: null, paused: null, memFreePct: null, diskFreeGb: null, host: null, switches: [], claudeLane: null, lanes: [],
@@ -372,6 +376,8 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           const entries = record(raw) ? raw.entries : raw;
           const states = readInboxAckStates(deps.runsDir ?? defaultRunsDir());
           result.inbox = (value as FleetRunsV1['inbox']).map((entry, i) => ({ ...entry, ...withAck((entries as unknown[])[i], states) }));
+          chatSource.inbox = entries as InboxEntry[];
+          chatSource.acks = states;
         }
         if (key === 'codex') result.codexPersonal = value as FleetRunsV1['codexPersonal'];
         if (key === 'merges') result.mergesLastHour = value as FleetRunsV1['mergesLastHour'];
@@ -387,8 +393,18 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       const raw: unknown = await outbox(30);
       const entries = record(raw) && Array.isArray(raw.entries) ? raw.entries : raw;
       result.outbox = project(entries, outboxShape) as FleetRunsV1['outbox'];
+      chatSource.replies = entries as OutboxEntry[];
     } catch { result.outbox = []; }
     await sourcesDone;
+    // The Leader chat rides on the inbox and replies already read and checked
+    // above; with either unread it stays absent (unknown), never empty.
+    if (chatSource.inbox && chatSource.acks && chatSource.replies) {
+      try {
+        const { buildLeaderChat } = await import('../fleet/leader-chat.js');
+        const chat = buildLeaderChat({ inbox: chatSource.inbox, replies: chatSource.replies, acks: chatSource.acks, nowMs: now(), limit: 50 });
+        result.leaderChat = { ...chat, messages: chat.messages.map(m => ({ ...m, text: project(m.text, 'string') as string })) };
+      } catch { /* Leave the chat unknown. */ }
+    }
     // Overrun flags are additive evidence on projected workers: the ledger can
     // only add `overrun`, never rewrite a projected field or the ordering.
     if (result.workers.length > 0) {
@@ -489,6 +505,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
       return true;
     }
+    // The Throughput pane reads the same report as `phm throughput`.
+    if (path === '/api/verse/fleet/runs/throughput') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const options = throughputOptions(params.get('hours'), params.get('by'));
+      if (!options) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes 1 to 168 and by takes lane, repo or tier' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, await readThroughput({ ...options, runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), now: now() }));
+      return true;
+    }
     // The Plugins and Skills panes read the same data as `phm plugins|skills list --all --json`.
     if (path === '/api/verse/fleet/runs/plugins' || path === '/api/verse/fleet/runs/skills') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
@@ -498,6 +524,12 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/goals') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readGoals(deps.runsDir ?? defaultRunsDir()));
+      return true;
+    }
+    if (path === '/api/verse/fleet/runs/autonomy') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readAutonomy } = await import('../fleet/autonomy.js');
+      sendJson(res, 200, await readAutonomy({ runsDir: deps.runsDir ?? defaultRunsDir(), now: now() }));
       return true;
     }
     // The desktop Goals view reads the same scorecard as `phm goals`.

@@ -1,5 +1,7 @@
 # Router gateway
 
+See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
+
 The router gateway lets any agent ask for a model completion and have Phantom
 pick the seat. It runs the same seat router (`routeSeat`) the fleet uses, so a
 call gets the same checks as fleet work: the standing grant, the budget mode,
