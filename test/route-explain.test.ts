@@ -11,7 +11,17 @@ it('counts only accepted moves in the trailing hour and reports unavailable stat
   try {
     expect((await explainRoutes(root, 10000))['route-moves-per-hour']).toBeNull();
     expect((await explainRoutes(root, 10000)).laneQuality).toBeNull();
+    expect((await explainRoutes(root, 10000)).pairing).toBeNull();
     await mkdir(join(root, 'queue'));
+    await writeFile(join(root, 'queue/pairing-lanes.json'), JSON.stringify({ lanes: [
+      { lane: 'lead', laneClass: 'frontier', available: true,
+        pool: { pool: 'lead', resetAt: new Date(10001 * 1000).toISOString(), remainingPercent: 80 } },
+    ] }));
+    expect((await explainRoutes(root, 10000)).pairing).toMatchObject({ lead: { lane: 'lead', pacePerHour: 280800 } });
+    await writeFile(join(root, 'queue/pairing-lanes.json'), JSON.stringify({ lanes: [{}] }));
+    expect((await explainRoutes(root, 10000)).pairing).toBeNull();
+    await writeFile(join(root, 'queue/pairing-lanes.json'), '{');
+    expect((await explainRoutes(root, 10000)).pairing).toBeNull();
     await writeFile(join(root, 'queue/route-state.json'), JSON.stringify({ job: {
       pool: 'claude', decided_at: 9999, waste_reason: 'use-it-all high waste risk: work -> frontier', moves: [6400, 6401, 9999, 10001],
     } }));

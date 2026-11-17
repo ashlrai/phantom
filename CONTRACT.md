@@ -1,3 +1,12 @@
+# Advisory routing pairing
+
+`decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
+is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
+sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;
+implementation escalates only for an explicit implementation bottleneck.
+`explainRoutes(root, nowSeconds)` adds nullable `pairing` from the optional
+`queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
+
 # Phantom — shared core contract (M1/M2 baseline)
 
 This is the binding interface for Phantom's original index, launcher and
