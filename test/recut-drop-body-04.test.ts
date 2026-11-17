@@ -15,7 +15,7 @@ it('builds a valid UTC desktop-compatible drop with exact paths and bound', () =
   expect(job.body).toContain('Closes #12');
 });
 it.each([
-  [{ class: 'landed' }, 'class'], [{ class: 'unknown' }, 'class'], [{ title: 'other' }, 'title'],
+  [{ class: 'landed' }, 'already-present-on-base'], [{ class: 'unknown' }, 'class'], [{ title: 'other' }, 'title'],
   [{ remainingPaths: [] }, 'empty'], [{ remainingPaths: Array(21).fill('a') }, 'too-wide'],
   ...['.github/workflows/a', 'src/cli/desktop.ts', 'src/core/desktop/a', 'desktop/src-tauri/a'].map(p => [{ remainingPaths: [p] }, 'owner-path']),
   [{ head: '' }, 'invalid-data'], [{ remainingPaths: ['a'.repeat(4001)] }, 'too-large'],
