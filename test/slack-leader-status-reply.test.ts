@@ -95,7 +95,7 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     expect(posts(call)[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: '1793920000.000001', text: `Leader: ${STATUS_TEXT}\n${WORK_LINE}\n${SNAPSHOT_LINES}` });
     expect((await readLeaderInbox(options)).inbox.entries[0]?.text).toContain('Phantom status');
     expect(posts(call)[0]?.[1]?.attachments).toEqual([{ text:
-      'RECEIVED; owner unknown; claim unknown; fleet as of 2026-11-06T01:59:00.000Z', mrkdwn_in: [] }]);
+      'RECEIVED; owner unknown; claim unknown; fleet as of 2026-11-06T01:59Z from fleet tick (stale, background only)', mrkdwn_in: [] }]);
     const statusOptions = { ...options, configPath: join(options.configDir, 'agent-network.toml'),
       commsPath: join(options.configDir, 'comms.toml'), stateRoot: join(options.runsDir, 'slack-transport'), now: () => new Date(options.now() + 2000) };
     await vi.waitFor(() => expect(buildSlackBridgeStatus(statusOptions).replies.answered).toBe(1), { timeout: WAIT_MS });
