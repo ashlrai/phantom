@@ -1,3 +1,4 @@
+import { runAgentsChat } from './agents-chat.js';
 import { isAbsolute } from 'node:path';
 import { cmdAgents } from './agents.js';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
@@ -8,6 +9,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
+ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--json]
 ashlr agents mesh status [--root <abs>] [--json]
 ashlr agents edges [--json]
 ashlr agents bus contract [--json]
@@ -28,6 +30,7 @@ export async function runAgentsCli(
   out: (text: string) => void = console.log,
   err: (text: string) => void = console.error,
 ): Promise<number> {
+  if (args[0] === 'chat') return runAgentsChat(args.slice(1), out, err);
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
   if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {

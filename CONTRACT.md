@@ -678,6 +678,18 @@ repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
 
+## Per-lane measured history
+
+`resource-live/store.ts` exports `resourceHistoryPath`, `readResourceHistoryFile`,
+`parseResourceHistory`, `appendResourceHistory`; `history.ts` exports
+`summarizeHistory`, `projectLaneHistory`, `readLaneHistory`. Types:
+`ResourceHistoryPoint`, `ResourceHistoryFile`, `LaneHistory`, `RESOURCE_HISTORY_SCHEMA`.
+The private `<runs>/state/resource-live-history.json` (`resource-live.history.v1`)
+stores seven days, at most 2016 points per allowance, spaced at least five minutes.
+`ResourceLiveFeed.history` and `loadSensorReport().history` carry lane-keyed history;
+`WorldProjectInput.laneHistory` projects optional `WorldModel.sensors.lanes[].history`
+with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHistory`.
+
 ## Devin weekly capacity
 
 `src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
@@ -820,3 +832,13 @@ Optional role, capabilities, machine/lane affinity and peer mappings persist in
 roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
+
+`fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
+`readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
+Read-only lists of the plugins and skills fleet agents have: Phantom plugins and
+Claude Code installed plugins; Claude Code, Codex and learned skills. Each row has
+`name`, `source`, `agents` (plain words), `enabled` (boolean or `'unknown'`) and
+`lastUsed` (`'unknown'`; no usage record exists yet). Each source reports
+`read`, `none` or `unknown`; an unreadable source adds no rows. Served by
+`phm plugins list --all --json`, `phm skills list --all --json` and
+`GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.

@@ -121,7 +121,7 @@ export async function loadSensorReport(nowMs: number): Promise<unknown> {
   const report = presentUsageSensors(live.readings, nowMs);
   const pace = new Map(live.pace.map((row) => [row.lane, row]));
   // Pacing keys ride on the lane rows, where the world model reads them.
-  return { ...report, lanes: report.lanes.map((lane) => (lane.status === 'fresh' && pace.has(lane.lane) ? { ...lane, ...pace.get(lane.lane) } : lane)) };
+  return { ...report, history: live.history, lanes: report.lanes.map((lane) => (lane.status === 'fresh' && pace.has(lane.lane) ? { ...lane, ...pace.get(lane.lane) } : lane)) };
 }
 
 export async function readObserveSession(sessionId: string, options: ReadObserveOptions = {}): Promise<SessionDetail> {

@@ -1,3 +1,4 @@
+import { agentChatResponse } from './agent-chat-route.js';
 import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
 /**
  * core/web/api.ts — M14 JSON API handler.
@@ -1344,6 +1345,11 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === '/api/agents/chat') {
+      const response = agentChatResponse(method, req.url ?? '');
+      sendJson(res, response.code, response.body);
+      return true;
+    }
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
     if (path.startsWith('/api/bots') && ctx.botTemplatesApi && await ctx.botTemplatesApi(req, res, ctx)) return true;
     if (path === '/api/usage/spend' && method === 'GET') {
