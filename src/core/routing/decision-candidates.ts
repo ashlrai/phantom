@@ -6,6 +6,7 @@ import { effortSchema, modelModeTierSchema, routeModelSchema, routeTierSchema, r
 import { modelModeTier } from '../run/model-catalog.js';
 import { MODE_RANK } from '../run/model-mode-data.js';
 import { compareSpendPriority, validResetCalendarPool } from './reset-pressure.js';
+import { readRouterWeights, type RouterWeight } from '../router/tune.js';
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const baseSlotSchema = z.object({
@@ -15,7 +16,7 @@ const slotSchema = baseSlotSchema.extend({
   capabilities: z.array(z.string()).optional(), tiers: z.array(routeTierSchema).optional(),
   cost_class: routeCostClassSchema.optional(), data_class: routeDataClassSchema.optional(),
 });
-export interface RouteSources { models: unknown; slots: unknown; admission: unknown; capacity?: unknown; request?: unknown }
+export interface RouteSources { models: unknown; slots: unknown; admission: unknown; capacity?: unknown; request?: unknown; weights?: RouterWeight[] }
 const object = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
@@ -38,7 +39,8 @@ export async function loadRouteSources(root: string): Promise<RouteSources> {
     read(join(root, 'queue/route-capacity.json')),
     read(join(root, 'queue/route-request.json')),
   ]);
-  return { models, slots, admission, ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }) };
+  const weights = await readRouterWeights();
+  return { models, slots, admission, ...(weights.length ? { weights } : {}), ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }) };
 }
 
 /** Directive's model table is a policy prior. Unknown models have no inferred price/latency. */
@@ -80,7 +82,8 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
   return result;
 }
 
-export function rankRouteCandidates(request: RouteRequest, candidates: readonly RouteCandidate[], nowMs = Date.now()): RouteCandidate[] {
+export function rankRouteCandidates(request: RouteRequest, candidates: readonly RouteCandidate[], nowMs = Date.now(), weights: readonly RouterWeight[] = []): RouteCandidate[] {
+  const weight = (lane: string) => request.work_class ? weights.find(w => w.work_class === request.work_class && w.lane === lane)?.weight ?? 0.5 : 0.5;
   const desired = request.tier_hint === 'frontier' ? 'premium' : request.tier_hint === 'work' ? 'workhorse' : 'everyday';
   const ranks = { everyday: 0, workhorse: 1, premium: 2 };
   const minimum = ranks[desired];
@@ -90,7 +93,7 @@ export function rankRouteCandidates(request: RouteRequest, candidates: readonly 
     return request.mode ? c.mode_tier !== null && (request.mode === 'fusion' || MODE_RANK[c.mode_tier] >= MODE_RANK[request.mode])
       : ranks[c.speed_tier] >= minimum;
   }).sort((a, b) => compareSpendPriority(a.capacity, b.capacity, nowMs) ||
-    a.cost_rank - b.cost_rank || a.latency_rank - b.latency_rank || a.lane.localeCompare(b.lane));
+    a.cost_rank - b.cost_rank || weight(b.lane) - weight(a.lane) || a.latency_rank - b.latency_rank || a.lane.localeCompare(b.lane));
 }
 
 /** Failover uses a fresh snapshot and fails closed on unmeasured lane policy. */

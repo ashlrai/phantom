@@ -128,6 +128,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
   router: ['rank', 'serve', 'models', 'pick', 'config', 'catalog'],
+  route: ['explain', 'decide', 'fit', 'outcomes', 'tune'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
   verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],

@@ -2,6 +2,38 @@
 
 Provider-neutral [failover chains](ROUTING.md#failover-chains) are advisory and dispatcher-unwired.
 
+## Outcome-driven work-market tuning
+
+`phm route outcomes [--lane <id>] --json` reads bounded local jobs metrics
+from `ASHLR_RUNS_DIR` (default `~/.ashlr-runs`), joining job/PR URL outcomes
+and the existing `eval.lane-scores.v1` projection by opaque lane/model.
+Malformed lines are skipped; missing measurements remain null, including
+merge state, CI first-pass, cost, wall time and review findings. Review findings
+are accepted only as explicit `review_findings: {fixed,rejected,ignored}` counts.
+No remote PR or review state is inferred or fetched.
+
+`phm route tune [--dry-run] [--apply] [--min-samples N] [--max-shift X] --json`
+groups jobs by work class and lane. Evidence is the number of known merge
+outcomes; target is their merge success rate (CI and pass^k are not blended).
+The neutral weight is 0.5. Fewer than 20 known outcomes refuses a shift with
+`insufficient-evidence`; each accepted shift is capped at 0.1 in either
+direction and weights stay within [0,1]. The bounds are configurable; minimum
+samples must be a positive integer and maximum shift must be in (0,1].
+
+Dry-run is the default and writes nothing. Apply atomically replaces only
+`$ASHLR_HOME/router/weights.json` (default `~/.ashlr/router/weights.json`),
+mode 0600, preserving existing groups without accepted proposals.
+The file is an array of `router.weights.v1` rows. Missing/invalid weights
+retain the original ordering. `route decide` requests may include optional
+`work_class`; without it weights have no effect. After all eligibility gates,
+ranking is spend posture, cost rank, descending weight, latency rank, lane.
+An unmeasured lane uses neutral 0.5. Weights cannot admit a blocked lane or
+override spend posture/cost; the existing model-backend selection guard stays
+unchanged. This does not modify the pinned dispatcher or gateway seat policy.
+Ranked failover chains use the same work-class weight tiebreak after their
+existing gates. Explicitly pinned fallback order and rejection reasons are
+unchanged.
+
 See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
 
 The router gateway lets any agent ask for a model completion and have Phantom
