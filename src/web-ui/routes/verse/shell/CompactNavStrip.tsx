@@ -1,5 +1,5 @@
 /**
- * routes/verse/shell/CompactNavStrip.tsx — the narrow-window top strip: Leader,
+ * routes/verse/shell/CompactNavStrip.tsx — the narrow-window top strip: Home, Leader,
  * Feed, Needs you (with its count) and Fleet, one tap each; Leader and Feed
  * carry a "N new" chip while not showing. Plain buttons, so Tab reaches them and Enter/Space activate; the current one carries
  * aria-current.
@@ -12,6 +12,7 @@ import { unreadLabel, type UnreadCounts } from './unread-counts.js';
 export type CompactNavId = HomeChoice | 'needs-you' | 'fleet';
 
 const ITEMS: readonly { id: CompactNavId; label: string }[] = [
+  { id: 'home', label: 'Home' },
   { id: 'leader', label: 'Leader' },
   { id: 'feed', label: 'Feed' },
   { id: 'ideas', label: 'Ideas' },

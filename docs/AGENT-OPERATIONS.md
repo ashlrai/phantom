@@ -929,6 +929,14 @@ excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
 
+`phm home` answers one question: is the fleet healthy and moving? It prints a
+headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
+merged PRs, median time to merge, main per repo, running jobs per lane, the
+resource most at risk of going unused, the last 5 work-log items and unread
+Leader replies (these need `--leader-seen <time>`). `phm home --json` prints
+schema `home.v1`: each field is `{state:"ok",value}` or `{state:"unknown",reason}`.
+It is read-only, and the desktop app opens on the same summary.
+
 `phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
 published, PRs merged, empty jobs and the median time from publish to merge. It
 prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
