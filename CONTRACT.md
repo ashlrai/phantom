@@ -967,6 +967,31 @@ optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
 and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
 See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
 
+## Ready queue to node bridge (`phantom.node-bridge.v1`)
+
+`src/core/drive/nodes/ready-bridge.ts` exports `runNodeBridge`, `planNodeBridge`,
+`parseReadyRow`, `remoteLaneCap`, `remotePackFor`, `bridgeLeaseOwner`,
+`nodeBridgeReadiness`, `flockDispatcher`, `localBridgeRouter`, `poolBridgeRouter`,
+the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
+`NODE_BRIDGE_READ_ONLY_KINDS`, `NODE_BRIDGE_WORKTREE_PACK_ENABLED`,
+`NODE_BRIDGE_PENDING_TTL_MS` and `NODE_BRIDGE_MAX_PER_PASS`, and the types
+`NodeBridgeReport`, `BridgeRowDecision`, `BridgeNodeView`, `BridgeLeaseView`,
+`BridgeRouter`, `ReadyRow`, `NodeBridgeHost`, `NodeBridgeOptions`,
+`DispatcherLock` and `AcquireDispatcherLock`.
+`src/core/drive/nodes/ready-bridge-run.ts` exports `readNodeBridgeConfig`,
+`runConfiguredNodeBridge`, `NodeBridgeConfig` and `NodeBridgeRunOptions`.
+`DriveNodes.withdraw(jobId, owner)` returns a `WithdrawOutcome`
+(`withdrawn | held | completed | absent`). It fences a pending or lapsed job
+with a fresh token (`WITHDRAWN_RESULT`). `JobView.claimedBy` names the holder
+of a running claim. `src/core/drive/nodes/runner-packs.ts` exports
+`probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
+`<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and
+`NODE_RUNNER_PROTOCOL`, and `phm node run-once packs` prints them.
+`ready-bridge-child.ts` is the spawned entry for the daemon phase, and
+`resolution-observer-scheduler.ts` now exports `childRuntimeArgs`.
+`TICK_PHASE_NODE_BRIDGE_MS` bounds the `node-bridge` phase. See
+[docs/NODE-ROUTER.md](docs/NODE-ROUTER.md#ready-queue-bridge).
+
 ## Fleet compute observation (`fleet.compute.v1`)
 
 `GET /api/verse/fleet/control/compute` serves the read-only projection in
