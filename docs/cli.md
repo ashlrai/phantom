@@ -20,6 +20,8 @@ Each command also supports details through `phm help --all`.
 | Check the release train. | `phm release status --json` |
 | Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
 | Explain dispatcher routes. | `phm route explain --json` |
+| Read recorded routing outcomes. | `phm route outcomes --json` |
+| Preview bounded routing weights. | `phm route tune --dry-run --json` |
 | Show usage by engine. | `phm usage` |
 
 ## `phm --help`
@@ -307,6 +309,8 @@ Every command, grouped by topic.
     queue add|claim|done|block|replay|list|import|export                                                                                                          Local job queue with atomic claims, JSON snapshots and a read-only Markdown mirror.
     issues [--retry] [--dir <queue-directory>] [--json]                                                                                                           Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
+    route outcomes [--lane <id>] --json                                                                                                                           Read recorded job outcomes and pass^k evidence.
+    route tune [--dry-run] [--apply] [--min-samples N] [--max-shift X] --json                                                                                     Preview bounded weights; apply writes only local router weights.
     route decide --input <file|-> [--root <directory>] --json                                                                                                     Suggest a schema-validated route without changing launch behavior.
     map [--json]                                                                                                                                                  The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. Read only.
     messages [--since 15m] [--agent <name>] [--limit <n>] [--text]                                                                                                What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR.

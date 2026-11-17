@@ -159,6 +159,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router/`
 - `src/core/router-gateway/`
 - `src/core/routines/`
 - `src/core/routing/`

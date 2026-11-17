@@ -1211,6 +1211,7 @@
 /test/router-eval-harness.test.ts @masonwyatt23
 /test/router-gateway.test.ts @masonwyatt23
 /test/router-lint.test.ts @masonwyatt23
+/test/router-outcomes.test.ts @masonwyatt23
 /test/router-queue-conflict-owner-297s.test.ts @masonwyatt23
 /test/router-queue-conflict-preservation-211s.test.ts @masonwyatt23
 /test/router-queue-conflict-recovery-198s.test.ts @masonwyatt23
@@ -1219,6 +1220,7 @@
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
 /test/router-task-arms.test.ts @masonwyatt23
+/test/router-tune.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
 /test/routing-bandit.test.ts @masonwyatt23

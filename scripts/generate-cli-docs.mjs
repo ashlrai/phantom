@@ -104,6 +104,8 @@ export function renderCliDoc(sections) {
     '| Check the release train. | `phm release status --json` |',
     '| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |',
     '| Explain dispatcher routes. | `phm route explain --json` |',
+    '| Read recorded routing outcomes. | `phm route outcomes --json` |',
+    '| Preview bounded routing weights. | `phm route tune --dry-run --json` |',
     '| Show usage by engine. | `phm usage` |', '',
   );
   for (const { title, note, output } of sections) {

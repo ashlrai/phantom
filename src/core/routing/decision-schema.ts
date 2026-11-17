@@ -18,6 +18,7 @@ export const routeRequestSchema = z.object({
   repo: routeIdSchema,
   tier_hint: routeTierSchema,
   mode: modeTierSchema.optional(),
+  work_class: routeIdSchema.optional(),
   lane_candidates: z.array(routeIdSchema).max(64),
   quota_state: z.record(routeIdSchema, z.enum(['available', 'exhausted', 'unknown'])),
   machine_state: z.object({
