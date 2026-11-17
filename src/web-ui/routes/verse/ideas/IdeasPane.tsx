@@ -1,5 +1,7 @@
 /**
- * routes/verse/ideas/IdeasPane.tsx: what the fleet will pick next. A
+ * routes/verse/ideas/IdeasPane.tsx: what the fleet will pick next. "Next bets"
+ * (FixNext) leads with ranked candidates and one "Queue it" each, then "Suggested
+ * jobs" (SuggestedJobs) with a queue line to copy; below it, a
  * view of the ranked backlog (`GET /api/backlog`, via the same query the
  * Autonomy panel uses), grouped by repo, each row saying where it came from.
  * Each row can be sent to the Leader as "Do next" / "Not now" (IdeaSteer).
@@ -22,7 +24,8 @@ import { IdeaDraftChip, postIdeasDraft, type IdeaDraftState } from './IdeaDraftC
 import { IdeaNotNow, postIdeaVerdict } from './IdeaNotNow.js';
 import { IdeaSteer } from './IdeaSteer.js';
 import styles from './ideas.module.css';
-import { NextIdeas } from './NextIdeas.js';
+import { FixNext } from './FixNext.js';
+import { SuggestedJobs } from './SuggestedJobs.js';
 
 export const IDEAS_POLL_MS = 30_000;
 const PER_REPO = 5;
@@ -51,7 +54,7 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
   const allRows = useMemo(() => rankIdeas(backlog.data?.items ?? []), [backlog.data]);
   const tagged = useMemo(() => {
     const items = backlog.data?.items ?? [];
-    const matches = new Map(tagIdeas(items, goals.data ?? []).map(({ idea, goal }) => [idea, goal]));
+    const matches = new Map(tagIdeas(items, Array.isArray(goals.data) ? goals.data : []).map(({ idea, goal }) => [idea, goal]));
     return allRows.map(idea => ({ idea, goal: matches.get(items[Number(idea.key.slice(idea.key.lastIndexOf('#') + 1))]!) ?? null }));
   }, [allRows, backlog.data, goals.data]);
   const ordered = [...tagged.filter(row => row.goal), ...tagged.filter(row => !row.goal)]
@@ -154,17 +157,19 @@ export function IdeasPane({ visible = true }: { visible?: boolean }) {
         <span className={styles.meta}>{picked.size === 0 ? `Tick 2 to ${DRAFT_MAX} ideas to draft them as one job.` : `${picked.size} selected`}</span>
       </div>
       <div className={styles.groups}>
-        {groups.map((group, i) => <RepoCard key={`${group.repo}-${i}`} group={group} all={full[i]!} goals={goals.data ?? []} goalByKey={goalByKey} expanded={open.has(group.repo)} onToggle={() => toggle(group.repo)} picked={picked} drafts={drafts} busy={busy} onPick={togglePick} onDraft={draft} verdictOf={verdictOf} verdictError={key => verdictErrors.get(key)} onDismiss={dismiss} />)}
+        {groups.map((group, i) => <RepoCard key={`${group.repo}-${i}`} group={group} all={full[i]!} goals={Array.isArray(goals.data) ? goals.data : []} goalByKey={goalByKey} expanded={open.has(group.repo)} onToggle={() => toggle(group.repo)} picked={picked} drafts={drafts} busy={busy} onPick={togglePick} onDraft={draft} verdictOf={verdictOf} verdictError={key => verdictErrors.get(key)} onDismiss={dismiss} />)}
 
       </div>
     </>;
   }
 
   return <div className={styles.root} aria-label="Ideas">
-    <NextIdeas visible={visible} />
+    <FixNext visible={visible} />
+    <SuggestedJobs visible={visible} />
+    {goals.data !== undefined && !Array.isArray(goals.data) ? <CardNote tone="unknown">Goal links unavailable.</CardNote> : null}
     <label>Goal: <select value={goalFilter} onChange={event => setGoalFilter(event.target.value)}>
       <option value="all">All</option>
-      {openGoals(goals.data ?? []).map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
+      {openGoals(Array.isArray(goals.data) ? goals.data : []).map(goal => <option key={goal.id} value={goal.id}>{goal.objective}</option>)}
     </select></label>
     <label className={styles.meta}><input type="checkbox" checked={showDismissed} onChange={event => setShowDismissed(event.target.checked)} /> Show dismissed{hiddenCount > 0 ? ` (${hiddenCount})` : ''}</label>
     <label><input type="checkbox" checked={onlyGoals} onChange={event => {

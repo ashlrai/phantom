@@ -71,7 +71,7 @@ function distBoundFiles(cwd) {
       return null;
     }
   }
-  const files = new Set(out.split('\n').filter(Boolean));
+  const files = new Set(out.split('\n').filter(Boolean).map((file) => file.replace(/^HEAD:/, '')));
   distBoundCache.set(cwd, files);
   return files;
 }

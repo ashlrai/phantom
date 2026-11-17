@@ -1,0 +1,10 @@
+{ "v": 1, "lanes": {
+  "claude": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "claude-api": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "codex-cmp": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "codex-local": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "codex-personal": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "devin": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "gemini": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]},
+  "zai": {"github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"], "cli": ["phm"], "skill": ["review"], "plugin": ["ashlr"]}
+} }

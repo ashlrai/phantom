@@ -10,11 +10,13 @@ import { z } from 'zod';
 import { EMPTY_RESET_STATE } from './reset-rule.js';
 import {
   RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA, RESOURCE_LIVE_STALE_MS,
+  RESOURCE_HISTORY_SCHEMA, type ResourceHistoryFile,
   type HistorySample, type PollState, type ResourceLiveAllowance, type ResourceLiveId,
   type ResourceLiveReading, type ResourceLiveReason, type ResourceLiveSidecar,
 } from './types.js';
 
 export const HISTORY_PER_ALLOWANCE = 12;
+export const resourceHistoryPath = (runsDir: string): string => join(resourceLiveStateDir(runsDir), 'resource-live-history.json');
 const MAX_SIDECAR_BYTES = 512 * 1024;
 
 export function resourceLiveStateDir(runsDir: string): string {
@@ -32,6 +34,9 @@ const amount = z.number().finite().nonnegative().nullable();
 const ids = RESOURCE_LIVE_ALLOWANCES.map(row => row.id) as [ResourceLiveId, ...ResourceLiveId[]];
 
 export const readingSchema = z.object({
+  account_id: z.string().trim().min(1).max(128).optional(),
+  model: z.string().trim().min(1).max(128).optional(),
+  window_start: instant.optional(),
   id: z.enum(ids),
   verified: z.boolean(),
   used: amount,
@@ -41,6 +46,8 @@ export const readingSchema = z.object({
   source: z.string().min(1).max(128).regex(/^[\x20-\x7e]+$/).nullable(),
   source_tier: z.enum(['official', 'own-call', 'visible-window', 'operator-entry']).nullable(),
   observed_at: instant.nullable(),
+  confidence: z.enum(['high', 'medium', 'low']).nullable().optional(),
+  stale_after: instant.nullable().optional(),
 });
 const pollSchema = z.object({
   last_polled_at: instant, next_poll_at: instant, interval_s: z.number().finite().positive(),
@@ -55,7 +62,7 @@ export function unverified(allowance: ResourceLiveAllowance, reason: ResourceLiv
   return {
     id: allowance.id as ResourceLiveId, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: false,
     used: null, limit: null, unit: null, used_pct: null, remaining: null, reset_at: null, expires_at: allowance.expires_at,
-    source: null, source_tier: null, observed_at: null, stale_after: null, reason,
+    source: null, source_tier: null, confidence: null, observed_at: null, stale_after: null, reason,
   };
 }
 
@@ -66,12 +73,17 @@ export function toReading(allowance: ResourceLiveAllowance, row: StoredReading &
   const measured = row.used !== null && row.limit !== null && row.limit > 0;
   return {
     id: row.id, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: true,
+    ...(row.account_id ? { account_id: row.account_id } : {}),
+    ...(row.model ? { model: row.model } : {}),
+    ...(row.window_start ? { window_start: row.window_start } : {}),
     used: row.used, limit: row.limit, unit: row.unit,
     used_pct: measured ? Math.min(100, Math.round(row.used! / row.limit! * 1000) / 10) : null,
     remaining: measured ? Math.max(0, Math.round((row.limit! - row.used!) * 1000) / 1000) : null,
     reset_at: row.reset_at, expires_at: allowance.expires_at, source: row.source, source_tier: row.source_tier,
+    confidence: row.source_tier === 'official' ? 'high' : row.source_tier === 'own-call' ? 'medium' : 'low',
     observed_at: row.observed_at,
-    stale_after: new Date(Date.parse(row.observed_at) + RESOURCE_LIVE_STALE_MS).toISOString(), reason: null,
+    stale_after: new Date(Math.min(Date.parse(row.observed_at) + RESOURCE_LIVE_STALE_MS,
+      row.stale_after ? Date.parse(row.stale_after) : Infinity)).toISOString(), reason: null,
   };
 }
 
@@ -126,11 +138,54 @@ export function parseResourceLiveSidecar(raw: unknown): Pick<ResourceLiveSidecar
 
 /** Read the sidecar as stored. Missing, oversized, symlinked or malformed files read as null. */
 export async function readResourceLiveFile(runsDir: string): Promise<unknown | null> {
+  return readPrivateJson(resourceLivePath(runsDir), MAX_SIDECAR_BYTES);
+}
+
+export async function readResourceHistoryFile(runsDir: string): Promise<unknown | null> {
+  return readPrivateJson(resourceHistoryPath(runsDir), 8 * 1024 * 1024);
+}
+
+async function readPrivateJson(path: string, cap: number): Promise<unknown | null> {
   let handle;
-  try { handle = await open(resourceLivePath(runsDir), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return null; }
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return null; }
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.size > MAX_SIDECAR_BYTES) return null;
+    if (!info.isFile() || info.size > cap) return null;
     return JSON.parse(await handle.readFile('utf8')) as unknown;
   } catch { return null; } finally { await handle.close().catch(() => undefined); }
+}
+
+const historyPointSchema = readingSchema.pick({ unit: true, reset_at: true, source_tier: true }).extend({
+  observed_at: instant, used: z.number().finite().nonnegative(), limit: z.number().finite().nonnegative(),
+  left: amount, source: readingSchema.shape.source.unwrap(), confidence: z.enum(['high', 'medium', 'low']).nullable(),
+});
+export function parseResourceHistory(raw: unknown, nowMs = Date.now()): ResourceHistoryFile {
+  const result: ResourceHistoryFile = { schema: RESOURCE_HISTORY_SCHEMA, allowances: {} };
+  const file = z.object({ schema: z.literal(RESOURCE_HISTORY_SCHEMA), allowances: z.record(z.string(), z.unknown()) }).safeParse(raw);
+  if (!file.success) return result;
+  for (const id of ids) {
+    const rows = file.data.allowances[id];
+    if (!Array.isArray(rows)) continue;
+    const points = rows.flatMap(row => { const p = historyPointSchema.safeParse(row); return p.success ? [p.data] : []; })
+      .filter(p => Date.parse(p.observed_at) >= nowMs - 7 * 24 * 3_600_000 && Date.parse(p.observed_at) <= nowMs)
+      .sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+    const kept = points.filter((p, i) => i === 0 || p.observed_at !== points[i - 1]!.observed_at).slice(-2016);
+    if (kept.length) result.allowances[id] = kept;
+  }
+  return result;
+}
+
+export function appendResourceHistory(raw: unknown, readings: readonly ResourceLiveReading[], nowMs: number): ResourceHistoryFile {
+  const file = parseResourceHistory(raw, nowMs);
+  for (const r of readings) {
+    if (!r.verified || r.used === null || r.limit === null || r.observed_at === null || r.source === null) continue;
+    const points = file.allowances[r.id] ?? [];
+    const last = points.at(-1);
+    const at = Date.parse(r.observed_at);
+    if (at > nowMs || at < nowMs - 7 * 24 * 3_600_000 || (last && at - Date.parse(last.observed_at) < 300_000)) continue;
+    points.push({ observed_at: r.observed_at, used: r.used, left: r.remaining, limit: r.limit, unit: r.unit,
+      reset_at: r.reset_at, source: r.source, source_tier: r.source_tier, confidence: r.confidence });
+    file.allowances[r.id] = points.slice(-2016);
+  }
+  return file;
 }

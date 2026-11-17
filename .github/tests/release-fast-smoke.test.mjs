@@ -65,8 +65,34 @@ test('excludes the currently executing build when looking for reusable input', (
   assert.equal(f.select(), null);
 });
 
-// RQ-PH-GATE-SPLIT-1: a sha is not release-green unless the two split-out jobs
-// (and their single named step) succeeded in the exact master push CI run.
+function cachedAuthorityDrift(f) {
+  const job = f.jobs.find(row => row.name === 'Check authority drift (hermetic)');
+  job.steps[0].conclusion = 'skipped';
+  job.steps.unshift(...['Hash authority drift inputs', 'Restore authority drift green result', 'Decide authority drift reuse']
+    .map(name => ({ name, status: 'completed', conclusion: 'success' })));
+  job.steps.push({ name: 'Record authority drift green result', status: 'completed', conclusion: 'skipped' });
+  return job;
+}
+
+test('selects exact-source push CI when authority drift reuses a matching green receipt', () => {
+  const f = setup('push'); cachedAuthorityDrift(f);
+  assert.deepEqual(f.select(), { run: 30, attempt: 2, sha: revision });
+});
+
+for (const mutation of ['missing decision', 'ambiguous decision', 'failed restore', 'incomplete hash', 'check failed', 'record ran']) {
+  test(`refuses cached authority drift evidence with ${mutation}`, () => {
+    const f = setup('push'); const job = cachedAuthorityDrift(f);
+    if (mutation === 'missing decision') job.steps.splice(2, 1);
+    if (mutation === 'ambiguous decision') job.steps.push({ ...job.steps[2] });
+    if (mutation === 'failed restore') job.steps[1].conclusion = 'failure';
+    if (mutation === 'incomplete hash') job.steps[0].status = 'in_progress';
+    if (mutation === 'check failed') job.steps[3].conclusion = 'failure';
+    if (mutation === 'record ran') job.steps[4].conclusion = 'success';
+    assert.throws(() => f.select());
+  });
+}
+
+// RQ-PH-GATE-SPLIT-1: both split-out jobs must prove green in the exact push run.
 for (const name of ['Check generated files', 'Check authority drift (hermetic)']) {
   for (const mutate of [
     ['missing', jobs => jobs.filter(job => job.name !== name)],

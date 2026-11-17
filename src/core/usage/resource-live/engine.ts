@@ -19,6 +19,7 @@ import { NEEDS_SIGNIN, type ResourceLiveObservation, type ResourceLiveSource, ty
 import {
   HISTORY_PER_ALLOWANCE, parseResourceLiveSidecar, readResourceLiveFile, readingSchema, resetDecisionDir, resourceLivePath,
   resourceLiveStateDir, toReading, unverified, usable,
+  appendResourceHistory, readResourceHistoryFile, resourceHistoryPath,
 } from './store.js';
 import {
   RESOURCE_LIVE_ALLOWANCES, RESOURCE_LIVE_SCHEMA,
@@ -40,6 +41,9 @@ function verifiedReading(allowance: ResourceLiveAllowance, seen: ResourceLiveObs
     id: allowance.id, verified: true, used: seen.used, limit: seen.limit, unit: seen.unit,
     reset_at: seen.reset_at === null ? null : normalizeInstant(seen.reset_at),
     source: seen.source, source_tier: seen.tier ?? tier, observed_at: normalizeInstant(seen.observed_at),
+    stale_after: seen.stale_after,
+    account_id: seen.account_id, model: seen.model,
+    window_start: seen.window_start === undefined ? undefined : normalizeInstant(seen.window_start),
   });
   if (!parsed.success || !usable(parsed.data)) return null;
   const row = parsed.data;
@@ -227,6 +231,8 @@ export async function runResourceLiveTick(options: ResourceLiveTickOptions): Pro
       next_poll_at: new Date(nextWakeMs(Object.values(poll), nowMs)).toISOString(),
     };
     await writePrivate(resourceLivePath(options.runsDir), `${JSON.stringify(sidecar, null, 2)}\n`);
+    await writePrivate(resourceHistoryPath(options.runsDir), JSON.stringify(appendResourceHistory(
+      await readResourceHistoryFile(options.runsDir), readings, nowMs)));
     return { sidecar, polled, drafts: rule.drafts, decisionFile };
   } finally {
     await release();

@@ -1,4 +1,264 @@
+# Phantom Bots
+
+`agents/phantom-bot.ts` exports `phantomBotSchema`, `PhantomBot` and
+`parsePhantomBot(value)` for strict provider-neutral `phantom-bot.v1` metadata.
+`lanePolicy` uses queue requirements, rejects metered cost and lane/provider pins,
+and defaults max cost to included. `listPhantomBots(home?)`,
+`readPhantomBot(id, home?)`, `planPhantomBot(value, home?)` are read-only;
+planning refuses existing ids. `writePhantomBot(value, home?)` exclusively creates
+a private record. `explainPhantomBot(bot, runs?, now?)` returns primitives,
+strict master-router eligibility, primary decision, fallback plan, rejected lanes
+with master reason codes and posture evidence; no model calls, dispatch or writes.
+`cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
+Creation requires `--dry-run` and never calls the writer.
+
+# Managed desktop CLI upgrade
+
+`src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
+(the consumer install ports plus `smokeVersion` and lowering-only
+`residentStop`), `ConsumerUpgradeOptions`, `ConsumerUpgradeResult`,
+`createConsumerUpgradeDependencies`, `inspectConsumerDesktopUpgrade` and
+`applyConsumerDesktopUpgrade`. Inspection returns frozen `desktop-upgrade.v1`
+observations and stages verified paired public artifacts privately. Apply
+consumes an invocation-owned admission once; it requires Stop/drain, stops the
+resident, switches the managed CLI pointer atomically and keeps the old release.
+`desktop-upgrade-journal.v1` records the previous/current release and version
+for explicit rollback. Neither mode replaces the native app, grants authority,
+or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
+its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
+install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
+The install module also exports its existing `directory`, `parents`, `owned`,
+`regular`, `write`, `sha`, `ioRead` and `packageReady` guards for shared use.
+
+# Lane allowance evidence
+
+`src/core/usage/lane-allowance.ts` exports pure `projectLaneAllowance(inputs,
+nowMs)` and read-only `readLaneAllowance({ runsDir?, weeklyFile?, nowMs? }?)`,
+returning `LaneAllowanceSnapshot` (`v: 1`, `asOf`, `lanes`). Inputs combine
+resource-live state/history, parsed posture evidence and published Devin weekly
+capacity. Runs default to `ASHLR_RUNS_DIR` or `~/.ashlr-runs`; `weeklyFile`
+overrides the Devin publication path. `LaneAllowanceInputs` and
+`LaneAllowanceRow` describe nullable usage, reset, age, history, posture and
+Devin preview evidence. Missing measurements stay null; stale values retain
+their age and reason. Future observations have `freshness: invalid-future`,
+null usage/age and an invalid-timestamp reason. A lane name alone never proves
+cost. Fresh verified USD readings map to `api-credit`; included/metered receipt
+classes require fresh matching provenance, and unrecognized classes stay unknown.
+`GET /api/usage/lanes` returns this projection without refreshing providers.
+`postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
+the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
+ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
+`window_start` and `reset_at` as `lane`, `accountId`, `model`, `windowStart` and
+`resetAt`. Absent optional fields remain absent, including `freePreview` and
+`previewExpiresAt`; parsing does not establish freshness or grant free status.
+The resource-live reading parser preserves optional `account_id`, `model` and
+`window_start`; weekly capacity also accepts optional `account_id` and `model`.
+`ClaudeAccountStatusResult` and `ClaudeAccountUsageResult` include nullable
+`accountScope`, an organization-only SHA-256 scope (`claude:` plus 16 lowercase
+hex digits) from validated opaque native status `orgId`, never email. Usage
+requires matching before/after scopes. `ClaudeQuotaReadingV1.accountId` is optional;
+malformed scopes reject the reading, while legacy unscoped files remain valid.
+The official Claude weekly resource-live source and sanctioned budget readings
+forward it as optional `account_id`, without a model (the window covers all models).
+`SanctionedReading` and `BudgetEntry` accept optional `account_id`; refresh owns
+and clears it on unscoped re-reads or estimates, never borrowing prior scope.
+When weekly capacity supplies the usage, its own scope is required, never
+borrowed from a different sidecar reading. Receipt evidence must match that lane/account/model and window
+(reset or fixed expiry, and window start when present), be within the reading's
+15-minute freshness bound, and never be future-dated. Legacy unscoped receipts
+remain readable in route explanations but cannot establish allowance posture
+or cost; incomplete usage cannot establish posture.
+
+A free preview requires a verified `devin-cli-models-list` models reading with
+a positive count, a named Flash/Lightning model, a nonempty account matching
+the lane reading, a fresh non-future observation and an unexpired preview window.
+Receipt flags alone cannot grant it or extend the fixed preview deadline.
+Granted previews include `evidence: { observedAt, accountId, model }` so cards
+can age them out. Cards omit usage bars for missing usage and free countdowns
+for unproven previews; future measurements show clock skew, not zero age.
+
+# CI baseline evidence
+
+Failure groups add `runs: {pr: number, head: string, runId: number}[]`, linking
+only the failed job evidence to its workflow run and current PR head.
+`src/core/fleet/ci-rerun.ts` exports `CiRerunOptions` and
+`runCiRerunMaintenance(opts)`: injectable repositories, cancellation, GitHub,
+analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
+probable flakes are rerun, with durable pre-attempt deduplication and a global
+hourly cap (default ten). Shared-baseline queueing requires effective authority
+and inactive KILL. Cancellation returns/persists `status: 'aborted'`.
+`ciRerunPaths()` resolves journal/status files under the ASHLR state root;
+`readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts and
+lastHour attempts; `readCiRerunStatus(path?)` returns the persisted status or null.
+Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
+Resident off-tick ticks launch it only with repositories and an elapsed interval.
+The CLI `ci reruns [--json]` reads recent journal entries/counts without mutation.
+
+`src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
+read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
+scrubbed Vitest failure identities and summaries. `enqueueBaselineFixes(report,
+absoluteQueuePath)` explicitly writes deduplicated work-tier master-fix rows.
+`applyBaselineUpdates(report, gh?)` explicitly applies expected-head guarded
+updates only after current master test-pass and merged-fix ancestry evidence.
+Unknown evidence never authorizes mutation. See [CI baseline](docs/CI-BASELINE.md).
+# Frontier CLI discovery and daemon health
+
+## Router catalog refresh
+
+`DailyJobSpec` in `src/core/steward/schedule.ts` accepts optional `weekday`
+(0=Sunday through 6=Saturday). When absent, daily unit output is unchanged.
+When set, launchd receives Weekday and systemd receives a weekday-qualified
+OnCalendar expression and Weekly timer description. Invalid weekdays throw.
+
+`src/core/routing/catalog-refresh.ts` exports pure `diffCatalog(current,
+sources, patterns, now, dryRun?)`, returning `{report, data}`, deterministic
+`renderCatalog(data)` and `catalogPatch(before, after)`, and async
+`refreshCatalog(options?, deps?)`. Refresh writes versioned report/patch
+artifacts; only explicit apply writes the generated data file. Source runners,
+fetch, seat discovery, current data and time are injectable. Source failures
+are unknown; existing tiers and catalog entries are never removed or changed.
+Only lite/normal pattern tiers may be assigned to additions. Reports use schema
+`router.catalog-refresh.v1`.
+
+`src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
+execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
+It rejects empty names and names containing `/`, searches PATH before common
+tool directories, `~/.npm-global/bin`, and the Node executable directory, and
+uses file metadata only (regular file with any execute bit). Options default to
+process PATH, HOME, and execPath. Returned paths are absolute. Engine discovery
+and absolute spawn-path resolution retain `which`/`where` first, then use this
+fallback; this does not change service PATH or admission policy.
+
+`src/core/daemon/guard-health.ts` exports `diagnoseFrontierClients(inventory,
+lookup?)`; the injected lookup now returns the executable resolution above or
+null rather than a boolean. Unavailable diagnoses retain `binaryOnPath` and add
+nullable `binaryPath`, nullable `binarySource`, and `cause`: `binary-not-found`,
+`auth-or-seat-not-admitted`, `policy-refused`, `resource-unavailable`,
+`not-selected`, `non-loopback-refused`, `probe-timeout`, or `unavailable`.
+Policy/resource/selection/refusal inventory reasons take precedence over binary
+absence. Admission is inferred, never authenticated by this metadata lookup.
+The health CLI bounds inventory discovery to 30 seconds; a timeout supplies a
+sanitized frontier error and null resolved inventory, preserving unknown health
+semantics and never itself recommending restart. See
+[daemon revival](docs/DAEMON-REVIVE.md).
+
+# Resident off-tick jobs
+
+`buildBacklog` scans up to `BACKLOG_REPO_CONCURRENCY` (4) repositories at once,
+aggregating scanner results in input repository order before existing ranking
+and snapshot persistence. Each scanner has a 45-second sub-deadline, overridable
+with `scannerDeadlineMs`. `signal` cancellation skips work not yet started.
+`skippedScanners` records `scanner-deadline` and `phase-cancelled` skips alongside
+unavailable observations. Skips are never cached as successful scans.
+
+`createBacklogScanSnapshot()` creates a tick-local cache of in-flight remote gh
+queries and scanner results. `buildBacklog({ snapshot, invalidate })` reuses
+results except for `invalidate.repos` (all scanners) and `invalidate.scanners`
+(all repos). Remote query promises survive scanner invalidation; ranking,
+filters, proposal deduplication and persistence always run again. Without a
+snapshot all reads are fresh. `runGhAsync`, `listIssuesAsync` and
+`githubCiStatusAsync` are abortable, never-throw read APIs; synchronous GitHub
+APIs retain their existing behavior. CI-only reads do not fetch PR/issue counts.
+
+`SelfHealCycleResult.checkedRepos` lists repos whose detector ran or whose
+self-heal queue projections were pruned during the cycle. Both cycle entry
+points return an empty array on early exits. The cycle budget is two minutes;
+the per-repo budget remains two minutes and the cursor resumes deferred work.
+Post-self-heal tick refreshes invalidate these repos plus queued-autonomy for
+every repo; a missing result conservatively invalidates all enrolled repos.
+
+Ancillary observation work shares `ANCILLARY_OBSERVATION_BUDGET_MS` (60 seconds).
+`runCounterfactualReplay`, `scanRealWorldOutcomes` and `sweepRejectionLearning`
+accept optional `signal`, `deadlineAtMs` and `now` controls. Calls without these
+controls retain their existing behavior. Interrupted replay does not persist
+partial calibration; outcome/learning results mark `sourceComplete: false` and
+include `skippedReason`. Outcome windows preserve their cursor on interruption.
+Daemon state persists optional `counterfactualReplayPending` to retry interrupted
+replay on the next eligible tick rather than waiting for its normal cadence.
+The budget audits skips but drains active work cooperatively; credit release,
+reflection and regression monitoring are not governed by this sub-budget.
+
+`runTickPhase` accepts `detached?: boolean`: detached phases retain deadline,
+abort and grace semantics but do not consume the tick budget, update progress,
+or append to its ledger. `recordTickPhase(record)` appends metadata to an open
+ledger. `DaemonTickPhaseStatus` includes `off-tick`, excluded from tick outcomes;
+`DaemonTickPhase.offTick` carries run identity and previous settled metadata.
+`launchOffTickJob(name, run, opts)` synchronously records an off-tick launch or
+existing run. Jobs are single-flight until both bounded and inner work settle.
+`offTickJobsSnapshot()` returns metadata only; `cancelOffTickJobs(graceMs?)`
+aborts running jobs and bounds shutdown waiting.
+Resident non-once ticks enable `offTickMaintenance` (ignored for dry runs):
+self-heal and ancillary run single-flight in the background, and auto-merge
+precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
+
+# Advisory routing pairing
+
+`routing/decision-schema.ts` exports `routeFailureKindSchema` (quota, 5xx,
+timeout, near_reset). Strict `RouteRequest` accepts optional `job`, `needs`
+(up to 32 capability names), `min_tier`, `max_cost_class`, `data_class` and
+`fallback` (up to three unique strict `{lane,on}` pins). Old requests are unchanged.
+`routeCandidateRejections(request,sources,nowMs,{failover?,pinned?}?)` returns
+all exclusion reason codes for deduped sorted candidate lanes; empty means eligible.
+`router/fallback.ts` exports `planFallbackChain`, `nextFailover`,
+`recordFailover`, `readFallbackUsed` and `runFailover`. Plans are
+`route.fallback.v1`, advisory, live:false, at most three entries, never primary.
+`nextFailover` accepts failed_lane, failure and attempted, with an optional
+fresh request/sources/nowMs recheck. Recording requires a job identifier and
+appends sorted-key failover/refusal rows to metrics/jobs.jsonl without task text.
+History reads only the bounded 256 KiB regular-file tail, newest last, max three
+matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
+decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
+
+`explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
+256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
+following). Its `lanes` map contains `posture`, `postureReason`, nullable
+`projectedUnusedPct` and nullable `hoursToReset`. The newest `work-market.v1`
+posture event wins, falling back to the newest route decision's ranking inputs
+only when no posture event exists. Missing or invalid evidence returns null.
+Lane evidence may also include `costClass`, `costClassReason`, `zeroCost`, and
+`allowance` with nullable numeric `used`, `limit`, `in_flight`, `reserve`,
+`session_cap` and `headroom` ACUs, projected from `work-market.v1` receipts.
+Devin's effective class is `included` only within measured weekly allowance
+after reservations and reserve with room for one session, or for an unexpired
+selected Lightning/Flash free preview (`zeroCost: true`); otherwise `metered`.
+Unknown usage stays null. See [queue cost evidence](docs/QUEUE.md#resource-posture-the-lane-is-a-hint).
+
+`run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
+model classifications and their capability order. `ModelEntry.modeTier` is
+required and excludes fusion (a composition). `RouteRequest.mode?` requests a
+minimum model class, independently of queue `tier_hint`; unknown models need
+`models.json["mode.<model>"]`. `RouteDecision.mode_tier` is the selected class
+or null. `RouteReport` includes `requested_mode` and nullable capacity evidence.
+`decideRoute(raw, sources, {backends?, signal?, nowMs?})` returns a
+`RouteReport` or, for fusion, `route.pairing.v1` with `mode_tier: fusion`.
+Fusion assigns ultra judgment and lite/normal implementation through
+`decidePairing`. Assignments add nullable `model` and `mode_tier`.
+`RouteSources` adds optional `capacity` and `request` snapshots, loaded from
+`queue/route-capacity.json` and `queue/route-request.json`. `explainRoutes`
+adds nullable `decision`, recomputed without model calls from those snapshots.
+Among eligible lanes: closest future reset with positive allowance, then
+zero marginal cost, then cheapest known marginal cost; unknown cost sorts last.
+`ResetCalendarPool.costPerMTok?` is nonnegative marginal USD/M tokens, not
+subscription sticker price. Reset-calendar lanes now sort by reset before pace.
+
+`decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
+is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
+sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;
+implementation escalates only for an explicit implementation bottleneck.
+`explainRoutes(root, nowSeconds)` adds nullable `pairing` from the optional
+`queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
+
 # Phantom — shared core contract (M1/M2 baseline)
+
+Resource-live sources accept optional `usage.liveSources` configuration (see
+[resource evidence](docs/RESOURCE-EVIDENCE.md#publish-subscription-capacity)).
+`ResourceLiveReading.confidence` is `high | medium | low | null`, derived from
+the source tier; old sidecars without it remain readable. Observations may
+carry `stale_after`, which can shorten but never extend the 15-minute TTL.
+`DaemonCapacityPublisherDeps.refreshResourceLive?(cfg)` refreshes the rail after
+a publisher cycle; production wiring is daemon-only and disabled in tests.
+`OperatorUsagePageReader.read(provider, usageUrl)` returns a nullable observation;
+the shipped implementation always returns null and is opt-in only.
 
 This is the binding interface for Phantom's original index, launcher and
 identity modules (the package was formerly named ashlr-hub). Do not change these
@@ -21,6 +281,32 @@ inline).
 The CLI ships as `phm` with the compatible `ashlr` alias (both run `bin/ashlr`).
 The full, current command inventory is `phm help --all`.
 
+## Headless ACP seats
+
+`agents/acp-client.ts` exports `runAcpSeatTurn(opts: AcpSeatOptions,
+deps?: AcpSeatDeps): Promise<AcpSeatResult>`. Options provide command, args,
+cwd, prompt, exact model, async-capable qualifyModel, timeoutMs, optional signal
+and permission (`read-only` by default, or `allow`). Dependencies inject spawn
+and env. Results contain ok, code, text and optional message, sessionId and
+stopReason. Qualification fails closed before spawning, with no paid fallback.
+ACP config model selection defaults to exact values. Optional `planModelStep`
+has signature `(target: string, configOptions: unknown): AcpModelStep`, returning
+`{kind: 'set', configId, value}`, `{kind: 'done'}` or
+`{kind: 'unplannable', reason}`. Each set replans from the response configOptions;
+unplannable targets or more than four sets fail before prompting, without fallback.
+No model control leaves selection to the agent's launch arguments.
+Input lines and collected text are capped at 1 MiB each; stderr is discarded.
+Timeout and abort notify session/cancel and terminate the child.
+
+`devin/acp-seat.ts` exports `devinAcpSeatArgs(model): string[]`,
+`devinQualifiedFreeModel(catalog: DevinModelCatalog, model: string, nowMs?: number): boolean`
+and `runDevinAcpSeat(opts, deps?): Promise<AcpSeatResult>`. Wrapper options replace
+command/args/qualifyModel/planModelStep with cliPath and catalog. The wrapper
+uses nextDevinModelStep for family, effort and speed selection. Only exact free
+ids from a native (`cli`) catalog with a parseable fetchedAt no older than
+DEVIN_MODELS_MAX_AGE_MS and not in the future qualify (nowMs defaults to Date.now()).
+Cache, fallback, aliases and lightning do not qualify.
+
 ## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
 
 `agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
@@ -40,6 +326,16 @@ Only authenticated admission receipts qualify; labels and peer status messages
 cannot authorize claims or prove completion. No shell, engine, merge or spending
 is invoked. Queue task strings remain untrusted data under existing worker gates.
 
+`QueueJob` (RQ-SHARED-QUEUE-1) carries the optional market requirements
+`max_tier` (tier ceiling; `tier` and `min_tier` may not exceed it), `data_class`
+(`public|internal|confidential|restricted`) and `work_class`
+(`bulk|standard|judgment`) beside `preferred_lane`, `needs`, `min_tier`,
+`max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
+values, and `phm queue add` takes `--max-tier`, `--data-class` and
+`--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
+nowMs, windowHours)` and `renderUnfed(report)` in
+`src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
+
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
 The optional synchronous host guard runs under that lock; an existing ID or an
@@ -53,6 +349,29 @@ and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>
 and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
 Dispatch is a read-only preview unless apply is exactly true. Results use only
 the local bus and its current comms/participant allowlist, never a Slack send.
+
+Devin autoland (additive): `src/core/devin/autoland.ts` exports
+`runDevinAutoland({apply, cap?}, deps?) -> Promise<DevinAutolandResult>` and
+`setDevinAutolandPaused(paused)`. Results carry v:1, ok, mode, passId,
+decisions and landed count; scanned decisions aggregate skipped-session counts
+by not-ours/already-archived/not-finished. Decisions include reason and optional session,
+bundle attachment, PR, job, commit count and auto-merge metadata. Dependencies
+inject API, self identity, landing, command runner, clock, KILL and home.
+Cap defaults to 3 (1–10); dry runs never persist. Apply decisions append to
+autoland.jsonl. The client adds optional serviceUserId/isArchived and
+archiveSession(orgId, sessionId), returning a validated DevinSession using
+create retry policy. `autoland-timer.ts` exports ensureDevinAutolandTimer(deps?)
+and stopDevinAutolandTimer(); resident passes are single-flight and unrefed.
+The CLI adds `phm devin autoland [--apply] [--cap N] [--json]` and pause/resume.
+
+Devin landing (additive): `src/core/devin/land.ts` exports
+`landDevinSession(request: DevinLandRequest, deps?: DevinLandDeps): Promise<DevinLandResult>`
+and its parsers; `DevinClient` gains `listSessionAttachments(orgId, sessionId)`
+and `downloadAttachment(orgId, uuid, name, maxBytes)` (the key is never sent past
+the API's redirect), and `DevinFetch` init gains optional `redirect: 'manual'`.
+The CLI adds `phm devin land --session <id> [--repo <name>] [--base <b>] [--job <id>]
+[--bundle <name>] [--apply] [--json]`, a dry run unless `--apply`; it runs the
+pinned `publish.sh` unchanged and refuses repos outside its allowlist.
 
 ---
 
@@ -478,6 +797,21 @@ It shares the existing read-only queue parser through
 in `src/cli/fleet-rebase-plan.ts`; `CoverageRead` has `state: 'ok' | 'missing' | 'degraded'`
 and `jobs: RebasePlanExistingJob[]`. Exit 0 emits actions, 1 emits an empty error
 report for unusable/incomplete input, and 2 indicates invalid arguments.
+
+The CLI also emits `train: GreenMergeTrain | null`. The pure
+`planGreenMergeTrain(prs: readonly MergeBatchPr[], run: MergeBatchRun, rows: readonly unknown[]): GreenMergeTrain`
+in `src/core/fleet/green-merge-train.ts` consumes the same validated snapshot and
+action report, with healthy hold/coverage reads required by its caller. A train
+has `authority: 'proposal-only'`, `validation: 'required-checks-on-combined-commit'`,
+`baseRef: string | null`, `members: {number, headSha}[]` and `deferred: {number, reason}[]`.
+It selects at most 16 ready enqueue actions in PR-number order, with one base,
+disjoint files, explicit OPEN/non-draft identities, matching full head OIDs,
+complete files confirmed by changedFiles, and nonempty, uncapped observed checks
+with no failures/pending entries and at least one success (completed skipped/neutral
+lanes are allowed). Missing/unhealthy queue or hold evidence produces null in the CLI.
+This proposes combined validation only: consumers must recheck head/base identities,
+required-check names/App identities, review, holds and Security policy through the
+existing protected merge queue. It grants no CI reuse or permission to merge.
 Nothing invokes gh, merges, closes, dispatches jobs or changes CI configuration.
 
 ## Feedback-to-fix pipeline — RQ-GROK-FEEDBACKLOOP-1
@@ -590,6 +924,60 @@ repair/archival is an operator task. Exit 0 means the cycle completed without
 attention items, 1 means incomplete/refused evidence or delivery, 2 means usage.
 Hermetic end-to-end coverage lives in `test/fleet-orchestrate.test.ts`.
 
+## Per-lane measured history
+
+`resource-live/store.ts` exports `resourceHistoryPath`, `readResourceHistoryFile`,
+`parseResourceHistory`, `appendResourceHistory`; `history.ts` exports
+`summarizeHistory`, `projectLaneHistory`, `readLaneHistory`. Types:
+`ResourceHistoryPoint`, `ResourceHistoryFile`, `LaneHistory`, `RESOURCE_HISTORY_SCHEMA`.
+The private `<runs>/state/resource-live-history.json` (`resource-live.history.v1`)
+stores seven days, at most 2016 points per allowance, spaced at least five minutes.
+`ResourceLiveFeed.history` and `loadSensorReport().history` carry lane-keyed history;
+`WorldProjectInput.laneHistory` projects optional `WorldModel.sensors.lanes[].history`
+with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHistory`.
+
+## Devin Review
+
+`DevinClient.triggerPrReview(orgId, prUrl): Promise<DevinPrReview>` posts a manual
+review (create retry policy); `getPrReview(orgId, prUrl, commitSha?)` reads the
+latest review. `parseDevinPrReview(unknown)` fails closed to null.
+`DevinPrReview` retains the required provider fields: status, repo_path,
+pr_number, commit_sha and created_at. `DevinApiError.errorCode: string | null`
+is a scrubbed provider ProblemDetail code, limited to 64 safe characters.
+
+`src/core/devin/pr-review.ts` exports `parseDevinPrRef`, `DevinPrRef`,
+`planDevinPrReview`, `devinPrReviewKey`, `triggerDevinPrReviewOnce`,
+`DevinPrReviewDeps`, `DevinPrReviewResult`, `DevinPrReviewReason`,
+`readDevinReviewFindings`, `DevinReviewFindings`, `DevinReviewSignal` and
+`fleetDevinReview`. Requests reserve a repo/PR/head key under a local store lock
+before contact; ambiguous outcomes cannot be retried. Unknown weekly allowance
+refuses contact; quota errors stop further requests that local day.
+Config `devin.review.maxPerDay` defaults to 5; 0 disables review requests.
+`MergeAutopilotPr.devinReview?: DevinReviewSignal | null` and injectable
+`MergeAutopilotDeps.devinReview` expose advisory evidence only: classification
+and merge gates are unchanged. Dry runs neither contact Devin nor journal.
+
+## Devin weekly capacity
+
+`DevinWeeklyInput` and `DevinWeeklyDeps` accept optional `accountId` and `model`.
+`DevinWeeklyCapacity` emits optional `account_id` and `model`: the connected Devin
+org ID and configured fleet model, omitted when unknown. Explicit dependencies
+override these defaults. `devinWeeklyObservation` forwards these and `window_start`.
+`ResourceLiveObservation` accepts optional `account_id`, `model`, `window_start`;
+the engine retains them in verified readings and normalizes window instants like
+`reset_at`. Preview observations carry the first matched free model ID, never an
+account ID (the CLI catalog exposes none).
+
+`src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
+`publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,
+`devinPreviewObservation`, `devinWeeklyWindow`, `devinWeeklyAllowance`, `devinWeeklyLine`
+and `DevinWeeklyCapacity { used, limit, remaining, limit_source, window_start, reset_at,
+burn_rate_per_hour, sessions, source, observed_at, state, reason }`. Unknown fields are
+`null`. `DevinSession.createdAtMs` (optional) and `devinInstantMs` come from
+`core/devin/client.ts`. Config: `devin.weeklyAcuAllowance`, `devin.weeklyResetAt`.
+`ResourceLiveSourceOptions` gains `readDevinWeekly`, `readDevinPublished` and
+`readDevinModels`. See [Devin weekly allowance](docs/RESOURCE-EVIDENCE.md#devin-weekly-allowance).
+
 ## Node host capacity
 
 `assessNodeCapacity(ramBytes, memory, freeDiskBytes, light?, options?)` and
@@ -615,6 +1003,48 @@ The private registry uses native hardware digest/boot identity; missing identity
 unsafe paths or corrupt state hold admission. Leases have no time-based expiry:
 a crashed worker's reservation remains until verified offline cleanup or reboot.
 See [node admission](docs/NODES.md#small-mac-enrollment-and-admission).
+
+## Node provider binaries and runner errors
+
+`src/core/drive/nodes/provider-binary.ts` exports `NODE_PROVIDERS`,
+`isNodeProvider`, `providerBinaryCandidates(provider, deps?)` and
+`resolveProviderBinary(provider, deps?) => string | null`, the single absolute
+allowlist resolver (no `PATH` lookup). `worker.ts` adds
+`probeProviderBinaries(run?, deps?) => ProviderBinaries`,
+`classifyRunnerReply(code, fenced, stdout)`, `PACK_FAILURE_LIMIT` (2), and an
+optional third `binaryDeps` argument to `probeNodeLanes`. `NodeRunnerRequest` gains
+optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
+`codex-pack.ts` exports `CODEX_OUTPUT_LIMIT` (48 KiB), `nodeWorkDir`, `codexFileArgv`
+and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
+See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
+
+## Ready queue to node bridge (`phantom.node-bridge.v1`)
+
+`src/core/drive/nodes/ready-bridge.ts` exports `runNodeBridge`, `planNodeBridge`,
+`parseReadyRow`, `remoteLaneCap`, `remotePackFor`, `bridgeLeaseOwner`,
+`nodeBridgeReadiness`, `flockDispatcher`, `localBridgeRouter`, `poolBridgeRouter`,
+the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
+`NODE_BRIDGE_READ_ONLY_KINDS`, `NODE_BRIDGE_WORKTREE_PACK_ENABLED`,
+`NODE_BRIDGE_PENDING_TTL_MS` and `NODE_BRIDGE_MAX_PER_PASS`, and the types
+`NodeBridgeReport`, `BridgeRowDecision`, `BridgeNodeView`, `BridgeLeaseView`,
+`BridgeRouter`, `ReadyRow`, `NodeBridgeHost`, `NodeBridgeOptions`,
+`DispatcherLock` and `AcquireDispatcherLock`.
+`src/core/drive/nodes/ready-bridge-run.ts` exports `readNodeBridgeConfig`,
+`runConfiguredNodeBridge`, `NodeBridgeConfig` and `NodeBridgeRunOptions`.
+`DriveNodes.withdraw(jobId, owner)` returns a `WithdrawOutcome`
+(`withdrawn | held | completed | absent`). It fences a pending or lapsed job
+with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;
+that marker, not the result or node ID, distinguishes a producer withdrawal
+from an accepted completion. `JobView.producerWithdrawn` exposes the marker,
+and `JobView.claimedBy` names the holder of a running claim.
+`src/core/drive/nodes/runner-packs.ts` exports
+`probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
+`<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and
+`NODE_RUNNER_PROTOCOL`, and `phm node run-once packs` prints them.
+`ready-bridge-child.ts` is the spawned entry for the daemon phase, and
+`resolution-observer-scheduler.ts` now exports `childRuntimeArgs`.
+`TICK_PHASE_NODE_BRIDGE_MS` bounds the `node-bridge` phase. See
+[docs/NODE-ROUTER.md](docs/NODE-ROUTER.md#ready-queue-bridge).
 
 ## Fleet compute observation (`fleet.compute.v1`)
 
@@ -656,6 +1086,22 @@ activity time; it is not a semantic completion claim. Remote claims never read
 local artifacts with matching job names. Missing sources and telemetry remain
 explicit; the map renders unknown placement and empty inventories without
 seeded sessions. All reads use the existing bounded regular-file readers.
+## Live sessions (`fleet.live-sessions.v1`)
+
+`src/core/fleet/live-sessions.ts` exports `buildLiveSessions(map, now,
+filter)` and `renderLiveSessionsText` (both pure);
+`src/core/fleet/live-sessions-read.ts` exports `readLiveSessions(options)` with
+an injectable `readMap`. `phm sessions [--lane] [--repo] [--json]` and
+`GET /api/verse/fleet/control/live-sessions` (optional `lane`, `repo`, each at
+most once; read session required) serve it. It projects the session map above;
+it adds no source. The session map gains `localNodeId`, and
+`fleet.sessions.v1` rows gain optional `lastOutputAt` (the `<job>.log` lstat
+mtime; absent from older servers). Rows cover launching, running, publishing
+and claim-only (`unknown`) sessions. Unknown text fields read `unknown`, unknown
+times are null, and `unknown` names the reason for each. `quiet` is true after
+10 minutes without output and null when that time is unknown.
+`throttledLiveMap` is now generic over its value type.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
@@ -720,3 +1166,104 @@ Optional role, capabilities, machine/lane affinity and peer mappings persist in
 roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
+
+`fleet.plugins-panel.v1` and `fleet.skills-panel.v1` (`src/core/fleet/installed-panels.ts`):
+`readPluginsPanel(opts?)`, `readSkillsPanel(opts?)`, `formatInstalledPanel(panel, noun)`.
+Read-only lists of the plugins and skills fleet agents have: Phantom plugins and
+Claude Code installed plugins; Claude Code, Codex and learned skills. Each row has
+`name`, `source`, `agents` (plain words), `enabled` (boolean or `'unknown'`) and
+`lastUsed` (`'unknown'`; no usage record exists yet). Each source reports
+`read`, `none` or `unknown`; an unreadable source adds no rows. Served by
+`phm plugins list --all --json`, `phm skills list --all --json` and
+`GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
+
+`tools.matrix.v1` (`src/core/fleet/tool-parity.ts`): `buildToolMatrix(report, lane?)`,
+`formatToolMatrix(matrix, lane?)` and `loadToolParity({ runsDir?, home?, readers? })`.
+Which lane has which tool. Rows are capabilities (GitHub read/write, web search,
+browser, computer use, shell, package install) then named MCP servers, CLIs,
+skills and plugins; each cell is `{ value: yes|no|unknown, source }`. `scores`
+give each lane's share of yes rows; `topGaps` holds at most three gaps with one
+plain `fix`. `readers` (connectors, lane-tools, slots) are injectable for tests.
+Read-only. Served by `phm tools [--json] [--lane L]` and
+`GET /api/verse/fleet/runs/tools[?lane=L]` (404 for an unknown lane) for the
+desktop Tools pane.
+
+`src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
+`subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
+`publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
+first-paint consumers observe it without importing pane definitions or shortcuts.
+
+### Agent app adapters
+
+`src/core/agents/apps/`: `AgentAppAdapter` (`describe`, `launchTask`, `listSessions`,
+`readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
+`describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
+`createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
+
+## Cross-provider subagents (subagent.v1)
+
+`src/core/subagent/spawn.ts` exports `MAX_SUBAGENT_DEPTH = 3`, strict Zod
+`subagentRecordSchema`, `SubagentRecord`, `SubagentSpawnInput`, `SubagentOptions`,
+and these asynchronous APIs:
+
+- `planSubagentSpawn(input: SubagentSpawnInput, options?: SubagentOptions)` →
+  `{schema:'subagent.spawn.v1',ok,dry_run,applied:false,record,parent:{id,depth,kind:'root'|'subagent'},routing:{decision,eligible_lanes,excluded_lanes:[{lane,reason}]},reason_codes,next_step}`.
+- `listSubagents(parentId: string, options?: SubagentOptions)` →
+  `{schema:'subagent.list.v1',parent_id,count,subagents:SubagentRecord[]}`.
+- `readSubagentRecord(id: string, options?: SubagentOptions)` → `SubagentRecord|null`.
+- `writeSubagentRecord(record: SubagentRecord, options?: SubagentOptions)` → `void`.
+
+Options: `home`, `runsRoot`, `nowMs`, `kill:()=> 'active'|'inactive'|'unknown'`,
+`paused:()=>boolean`. Input: `parent_id`, `tier`, `task`, optional
+`tools_allowed`, `write_scope`, `max_tokens`, `max_cost_class`, `task_class`,
+`repo`, `apply`. Defaults and subset rules: [Subagents](docs/SUBAGENTS.md).
+Refusals are values, not exceptions. Storage failures may throw.
+
+Strict record fields: `schema:'subagent.v1'`, `id` (`sa-` + 16 random hex),
+`parent_id` (bounded session/job identifier), `depth` (positive integer),
+`tier` (`fast|mid|work|frontier`), `lane:string|null`, `model:string|null`,
+`tools_allowed` (read/search/edit/test/shell/web array), `write_scope:string[]`,
+`max_tokens` (positive integer), `max_cost_class` (`local|included|metered`),
+`state` (`planned|held|refused|running|completed|failed`), `result_ref:string|null`,
+`created_at` (ISO timestamp), `reason_codes:string[]`, `task_digest` (SHA-256 hex).
+No task content is stored. Dry-run writes nothing. Successful apply stores
+held only; no live execution, enqueue, queue file writes or paid model calls.
+
+`src/core/subagent/result.ts` exports:
+- `readSubagentResult(id: string, options?: SubagentOptions)` →
+  `{schema:'subagent.result.v1',id,found,state,result_ref,lane,depth,reason_codes}`;
+  missing records have null state/reference/lane/depth.
+- `recordSubagentResult(id: string, input:{state:'completed'|'failed',result_ref:string}, options?: SubagentOptions)`
+  → `{ok:boolean,reason:string|null}`. Only held/running may transition.
+  References match `^(run|pr|proposal|job|artifact):[A-Za-z0-9._:/#-]{1,200}$`.
+
+Subagent-pattern parent IDs (`^sa-[a-f0-9]{16}$`) require a valid stored record
+or refuse `parent-not-found`. Stored parents outside planned/held/running
+refuse `parent-state-invalid`. Both gates skip routing. Non-subagent parent
+IDs resolve as root sessions/jobs with fixed frontier tier,
+read/search/edit/test/shell tools, `**` write scope, 200000 tokens and
+included cost class.
+
+Reason codes: `parent-not-found`, `parent-state-invalid`, `depth-exceeded`, `scope-tools-not-subset`, `scope-write-not-subset`,
+`write-scope-invalid`, `scope-cost-not-subset`, `scope-tokens-not-subset`,
+`scope-tier-not-subset`, `tool-unknown`, `kill-engaged`, `paused`,
+`no-eligible-lane-quota`, `input-invalid`, `apply-inert-no-scoped-live-path`,
+plus existing router reason codes (including `admission-blocked`). Result
+updates may refuse with `not-found`, `state-transition-invalid`,
+`result-ref-invalid`. CLI uses sanitized public JSON and exit 0/1/2 for
+success/refusal-or-missing/usage.
+
+### PR append-union conflict resolution
+
+`resolvePrConflicts(ConflictOptions): Promise<ConflictReport>` in
+`src/core/fleet/pr-conflict-resolver.ts` inspects one pinned open PR in a
+disposable git repository/worktree. The exact `APPEND_UNION_ALLOWLIST` and empty
+diff3 base regions constrain resolution; GATES v3 and holds override any
+configuration. Dry-run is the default. Apply runs generators and verification,
+then revalidates PR identity, holds and master before export or sanctioned
+publication. `ConflictReport.status` is `needs-agent`, `would-resolve`,
+`ready-supersede` or `published`; available scrubbed conflict hunks and failed
+command names remain evidence. No direct push fallback exists.
+`runPrConflictResolution(ConflictRunOptions): Promise<unknown>` reads GitHub and
+fleet hold evidence for the `pr.resolve-conflicts.v1` CLI envelope.
+See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).

@@ -2,7 +2,9 @@
 
 One ordered thread for the owner. Desktop, Telegram, email, iMessage and Slack
 all land here. A leader reply goes back to the channel the owner used and to
-the desktop thread. It never goes to anyone else.
+the desktop thread. Ordinary owner-thread messages and replies are not broadcast
+into agent group chats. The separately gated, explicit agent-chat share below is
+an opt-in exception for selected text, not a mirror of this thread.
 
 Claim key: `queue:RQ-COMMS-UNIFIED-1`. A claim coordinates work and grants no
 execution authority. The leader inbox handoff is `createLeaderMailbox` in
@@ -60,12 +62,61 @@ bridge = "loopback"
 | Desktop | Yes. Native. No secret. Inbound from the desktop composer and `send-owner` both land on this thread. | Add `{ channel = "bus", id = "local-owner" }` to `[mason]` and `[team]`, and `{ channel = "bus", id = "leader" }` to `[team]`. Set `confirmedByMason = true`. |
 | Telegram | The thread records owner messages that already pass the Telegram receiver. `send-owner` delivers with the existing bot client when the chat id matches. | 1. Create a bot with BotFather and store the token as Phantom Secrets handle `phm_TELEGRAM_BOT_TOKEN` (the environment name `TELEGRAM_BOT_TOKEN` stays in existing custody). 2. `phm channels add telegram <numeric chat id>`. 3. `phm comms pair-telegram`. 4. Add `{ channel = "telegram", id = "telegram:<chat id>" }` to `[mason]` and `[team]`. 5. Write the handle name in `owner-adapters.toml` as above. |
 | Email | The thread records allowlisted drop-folder mail. `send-owner` uses the existing Mail.app outbox and only the saved `from` address. | 1. `phm comms setup-email`. 2. `phm comms email-drop <inboxDir> --from <verified-address> --save-config --send-replies`. 3. Add `{ channel = "email", id = "email:<verified-address>" }` to `[mason]` and `[team]`. 4. Store the mail credential as `phm_EMAIL_CREDENTIAL` and name that handle in `owner-adapters.toml`. |
-| iMessage | Loopback only, on macOS. Text stays in the private thread and the local leader inbox. The bus mirror is redacted. `send-owner` uses the existing self-only transport. | 1. Put your own handle in `~/.ashlr/config.json` as `comms.imessageHandle` and set `comms.enabled` to true. 2. Add `{ channel = "imessage", id = "<that handle>" }` to `[mason]` and `[team]`. 3. Set `[imessage] bridge = "loopback"` in `owner-adapters.toml`. 4. Grant Automation for Messages and Full Disk Access to the terminal that runs the bridge. No remote host is accepted. |
+| iMessage | Loopback only, on macOS. Ordinary text stays in the private thread and the local leader inbox. The bus mirror is redacted; explicit agent-chat shares are the separately gated exception below. `send-owner` uses the existing self-only transport. | 1. Put your own handle in `~/.ashlr/config.json` as `comms.imessageHandle` and set `comms.enabled` to true. 2. Add `{ channel = "imessage", id = "<that handle>" }` to `[mason]` and `[team]`. 3. Set `[imessage] bridge = "loopback"` in `owner-adapters.toml`. 4. Grant Automation for Messages and Full Disk Access to the terminal that runs the bridge. No remote host is accepted. |
 | Slack | The thread can record an owner message passed to the adapter. `send-owner` delivers only through the existing Slack leader path, and only when the original thread reference is present. | 1. Name `phm_SLACK_BOT_TOKEN` in `owner-adapters.toml`. The token value stays in existing Slack custody. 2. Add `{ channel = "slack", id = "<your Slack user id>" }` to `[mason]` and `[team]`. 3. Finish the existing Socket Mode bridge (`phm channels slack status --json`) so a thread reference exists. This command does not open a new paid Slack app. |
 
 `~/.ashlr/KILL` and the comms pause stop every adapter before a transport is called. Nothing in this path spends money or sends to a non-owner address.
 
+### Short Slack status replies
+
+With the existing owner verification and delivery gates satisfied, a short
+status ask such as `Phantom status` uses the fixed status reader, not a model.
+Specific requests such as `status of the release PR #12` stay on the Leader
+path. `recheck`, `orders`, `review`, `owners`, `bridge`, and `peers` have their
+own readers; they do not use the status layout below.
+
+The status body starts with the digest. Socket Mode also supplies an optional
+runtime/channel-health line below the heading. A work-board summary follows,
+reading at most 20 retained items and showing counts plus up to three items
+needing attention. An unreadable board yields `Work items: unknown`, not zero.
+The body drops work-board lines first, then the optional runtime line when
+space is tight; an absent or throwing runtime-line reader adds no line.
+
+The Slack composer separately appends a newly read snapshot with `Runtime:`,
+`Fleet state:`, and `Claims:` lines, reserving space by shortening the earlier
+body within the 1,500-character reply budget. Fleet freshness means time since
+the last state write, not proof of current execution. Live claims are reported
+separately from running-worker evidence when available. Unavailable fields say
+`UNKNOWN`; a failed snapshot read produces `Runtime: UNKNOWN (snapshot
+unavailable)`. A failed digest produces the fixed status-read fallback, still
+followed by snapshot evidence when available.
+
+These are read-only observations, not claims of completed work or permission
+to dispatch. This describes the source implementation; it does not establish
+that a particular Slack bridge has installed it or delivered a live reply.
+
+### Explicit sharing into agent chat
+
+The native iMessage receiver can separately accept an exact `agent-chat.share`
+JSON object from the configured, verified owner handle, after private intake.
+Only its selected `text` goes to the specified channel and run/outcome thread;
+ordinary messages and private history are not copied. See [Agent group chat](AGENT-CHAT.md)
+for the JSON shape, required native source identity, recipient approval,
+replay limits and refusal behavior. This is not a generic desktop, Slack,
+email or Bus write endpoint, and it does not upgrade a note into a command.
+An accepted share receipt proves local Bus append, not agent consumption,
+execution, remote delivery or installation on a particular host.
+
 ### Copy Leader plan replies into the conversation
+
+The Leader conversation in the desktop app and the phone view already shows
+each **Reply for Mason** from the plan log as a Leader message at its heading
+time, oldest first; no command is needed. To read them in a terminal, run
+`phm leader replies` (one line each, newest first; `--json` adds a stable `id`
+per heading). The leader's usual line,
+`**Reply for Mason** (for OUTBOXFALLBACK to copy): "..."` under a
+`## 2026-11-16 ~22:55 ET` heading, is read as the plain quoted text at 22:55
+ET. A heading with no time shows its time as "unknown".
 
 Run `phm leader replies sync --json` to copy new dated **Reply for Mason**
 blocks from `~/.ashlr-runs/leader/PLAN-LOG.md` into the existing Leader thread.

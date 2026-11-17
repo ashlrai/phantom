@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolveExecutable } from '../src/core/run/tool-path.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
 const probes = vi.hoisted(() => ({ authAccesses: [] as string[], installed: vi.fn(), spawn: vi.fn() }));
@@ -40,6 +43,31 @@ const config = (): AshlrConfig => ({
 } as unknown as AshlrConfig);
 
 describe('real guarded resolver discovery without auth filesystem access', () => {
+  it('discovers executable frontier CLIs outside the resident PATH without spawning them', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'frontier-path-'));
+    try {
+      const binDir = join(home, '.local', 'bin');
+      mkdirSync(binDir, { recursive: true });
+      const claude = join(binDir, 'claude');
+      writeFileSync(claude, 'not a runnable program', { mode: 0o755 });
+      vi.stubEnv('HOME', home);
+      vi.stubEnv('PATH', '/nonexistent');
+      const engines = await vi.importActual<typeof import('../src/core/run/engines.js')>('../src/core/run/engines.js');
+      expect(engines.engineInstalled('claude')).toBe(true);
+      expect(engines.resolveBinAbsolute('claude')).toBe(claude);
+      expect(resolveExecutable('claude')).toEqual({ path: claude, source: 'well-known' });
+      vi.stubEnv('PATH', binDir);
+      expect(resolveExecutable('claude')).toEqual({ path: claude, source: 'path' });
+      chmodSync(claude, 0o644);
+      expect(resolveExecutable('claude')).toBeNull();
+      expect(engines.engineInstalled('claude')).toBe(false);
+      expect(engines.resolveBinAbsolute('claude')).toBe('claude');
+      expect(resolveExecutable('../claude')).toBeNull();
+      expect(resolveExecutable('')).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
   it.each(['.codex', '.codex-2'])('resolves Codex with Claude absent without inspecting %s credentials', async profile => {
     vi.stubEnv('CODEX_HOME', join(homedir(), profile));
     probes.installed.mockImplementation(engine => engine === 'codex');

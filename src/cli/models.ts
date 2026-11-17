@@ -2,8 +2,10 @@
  * `ashlr models` — local model management CLI.
  *
  * Subcommands:
- *   (none)           List local models (Ollama + LM Studio) with provider,
- *                    name, size, and active marker.
+ *   (none)           List the model registry (verified, unverified, stale), then
+ *                    local models (Ollama + LM Studio).
+ *   verify <id> --source <url>
+ *                    Mark one model verified after its official doc page confirms the id.
  *   routing          Inspect recorded routing evidence without probing providers.
  *   pull <name>      Confirm then pull a model via `ollama pull` (EXPLICIT
  *                    only — large download; honors --yes to skip prompt).
@@ -27,6 +29,7 @@ import { ansi as C, pad, makeColors, isTty } from './ui.js';
 import { BUILTIN_ENGINE_REGISTRY } from '../core/run/engine-registry.js';
 import { probeApiModelEngine } from '../core/providers.js';
 import type { ApiModelReadiness } from '../core/providers.js';
+import type { ModelRegistryRow, ModelVerifyOptions } from '../core/fleet/model-verify.js';
 
 const { bold, dim, green, yellow, cyan, gray } = makeColors(isTty());
 
@@ -97,7 +100,13 @@ async function loadConfig(): Promise<AshlrConfig> {
 interface ParsedModelsArgs {
   subcommand: 'list' | 'pull' | 'start' | 'inventory' | 'routing' | 'verify';
   pullName?: string;
+  /** `verify <id> --source <url>`: the model to mark verified. */
+  verifyId?: string;
+  source?: string;
+  provider?: string;
+  lanes: string[];
   json: boolean;
+  text?: boolean;
   yes: boolean;
   usageError?: string;
 }
@@ -107,6 +116,7 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
     subcommand: 'list',
     json: false,
     yes: false,
+    lanes: [],
   };
 
   // Strip flags first
@@ -116,8 +126,15 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
     const arg = args[i]!;
     if (arg === '--json') {
       result.json = true;
+    } else if (arg === '--text') {
+      result.text = true;
     } else if (arg === '--yes' || arg === '-y') {
       result.yes = true;
+    } else if (arg === '--source' || arg === '--provider' || arg === '--lane') {
+      const value = args[++i];
+      if (!value || value.startsWith('--')) { result.usageError = `${arg} needs a value`; return result; }
+      if (arg === '--lane') result.lanes.push(value);
+      else result[arg === '--source' ? 'source' : 'provider'] = value;
     } else if (arg === '--help' || arg === '-h') {
       // handled upstream via help check
     } else if (arg.startsWith('--')) {
@@ -142,7 +159,9 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
     result.pullName = name;
   } else if (sub === 'verify') {
     result.subcommand = 'verify';
-    if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models verify [--json]';
+    result.verifyId = positional[1];
+    if (positional.length > 2 || result.yes || (result.verifyId ? !result.source || result.text : result.source))
+      result.usageError = 'Usage: phm models verify [--text | --json], or phm models verify <id> --source <url> [--provider <name>] [--lane <lane>] [--json]';
   } else if (sub === 'routing') {
     result.subcommand = 'routing';
     if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models routing [--json]';
@@ -155,6 +174,8 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
     result.usageError = `unknown subcommand: ${sub}. Use list, routing, inventory, verify, pull <name>, or start.`;
   }
 
+  if ((result.provider || result.lanes.length) && !result.verifyId) result.usageError = '--provider and --lane are only for models verify <id> --source <url>.';
+  if (result.text && (result.subcommand !== 'verify' || result.json)) result.usageError = '--text is only for models verify and cannot be combined with --json.';
   return result;
 }
 
@@ -191,11 +212,36 @@ function activeMarker(active: boolean): string {
 // Subcommand: list
 // ---------------------------------------------------------------------------
 
+/** Plain status word for one registry row. */
+export function registryStatus(row: ModelRegistryRow): string {
+  return row.stale ? 'stale (verified over 30 days ago)' : row.status;
+}
+
+/** The registry table, no colour: one row per model, unknown shown as unknown. */
+export function formatModelRegistry(rows: readonly ModelRegistryRow[] | null): string[] {
+  if (rows === null) return ['  Model registry: unknown (it could not be read, so the router will not launch any model).', ''];
+  if (rows.length === 0) return ['  Model registry: empty. Add a model: phm models verify <id> --provider <name> --source <official doc URL>', ''];
+  const cells = rows.map(row => [row.id, row.provider, row.lanes.join(',') || 'unknown', registryStatus(row), row.verified_on ?? 'unknown', row.source_url ?? 'unknown']);
+  const head = ['Model', 'Provider', 'Lanes', 'Status', 'Verified on', 'Source'];
+  const widths = head.map((title, i) => Math.max(title.length, ...cells.map(cell => cell[i]!.length)));
+  const line = (cell: string[]) => `  ${cell.map((text, i) => pad(text, widths[i]!)).join('  ').trimEnd()}`;
+  const blocked = rows.filter(row => row.unverified).length;
+  return [
+    '  Model registry: the router only launches verified models', '', line(head), ...cells.map(line), '',
+    `  ${rows.length - blocked} verified, ${blocked} blocked, ${rows.filter(row => row.stale).length} stale.  Verify one: phm models verify <id> --source <official doc URL>`, '',
+  ];
+}
+
 async function cmdModelsList(
   cfg: AshlrConfig,
   mm: Awaited<ReturnType<typeof loadModelManager>>,
   json: boolean,
+  verifyOptions: ModelVerifyOptions,
 ): Promise<number> {
+  const { listModelRegistry } = await import('../core/fleet/model-verify.js');
+  // Unreadable is reported as unknown (null), never as an empty registry.
+  const registry = await listModelRegistry(verifyOptions).then(list => list.entries, () => null);
+
   if (!mm) {
     process.stderr.write(
       `${C.red}error:${C.reset} models command requires src/core/run/model-manager.ts (M15 module not yet built).\n`,
@@ -223,13 +269,14 @@ async function cmdModelsList(
   );
 
   if (json) {
-    process.stdout.write(JSON.stringify({ local: models, apiEngines: apiReadiness }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ registry, local: models, apiEngines: apiReadiness }, null, 2) + '\n');
     return 0;
   }
 
   console.log('');
-  console.log(bold('  ashlr models') + gray(' — local models (Ollama + LM Studio) + API engines'));
+  console.log(bold('  ashlr models') + gray(' — model registry, local models (Ollama + LM Studio) + API engines'));
   console.log('');
+  for (const line of formatModelRegistry(registry)) console.log(line);
 
   if (models.length === 0) {
     console.log(`  ${dim('No local models found. Is Ollama or LM Studio running?')}`);
@@ -519,10 +566,11 @@ function printModelsHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
-    ['verify', 'Check registry IDs against official provider pages; not-found means absent from those pages.'],
+    ['verify', 'Show model status, evidence age and configured choices (JSON by default; --text for people).'],
+    ['verify <id> --source <url>', 'Mark one model verified once its official doc page names the exact id (--provider adds a new model).'],
     ['routing', 'Inspect recorded task fit, latency availability and execution feedback (read-only).'],
     ['inventory', 'Measure opt-in loopback models and write fleet.json resources.models.'],
-    ['(none) / list',    'List all local models across Ollama and LM Studio.'],
+    ['(none) / list',    'List the model registry (verified, unverified, stale), then local models.'],
     ['pull <name>',      'Pull a model by name via `ollama pull` (confirms first; large download).'],
     ['start',            'Best-effort start a locally-installed Ollama daemon.'],
   ];
@@ -537,7 +585,11 @@ function printModelsHelp(): void {
 
   const opts: [string, string][] = [
     ['--json',    'Emit machine-readable JSON on stdout; no ANSI rendering.'],
+    ['--text',    'Show models verify in plain words.'],
     ['--yes',     'Skip the pull confirmation prompt (use in scripts).'],
+    ['--source',  'Official doc or changelog URL that names the model (models verify <id>).'],
+    ['--provider', 'Provider of a model that is not in the registry yet (models verify <id>).'],
+    ['--lane',    'A lane that can run the model; repeat for more (models verify <id>).'],
   ];
   const optW = Math.max(...opts.map(([o]) => o.length));
   for (const [opt, desc] of opts) {
@@ -575,9 +627,9 @@ function printModelsHelp(): void {
  * `ashlr models` — local model management.
  * Returns process exit code.
  */
-export async function cmdModels(args: string[]): Promise<number> {
+export async function cmdModels(args: string[], verifyOptions: ModelVerifyOptions = {}): Promise<number> {
   // Help shortcircuit
-  // `models <verb> --help` / `-h` too (models takes no value flags): `models
+  // `models <verb> --help` / `-h` too: `models
   // list -h` probed local model servers and `models start -h` looked for
   // ollama to launch it.
   if (args[0] === 'help' || args.some((arg) => arg === '--help' || arg === '-h')) {
@@ -593,15 +645,36 @@ export async function cmdModels(args: string[]): Promise<number> {
     return 2;
   }
 
+  if (parsed.subcommand === 'verify' && parsed.verifyId) {
+    const { markModelVerified, ModelVerifyRefusal } = await import('../core/fleet/model-verify.js');
+    try {
+      const entry = await markModelVerified({ id: parsed.verifyId, source: parsed.source!, provider: parsed.provider, lanes: parsed.lanes }, verifyOptions);
+      console.log(parsed.json ? JSON.stringify({ ok: true, entry }) : `Verified ${entry.id} on ${entry.verified_on}. Source: ${entry.source_url}. The router can use it now.`);
+      return 0;
+    } catch (err) {
+      // Only our own refusals are shown; other errors can carry file contents.
+      const error = err instanceof ModelVerifyRefusal ? err.message : 'Cannot read or update the model registry.';
+      if (parsed.json) console.log(JSON.stringify({ ok: false, error }));
+      else console.error(error);
+      return 1;
+    }
+  }
+
   if (parsed.subcommand === 'verify') {
     try {
-      const { verifyModelDocs } = await import('../core/fleet/model-docs-verify.js');
-      const results = await verifyModelDocs();
-      if (parsed.json) console.log(JSON.stringify({ schema: 'models.verify.v1', results }));
-      else for (const row of results) console.log(`${row.id}: ${row.status} (${row.sourceUrl}, ${row.checkedAt})`);
-      return results.some(row => row.status !== 'confirmed') ? 1 : 0;
+      const { verifyModelRegistry } = await import('../core/fleet/model-verify.js');
+      const report = await verifyModelRegistry(verifyOptions);
+      if (!parsed.text) console.log(JSON.stringify(report));
+      else {
+        for (const row of report.results) console.log(`${row.id}: ${row.status}; age ${row.age_days === null ? 'unknown' : `${row.age_days} days`}${row.needs_recheck ? '; re-check needed' : ''}`);
+        for (const choice of report.current_choices) if (choice.status !== 'verified') console.log(`${choice.key}: ${choice.model ?? 'unknown'} is ${choice.status}.`);
+        console.log(report.error ?? (report.ok ? 'All configured choices are verified.' : 'Router choices need verification.'));
+      }
+      return report.ok ? 0 : 1;
     } catch {
-      process.stderr.write('Cannot read or validate model registry.\n');
+      const error = 'Cannot read or validate model registry.';
+      if (parsed.text) console.error(error);
+      else console.log(JSON.stringify({ schema: 'models.verify.v1', results: [], current_choices: [], ok: false, error }));
       return 1;
     }
   }
@@ -642,7 +715,7 @@ export async function cmdModels(args: string[]): Promise<number> {
 
   switch (parsed.subcommand) {
     case 'list':
-      return cmdModelsList(cfg!, mm, parsed.json);
+      return cmdModelsList(cfg!, mm, parsed.json, verifyOptions);
 
     case 'pull':
       return cmdModelsPull(parsed.pullName!, mm, { json: parsed.json, yes: parsed.yes });

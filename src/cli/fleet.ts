@@ -50,6 +50,7 @@ import type { FleetLaneSnapshot, FleetLaneView } from '../core/fleet/lane-consol
 import type { UsageMotionAuditView, UsageMotionClassification, UsageMotionLaneView } from '../core/fleet/usage-motion-audit.js';
 import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 import type { FleetStatus } from '../core/fleet/status.js';
+import { formatFleetDiskAttribution } from '../core/fleet/disk-attribution.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -114,6 +115,7 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.disk) lines.push(...formatFleetDiskAttribution(s.disk));
   if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
@@ -1699,6 +1701,8 @@ async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
   try {
     const { buildFleetStatus } = await import('../core/fleet/status.js');
     status = await buildFleetStatus(cfg);
+    const { readFleetDiskAttribution } = await import('../core/fleet/disk-attribution.js');
+    status.disk = await readFleetDiskAttribution();
   } catch (err) {
     process.stderr.write(
       red('error: ') + 'failed to build fleet status: ' +
@@ -2726,6 +2730,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
+  console.log(`    phm fleet spend [--json]   ${cyan('# spend-down per pool: on pace, behind or unknown before reset')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);

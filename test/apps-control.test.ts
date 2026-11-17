@@ -174,7 +174,8 @@ describe('phm apps', () => {
 
   it('rejects unknown verbs, missing targets and control characters with exit 2', async () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    for (const args of [[], ['dance'], ['quit'], ['list', 'x'], ['quit', 'No\nPe'], ['quit', '--json']]) expect(await cmdApps(args, base())).toBe(2);
+    // Bare `phm apps` is the known-app report (test/apps-known.test.ts), not a usage error.
+    for (const args of [['dance'], ['quit'], ['list', 'x'], ['quit', 'No\nPe'], ['quit', '--json']]) expect(await cmdApps(args, base())).toBe(2);
     stderr.mockRestore();
   });
 
@@ -266,7 +267,8 @@ describe('phm apps', () => {
   });
 
   it.each([
-    ['request', 'quit', 'Notes'], ['quit', 'Phantom'], ['open', 'Phantom'], ['focus', 'Phantom'], ['open', 'Messages'],
+    // quit Phantom is refused as protected (test/apps-known.test.ts), so it is not queued.
+    ['request', 'quit', 'Notes'], ['request', 'open', 'Phantom'], ['open', 'Phantom'], ['focus', 'Phantom'], ['open', 'Messages'],
   ])('queues %j without touching the desktop or launcher', async (...args) => {
     allow(['Notes', { name: 'Phantom', bundleId: 'ai.ashlr.desktop' }, { name: 'Messages', mode: 'request' }]);
     const d = fakeDesktop();

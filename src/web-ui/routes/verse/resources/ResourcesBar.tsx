@@ -324,6 +324,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
   const observeRead = useQuery(observeQuery, { enabled: resources.bar, freshMs: 60_000 });
+  const usageWindows = observeRead.data?.usage?.windows;
+  const observationsAvailable = Array.isArray(usageWindows) && usageWindows.every(window => window && typeof window.lane === 'string');
   const refreshCredits = useRefetch(creditPoolsQuery);
   const devin = devinRead.data?.value ?? null;
   const [coldStartedAt] = useState(() => Date.now());
@@ -374,8 +376,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     void drainFirstReadQueue();
   }, [capacityRows, data.loading, documentVisible]);
   const rows = useMemo(
-    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null),
-    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
+    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observationsAvailable ? usageWindows : null),
+    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observationsAvailable, usageWindows],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
@@ -697,6 +699,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
+      {(observeRead.data !== undefined || observeRead.error) && !observationsAvailable ? <span role="status">Usage observations unavailable.</span> : null}
       <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
       <NodeProfileRows enabled={resources.bar} />
       {providerView && expanded ? <Suspense fallback={null}>
