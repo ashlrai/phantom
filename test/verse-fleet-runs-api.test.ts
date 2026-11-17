@@ -44,7 +44,7 @@ describe('fleet runs api', () => {
     const api = createFleetRunsApi(deps({ runsDir }));
     const { status, wire } = await request(api, { path: '/api/verse/fleet/runs/goal-scorecard' });
     expect(status).toBe(200);
-    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v1', generatedAt: new Date(NOW).toISOString() });
+    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v2', version: 2, generatedAt: new Date(NOW).toISOString() });
     const goals = (wire as unknown as { goals: { status: string; value: unknown }[] }).goals;
     expect(goals.length).toBe(5);
     expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
