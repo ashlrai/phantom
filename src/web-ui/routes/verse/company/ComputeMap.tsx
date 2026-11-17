@@ -34,6 +34,25 @@ export const sessionsMapQuery: QueryDef<FleetSessionMap> = {
 const coordinationQuery = agentBusPageQuery(0, 100);
 const gib = (v: number | null | undefined) => v == null ? 'unknown' : `${(v / 1024 ** 3).toFixed(1)} GiB`;
 
+/**
+ * Load-versus-ceiling bands, shared by the machine card's edge and its meter.
+ * A bare <meter> draws green at every value, so a host at 221% of its ceiling
+ * showed a red card with a full green bar inside it.
+ */
+const HEAT_WARM = 0.7;
+/** Just under a full bar: the meter turns red only above `high`, and the value is capped at 1. */
+const HEAT_HOT = 0.999;
+export function heatBand(ratio: number): 'hot' | 'warm' | 'cool' {
+  return ratio >= 1 ? 'hot' : ratio >= HEAT_WARM ? 'warm' : 'cool';
+}
+
+/** The lane card's edge colour. A hold outranks quota; a lane with neither reading stays unknown, never green. */
+export function laneQuotaState(held: boolean | null | undefined, quotaOk: boolean | null | undefined): 'held' | 'blocked' | 'ok' | 'unknown' {
+  if (held) return 'held';
+  if (quotaOk === false) return 'blocked';
+  return quotaOk === true ? 'ok' : 'unknown';
+}
+
 function CoreSparks({ history, current }: { history?: CoreHistory; current: boolean }) {
   if (!history || !current) return <p>Per-core utilization unknown</p>;
   return <details><summary>Per-core utilization · last {history.samples.length} observations</summary>
@@ -169,7 +188,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       return read.status === 'error' ? <p key={String(label)} role="alert">{String(label)} refresh failed. {read.data ? 'Last reading retained; may be stale.' : 'No data available.'}</p> : null;
     })}
     <p>{data ? `Compute observed ${data.generatedAt} · ${recordedAt(data.generatedAt, now)}${data.truncated ? ' · partial inventory' : ''}` : 'No compute data yet.'}</p>
-    <div className={styles.quota} aria-label="Lane quota strip">{!lanes.data?.lanes.length && <p>No lane observations.</p>}{lanes.data?.lanes.map(l => <article key={l.lane}>
+    <div className={styles.quota} aria-label="Lane quota strip">{!lanes.data?.lanes.length && <p>No lane observations.</p>}{lanes.data?.lanes.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
       <strong>{l.lane}</strong><span>{shown(l.liveJobs)} running / {shown(l.slotTarget)} target / {shown(data?.lanes[l.lane]?.hardCap)} hard cap</span>
       <span>quota_ok: {data?.lanes[l.lane]?.quotaOk == null ? 'unknown' : String(data.lanes[l.lane]!.quotaOk)} · {l.credit.label}</span>
       <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
@@ -184,7 +203,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
         {nodes.map(n => {
           const s = n.stats, current = fresh(s?.sampledAtMs, now), ceiling = s?.cores.length ? 2 * s.cores.length : null;
           const ratio = loadRatio(n, now);
-          return <article className={styles.machine} key={n.id} data-heat={heat && ratio !== null ? ratio >= 1 ? 'hot' : ratio >= 0.7 ? 'warm' : 'cool' : 'unknown'}
+          return <article className={styles.machine} key={n.id} data-heat={heat && ratio !== null ? heatBand(ratio) : 'unknown'}
             style={{ flexGrow: s ? 1 + s.cores.length / maxCores : 1 }}>
             <h3>{n.id}{n.local ? ' · this host' : ''}</h3><p>{n.state} · Heartbeat {n.heartbeatAt === null ? 'unknown' : recordedAt(n.heartbeatAt, now)}</p>
             <small>Metrics {s ? recordedAt(s.sampledAtMs, now) : 'unknown · no host-stats beat'}</small>
@@ -195,7 +214,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
             <div className={styles.capacity}><span>Load ceiling (2 × CPU): {shown(ceiling)} · Slots {shown(n.slots)}{n.slots === 0 && n.state === 'ready' ? ' (held; reason not recorded)' : ''} · RAM slot ceiling {shown(n.ramSlots)}</span>
               <span>Caps: {n.caps?.length ? n.caps.join(', ') : 'unknown'}</span>
               <span>Memguard {n.memguardPaused === null ? 'unknown' : n.memguardPaused ? 'paused' : 'clear'}</span>
-              {ratio === null ? <p>Headroom unknown · no fresh load reading</p> : <><meter aria-label={`${n.id} load versus ceiling`} min={0} max={1} value={Math.min(1, ratio)} /><small>{(ratio * 100).toFixed(0)}% of load ceiling · advisory; memory/slot gates remain independent</small></>}
+              {ratio === null ? <p>Headroom unknown · no fresh load reading</p> : <><meter aria-label={`${n.id} load versus ceiling`} min={0} max={1} optimum={0} low={HEAT_WARM} high={HEAT_HOT} value={Math.min(1, ratio)} /><small>{(ratio * 100).toFixed(0)}% of load ceiling · advisory; memory/slot gates remain independent</small></>}
             </div>
             {tokens(jobs.filter(j => location(j) === n.id))}
           </article>;
