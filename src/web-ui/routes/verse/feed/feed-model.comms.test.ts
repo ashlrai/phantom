@@ -31,9 +31,9 @@ describe('waiting communications in the feed', () => {
   });
   it('orders the waiting entries alongside existing items', () => {
     const feed = buildFeed({ teammate: view(entry(), entry({ id: 'linked', kind: 'linkedin-message', since: '2026-11-09T11:00:00Z' })),
-      shared: { schema: 'phantom.feed.v1', sources: { merges: 'available', releases: 'unknown', incidents: 'unknown', leaderReplies: 'available' },
-        items: [{ kind: 'merge', at: '2026-11-09T10:30:00Z', text: 'Merged' }] } });
+      shared: { schema: 'phantom.feed.v2', version: 2, more: false, sources: { jobs: 'available', events: 'unknown', leader: 'available', merges: 'available', releases: 'unknown', main: 'unknown' },
+        items: [{ kind: 'merged', at: '2026-11-09T10:30:00Z', text: 'Merged' }] } });
     expect(feed.map(item => item.title)).toEqual(['Work inbox', 'Merged', 'Work inbox']);
-    expect(feed.map(item => item.id)).toEqual(['linkedin:linked', 'shared:merge:2026-11-09T10:30:00Z:0', 'gmail:work']);
+    expect(feed.map(item => item.id)).toEqual(['linkedin:linked', 'shared:merged:2026-11-09T10:30:00Z:0', 'gmail:work']);
   });
 });

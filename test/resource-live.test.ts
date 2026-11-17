@@ -250,6 +250,13 @@ describe('reset rule', () => {
 });
 
 describe('resource-live tick', () => {
+  it('passes measured scope through and normalizes its window', async () => {
+    const runsDir = tmp();
+    await runResourceLiveTick({ runsDir, nowMs: NOW, activeLanes: () => new Set(), sources: sourcesOf({
+      devin: [fixed({ account_id: 'org-test', model: 'swe-2-high', window_start: iso(NOW - HOUR).replace('.000Z', '+00:00') })],
+    }) });
+    expect(byId(stored(runsDir), 'devin')).toMatchObject({ verified: true, account_id: 'org-test', model: 'swe-2-high', window_start: iso(NOW - HOUR) });
+  });
   it('writes every allowance with source and observed time, and nulls for unverified ones', async () => {
     const runsDir = tmp();
     const result = await runResourceLiveTick({ runsDir, nowMs: NOW, activeLanes: () => new Set(), sources: sourcesOf({
@@ -455,6 +462,12 @@ describe('resource-live tick', () => {
 });
 
 describe('default sources', () => {
+  it('carries the Claude organization scope without inventing a model', async () => {
+    const sources = defaultResourceLiveSources({ runsDir: tmp(), readClaudeQuota: async () => ({ ...quota(iso(NOW)), accountId: 'claude:0123456789abcdef' }) });
+    const observation = await sources['claude-weekly'][0]!.read(NOW);
+    expect(observation).toMatchObject({ account_id: 'claude:0123456789abcdef' });
+    expect(observation).not.toHaveProperty('model');
+  });
   const quota = (observedAt: string) => ({ v: 1 as const, observedAt, reason: 'ok', fresh: true,
     windows: [{ id: 'seven_day', usedPct: 71, resetAt: WEEKLY_RESET }, { id: 'seven_day_fable', usedPct: 30, resetAt: WEEKLY_RESET }] });
 

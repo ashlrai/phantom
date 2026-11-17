@@ -26,7 +26,7 @@ function session(extra: Partial<MapSession> = {}): MapSession {
     detailSources: null, ...extra };
 }
 function sessions(rows = [session()]): FleetSessionMap {
-  return { schema: 'fleet.sessions.v1', generatedAt: iso, computeAt: iso, runsDirPresent: true,
+  return { schema: 'fleet.sessions.v1', generatedAt: iso, computeAt: iso, localNodeId: '@local:fixture', runsDirPresent: true,
     sourceState: 'healthy', sources: { runDir: 'healthy', ready: 'healthy', claimed: 'healthy', precheck: 'healthy', status: 'healthy', metrics: 'healthy', live: 'healthy' },
     dispatcher: null, sessions: [], recent: [], mapSessions: rows, mapRecent: [], malformed: 0, truncated: false,
     counts: { queued: 0, parked: 0, launching: 0, running: rows.length, publishing: 0, exited: 0, stale: 0 } };

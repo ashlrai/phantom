@@ -8,7 +8,7 @@
  * null (JSON) or "unknown" (text), never zero.
  */
 import { join } from 'node:path';
-import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerRows, readText, type EmptyCause, type EmptyEvidence } from './empty-cause.js';
+import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerRows, readText, type EmptyCause, type EmptyEvidence, type LedgerRow } from './empty-cause.js';
 import { REASON_LINE, TIMEOUT_EXITS } from './lane-empty-causes.js';
 
 export const EMPTY_REASONS = ['already_on_master', 'no_eligible_target', 'blocked_tool', 'precheck_skip', 'timeout', 'model_error', 'unknown'] as const;
@@ -33,11 +33,11 @@ export interface EmptiesFinish {
 const SKIP_EVENTS = new Set(['precheck_skip', 'skipped_empty']);
 const whole = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 
-/** Pure: every job that finished in the window, newest row per job. */
-export function ledgerFinishes(ledger: string, now: number, hours: number): { finishes: EmptiesFinish[]; malformed: number } {
-  const { rows, malformed } = ledgerRows(ledger, now, hours);
+/** Pure: the newest finish per job among rows already read, with its time. Shared with `phm throughput`. */
+export function finishesIn(rows: readonly LedgerRow[]): (EmptiesFinish & { at: number })[] {
   const newest = new Map<string, EmptiesFinish & { at: number }>();
   for (const { row, id, lane, at } of rows) {
+    if (!id) continue;
     // `applied: false` is the skip gate's dry run: the job still launched, so only its finish row counts.
     const skipped = SKIP_EVENTS.has(row.event as string) && row.applied !== false;
     const marked = [row.event, row.outcome, row.state].includes('EMPTY_DONE');
@@ -55,7 +55,13 @@ export function ledgerFinishes(ledger: string, now: number, hours: number): { fi
       poolError: (typeof row.pool_error === 'string' && row.pool_error !== '') || (prior?.poolError ?? false),
     });
   }
-  return { finishes: [...newest.values()].map(({ at: _at, ...finish }) => finish), malformed };
+  return [...newest.values()];
+}
+
+/** Pure: every job that finished in the window, newest row per job. */
+export function ledgerFinishes(ledger: string, now: number, hours: number): { finishes: EmptiesFinish[]; malformed: number } {
+  const { rows, malformed } = ledgerRows(ledger, now, hours);
+  return { finishes: finishesIn(rows).map(({ at: _at, ...finish }) => finish), malformed };
 }
 
 // The agent's own EMPTY_REASON line (the launcher asks for one) is the best evidence.
@@ -92,6 +98,13 @@ export function classifyEmptyReason(finish: Pick<EmptiesFinish, 'skipped' | 'exi
 }
 
 export interface EmptiesCount { name: string; count: number }
+export interface EmptiesFamily {
+  name: string; finishes: number; empties: number; empty_rate: number;
+  /** Recorded tokens from empty finishes only; null when none were measured. */
+  wasted_tokens: number | null;
+  tokens_unknown_jobs: number;
+  recommendation: 'suppress' | 'observe' | 'keep';
+}
 export interface EmptiesReason {
   reason: EmptyReason; label: string; count: number;
   /** Share of every finish in the window, 0..1. */
@@ -118,6 +131,8 @@ export interface EmptiesReport {
   notes_missing: number | null;
   /** Every reason, most frequent first; empty when the metrics file is unreadable. */
   reasons: EmptiesReason[];
+  /** All families, ordered by empty rate, wasted tokens (unknown last), then name. */
+  families: EmptiesFamily[];
 }
 
 const share = (part: number, total: number): number => Math.round((part / total) * 1000) / 1000;
@@ -131,22 +146,29 @@ const ranked = (counts: Map<string, number>): EmptiesCount[] => [...counts]
  * RQ-PHX-RECUTCOREFLEETC518 and RQ-RECUTWEBUIC502 are both RECUT.
  */
 export function jobFamilies(ids: readonly string[]): EmptiesCount[] {
-  const groups = new Map<string, string[]>();
-  for (const id of ids) {
-    const name = id.replace(/^(?:(?:RQ|PHX|FIXUP|CI)-)+/, '') || id;
-    groups.set(name.slice(0, 5), [...(groups.get(name.slice(0, 5)) ?? []), name]);
+  return ranked(new Map([...familyGroups(ids.map(id => ({ id })))].map(([name, jobs]) => [name, jobs.length])));
+}
+
+function familyGroups<T extends { id: string }>(jobs: readonly T[]): Map<string, T[]> {
+  const nameOf = ({ id }: T) => id.replace(/^(?:(?:RQ|PHX|FIXUP|CI)-)+/, '') || id;
+  const groups = new Map<string, T[]>();
+  for (const job of jobs) {
+    const key = nameOf(job).slice(0, 5);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(job);
   }
-  const counts = new Map<string, number>();
-  for (const members of groups.values()) {
+  const families = new Map<string, T[]>();
+  for (const group of groups.values()) {
+    const members = group.map(nameOf);
     let shared = members[0]!;
     for (const member of members) while (!member.startsWith(shared)) shared = shared.slice(0, -1);
     // A cut inside a word reads badly: fall back to the last whole segment.
     const cut = shared.lastIndexOf('-');
     if (cut >= 5 && members.some(m => m.length > shared.length && m[shared.length] !== '-')) shared = shared.slice(0, cut);
     const name = shared.replace(/[-_.\d]+$/, '') || shared;
-    counts.set(name, (counts.get(name) ?? 0) + members.length);
+    families.set(name, [...(families.get(name) ?? []), ...group]);
   }
-  return ranked(counts);
+  return families;
 }
 
 function nextStep(reason: EmptyReason, family: string, lane: string, count: number, noNotes: number): string {
@@ -169,7 +191,7 @@ export function buildEmptiesReport(input: {
 }): EmptiesReport {
   const head = { schema: 'empties.v1', since_hours: input.hours, metrics_path: input.metricsPath } as const;
   if (input.ledger === null) {
-    return { ...head, metrics: 'unreadable', finishes: null, empties: null, empty_share: null, tokens: null, tokens_unknown_jobs: null, malformed_lines: null, notes_missing: null, reasons: [] };
+    return { ...head, metrics: 'unreadable', finishes: null, empties: null, empty_share: null, tokens: null, tokens_unknown_jobs: null, malformed_lines: null, notes_missing: null, reasons: [], families: [] };
   }
   const { finishes, malformed } = input.ledger;
   const empties = finishes.filter(finish => finish.empty);
@@ -181,6 +203,16 @@ export function buildEmptiesReport(input: {
     const known = jobs.filter(job => job.tokens !== null);
     return { tokens: known.length ? known.reduce((sum, job) => sum + job.tokens!, 0) : null, tokens_unknown_jobs: jobs.length - known.length };
   };
+  const families = [...familyGroups(finishes)].map(([name, jobs]): EmptiesFamily => {
+    const empty = jobs.filter(job => job.empty);
+    const { tokens, tokens_unknown_jobs } = tokensOf(empty);
+    const rate = empty.length / jobs.length;
+    return {
+      name, finishes: jobs.length, empties: empty.length, empty_rate: rate,
+      wasted_tokens: empty.length ? tokens : 0, tokens_unknown_jobs,
+      recommendation: jobs.length < 5 ? 'observe' : rate > 0.6 ? 'suppress' : 'keep',
+    };
+  }).sort((a, b) => b.empty_rate - a.empty_rate || (b.wasted_tokens ?? -1) - (a.wasted_tokens ?? -1) || a.name.localeCompare(b.name));
   const reasons = EMPTY_REASONS.map((reason): EmptiesReason => {
     const jobs = byReason.get(reason)!;
     const lanes = new Map<string, number>();
@@ -198,7 +230,7 @@ export function buildEmptiesReport(input: {
     ...head, metrics: 'ok', finishes: finishes.length, empties: empties.length,
     empty_share: finishes.length ? share(empties.length, finishes.length) : null,
     ...tokensOf(empties),
-    malformed_lines: malformed, notes_missing: empties.filter(noNotes).length, reasons,
+    malformed_lines: malformed, notes_missing: empties.filter(noNotes).length, reasons, families,
   };
 }
 
@@ -207,7 +239,7 @@ const percent = (value: number): string => `${Math.round(value * 100)}%`;
 const tokenText = (tokens: number | null, unknownJobs: number): string => tokens === null ? 'tokens unknown'
   : `${tokens.toLocaleString('en-US')} tokens${unknownJobs ? ` (${plural(unknownJobs, 'job')} unknown)` : ''}`;
 
-/** Pure: the `--text` view. At most 17 lines: one summary, two per reason seen, two for gaps. */
+/** Pure: the `--text` view. At most 20 lines: summary, reasons, top three empty families, gaps. */
 export function emptiesText(report: EmptiesReport): string[] {
   const window = `the last ${report.since_hours} h`;
   if (report.finishes === null || report.empties === null) return [`Empty finishes in ${window}: unknown. Cannot read the job metrics file ${report.metrics_path}.`];
@@ -218,6 +250,11 @@ export function emptiesText(report: EmptiesReport): string[] {
     const list = (items: EmptiesCount[]) => items.map(item => `${item.name} ${item.count}`).join(', ');
     lines.push(`${reason.label}: ${plural(reason.count, 'job')}, ${percent(reason.share_of_finishes)} of finishes, ${tokenText(reason.tokens, reason.tokens_unknown_jobs)}. Lanes: ${list(reason.lanes)}. Jobs: ${list(reason.prefixes)}.`);
     lines.push(`  Next: ${reason.next_step}`);
+  }
+  for (const family of report.families.filter(row => row.empties > 0).slice(0, 3)) {
+    const next = family.recommendation === 'suppress' ? 'Suppress new jobs in this family.'
+      : family.recommendation === 'observe' ? 'Collect at least five finishes before suppressing.' : 'No suppression recommended.';
+    lines.push(`Family ${family.name}: ${family.empties}/${family.finishes} empty (${percent(family.empty_rate)}), wasted ${tokenText(family.wasted_tokens, family.tokens_unknown_jobs)}. ${next}`);
   }
   if (report.notes_missing) lines.push(`${plural(report.notes_missing, 'empty job')} left no notes, so their reason comes from the log alone.`);
   if (report.malformed_lines) lines.push(`${plural(report.malformed_lines, 'metrics line')} could not be read and ${report.malformed_lines === 1 ? 'was' : 'were'} skipped.`);

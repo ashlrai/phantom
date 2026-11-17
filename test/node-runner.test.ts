@@ -69,6 +69,20 @@ describe('reference node runner', () => {
     expect(() => parseNodeRunnerRequest(JSON.stringify(r))).toThrow('Invalid node runner request');
     expect(ports.exec).not.toHaveBeenCalled();
   });
+  it('accepts only an allowlisted absolute lane receipt for a required provider', () => {
+    const ok = { ...request(), providerBinaries: { codex: '/opt/homebrew/bin/codex' } };
+    expect(parseNodeRunnerRequest(JSON.stringify(ok)).providerBinaries).toEqual({ codex: '/opt/homebrew/bin/codex' });
+    for (const providerBinaries of [{ codex: 'codex' }, { codex: '/tmp/codex' }, { claude: '/opt/homebrew/bin/claude' },
+      { codex: '/opt/homebrew/bin/codex', gh: '/opt/homebrew/bin/gh' }, {}, ['codex'], { codex: 'rm -rf /' }])
+      expect(() => parseNodeRunnerRequest(JSON.stringify({ ...request(), providerBinaries }))).toThrow('Invalid node runner request');
+  });
+  it('refuses a lane receipt that disagrees with its own resolver before any work', async () => {
+    const r = { ...request(), providerBinaries: { codex: '/opt/homebrew/bin/codex' } };
+    await expect(runNodeRunner(r, { resolveBinary: () => null })).rejects.toThrow('receipt mismatch');
+    await expect(runNodeRunner(r, { resolveBinary: () => '/usr/local/bin/codex' })).rejects.toThrow('receipt mismatch');
+    expect(ports.exec).not.toHaveBeenCalled();
+    expect(await runNodeRunner(r, { resolveBinary: () => '/opt/homebrew/bin/codex' })).toEqual({ resultRef: 'node-results:job-1' });
+  });
   it('bounds, parses and times out stdin', async () => {
     expect(await readNodeRunnerRequest(Readable.from([JSON.stringify(request())]))).toMatchObject({ protocol: 'phm-node-worker/v1' });
     await expect(readNodeRunnerRequest(Readable.from([' '.repeat(16 * 1024 + 1)]))).rejects.toThrow('too large');

@@ -41,7 +41,7 @@ export interface ReturnPrCheckReport {
   checked: ReturnPrChecked[];
   /** Input rows with no check row of their own: filtered, deduped or truncated. */
   skipped: number;
-  /** More eligible repo#pr pairs existed than the limit allowed. */
+  /** More distinct eligible repo#pr/head evidence existed than the limit allowed. */
   truncated: boolean;
 }
 
@@ -106,19 +106,32 @@ export async function checkReturnPrs(
   for (const row of rows) {
     if (row.result !== 'VERIFIED' || row.evidenceKind !== 'pr'
       || typeof row.pr !== 'number' || !Number.isSafeInteger(row.pr) || row.pr < 1) continue;
-    const key = `${row.repo.toLowerCase()}#${row.pr}`;
+    // Keep conflicting heads and their original claim provenance independently visible.
+    const key = JSON.stringify([row.repo.toLowerCase(), row.pr, row.head?.toLowerCase() ?? null]);
     if (seen.has(key)) continue;
     seen.add(key);
     eligible.push({ claimId: row.claimId, repo: row.repo, pr: row.pr, head: row.head });
   }
   const truncated = eligible.length > limit;
   const checked: ReturnPrChecked[] = [];
+  let expired = false;
   for (const row of eligible.slice(0, limit)) {
-    if (now() >= deadline) {
+    const remaining = deadline - now();
+    if (expired || remaining <= 0) {
       checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
       continue;
     }
-    checked.push(await checkOne(gh, row));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), remaining);
+    });
+    const result = await Promise.race([checkOne(gh, row), timeout]).finally(() => clearTimeout(timer));
+    if (result === null) {
+      expired = true;
+      checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
+    } else {
+      checked.push(result);
+    }
   }
   const end = now();
   return { v: 1, authority: 'none', asOf: Number.isFinite(end) ? new Date(end).toISOString() : 'unknown', checked,

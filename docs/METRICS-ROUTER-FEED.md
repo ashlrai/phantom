@@ -39,6 +39,21 @@ Unknown fields are ignored and never copied to the output. Missing fields must
 be omitted, not set to `null`. Empty jobs need an explicit `empty` outcome;
 missing PR evidence is not proof that a job was empty.
 
+Claude Code result records can supply `type: "result"` and `usage` alongside
+the required job identity fields, or alongside `id` in a status entry:
+
+```json
+{"schemaVersion":1,"id":"RQ-claude","lane":"claude","tier":"work","outcome":"failed","type":"result","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":20,"cache_creation_input_tokens":3}}
+```
+
+The total is 38: input, output, cache read and cache creation tokens counted
+once. All four counts must be nonnegative safe integers and their sum must be
+safe. Missing, partial or invalid usage is unknown; explicit zeros are known.
+Only final result usage is read; assistant-message usage is ignored. An explicit
+`tokens` total takes precedence, allowing producers to supply an across-attempt
+total. A status result with incomplete usage clears an earlier token measurement.
+Truncated JSON still refuses the report. Output fields and ordering are unchanged.
+
 The status file is an explicit overlay on those exact JSONL bytes:
 
 ```json
