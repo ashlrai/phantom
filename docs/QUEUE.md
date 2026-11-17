@@ -79,6 +79,22 @@ again for every candidate so several jobs cannot reserve the same final slot.
 The existing admission gate remains the authority for host load, processes,
 worktrees, disk, adaptive global concurrency and the per-tick claim limit.
 
+### Use spare subscription capacity for frontier work
+
+When fresh `use-it-all.v1` evidence reports `known:true`, `stale:false` and
+`behind:true`, a work job launches as frontier on its selected lane if that
+executor supports frontier and its cost class is `included`. Holds, quota,
+backoff and admission still apply. Eligible jobs run individually so batching
+cannot substitute a work-tier model. Existing waste-risk upgrades remain.
+
+`queue/status.json` exposes `tier_upgrades_this_tick`: typed records of `job`,
+`lane`, `from_tier`, `to_tier` and a plain-language `reason`. The reason also
+persists in `queue/route-state.json` as `waste_reason` and in `ROUTE_BOOST` events.
+Run `phm route explain --json` to read it as `lines[].wasteReason`.
+`use_it_all_behind` reports each lane's boolean reading or null for unknown,
+missing or stale evidence. This bounded policy responds to measured work-tier
+underperformance; it does not infer a causal yield gain or train a tier optimizer.
+
 Among eligible executors, preference comes first, followed by utilization,
 measured empty rate and yield, cost class, known remaining quota, measured model
 latency and stable executor order. Recent finish events supply empty-rate and
