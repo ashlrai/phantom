@@ -223,14 +223,19 @@ export function appendClaimNoticeSent(sentPath: string, dedupeKey: string, at: n
 }
 
 /** Delivered dedupeKeys; `null` when the ledger exists but cannot be
- * trusted (truncated, or any nonblank line that is not a valid v1 record —
+ * trusted (unreadable, truncated, or any nonblank line that is not a valid v1 record —
  * a torn write, an unsupported version or a malformed key means the file
  * may hide earlier deliveries, so a partial set must never masquerade as
  * complete). A missing ledger is an empty set; the file itself is never
  * repaired, truncated or deleted here — recovery stays with its owner. */
 export function readClaimNoticeSentRows(sentPath: string): Array<{ key: string; at: number }> | null {
   const read = readPrivateFileCapped(sentPath, LEDGER_MAX_BYTES);
-  if (read === null) return [];
+  if (read === null) {
+    try { lstatSync(sentPath); } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null;
+    }
+    return null;
+  }
   if (read.truncated) return null;
   const rows: Array<{ key: string; at: number }> = [];
   for (const line of read.text.split('\n')) {
