@@ -54,11 +54,17 @@ export interface SlackBridgeStatus {
   /**
    * Ingested requests bound by exact Leader reply key to a `sent` receipt. An
    * `attempted` send is never an answer; `uncertainSends` counts attempts never
-   * confirmed. `unanswered` (and the overdue notice built on it) counts only
-   * requests with a known reply identity and no stored send, plus bus failures.
+   * confirmed. `unanswered` (and the ordinary overdue notice built on it) counts
+   * only requests with a known reply identity, durable bus ingress (posted or
+   * duplicate) and no stored send. Bus-ingress failures are a separate class:
+   * `busFailed`/`busFailedSample` hold EVERY failed row (keyed or not) and raise
+   * an explicit BUS-FAILED notice, never an ordinary reply-overdue one.
    * `unverified` counts requests with no reply identity (legacy, peer path, not
-   * Leader-routed) and `uncertainRequests` keyed requests whose send is only
-   * attempted or inconsistent; neither is answered nor certified unanswered.
+   * Leader-routed), failed or not, so it OVERLAPS `busFailed` for failed
+   * unidentified rows; the counters are not disjoint totals.
+   * `uncertainRequests` counts keyed requests whose send is only attempted or
+   * inconsistent, or whose ingress was never durably recorded. Unverified and
+   * uncertain rows are neither answered nor certified unanswered.
    */
   replies: {
     state: 'ok' | 'missing' | 'degraded';
@@ -71,6 +77,8 @@ export interface SlackBridgeStatus {
     rejected: number;
     futureDated: number;
     unansweredSample: { channelId: string; threadTs: string; messageTs: string; at: string }[];
+    busFailed: number;
+    busFailedSample: { channelId: string; threadTs: string; messageTs: string; at: string }[];
   };
   work: SlackWorkStatus;
   ready: boolean;
@@ -206,15 +214,21 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const ignoredReasons = sortedReasons.slice(0, IGNORED_REASONS_MAX_ROWS);
   const sends = readSlackSendReceipts(options.stateRoot ? { stateRoot: options.stateRoot } : {});
   const binding = bindSlackReplies({ requests, receipts: sends.receipts, now: now() });
-  // Failed bus appends remain unresolved and cannot consume sent evidence;
-  // with no receipts every failed request lands in unanswered or unverified.
+  // Failed bus appends never reached durable ingress and cannot consume sent
+  // evidence: they are reported as their own class, keyed or not.
   const failed = bindSlackReplies({ requests: failedRequests, receipts: [], now: now() });
-  // Only requests with a positively known Leader reply identity and no stored
-  // send can be overdue. Unverified and uncertain requests are counted apart.
-  const unansweredByAge = [...binding.unanswered, ...failed.unanswered, ...failed.unverified]
+  const failedRows = [...failed.unanswered, ...failed.unverified, ...failed.uncertain]
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  const unverified = binding.unverified.length;
-  const uncertain = binding.uncertain.length;
+  // Ordinary overdue needs a positively known Leader reply identity AND durable
+  // ingress. A keyed row whose ingress was never recorded is uncertain, not overdue.
+  const durable = new Set(journal.entries
+    .filter((e) => e.decision === 'ingested' && (e.bus === 'posted' || e.bus === 'duplicate') && e.requestId !== undefined)
+    .map((e) => e.requestId!));
+  const unansweredByAge = binding.unanswered.filter((r) => r.requestId !== undefined && durable.has(r.requestId))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const unknownIngress = binding.unanswered.length - unansweredByAge.length;
+  const unverified = binding.unverified.length + failed.unverified.length;
+  const uncertain = binding.uncertain.length + unknownIngress;
   const confirmedByMason = loadCommsConfirmation({ ...(options.commsPath ? { path: options.commsPath } : {}), ...(options.home ? { home: options.home } : {}) });
   const slackIds = slackIdentityCount(config);
   const ready = config.state === 'ok' && bridge !== undefined &&
@@ -254,6 +268,10 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
       rejected: binding.rejected + failed.rejected,
       futureDated: binding.futureDated + failed.futureDated,
       unansweredSample: unansweredByAge.slice(0, 5).map((r) => ({
+        channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
+      })),
+      busFailed: failedRows.length,
+      busFailedSample: failedRows.slice(0, 5).map((r) => ({
         channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
       })),
     },

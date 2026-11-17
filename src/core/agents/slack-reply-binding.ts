@@ -147,10 +147,27 @@ export function bindSlackReplies(input: {
   // One request id is one request: duplicate journal rows of it share a verdict
   // and the earliest receipt stands for it in the lists.
   const ordered = validRequests.sort(compareRequests);
+  // Rows sharing a requestId must describe the same message. If they disagree
+  // (different channel, thread or message ts) the evidence is inconsistent: fail
+  // closed as uncertain for every such row instead of letting the first row win.
+  const location = (r: InboundRequest): string => `${r.channelId}:${r.threadTs}:${r.messageTs}`;
+  const seenLocation = new Map<string, string>();
+  const inconsistentIds = new Set<string>();
+  for (const request of ordered) {
+    if (request.requestId === undefined) continue;
+    const first = seenLocation.get(request.requestId);
+    if (first === undefined) seenLocation.set(request.requestId, location(request));
+    else if (first !== location(request)) inconsistentIds.add(request.requestId);
+  }
   for (const request of ordered) {
     const id = request.requestId;
     if (id === undefined) {
       result.unverified.push(request);
+      continue;
+    }
+    if (inconsistentIds.has(id)) {
+      result.byRequestId.set(id, { verdict: 'uncertain' });
+      result.uncertain.push(request);
       continue;
     }
     if (result.byRequestId.has(id)) continue;

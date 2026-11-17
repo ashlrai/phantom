@@ -258,4 +258,15 @@ describe('channel health default Slack reply binding', () => {
       expect(s.missing).not.toContain('slack reply binding unreadable');
     });
   }, 30_000);
+
+  it('a bus-failed row never counts as answered, even with a matching keyed receipt', async () => {
+    await withSlackStores(
+      [{ ...request(ago(30), '1700000000.000100'), bus: 'failed' }],
+      { [replyKey(rid('1700000000.000100'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
+      (s) => {
+        expect(s.state).toBe('DEGRADED');
+        expect(s.proof).toMatchObject({ requestCoverage: 'unproven', answeredCount: 0 });
+      },
+    );
+  }, 30_000);
 });

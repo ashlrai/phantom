@@ -19,8 +19,8 @@ beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'slack-overdue-337-')); runs
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const RID = fakeRequestId('337');
-const ingest = (minutes: number, ts = THREAD, keyed = true) =>
-  recordSlackObservation({ at: minsAgo(minutes), decision: 'ingested', channelId: CH, messageTs: ts, threadTs: THREAD, ...(keyed ? { requestId: RID } : {}) }, { runsDir });
+const ingest = (minutes: number, ts = THREAD, keyed = true, bus: 'posted' | 'failed' | null = 'posted') =>
+  recordSlackObservation({ at: minsAgo(minutes), decision: 'ingested', channelId: CH, messageTs: ts, threadTs: THREAD, ...(bus ? { bus } : {}), ...(keyed ? { requestId: RID } : {}) }, { runsDir });
 const writeStore = (key: string, state: 'sent' | 'attempted' = 'sent') => {
   mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   writeFileSync(join(stateRoot, 'messages.json'), JSON.stringify({ version: 1, messages: {
@@ -67,6 +67,27 @@ describe('slack overdue notice (337)', () => {
     ingest(10);
     writeStore(replyKey(RID), 'attempted');
     expect(await noticeOverdueSlackRequests(opts())).toEqual({ state: 'ok', raised: 0, skipped: 0 });
+  });
+
+  it('raises a BUS-FAILED notice (not an ordinary overdue one) for failed ingress, keyed or not, even when a reply key exists', async () => {
+    ingest(10, THREAD, true, 'failed');
+    ingest(11, '1700000001.000100', false, 'failed');
+    writeStore(replyKey(RID));
+    expect(await noticeOverdueSlackRequests(opts())).toEqual({ state: 'ok', raised: 2, skipped: 0 });
+    const texts = thread();
+    expect(texts).toHaveLength(2);
+    for (const text of texts) {
+      expect(text).toContain('BUS-FAILED');
+      expect(text).not.toContain('no reply under its Leader reply key');
+    }
+    // The seen-file key shape is shared, so a notified row never re-fires.
+    expect(await noticeOverdueSlackRequests(opts())).toEqual({ state: 'ok', raised: 0, skipped: 2 });
+  });
+
+  it('raises no ordinary notice for a keyed request whose ingress was never durably recorded (uncertain)', async () => {
+    ingest(10, THREAD, true, null);
+    expect(await noticeOverdueSlackRequests(opts())).toEqual({ state: 'ok', raised: 0, skipped: 0 });
+    expect(thread()).toHaveLength(0);
   });
 
   it('ignores a request under the threshold', async () => {

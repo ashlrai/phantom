@@ -63,7 +63,7 @@ it('answers only the request whose thread gets a durable sent receipt, across re
   writeReceipts([{ key: replyKey(rid(A)), channel: CH, thread: A, state: 'attempted' }]);
   expect(await readTool()).toEqual({
     asOf: new Date(NOW_MS).toISOString(), state: 'ok', answered: 0, unanswered: 1, oldestUnansweredAt: reqB!.at,
-    uncertainSends: 1, unverified: 0, uncertainRequests: 1, rejected: 0, futureDated: 0, unansweredSample: [reqB],
+    uncertainSends: 1, unverified: 0, uncertainRequests: 1, rejected: 0, futureDated: 0, unansweredSample: [reqB], busFailed: 0, busFailedSample: [],
   });
 
   // Clock advances: thread A gets a sent reply; a sent reply on thread C reaches no request.

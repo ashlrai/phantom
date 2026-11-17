@@ -32,15 +32,16 @@ function fixture(outcomes: Array<'failed' | 'posted' | undefined>, keyed = true)
 it('keeps a failed ingress unresolved despite a later sent receipt', () => {
   const status = fixture(['failed']);
   expect(status.journal.ingested).toBe(1);
-  expect(status.replies).toMatchObject({ state: 'ok', answered: 0, unanswered: 1, oldestUnansweredAt: at,
-    unansweredSample: [{ channelId, threadTs, messageTs: threadTs, at }] });
+  // A failed ingress is its own class: not ordinary-unanswered, never answered, never dropped.
+  expect(status.replies).toMatchObject({ state: 'ok', answered: 0, unanswered: 0, busFailed: 1, oldestUnansweredAt: null,
+    unansweredSample: [], busFailedSample: [{ channelId, threadTs, messageTs: threadTs, at }] });
 });
 
 it('reserves the reply for a posted request while retaining the failed request', () => {
   const status = fixture(['failed', 'posted']);
   expect(status.journal.ingested).toBe(2);
-  expect(status.replies).toMatchObject({ answered: 1, unanswered: 1,
-    unansweredSample: [{ channelId, threadTs, messageTs: threadTs, at }] });
+  expect(status.replies).toMatchObject({ answered: 1, unanswered: 0, busFailed: 1,
+    unansweredSample: [], busFailedSample: [{ channelId, threadTs, messageTs: threadTs, at }] });
 });
 
 it('binds a keyed row without a bus outcome', () => {
@@ -49,4 +50,6 @@ it('binds a keyed row without a bus outcome', () => {
 
 it('reports legacy rows without a requestId as unverified, never answered by a same-thread receipt', () => {
   expect(fixture([undefined], false).replies).toMatchObject({ answered: 0, unanswered: 0, unverified: 1 });
+  // A failed unidentified row is counted in BOTH unverified and busFailed (counters overlap by design).
+  expect(fixture(['failed'], false).replies).toMatchObject({ unanswered: 0, unverified: 1, busFailed: 1 });
 });

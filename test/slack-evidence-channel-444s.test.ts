@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { cmdFleetSlackEvidence } from '../src/cli/fleet-slack-evidence.js';
 
 const thread = '1731000000.000100';
@@ -11,8 +12,9 @@ const now = () => new Date('2024-11-07T18:00:00.000Z');
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
+const rid = (channelId: string, ts: string) => fakeRequestId(`444s:${channelId}:${ts}`);
 const entry = (channelId: string, at: string, messageTs: string, bus?: string) => ({
-  at, decision: 'ingested', ...(bus === undefined ? {} : { bus }), channelId, threadTs: thread, messageTs,
+  at, decision: 'ingested', ...(bus === undefined ? {} : { bus }), channelId, threadTs: thread, messageTs, requestId: rid(channelId, messageTs),
 });
 const sent = (channel: string, ts: string) => ({ channel, thread, state: 'sent', ts });
 
@@ -39,7 +41,7 @@ it('scopes shared-thread rows by channel and recomputes counts and freshness', a
     entry(channelB, '2024-11-07T12:00:00.000Z', '1731000020.000100', 'posted'),
   ];
   const deps = fixture(`${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, {
-    a: sent(channelA, '1731002390.000100'),
+    [replyKey(rid(channelA, '1731000010.000100'))]: sent(channelA, '1731002390.000100'),
   });
   const before = snapshot(deps.root);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -72,7 +74,7 @@ it('scopes shared-thread rows by channel and recomputes counts and freshness', a
 
 it('returns empty unknown freshness for an absent channel', async () => {
   const deps = fixture(`${JSON.stringify(entry(channelA, '2024-11-07T17:59:30.000Z', '1731000010.000100', 'posted'))}\n`, {
-    a: sent(channelA, '1731002390.000100'),
+    [replyKey(rid(channelA, '1731000010.000100'))]: sent(channelA, '1731002390.000100'),
   });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetSlackEvidence(['--thread', thread, '--channel', 'C0FAKE9999', '--max-age-seconds', '60', '--json'], deps)).toBe(1);
@@ -98,7 +100,7 @@ it.each([
 
 it('keeps degraded sources degraded after channel filtering', async () => {
   const deps = fixture(`${JSON.stringify(entry(channelA, '2024-11-07T17:59:30.000Z', '1731000010.000100', 'posted'))}\ninvalid\n`, {
-    a: sent(channelA, '1731002390.000100'), bad: {},
+    [replyKey(rid(channelA, '1731000010.000100'))]: sent(channelA, '1731002390.000100'), bad: {},
   });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetSlackEvidence(['--thread', thread, '--channel', channelA, '--max-age-seconds', '60', '--json'], deps)).toBe(1);
@@ -116,7 +118,7 @@ it('preserves bus-failed and unknown-ingress exit failures', async () => {
     entry(channelA, '2024-11-07T17:59:31.000Z', '1731000020.000100'),
   ];
   const deps = fixture(`${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, {
-    a: sent(channelA, '1731002390.000100'),
+    [replyKey(rid(channelA, '1731000010.000100'))]: sent(channelA, '1731002390.000100'),
   });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetSlackEvidence(['--thread', thread, '--channel', channelA, '--max-age-seconds', '60', '--json'], deps)).toBe(1);

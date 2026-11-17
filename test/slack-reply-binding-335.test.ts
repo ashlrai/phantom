@@ -128,4 +128,22 @@ describe('Slack causal reply binding (335)', () => {
     }
     expect({ requests, receipts }).toEqual(before);
   });
+
+  it('fails closed when rows sharing one requestId disagree about the message (no first-row-wins)', () => {
+    const id = request.requestId!;
+    for (const other of [
+      { ...request, channelId: 'C0OTHER335' },
+      { ...request, messageTs: '1700000000.000150' },
+      { ...request, threadTs: '1700000000.000002' },
+    ]) {
+      // Even with a valid exact-key sent receipt for that id, neither row may be answered.
+      const result = bind([request, other], [reply]);
+      expect(result.answered).toEqual([]);
+      expect(result.unanswered).toEqual([]);
+      expect(result.uncertain).toHaveLength(2);
+      expect(result.byRequestId.get(id)).toEqual({ verdict: 'uncertain' });
+    }
+    // Identical duplicate rows (a redelivery) are still one request with one shared verdict.
+    expect(bind([request, { ...request, at: '2023-11-14T22:13:21.000Z' }], [reply]).answered).toHaveLength(1);
+  });
 });

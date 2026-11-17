@@ -19,12 +19,12 @@ const UNKNOWN = 'UNKNOWN';
  */
 export const SURFACES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'slack-bridge': Object.freeze([
-    'src/core/agents/slack-audience.ts',
     'src/core/agents/slack-inbound.ts',
     'src/core/agents/slack-journal.ts',
     'src/core/agents/slack-leader.ts',
     'src/core/agents/slack-network.ts',
     'src/core/agents/slack-reply-binding.ts',
+    'src/core/agents/slack-reply-identity.ts',
     'src/core/agents/slack-request-trace.ts',
     'src/core/agents/slack-send-receipts.ts',
     'src/core/agents/slack-status.ts',

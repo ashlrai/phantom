@@ -211,7 +211,8 @@ function slackReplyBinding(runsDir: string | undefined, now: Date): ReplyBinding
   for (const e of journal.entries) {
     if (e.decision !== 'ingested') continue;
     const verdict = e.requestId === undefined ? undefined : binding.byRequestId.get(e.requestId);
-    if (verdict?.verdict === 'answered') answeredAt.push(e.at);
+    // A bus-failed row never reached durable ingress: like the trace, never certify it answered.
+    if (verdict?.verdict === 'answered' && e.bus !== 'failed') answeredAt.push(e.at);
     else unansweredAt.push(e.at);
   }
   return { store: 'ok', answeredAt, unansweredAt, futureDated: binding.futureDated };

@@ -40,7 +40,7 @@ function writeStore(stateRoot: string, rows: Row[]): void {
 const rid = (messageTs: string) => fakeRequestId(`336:${messageTs}`);
 const key = (messageTs: string) => replyKey(rid(messageTs));
 function ingest(runsDir: string, at: string, messageTs: string, decision: 'ingested' | 'ignored' = 'ingested', keyed = true): void {
-  recordSlackObservation({ at, decision, channelId: CH, messageTs, threadTs: THREAD, ...(keyed ? { requestId: rid(messageTs) } : {}), ...(decision === 'ignored' ? { reason: 'untrusted-sender' } : {}) }, { runsDir });
+  recordSlackObservation({ at, decision, channelId: CH, messageTs, threadTs: THREAD, ...(decision === 'ingested' ? { bus: 'posted' as const } : {}), ...(keyed ? { requestId: rid(messageTs) } : {}), ...(decision === 'ignored' ? { reason: 'untrusted-sender' } : {}) }, { runsDir });
 }
 const status = (p: ReturnType<typeof setup>) => buildSlackBridgeStatus({ ...p, now: () => NOW });
 
@@ -108,6 +108,7 @@ describe('slack status replies (336)', () => {
     expect(status(p).replies).toEqual({
       state: 'missing', answered: 0, unanswered: 0, oldestUnansweredAt: null,
       uncertainSends: 0, unverified: 0, uncertainRequests: 0, rejected: 0, futureDated: 0, unansweredSample: [],
+      busFailed: 0, busFailedSample: [],
     });
   });
 
