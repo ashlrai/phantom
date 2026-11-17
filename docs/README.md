@@ -4,7 +4,11 @@
 
 # Phantom documentation
 
-- [Router catalog refresh](ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
+- [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
+
+- [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
+
+- [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.
 
 Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
 
@@ -12,6 +16,7 @@ Phantom is an open-source workbench for running coding agents, coordinating a fl
 | --- | --- |
 | [Quickstart](QUICKSTART.md#open-verse) | Install the CLI, open the console and check one resource. |
 | [First useful turn](QUICKSTART.md#make-your-first-useful-turn) | Ask an agent for a small change and review the diff. |
+| [Run the fleet from Phantom](https://github.com/ashlrai/phantom/blob/master/docs/RUN-THE-FLEET.md) | Read Home, find work, steer a job and check Autonomy. |
 | [Fleet guide](AUTOMATIC-OUTCOMES.md#work-for-me) | Save an outcome and understand resident setup. |
 | [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) | Join a node with its own sign-in and owner scope. |
 | [Agent network](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK.md) | Understand participants, coordination and channel boundaries. |
@@ -20,7 +25,7 @@ The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands
 
 ## Agents, start here
 
-- [CI baseline analyzer](CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
+- [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
 
 Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
@@ -37,6 +42,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Plan bounded cross-provider child agents | [Subagents](https://github.com/ashlrai/phantom/blob/master/docs/SUBAGENTS.md) |
 | Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
@@ -257,6 +263,9 @@ connected into an unattended subscription-backed product factory. Keep their
 roots, budgets and acceptance evidence explicit.
 
 ## Deeper design and history
+
+The [recursive self-improvement and open fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md)
+proposes verified improvement experiments and a public-work-only contributor fleet.
 
 The [30-day fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/FLEET-30D.md)
 ranks the delivery gaps, maps accountable roles to existing runtimes, and sets

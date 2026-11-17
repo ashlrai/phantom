@@ -300,7 +300,7 @@ describe('codex catalog', () => {
     expect(readCodexCatalog(path.join(tmp, 'codex-a', 'native-state'))).toBeNull();
     const options = codexModelOptions(null);
     expect(options.map((m) => m.id)).toEqual([
-      'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+      'gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
     ]);
     expect(options.map((m) => m.id)).not.toContain('gpt-reserve');
     expect(options.map((m) => m.id)).not.toContain('gpt-5.5');

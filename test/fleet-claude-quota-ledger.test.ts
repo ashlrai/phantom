@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
+import { readClaudeQuotaReading } from '../src/core/fleet/claude-quota-reading.js';
 
 const fixture = join(process.cwd(), 'test/fixtures/runs-resource-ledger');
 const now = Date.parse('2026-11-02T12:00:00Z');
@@ -31,6 +32,18 @@ const claudeLane = async (root: string) => {
 afterEach(async () => { await Promise.all(roots.splice(0).map(r => rm(r, { recursive: true, force: true }))); });
 
 describe('claude native quota in the resource ledger', () => {
+  it.each([null, 42, '', 'claude:ABCDEF0123456789', 'org-fixture-123', 'claude:0123456789abcdef0'])('rejects malformed persisted scope %s', async (accountId) => {
+    const root = await setup();
+    await put(root, reading({ accountId }));
+    expect(await readClaudeQuotaReading(root)).toBeNull();
+  });
+  it('accepts optional opaque scope and legacy unscoped files', async () => {
+    const root = await setup();
+    await put(root, reading({ accountId: 'claude:0123456789abcdef' }));
+    expect(await readClaudeQuotaReading(root)).toMatchObject({ accountId: 'claude:0123456789abcdef' });
+    await put(root, reading());
+    expect(await readClaudeQuotaReading(root)).not.toHaveProperty('accountId');
+  });
   it('replaces the stale status value and carries per-model scopes', async () => {
     const root = await setup();
     await put(root, reading());

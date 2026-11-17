@@ -1,6 +1,6 @@
 /**
  * routes/verse/shell/home-view-store.ts — the operator's explicit home choice
- * (Leader, Feed, Ideas, Goals or Library) and the window layout, bound for the shell.
+ * (Home, Leader, Feed, Ideas, Goals or Library) and the window layout, bound for the shell.
  *
  * Same shape as data/appearance-store.ts: a module-level value + listener set,
  * best-effort localStorage (Safari private mode throws), nothing stored until
@@ -19,7 +19,8 @@ function readChoice(): HomeChoice | null {
   if (choice !== undefined) return choice;
   try {
     const raw = localStorage.getItem(HOME_VIEW_STORAGE_KEY);
-    choice = isHomeChoice(raw) ? raw : null;
+    // Leader is a session view, not a landing choice: a new launch opens Home.
+    choice = isHomeChoice(raw) && raw !== 'leader' ? raw : null;
   } catch {
     choice = null;
   }
@@ -73,8 +74,9 @@ export function useHomeView(): { view: HomeView; layout: HomeLayout } {
   const narrow = useSyncExternalStore(subscribeNarrow, currentNarrow, () => false);
   const pickedRegistered = useSyncExternalStore(subscribeRegisteredPaneIds,
     () => persisted ? hasRegisteredPane(HOME_PANE_IDS[persisted]) : false, () => false);
+  const hasHome = useSyncExternalStore(subscribeRegisteredPaneIds, () => hasRegisteredPane(HOME_PANE_IDS.home), () => false);
   return useMemo(
-    () => resolveHomeView({ persisted, width: narrow ? HOME_COMPACT_BELOW - 1 : HOME_COMPACT_BELOW, hasLeaderThread: true, registered: () => pickedRegistered }),
-    [persisted, narrow, pickedRegistered],
+    () => resolveHomeView({ persisted, width: narrow ? HOME_COMPACT_BELOW - 1 : HOME_COMPACT_BELOW, hasLeaderThread: true, registered: () => pickedRegistered, hasHome }),
+    [persisted, narrow, pickedRegistered, hasHome],
   );
 }

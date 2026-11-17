@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { cmdRoute } from '../src/cli/route.js';
 import { execFileSync } from 'node:child_process';
 import { explainRoutes } from '../src/core/queue/route-explain.js';
+import { recordFailover } from '../src/core/router/fallback.js';
 import { buildFleetEvalReport } from '../src/core/fleet/eval-report.js';
 
 it('explains bounded posture evidence, falls back to routing inputs, and keeps invalid evidence unknown', async () => {
@@ -12,7 +13,7 @@ it('explains bounded posture evidence, falls back to routing inputs, and keeps i
   try {
     await mkdir(join(root, 'metrics'));
     const path = join(root, 'metrics/work-market.jsonl');
-    expect((await explainRoutes(root)).posture).toBeNull();
+    expect(await explainRoutes(root)).toMatchObject({ posture: null, fallback_chain: null, fallback_used: null });
     const lane = { posture: 'burn', posture_reason: 'spend_down_projected_unused',
       projected_unused_pct: 70, hours_to_reset: 2 };
     const snapshot = { schema: 'work-market.v1', event: 'posture', lanes: { claude: lane } };
@@ -48,15 +49,21 @@ it('explains a job mode and its spending evidence through the real JSON CLI with
     await writeFile(join(root, 'queue/slots.json'), JSON.stringify({ seat: { target: 1, hard_cap: 1 } }));
     await writeFile(join(root, 'queue/admission.json'), '{"admit":true}');
     await writeFile(join(root, 'queue/route-capacity.json'), JSON.stringify({ seat: { resetAt: null, remainingPercent: null, costPerMTok: 0 } }));
-    const request = { task_class: 'bug-fix', repo: 'phantom', tier_hint: 'work', mode: 'normal',
+    const request = { job: 'example', task_class: 'bug-fix', repo: 'phantom', tier_hint: 'work', mode: 'normal',
       lane_candidates: ['seat'], quota_state: { seat: 'available' }, machine_state: { admit: true, running_by_lane: { seat: 0 } } };
     await writeFile(join(root, 'queue/route-request.json'), JSON.stringify(request));
     expect(await cmdRoute(['explain', '--json'])).toBe(0);
+    expect(JSON.parse(log.mock.calls.at(-1)![0])).toMatchObject({ fallback_chain: { primary: 'seat', live: false }, fallback_used: null });
+    await recordFailover(root, { job: 'example', failed_lane: 'seat', lane: null, failure: 'timeout' }, 1000);
+    await writeFile(join(root, 'queue/route-state.json'), '{}');
+    expect(await explainRoutes(root)).toMatchObject({ available: true, fallback_chain: { primary: 'seat' },
+      fallback_used: [{ event: 'failover_refused', job: 'example' }] });
     expect(JSON.parse(log.mock.calls.at(-1)![0]).decision).toMatchObject({ requested_mode: 'normal', mode_tier: 'normal',
       lane: 'seat', capacity: { costPerMTok: 0 }, reason_codes: ['mode-tier', 'free-capacity'] });
     await writeFile(join(root, 'queue/route-request.json'), JSON.stringify({ ...request, mode: 'fusion' }));
     expect((await explainRoutes(root)).decision).toMatchObject({ schema: 'route.pairing.v1', mode_tier: 'fusion',
       lead: null, sidekick: { lane: 'seat', mode_tier: 'normal' }, reason_codes: expect.arrayContaining(['no-frontier-lane']) });
+    expect((await explainRoutes(root)).fallback_chain).toBeNull();
     await writeFile(join(root, 'queue/route-request.json'), '{"mode":"invalid"}');
     expect((await explainRoutes(root)).decision).toBeNull();
   } finally { vi.unstubAllEnvs(); log.mockRestore(); await rm(root, { recursive: true, force: true }); }

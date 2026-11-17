@@ -1,0 +1,1 @@
+{"account_id":"org-test","model":"swe-2-high","used":20,"limit":50,"remaining":30,"limit_source":"config","window_start":"2026-11-10T13:00:00.000Z","reset_at":"2026-11-17T13:00:00.000Z","observed_at":"2026-11-17T12:00:00.000Z","state":"live","source":"devin-api-v3-sessions","burn_rate_per_hour":0,"sessions":1,"reason":null}

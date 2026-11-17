@@ -21,6 +21,8 @@ export const MODEL_MODE_TIERS: Readonly<Record<string, ModelModeTier>> = {
   "gpt-6-sol": "normal",
   "gpt-6.1-sol": "normal",
   "gpt-6.1-terra": "lite",
+  "gpt-6.2-astra": "ultra",
+  "gpt-6.2-sol": "normal",
   "grok-4.7": "normal",
   "grok-4.7-build-fast": "lite",
   "haiku": "lite",

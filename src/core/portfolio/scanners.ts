@@ -29,7 +29,7 @@ import type {
   ScannerObservationReason,
   SourceBaseDigestV1,
 } from '../types.js';
-import { listIssues, githubStatus } from '../integrations/github.js';
+import { listIssuesAsync, githubCiStatusAsync } from '../integrations/github.js';
 import { isTrivialItem, isNonCodePath } from './value-filter.js';
 import { scoreItem } from './scoring.js';
 import { listGoals } from '../goals/store.js';
@@ -303,7 +303,7 @@ function isActionableEngineeringIssue(labels: readonly string[]): boolean {
 
 export async function scanIssues(repo: string): Promise<WorkItem[]> {
   try {
-    const issues = listIssues(repo, { limit: 100, includeLabels: true });
+    const issues = await listIssuesAsync(repo, { limit: 100, includeLabels: true });
     if (!Array.isArray(issues) || issues.length === 0) return [];
 
     const items: WorkItem[] = [];
@@ -664,7 +664,7 @@ export async function scanTests(repo: string): Promise<WorkItem[]> {
     }
 
     // 2. Check CI state via M18 githubStatus (reads gh run list, never runs tests)
-    const status = githubStatus(repo);
+    const status = await githubCiStatusAsync(repo);
     if (status.isRepo && status.ci === 'failing') {
       items.push(
         makeItem(

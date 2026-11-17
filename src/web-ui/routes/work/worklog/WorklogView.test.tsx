@@ -25,6 +25,7 @@ function serve(worklog: WorklogReport, detail: unknown = null) {
   vi.mocked(apiGet).mockImplementation(async (path: string) => {
     if (path.startsWith('/api/fleet/job?id=')) { if (detail === null) throw new ApiError('not found', 404, path); return detail; }
     if (path.startsWith('/api/worklog')) return worklog;
+    if (path === '/api/fleet/empty-jobs') return { schema: 'jobs.empty.v1', hours: 24, total: 0, topCauses: [], diagnosis: { jobs: [], families: [], lanes: [] } };
     throw new Error(`Unexpected path ${path}`);
   });
 }
@@ -35,6 +36,8 @@ describe('Work log', () => {
     serve(report(feed));
     render(<WorklogView />);
     expect(await screen.findByText('Merged #6675 Pools panel in 2m 40s')).toBeTruthy();
+    expect(await screen.findByText('No empty jobs in this period.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Why jobs end empty' })).toBeTruthy();
     const groups = screen.getAllByRole('region').filter(region => region.querySelector('ul'));
     expect(groups.map(group => within(group).getAllByRole('listitem').length)).toEqual([3, 3]);
     expect(screen.getByText('Opened PR #6675 Pools panel (2 events)')).toBeTruthy();
@@ -83,7 +86,7 @@ describe('Work log', () => {
     serve(report([row('launched', 'RQ-OLD', 'Launched')], { hours: 24 }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Show the last 24 hours' })); });
     expect(await screen.findByText('RQ-OLD · work · phantom')).toBeTruthy();
-    expect(vi.mocked(apiGet).mock.calls.map(call => call[0])).toEqual(['/api/worklog', '/api/worklog?hours=24']);
+    expect(vi.mocked(apiGet).mock.calls.map(call => call[0])).toEqual(['/api/fleet/empty-jobs', '/api/worklog', '/api/worklog?hours=24']);
   });
   it('shows an unreadable source as unknown with its reason', async () => {
     serve(report([feed[0]!], { malformedLines: 1, sources: { jobs: ok, events: ok, leader: { state: 'unknown', reason: 'The leader plan log could not be read.' } } }));
