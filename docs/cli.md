@@ -332,6 +332,7 @@ Every command, grouped by topic.
     worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                              Show job launches, finishes and merges from the jobs ledger.
     library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                       Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
+    autonomy [--hours 24] [--json]                                                              Measure merges, human involvement, fleet improvements, releases and main health from local evidence.
     signals [--json]                                                                            Read real repository adoption signals.
     radar list|run|diff [--json]                                                                Observe public docs and package metadata; GET only, six-hour per-source floor.
     observe session <id> [--json]                                                               Read one roster session. Transcript stays unknown until desktop-operator registers a reader.

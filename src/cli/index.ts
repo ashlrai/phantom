@@ -2869,6 +2869,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'autonomy': {
+        const { cmdAutonomy } = await import('./autonomy.js');
+        process.exitCode = await cmdAutonomy(rest);
+        break;
+      }
+
       case 'goals': {
         // Bare `goals` (or only --json/--text) is the fleet scorecard; every subcommand is M28.
         if (rest.every(arg => arg === '--json' || arg === '--text')) {

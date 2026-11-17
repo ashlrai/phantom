@@ -30,10 +30,10 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-observe` | Observe | `mod+alt+v` | `src/web-ui/routes/verse/fleet-observe/fleet-observe.pane.tsx` |
 | `fleet-org` | Org | none | `src/web-ui/routes/verse/fleet-org/fleet-org.pane.tsx` |
 | `fleet-outcomes` | Outcomes | — | `src/web-ui/routes/verse/fleet-outcomes/fleet-outcomes.pane.tsx` |
-| `fleet-plugins` | Plugins | — | `src/web-ui/routes/verse/fleet-installed/fleet-installed.pane.tsx` |
+| `fleet-plugins` | Plugins | none | `src/web-ui/routes/verse/fleet-installed/fleet-installed.pane.tsx` |
 | `fleet-queue` | Queue | `mod+alt+q` | `src/web-ui/routes/verse/fleet-queue/fleet-queue.pane.tsx` |
 | `fleet-releases` | Releases | — | `src/web-ui/routes/verse/fleet-releases/fleet-releases.pane.tsx` |
-| `fleet-skills` | Skills | — | `src/web-ui/routes/verse/fleet-installed/fleet-installed.pane.tsx` |
+| `fleet-skills` | Skills | none | `src/web-ui/routes/verse/fleet-installed/fleet-installed.pane.tsx` |
 | `fleet-steering` | Steering | — | `src/web-ui/routes/verse/fleet-steering/fleet-steering.pane.tsx` |
 | `fleet-steer` | Steer | none | `src/web-ui/routes/verse/fleet-steer/fleet-steer.pane.tsx` |
 | `fleet-supply` | Supply | `mod+alt+u` | `src/web-ui/routes/verse/fleet-supply/fleet-supply.pane.tsx` |

@@ -8,12 +8,33 @@ capacity. Runs default to `ASHLR_RUNS_DIR` or `~/.ashlr-runs`; `weeklyFile`
 overrides the Devin publication path. `LaneAllowanceInputs` and
 `LaneAllowanceRow` describe nullable usage, reset, age, history, posture and
 Devin preview evidence. Missing measurements stay null; stale values retain
-their age and reason. USD pools map to `api-credit`, included/metered posture
-classes pass through, and local, absent or unrecognized classes stay unknown.
+their age and reason. Future observations have `freshness: invalid-future`,
+null usage/age and an invalid-timestamp reason. A lane name alone never proves
+cost. Fresh verified USD readings map to `api-credit`; included/metered receipt
+classes require fresh matching provenance, and unrecognized classes stay unknown.
 `GET /api/usage/lanes` returns this projection without refreshing providers.
 `postureEvidence(root)` is exported from `src/core/queue/route-explain.ts` for
-the shared bounded journal parser, including optional `freePreview` and
-`previewExpiresAt` evidence; absent optional fields remain absent.
+the shared bounded journal parser. It preserves receipt `ts` (epoch seconds or
+ISO timestamp) as optional `observedAt`, plus lane `lane`, `account_id`, `model`,
+`window_start` and `reset_at` as `lane`, `accountId`, `model`, `windowStart` and
+`resetAt`. Absent optional fields remain absent, including `freePreview` and
+`previewExpiresAt`; parsing does not establish freshness or grant free status.
+The resource-live reading parser preserves optional `account_id`, `model` and
+`window_start`; weekly capacity also accepts optional `account_id` and `model`.
+When weekly capacity supplies the usage, its own scope is required, never
+borrowed from a different sidecar reading. Receipt evidence must match that lane/account/model and window
+(reset or fixed expiry, and window start when present), be within the reading's
+15-minute freshness bound, and never be future-dated. Legacy unscoped receipts
+remain readable in route explanations but cannot establish allowance posture
+or cost; incomplete usage cannot establish posture.
+
+A free preview requires a verified `devin-cli-models-list` models reading with
+a positive count, a named Flash/Lightning model, a nonempty account matching
+the lane reading, a fresh non-future observation and an unexpired preview window.
+Receipt flags alone cannot grant it or extend the fixed preview deadline.
+Granted previews include `evidence: { observedAt, accountId, model }` so cards
+can age them out. Cards omit usage bars for missing usage and free countdowns
+for unproven previews; future measurements show clock skew, not zero age.
 
 # CI baseline evidence
 
@@ -919,3 +940,10 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
 first-paint consumers observe it without importing pane definitions or shortcuts.
+
+### Agent app adapters
+
+`src/core/agents/apps/`: `AgentAppAdapter` (`describe`, `launchTask`, `listSessions`,
+`readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
+`describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
+`createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).

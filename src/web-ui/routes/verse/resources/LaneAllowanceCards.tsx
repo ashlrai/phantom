@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { LaneAllowanceRow, LaneAllowanceSnapshot } from '../../../../core/usage/lane-allowance.js';
+import { RESOURCE_LIVE_STALE_MS } from '../../../../core/usage/resource-live/types.js';
 import { apiGet } from '../../../data/client.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useCapacityClock } from '../seat-subscription.js';
@@ -19,6 +20,7 @@ const reasonLabels: Record<string, string> = {
   'reading-stale': 'Last reading is stale', 'reading-missing': 'Not measured yet',
   'reset-unknown': 'Reset time unknown', 'reading-incomplete': 'Reading is incomplete',
   'reset-passed': 'Recorded reset has passed', 'posture-unmeasured': 'Router posture not recorded',
+  'invalid-future': 'Clock skew / invalid timestamp',
 };
 const countdownText = (ms: number) => {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
@@ -28,29 +30,37 @@ const countdownText = (ms: number) => {
 
 export function LaneAllowanceCard({ row, now }: { row: LaneAllowanceRow; now: number }) {
   const description = useId();
-  const age = row.measuredAt ? Math.max(0, Math.floor((now - Date.parse(row.measuredAt)) / 60_000)) : null;
-  const stale = row.freshness === 'stale' || (row.measuredAt !== null && now - Date.parse(row.measuredAt) > 15 * 60_000);
+  const observed = row.measuredAt ? Date.parse(row.measuredAt) : NaN;
+  const invalid = row.freshness === 'invalid-future' || (row.measuredAt !== null && (!Number.isFinite(observed) || observed > now));
+  const age = !invalid && Number.isFinite(observed) ? Math.floor((now - observed) / 60_000) : null;
+  const stale = !invalid && (row.freshness === 'stale' || now - observed > RESOURCE_LIVE_STALE_MS);
+  const hasUsage = !invalid && age !== null && row.used !== null && row.limit !== null && row.usedPct !== null;
   const countdown = (at: string) => countdownText(Date.parse(at) - now);
   const history = row.history;
   const preview = row.devin?.preview;
   const expired = preview && (preview.expired || now >= Date.parse(preview.expiresAt));
-  const reason = row.reason ?? (row.postureReason === 'posture-unmeasured' ? row.postureReason : null);
-  return <li className={styles.card} data-posture={row.posture} data-freshness={stale ? 'stale' : row.freshness} aria-label={row.label}>
+  const previewAt = preview?.evidence ? Date.parse(preview.evidence.observedAt) : NaN;
+  const free = !invalid && preview?.free === true && !expired && Number.isFinite(Date.parse(preview.expiresAt))
+    && preview.evidence?.accountId && preview.evidence.model && previewAt <= now && now - previewAt <= RESOURCE_LIVE_STALE_MS;
+  const displayRow = { ...row, posture: hasUsage && !stale ? row.posture : 'unknown' as const };
+  const cost = !invalid && (hasUsage || free) ? row.costClass : 'unknown';
+  const reason = invalid ? 'invalid-future' : row.reason ?? (row.postureReason === 'posture-unmeasured' ? row.postureReason : null);
+  return <li className={styles.card} data-posture={displayRow.posture} data-freshness={invalid ? 'invalid-future' : stale ? 'stale' : row.freshness} aria-label={row.label}>
     <header className={styles.header}><strong>{row.label}</strong>
-      <span className={styles.chips}><span className={styles.chip} data-posture={row.posture} title={postureText(row)} aria-describedby={description}>{postureLabels[row.posture]}</span>
-      <span className={styles.tag}>{costLabels[row.costClass]}</span></span></header>
-    <span id={description} className={styles.hidden}>{postureText(row)}</span>
-    <p>{row.usedPct === null ? 'unknown — not measured' : row.unit === 'percent' ? `${Math.round(row.usedPct)}% used · ${number(row.left)}% left` : `${number(row.used)} / ${number(row.limit)} ${row.unit === 'acu' ? 'ACU' : row.unit === 'usd' ? 'USD' : row.unit ?? ''} · ${number(row.left)} left`}</p>
-    <div className={styles.track} data-unknown={row.usedPct === null} role="img" aria-label={row.usedPct === null ? 'Usage unknown' : `${Math.round(row.usedPct)}% used`}>
-      {row.usedPct !== null ? <span style={{ width: `${Math.max(0, Math.min(100, row.usedPct))}%` }} /> : null}
-    </div>
+      <span className={styles.chips}><span className={styles.chip} data-posture={displayRow.posture} title={postureText(displayRow)} aria-describedby={description}>{postureLabels[displayRow.posture]}</span>
+      <span className={styles.tag}>{costLabels[cost]}</span></span></header>
+    <span id={description} className={styles.hidden}>{postureText(displayRow)}</span>
+    <p>{!hasUsage ? 'unknown — not measured' : row.unit === 'percent' ? `${Math.round(row.usedPct!)}% used · ${number(row.left)}% left` : `${number(row.used)} / ${number(row.limit)} ${row.unit === 'acu' ? 'ACU' : row.unit === 'usd' ? 'USD' : row.unit ?? ''} · ${number(row.left)} left`}</p>
+    {hasUsage ? <div className={styles.track} role="img" aria-label={`${Math.round(row.usedPct!)}% used`}>
+      <span style={{ width: `${Math.max(0, Math.min(100, row.usedPct!))}%` }} />
+    </div> : null}
     <div className={styles.meta}><span>{row.resetAt ? `Resets in ${countdown(row.resetAt)}` : 'Reset unknown'}</span>
-      <span>{age === null ? 'Not measured' : `measured ${age < 60 ? `${age}m` : `${Math.floor(age / 60)}h`} ago`}{stale ? ' · stale' : ''}</span></div>
+      <span>{invalid ? 'Timestamp rejected' : age === null ? 'Not measured' : `measured ${age < 60 ? `${age}m` : `${Math.floor(age / 60)}h`} ago`}{stale ? ' · stale' : ''}</span></div>
     {history && history.points.length >= 2 ? <BurnSparkline now={now} history={{ points: history.points.map(p => ({ t: Date.parse(p.observedAt), fraction: p.limit > 0 ? p.used / p.limit : 0, gapBefore: p.gapBefore })), burnPerHour: history.burn?.perHour ?? null, exhaustAt: history.exhaustAt, resetAt: history.resetAt }} /> : null}
     {row.devin ? <div className={styles.details}>
       <span>Weekly ACUs: {number(row.devin.weeklyUsedAcu)} / {number(row.devin.weeklyAllowanceAcu)}</span>
       <span>In-flight reservations: {number(row.devin.inFlightReservations)}</span>
-      {preview ? <span>{expired ? 'Preview expired' : `${preview.free === true ? 'Free preview' : 'Preview (free status unknown)'} ends in ${countdown(preview.expiresAt)}`}</span> : null}
+      {preview ? <span>{expired ? 'Preview expired' : free ? `Free preview ends in ${countdown(preview.expiresAt)}` : 'Preview free status unknown'}</span> : null}
     </div> : null}
     {reason ? <small className={styles.reason} data-reason={reason}>{reasonLabels[reason] ?? 'Reading unavailable'}</small> : null}
   </li>;
