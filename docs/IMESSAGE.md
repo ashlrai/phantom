@@ -250,7 +250,11 @@ phm fleet teammate-latency --window-hours 24 --target-minutes 5 --json
 transport and unsupported-collaborator states do not assess the separate
 teammate task transport described above. `imessage-acks` reads the
 acknowledgement journal; no match in its bounded tail does not prove a message
-was never ingested, and recorded-not-sent is not delivery. `teammates` shows
+was never ingested. Legacy journal labels such as `recorded-not-sent` are
+normalized to `delivery: "unknown"` in CLI/MCP evidence; the original journal
+remains unchanged. This source cannot prove delivery or non-delivery, even if
+a row claims a successful native return. `deliveryProof` remains false.
+`teammates` shows
 declared counterparts and masked handles with observed text times. Latency
 summarizes recorded replies and unanswered age; missing sources remain unknown.
 The read-only fleet MCP equivalents are in the
