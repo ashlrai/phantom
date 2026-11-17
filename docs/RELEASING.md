@@ -340,6 +340,10 @@ only after its original-asset qualification and required Stop/drain and Quit.
 An npm version, GitHub release or downloaded archive does not establish installed
 startup acceptance. Use the [desktop install guide](../desktop/README.md#install)
 for supported paths and the locally signed, non-notarized app limitations.
+For an existing managed CLI, see [managed upgrades](../desktop/README.md#upgrade-an-existing-managed-install):
+`phm desktop install --upgrade` plans the switch; explicit `--apply` uses resident
+stop but never restarts it. Journaled `--rollback` is separate from release
+publication. Any Touch ID grant and resident restart remain owner actions.
 
 Website promotion, provider sign-ins, spending permissions and resident fleet
 activation are separate verified operations. Neither this guide nor a version
