@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -6,6 +6,37 @@ import { cmdRoute } from '../src/cli/route.js';
 import { execFileSync } from 'node:child_process';
 import { explainRoutes } from '../src/core/queue/route-explain.js';
 import { buildFleetEvalReport } from '../src/core/fleet/eval-report.js';
+
+it('explains bounded posture evidence, falls back to routing inputs, and keeps invalid evidence unknown', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'posture-explain-'));
+  try {
+    await mkdir(join(root, 'metrics'));
+    const path = join(root, 'metrics/work-market.jsonl');
+    expect((await explainRoutes(root)).posture).toBeNull();
+    const lane = { posture: 'burn', posture_reason: 'spend_down_projected_unused',
+      projected_unused_pct: 70, hours_to_reset: 2 };
+    const snapshot = { schema: 'work-market.v1', event: 'posture', lanes: { claude: lane } };
+    const route = { schema: 'work-market.v1', event: 'route_decision', ranking_inputs: {
+      claude: { posture: 'balanced', posture_reason: 'host_declared', spend_down: {
+        projected_unused_pct: 5, hours_to_reset: 1 } } } };
+    await writeFile(path, `${'x'.repeat(300_000)}\n${JSON.stringify(snapshot)}\n${JSON.stringify(route)}\n{`);
+    expect((await explainRoutes(root)).posture).toEqual({ lanes: { claude: {
+      posture: 'burn', postureReason: 'spend_down_projected_unused', projectedUnusedPct: 70, hoursToReset: 2 } } });
+    await writeFile(path, JSON.stringify(route));
+    expect((await explainRoutes(root)).posture?.lanes.claude).toEqual({
+      posture: 'balanced', postureReason: 'host_declared', projectedUnusedPct: 5, hoursToReset: 1 });
+    for (const text of ['{', JSON.stringify({ ...snapshot, lanes: {} }),
+      JSON.stringify({ ...snapshot, lanes: { claude: { ...lane, posture: 'invalid' } } }),
+      JSON.stringify({ ...snapshot, lanes: { claude: { ...lane, hours_to_reset: -1 } } })]) {
+      await writeFile(path, text);
+      expect((await explainRoutes(root)).posture).toBeNull();
+    }
+    await writeFile(join(root, 'evidence'), JSON.stringify(snapshot));
+    await rm(path);
+    await symlink(join(root, 'evidence'), path);
+    expect((await explainRoutes(root)).posture).toBeNull();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 it('explains a job mode and its spending evidence through the real JSON CLI without model calls', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mode-explain-'));

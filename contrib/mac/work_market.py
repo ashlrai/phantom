@@ -13,6 +13,8 @@ WORK_CLASSES = ("bulk", "standard", "judgment")
 # Resource posture is a ranking input only: it never grants capability, cost class, quota or capacity.
 # burn = spend the window on volume; preserve = keep the window for judgment work. Host slots.json overrides.
 POSTURES = ("burn", "balanced", "preserve")
+SPEND_DOWN_BURN_PCT = 10
+SPEND_DOWN_PRESERVE_MARGIN_PCT = 10
 POSTURE = {"codex-cmp": "burn", "codex-personal": "preserve", "claude": "preserve"}
 FIT = {"burn": {"bulk": 0, "standard": 0, "judgment": 1},
        "balanced": {"bulk": 1, "standard": 1, "judgment": 1},
@@ -100,6 +102,26 @@ def _epoch(value):
     except (ValueError, OverflowError): return None
 
 
+def spend_down(lane, cost_class, reading, now):
+    """Project only fresh, measured included-subscription allowance."""
+    result = dict(posture=None, reason="spend_down_unknown", projected_unused_pct=None, hours_to_reset=None)
+    if cost_class != "included":
+        return dict(result, reason="spend_down_not_subscription")
+    if not isinstance(reading, dict) or number(now) is None: return result
+    used, burn = number(reading.get("weekly_used_pct")), number(reading.get("burn_pct_per_hour"))
+    reset, observed = _epoch(reading.get("reset_at")), _epoch(reading.get("as_of"))
+    if (used is None or not 0 <= used <= 100 or burn is None or burn < 0
+            or reset is None or observed is None or not -60 <= now - observed <= 1800 or reset <= now):
+        return result
+    hours = (reset - now) / 3600
+    projected = used + burn * hours
+    unused = max(0, 100 - projected)
+    state, reason = ("burn", "spend_down_projected_unused") if unused >= SPEND_DOWN_BURN_PCT else (
+        ("preserve", "spend_down_projected_exhaustion") if projected > 100 + SPEND_DOWN_PRESERVE_MARGIN_PCT
+        else ("balanced", "spend_down_on_pace"))
+    return dict(posture=state, reason=reason, projected_unused_pct=unused, hours_to_reset=hours)
+
+
 def posture(lane, slot, now=None):
     """burn | balanced | preserve. An unexpired host free_until window reads as burn; garbage is ignored."""
     until = _epoch(slot.get("free_until"))
@@ -118,7 +140,7 @@ def hard_down(slot):
             or (slot.get("held") and slot.get("held_reason") == "auth_failure"))
 
 
-def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, adaptive=None, now=None):
+def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, adaptive=None, now=None, allowance=None):
     """Use configured executor capabilities; sensitive capabilities require explicit advertisement.
 
     Existing executor contracts supply git/gh/node and their own CLI. Host-owned
@@ -184,6 +206,16 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
             "latency_source": "adaptive_model" if latency_s is not None and latency_s >= 0 else "model_phase" if latency else "session_wall" if wall else None,
         }
         if not isinstance(view[lane]["cost_class"], str): view[lane]["cost_class"] = None
+        projection = spend_down(lane, view[lane]["cost_class"], allowance.get(lane) if isinstance(allowance, dict) else None, now)
+        until = _epoch(slot.get("free_until"))
+        reason = projection["reason"]
+        if until is not None and number(now) is not None and now < until:
+            reason = "free_until"
+        elif slot.get("posture") in POSTURES:
+            reason = "host_declared"
+        elif projection["posture"] is not None:
+            view[lane]["posture"] = projection["posture"]
+        view[lane].update(posture_reason=reason, spend_down=projection)
         if not valid_caps: view[lane]["unavailable"] = "invalid_capability_advertisement"
     return view
 
@@ -238,7 +270,8 @@ def choose(job, spec, tier, view, record, now, decide):
               "chosen_lane": None, "preferred_lane": pref, "work_class": kind, "override": None,
               "rejected_lanes": rejected, "reason_codes": [],
               "ranking_inputs": {lane: dict({key: v[key] for key in ("running", "target", "quota", "empty_rate", "yield_rate", "cost_class", "latency_s", "latency_source")},
-                                            posture=v.get("posture", "balanced"), fit=fit[lane]) for lane, v in view.items()}}
+                                            posture=v.get("posture", "balanced"), posture_reason=v.get("posture_reason"),
+                                            spend_down=v.get("spend_down"), fit=fit[lane]) for lane, v in view.items()}}
     # Hint-only records preserve old external-proposal diagnostics without making
     # the preference a routing commitment before the first runnable assignment.
     prior = record if record and record.get("assigned", True) else None

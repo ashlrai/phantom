@@ -1894,10 +1894,17 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return (picked, lane_, size) if lane_ else None
     market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
                                         hold, market_models, BUS["quota"], JOBS_RAW,
-                                        jload(Q + "/adaptive.json", {}), NOW)
+                                        jload(Q + "/adaptive.json", {}), NOW, allowance=_BUDGET_OV)
     # Fresh use-it-all evidence that a window is going to waste outranks a preserve default this tick.
     for _l in LANES:
-        if waste_risk(UIA.get(_l), _l) or pace_behind(UIA.get(_l)) is True: market_view[_l]["posture"] = "burn"
+        _waste = waste_risk(UIA.get(_l), _l)
+        if _waste or pace_behind(UIA.get(_l)) is True:
+            market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
+    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES):
+        market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
+            l: dict(posture=v["posture"], posture_reason=v["posture_reason"],
+                    projected_unused_pct=v["spend_down"]["projected_unused_pct"],
+                    hours_to_reset=v["spend_down"]["hours_to_reset"]) for l, v in market_view.items()}})
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
