@@ -12,7 +12,8 @@ import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { JOB_ID_RE, jobOptions, logHint, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
+import { describeJob } from '../../../../core/fleet/job-tail-words.js';
+import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
@@ -122,7 +123,8 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const backlogUnavailable = pr !== null && (backlog.data === null || backlog.data?.source === 'gh-failed' || backlog.status === 'error');
   const { testLine, sensitive } = publishFacts(detail.data?.publish);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
-  const hint = detail.data ? logHint(detail.data, Date.now()) : null;
+  // Same plain words as `phm job tail` (core/fleet/job-tail-words.ts).
+  const words = detail.data ? describeJob({ ...detail.data, job: detail.data.job ?? job }, Date.now()) : null;
   const state = detail.data?.state ?? 'unknown';
 
   return <div className={styles.pane} aria-label="Worker log">
@@ -170,16 +172,17 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         {testLine !== null && <p>Tests: <code>{testLine}</code></p>}
         {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
       </section>}
-      {hint ? <p className={styles.hint}>{hint}</p> : detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
+      {words?.text && <p className={styles.hint}>{words.text}</p>}
+      {words?.showLog &&
         <div className={styles.logWrap}>
           <div ref={logRef} className={styles.log} role="log" aria-live="polite" onScroll={event => {
             const log = event.currentTarget;
             if (log.scrollTop + log.clientHeight >= log.scrollHeight - 1) clearUnseen();
           }}>{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>
-          {!follow && (liveness?.unseenLines ?? 0) > 0 && <button type="button" className={styles.newLines} onClick={() => {
+          {!follow && <button type="button" className={styles.newLines} onClick={() => {
             if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
             clearUnseen(); setFollow(true);
-          }}>{newLinesLabel(liveness?.unseenLines ?? 0)} ↓</button>}
+          }}>{(liveness?.unseenLines ?? 0) > 0 ? newLinesLabel(liveness?.unseenLines ?? 0) : 'Jump to latest'} ↓</button>}
         </div>}
       {changes.data && <section aria-label="Changes" className={styles.changes}>
         <div>{changesHeadline(changes.data)}</div>

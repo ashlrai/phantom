@@ -2160,6 +2160,21 @@ export async function handleApi(
       return true;
     }
 
+    // fleet.job.tail.v1 — the `phm job tail` snapshot (status words, header,
+    // ledger events, redacted last N log lines). Same read class as above.
+    if (path === '/api/fleet/job/tail' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobTail } = await import('../fleet/runs-job-tail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 120) {
+        sendJson(res, 400, { error: 'valid job id and lines (1..120) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobTail(id, { lines }));
+      return true;
+    }
+
     if (path === '/api/fleet/job/cost' && method === 'GET') {
       const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
       const { getFleetJobCost } = await import('../fleet/runs-job-cost.js');

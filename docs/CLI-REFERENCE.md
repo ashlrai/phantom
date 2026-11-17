@@ -144,6 +144,7 @@ Phantom - every command (phm or ashlr)
     backlog refresh                                                                                                                                               Re-scan all enrolled repos and rebuild the backlog.
     release-articles status|enable|disable|import|sync [--json]                                                                                                   Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.
     release status [--json] [--file <release-state.json>]                                                                                                         Show local release tags, age and commits since each tag. Use --file to read release train state.
+    release notes [--since <tag>] [--json] [--write]                                                                                                              Summarize local mainline changes since the latest release tag. Use --write to prepend notes to CHANGELOG.md.
     backlog --source <src>                                                                                                                                        Filter backlog by source: issue|todo|test|dep|doc|security|plugin|self|lint|goal|hygiene|invent.
     backlog --repo <path>                                                                                                                                         Filter backlog to a specific enrolled repo.
     backlog --limit <n>                                                                                                                                           Show only the top N items.
@@ -347,6 +348,7 @@ Phantom - every command (phm or ashlr)
     queue batches [--runs <directory>] [--json]                                                Show each batch line’s PR, empty reason, failure or unknown result.
     repos rank [proposals] [--json] [--recompute]                                              Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
     job cost <id> [--json]                                                                     Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
+    job tail <id> [--lines N] [--follow] [--json]                                              What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.
     telemetry [status]                                                                         M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                             Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]         Tail the append-only audit trail; --team lists workspace actions (read-only).
