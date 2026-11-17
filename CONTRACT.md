@@ -1,3 +1,17 @@
+# Phantom Bots
+
+`agents/phantom-bot.ts` exports `phantomBotSchema`, `PhantomBot` and
+`parsePhantomBot(value)` for strict provider-neutral `phantom-bot.v1` metadata.
+`lanePolicy` uses queue requirements, rejects metered cost and lane/provider pins,
+and defaults max cost to included. `listPhantomBots(home?)`,
+`readPhantomBot(id, home?)`, `planPhantomBot(value, home?)` are read-only;
+planning refuses existing ids. `writePhantomBot(value, home?)` exclusively creates
+a private record. `explainPhantomBot(bot, runs?, now?)` returns primitives,
+strict master-router eligibility, primary decision, fallback plan, rejected lanes
+with master reason codes and posture evidence; no model calls, dispatch or writes.
+`cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
+Creation requires `--dry-run` and never calls the writer.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`

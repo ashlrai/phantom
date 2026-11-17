@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm bots list|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id> [--json]', description: 'Inspect provider-neutral bot metadata and advisory routing; plan creation without writing. Live creation refused.', safety: 'read', jsonShape: 'phantom-bot.v1 record, plan or explanation' },
   { usage: 'phm release notes [--since <tag>] [--json] [--write]', description: 'Draft local mainline release notes. --write updates only the generated Unreleased changelog block. Exit 0 success, 1 unavailable history/write failure, 2 usage.', safety: 'append', jsonShape: 'phantom.release-notes.v1 {since,head,summary,groups:{New,Improved,Fixed,Internal}}; entries: {text,prs,commits}' },
   { usage: 'phm worklog [--hours 6] [--kind merged|launched|finished|empty|leader|incident] [--repo <repo>] [--lane <lane>] [--json]', description: 'One feed of what the fleet did, newest first: merges, launches, finishes, empty jobs, leader replies and incidents, one plain-words line each. An unreadable source is reported as unknown with a reason. Exit 0 report, 1 read failure, 2 bad usage.', safety: 'read', jsonShape: 'worklog.v3 {hours,rows:[{at,kind,job,lane,repo,text,url,count}],sources:{jobs,events,leader:{state,reason?}},entries:[{kind,at,job,repo,lane,model,mergedAt,openToMergeSeconds,url}],malformedLines}' },
   { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
@@ -869,6 +870,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
+  { cmd: 'bots list|show|create --dry-run|explain [--json]', desc: 'Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.', topic: 'autonomy' },
   { cmd: 'app restart --json', desc: 'Report a held restart while the native UI owns live runtime state; does not quit or update the app.', topic: 'core' },
   { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },

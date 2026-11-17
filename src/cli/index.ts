@@ -3270,6 +3270,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'bots': {
+        const { runBotsCli } = await import('./bots.js');
+        process.exitCode = await runBotsCli(rest);
+        break;
+      }
+
       case 'openai-agents': {
         const cmdOpenaiAgents = await loadOpenaiAgentsCmd();
         process.exitCode = await cmdOpenaiAgents(rest);
