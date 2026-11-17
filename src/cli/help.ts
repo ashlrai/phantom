@@ -230,6 +230,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; unavailable scores are null',
   },
   {
+    usage: 'phm graph status --fleet <fleet.json> [--seats <seats.json>] [--json] | phm graph status --seats <seats.json> [--json]',
+    description: 'Read declared fleet relationships and passive seat catalogs. No provider probes or execution authority. Exit 0 complete projection, 1 incomplete, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'RegistryGraph (schema graph.v1): sources, nodes, edges, issues, complete',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -946,6 +952,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', desc: 'Show merged pull requests from the jobs ledger.', topic: 'observability' },
   { cmd: 'library list [--json]', desc: 'List leader files. Read-only.', topic: 'observability' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
+  { cmd: 'graph status --fleet <file> [--seats <file>] [--json]',        desc: 'Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.', topic: 'autonomy' },
   { cmd: 'fleet vitals [--runs-dir <directory>] [--json]', desc: 'Read first-minute launch process and sampled CPU costs; missing evidence stays unknown.', topic: 'autonomy' },
   { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
   { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
