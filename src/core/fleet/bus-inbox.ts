@@ -55,6 +55,8 @@ interface BusInboxStore {
   /** Greatest cursor ever assigned; 0 while nothing has been posted. */
   highWater: number;
   bytes: number | null;
+  /** Rows dropped by a tolerant scan; strict loads throw instead. */
+  skipped: number;
 }
 function checkedRow(row: BusInboxReceipt, ids: Set<string>): BusInboxReceipt {
   if (!row || Object.keys(row).sort().join() !== 'cursor,envelope,receivedAt' ||
@@ -82,9 +84,11 @@ function readSnapshotText(file: string, root: string): { text: string; bytesRead
     if (attempt >= BUS_INBOX_READ_ATTEMPTS) throw new BusInboxChurnError('Bus inbox changed during read');
   }
 }
-function loadSnapshot(root: string): BusInboxStore {
+/** `tolerant` (read-only views) skips and counts a damaged row instead of
+ * failing the whole store; writers stay strict so damage is never rewritten. */
+function loadSnapshot(root: string, tolerant = false): BusInboxStore {
   const directory = join(root, 'bus-inbox'), file = join(directory, 'messages.json');
-  const absent: BusInboxStore = { source: 'missing', rows: [], highWater: 0, bytes: null };
+  const absent: BusInboxStore = { source: 'missing', rows: [], highWater: 0, bytes: null, skipped: 0 };
   if (missing(root)) return absent;
   privatePath(root, 'directory', root);
   if (missing(directory)) return absent;
@@ -98,11 +102,11 @@ function loadSnapshot(root: string): BusInboxStore {
     // the high-water mark. Reads migrate in memory only; the next append
     // rewrites version 2 atomically.
     if (snapshot.length > BUS_INBOX_MAX_MESSAGES) throw new Error('Unavailable');
-    const rows = snapshot.map((row: BusInboxReceipt, index) => {
+    const rows = keep(snapshot.map((row: BusInboxReceipt, index) => () => {
       if (!row || row.cursor !== index + 1) throw new Error('Unavailable');
       return checkedRow(row, ids);
-    });
-    return { source: 'available', rows, highWater: rows.length, bytes: read.bytesRead };
+    }), tolerant);
+    return { source: 'available', rows: rows.kept, highWater: snapshot.length, bytes: read.bytesRead, skipped: rows.skipped };
   }
   if (snapshot === null || typeof snapshot !== 'object' ||
     Object.keys(snapshot).sort().join() !== 'highWater,rows,version' ||
@@ -112,13 +116,34 @@ function loadSnapshot(root: string): BusInboxStore {
   const { highWater, rows: stored } = snapshot as { highWater: number; rows: unknown };
   if (!Array.isArray(stored) || stored.length > BUS_INBOX_MAX_MESSAGES) throw new Error('Unavailable');
   let ceiling = 0;
-  const rows = stored.map((row: BusInboxReceipt) => {
+  const rows = keep(stored.map((row: BusInboxReceipt) => () => {
     const receipt = checkedRow(row, ids);
     if (receipt.cursor <= ceiling || receipt.cursor > highWater) throw new Error('Unavailable');
     ceiling = receipt.cursor;
     return receipt;
-  });
-  return { source: 'available', rows, highWater, bytes: read.bytesRead };
+  }), tolerant);
+  return { source: 'available', rows: rows.kept, highWater, bytes: read.bytesRead, skipped: rows.skipped };
+}
+function keep(checks: (() => BusInboxReceipt)[], tolerant: boolean): { kept: BusInboxReceipt[]; skipped: number } {
+  const kept: BusInboxReceipt[] = [];
+  for (const check of checks) {
+    try { kept.push(check()); } catch (error) { if (!tolerant) throw error; }
+  }
+  return { kept, skipped: checks.length - kept.length };
+}
+
+export interface BusInboxScan { source: 'missing' | 'available' | 'unavailable'; rows: BusInboxReceipt[]; skipped: number }
+/** Read-only scan of every retained live receipt for views such as `phm messages`.
+ * A malformed row is skipped and counted, never fatal; a damaged file header,
+ * unsafe path or invalid clock still reads as unavailable. TTL is not rewritten. */
+export function scanBusInbox(options: BusInboxOptions = {}): BusInboxScan {
+  try {
+    const now = (options.now ?? Date.now)();
+    if (!Number.isSafeInteger(now) || now < 0) return { source: 'unavailable', rows: [], skipped: 0 };
+    const snapshot = loadSnapshot(rootPath(options), true);
+    const rows = snapshot.rows.filter(row => Math.max(0, now - row.receivedAt) < row.envelope.ttl);
+    return { source: snapshot.source, rows, skipped: snapshot.skipped };
+  } catch { return { source: 'unavailable', rows: [], skipped: 0 }; }
 }
 
 /** Observe retained capacity without creating or changing the store. Counts are

@@ -124,6 +124,65 @@ is free by default. Fresh `use-it-all.v1` evidence that an executor's window is
 at waste risk or behind pace also reads as `burn` for that tick, so a preserved
 window that would otherwise expire unused takes volume.
 
+Fresh measured `queue/budget-overrides.json` allowance also sets posture for
+`included` subscriptions only (never metered/API-credit or local lanes).
+Per-lane `weekly_used_pct` (0–100), finite nonnegative `burn_pct_per_hour`
+(including measured zero), `reset_at` and `as_of` are required. Times accept
+epoch seconds or ISO timestamps; observations older than 30 minutes, more than
+60 seconds in the future, or already elapsed resets are unknown.
+With hours remaining to reset, projected unused allowance is
+`max(0, 100 - weekly_used_pct - burn_pct_per_hour * hours)` (see
+[projected waste](AMPLIFY.md)). At least 10 percentage points unused selects
+`burn` (`spend_down_projected_unused`); projected consumption above 110% selects
+`preserve` (`spend_down_projected_exhaustion`); otherwise `balanced`
+(`spend_down_on_pace`). Precedence is unexpired `free_until`, valid host-declared
+`posture`, measured spend-down, then built-in defaults. Reasons are `free_until`,
+`host_declared`, or the spend-down code; defaults retain `spend_down_unknown`
+or `spend_down_not_subscription`. The existing use-it-all tick override remains
+last, with reason `use_it_all_waste_risk` or `use_it_all_behind`.
+
+The Devin CLI lane derives an allowance-bounded cost class instead of trusting
+a `slots.json` cost override. It reads the existing published
+`~/.ashlr/devin/weekly-capacity.json` measurement (`phm capacity publish`),
+`devin.weeklyAcuAllowance` (falling back to the local budget's `acuBudgetTotal`),
+and the configured recurring `devin.weeklyResetAt` anchor. The measurement must
+be live, at most 15 minutes old, and belong to the configured window with a
+future reset. Unknown ACU values stay null. It counts as `included` only when
+`allowance - measured usage - reservations - reserveAcu >= maxAcuPerSession`.
+Reservations conservatively hold the full cap of unsettled local Devin tasks
+(including suspended/dismissed sessions and ambiguous creates), plus one cap
+per running dispatcher session. This can double-reserve a tracked worker;
+it protects usage since the weekly observation. Claims in the same tick each
+reserve another cap before the next decision. Missing budget or task inventory
+makes reservations unknown. No allowance, reset, measurement or sufficient
+headroom means `metered`, which cannot burn, including through host posture
+or use-it-all overrides. This classification grants no launch authority and
+does not change billing, plan settings or the launcher's spending gates.
+
+Selected SWE-2 Lightning/Flash CLI preview models are `included` with
+`zero_cost: true` and posture `burn` until 2026-12-01 05:00 UTC (the shared
+resource-live expiry). They need no ACU reservation. At expiry they become
+`metered`; `free_until` cannot extend them. Tier-specific model picks apply per
+job; a batch or tier boost cannot silently substitute a differently priced
+Devin model for the cost receipt's selected model.
+
+Devin receipts add `cost_class_reason`, `zero_cost` and nullable ACU `allowance`
+evidence. Reasons are `devin_within_allowance`, `devin_allowance_headroom`,
+`devin_usage_unknown`, `devin_usage_stale`, `devin_reset_unknown`,
+`devin_reset_expired`, `devin_allowance_unknown`, `devin_reservations_unknown`,
+`devin_free_preview` and `devin_preview_expired`.
+
+`work-market.v1` routing receipts include `posture_reason` and `spend_down` in
+each lane's ranking inputs. When allowance readings exist, one `event: posture`
+snapshot per market tick records all lane postures and projections, including
+ticks without a routing decision. `phm route explain --json` returns nullable
+`posture.lanes` with `posture`, `postureReason`, `projectedUnusedPct` and
+`hoursToReset`, using the newest posture snapshot in a bounded 256 KiB journal
+tail, or the newest routing decision if no snapshot exists. Missing or invalid
+evidence stays null. These ranking inputs never grant quota or eligibility.
+Devin's cost evidence is exposed there as `costClass`, `costClassReason`,
+`zeroCost` and `allowance` (ACU keys retain their receipt names).
+
 | Posture | bulk | standard | judgment |
 | --- | --- | --- | --- |
 | `burn` | best | best | neutral |
@@ -425,8 +484,8 @@ code 14.
 `merge-queue-loop` ([`merge-queue-loop.ts`](../src/core/drive/merge-queue-loop.ts),
 run by `node scripts/merge-queue-loop.mjs cycle [--dry-run]`) makes one pass
 over the fleet PRs of the seven approved repos. A green, mergeable PR is
-added to the default branch's GitHub merge queue (`enqueuePullRequest` with
-`expectedHeadOid`, so a moved head is refused); the queue still runs every
+added to the default branch's GitHub merge queue (`gh pr merge --auto` with
+`--match-head-commit`, so a moved head is refused); the queue still runs every
 required check on the merge group. A BEHIND PR gets `updatePullRequestBranch`
 with the MERGE method (a base merge commit, never a rewrite or force-push) only
 where it helps: in a repo without a merge queue, or when its head reports no
@@ -437,6 +496,15 @@ queue are never auto-enqueued, and PRs touching Security-pinned paths (or with
 a truncated file list) are reported as `pinned`, not enqueued. Each action is
 written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
 per cycle.
+
+The same cycle recovers eligible PRs stranded outside the queue, including
+those with auto-merge already armed. Live PR or repository claims in the
+coordination ledger report `owned`; unreadable ownership stops that repo.
+JSON `repos[].latency` reports each PR's head, state, state entry time (`since`),
+observation time (`observedAt`, both epoch milliseconds) and cumulative `stateMs`. Times are sampled
+at successful reads: intervals belong to the preceding observed state, not
+exact GitHub transition times. New heads, failed reads and backward clocks
+reset the timing window; closed PRs are removed. Dry runs report without saving.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs

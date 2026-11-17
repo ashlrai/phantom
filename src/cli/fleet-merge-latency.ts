@@ -69,6 +69,12 @@ export interface LatencyStats { count: number; missing: number; p50_s: number | 
 export interface RetryableConflict { repo: string; pr: number; head_sha: string; waiting_s: number; recut: MergeRecutRequest }
 export interface BlockedConflict { repo: string; pr: number; reason: 'no-head' | 'already-requested' | 'too-many-recuts' }
 
+export interface ActionableQueueDelay {
+  repo: string; pr: number; since: string; waiting_s: number; reason: BlockerReason;
+  next_action: 'inspect_checks' | 'resolve_conflicts' | 'address_review' | 'inspect_queue';
+  recommendation: string;
+}
+
 export interface MergeLatencyReport {
   schema: typeof SCHEMA;
   known: boolean;
@@ -97,6 +103,8 @@ export interface MergeLatencyReport {
   /** Aggregate seconds PRs spent in each queue state across all timelines. */
   queue_state_time: QueueStateTime | null;
   pr_stages: PrStages[] | null;
+  /** Oldest open, uniquely timed queue entry needing attention, across all ages. Advisory only. */
+  oldest_actionable_delay: ActionableQueueDelay | null;
 }
 
 /**
@@ -163,6 +171,33 @@ export interface QueueTimeline {
 }
 
 type QueueRetryVerdict = { kind: 'none' } | { kind: 'retryable'; row: RetryableQueueFailure } | { kind: 'blocked'; row: BlockedQueueRetry };
+
+/** Only aggregate readiness clears check blockers; a single check success cannot. */
+function actionableQueueDelay(events: MergeEvent[], now: number, stalledAfter: number): ActionableQueueDelay | null {
+  const queued = events.filter(e => e.type === 'queued');
+  if (queued.length !== 1) return null;
+  const since = queued[0]!.at!;
+  const queuedAt = Date.parse(since);
+  const waiting_s = Math.floor((now - queuedAt) / 1000);
+  const transitions = events.filter(e => eventTime(e) >= queuedAt &&
+    (['blocked', 'conflict', 'eligible', 'checks_passed'].includes(e.type) ||
+      (e.type === 'check_observed' && e.required === true && e.conclusion !== 'success')));
+  const reasonOf = (e: MergeEvent): BlockerReason => e.type === 'blocked' ? e.reason!
+    : e.type === 'conflict' ? 'conflict' : e.type === 'check_observed' ? 'required_checks' : 'queue';
+  const latest = transitions.at(-1);
+  // Simultaneous contradictory states have no reliable ordering.
+  if (latest && transitions.some(e => eventTime(e) === eventTime(latest) && reasonOf(e) !== reasonOf(latest))) return null;
+  const reason = latest ? reasonOf(latest) : 'queue';
+  if (reason === 'queue' && waiting_s < stalledAfter) return null;
+  const actions: Record<BlockerReason, Pick<ActionableQueueDelay, 'next_action' | 'recommendation'>> = {
+    required_checks: { next_action: 'inspect_checks', recommendation: 'Inspect pending or failed required checks and their merge-group workflow; keep every required check enabled.' },
+    conflict: { next_action: 'resolve_conflicts', recommendation: 'Inspect existing recut requests, then resolve any remaining conflicts on the current head; rerun required checks through the merge queue.' },
+    review: { next_action: 'address_review', recommendation: 'Address review feedback and obtain required approval; continue through the merge queue.' },
+    queue: { next_action: 'inspect_queue', recommendation: 'Inspect queue membership and merge-group checks; continue through the merge queue without bypassing its requirements.' },
+    other: { next_action: 'inspect_queue', recommendation: 'Inspect the recorded blocker and current queue state; keep required checks and merge-queue rules in place.' },
+  };
+  return { repo: queued[0]!.repo, pr: queued[0]!.pr, since, waiting_s, reason, ...actions[reason] };
+}
 
 /**
  * Classify one open PR's queue-failure state. A transient queue failure is an
@@ -313,7 +348,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   try { text = await read(); } catch { text = null; }
   if (text === null) {
     return { ...base, known: false, merged: 0, merged_time_unknown: 0, open: 0, ignored_events: 0, opened_to_queue: null, queue_to_merge: null,
-      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_retries: null, queue_timelines: null, queue_state_time: null, pr_stages: null };
+      total: null, slowest_step: null, retryable_conflicts: null, blocked_conflicts: null, pending_auto_merge: null, queue_retries: null, queue_timelines: null, queue_state_time: null, pr_stages: null, oldest_actionable_delay: null };
   }
   const since = now - hours * 3_600_000;
   const byPr = new Map<string, MergeEvent[]>();
@@ -335,6 +370,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
   const pending: PendingAutoMerge[] = [];
   const timelines: QueueTimeline[] = [];
   const stages: PrStages[] = [];
+  const delays: ActionableQueueDelay[] = [];
   let merged = 0;
   let mergedTimeUnknown = 0;
   let open = 0;
@@ -358,6 +394,8 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
     }
     if (events.some(e => e.type === 'closed')) continue;
     open++;
+    const delay = actionableQueueDelay(events, now, stalledAfter);
+    if (delay) delays.push(delay);
     const toggles = events.filter(e => e.type === 'auto_merge_enabled' || e.type === 'auto_merge_disabled');
     const latest = toggles.at(-1);
     // Untimed or simultaneous contradictory toggles cannot establish current state.
@@ -401,6 +439,7 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
       [reason, stats(timelines.map(t => t.wait_by_reason_s === null ? null : t.wait_by_reason_s[reason] ?? 0))])) as Record<BlockerReason, LatencyStats>,
   };
   return { ...base, known: true, merged, merged_time_unknown: mergedTimeUnknown, open, ignored_events: ignored, opened_to_queue: q, queue_to_merge: m, total: stats(total),
+    oldest_actionable_delay: delays.sort((a, b) => Date.parse(a.since) - Date.parse(b.since) || byPrId(a, b))[0] ?? null,
     slowest_step: q.p50_s === null || m.p50_s === null ? null : m.p50_s >= q.p50_s ? 'queue_to_merge' : 'opened_to_queue',
     retryable_conflicts: retryable.sort(byWait), blocked_conflicts: blocked.sort(byPrId),
     queue_retries: { retryable: retryableQueueFailures.sort((a, b) => b.waiting_s - a.waiting_s || byPrId(a, b)), needs_person: blockedQueueRetries.sort(byPrId) },
@@ -443,6 +482,8 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
   const retry = r.retryable_conflicts!;
   return [
     `Last ${r.window_hours} hours: ${r.merged - r.merged_time_unknown} merged; ${r.merged_time_unknown} merged at an unknown time. Still open in ledger (all ages): ${r.open}.`,
+    r.oldest_actionable_delay ? `Oldest actionable queue delay: ${r.oldest_actionable_delay.repo}#${r.oldest_actionable_delay.pr} (${r.oldest_actionable_delay.waiting_s}s queued). Next: ${r.oldest_actionable_delay.recommendation}`
+      : 'Oldest actionable queue delay: none observed.',
     line('Waiting to join the queue', r.opened_to_queue),
     line('Queue to merge', r.queue_to_merge),
     ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.`),
@@ -469,6 +510,7 @@ export async function cmdFleetMergeLatency(args: string[], deps: MergeLatencyDep
     console.log([
       usage,
       'Show first-enqueue-to-merge median and 90th percentile, pending auto-merges and retryable conflicts.',
+      'Oldest actionable queue delay: one open, uniquely timed enqueue needing attention, across all ages, with a safe next action. Ordinary queue waits use --stalled-after.',
       'Read-only: required checks are never skipped. No live GitHub query; results reflect the supplied ledger.',
       'Example: phm fleet merge-latency --events merge-events.jsonl --json',
       'Default ledger: ~/.ashlr-runs/metrics/merge-events.jsonl. One JSON event per line: repo, pr, type, at (ISO timestamp), head_sha (optional).',

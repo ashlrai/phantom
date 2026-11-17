@@ -1,13 +1,12 @@
 /** Check registry IDs against the provider pages already recorded in the registry. */
-import { readFile } from 'node:fs/promises';
-import type { ModelRegistryEntry } from './model-verify.js';
+import { loadVerifiedRegistry } from './model-verify.js';
 
 export type ModelDocsStatus = 'confirmed' | 'not-found' | 'unknown';
 export interface ModelDocsResult {
   id: string;
   provider: string;
   status: ModelDocsStatus;
-  sourceUrl: string;
+  sourceUrl: string | null;
   checkedAt: string;
 }
 
@@ -17,25 +16,16 @@ export async function verifyModelDocs(options: {
   now?: () => Date;
   timeoutMs?: number;
 } = {}): Promise<ModelDocsResult[]> {
-  const registry: unknown = JSON.parse(await readFile(options.registryPath ?? new URL('../../../docs/model-registry.json', import.meta.url), 'utf8'));
-  if (!Array.isArray(registry)) throw new Error('Invalid model registry');
-  const entries: ModelRegistryEntry[] = registry.map((row: unknown) => {
-    if (!row || typeof row !== 'object') throw new Error('Invalid model registry');
-    const entry = row as Partial<ModelRegistryEntry>;
-    if (typeof entry.id !== 'string' || !/^[a-z0-9][a-z0-9.-]*$/i.test(entry.id)
-      || typeof entry.provider !== 'string' || typeof entry.docs_url !== 'string') throw new Error('Invalid model registry');
-    const url = new URL(entry.docs_url);
-    const domains: Record<string, string[]> = { openai: ['learn.chatgpt.com'], anthropic: ['platform.claude.com'] };
-    if (url.protocol !== 'https:' || url.username || url.password || url.port || !domains[entry.provider]?.includes(url.hostname)) throw new Error('Invalid model source');
-    return entry as ModelRegistryEntry;
-  });
+  const entries = await loadVerifiedRegistry({ registryPath: options.registryPath, now: () => (options.now ?? (() => new Date()))().getTime() });
   const checkedAt = (options.now ?? (() => new Date()))().toISOString();
   const fetcher = options.fetch ?? fetch;
   const pages = new Map<string, Promise<string | null>>();
   for (const entry of entries) {
-    if (!pages.has(entry.docs_url)) pages.set(entry.docs_url, (async () => {
+    const source = entry.verified_source;
+    if (source === null) continue;
+    if (!pages.has(source)) pages.set(source, (async () => {
       try {
-        const response = await fetcher(entry.docs_url, { signal: AbortSignal.timeout(options.timeoutMs ?? 10_000), redirect: 'error', credentials: 'omit' });
+        const response = await fetcher(source, { signal: AbortSignal.timeout(options.timeoutMs ?? 10_000), redirect: 'error', credentials: 'omit' });
         if (!response.ok) return null;
         if (!response.body) return null;
         const reader = response.body.getReader();
@@ -53,9 +43,9 @@ export async function verifyModelDocs(options: {
     })());
   }
   return Promise.all(entries.map(async entry => {
-    const page = await pages.get(entry.docs_url)!;
+    const page = entry.verified_source === null ? null : await pages.get(entry.verified_source)!;
     const escaped = entry.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const found = page !== null && new RegExp(`(^|[^a-z0-9.-])${escaped}($|[^a-z0-9.-])`, 'i').test(page);
-    return { id: entry.id, provider: entry.provider, status: page === null ? 'unknown' : found ? 'confirmed' : 'not-found', sourceUrl: entry.docs_url, checkedAt };
+    const found = page !== null && new RegExp(`(^|[^a-z0-9._:/-])${escaped}($|[^a-z0-9._:/-])`, 'i').test(page);
+    return { id: entry.id, provider: entry.provider, status: page === null ? 'unknown' : found ? 'confirmed' : 'not-found', sourceUrl: entry.verified_source, checkedAt };
   }));
 }

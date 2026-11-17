@@ -1,5 +1,5 @@
 /**
- * settings-appearance-n17a — `phm settings appearance get|set` and the typed
+ * settings-appearance-n17a — `phm settings appearance [get]|set` and the typed
  * four-key module behind it (core/settings-appearance.ts): defaults,
  * validation errors, a set followed by a get against the SAME shared record
  * the app polls, and system theme resolution. Hermetic: ASHLR_RUNS_DIR points
@@ -61,6 +61,15 @@ describe('defaults', () => {
     expect(v.revision).toBe(0);
     expect(v.updatedBy).toBeNull();
   });
+  it('bare `appearance --json` reads (the documented form), same payload as `get`', async () => {
+    expect(await cmdSettings(['appearance', '--json'], osDark(true))).toBe(0);
+    const bare = lastJson();
+    expect(await cmdSettings(['appearance', 'get', '--json'], osDark(true))).toBe(0);
+    expect(bare).toEqual(lastJson());
+    expect(bare.resolvedTheme).toBe('dark');
+    expect(await cmdSettings(['appearance'], osDark(false))).toBe(0);
+    expect(out.at(-1)).toMatch(/^theme {5}system \(light right now\)/);
+  });
 });
 
 describe('validation', () => {
@@ -103,6 +112,7 @@ describe('validation', () => {
     expect(await cmdSettings(['appearance', 'set', 'theme'])).toBe(2);
     expect(await cmdSettings(['appearance', 'set', 'theme', 'dark', 'extra'])).toBe(2);
     expect(await cmdSettings(['appearance', 'get', 'theme'])).toBe(2);
+    expect(await cmdSettings(['appearance', 'theme'])).toBe(2);
     expect(await cmdSettings(['--help'])).toBe(0);
   });
 });

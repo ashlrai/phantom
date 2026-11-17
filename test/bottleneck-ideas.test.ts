@@ -28,6 +28,7 @@ async function put(path: string, text: string): Promise<void> {
 
 /** One fixture per signal, each tripping its threshold once plus a decoy that must not. */
 async function seedAllSignals(): Promise<void> {
+  for (const path of ['leader/VISION.md', 'leader/MASON-INBOX.md', 'queue/router-queue.md']) await put(path, '');
   const rows: object[] = [];
   // RQ-PHX-RECUT*: 4 launches, 3 empty finishes. RQ-GOOD*: 2 launches, none empty.
   Array.from({ length: 4 }, (_, i) => `RQ-PHX-RECUTAPIC${i + 1}`).forEach((job, i) => {
@@ -138,9 +139,9 @@ describe('stable JSON', () => {
       const signal = signals[key];
       if (signal.ok) (reversed as unknown as Record<string, unknown>)[key] = { ok: true, data: [...signal.data].reverse() };
     }
-    expect(JSON.stringify(rankBottlenecks(reversed, NOW))).toBe(first);
+    expect(JSON.stringify(rankBottlenecks(reversed, NOW))).toBe(JSON.stringify(rankBottlenecks(signals, NOW)));
     expect(Object.keys(JSON.parse(first))).toEqual(['schema', 'generatedAt', 'ideas', 'signals']);
-    expect(Object.keys(JSON.parse(first).ideas[0])).toEqual(['id', 'signal', 'title', 'evidence', 'payoff', 'task']);
+    expect(Object.keys(JSON.parse(first).ideas[0])).toEqual(['id', 'signal', 'title', 'evidence', 'payoff', 'task', 'why', 'lane', 'status']);
   });
 
   it('ties break by id so equal scores never swap', () => {
@@ -194,7 +195,7 @@ describe('phm ideas list / queue', () => {
       vi.restoreAllMocks();
       out = capture();
       expect(await cmdIdeas(['list', '--human'])).toBe(0);
-      expect(out.join('\n')).toMatch(/^Nothing to fix right now\.\nNot checked: empty-launches/);
+      expect(out.join('\n')).toMatch(/^No candidates from available sources\.\nNot checked: empty-launches/);
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -207,6 +208,77 @@ describe('phm ideas list / queue', () => {
       expect(await cmdIdeas(['queue', 'idle-lanes:nope', '--json'])).toBe(1);
       expect(JSON.parse(out.at(-1)!)).toEqual({ error: 'that idea is not on the current list' });
       expect(await cmdIdeas(['list', '--help'])).toBe(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+});
+
+describe('next bets contract', () => {
+  it('combines VISION and requests with queue and merged lifecycle evidence', async () => {
+    await seedAllSignals();
+    await put('leader/VISION.md', '- READY RQ-NEXT (pool=codex-personal): Build offline search\n- READY RQ-LIVE: Ship retries\n- READY RQ-DONE: Restore main');
+    await put('queue/router-queue.md', '- READY RQ-LIVE: Ship retries\n- READY RQ-WAIT: Improve onboarding');
+    await put('leader/MASON-INBOX.md', '2026-11-17T10:00:00Z [src:desktop id:ask1] Make the fleet more ambitious');
+    await put('metrics/jobs.jsonl', [
+      { event: 'concurrency', ts: iso(3), from: 1, to: 2 },
+      { event: 'enqueue', job: 'RQ-WAIT', ts: NOW / 1000 - 7200 },
+      { event: 'launch', job: 'RQ-LIVE', ts: iso(1) },
+      { event: 'outcome', job_id: 'RQ-DONE', state: 'MERGED', ts: iso(2) },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    const report = await read();
+    expect(report.ideas[0]).toMatchObject({ signal: 'mason-inbox', status: 'proposed', payoff: { score: 85 } });
+    const byId = new Map(report.ideas.map(idea => [idea.id, idea]));
+    expect(byId.get('plan:rq-next')).toMatchObject({ title: 'Build offline search', lane: 'codex-personal', status: 'proposed', why: 'Leader VISION names RQ-NEXT.' });
+    expect(byId.get('plan:rq-live')).toMatchObject({ status: 'running' });
+    expect(byId.get('plan:rq-wait')).toMatchObject({ status: 'queued' });
+    expect(byId.get('plan:rq-done')).toMatchObject({ status: 'shipped' });
+    expect(JSON.stringify(await read())).toBe(JSON.stringify(report));
+    const write = vi.fn();
+    expect(await queueIdea('plan:rq-done', { runsDir: root, now: NOW, write })).toMatchObject({ existing: true, queued: false, jobId: 'RQ-DONE' });
+    expect(write).not.toHaveBeenCalled();
+    await queueIdea('plan:rq-next', { runsDir: root, now: NOW });
+    const prompt = await readFile(join(root, 'leader/drop/claude', `RQ-PHX-${ideaJobId('plan:rq-next')}.md`), 'utf8');
+    expect(prompt).toContain('lane=codex-personal');
+    expect((await read()).ideas.find(idea => idea.id === 'plan:rq-next')?.status).toBe('queued');
+    expect(await queueIdea('plan:rq-next', { runsDir: root, now: NOW })).toMatchObject({ jobId: ideaJobId('plan:rq-next'), queued: false });
+  });
+
+  it('marks malformed event lines unknown while retaining independent VISION evidence', async () => {
+    await put('leader/VISION.md', '- READY RQ-NEXT: Build offline search');
+    await put('metrics/jobs.jsonl', '{broken event\n' + [
+      { event: 'launch', job: 'RQ-NEXT', ts: 'invalid' }, { event: 'launch', job: 'RQ-NEXT', ts: iso(-1) },
+      { jobId: 'RQ-NEXT', outcome: 'MERGED', ts: iso(1) },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    const report = await read();
+    expect(report.ideas).toHaveLength(1);
+    expect(report.ideas[0]?.status).toBe('shipped');
+    expect(await queueIdea('plan:rq-next', { runsDir: root, now: NOW })).toMatchObject({ existing: true, queued: false });
+    for (const name of ['job-events', 'empty-launches']) expect(report.signals.find(signal => signal.name === name)).toMatchObject({ status: 'unknown', reason: expect.stringContaining('malformed') });
+  });
+
+  it('does not turn an ended run or an unmerged outcome into shipped work', async () => {
+    await put('leader/VISION.md', '- READY RQ-NEXT: Build offline search');
+    await put('metrics/jobs.jsonl', ['launch', 'finish', 'publish', 'outcome'].map((event, i) => JSON.stringify({ event, job: 'RQ-NEXT', state: 'UNMERGED', ts: iso(4 - i) })).join('\n'));
+    expect((await read()).ideas[0]).toMatchObject({ status: 'proposed', evidence: { existingJobId: 'RQ-NEXT' } });
+    expect(await queueIdea('plan:rq-next', { runsDir: root, now: NOW })).toMatchObject({ existing: true, queued: false, jobId: 'RQ-NEXT' });
+  });
+
+  it('proposes investigating a stuck job without claiming the diagnosis has run', async () => {
+    await put('metrics/jobs.jsonl', JSON.stringify({ event: 'launch', job: 'RQ-STUCK_1', ts: iso(8) }));
+    expect((await read()).ideas[0]).toMatchObject({ id: 'stuck:rq-stuck_1', status: 'proposed', payoff: { score: 58 } });
+    expect(await queueIdea('stuck:rq-stuck_1', { runsDir: root, now: NOW })).toMatchObject({ queued: true });
+  });
+
+  it('shares the default JSON report with list and supports --text', async () => {
+    vi.stubEnv('ASHLR_RUNS_DIR', root);
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await put('leader/VISION.md', '- READY RQ-NEXT (pool=claude): Build offline search');
+      expect(await cmdIdeas(['--json'])).toBe(0);
+      expect(await cmdIdeas(['list', '--json'])).toBe(0);
+      expect(out.mock.calls[0]).toEqual(out.mock.calls[1]);
+      expect(await cmdIdeas(['--text'])).toBe(0);
+      expect(out.mock.calls[2]?.[0]).toContain('Build offline search [proposed] · claude');
     } finally { vi.unstubAllEnvs(); }
   });
 });

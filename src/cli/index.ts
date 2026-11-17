@@ -55,6 +55,8 @@
  *   serve [--port N] [--open]  Local web dashboard + JSON API on 127.0.0.1 (default port 7777).
  *   console [--port N] [--no-open]  Phantom console (serve with dispatch on) at /app/. `verse` is the same command.
  *   verse [--port N] [--no-open]  Alias of `console`; opens /verse/.
+ *   pages publish <file> [opts]  Publish a Markdown/JSON report into the local dashboard (/pages/<slug>).
+ *   pages list [--json]          List published report pages.
  *   issues [--retry] [--json]  Group failed queue jobs by error; --retry queues READY retries.
  *   gh <pr|issue|ci>           Read GitHub PRs / issues / CI status (read-only via gh CLI).
  *   gh pr create               Create a PR (explicit + confirm-gated mutation).
@@ -446,6 +448,14 @@ const loadDashboardCmd = lazyCmd(
   () => import('./dashboard.js' as unknown as string),
   (m) => m.cmdDashboard as Cmd,
   'dashboard command requires src/cli/dashboard.ts (M211 module not yet built).',
+);
+
+// ─── COS report pages command loader ────────────────────────────────
+
+const loadPagesCmd = lazyCmd(
+  () => import('./pages.js' as unknown as string),
+  (m) => m.cmdPages as Cmd,
+  'pages command requires src/cli/pages.ts.',
 );
 
 // ─── M14 command loader ────────────────────────────────────────────
@@ -2125,6 +2135,17 @@ async function main(): Promise<void> {
         process.exitCode = await cmdRoute(rest);
         break;
       }
+      case 'tools': {
+        const { cmdTools } = await import('./tools.js');
+        process.exitCode = await cmdTools(rest);
+        break;
+      }
+
+      case 'messages': {
+        const { cmdMessages } = await import('./messages.js');
+        process.exitCode = await cmdMessages(rest);
+        break;
+      }
       case 'router': {
         const { cmdRouter } = await import('./router.js');
         process.exitCode = await cmdRouter(rest);
@@ -2187,6 +2208,12 @@ async function main(): Promise<void> {
       case 'autopilot': {
         const { cmdAutopilot } = await import('./autopilot.js');
         process.exitCode = await cmdAutopilot(rest);
+        break;
+      }
+
+      case 'empties': {
+        const { cmdEmpties } = await import('./empties.js');
+        process.exitCode = await cmdEmpties(rest);
         break;
       }
 
@@ -2526,6 +2553,14 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'pages': {
+        // COS report pages: publish a .md/.json report into the loopback
+        // dashboard at /pages/<slug>, or list published pages.
+        const cmdPages = await loadPagesCmd();
+        process.exitCode = await cmdPages(rest);
+        break;
+      }
+
       case 'serve': {
         const cmdServe = await loadServeCmd();
         process.exitCode = await cmdServe(rest);
@@ -2829,7 +2864,8 @@ async function main(): Promise<void> {
       }
 
       case 'goals': {
-        if (rest.length === 0 || (rest.length === 1 && rest[0] === '--json')) {
+        // Bare `goals` (or only --json/--text) is the fleet scorecard; every subcommand is M28.
+        if (rest.every(arg => arg === '--json' || arg === '--text')) {
           const { cmdGoals } = await import('./goals-view.js');
           process.exitCode = await cmdGoals(rest);
           break;
@@ -2967,7 +3003,7 @@ async function main(): Promise<void> {
       case 'settings': {
         if (wantsHelp(rest)) {
           printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
-            ['phm settings appearance get [--json]', 'Read the four appearance settings'],
+            ['phm settings appearance [--json]', 'Read the four appearance settings'],
             ['phm settings appearance set <key> <value> [--json]', 'Change one; a running app applies it live'],
           ]);
           process.exitCode = 0;

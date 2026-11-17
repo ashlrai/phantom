@@ -36,6 +36,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
   in Secrets' trusted terminal. See [ecosystem onboarding](docs/ECOSYSTEM-ONBOARDING.md).
 - This repo's `.mcp.json` declares six companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7`, `ashlr` (Ashlr.AI Plugin). What each is for, its limits, and how to approve it: [docs/AGENT-TOOLCHAIN.md](docs/AGENT-TOOLCHAIN.md).
 - In a Phantom cloud task, list the companion tools you actually called in the report's `toolsUsed` field (an empty list if none); `phm cloud list` shows it as the session's claim.
+- Live org: `phm org` prints the leader, each lane (running, target, queued, pool usage) and each running job as a `fleet.org.v1` JSON tree; `phm org --text` is the same for people. Unknown stays null, never 0. See [docs/FLEET-API.md](docs/FLEET-API.md#org-tree).
 - Team org: `phm org show --json`, `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` (each co-founder on their own machine; opt-in per lane, no auth read, nothing sent) and `phm org plan --json` (proposes queue assignments and roles within each member's contributed limits from the router's usage and reset data; the leader reads it each planning pass). Private data is never pooled; spending stays with each member. See [docs/AGENT-NETWORK.md](docs/AGENT-NETWORK.md#team-org).
 - Team membership: `phm team invite <gh-user>`, `phm team join <invite>` and `phm team remove <gh-user>` are human-terminal commands for owners/admins and invitees (agent processes are refused); an invite grants membership only and never credentials. Agents needing access changes file them with the `phm_team_access_request` MCP tool (invite-member, link-repo or change-role); a human owner/admin decides with `phm team approve|deny`. See [docs/TEAM.md](docs/TEAM.md#invite-join-and-remove-a-teammate).
 
@@ -110,6 +111,11 @@ worktrees and reports pass@1/pass@k/pass^k per lane/model. `scores` and
 `--gate` exits 3 on a regression vs the baseline. Outputs are advisory for
 lane routing; nothing routes, reserves or merges. See
 [EVAL-PASSK](docs/EVAL-PASSK.md).
+
+Report pages: `phm pages publish <file.md|file.json> --json` renders a report
+into the loopback console at `/pages/<slug>`; `phm pages list --json` lists
+published pages. Store is `~/.ashlr/pages`; nothing leaves the machine. See
+[report pages](docs/PAGES.md).
 
 ## Publish subscription capacity
 

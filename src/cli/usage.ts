@@ -12,7 +12,7 @@
  *   - codex session files              (subscription rate limits)
  *   - ~/.claude/projects + .ashlr/runs (observability rollup for tokens/cost)
  *
- * With --json: prints the raw FrontierUsage JSON object.
+ * With --json: preserves FrontierUsage and adds the desktop's spend snapshot.
  */
 
 import { cmdUsageSensors } from './usage-sensors.js';
@@ -20,6 +20,11 @@ import { cmdUsageLive } from './usage-live.js';
 import { cmdUsageResourceLive } from './usage-resource-live.js';
 import { cmdUsageHistory } from './usage-history.js';
 import { makeColors, isTty } from './ui.js';
+import type { FrontierUsage } from '../core/usage/frontier-usage.js';
+import type { SpendSnapshot } from '../core/usage/spend.js';
+
+/** Additive CLI contract: legacy engine totals plus the desktop pool projection. */
+export type UsageSnapshot = FrontierUsage & { spend: SpendSnapshot };
 
 const { bold, dim, cyan, green, yellow, red } = makeColors(isTty());
 
@@ -247,7 +252,9 @@ export async function cmdUsage(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    console.log(JSON.stringify(usage, null, 2));
+    const { readUsageSpend } = await import('../core/usage/spend.js');
+    const snapshot: UsageSnapshot = { ...usage, spend: await readUsageSpend() };
+    console.log(JSON.stringify(snapshot, null, 2));
   } else {
     renderTable(usage);
   }
@@ -265,6 +272,7 @@ function printUsage(): void {
   console.log(b('  ashlr usage') + d(' [--json]'));
   console.log('');
   console.log('  Show per-engine frontier usage: calls, tokens, cost, and window state.');
+  console.log('  --json also includes spend: the desktop pool usage, reset, burn and unused forecast.');
   console.log('  phm usage spend [--json] shows measured burn and unused capacity at reset.');
   console.log('  phm usage pace [--json] shows included-quota forecasts by pool.');
   console.log('  phm usage validate <file> [--json] checks usage-reading.v1 JSONL records.');

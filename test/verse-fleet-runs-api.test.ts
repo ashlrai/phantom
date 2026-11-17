@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -36,6 +39,17 @@ async function request(api: ReturnType<typeof createFleetRunsApi>, options: { pa
 }
 
 describe('fleet runs api', () => {
+  it('serves the goal scorecard read-only, unknown when the runs dir is empty', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'goal-scorecard-'));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const { status, wire } = await request(api, { path: '/api/verse/fleet/runs/goal-scorecard' });
+    expect(status).toBe(200);
+    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v1', generatedAt: new Date(NOW).toISOString() });
+    const goals = (wire as unknown as { goals: { status: string; value: unknown }[] }).goals;
+    expect(goals.length).toBe(5);
+    expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
+    expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
+  });
   it('mounts runs and live as separate families', () => {
     expect(workbenchFamilyFor(PATH)?.id).toBe('fleet-runs');
     expect(workbenchFamilyFor(INBOX)?.id).toBe('fleet-runs');
