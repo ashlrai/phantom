@@ -968,7 +968,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
   { cmd: 'prs triage [--repo ashlrai/<name>] [--limit N] --json', desc: 'Read-only classification of open pull requests.', topic: 'autonomy' },
   { cmd: 'worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', desc: 'Show job launches, finishes and merges from the jobs ledger.', topic: 'observability' },
-  { cmd: 'library list [--json]', desc: 'List leader files. Read-only.', topic: 'observability' },
+  { cmd: 'library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]', desc: 'Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.', topic: 'observability' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
   { cmd: 'graph status --fleet <file> [--seats <file>] [--json]',        desc: 'Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.', topic: 'autonomy' },
   { cmd: 'fleet vitals [--runs-dir <directory>] [--json]', desc: 'Read first-minute launch process and sampled CPU costs and the top empty-job causes; missing evidence stays unknown.', topic: 'autonomy' },
