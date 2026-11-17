@@ -794,3 +794,11 @@ Optional role, capabilities, machine/lane affinity and peer mappings persist in
 roster v1. Legacy counters never supply measured outcomes; missing evidence is
 explicit and peer mappings confer no authority. See the
 [specialist roster contract](docs/contracts/CONTRACT-SPECIALIST-ROSTER.md#evidence-derived-identity-rq-agent-identity-1).
+
+### Agent app adapters
+
+`src/core/agents/apps/`: `AgentAppAdapter` (`describe`, `launchTask`, `listSessions`,
+`readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
+`describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
+`createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
+
