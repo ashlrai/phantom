@@ -1049,6 +1049,31 @@ class QueueDepthGateTests(unittest.TestCase):
                     tmp.cleanup()
 
 class QueueQualityTests(unittest.TestCase):
+    def test_semantic_incident_admission_and_repeated_pass(self):
+        fixture = (SCRIPT.parents[2] / 'test/fixtures/queue-semantic-nov16.md').read_text()
+        tmp = build(fixture)
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        preview = restock(home, '--dry-run', '--per-lane', '20', '--json')
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        report = json.loads(preview.stdout)
+        self.assertEqual(report['queued'], 2)
+        self.assertEqual(len(report['dedupe']['repeats']), 12)
+        self.assertEqual(report['dedupe']['unknown'], [])
+        self.assertTrue(all(r['reason'] == 'semantic-goal-overlap' and r['jaccard'] >= .5 for r in report['dedupe']['repeats']))
+        self.assertEqual((q / 'router-queue.md').read_text(), fixture)
+        applied = restock(home, '--per-lane', '20', '--json')
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(len((q / 'ready.tsv').read_text().splitlines()), 2)
+        self.assertEqual((q / 'router-queue.md').read_text().count('- DUPLICATE-OF-'), 12)
+        self.assertEqual(json.loads(restock(home, '--per-lane', '20', '--json').stdout)['queued'], 0)
+        new = fixture.splitlines()[1].replace('RQ-GUARDIANROUTINGQ8', 'RQ-LATE')
+        with (q / 'router-queue.md').open('a') as f: f.write(new + '\n')
+        late = json.loads(restock(home, '--per-lane', '20', '--json').stdout)
+        self.assertEqual(late['queued'], 0)
+        self.assertEqual(late['dedupe']['repeats'][0]['repeatOf'], 'RQ-GUARDIANROUTINGQ8')
+
     def test_identical_filler_grouped_at_any_rate_and_distinct_work_kept(self):
         rows = [
             line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),
