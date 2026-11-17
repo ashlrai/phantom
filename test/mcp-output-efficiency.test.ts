@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { dirname } from 'node:path';
 import { listNativeTools } from '../src/core/mcp-native.js';
 import { registerFleetNativeTools } from '../src/core/mcp-native-fleet.js';
+import { cmdMcp } from '../src/cli/mcp.js';
 
 registerFleetNativeTools();
 
@@ -212,7 +213,6 @@ describe('native MCP tool inventory', () => {
 describe('MCP CLI JSON inventory', () => {
   it('keeps the inventory fields and native classifications in compact JSON', async () => {
     vi.stubEnv('PATH', dirname(process.execPath));
-    const { cmdMcp } = await import('../src/cli/mcp.js');
     const chunks: string[] = [];
     const write = process.stdout.write;
     process.stdout.write = ((chunk: string | Uint8Array) => {
