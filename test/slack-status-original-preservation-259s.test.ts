@@ -88,7 +88,8 @@ const noSeat = { calls: 0,
 } as unknown as LeaderReplySeatModule & { calls: number };
 const cfg = {} as AshlrConfig;
 const tickWithGenerator = (call: SlackCall) => tickLeaderNetwork(cfg, { ...options, slackCall: call },
-  { reply: input => generateLeaderReply(input, cfg, options, { seat: noSeat }) });
+  // Exercise the original no-seat fallback; the newer instant brief has its own round-trip suite.
+  { statusBrief: async () => '', reply: input => generateLeaderReply(input, cfg, options, { seat: noSeat }) });
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** 'YYYY-MM-DD HH:MM:SS' in this machine's local time, the format the guardian reader parses. */

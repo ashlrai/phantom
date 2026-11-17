@@ -1,0 +1,34 @@
+import { homedir } from 'node:os';
+import { explainPhantomBot, listPhantomBots, planPhantomBot, readPhantomBot } from '../core/agents/phantom-bot.js';
+
+function options(args: string[], flags: string[], values: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  while (args.length) {
+    const key = args.shift()!;
+    if (flags.includes(key)) result[key] = 'true';
+    else if (values.includes(key) && args[0] && !args[0].startsWith('--')) result[key] = args.shift()!;
+    else throw new Error(`Invalid option: ${key}`);
+  }
+  return result;
+}
+export async function runBotsCli(argv: string[], out = console.log, home = homedir()): Promise<number> {
+  try {
+    const [verb, ...args] = argv;
+    if (!verb || ['help', '--help', '-h'].includes(verb) || args.includes('--help')) {
+      out('phm bots list|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id> [--json]'); return 0;
+    }
+    const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';
+    const opts = options(args, ['--json', '--dry-run'], ['--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class']);
+    let result: unknown;
+    if (verb === 'create') {
+      if (!opts['--dry-run']) throw new Error('Live bot creation disabled; use --dry-run. Triggers are not live.');
+      result = await planPhantomBot({ schema: 'phantom-bot.v1', id: opts['--id'], outcome: opts['--outcome'], profile: opts['--profile'], repos: [], triggers: [],
+        lanePolicy: { needs: opts['--needs']?.split(',') ?? [], min_tier: opts['--min-tier'] ?? 'fast', max_tier: opts['--max-tier'] ?? 'frontier', max_cost_class: opts['--max-cost-class'] ?? 'included' },
+        memory: { pointer: `~/.phantom/bots/${opts['--id']}/memory` }, channels: [], needsYou: [] }, home);
+    } else if (verb === 'list') result = await listPhantomBots(home);
+    else if (verb === 'show' || verb === 'explain') {
+      const bot = await readPhantomBot(name, home); result = verb === 'show' ? bot : await explainPhantomBot(bot);
+    } else throw new Error('Unknown bots verb.');
+    out(JSON.stringify(result, null, 2)); return 0;
+  } catch (error) { out(JSON.stringify({ ok: false, error: (error as Error).message })); return 1; }
+}

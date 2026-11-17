@@ -9,19 +9,31 @@ const trace = (jobs: OrderTraceJob[]): OrderTraceV1 => ({
   orders: [{ at: AT, source: 'Phantom desktop', key: '11-01 00:08', jobs }],
 });
 const job = (state: OrderTraceJob['state'], url: string | null = null, id = 'RQ-PHX-FAKE01'): OrderTraceJob => ({ id, lane: null, state, url });
+const received = (missing: string[]) => ({ state: 'RECEIVED', missing, asOf: 'unknown' });
 
 describe('interjectOutcome', () => {
-  it('sent when nothing is known', () => expect(interjectOutcome(AT, false, null)).toEqual({ stage: 'sent', text: 'sent' }));
-  it('acked without a trace', () => expect(interjectOutcome(AT, true, null)).toEqual({ stage: 'acked', text: 'acked' }));
-  it('job running', () => expect(interjectOutcome(AT, true, trace([job('launched')]))).toEqual({ stage: 'job', text: 'job RQ-PHX-FAKE01 running' }));
+  it('sent when nothing is known', () => expect(interjectOutcome(AT, false, null)).toEqual({
+    stage: 'sent', text: 'sent', contract: received(['named owner', 'durable claim receipt']),
+  }));
+  it('acked without a trace', () => expect(interjectOutcome(AT, true, null)).toEqual({
+    stage: 'acked', text: 'acked', contract: received(['named owner', 'durable claim receipt']),
+  }));
+  it('job running', () => expect(interjectOutcome(AT, true, trace([job('launched')]))).toEqual({
+    stage: 'job', text: 'job RQ-PHX-FAKE01 launched', contract: received(['named owner']),
+  }));
   it('merged links the PR', () => expect(interjectOutcome(AT, true, trace([job('merged', pr(1234))])))
-    .toEqual({ stage: 'merged', text: 'merged #1234', href: 'https://github.com/ashlrai/phantom/pull/1234' }));
+    .toEqual({
+      stage: 'merged', text: 'merged #1234', href: 'https://github.com/ashlrai/phantom/pull/1234',
+      contract: { state: 'VERIFIED', missing: [], asOf: '2026-11-01T05:00:00Z' },
+    }));
   it('two jobs, one merged: merged wins', () => expect(interjectOutcome(AT, false, trace([job('launched', null, 'RQ-A'), job('merged', pr(77), 'RQ-B')])).stage).toBe('merged'));
   it('matches by timestamp key when the heading differs', () =>
     expect(interjectOutcome('2026-11-01 00:08', false, trace([job('queued')])).stage).toBe('job'));
   it('no link for a PR on another repo', () => expect(interjectOutcome(AT, true, trace([job('merged', pr(5, 'github.com/other/repo'))])))
-    .toEqual({ stage: 'merged', text: 'merged' }));
+    .toEqual({ stage: 'merged', text: 'merged', contract: received(['named owner']) }));
   it('no link without a numeric PR', () => expect(interjectOutcome(AT, true, trace([job('merged', 'https://github.com/ashlrai/phantom/pull/abc')])).href).toBeUndefined());
-  it('malformed trace gives sent', () => expect(interjectOutcome(AT, false, narrowOrderTrace({ v: 1, orders: 'x' }))).toEqual({ stage: 'sent', text: 'sent' }));
+  it('malformed trace gives sent', () => expect(interjectOutcome(AT, false, narrowOrderTrace({ v: 1, orders: 'x' }))).toEqual({
+    stage: 'sent', text: 'sent', contract: received(['named owner', 'durable claim receipt']),
+  }));
   it('unknown for an entry without a time', () => expect(interjectOutcome('—', true, null).stage).toBe('unknown'));
 });

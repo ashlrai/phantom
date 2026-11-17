@@ -58,11 +58,16 @@ test('build, pack, custody and smoke run only in the isolated pinned tree with a
 
 test('native cache is keyed by the lockfile, never the commit, at the stable isolated target path', () => {
   const cache = workflow().jobs['release-build'].steps.find(step => step.name === 'Cache native compiler inputs');
-  assert.ok(!/github\.sha/.test(cache.with.key) && !/github\.sha/.test(cache.with['restore-keys']));
+  assert.ok(!/github\.sha/.test(cache.with.key) && !/github\.sha/.test(String(cache.with['restore-keys'])));
   assert.ok(cache.with.key.endsWith("${{ hashFiles('desktop/src-tauri/Cargo.lock') }}"));
-  assert.ok(cache.with.key.startsWith(cache.with['restore-keys']));
-  assert.deepEqual(cache.with.path.trim().split('\n'), ['~/.cargo/registry/', '~/.cargo/git/db/',
-    '${{ steps.tree.outputs.root }}/desktop/src-tauri/target/']);
+  const restore = String(cache.with['restore-keys']).trim().split('\n').map(line => line.trim());
+  assert.ok(cache.with.key.startsWith(restore[0]));
+  assert.deepEqual(cache.with.path.trim().split('\n').map(line => line.trim()), [
+    '~/.cargo/registry/', '~/.cargo/git/db/',
+    '~/.cache/electron/', '~/.cache/electron-builder/',
+    '~/Library/Caches/electron/', '~/Library/Caches/electron-builder/',
+    '${{ steps.tree.outputs.root }}/desktop/src-tauri/target/',
+  ]);
 });
 
 test('pinned tool install overlaps setup and its exit status gates the build', () => {

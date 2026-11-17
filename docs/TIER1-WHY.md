@@ -11,6 +11,8 @@ The command prints a shortest runtime import chain from any Tier-1 root to the f
 
 The TypeScript AST walk is copied verbatim from the authority closure test and checked for parity by the ordinary boundary test. It follows runtime imports, re-exports and literal dynamic imports, excluding type-only edges. Breadth-first search chooses a shortest chain; sorted roots make ties deterministic. No application code executes.
 
+The module also exports the walk itself: `computeClosure()` runs it from the Tier-1 roots and `reachableClosure(entries)` runs it from any repo-relative entry points, so boundary tests can pin that a module's reachable set stays inside the blessed snapshot (for example `test/intent-import-closure.test.ts`).
+
 Fleet convention subcommands enter through `src/cli/fleet-entry.ts`; the MCP CLI registers fleet apps definitions from `src/core/mcp-native-fleet.ts`. Authority code can use the core native registry without importing app implementations. The ordinary `test/tier1-apps-boundary.test.ts` checks the full closure for apps implementation paths.
 
 Never disguise an import to escape this scan. Do not regenerate the protected closure snapshot: Security reviews membership changes and Mason owns snapshot regeneration.

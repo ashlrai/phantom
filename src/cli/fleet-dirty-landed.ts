@@ -5,18 +5,19 @@
  * `mergeStateStatus` DIRTY), the paths the PR changes are compared with the
  * tip of its base branch (master for every fleet PR) and the PR is classified:
  *
- *   landed        — every changed path already matches the base tip: the work
+ *   landed        — every changed path's work is present on the base tip: it
  *                   shipped some other way and the PR adds nothing
- *   partly-landed — some changed paths match the base tip, some still differ:
+ *   partly-landed — some changed paths have landed, some still need work:
  *                   only the remaining paths need a recut
- *   needs-recut   — no changed path matches the base tip: the conflict is real
- *                   and the whole change still has to land
+ *   needs-recut   — no changed path is proven landed; preserve the recut
  *   unknown       — a read failed (bad row, fetch, moved head, merge-base,
  *                   diff): the PR is never guessed at
  *
- * Changed paths come from `git diff merge-base head` and the still-differing
- * set from `git diff base head`; a changed path absent from the tip diff is
- * identical on both sides, which means it already landed. Git objects and
+ * Changed paths come from `git diff --no-renames merge-base head`. Matching
+ * tip content proves landing; a clean scratch merge also recognizes work
+ * followed by newer base edits. Conflicts or failed previews retain the tip
+ * comparison. JSON reason `already-present-on-base` explains suppression.
+ * Git objects and
  * scratch refs live in a temporary bare repository — the host repository and
  * GitHub state are never written.
  */

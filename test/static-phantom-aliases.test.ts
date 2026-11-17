@@ -40,6 +40,10 @@ function get(url: string): { handled: boolean; status: number; body: string; hea
 }
 
 describe('Phantom /app aliases (static)', () => {
+  it('serves the standalone Owner Assist route without accepting nested lookalikes', () => {
+    for (const url of ['/verse/owner-assist', '/verse/owner-assist/']) expect(get(url).body).toBe(SHELL);
+    expect(get('/verse/owner-assist/unknown').body).not.toBe(SHELL);
+  });
   it.each([
     ['/verse', '/app'], ['/verse/', '/app/'], ['/verse/m', '/app/m'], ['/verse/m/', '/app/m/'],
   ])('%s and %s serve the same shell', (legacy, alias) => {

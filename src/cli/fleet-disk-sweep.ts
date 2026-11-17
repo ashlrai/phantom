@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetWorktreeStale } from './fleet-worktree-stale.js';
 import { cmdFleetWtCache } from './fleet-wt-cache.js';
+import { liveOverride } from '../core/fleet/dynconfig.js';
 import { FLEET_DISK_LANE_FREEZE_GB, parseLaneDiskLines } from './fleet-disk.js';
 
 const USAGE =
@@ -58,6 +59,9 @@ function logPath(): string { return join(runsDir(), 'queue', 'disk-sweep.jsonl')
 
 async function defaultFreezeBelowGb(): Promise<number> {
   const text = await readFile(join(runsDir(), 'queue', 'budget-overrides.json'), 'utf8').catch(() => '');
+  // A live override (RQ-DYNCONFIG-1) wins over budget-overrides.json; absent, behavior is unchanged.
+  const live = await liveOverride('compact.lanes.raise_freeze_below_gb', { runsDir: runsDir() });
+  if (live !== undefined) return live;
   return text ? parseLaneDiskLines(text).freezeBelowGb : FLEET_DISK_LANE_FREEZE_GB;
 }
 
