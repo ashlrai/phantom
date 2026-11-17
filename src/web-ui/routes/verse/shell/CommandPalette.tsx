@@ -35,7 +35,7 @@ import { useActivity } from './useActivity.js';
 import { deriveCiNeedsYou } from './ci-needs-you.js';
 import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.js';
 import styles from './CommandPalette.module.css';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { revealDockPane } from '../dock/reveal-pane.js';
@@ -420,7 +420,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
                     >
                       <span className={styles.lead} aria-hidden="true">
                         {item.monogram ? (
-                          <span className={styles.monogram} data-engine={item.engine ?? undefined}>{item.engine ? <ProviderLogo engine={item.engine} size={13} /> : item.monogram}</span>
+                          <span className={styles.monogram} data-engine={item.engine ?? undefined}>{item.engine ? <BrandMark brand={item.engine} size={13} /> : item.monogram}</span>
                         ) : (
                           <span className={styles.bullet} data-kind={item.kind} />
                         )}

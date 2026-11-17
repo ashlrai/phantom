@@ -241,6 +241,8 @@ describe('recutLoopTick', () => {
       writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
     };
     const ledger = (rows: Record<string, unknown>[]): void => {
+      // Each historical-ledger scenario starts without a publication reservation.
+      rmSync(join(runsDir, 'queue', 'recut-loop-leases.jsonl'), { force: true });
       mkdirSync(join(runsDir, 'queue'), { recursive: true });
       writeFileSync(ledgerPath(), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
     };

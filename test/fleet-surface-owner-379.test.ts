@@ -139,7 +139,7 @@ describe('fleet surface-owner', () => {
   it('every SURFACES path exists in the repo so the table cannot rot silently', () => {
     for (const [surface, paths] of Object.entries(SURFACES)) {
       expect(paths.length).toBeGreaterThan(0);
-      expect(paths.length).toBeLessThanOrEqual(12);
+      expect(paths.length).toBeLessThanOrEqual(13);
       for (const path of paths) expect(existsSync(join(ROOT, path)), `${surface}: ${path}`).toBe(true);
     }
   });

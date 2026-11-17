@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordSlackObservation, type SlackObservation } from '../src/core/agents/slack-journal.js';
 import { cmdFleetSlackTrace } from '../src/cli/fleet-slack-trace.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
 const CH = 'C0FAKE0001';
@@ -33,15 +34,19 @@ function setup() {
 
 const ingest = (runsDir: string, at: string, messageTs: string, threadTs: string = T1,
   extra: Partial<SlackObservation> = {}): void => {
-  recordSlackObservation({ at, decision: 'ingested', channelId: CH, messageTs, threadTs, ...extra }, { runsDir });
+  // Leader-routed rows journal their request id; pass requestId: undefined for a legacy row.
+  recordSlackObservation({ at, decision: 'ingested', channelId: CH, messageTs, threadTs,
+    requestId: fakeRequestId(messageTs), ...extra }, { runsDir });
 };
 
-type Row = { channel: string; thread?: string; state: 'attempted' | 'sent'; ts?: string };
+/** `for` is the request message ts whose Leader reply this send is; without it the send is unrelated to any request. */
+type Row = { channel: string; thread?: string; state: 'attempted' | 'sent'; ts?: string; for?: string };
 function writeStore(stateRoot: string, rows: Row[]): void {
   mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   const messages: Record<string, unknown> = {};
-  rows.forEach((row, i) => {
-    messages[String(i).padStart(64, '0')] = { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12, ...row };
+  rows.forEach(({ for: forMessage, ...row }, i) => {
+    const key = forMessage === undefined ? String(i).padStart(64, '0') : replyKey(fakeRequestId(forMessage));
+    messages[key] = { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12, ...row };
   });
   writeFileSync(join(stateRoot, 'messages.json'), JSON.stringify({ version: 1, messages }), { mode: 0o600 });
 }
@@ -53,21 +58,21 @@ async function run(args: string[], deps: { runsDir: string; stateRoot: string })
 }
 
 describe('fleet slack-trace (339)', () => {
-  it('a same-thread sent receipt answers the request and exits 0', async () => {
+  it('the sent receipt under the request reply key answers it and exits 0', async () => {
     const p = setup();
     ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted' });
-    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY }]);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY, for: MSG1 }]);
     const { code, lines } = await run([], p);
     expect(code).toBe(0);
     expect(lines[0]).toContain('journal=ok sends=ok');
     expect(lines[1]).toBe(`${AT1} ${CH} thread=${T1} msg=${MSG1} ingress=posted -> ANSWERED reply=${REPLY}`);
   });
 
-  it('binds one reply one-to-one: a second request in the same thread is UNANSWERED', async () => {
+  it('binds by key: a reply for one request never answers a second request in the same thread', async () => {
     const p = setup();
     ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted' });
     ingest(p.runsDir, AT2, MSG2, T1, { bus: 'posted' });
-    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: '1731000100.000100' }]);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: '1731000100.000100', for: MSG1 }]);
     const { code, lines } = await run([], p);
     expect(code).toBe(1);
     expect(lines).toHaveLength(3);
@@ -76,25 +81,27 @@ describe('fleet slack-trace (339)', () => {
     expect(lines[2]).not.toContain('reply=');
   });
 
-  it('a duplicate redelivery of the same message still answers only the first row', async () => {
+  it('a duplicate redelivery of the same message shares its one request answer', async () => {
     const p = setup();
     ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted' });
     ingest(p.runsDir, AT2, MSG1, T1, { bus: 'duplicate' });
-    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY }]);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY, for: MSG1 }]);
     const { code, lines } = await run([], p);
-    expect(code).toBe(1);
+    expect(code).toBe(0);
     expect(lines).toHaveLength(3);
     expect(lines[1]).toContain(`msg=${MSG1} ingress=posted -> ANSWERED reply=${REPLY}`);
-    expect(lines[2]).toContain(`msg=${MSG1} ingress=duplicate -> UNANSWERED`);
+    expect(lines[2]).toContain(`msg=${MSG1} ingress=duplicate -> ANSWERED reply=${REPLY}`);
   });
 
-  it('an attempted send in the thread leaves the request UNCERTAIN', async () => {
+  it('an attempted send under the request reply key leaves it UNCERTAIN, an unrelated attempt does not', async () => {
     const p = setup();
     ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted' });
-    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'attempted' }]);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'attempted', for: MSG1 }]);
     const { code, lines } = await run([], p);
     expect(code).toBe(1);
     expect(lines[1]).toContain(`msg=${MSG1} ingress=posted -> UNCERTAIN`);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'attempted' }]);
+    expect((await run([], p)).lines[1]).toContain(`msg=${MSG1} ingress=posted -> UNANSWERED`);
   });
 
   it('a failed bus append reports BUS-FAILED', async () => {
@@ -106,20 +113,34 @@ describe('fleet slack-trace (339)', () => {
     expect(lines[1]).toContain(`msg=${MSG1} ingress=failed -> BUS-FAILED`);
   });
 
-  it('a top-level sent post never answers a threaded request', async () => {
+  it('a top-level sent post never answers a threaded request, and an inconsistent keyed one is only UNCERTAIN', async () => {
     const p = setup();
     ingest(p.runsDir, AT1, MSG1, T1);
     writeStore(p.stateRoot, [{ channel: CH, state: 'sent', ts: REPLY }]);
     const { code, lines } = await run([], p);
     expect(code).toBe(1);
     expect(lines[1]).toContain(`msg=${MSG1} ingress=unknown -> UNANSWERED`);
+    writeStore(p.stateRoot, [{ channel: CH, state: 'sent', ts: REPLY, for: MSG1 }]);
+    const keyed = await run([], p);
+    expect(keyed.lines[1]).toContain(`msg=${MSG1} ingress=unknown -> UNCERTAIN`);
+    expect(keyed.lines[1]).not.toContain('reply=');
+  });
+
+  it('a legacy row without a reply identity is UNCERTAIN (unverified), even beside a later same-thread send', async () => {
+    const p = setup();
+    ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted', requestId: undefined });
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY }]);
+    const { code, lines } = await run([], p);
+    expect(code).toBe(1);
+    expect(lines[1]).toContain(`msg=${MSG1} ingress=posted -> UNCERTAIN (reply identity unverified)`);
+    expect(lines[1]).not.toContain('reply=');
   });
 
   it('--thread filters rows to one thread and a malformed ts exits 2', async () => {
     const p = setup();
     ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted' });
     ingest(p.runsDir, AT2, MSG2, T2, { bus: 'posted' });
-    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY }]);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY, for: MSG1 }]);
     const { code, lines } = await run(['--thread', T1], p);
     expect(code).toBe(0);
     expect(lines).toHaveLength(2);
@@ -131,11 +152,12 @@ describe('fleet slack-trace (339)', () => {
     expect(err).toHaveBeenCalled();
   });
 
-  it('missing journal and store report missing sources, empty rows, exit 0', async () => {
+  it('missing journal and store report missing sources and empty rows, and never verify (exit 1, 435S)', async () => {
     const p = setup();
     const { code, lines } = await run([], p);
-    expect(code).toBe(0);
-    expect(lines).toEqual([`slack trace as of ${NOW.toISOString()} (journal=missing sends=missing)`]);
+    expect(code).toBe(1);
+    expect(lines[0]).toContain('(journal=missing sends=missing)');
+    expect(lines[1]).toBe('No matching request evidence; verification unsuccessful.');
   });
 
   it('--json prints the trace with sources and counts, ignoring non-ingested rows and digests', async () => {
@@ -143,7 +165,7 @@ describe('fleet slack-trace (339)', () => {
     ingest(p.runsDir, AT1, MSG1, T1, { bus: 'posted' });
     ingest(p.runsDir, AT2, MSG2, T1, { bus: 'duplicate' });
     recordSlackObservation({ at: AT3, decision: 'ignored', channelId: CH, messageTs: '1731000030.000100', threadTs: T1, reason: 'untrusted-sender' }, { runsDir: p.runsDir });
-    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY }]);
+    writeStore(p.stateRoot, [{ channel: CH, thread: T1, state: 'sent', ts: REPLY, for: MSG1 }]);
     const { code, lines } = await run(['--json'], p);
     expect(code).toBe(1);
     expect(lines).toHaveLength(1);
@@ -151,6 +173,7 @@ describe('fleet slack-trace (339)', () => {
     expect(trace.asOf).toBe(NOW.toISOString());
     expect(trace.sources).toEqual({ journal: 'ok', sends: 'ok' });
     expect(trace.counts).toEqual({ total: 2, answered: 1, uncertain: 0, busFailed: 0, unanswered: 1 });
+    expect(lines[0]).not.toContain(fakeRequestId(MSG1));
     expect(trace.rows[0]).toMatchObject({ at: AT1, channelId: CH, threadTs: T1, messageTs: MSG1, ingress: 'posted', outcome: 'answered', replyTs: REPLY });
     expect(trace.rows[1]).toMatchObject({ at: AT2, messageTs: MSG2, ingress: 'duplicate', outcome: 'unanswered' });
     expect(lines[0]).not.toContain(DIGEST);

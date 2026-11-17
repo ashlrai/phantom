@@ -130,7 +130,7 @@ describe('agent docs name only real CLI commands, verbs and flags', () => {
       const text = readFileSync(join(ROOT, file), 'utf8');
       const paragraph = text.split(/\n\s*\n/).find((p) => p.includes('`.mcp.json`') && p.includes('`phantom-secrets`'));
       expect(paragraph, `${file}: missing companion server list`).toBeDefined();
-      const names = [...(paragraph ?? '').matchAll(/`([a-z][a-z-]*)`/g)]
+      const names = [...(paragraph ?? '').matchAll(/`([a-z][a-z0-9-]*)`/g)]
         .map((m) => m[1]!).sort();
       expect(names, `${file}: companion server list differs from .mcp.json`).toEqual(expected);
     }

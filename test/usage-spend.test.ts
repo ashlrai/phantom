@@ -10,7 +10,8 @@ const fixture = { schema: 'dispatchd.status.v1', last_tick: '2026-11-09T16:00:00
 describe('spend down', () => {
   it('projects fresh measured burn and identifies stale and missing pools', () => {
     const rows = projectUsageSpend(fixture, now).pools;
-    expect(rows.find(r => r.pool === 'codex-personal')).toEqual({ pool: 'codex-personal', reason: null, usedPercent: 20, resetAt: '2026-11-10T02:00:00.000Z', hoursLeft: 10, burnPerHour: 3, projectedUnusedPercent: 50 });
+    expect(rows.find(r => r.pool === 'codex-personal')).toEqual({ pool: 'codex-personal', reason: null, usedPercent: 20, resetAt: '2026-11-10T02:00:00.000Z', hoursLeft: 10, burnPerHour: 3, projectedUnusedPercent: 50,
+      unit: 'percent', projectedUsedPercent: 50, remainingUsd: null, projectedUnusedUsd: null, verdict: 'behind', summary: 'behind: 50% would go unused', resetsIn: '10h 0m' });
     expect(rows.find(r => r.pool === 'claude')?.reason).toBe('reading stale');
     expect(rows.find(r => r.pool === 'custom')?.reason).toBe('reading missing');
     expect(rows.find(r => r.pool === 'zai')?.reason).toBe('reading missing');

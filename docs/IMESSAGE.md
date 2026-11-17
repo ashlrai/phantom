@@ -145,7 +145,7 @@ that still has no chat.db record after thirty minutes returns the durable draft
 to the normal send path for a bounded retry — at most three send attempts in
 all — after which the row is suppressed and marked answered, so wedged sends
 cannot starve newer replies. Pure acknowledgements and artifact-only
-updates produce no reply. Requests for approval, decisions, or certain actions stay
+updates produce no reply (see the next section). Requests for approval, decisions, or certain actions stay
 pending for leader review; they do not prevent later replyable messages in the
 same pass from being examined. Pending and uncertain records are preserved when
 storage is full. A native transport return alone does not prove delivery.
@@ -155,6 +155,48 @@ live route with a fresh teammate task question, then inspect the private reply
 receipt for an exact outgoing message match and its sent/delivered flags. Keep
 that evidence tied to the actual responsible native app and source revision;
 a foreground CLI result does not establish desktop background operation.
+
+## Conversational replies
+
+The responder answers what a teammate actually said. For each message it:
+
+1. Picks out the job ids (`RQ-…`, `FIXUP-…`), PR numbers and commit SHAs the
+   message names.
+2. Looks up the newest lines that mention them in `metrics/jobs.jsonl`,
+   `queue/ready.tsv` and `dispatch-events.log`, scrubbed and clipped.
+3. Asks the local model with the message, those records, the message again and
+   one instruction: answer in plain sentences, and say unknown when the records
+   do not show it.
+4. Passes the answer through one outbound gate and signs it
+   `— Phantom · ref [rowid]`, where the rowid is the message being answered.
+
+The gate refuses secret-shaped text outright. It strips think blocks and control
+characters, redacts email addresses, phone numbers and home paths, and cuts the
+whole message under 600 characters at a sentence boundary.
+
+Which messages get a reply:
+
+| Message | What happens |
+| --- | --- |
+| Question or plain request | Model reply |
+| Handoff, authorization, receipt, blocker, claim or coordination note | Short confirmation (`acknowledge`) |
+| Named review, research or analysis work | Queued, with the job id in the reply |
+| Approval, decision or privileged action | Stays pending for leader review |
+| Pure ack, short status line, protocol frame, `RESULT <job> <token>` line | No reply |
+
+A confirmation grants nothing: a teammate "authorization" is still untrusted
+text. When the model gives no usable answer, a confirmation falls back at once to
+a reply that starts `Automatic template reply` and reports the newest matching
+record, or that the status is unknown. A question keeps its draft pending for up
+to three model attempts or fifteen minutes, then gets the same marked template.
+Each teammate gets at most four confirmations an hour; later ones wait as
+pending and are sent when the hour has room. They are never suppressed.
+
+The reply journal keeps the newest 150 settled receipts and drops older ones,
+as well as any older than seven days. A receipt is dropped only after its
+message is marked answered, so trimming never causes a second reply. Every send
+gate above still applies, and `phm imessage respond --apply --json` reports the
+sent, pending and suppressed counts of each pass.
 
 ## Fleet teammate tasks and evidence
 

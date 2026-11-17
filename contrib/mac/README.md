@@ -656,6 +656,13 @@ one-hour cap. Waiting jobs consume no precheck budget; due jobs wait if the
 budget is exhausted. One `precheck_parked` metric replaces repeated code 13
 skip events for unchanged inputs. A prompt or routing change resets the delay;
 a successful retry clears it. Other runnable jobs continue through the queue.
+Before claiming generated `RQ-FIXUP|REBASE|RECUT-<repo>-<pr>[-<sha7>]`
+repairs, dispatch reads the target PR through `locus exec -- gh pr view` with a
+three-second deadline. Closed or merged targets finish as `DONE-NOOP`; resolved
+conflicts or completed checks require the queued head, and FIXUP also requires
+the named failing check to remain present. Reasons are fixed codes in
+`metrics/jobs.jsonl` (`launched: false`); unknown evidence stays eligible and an
+exhausted precheck budget defers the repair. No model runs for retired repairs.
 Host installation still requires Security review and re-pinning. Preview without changing queue files:
 
 ```sh

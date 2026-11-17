@@ -1,12 +1,14 @@
-Provider marks in the capacity cards
+Provider marks
 
-The OpenAI, Anthropic, Cognition / Devin and xAI logos are trademarks of their
-owners. None ships with a licence compatible with this repository's MIT
-licence, so Phantom does not bundle them. The capacity cards
-(src/web-ui/routes/resources/ProviderMark.tsx) show one-letter monograms
-instead.
+The OpenAI, Anthropic, Cognition / Devin, xAI, Google Gemini and Cursor logos
+are trademarks of their owners. They identify the provider an account, lane or
+pool belongs to; no affiliation or endorsement is implied.
 
-The "local" chip is an SVG drawn for this repository and is covered by the same
-MIT licence as PHANTOM-ICON-LICENSE.txt.
+Geometry lives in one place, src/core/brand/registry.ts, and is drawn inline
+(no network). Claude, OpenAI, Grok, Ollama and Gemini paths come from Lobe
+Icons (MIT; notice in site/assets/provider-marks-LICENSE.txt). Devin is the
+vendor favicon. Cursor is a flat redraw of its cube. The generic chip and the
+unknown-provider monogram tile are drawn for this repository under the same MIT
+licence as PHANTOM-ICON-LICENSE.txt.
 
-Add a real vendor logo only after recording its licence here.
+Record the source of any new mark in site/assets/provider-marks-SOURCES.md.

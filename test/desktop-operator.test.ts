@@ -21,6 +21,7 @@ import {
   ACCESSIBILITY_PANE,
   ACCESSIBILITY_SETTINGS_URL,
   COMPUTER_DENIED_SETTINGS_TITLES,
+  DESKTOP_OPERATOR_BUILD,
   DESKTOP_WRITE_BUNDLE_IDS,
   OPERATOR_ROSTER,
   SCREEN_RECORDING_PANE,
@@ -125,6 +126,24 @@ describe('desktop operator policy reuses computer-use rules', () => {
     const ids = [...writable.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     expect(ids).toEqual([...DESKTOP_WRITE_BUNDLE_IDS]);
     expect(ids).not.toContain('ai.ashlr.desktop');
+  });
+
+  it('never reads a fullscreen app through its title-bar strip', () => {
+    // A native-fullscreen Phantom owns 1920x30 companion windows that come
+    // first in z-order. Taking the first window captured a 1280x21 sliver and
+    // reported a healthy app as hollow. The helper's own `self-test` op runs
+    // the selection; this pins that every caller goes through it.
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const swift = readFileSync(join(root, 'tools/desktop-operator/main.swift'), 'utf8');
+    const requireWindow = /func requireWindow\([\s\S]*?\n}\n/.exec(swift)?.[0] ?? '';
+    expect(requireWindow).toContain('contentWindow(');
+    expect(requireWindow).toContain('onScreenOnly: false');
+    expect(requireWindow).not.toMatch(/rows\.first\b(?!\()/);
+    expect(swift).toMatch(/case "windows":[\s\S]*?!isChromeStrip\(\$0\)/);
+    // Role names alone are not text: an unpublished webview tree must reach OCR.
+    expect(swift).toMatch(/case "read":[\s\S]*?if tree\.content == 0 \{/);
+    // The macOS 15 SDK refuses the window-capture call without an older target.
+    expect(DESKTOP_OPERATOR_BUILD).toContain('-target arm64-apple-macos13.0');
   });
 
   it('allows Cursor typing by exact bundle id, and keeps Phantom, mail, chat, browsers and terminals read-only', () => {

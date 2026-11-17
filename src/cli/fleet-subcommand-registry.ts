@@ -397,6 +397,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'slack-evidence': () => import('./fleet-slack-evidence.js'),
   'slack-trace': () => import('./fleet-slack-trace.js'),
   'slow-prs': () => import('./fleet-slow-prs.js'),
+  'spend': () => import('./fleet-spend.js'),
   'staging-inventory': () => import('./fleet-staging-inventory.js'),
   'staging-inventory-batch': () => import('./fleet-staging-inventory-batch.js'),
   'staging-inventory-retry': () => import('./fleet-staging-inventory-retry.js'),

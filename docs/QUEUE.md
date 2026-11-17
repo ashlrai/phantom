@@ -79,6 +79,22 @@ again for every candidate so several jobs cannot reserve the same final slot.
 The existing admission gate remains the authority for host load, processes,
 worktrees, disk, adaptive global concurrency and the per-tick claim limit.
 
+### Use spare subscription capacity for frontier work
+
+When fresh `use-it-all.v1` evidence reports `known:true`, `stale:false` and
+`behind:true`, a work job launches as frontier on its selected lane if that
+executor supports frontier and its cost class is `included`. Holds, quota,
+backoff and admission still apply. Eligible jobs run individually so batching
+cannot substitute a work-tier model. Existing waste-risk upgrades remain.
+
+`queue/status.json` exposes `tier_upgrades_this_tick`: typed records of `job`,
+`lane`, `from_tier`, `to_tier` and a plain-language `reason`. The reason also
+persists in `queue/route-state.json` as `waste_reason` and in `ROUTE_BOOST` events.
+Run `phm route explain --json` to read it as `lines[].wasteReason`.
+`use_it_all_behind` reports each lane's boolean reading or null for unknown,
+missing or stale evidence. This bounded policy responds to measured work-tier
+underperformance; it does not infer a causal yield gain or train a tier optimizer.
+
 Among eligible executors, preference comes first, followed by utilization,
 measured empty rate and yield, cost class, known remaining quota, measured model
 latency and stable executor order. Recent finish events supply empty-rate and
@@ -612,6 +628,13 @@ Run `phm queue batches` to see one plain summary of batch sessions, or
 `batches` to inspect a fixture or another local runs directory.
 This is read-only. The same report backs both forms.
 
+The report also carries `routeSkips`: ready jobs whose prompt needs something
+their lane is declared unable to do, each with the typed code
+`route_skip: lane lacks gh` and one plain sentence. The human form adds one
+line only when such jobs exist. It is a forecast from `queue/ready.tsv` and
+`queue/prompts`; it moves nothing. Unreadable files report `unknown`, never an
+empty all-clear. See [lane capability fit](ROUTING.md#lane-capability-fit).
+
 `emptyPrefixes` reports the top five job-ID prefixes by empty `finish` rows in
 the last 24 hours, with counts and a total. Retries count separately; filler
 counters and trailing incident hashes are removed while lane names remain.
@@ -642,3 +665,16 @@ invalid manifests or more than 1000 files mark the report partial, with counts
 only for readable sessions. Old sessions whose handoff markers were superseded
 may have unknown publication results. These changes require Security review and
 re-pinning before dispatcher installation; no live cutover is part of this change.
+
+### Queue health
+
+Run `phm fleet parked --json` for the read-only `health` summary
+(`fleet.queue-health.v1`). It separates ready and parked counts and groups
+repeated precheck skips, including `RESTOCK`, by job, code and reason over the
+last 24 hours. A repeat means at least two matching records; it does not prove
+a job is still blocked. The plain-text command shows the same repeat counts.
+Counts cover the bounded readable queue and log snapshot, before display
+limits; check `sources` for missing or degraded evidence. Unavailable health
+counts are `null`; a readable empty source counts as zero. Lane filters omit
+unattributed repeat details; health counts remain global. Nothing is unparked,
+restocked or changed by reading the report.
