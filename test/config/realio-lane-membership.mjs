@@ -725,6 +725,8 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-agents-api-316.test.ts', // 3.16: real git worktree per agent behind /api/verse/agents (temp HOME + temp repo)
   'test/verse-retro-sweep-close-315.test.ts', // 3.15: real loopback startServer bind; close() stops the retro sweep schedule
   'test/devin-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/devin routes
+  'test/devin-land.test.ts', // real git repos, bundles, worktrees and a stub publish.sh subprocess
+  'test/devin-autoland.test.ts', // hermetic autoland journal and git bundle integration
   'test/automations-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/automations routes
   'test/cloud-pr-actions.test.ts', // 3.13: real loopback http server bind for the Needs-you land/close/update-branch routes
   'test/devin-evidence-triage-315.test.ts', // 3.15: real loopback http server bind for the Devin previews / close-with-reason / timeline routes
