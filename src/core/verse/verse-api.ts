@@ -255,8 +255,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
   { id: 'fleet-apps', load: async () => (await import('./fleet-apps-recovery-api.js')).handleFleetAppsRecoveryApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
-  // Teammate iMessage reply age: GET /api/verse/comms/teammate-reply-age (core/verse/comms-teammate-reply-age-api.ts); read-only, times and flags only.
-  { id: 'comms-teammate-reply-age' as MountedApiModuleId, load: async () => (await import('./comms-teammate-reply-age-api.js')).handleCommsTeammateReplyAgeApi },
+  // Teammate reply age is owned by the workbench family comms-teammate-reply, which delegates to the age handler. It is not a separate A10 mount.
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
@@ -269,6 +268,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-doctor' as MountedApiModuleId, load: async () => (await import('./fleet-doctor-api.js')).handleFleetDoctorApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
+  // The `phm commands` catalog for the palette, plus bounded read-only runs (core/verse/commands-api.ts).
+  { id: 'commands' as MountedApiModuleId, load: async () => (await import('./commands-api.js')).handleCommandsApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -515,6 +516,9 @@ const WORKBENCH_IMPORTS: Readonly<Record<WorkbenchRouteFamilyId, () => Promise<W
   'comms-teammate-reply': async () => {
     try { return (await import('./comms-teammate-reply-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'comms-teammate-reply-api.js'); }
   },
+  'fleet-merge-latency': async () => {
+    try { return (await import('./merge-latency-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'merge-latency-api.js'); }
+  },
   'agent-roster': async () => {
     try { return (await import('./agent-roster-api.js' as string)) as Record<string, unknown>; } catch (err) { return notLandedOr(err, 'agent-roster-api.js'); }
   },
@@ -695,6 +699,8 @@ export interface VerseApiContext {
   readSession?: { id: string; expiresAt: number };
   /** Fixed read-only worker shared by this server; never a caller-selected module. */
   readProjections?: import('../web/read-projections.js').ReadProjectionReader;
+  /** Trusted seam for the peer-ledger route; defaults to its Verse module. */
+  fleetPeerLedgerApi?: ApiModule;
 }
 
 // ---------------------------------------------------------------------------
@@ -2091,6 +2097,17 @@ export async function handleVerseApi(
       sendJson(res, 200, readBuildIdentity());
       return true;
     }
+    if (path === `${VERSE_API_PREFIX}/fleet/peer-ledger`) {
+      if (method !== 'GET') {
+        if (!ctx.allowDispatch) {
+          sendJson(res, 404, { error: `not found: ${method} ${path}` });
+          return true;
+        }
+        if (!passesMutationGate(req, res, ctx.token)) return true;
+      }
+      const api = ctx.fleetPeerLedgerApi ?? (await import('./fleet-peer-ledger-api.js')).handleFleetPeerLedgerApi;
+      return api(ctx, req, res, path, method);
+    }
     if (path === `${VERSE_API_PREFIX}/fleet/grok-ultra` || path.startsWith(`${VERSE_API_PREFIX}/fleet/grok-ultra/`)) {
       if (path !== `${VERSE_API_PREFIX}/fleet/grok-ultra`) { sendJson(res, 404, { error: 'Grok usage route not found.' }); return true; }
       return (await import('./grok-ultra-api.js')).handleGrokUltraApi(req, res, path, method);
@@ -2120,6 +2137,9 @@ export async function handleVerseApi(
       // Read-only release notes; unknown children 404 here rather than evaluating the mounted modules.
       if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
       return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
+    }
+    if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
+      return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);
     }
     // ── GET /api/verse/bootstrap ─────────────────────────────────────────
     if (path === `${VERSE_API_PREFIX}/bootstrap` && method === 'GET') {

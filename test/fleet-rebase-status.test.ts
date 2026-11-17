@@ -20,6 +20,12 @@ describe('rebase status', () => {
     const report = summarizeRebases('a/b', [pr(1, { createdAt: 'bad' }), pr(2, { createdAt: '2027-01-01' })], [], now);
     expect(report.ageSeconds).toEqual({ oldest: null, median: null, unknown: 2 });
   });
+  it('recognizes a live retry as current-head coverage', () => {
+    expect(summarizeRebases('ashlrai/phantom', [pr(1234)], [
+      { id: 'RQ-REBASE-phantom-1234-abcdef0', status: 'FAILED' },
+      { id: 'RQ-REBASE-phantom-1234-abcdef0-retry1', status: 'RUNNING' },
+    ], now).coverage).toEqual({ currentHead: 1, staleHeadOnly: 0, unknownHead: 0, uncovered: 0 });
+  });
   it('reports missing queue instead of empty success', async () => {
     const root = await mkdtemp(join(tmpdir(), 'rebase-status-'));
     try {

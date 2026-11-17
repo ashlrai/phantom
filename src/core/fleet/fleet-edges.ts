@@ -5,7 +5,11 @@ export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; mes
 export interface FleetEdges { schema: 'fleet.edges.v1'; source: 'available' | 'missing' | 'unavailable'; edges: FleetEdge[] | null }
 
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
-export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now()): FleetEdge[] {
+export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number): FleetEdge[] {
+  if (windowMinutes !== undefined) {
+    if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) throw new Error('Minutes must be 1..1440');
+    rows = rows.filter(row => row.receivedAt > now - windowMinutes * 60_000 && row.receivedAt <= now);
+  }
   const edges = new Map<string, FleetEdge>();
   const providers = new Map<string, Set<string>>();
   for (const { envelope } of rows) {
@@ -26,7 +30,7 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now()): Fl
   return [...edges.values()].sort((a, b) => b.lastAt - a.lastAt || a.from.address.localeCompare(b.from.address));
 }
 
-export function readFleetEdges(options: BusInboxOptions = {}): FleetEdges {
+export function readFleetEdges(options: BusInboxOptions & { windowMinutes?: number } = {}): FleetEdges {
   const source = inspectBusInbox(options).source;
   if (source !== 'available') return { schema: 'fleet.edges.v1', source, edges: null };
   const rows: BusInboxReceipt[] = [];
@@ -35,7 +39,7 @@ export function readFleetEdges(options: BusInboxOptions = {}): FleetEdges {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, options);
     if (result.status !== 'ok') return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };
     rows.push(...result.messages);
-    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now()) };
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now(), options.windowMinutes) };
     cursor = result.nextCursor;
   }
   return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };

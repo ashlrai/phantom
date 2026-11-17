@@ -39,7 +39,7 @@ const runStep = (name: string): Record<string, unknown> | undefined =>
 describe('perf-budget workflow is advisory by shape', () => {
   it('runs only on pull_request, the daily drift schedule and manual dispatch', () => {
     expect(Object.keys(on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch']);
-    expect(on.pull_request).toEqual({ branches: ['**'], types: ['opened', 'synchronize', 'reopened'] });
+    expect(on.pull_request).toEqual({ branches: ['**'], types: ['opened', 'reopened', 'ready_for_review'] });
     expect(on.schedule).toEqual([{ cron: expect.stringMatching(/^\d+ \d+ \* \* \*$/) }]);
     // A merge_group, push, pull_request_target or workflow_run trigger would
     // let the check reach merge-queue or protected refs — it must never get

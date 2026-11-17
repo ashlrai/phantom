@@ -4,6 +4,7 @@
  * fact or the word "unknown" with its reason; an unreadable source is never
  * rendered as 0 or "none".
  */
+import type { NodeResultsSummary } from '../drive/nodes/results-read.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type Fact<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -12,6 +13,9 @@ export interface StatusDigestLane { lane: string; running: number; target: numbe
 
 /** Durable bus work-claim counts at `asOfMs` (completion is a claim state, not verified work). */
 export interface StatusDigestWorkClaims { live: number; completed: number; expired: number; owners: number; asOfMs: number }
+
+/** Compact peer-bus health from the read-only peer ledger; only surfaced when it says something. */
+export interface StatusDigestPeers { status: 'ok' | 'empty' | 'unavailable'; rateLimited: number; tightest: string | null; nearCap: number; reason?: string }
 
 export interface StatusDigestInput {
   installedVersion: Fact<string>;
@@ -27,6 +31,10 @@ export interface StatusDigestInput {
   topP0: Fact<{ text: string; ageMs: number | null } | null>;
   /** Bus work claims; value null means no claims table exists yet. Absent field keeps the five original lines. */
   workClaims?: Fact<StatusDigestWorkClaims | null>;
+  /** Peer bus health; null/undefined, empty and ok-with-headroom render nothing. */
+  peers?: StatusDigestPeers | null;
+  /** Node runner results on this computer; undefined keeps the existing lines, a throw is `{ status: 'unavailable' }`. */
+  nodeRuns?: NodeResultsSummary | null;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -69,5 +77,32 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
     lines.push(`Claims: ${show(input.workClaims, claims => claims === null ? 'none recorded (no claims table)'
       : `${claims.live} live (${claims.owners} owner${claims.owners === 1 ? '' : 's'}) · ${claims.completed} completed · ${claims.expired} expired · as of ${claimsClock.format(new Date(claims.asOfMs))} ET, source bus claims`)}`);
   }
+  const peers = input.peers;
+  if (peers) {
+    if (peers.status === 'unavailable') {
+      lines.push(`Peers: ${unknown(peers.reason ?? '')}`);
+    } else if (peers.rateLimited > 0 || peers.nearCap > 0) {
+      const parts: string[] = [];
+      if (peers.rateLimited > 0) {
+        parts.push(`${peers.rateLimited} pair${peers.rateLimited === 1 ? '' : 's'} rate-limited${peers.tightest ? ` (${peers.tightest})` : ''}`);
+      }
+      if (peers.nearCap > 0) parts.push(`${peers.nearCap} conversation${peers.nearCap === 1 ? '' : 's'} near hop cap`);
+      lines.push(`Peers: ${parts.join(' · ')}`);
+    }
+  }
+  const runs = input.nodeRuns;
+  if (runs) lines.push(nodeRunsLine(runs));
   return lines;
+}
+
+const utcClock = (iso: string): string => `${iso.slice(11, 16)}Z`;
+
+/** Node runs line: source (this computer), window and as-of are always stated; artifacts are not completion proof. */
+function nodeRunsLine(runs: NodeResultsSummary): string {
+  if (runs.status === 'unavailable') return `Node runs unknown: ${(runs.reason ?? 'reader failed').replace(/\s+/g, ' ').trim()}`;
+  if (runs.status === 'none') return 'Node runs: none recorded on this computer';
+  const hours = Math.max(1, Math.round(runs.windowMs / 3_600_000));
+  const extra = `${runs.unreadable > 0 ? `, ${runs.unreadable} unreadable` : ''}${runs.truncated ? ', newest 200 examined' : ''}`;
+  const newest = runs.newest ? `, newest ${runs.newest.jobId} at ${utcClock(runs.newest.at)}` : '';
+  return `Node runs (this computer, ${hours}h, as of ${utcClock(runs.asOf)}): ${runs.inWindow} result${runs.inWindow === 1 ? '' : 's'}${newest}${extra}; artifacts are not completion proof`;
 }

@@ -82,7 +82,9 @@ export interface WtAuditFs {
   real(path: string): Promise<string | null>;
 }
 
-const defaultFs: WtAuditFs = {
+/** The real filesystem behind the audit; exported so sibling readers (the
+ * census) share one injectable fs contract instead of forking it. */
+export const defaultFs: WtAuditFs = {
   async dirs(path) {
     try {
       return (await readdir(path, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name);
@@ -157,7 +159,13 @@ export interface WtJobLedger {
   publishUrl: string | null;
   publishClass: string | null;
   lastMs: number | null;
+  /** owner/name or name from any row's `repo`, else the publish URL; kept across attempts. */
+  repo: string | null;
 }
+
+const REPO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,99})?$/;
+const repoOfUrl = (url: string | null): string | null =>
+  /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\//.exec(url ?? '')?.[1] ?? null;
 
 export function parseAuditLedger(text: string): Map<string, WtJobLedger> {
   const jobs = new Map<string, WtJobLedger>();
@@ -174,9 +182,10 @@ export function parseAuditLedger(text: string): Map<string, WtJobLedger> {
     const at = Number.isFinite(ts) ? ts : null;
     const entry = jobs.get(id) ?? {
       rows: 0, launchMs: null, finishSeen: false, finishMs: null, finishEmpty: false,
-      outcomeState: null, outcomeMs: null, publishUrl: null, publishClass: null, lastMs: null,
+      outcomeState: null, outcomeMs: null, publishUrl: null, publishClass: null, lastMs: null, repo: null,
     };
     entry.rows++;
+    if (typeof row.repo === 'string' && REPO.test(row.repo)) entry.repo = row.repo;
     if (event === 'launch') {
       entry.launchMs = at;
       entry.finishSeen = false; entry.finishMs = null; entry.finishEmpty = false;
@@ -194,6 +203,7 @@ export function parseAuditLedger(text: string): Map<string, WtJobLedger> {
       } else if (event === 'publish') {
         entry.publishUrl = typeof row.url === 'string' && /^https:\/\/github\.com\/[\w./-]{1,300}$/.test(row.url) ? row.url : null;
         entry.publishClass = typeof row.class === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(row.class) ? row.class : null;
+        entry.repo ??= repoOfUrl(entry.publishUrl);
       }
       if (at !== null && (entry.lastMs === null || at > entry.lastMs)) entry.lastMs = at;
     }
@@ -314,6 +324,8 @@ export interface WtAuditEntry {
   name: string;
   state: WtAuditState;
   pool: string | null;
+  /** Repository from the jobs ledger; null when no row names one. */
+  repo: string | null;
   bytes: number | null;
   /** false means bytes is a partial floor from a bounded scan. */
   sizeComplete: boolean;
@@ -423,6 +435,7 @@ export function classifyEntry(ev: WtEvidence, ctx: WtAuditContext): Omit<WtAudit
     name: ev.name,
     state,
     pool: ev.pool,
+    repo: ledger?.repo ?? null,
     ageHours,
     reapable: via !== null,
     via,

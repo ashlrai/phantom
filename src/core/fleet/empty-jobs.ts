@@ -2,8 +2,10 @@ import { open, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { emptyJobs } from './empty-job-ledger.js';
-import { classifyEmptyLog, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
+import { ledgerFinishes } from './empties.js';
+import { jobFamily } from './slot-yield.js';
+import { classifyEmptyLog, diagnoseEmptyJob, EMPTY_JOB_REASONS, EMPTY_JOB_SUGGESTIONS, FLEET_EMPTY_WHY_REASONS, type EmptyJobDiagnosis, type FleetEmptyWhyReason } from './empty-why-classify.js';
+export { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
 
 export const EMPTY_CLASSES = ['duplicate', 'already-done', 'too-broad', 'tests-timeout', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
 export type EmptyClass = typeof EMPTY_CLASSES[number];
@@ -13,7 +15,26 @@ export interface EmptyJobReason { id: string; lane: string; reason: FleetEmptyWh
 /** The `fleet empty-why` log-tail tags for the newest empty jobs (the CLI's classifier, shared). */
 export interface EmptyJobsReasons { by_reason: Record<FleetEmptyWhyReason, number>; recent: EmptyJobReason[] }
 /** `reasons` is optional so the desktop panel still reads an older server's report. */
-export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; topCauses: EmptyCause[]; reasons?: EmptyJobsReasons }
+export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; topCauses: EmptyCause[]; reasons?: EmptyJobsReasons; diagnosis?: EmptyDiagnosisReport }
+export interface DiagnosedEmptyJob { id: string; lane: string; family: string; reason: EmptyJobDiagnosis }
+export interface EmptyDiagnosisGroup { name: string; total: number; topReason: EmptyJobDiagnosis; suggestion: string }
+export interface EmptyDiagnosisReport { jobs: DiagnosedEmptyJob[]; families: EmptyDiagnosisGroup[]; lanes: EmptyDiagnosisGroup[] }
+export type EmptyJobsReader = (path: string, maxBytes?: number) => Promise<string | null>;
+
+function groupDiagnoses(jobs: DiagnosedEmptyJob[], key: 'family' | 'lane'): EmptyDiagnosisGroup[] {
+  const groups = new Map<string, DiagnosedEmptyJob[]>();
+  for (const job of jobs) {
+    const members = groups.get(job[key]) ?? [];
+    members.push(job);
+    groups.set(job[key], members);
+  }
+  return [...groups].map(([name, members]) => {
+    const counts = EMPTY_JOB_REASONS.map(reason => ({ reason, count: members.filter(job => job.reason === reason).length }));
+    // Stable reason-list order breaks ties, including unknown.
+    const topReason = counts.sort((a, b) => b.count - a.count)[0]!.reason;
+    return { name, total: members.length, topReason, suggestion: EMPTY_JOB_SUGGESTIONS[topReason] };
+  }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
 
 const REASON_LOG_LIMIT = 50;
 const REASON_RECENT_LIMIT = 20;
@@ -51,17 +72,22 @@ async function tail(path: string, size: number): Promise<string | null> {
   } catch { return null; } finally { await file?.close(); }
 }
 
-export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs'), worktrees = process.env.ASHLR_WT_DIR?.trim() || join(homedir(), 'Projects/ashlrai/wt'), now = Date.now()): Promise<EmptyJobsReport | null> {
-  let ledger: string;
-  try { ledger = await readFile(join(root, 'metrics/jobs.jsonl'), 'utf8'); } catch { return null; }
-  const selected = emptyJobs(ledger, now, hours);
+export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs'), worktrees = process.env.ASHLR_WT_DIR?.trim() || join(homedir(), 'Projects/ashlrai/wt'), now = Date.now(), options: { read?: EmptyJobsReader; family?: string } = {}): Promise<EmptyJobsReport | null> {
+  const reader: EmptyJobsReader = options.read ?? ((path, max) => max ? tail(path, max) : readFile(path, 'utf8'));
+  const read: EmptyJobsReader = (path, max) => reader(path, max).catch(() => null);
+  const ledger = await read(join(root, 'metrics/jobs.jsonl'));
+  if (ledger === null) return null;
+  const selected = ledgerFinishes(ledger, now, hours).finishes.filter(job => job.empty &&
+    (!options.family || jobFamily(job.id) === jobFamily(options.family))).map(({ id, lane }) => ({ id, lane }));
   const jobs: EmptyJobResult[] = [];
   const logs = new Map<string, string | null>();
+  const diagnoses = new Map<string, DiagnosedEmptyJob>();
   for (let offset = 0; offset < selected.length; offset += 16) {
     const batch = selected.slice(offset, offset + 16);
     jobs.push(...await Promise.all(batch.map(async job => {
-      const [notes, log] = await Promise.all([tail(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), tail(join(root, `${job.id}.log`), 65536)]);
+      const [notes, log, publish] = await Promise.all([read(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), read(join(root, `${job.id}.log`), 65536), read(join(root, `${job.id}.publish`), 65536)]);
       logs.set(job.id, log);
+      diagnoses.set(job.id, { ...job, family: jobFamily(job.id), reason: diagnoseEmptyJob(log, publish) });
       return { ...job, ...classifyEmpty(notes, log) };
     })));
   }
@@ -75,5 +101,7 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
   const tagged = jobs.slice(-REASON_LOG_LIMIT).map(({ id, lane }) => ({ id, lane, reason: classifyEmptyLog(logs.get(id) ?? null) }));
   for (const t of tagged) by_reason[t.reason]++;
   const recent = tagged.slice(-REASON_RECENT_LIMIT).reverse();
-  return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs, topCauses, reasons: { by_reason, recent } };
+  const diagnosed = [...diagnoses.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs, topCauses, reasons: { by_reason, recent },
+    diagnosis: { jobs: diagnosed, families: groupDiagnoses(diagnosed, 'family'), lanes: groupDiagnoses(diagnosed, 'lane') } };
 }

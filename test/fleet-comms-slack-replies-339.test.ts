@@ -30,7 +30,8 @@ const row = (n: number) => ({
 });
 const replies = (over: Partial<Replies>): Replies => ({
   state: 'ok', answered: 0, unanswered: 0, oldestUnansweredAt: null, uncertainSends: 0,
-  rejected: 0, futureDated: 0, unansweredSample: [], ...over,
+  unverified: 0, uncertainRequests: 0, rejected: 0, futureDated: 0, unansweredSample: [],
+  busFailed: 0, busFailedSample: [], ...over,
 });
 
 it('carries counts, oldest time and sample rows without messageTs', async () => {
@@ -40,6 +41,7 @@ it('carries counts, oldest time and sample rows without messageTs', async () => 
   expect(status).toBe(200);
   expect(body.slackReplies).toEqual({
     state: 'ok', answered: 1, unanswered: 2, oldestUnansweredAt: row(1).at, uncertainSends: 1,
+    unverified: 0, uncertainRequests: 0, busFailed: 0, busFailedSample: [],
     sample: [
       { channelId: 'C0FAKE0001', threadTs: row(1).threadTs, at: row(1).at },
       { channelId: 'C0FAKE0001', threadTs: row(2).threadTs, at: row(2).at },
@@ -76,4 +78,15 @@ it('passes state missing through unchanged', async () => {
   const { body } = await call(() => replies({ state: 'missing' }));
   expect(body.slackReplies).toMatchObject({ state: 'missing', answered: 0, unanswered: 0, sample: [] });
   expect(body.sources.slackReplies).toBe('healthy');
+});
+
+it('passes unverified, uncertain and bus-failed evidence through without messageTs or malformed rows', async () => {
+  const bad = { ...row(3), channelId: '/Users/someone/secret' };
+  const { body, text } = await call(() => replies({
+    unverified: 3, uncertainRequests: 2, busFailed: 2, busFailedSample: [row(1), bad],
+  }));
+  expect(body.slackReplies).toMatchObject({ unverified: 3, uncertainRequests: 2, busFailed: 2,
+    busFailedSample: [{ channelId: 'C0FAKE0001', threadTs: row(1).threadTs, at: row(1).at }] });
+  expect(text).not.toContain('messageTs');
+  expect(text).not.toContain('/Users/someone/secret');
 });

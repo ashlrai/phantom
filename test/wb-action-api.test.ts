@@ -93,6 +93,17 @@ it('stores only the existing capability at 0600 and refuses unsafe files', async
   await expect(storeWbToken(directory, token)).rejects.toThrow();
 });
 
+it('does not enforce POSIX mode bits where the platform has none (win32), so the dispatch server can start', async () => {
+  const directory = join(root, 'wb');
+  await storeWbToken(directory, token);
+  await chmod(join(directory, 'token'), 0o644); await chmod(directory, 0o755);
+  const real = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try { await storeWbToken(directory, token); } finally { Object.defineProperty(process, 'platform', real); }
+  expect(await readFile(join(directory, 'token'), 'utf8')).toBe(token);
+  await expect(storeWbToken(directory, token)).rejects.toThrow();
+});
+
 it('counts reclaimable worktrees without returning paths or deleting them', async () => {
   const response = await request(body('reap.count'));
   expect(response.status).toBe(200);

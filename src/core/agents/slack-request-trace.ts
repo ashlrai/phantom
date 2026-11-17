@@ -2,15 +2,23 @@
  * Per-request Slack trace (RQ-PHX-SLACKTRACEVERB339): for every ingested
  * journal entry that carries the ids a reply can bind to, join the durable
  * ingress receipt (journal `bus` outcome) with the send-store evidence and
- * report one outcome -- ANSWERED by a same-thread `sent` receipt, UNCERTAIN
- * when only an `attempted` send exists in that thread, BUS-FAILED when the
- * bus append failed, else UNANSWERED. Message text, author ids and paths are
- * never read or repeated; the output is ids and timestamps only.
+ * report one outcome. Binding is causal, not temporal: a request is ANSWERED
+ * only by the `sent` receipt stored under the exact key of its Leader reply
+ * (journaled `requestId`), UNCERTAIN when that key is only `attempted` or its
+ * stored evidence is inconsistent, UNANSWERED when no send exists for the key,
+ * and BUS-FAILED when the bus append failed (reply evidence is still kept).
+ * Rows with no reply identity (legacy rows, the peer path, owner requests not
+ * routed to the Leader) are UNCERTAIN with `evidence: 'unverified'`: they are
+ * never claimed answered and never certified unanswered, and no timestamp
+ * fallback is used. A matching key is correlation evidence, not proof that the
+ * content answered the request. Unknown ingress never reports a replyTs.
+ * Message text, author ids, request ids and paths are never read or repeated;
+ * the output is ids and timestamps only.
  */
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
 import { isSlackChannelId, isSlackTs } from './slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from './slack-send-receipts.js';
-import { bindSlackReplies, type InboundRequest, type SentReceipt } from './slack-reply-binding.js';
+import { bindSlackReplies, type InboundRequest, type SentReceipt, type SlackReplyBinding } from './slack-reply-binding.js';
 
 export type SlackTraceIngress = 'posted' | 'duplicate' | 'failed' | 'unknown';
 export type SlackTraceOutcome = 'answered' | 'uncertain' | 'bus-failed' | 'unanswered';
@@ -24,8 +32,10 @@ export interface SlackTraceRow {
   /** Local bus append outcome recorded at ingress; `unknown` when the row carries none. */
   ingress: SlackTraceIngress;
   outcome: SlackTraceOutcome;
-  /** Same-thread `sent` receipt ts when outcome is `answered`. */
+  /** `sent` receipt ts bound by exact reply key; on bus failure this does not prove execution. */
   replyTs?: string;
+  /** `unverified` when the row has no reply identity, so no answer can be proven or ruled out. */
+  evidence?: 'unverified';
 }
 
 export interface SlackRequestTrace {
@@ -68,55 +78,44 @@ export function traceSlackRequests(input: {
     if (entry.decision !== 'ingested' || !entry.channelId || !entry.messageTs || !entry.threadTs) continue;
     if (input.thread !== undefined && entry.threadTs !== input.thread) continue;
     pending.push({
-      req: { at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs },
+      req: { at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs,
+        ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) },
       ingress: entry.bus ?? 'unknown',
     });
   }
-  const binding = bindSlackReplies({ requests: pending.map((p) => p.req), receipts, now });
-  // The binder answers requests in compareRequests order; for journal rows
-  // that share channel+thread+message ids that order reduces to `at`, so the
-  // k-th oldest duplicate claims the k-th reply recorded for that key. Rows
-  // the binder rejects or marks future-dated hold no rank and never answer.
-  const answersByKey = new Map<string, string[]>();
-  for (const a of binding.answered) {
-    const key = `${a.channelId}:${a.threadTs}:${a.messageTs}`;
-    const list = answersByKey.get(key) ?? [];
-    list.push(a.replyTs);
-    answersByKey.set(key, list);
-  }
+  // Every ingested row stays in the trace. Failed rows are bound separately so
+  // they keep their reply evidence; the binder shares one verdict between
+  // duplicate journal rows of the same request id.
+  const bind = (ingress: (i: SlackTraceIngress) => boolean): SlackReplyBinding =>
+    bindSlackReplies({ requests: pending.filter((p) => ingress(p.ingress)).map((p) => p.req), receipts, now });
+  const binding = bind((i) => i !== 'failed');
+  const failedBinding = bind((i) => i === 'failed');
   const nowMs = now.getTime();
   const eligible = (req: InboundRequest): boolean =>
     isSlackChannelId(req.channelId) && isSlackTs(req.messageTs) && isSlackTs(req.threadTs) &&
     Number.isFinite(Date.parse(req.at)) && Date.parse(req.at) <= nowMs;
-  const rankByIndex = new Map<number, number>();
-  const byKey = new Map<string, number[]>();
-  pending.forEach((p, i) => {
-    if (!eligible(p.req)) return;
-    const key = `${p.req.channelId}:${p.req.threadTs}:${p.req.messageTs}`;
-    const list = byKey.get(key) ?? [];
-    list.push(i);
-    byKey.set(key, list);
-  });
-  for (const indexes of byKey.values()) {
-    indexes.sort((a, b) => compareText(pending[a]!.req.at, pending[b]!.req.at));
-    indexes.forEach((i, rank) => rankByIndex.set(i, rank));
-  }
-  const attempted = new Set(
-    receipts.filter((r) => r.state === 'attempted' && r.thread !== undefined).map((r) => `${r.channel}:${r.thread}`),
-  );
   const counts = { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
-  const rows: SlackTraceRow[] = pending.map((p, i) => {
+  const rows: SlackTraceRow[] = pending.map((p) => {
     const { req, ingress } = p;
-    const key = `${req.channelId}:${req.threadTs}:${req.messageTs}`;
-    const replies = answersByKey.get(key);
-    const rank = rankByIndex.get(i);
-    const row: SlackTraceRow = { ...req, ingress, outcome: 'unanswered' };
-    if (rank !== undefined && replies !== undefined && rank < replies.length) {
-      row.outcome = 'answered';
-      row.replyTs = replies[rank]!;
-    } else if (ingress === 'failed') {
+    const { requestId, ...evidence } = req;
+    const row: SlackTraceRow = { ...evidence, ingress, outcome: 'unanswered' };
+    const found = requestId !== undefined && eligible(req)
+      ? (ingress === 'failed' ? failedBinding : binding).byRequestId.get(requestId) : undefined;
+    if (ingress === 'failed') {
       row.outcome = 'bus-failed';
-    } else if (attempted.has(`${req.channelId}:${req.threadTs}`)) {
+      if (found?.replyTs !== undefined) row.replyTs = found.replyTs;
+      if (requestId === undefined) row.evidence = 'unverified';
+    } else if (requestId === undefined) {
+      // No reply identity (legacy, peer path, or not Leader-routed): neither
+      // answered nor certified unanswered.
+      row.outcome = 'uncertain';
+      row.evidence = 'unverified';
+    } else if (found?.verdict === 'answered' && (ingress === 'posted' || ingress === 'duplicate')) {
+      row.outcome = 'answered';
+      row.replyTs = found.replyTs!;
+    } else if (found?.verdict === 'uncertain' || found?.verdict === 'answered') {
+      // Exact-key attempt, inconsistent stored evidence, or a send whose
+      // ingress was never durably recorded: transport cannot prove it.
       row.outcome = 'uncertain';
     }
     counts.total++;

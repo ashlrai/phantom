@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { useCapacityData } from '../usage/CapacityStrip.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -454,7 +454,7 @@ describe('Devin provider identity', () => {
   it('bundles the exact verified vendor geometry with a theme-aware fill and accessible name', () => {
     const asset = readFileSync(resolve(process.cwd(), 'site/assets/devin-mark.svg'), 'utf8');
     expect(createHash('sha256').update(asset).digest('hex')).toBe('fe0753d2e3823bc1eb8a37943234fac63733b8c9e8abff0ca0402a6c7ddcd682');
-    const { getByRole, container } = render(<ProviderLogo engine="devin" title="Devin" />);
+    const { getByRole, container } = render(<BrandMark brand="devin" title="Devin" />);
     expect(getByRole('img', { name: 'Devin' })).toHaveAttribute('viewBox', '0 0 425 425');
     expect(container.querySelector('path')!.getAttribute('d')).toBe(asset.match(/<path d="([^"]+)"/)![1]);
     expect(container.querySelector('path')).toHaveAttribute('fill', 'currentColor');

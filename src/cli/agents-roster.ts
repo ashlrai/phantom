@@ -1,6 +1,7 @@
 /**
  * `phm agents roster` dispatcher. Parsing only; the roster lives in core.
  */
+import { terminalColor } from '../core/brand/registry.js';
 import { collectAgentRoster, formatAgentRoster, validateAgentRoster, type AgentRosterDeps } from '../core/fleet/agent-roster.js';
 
 const HELP = `ashlr agents roster [--json]
@@ -26,7 +27,7 @@ export async function runAgentsRosterCli(
       err(problem);
       return 1;
     }
-    out(formatAgentRoster(roster));
+    out(formatAgentRoster(roster, { color: terminalColor() }));
     return 0;
   }
   const json = args.includes('--json');
@@ -41,6 +42,6 @@ export async function runAgentsRosterCli(
     err(json ? JSON.stringify({ error: 'invalid-roster', field: problem }) : problem);
     return 1;
   }
-  out(json ? JSON.stringify(roster) : formatAgentRoster(roster));
+  out(json ? JSON.stringify(roster) : formatAgentRoster(roster, { color: terminalColor() }));
   return 0;
 }
