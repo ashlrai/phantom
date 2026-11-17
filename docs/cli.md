@@ -329,6 +329,7 @@ Every command, grouped by topic.
     home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
     asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
     throughput [--hours 24] [--by lane|repo|tier] [--text]                                      Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
+    jobs state <id> [--json]                                                                    Show whether a job is running or done, with the evidence.
     jobs empty [--since 24h] [--json]                                                           Explain empty jobs from local notes and logs.
     radar list|run|diff [--json]                                                                Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                            Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
