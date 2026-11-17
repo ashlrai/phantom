@@ -50,6 +50,8 @@ export const PALETTE_GROUPS = [
   { id: 'chats', label: 'Chats' },
   { id: 'actions', label: 'Actions' },
   { id: 'go-to', label: 'Go to' },
+  // Every `phm` command, from the CLI's own catalog (palette-commands.ts).
+  { id: 'cli', label: 'Commands' },
   { id: 'seats-apps', label: 'Seats & Apps' },
   { id: 'projects', label: 'Projects' },
 ] as const;

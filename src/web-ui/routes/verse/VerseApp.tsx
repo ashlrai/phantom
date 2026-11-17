@@ -323,6 +323,8 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 
 /** Pointer navigation to Fleet shares the menu's map target, including repeat visits. */
 function navigateSection(section: VerseSectionId): void {
+  // Home pressed while a landing view is already showing goes back to the Home summary.
+  if (section === 'live' && getVerseUiState().section === 'live') setHomeChoice('home');
   if (section === 'fleet') executeCatalogCommand('surface.fleet', { via: 'button' });
   else setVerseSection(section);
 }
@@ -518,7 +520,7 @@ export function PhantomApp() {
   // and the page's name, since one gear stands for three pages), not only
   // through the data-active styling.
   const currentPage = sectionEntry(ui.section);
-  // The landing view (Leader by default) replaces the Home section; below 720
+  // The landing view (the Home summary by default) replaces the Home section; below 720
   // the compact strip carries navigation and, above the phone layout, the rail steps aside on it.
   const homePane = home.view === 'live' ? null : HOME_PANE_IDS[home.view];
   const homeShowing = ui.section === 'live' && homePane !== null;

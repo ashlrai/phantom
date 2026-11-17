@@ -351,6 +351,10 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/map') {
     return (await import('./fleet-org-map-api.js')).handleFleetOrgMapApi(ctx, req, res, path, method);
   }
+  // Literal path: the whole-fleet graph behind `phm map` and the Map pane.
+  if (path === '/api/verse/fleet/control/live-map') {
+    return (await import('./fleet-live-map-api.js')).handleFleetLiveMapApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/claim-notices') {
     return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);
   }

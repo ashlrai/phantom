@@ -310,7 +310,8 @@ Session evidence preserves exact lanes and stale jobs; missing model/provider/he
 is `unknown`. The 2D map opens the existing job detail sheet. The 3D view retains
 machine placement and reads shared job labels and message counts.
 Message edges count retained, unexpired local bus receipts in the window, exclude
-human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately. This is
+human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately.
+Each message edge also carries `lastAt`, the time of its newest message. This is
 not a complete historical ledger. Leader, guardian and channel health remain unknown.
 
 #### Org tree
@@ -334,6 +335,36 @@ screen, never 0. A lane with no jobs reads "idle"; when no job source answered
 (`jobsKnown` is false) it reads "jobs unknown" instead. The dot beside a job is
 on when `lastActivityAt` is within the last 5 minutes. Selecting a job opens
 its detail sheet.
+
+#### Live map
+
+`phm map` shows the whole fleet as one graph: the leader, lanes, running jobs,
+computers and the pools lanes draw on. `phm map --json` prints it as
+`fleet.live-map.v1`. `GET /api/verse/fleet/control/live-map` serves the same
+graph to the desktop Map pane with a current read session. The graph adds no
+source of its own. It joins the org map and tree above, `phm nodes` (computers
+and the jobs each one holds) and the pool-usage ledger.
+
+- `nodes[]`: `id`, `kind` (`leader`, `lane`, `job`, `computer`, `resource`),
+  `level` (0 to 4, the row in the drawing), `label`, `provider`, `status`,
+  `detail` and `live` (jobs only). Ids are stable: `leader`, `lane:<name>`,
+  `job:<id>`, `computer:<name>`, `resource:<lane>`.
+- `edges[]`: `id`, `kind` (`reports-to`, `runs-on`, `uses-resource`,
+  `messaged-in-last-15-min`), `from`, `to`, `messages`, `lastMessageAt` and
+  `pulse` (a message in the last minute).
+- `counts`, `sources`, `unmappedMessages`, and `gaps`, which lists in plain
+  words every fact the map could not show.
+
+Every node and edge has the same keys in the same order, sorted by level and
+id, so the same facts always print the same JSON. A job runs on a computer when
+that computer's pool claim names it, or when a worker process for it was seen
+on this computer. Messages to or from something not on the map, such as a
+channel, are counted in `unmappedMessages` and never assigned to a node by
+guessing. The server builds the graph at most once every 5 seconds, and the
+pane polls no faster than that while it is visible. Selecting a node opens the
+pane that already shows its details: the worker log for a job, Lanes, Computers,
+Usage for a pool, or Leader. The map is 2D only, because no 3D library is a
+dependency.
 
 ### Desktop workbench actions (WB-4)
 
