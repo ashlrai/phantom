@@ -1,5 +1,23 @@
 # Advisory routing pairing
 
+`run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
+model classifications and their capability order. `ModelEntry.modeTier` is
+required and excludes fusion (a composition). `RouteRequest.mode?` requests a
+minimum model class, independently of queue `tier_hint`; unknown models need
+`models.json["mode.<model>"]`. `RouteDecision.mode_tier` is the selected class
+or null. `RouteReport` includes `requested_mode` and nullable capacity evidence.
+`decideRoute(raw, sources, {backends?, signal?, nowMs?})` returns a
+`RouteReport` or, for fusion, `route.pairing.v1` with `mode_tier: fusion`.
+Fusion assigns ultra judgment and lite/normal implementation through
+`decidePairing`. Assignments add nullable `model` and `mode_tier`.
+`RouteSources` adds optional `capacity` and `request` snapshots, loaded from
+`queue/route-capacity.json` and `queue/route-request.json`. `explainRoutes`
+adds nullable `decision`, recomputed without model calls from those snapshots.
+Among eligible lanes: closest future reset with positive allowance, then
+zero marginal cost, then cheapest known marginal cost; unknown cost sorts last.
+`ResetCalendarPool.costPerMTok?` is nonnegative marginal USD/M tokens, not
+subscription sticker price. Reset-calendar lanes now sort by reset before pace.
+
 `decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
 is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
 sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;

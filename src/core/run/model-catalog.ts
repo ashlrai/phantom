@@ -14,6 +14,12 @@
  */
 
 import type { EngineId } from '../types.js';
+import { MODEL_MODE_TIERS, type ModelModeTier } from './model-mode-data.js';
+
+export function modelModeTier(model: string): ModelModeTier | null {
+  const tag = Object.hasOwn(MODEL_MODE_TIERS, model) ? model : model.slice(model.indexOf(':') + 1);
+  return Object.hasOwn(MODEL_MODE_TIERS, tag) ? MODEL_MODE_TIERS[tag]! : null;
+}
 
 /**
  * HTTP API version, independent of the Anthropic SDK major version.
@@ -128,6 +134,8 @@ export const GROK_CLI_FAST_MODEL = 'grok-4.7-build-fast';
 // ---------------------------------------------------------------------------
 
 export interface ModelEntry {
+  /** Company-neutral capability/cost class; fusion is a pairing, never a model. */
+  modeTier: ModelModeTier;
   /** Unique catalog id: `<engine>:<model-tag>`. */
   id: string;
   /** The fleet engine this model runs on. */
@@ -205,7 +213,7 @@ export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
 /** Registered for lookup only until its subscription admission safeguards are wired. */
 export const FABLE_52_MODEL_ID = 'claude-fable-5-2';
 
-export const KNOWN_MODELS: readonly ModelEntry[] = [
+const MODEL_ENTRIES: readonly Omit<ModelEntry, 'modeTier'>[] = [
   // Concrete current IDs stay distinct from the old aliases used by signed grants.
   // Public API sticker prices are estimates, never native allowance/billing proof:
   // platform.claude.com/docs/en/models/overview; developers.openai.com/api/docs/models/gpt-6.1-sol.
@@ -572,6 +580,12 @@ export const KNOWN_MODELS: readonly ModelEntry[] = [
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+export const KNOWN_MODELS: readonly ModelEntry[] = MODEL_ENTRIES.map(entry => {
+  const modeTier = modelModeTier(entry.id.slice(entry.id.indexOf(':') + 1));
+  if (!modeTier) throw new Error(`Missing model mode classification: ${entry.id}`);
+  return { ...entry, modeTier };
+});
 
 /**
  * Current automatic entries for a specific engine. KNOWN_MODELS also preserves historical lookups.
