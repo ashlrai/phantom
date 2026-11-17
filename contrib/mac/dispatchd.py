@@ -12,6 +12,7 @@
 # usage_source and a usage_missing reason when nothing was recorded.
 import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from typing import TypedDict
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 # A kernel-held claim serializes the complete tick, including liveness sampling and
@@ -1447,11 +1448,29 @@ def waste_risk(projection, lane):
     risk = projection.get("waste_risk")
     return risk if risk in ("medium", "high") else None
 
-def waste_boost(projection, lane, tier):
+class TierUpgrade(TypedDict):
+    job: str
+    lane: str
+    from_tier: str
+    to_tier: str
+    reason: str
+
+def pace_behind(projection):
+    if (not isinstance(projection, dict) or projection.get("known") is not True
+            or projection.get("stale") is not False or type(projection.get("behind")) is not bool): return None
+    return projection["behind"]
+
+def waste_boost(projection, lane, tier, executor):
+    # A tier change never grants paid usage or bypasses the selected executor's contract.
+    if (executor.get("cost_class") != "included" or executor.get("held")
+            or executor.get("auth_failed") or executor.get("backoff") or executor.get("quota") == 0): return None
+    boosted = {"mid": "work", "work": "frontier"}.get(tier)
+    if not boosted or boosted not in executor.get("tiers", []): return None
+    if tier == "work" and pace_behind(projection) is True:
+        return boosted, "use-it-all behind pace: work -> frontier (yield policy)"
     risk = waste_risk(projection, lane)
     if not risk: return None
-    boosted = {"mid": "work", "work": "frontier"}.get(tier)
-    return (boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)) if boosted else None
+    return boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)
 
 # The host-owned projection is advisory and expires after two minutes.
 UIA = {}
@@ -1722,6 +1741,7 @@ conc_adjusted(concurrency.decide(CONC, fc.concurrency_signals(BUS, GATE_LOAD_PER
 tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
+tier_upgrades: list[TierUpgrade] = []
 GCAP = global_cap()
 
 # Weekly quota pacing (RQ-PACE-TO-RESET): routine claims defer when a lane's
@@ -1856,8 +1876,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                             "chars": len(text), "f": f, "prompt": text}
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
-        if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        def solo(c):
+            return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}))
+        if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
@@ -2011,8 +2033,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
-        boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
+        boost = waste_boost(UIA.get(lane), lane, tier, view[lane]) if not batch else None
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
+        requested_tier = tier
         if boost: tier = boost[0]
         for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
             prior = route_state.get(route_job)
@@ -2049,6 +2072,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)
             ev("ROUTE_BOOST %s %s %s" % (j, lane, reason))
+        if boost:
+            tier_upgrades.append({"job": j, "lane": lane, "from_tier": requested_tier, "to_tier": tier, "reason": reason})
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         if target: drain_targets.add(target)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
@@ -2414,6 +2439,8 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                     "effective_target": tgt(l), "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
+      "tier_upgrades_this_tick": tier_upgrades,
+      "use_it_all_behind": {l: pace_behind(UIA.get(l)) for l in LANES},
       "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],
       "recent_events": evs,
