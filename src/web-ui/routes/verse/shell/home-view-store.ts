@@ -7,7 +7,7 @@
  * the operator actually chooses, so a fresh profile follows the default.
  */
 import { useMemo, useSyncExternalStore } from 'react';
-import { getPane, subscribePanes } from '../panes/pane-registry.js';
+import { hasRegisteredPane, subscribeRegisteredPaneIds } from '../panes/pane-presence.js';
 import { HOME_COMPACT_BELOW, HOME_PANE_IDS, isHomeChoice, resolveHomeView, type HomeChoice, type HomeLayout, type HomeView } from './home-view.js';
 
 export const HOME_VIEW_STORAGE_KEY = 'ashlr.verse.home.v1';
@@ -71,8 +71,8 @@ function subscribeChoice(listener: () => void): () => void {
 export function useHomeView(): { view: HomeView; layout: HomeLayout } {
   const persisted = useSyncExternalStore(subscribeChoice, readChoice, () => null);
   const narrow = useSyncExternalStore(subscribeNarrow, currentNarrow, () => false);
-  const pickedRegistered = useSyncExternalStore(subscribePanes,
-    () => persisted ? getPane(HOME_PANE_IDS[persisted]) !== null : false, () => false);
+  const pickedRegistered = useSyncExternalStore(subscribeRegisteredPaneIds,
+    () => persisted ? hasRegisteredPane(HOME_PANE_IDS[persisted]) : false, () => false);
   return useMemo(
     () => resolveHomeView({ persisted, width: narrow ? HOME_COMPACT_BELOW - 1 : HOME_COMPACT_BELOW, hasLeaderThread: true, registered: () => pickedRegistered }),
     [persisted, narrow, pickedRegistered],

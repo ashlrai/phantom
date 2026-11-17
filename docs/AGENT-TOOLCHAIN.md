@@ -147,3 +147,29 @@ probes and returns nonzero for unhealthy required servers. This job's host
 reported an unwired Claude gateway and unreadable Codex/Cursor/Gemini client
 configs. Those observations do not prove that the separate lane configs lack
 servers. Required lane tools remain unknown until checked in that lane.
+
+## Check lane tool parity
+
+`phm tools parity` prints a lane-by-tool matrix as JSON (`--text` for a short
+table): GitHub read, GitHub write through the publish path, web search,
+browser, shell, package install and MCP servers by name. It reads declarations
+only, never a live probe: the router's declared lane capabilities, MCP
+connectors in the connector profile that name a lane, and the host's own
+`<runs>/queue/lane-tools.json`. Lanes come from `slots.json`. A tool no source
+declares is shown as unknown (`?`), never as missing.
+
+```sh
+phm tools parity --text
+phm tools requires --needs github-read,browser
+```
+
+`requires` lists the lanes that declare every need (`can`), lanes that declare
+none of them missing (`unproven`), and lanes declared to lack one (`cannot`).
+Send a job only to `can` or `unproven`. Needs are `github-read`,
+`github-write`, `web-search`, `browser`, `shell`, `package-install` and
+`mcp:<server>`. Declare a lane's tools in `lane-tools.json`, which wins over
+the router's built-in declarations:
+
+```json
+{ "v": 1, "lanes": { "claude": { "github-read": false, "browser": true, "mcp": ["context7", "fetch"] } } }
+```

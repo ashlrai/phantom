@@ -48,6 +48,7 @@ export function groupingFallbackRegression(label: string, warning: RegExp, relea
     vi.useFakeTimers(); vi.setSystemTime(NOW);
     render(pair());
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.click(screen.getByRole('button', { name: /Usage sources and budgets/ }));
     const readsBeforeGrouping = reads.length;
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Group by provider' }));

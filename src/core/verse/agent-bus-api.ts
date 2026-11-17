@@ -3,6 +3,8 @@
  * GET /api/verse/agent-bus[?after=0&limit=50] reads a cursor page (limit 1..100).
  * POST /api/verse/agent-bus appends exactly one BusEnvelope, with the normal
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
+ * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&limit=50] is the same
+ * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -14,6 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { mirrorLeaderPostToInbox } from '../fleet/bus-leader-inbox.js';
 import { CHANNEL_ACK_TIMEOUT_MS } from '../fleet/channel-envelope.js';
@@ -24,12 +27,14 @@ import type { ApiModule } from './api-modules.js';
 
 const PATH = '/api/verse/agent-bus';
 const NEEDS_MASON = `${PATH}/needs-mason`;
+const MESSAGES = `${PATH}/messages`;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 type NeedsMasonApiResult = NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' };
 export interface AgentBusApiDeps {
   append?: typeof appendBusInbox;
   list?: typeof listBusInboxAfter;
   inspect?: typeof inspectBusInbox;
+  messages?: typeof readAgentMessages;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
   needsMason?: {
@@ -42,7 +47,7 @@ export interface AgentBusApiDeps {
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE) return false;
+    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE) return false;
     if (method !== (path === NEEDS_MASON_RESOLVE ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
@@ -57,13 +62,20 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     let params: URLSearchParams;
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
-    const allowed = method === 'GET' && path === PATH ? ['after', 'limit'] : [];
+    const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'limit'] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
     try {
       if (path === `${PATH}/edges`) {
         const result = readFleetEdges();
+        sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+      } else if (path === MESSAGES) {
+        const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
+          agent: params.get('agent') ?? undefined, limit: params.get('limit') ?? undefined });
+        if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
+        const result = (deps.messages ?? readAgentMessages)(parsed.query);
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } else if (path === NEEDS_MASON) {
         sendJson(res, 200, { v: 1, items: (deps.needsMason?.list ?? listNeedsMason)() });

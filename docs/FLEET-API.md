@@ -313,6 +313,28 @@ Message edges count retained, unexpired local bus receipts in the window, exclud
 human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately. This is
 not a complete historical ledger. Leader, guardian and channel health remain unknown.
 
+#### Org tree
+
+`phm org` prints the same facts as one `fleet.org.v1` tree, and the Fleet map
+draws that tree: the leader, one card per lane, one chip per running job.
+JSON is the default; `phm org --text` prints it for people.
+The map endpoint above carries the tree in its `tree` field.
+
+- `leader`: `label`, `status` and the dispatcher's `lastTick` and `paused`.
+- `lanes[]`: `lane`, `provider`, `running`, `target`, `queued`, `held`, and
+  `usage` (`usedPct`, `asOf`, `resetAt`). Fleet lanes come first in a fixed
+  order, then any other lane by name.
+- `lanes[].jobs[]`: `id`, `repo`, `model`, `provider`, `status`, `startedAt`,
+  `lastEvent` (`at`, `kind`) and `lastActivityAt`. Oldest first.
+- `messages[]`: `from`, `to`, `count` for the message window, or `null` when
+  the bus could not be read.
+
+A fact no source reported is `null` in JSON and "unknown" in text and on
+screen, never 0. A lane with no jobs reads "idle"; when no job source answered
+(`jobsKnown` is false) it reads "jobs unknown" instead. The dot beside a job is
+on when `lastActivityAt` is within the last 5 minutes. Selecting a job opens
+its detail sheet.
+
 ### Desktop workbench actions (WB-4)
 
 `POST /api/wb/v1/action` requires dispatch enabled, the existing mutation
