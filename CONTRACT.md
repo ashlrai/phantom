@@ -866,3 +866,8 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `read`, `none` or `unknown`; an unreadable source adds no rows. Served by
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
+
+`src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
+`subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
+`publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
+first-paint consumers observe it without importing pane definitions or shortcuts.
