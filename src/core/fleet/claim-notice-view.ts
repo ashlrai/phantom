@@ -11,14 +11,16 @@
  * A "sent" row means a durable bus note was written, NOT that Slack
  * delivered it. To keep that distinction honest each recent row also carries
  * `delivery`, which joins the row's claim binding onto the Slack transport's
- * own outbound send store: 'slack-sent' only when a same-channel, same-thread
- * `sent` receipt with a well-formed Slack ts exists at-or-after the ledger
+ * own outbound send store: 'slack-sent' only when the exact notice identity has
+ * a same-channel, same-thread `sent` receipt with a well-formed Slack ts at-or-after the ledger
  * time (minus skew) and no later than the collection time, 'no-slack-receipt'
  * when the store is healthy but nothing matches, 'unknown' whenever the evidence
  * itself is incomplete (missing or ambiguous binding, unparseable threadKey,
  * missing/degraded/thrown store read). Thread keys are Slack ids/timestamps;
  * tokens, author ids and file paths never enter the view. */
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { slackSendStoreKey } from '../agents/slack-reply-identity.js';
 import { isSlackTs, loadAgentNetworkConfig } from '../agents/slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
 import { parseNoticeThreadRef } from '../../cli/fleet-claim-notices.js';
@@ -122,7 +124,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
   const rows = readClaimNoticeSentRows(paths.sent);
   if (rows === null) return empty('unreadable');
   const bindings = readClaimThreadBindings(paths.bindings);
-  const classify = (claimId: string, repo: string | undefined, at: number): ClaimNoticeDeliveryWord => {
+  const classify = (claimId: string, repo: string | undefined, at: number, dedupeKey: string): ClaimNoticeDeliveryWord => {
     // A non-ok store can hide receipts; only a healthy read may say "none matched".
     if (sendStore.state !== 'ok') return 'unknown';
     const threads = new Set(bindings
@@ -134,7 +136,11 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     if (ref === null) return 'unknown';
     const floorSeconds = (at - CLAIM_NOTICE_RECEIPT_SKEW_MS) / 1000;
     const ceilingSeconds = collectedAtMs / 1000;
-    return sendStore.receipts.some(r => r.state === 'sent' && r.channel === ref.channelId &&
+    // Match the producer's envelope id and the transport's store key exactly.
+    // Thread/time proximity alone cannot identify which transition was sent.
+    const envelopeId = `claim-notice-${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`;
+    const key = slackSendStoreKey(envelopeId);
+    return sendStore.receipts.some(r => r.key === key && r.state === 'sent' && r.channel === ref.channelId &&
         r.thread === ref.threadTs && isSlackTs(r.ts) &&
         Number(r.ts) >= floorSeconds && Number(r.ts) <= ceilingSeconds)
       ? 'slack-sent' : 'no-slack-receipt';
@@ -145,7 +151,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     const parsed = parseClaimNoticeKey(row.key);
     if (parsed !== null) {
       recent.push({ state: parsed.state, claimId: parsed.claimId, at: row.at,
-        delivery: classify(parsed.claimId, parsed.repo, row.at) });
+        delivery: classify(parsed.claimId, parsed.repo, row.at, row.key) });
     }
   }
 
