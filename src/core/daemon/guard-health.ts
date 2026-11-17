@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { probeDaemonLiveness, type DaemonLivenessV1 } from './liveness.js';
 import { readDaemonPause } from './pause.js';
+import { resolveExecutable, type ExecutableResolution } from '../run/tool-path.js';
 
 import { evidenceDir } from '../autonomy/evidence-pack.js';
 import { readKillSwitch } from '../sandbox/policy.js';
@@ -283,6 +284,11 @@ export interface DaemonHealthClientDiagnosis {
   reason: string;
   /** null when the engine has no CLI binary to look for (local, grok-cli). */
   binaryOnPath: boolean | null;
+  binaryPath: string | null;
+  binarySource: 'path' | 'well-known' | null;
+  /** Admission is inferred from inventory; authentication is never inspected. */
+  cause: 'binary-not-found' | 'auth-or-seat-not-admitted' | 'policy-refused' |
+    'resource-unavailable' | 'not-selected' | 'non-loopback-refused' | 'probe-timeout' | 'unavailable';
 }
 
 export interface DaemonHealthFrontierDiagnostics {
@@ -295,29 +301,33 @@ const FRONTIER_CLI_BINARY: Record<string, string> = { codex: 'codex', claude: 'c
 
 /** PATH lookup by metadata only: never launches the CLI or reads its auth. */
 export function binaryOnPath(name: string, pathValue: string | undefined = process.env['PATH']): boolean {
-  for (const dir of (pathValue ?? '').split(':').filter(Boolean)) {
-    try {
-      const meta = statSync(join(dir, name));
-      if (meta.isFile() && (meta.mode & 0o111) !== 0) return true;
-    } catch { /* not in this dir */ }
-  }
-  return false;
+  return resolveExecutable(name, { pathValue: pathValue ?? '' })?.source === 'path';
 }
 
 export function diagnoseFrontierClients(
   inventory: ReadonlyArray<{ id: string; engine: string; available: boolean; reason: string }>,
-  onPath: (name: string) => boolean = binaryOnPath,
+  lookup: (name: string) => ExecutableResolution | null = resolveExecutable,
 ): DaemonHealthClientDiagnosis[] {
   return inventory.filter((client) => !client.available).map((client) => {
     const binary = FRONTIER_CLI_BINARY[client.engine];
-    return { id: client.id, engine: client.engine, reason: client.reason, binaryOnPath: binary ? onPath(binary) : null };
+    const resolved = binary ? lookup(binary) : null;
+    const reason = client.reason;
+    const cause: DaemonHealthClientDiagnosis['cause'] =
+      reason === 'policy-refused' || reason === 'resource-unavailable' || reason === 'not-selected' ||
+      reason === 'non-loopback-refused' || reason === 'probe-timeout' ? reason
+        : binary && !resolved ? 'binary-not-found'
+          : reason === 'unavailable-or-not-admitted' && resolved ? 'auth-or-seat-not-admitted'
+            : reason === 'unavailable-or-not-selected' ? 'not-selected' : 'unavailable';
+    return { id: client.id, engine: client.engine, reason, cause,
+      binaryOnPath: binary ? resolved?.source === 'path' : null,
+      binaryPath: resolved?.path ?? null, binarySource: resolved?.source ?? null };
   });
 }
 
 function frontierDetail(diagnostics: DaemonHealthFrontierDiagnostics): string {
   if (diagnostics.error) return `frontier inventory unreadable: ${diagnostics.error}`;
   const parts = diagnostics.unavailable.map((client) =>
-    `${client.id}: ${client.reason}${client.binaryOnPath === false ? ` ('${FRONTIER_CLI_BINARY[client.engine]}' not on PATH)` : ''}`);
+    `${client.id}: ${client.cause}${client.binaryPath ? ` (${client.binaryPath})` : ''}`);
   return parts.length > 0 ? `no frontier client resolved (${parts.join('; ')})` : 'no frontier client resolved';
 }
 
