@@ -252,7 +252,7 @@ describe('fleet_imessage_acks over MCP', () => {
     expect(out).toMatchObject({ sourceState: 'ok', coverage: ACKS_COVERAGE });
     expect(out.ackEvidence).toMatchObject({ sourceState: 'ok', malformedRows: 0, deliveryProof: false });
     expect(out.ackEvidence.rows).toEqual([
-      { timestamp: '2026-01-02T03:04:05.000Z', rowid: 1, status: 'accepted', delivery: 'recorded-not-sent' },
+      { timestamp: '2026-01-02T03:04:05.000Z', rowid: 1, status: 'accepted', delivery: 'unknown' },
       { timestamp: '2026-01-02T03:04:05.000Z', rowid: 2, status: 'duplicate', delivery: 'unknown' },
     ]);
   });

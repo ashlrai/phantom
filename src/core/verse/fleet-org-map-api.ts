@@ -3,16 +3,20 @@ import { sendJson } from '../web/api.js';
 import { buildFleetLiveSnapshot } from './fleet-live-api.js';
 import { getFleetSessions } from '../fleet/runs-sessions.js';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
-import { fleetOrgMap, mapWindowMinutes } from '../fleet/org-map.js';
+import { fleetOrgMap, mapWindowMinutes, type FleetOrgMap } from '../fleet/org-map.js';
+import { fleetOrgTree, type FleetOrgTree } from '../fleet/org-tree.js';
+import { readFleetRunsDirState } from '../fleet/runs-dir-state.js';
+import { readResourceLedger } from '../fleet/runs-resource-ledger.js';
 
-export async function readFleetOrgMap(minutes = 60) {
+export async function readFleetOrgMap(minutes = 60): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
   mapWindowMinutes(String(minutes));
-  const now = Date.now();
-  const [live, sessions] = await Promise.allSettled([buildFleetLiveSnapshot(), getFleetSessions({ now: () => now })]);
-  const messages = readFleetEdges({ now: () => now, windowMinutes: minutes });
-  return fleetOrgMap(live.status === 'fulfilled' ? live.value.snapshot : null, {
-    sessions: sessions.status === 'fulfilled' ? sessions.value : null, messages, minutes, now,
-  });
+  const now = Date.now(), clock = { now: () => now };
+  const settled = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : null;
+  const [live, sessions, runs, usage] = await Promise.allSettled([buildFleetLiveSnapshot(), getFleetSessions(clock), readFleetRunsDirState(clock), readResourceLedger(clock)]);
+  const messages = readFleetEdges({ ...clock, windowMinutes: minutes });
+  const snapshot = settled(live)?.snapshot ?? null;
+  const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now });
+  return { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage: settled(usage), engineLanes: snapshot?.lanes }) };
 }
 export function createFleetOrgMapApi(read = readFleetOrgMap): ApiModule {
   return async (ctx, req, res, path, method) => {

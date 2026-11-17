@@ -96,4 +96,13 @@ describe('readUsageSpend original preservation', () => {
       expect(spend.pools.every(row => row.reason === 'status missing or stale' && row.usedPercent === null)).toBe(true);
     }
   });
+
+  it('withholds an oversized ledger even when its JSON is valid', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const path = await statusFile(status({ claude: measured(20, iso(NOW + HOUR_MS), 3) }) + ' '.repeat(1024 * 1024));
+    const spend = await readUsageSpend(path);
+    expect(spend.asOf).toBeNull();
+    expect(spend.pools.every(row => row.usedPercent === null && row.burnPerHour === null)).toBe(true);
+  });
 });

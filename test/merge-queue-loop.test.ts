@@ -4,6 +4,7 @@ import {
   type MergeQueueIo, type MergeQueuePr, type MergeQueueRepoSnapshot, type MergeQueueState,
 } from '../src/core/drive/merge-queue-loop.js';
 import { drainKey } from '../src/core/drive/refix-loop.js';
+import { enqueueMergeQueuePr, readSnapshot } from '../scripts/merge-queue-loop.mjs';
 
 const NOW = 1_700_000_000_000;
 const MIN = 60_000;
@@ -140,6 +141,11 @@ describe('classifyMergeQueuePr', () => {
     expect(classifyMergeQueuePr(pr({ filesTruncated: true }), queueRepo, fleet)).toBe('pinned');
   });
 
+  it.each([{}, { mergeState: 'DIRTY' }, { mergeState: 'BEHIND', checks: 'NONE' }] as Partial<MergeQueuePr>[])(
+    'leaves actively owned PRs to their owner: %j', over => {
+    expect(classifyMergeQueuePr(pr({ ...over, activeOwner: true }), queueRepo, fleet)).toBe('owned');
+  });
+
   it('skips drafts, held, non-fleet, off-base and malformed PRs', () => {
     expect(classifyMergeQueuePr(pr({ isDraft: true }), queueRepo, fleet)).toBe('skip');
     expect(classifyMergeQueuePr(pr(), queueRepo, { fleet: true, held: true })).toBe('skip');
@@ -151,6 +157,54 @@ describe('classifyMergeQueuePr', () => {
 });
 
 describe('runMergeQueueCycle', () => {
+  it('reports sampled state milliseconds as JSON, resets on new heads and omits closed PRs', () => {
+    let at = NOW;
+    const snapshots = only([pr({ checks: 'PENDING' })]), fake = makeIo({ snapshots, now: () => at });
+    const cycle = () => JSON.parse(JSON.stringify(runMergeQueueCycle(fake.io, { repos: [REPO] }))).repos[0].latency;
+    cycle();
+    at += MIN; snapshots.set(REPO, snap([pr({ mergeState: 'DIRTY' })])); cycle();
+    at += 2 * MIN; snapshots.set(REPO, snap([pr({ activeOwner: true })])); cycle();
+    at += 3 * MIN; snapshots.set(REPO, snap([pr()])); cycle();
+    at += 4 * MIN; snapshots.set(REPO, snap([pr({ inMergeQueue: true })])); cycle();
+    at += 5 * MIN;
+    expect(cycle()[0]).toMatchObject({ state: 'queued', since: NOW + 10 * MIN,
+      stateMs: { wait: MIN, conflict: 2 * MIN, owned: 3 * MIN, enqueue: 4 * MIN, queued: 5 * MIN } });
+    at -= MIN;
+    expect(cycle()[0].stateMs).toEqual({ queued: 0 });
+    snapshots.set(REPO, snap([pr({ headSha: sha('b') })]));
+    expect(cycle()[0].stateMs).toEqual({ enqueue: 0 });
+    snapshots.set(REPO, snap([])); expect(cycle()).toEqual([]);
+    expect(fake.state()?.latency).toEqual({});
+  });
+
+  it('does not infer time across failed reads or accept malformed persisted timings', () => {
+    let at = NOW;
+    const failRead = new Set<string>(), fake = makeIo({ snapshots: only([pr()]), failRead, now: () => at });
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    failRead.add(REPO); at += MIN; runMergeQueueCycle(fake.io, { repos: [REPO] });
+    failRead.clear(); at += MIN;
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).repos[0]?.latency[0]?.stateMs).toEqual({ enqueue: 0 });
+    expect(normalizeMergeQueueState({ latency: { bad: { headSha: sha('a'), state: 'enqueue', since: 0, observedAt: 1, stateMs: { enqueue: -1 } } } }).latency).toBeUndefined();
+  });
+
+  it('recovers eligible heads through head-pinned auto-merge while owners, conflicts and checks wait', () => {
+    const candidates = [pr(), pr({ number: 2, checks: 'PENDING' }), pr({ number: 3, mergeState: 'DIRTY' }),
+      pr({ number: 4, activeOwner: true }), pr({ number: 5, checks: 'FAILURE' }), pr({ number: 6, inMergeQueue: true })];
+    const fake = makeIo({ snapshots: only(candidates) }), calls: string[][] = [];
+    fake.io.enqueue = (repo, p) => { enqueueMergeQueuePr((args: string[]) => { calls.push(args); throw new Error('uncertain'); }, repo, p); };
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(calls).toEqual([['pr', 'merge', '1', '--repo', REPO, '--auto', '--match-head-commit', sha('a')]]);
+    expect(fake.lines).toHaveLength(1);
+    const snapshot = (claims: { key: string; live: boolean }[]) => readSnapshot(() => ({ data: { repository: {
+      defaultBranchRef: { name: 'master' }, mergeQueue: { id: 'Q' },
+      pullRequests: { nodes: [{ number: 1 }], pageInfo: { hasNextPage: false } },
+    } } }), REPO, claims).prs[0];
+    expect(snapshot([{ key: `pr:${REPO}#1`, live: true }]).activeOwner).toBe(true);
+    expect(snapshot([{ key: `repo:${REPO.toUpperCase()}`, live: true }]).activeOwner).toBe(true);
+    expect(snapshot([{ key: `pr:${REPO}#1`, live: false }]).activeOwner).toBe(false);
+  });
+
   it('enqueues a stranded armed head once and leaves the actual queue to enforce merge checks', () => {
     const candidate = pr({ autoMerge: true });
     const snapshots = only([candidate]);

@@ -65,6 +65,34 @@ bridge = "loopback"
 
 `~/.ashlr/KILL` and the comms pause stop every adapter before a transport is called. Nothing in this path spends money or sends to a non-owner address.
 
+### Short Slack status replies
+
+With the existing owner verification and delivery gates satisfied, a short
+status ask such as `Phantom status` uses the fixed status reader, not a model.
+Specific requests such as `status of the release PR #12` stay on the Leader
+path. `recheck`, `orders`, `review`, `owners`, `bridge`, and `peers` have their
+own readers; they do not use the status layout below.
+
+The status body starts with the digest. Socket Mode also supplies an optional
+runtime/channel-health line below the heading. A work-board summary follows,
+reading at most 20 retained items and showing counts plus up to three items
+needing attention. An unreadable board yields `Work items: unknown`, not zero.
+The body drops work-board lines first, then the optional runtime line when
+space is tight; an absent or throwing runtime-line reader adds no line.
+
+The Slack composer separately appends a newly read snapshot with `Runtime:`,
+`Fleet state:`, and `Claims:` lines, reserving space by shortening the earlier
+body within the 1,500-character reply budget. Fleet freshness means time since
+the last state write, not proof of current execution. Live claims are reported
+separately from running-worker evidence when available. Unavailable fields say
+`UNKNOWN`; a failed snapshot read produces `Runtime: UNKNOWN (snapshot
+unavailable)`. A failed digest produces the fixed status-read fallback, still
+followed by snapshot evidence when available.
+
+These are read-only observations, not claims of completed work or permission
+to dispatch. This describes the source implementation; it does not establish
+that a particular Slack bridge has installed it or delivered a live reply.
+
 ### Copy Leader plan replies into the conversation
 
 The Leader conversation in the desktop app and the phone view already shows

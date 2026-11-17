@@ -2002,8 +2002,15 @@ export async function handleApi(
     }
 
     if (path === '/api/worklog' && method === 'GET') {
-      const { readWorklog } = await import('../fleet/worklog.js');
-      try { sendJson(res, 200, await readWorklog()); }
+      const { readWorklog, filterWorklog, worklogHours } = await import('../fleet/worklog.js');
+      let hours: number;
+      try { hours = worklogHours(getQueryParam(req.url ?? '', 'since')); }
+      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 1h.' }); return true; }
+      try {
+        const report = await readWorklog(hours);
+        report.entries = filterWorklog(report.entries, getQueryParam(req.url ?? '', 'repo'), getQueryParam(req.url ?? '', 'lane'));
+        sendJson(res, 200, report);
+      }
       catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }
       return true;
     }
@@ -2412,8 +2419,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { readFeed } = await import('../feed.js');
-      sendJson(res, 200, await readFeed());
+      const { parseFeedQuery, readFeed } = await import('../feed.js');
+      const params = new URL(req.url ?? '', 'http://localhost').searchParams;
+      const query = parseFeedQuery(params.get('limit') ?? undefined, params.get('since') ?? undefined);
+      if (!query) sendJson(res, 400, { error: 'Use limit 1 to 1000 and since 1m to 7d.' });
+      else sendJson(res, 200, await readFeed(query.limit, query));
       return true;
     }
 
