@@ -52,7 +52,15 @@ phm nodes --can-take claude --json
 is running there, free memory, CPU headroom, lanes, running jobs and a
 plain-words state such as `ready for work` or `offline since 10:42`.
 `--can-take <lane>` lists only the computers that can take a job for that lane
-now. It is read only: it reads `tailscale status` and the node list already on
+now and recommends one: ready remote computers first, most free slots first,
+then name to break ties. If none qualifies, it falls back to this computer only
+when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
+`target` (`remote`, `local`, `none`), `reason` (`remote-ready`, `local-only`,
+`local-fallback`, `no-ready-node`) and a plain explanation. Unknown reachability
+or slots, stale mirrors and expired lane advertisements cannot qualify a node.
+The typed `chooseNodeForLane` API also accepts `{ localOnly: true }` to keep
+explicitly local work here. This is advice; it does not reserve or launch work.
+It is read only: it reads `tailscale status` and the node list already on
 this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
 the node list on another computer) is `unknown` with the reason. The desktop
 Computers pane shows the same rows as cards.

@@ -18,9 +18,13 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 
 | Surface | What it gives you |
 | --- | --- |
-| **Fleet** | Inspect running jobs, lane capacity, queued work and recorded results. [Operate the fleet](docs/AUTOMATIC-OUTCOMES.md). |
+| **Home** | Read fleet health, merges, running jobs and unread Leader replies. [Run the fleet from Phantom](https://github.com/ashlrai/phantom/blob/master/docs/RUN-THE-FLEET.md). |
+| **Map and Work log** | Find a running job on the map or read recorded launches, finishes, merges and incidents. |
+| **Job controls** | Pause, resume, stop or move one job; distinguish a recorded request from an applied change. |
+| **Autonomy** | Read measured outcomes in Fleet: merges, fleet improvements and work completed without human intervention; missing evidence stays unknown. |
+| **Admission** | Explain the proposed launch interval and its inputs; the report is advisory. |
 | **Agent bus** | Follow durable messages, threads and coordination events between agents. [Bus contract](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-BUS.md). |
-| **Multi-node** | Register computers and coordinate owner-scoped jobs with heartbeats and fenced leases. Each machine keeps its own provider sign-in. [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md). |
+| **Computers** | Read reachability, free memory, lanes and running jobs. Each machine keeps its own provider sign-in. [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md). |
 | **Comms** | Read one owner thread across configured channels. Adapters require setup; send policies still apply. [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md). |
 | **Secrets** | Connect the separately installed Phantom Secrets companion through MCP; use secret references in agent work. [Companion setup](docs/COMPANIONS.md). |
 | **Release train** | Inspect release status, qualification and publication evidence. Releases use the repository's sanctioned workflow. [Release guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md). |
@@ -103,16 +107,16 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 
 | Group | Commands |
 | --- | --- |
-| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
+| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `commands`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
 | Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |
 | Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
-| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations`, `ideas`, `agentnet`, `amplify`, `routines` |
-| Observability | `feed`, `wb`, `worklog`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
+| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations`, `ideas`, `agentnet`, `amplify`, `routines`, `bets`, `messages`, `map`, `admission`, `tools` |
+| Observability | `feed`, `wb`, `worklog`, `home`, `job`, `throughput`, `empties`, `autonomy`, `ci`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
 | Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `caps`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
-| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
-| Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse`, `console` |
+| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `nodes`, `autofix`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
+| Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse`, `console`, `pages`, `settings` |
 | Scaffold | `new`, `ship` |
 
 ### Common CLI tasks
