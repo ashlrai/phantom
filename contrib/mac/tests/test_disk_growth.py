@@ -32,7 +32,29 @@ class DiskGrowthTest(unittest.TestCase):
         sizes, timed_out = disk.sample_sizes([Path(__file__), Path(__file__)], 2, clock=lambda: 10, run=run)
         self.assertEqual(calls, [2])
         self.assertTrue(timed_out)
-        self.assertEqual(sizes, {})
+        self.assertEqual(sizes, {str(Path(__file__)): None})
+
+    def test_delta_uses_latest_sample_and_preserves_unknown(self):
+        history = [{'at': 1, 'free_gb': 300, 'sizes_gb': {'a': 2}},
+                   {'at': 10, 'free_gb': 200, 'sizes_gb': {'a': 5}}]
+        current = {'at': 20, 'free_gb': 190, 'sizes_gb': {'a': 3, 'b': None, 'c': 1}, 'timed_out': True}
+        report = disk.calculate(history, current)
+        self.assertEqual(report['previous_sampled_at'], 10)
+        self.assertEqual([row['delta_gb'] for row in report['directories']], [-2, None, None])
+        self.assertIsNone(disk.calculate([{'at': 10}], current)['previous_sampled_at'])
+
+    def test_top_level_targets_do_not_follow_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            paths = [home / '.ashlr-runs/logs', home / 'Projects/ashlrai/wt/RQ-A']
+            for path in paths: path.mkdir(parents=True)
+            (home / 'Documents').mkdir()
+            (paths[0].parent / 'link').symlink_to(home / 'Documents')
+            self.assertEqual(disk.targets(home), paths)
+            (home / '.ashlr-runs/queue').symlink_to(home / 'Documents')
+            result = subprocess.run([sys.executable, str(Path(disk.__file__)), '--home', str(home)], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list((home / 'Documents').iterdir()), [])
 
     def test_first_sample_is_unknown(self):
         result = disk.calculate([], {'at': 1, 'free_gb': 200, 'sizes_gb': {}, 'timed_out': False})

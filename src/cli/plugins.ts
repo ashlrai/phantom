@@ -43,7 +43,7 @@ function printPluginsHelp(): void {
   console.log('');
   console.log(c.bold('  ashlr plugins') + c.dim('  manage the plugin layer (default-off)'));
   console.log('');
-  console.log(`    ${c.cyan('ashlr plugins list [--json]')}`);
+  console.log(`    ${c.cyan('ashlr plugins list [--all] [--json]')}`);
   console.log(`    ${c.cyan('ashlr plugins info <name> [--json]')}`);
   console.log(`    ${c.cyan('ashlr plugins init <name> [--capability scanner|template|provider|command] [--json] [--dry-run]')}`);
   console.log(`    ${c.cyan('ashlr plugins enable <name> [--yes] [--json] [--dry-run]')}`);
@@ -52,12 +52,14 @@ function printPluginsHelp(): void {
   console.log('');
   console.log('  Examples:');
   console.log(`    ${c.cyan('phm plugins list --json')}`);
+  console.log(`    ${c.cyan('phm plugins list --all --json')}`);
   console.log(`    ${c.cyan('phm plugins init my-scanner --capability scanner --dry-run')}`);
   console.log(`    ${c.cyan('phm plugins enable my-scanner --dry-run')}`);
   console.log(`    ${c.cyan('phm plugins enable my-scanner --yes')}`);
   console.log('');
   console.log('  Flags:');
   console.log(`    ${c.cyan('--json')}        one JSON value on stdout`);
+  console.log(`    ${c.cyan('--all')}         list: every plugin fleet agents have, not just Phantom's`);
   console.log(`    ${c.cyan('--yes')}         enable without a prompt`);
   console.log(`    ${c.cyan('--dry-run')}     report the change and write nothing`);
   console.log(`    ${c.cyan('--capability')}  init only: scanner, template, provider, or command`);
@@ -136,6 +138,14 @@ async function cmdPluginsList(jsonMode: boolean): Promise<number> {
   console.log('');
   console.log(c.dim('  enable with: ashlr plugins enable <name>'));
   console.log('');
+  return 0;
+}
+
+/** `--all`: every plugin fleet agents have (Phantom and Claude Code), the Plugins pane's data. */
+async function cmdPluginsListAll(jsonMode: boolean): Promise<number> {
+  const { readPluginsPanel, formatInstalledPanel } = await import('../core/fleet/installed-panels.js');
+  const panel = readPluginsPanel();
+  process.stdout.write(jsonMode ? `${JSON.stringify(panel, null, 2)}\n` : `${formatInstalledPanel(panel, 'plugins')}\n`);
   return 0;
 }
 
@@ -479,7 +489,7 @@ const PLUGINS_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }
     allowed: { flags: ['--json', '--dry-run'], values: ['--capability'] },
     usage: 'usage: ashlr plugins init <name> [--capability scanner|template|provider|command] [--json] [--dry-run]',
   },
-  list: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins list [--json]' },
+  list: { allowed: { flags: ['--json', '--all'] }, usage: 'usage: ashlr plugins list [--all] [--json]' },
   info: { allowed: { flags: ['--json'] }, usage: 'usage: ashlr plugins info <name> [--json]' },
   enable: { allowed: { flags: ['--yes', '--json', '--dry-run'] }, usage: 'usage: ashlr plugins enable <name> [--yes] [--json] [--dry-run]' },
   disable: { allowed: { flags: ['--json', '--dry-run'] }, usage: 'usage: ashlr plugins disable <name> [--json] [--dry-run]' },
@@ -505,7 +515,7 @@ export async function cmdPlugins(args: string[]): Promise<number> {
       return 2;
     }
   }
-  if (sub === 'list') return cmdPluginsList(jsonMode);
+  if (sub === 'list') return args.includes('--all') ? cmdPluginsListAll(jsonMode) : cmdPluginsList(jsonMode);
   if (sub === 'info') return cmdPluginsInfo(args[1], jsonMode);
   if (sub === 'init') return cmdPluginsInit(args.slice(1), jsonMode, dryRun);
   if (sub === 'enable') return cmdPluginsEnable(args[1], yes, jsonMode, dryRun);

@@ -1,0 +1,191 @@
+/** Thin argv adapter for the unified agent bus (src/core/agents/bus-unified.ts). Exit 0 ok, 1 refused, 2 usage. */
+import { isAbsolute } from 'node:path';
+import {
+  BUS_CLIS, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry, registerAgentIdentity,
+  type BusCli, type BusProvider,
+} from '../core/agents/bus-identity.js';
+import {
+  postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, type UnifiedBusOptions,
+} from '../core/agents/bus-unified.js';
+import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import type { BusPriority } from '../core/fleet/bus-envelope.js';
+
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters']);
+
+export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
+ashlr agents bus id list
+ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
+ashlr agents bus channel join|leave <name> [--agent <agent>]
+ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--priority ..] [--wake|--no-wake]
+ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--since <epoch ms>]
+ashlr agents bus adapters
+Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
+--from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
+names, never authentication. Messages land in the one local bus store; P0 always
+wakes, P1 and handoffs wake by default. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
+
+const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
+  '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
+  '--frame', '--since', '--root']);
+const MULTI = new Set(['--alias', '--member']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake']);
+
+class UsageError extends Error {}
+
+interface Parsed { positionals: string[]; values: Map<string, string[]>; bools: Set<string> }
+
+function parse(argv: string[]): Parsed {
+  const parsed: Parsed = { positionals: [], values: new Map(), bools: new Set() };
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i]!;
+    const equal = token.startsWith('--') ? token.indexOf('=') : -1;
+    const flag = equal > 0 ? token.slice(0, equal) : token;
+    if (VALUE_FLAGS.has(flag)) {
+      const value = equal > 0 ? token.slice(equal + 1) : argv[++i];
+      if (value === undefined || (equal < 0 && value.startsWith('--'))) throw new UsageError(`${flag} requires a value.`);
+      const list = parsed.values.get(flag) ?? [];
+      if (list.length && !MULTI.has(flag)) throw new UsageError(`Duplicate ${flag}.`);
+      parsed.values.set(flag, [...list, value]);
+    } else if (BOOL_FLAGS.has(token)) {
+      if (parsed.bools.has(token)) throw new UsageError(`Duplicate ${token}.`);
+      parsed.bools.add(token);
+    } else if (token.startsWith('-')) {
+      throw new UsageError(`Unknown option ${token.slice(0, 32)}.`);
+    } else parsed.positionals.push(token);
+  }
+  if (parsed.bools.has('--wake') && parsed.bools.has('--no-wake')) throw new UsageError('Use --wake or --no-wake, not both.');
+  return parsed;
+}
+
+function integer(raw: string | undefined, name: string): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!/^[0-9]{1,16}$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new UsageError(`${name} must be a non-negative integer.`);
+  return Number(raw);
+}
+
+export async function runAgentsBusUnified(argv: string[], out: (text: string) => void, err: (text: string) => void,
+  env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const json = argv.includes('--json');
+  try {
+    if (argv.some(arg => arg === '--help' || arg === '-h')) { out(AGENTS_BUS_UNIFIED_HELP); return 0; }
+    const p = parse(argv);
+    const one = (flag: string): string | undefined => p.values.get(flag)?.[0];
+    const root = one('--root');
+    if (root !== undefined && (!isAbsolute(root) || root.includes('\0'))) throw new UsageError('--root must be an absolute path.');
+    const options: UnifiedBusOptions = root ? { root } : {};
+    const self = env['PHM_AGENT_ID'] || undefined;
+    const actor = (flag: string): string => {
+      const value = one(flag) ?? self;
+      if (!value) throw new UsageError(`${flag} is required when PHM_AGENT_ID is not set.`);
+      return value;
+    };
+    const required = (flag: string): string => {
+      const value = one(flag);
+      if (value === undefined) throw new UsageError(`${flag} is required.`);
+      return value;
+    };
+    const wake = p.bools.has('--wake') ? true : p.bools.has('--no-wake') ? false : undefined;
+    const send = {
+      priority: one('--priority') as BusPriority | undefined, ttl: integer(one('--ttl'), '--ttl'), id: one('--id'), wake,
+    };
+    const [verb, sub, arg, ...extra] = p.positionals;
+    const finish = (result: { status: string; reason?: string }, human: string): number => {
+      const ok = !('reason' in result) || result.reason === undefined;
+      out(json ? JSON.stringify(result) : ok ? human : `${result.status}: ${result.reason}`);
+      return ok ? 0 : 1;
+    };
+    const noExtra = (count: number): void => {
+      if (p.positionals.length > count) throw new UsageError('Unexpected operand.');
+    };
+
+    if (verb === 'adapters') {
+      noExtra(1);
+      const adapters = listBusCliAdapters();
+      out(json ? JSON.stringify({ adapters }) : adapters.map(a =>
+        `${a.cli.padEnd(7)} providers=${a.providers.join(',')} engine=${a.engine?.entry ?? 'session'}  ${a.note}`).join('\n'));
+      return 0;
+    }
+    if (verb === 'id' && sub === 'list') {
+      noExtra(2);
+      const read = readAgentRegistry(options);
+      if (read.status !== 'ok') return finish(read, '');
+      out(json ? JSON.stringify({ status: 'ok', identities: read.registry.identities, channels: read.registry.channels })
+        : read.registry.identities.map(i => `${i.handle.padEnd(16)} ${i.id}  runtimes=${i.runtimes.map(r => `${r.cli}/${r.provider}${r.model ? `/${r.model}` : ''}`).join(',') || '-'}${i.aliases.length ? `  aliases=${i.aliases.join(',')}` : ''}`).join('\n') || 'No identities registered.');
+      return 0;
+    }
+    if (verb === 'id' && sub === 'register') {
+      noExtra(3);
+      const cli = one('--cli');
+      if (cli !== undefined && !(BUS_CLIS as readonly string[]).includes(cli)) throw new UsageError(`--cli must be one of ${BUS_CLIS.join(', ')}.`);
+      const aliases = p.values.get('--alias') ?? [];
+      const displayName = one('--display');
+      const handle = arg ?? self;
+      if (!handle) throw new UsageError('A handle or PHM_AGENT_ID is required.');
+      const runtime = cli !== undefined || one('--model') !== undefined || one('--provider') !== undefined || detectBusCli(env) !== null;
+      const result = runtime
+        ? attachBusCliSession({ handle, cli: cli as BusCli | undefined, provider: one('--provider') as BusProvider | undefined,
+          model: one('--model'), aliases, displayName }, env, options)
+        : registerAgentIdentity({ handle, aliases, displayName }, options);
+      return finish(result, 'identity' in result ? `${result.status}: ${result.identity.handle} ${result.identity.id}` : '');
+    }
+    if (verb === 'dm') {
+      noExtra(1);
+      const result = await sendDirectMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
+        thread: one('--thread') }, options);
+      return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+    }
+    if (verb === 'channel' && arg !== undefined && extra.length === 0) {
+      if (sub === 'create') {
+        const result = createAgentChannel({ name: arg, createdBy: actor('--from'), members: p.values.get('--member') ?? [] }, options);
+        return finish(result, 'channel' in result ? `${result.status}: #${result.channel.name} ${result.channel.members.join(',')}` : '');
+      }
+      if (sub === 'join' || sub === 'leave') {
+        const result = (sub === 'join' ? joinAgentChannel : leaveAgentChannel)(arg, actor('--agent'), options);
+        return finish(result, 'channel' in result ? `${result.status}: #${result.channel.name} ${result.channel.members.join(',')}` : '');
+      }
+      if (sub === 'post') {
+        const result = await postChannelMessage({ ...send, from: actor('--from'), channel: arg, topic: one('--topic'),
+          text: required('--text'), thread: one('--thread') }, options);
+        return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+      }
+    }
+    if (verb === 'handoff') {
+      noExtra(1);
+      const result = await sendHandoff({ ...send, from: actor('--from'), to: required('--to'), taskId: required('--task'),
+        prompt: required('--prompt') }, options);
+      return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+    }
+    if (verb === 'inbox') {
+      noExtra(2);
+      const frame = one('--frame');
+      if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
+      const agent = sub ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
+      if (page.status !== 'ok') return finish(page, '');
+      if (frame) { out(json ? JSON.stringify({ ...page, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
+      out(json ? JSON.stringify(page) : [
+        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
+        `nextCursor ${page.nextCursor}`,
+      ].join('\n'));
+      return 0;
+    }
+    if (verb === 'wakes') {
+      noExtra(2);
+      const agent = sub ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const page = readAgentWakes(agent, integer(one('--since'), '--since'), options);
+      if (page.status !== 'ok') return finish(page, '');
+      out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
+      return 0;
+    }
+    throw new UsageError('Unknown agents bus command.');
+  } catch (error) {
+    if (!(error instanceof UsageError)) throw error;
+    err(json ? JSON.stringify({ error: 'invalid-argument', reason: error.message }) : `${error.message}\n${AGENTS_BUS_UNIFIED_HELP}`);
+    return 2;
+  }
+}

@@ -20,8 +20,8 @@ Accepted shapes: the raw `gh pr list` JSON array, a merge-backlog read
 (`{v:1, items:[…]}`), and a `fleet.pr-hygiene.v1` report. For the full
 scoreboard capture one page of both states, for example:
 
-```
-gh pr list --state all --limit 500 --json number,title,url,headRefName,headSha,\
+```sh
+gh pr list --state all --limit 500 --json number,title,url,headRefName,headRefOid,\
   isDraft,mergeable,mergeStateStatus,statusCheckRollup,autoMergeRequest,body,\
   createdAt,updatedAt,closedAt,mergedAt,files
 ```

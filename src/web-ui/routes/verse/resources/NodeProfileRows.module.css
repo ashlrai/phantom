@@ -1,0 +1,15 @@
+/* Declared-profile node rows (e.g. the 8 GB MacBook Pro) inside the rail resource bar. */
+.group { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; }
+.row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0;
+  padding: 5px var(--space-2); border-radius: var(--radius-sm);
+  color: var(--text-secondary); text-align: left;
+}
+.row:hover { background: var(--bg-hover); color: var(--text-primary); }
+.row:focus-visible { outline: 2px solid var(--focus-ring, var(--accent-500)); outline-offset: 1px; }
+.row[data-state='offline'], .row[data-state='down'] { background: color-mix(in srgb, var(--status-danger-bg) 60%, transparent); }
+.row[data-state='stale'] { background: color-mix(in srgb, var(--status-warning-bg) 80%, transparent); }
+.line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.state { flex: none; font-size: var(--text-xs, 11px); text-transform: uppercase; letter-spacing: 0.04em; }
+.meta { font-size: var(--text-xs, 11px); color: var(--text-tertiary, var(--text-secondary)); }

@@ -39,7 +39,7 @@ it('shows jobs with a PR link and opens a launched worker log', async () => {
   expect(await within(row).findByText('3 jobs')).toBeInTheDocument();
   expect(within(row).getByRole('link', { name: 'PR #1712' })).toHaveAttribute('href', jobs[0]!.url);
   expect(within(row).getByRole('link', { name: 'PR #1712' })).toHaveAttribute('target', '_blank');
-  expect(within(row).getByText('running')).toBeInTheDocument();
+  expect(within(row).getByText('launched')).toBeInTheDocument();
   expect(within(row).queryByRole('button', { name: /RQ-PHX-QUEUED/ })).not.toBeInTheDocument();
   fireEvent.click(within(row).getByRole('button', { name: 'Open log for RQ-PHX-RUNNING' }));
   expect(requestWorkerLogJob).toHaveBeenCalledWith('RQ-PHX-RUNNING');

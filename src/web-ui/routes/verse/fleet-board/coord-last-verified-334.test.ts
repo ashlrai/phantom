@@ -66,15 +66,15 @@ describe('strip Last verified row', () => {
     }));
     const deps: FleetRecheckDeps = {
       now: () => new Date(NOW), homeDir: () => '/home/fakeuser',
-      readRuntimeIdentity: () => ({
+      readRuntimeIdentity: async () => ({
         host: 'fake-host', platform: 'fakeos', asOf: ago(0), installedVersion: '1.2.3', sourceVersion: '1.2.3',
         versionDrift: false, tailnetName: 'fake-node', reasons: [],
         fleetState: { path: '~/fake/state.json', mtime: ago(60_000), ageSeconds: 60, stale: false },
       }),
-      readFleetBoard: () => ({ schema: 'fleet.coordination.v1', state: 'known', claims: [], messages: [], proposals: [], expiredClaims: 0 }),
-      readChannelHealth: () => ({ schemaVersion: 1, asOf: ago(0), channels: [] }),
-      listWorkBoard: (): WorkBoardResult => ({ items: serverItems, inbox: 'ok', truncated: false }),
-      listCoordination: () => ({ source: 'unavailable', claims: [] }),
+      readFleetBoard: async () => ({ schema: 'fleet.coordination.v1', state: 'known', claims: [], messages: [], proposals: [], expiredClaims: 0 }),
+      readChannelHealth: async () => ({ schemaVersion: 1, asOf: ago(0), channels: [] }),
+      listWorkBoard: async (): Promise<WorkBoardResult> => ({ items: serverItems, inbox: 'ok', truncated: false }),
+      listCoordination: async () => ({ source: 'unavailable', claims: [] }),
     };
     const server = (await readFleetRecheck(deps)).sections.task.lastVerified;
     expect(server?.id).toBe('fake-new');

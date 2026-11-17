@@ -37,7 +37,7 @@ export async function cmdFleetImessageAcks(args: string[], deps: FleetImessageAc
       else output(`Matching acknowledgement recorded for rowid ${rowid}.`);
     }
     for (const row of report.rows) output(`${row.timestamp} rowid ${row.rowid} ${row.status} ${row.delivery}`);
-    output('Recorded-not-sent does not establish delivery. Delivery proof: false.');
+    output('Acknowledgement journal records do not establish delivery or non-delivery. Delivery status: unknown. Delivery proof: false.');
   }
   return 0;
 }

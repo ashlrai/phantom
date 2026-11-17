@@ -1,0 +1,4 @@
+{ "v": 1, "lanes": {
+  "claude": { "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"] },
+  "codex-cmp": { "github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"] }
+} }

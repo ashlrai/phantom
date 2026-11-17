@@ -22,12 +22,20 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
 - `scanSensitiveChange({ diff, repo, policy, codeowners }): SensitiveScan`,
   together with `diffPathsForReview`, `codeownersGlobs`,
   `isSelfRepoTarget` and `CROSS_REVIEW_ESCALATE_PATTERNS`.
-- `buildCrossReviewPrompt(request, diff)` is the only sink for job text.
+- `buildCrossReviewPrompt(request, diff, mode?)` is the only sink for job text;
+  `mode: 'tier1-semantic'` adds the strict claim-vs-diff rules.
   `parseReviewVerdict(output)` accepts the closed schema
   (`REVIEW_REASON_CODES`) and nothing else.
 - `decideCrossReview(input): CrossReviewDecision` and `diffSha256`,
   `isCommitSha`, `prUrl`. The optional `checks` evidence binds `headSha` to a
   hold code or `null` for success; omitted evidence holds with `checks-unreadable`.
+  The optional `tier1` input (an `assessTier1` result) and `policy.tier1`
+  drive the tier1-verify stage; the decision then carries `tier1` and, on a
+  reject, `fixJob`.
+
+`src/core/fleet/tier1-verify.ts` (pure): `assessTier1(input): Tier1Assessment`,
+`fullCheckSatisfied`, `tier1FixJobId`, `tier1FixJobLine`, `TIER1_STAGE`,
+`TIER1_FLOOR_RULES` and `TIER1_FLOOR_PATH_RE`.
 
 `src/core/fleet/cross-review-process.ts`:
 
@@ -43,6 +51,7 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
   return promises. Before approval they read live required checks and exact-SHA
   results through host custody, then re-read the PR head and stop states.
 - `latestCrossReview(repo, pr)` and `loadCrossReviewPolicy(path?)`.
+- `enqueueTier1FixJob(queuePath, line)` appends a tier1-verify fix job once per id.
 - `crossReviewPolicyPath`, `crossReviewLogPath`, `crossReviewPauseFile` and
   `readBoundedFile`.
 
@@ -55,7 +64,8 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
    - an approve verdict;
    - recorded at exactly the head SHA the caller passes now;
    - over the same diff sha256;
-   - a clean sensitive scan;
+   - a clean sensitive scan, or, with `policy.tier1.enabled`, a tier1-verified
+     change (invariant 6);
    - a reviewer on another pool and an independent family;
    - an allowed repo;
    - KILL off and PAUSE absent;
@@ -73,4 +83,17 @@ Operator guide: [Cross-model review](../CROSS-REVIEW.md).
 4. The review log and audit log hold structured fields only. They never hold
    diff text, job text, model output, env values or file paths.
 5. Any malformed reviewer output, non-zero exit, timeout, oversize output or
-   refused launch escalates.
+   refused launch escalates. Under tier1-verify it holds instead (a review
+   never taken is `re-review`): a reviewer fault is not a reason to park a PR
+   for a human. Enabling tier1 requires two distinct reviewer seats.
+6. tier1-verify (`test/cross-review-deep-verify.test.ts`). An escalating change arms
+   auto-merge only when: no GATES v3 floor hit (`TIER1_FLOOR_RULES`,
+   `TIER1_FLOOR_PATH_RE`, CODEOWNERS edits, Security-pinned paths,
+   credential-read or download-exec content, secret-shaped added values,
+   unreadable or unmeasurable diffs or the denylist; each still escalates); no
+   deterministic failure (test tampering, untested source, oversize or
+   shrinking tests); an
+   approving standard review AND an approving semantic review from a second,
+   distinct, producer-independent seat; and every `tier1.fullChecks` entry
+   succeeded on the exact head. A failure rejects with enumerated codes and a
+   one-line `fixJob`. The model is never asked about a floor change.

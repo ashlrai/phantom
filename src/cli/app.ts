@@ -28,6 +28,7 @@ Does not quit, signal processes, replace bundles, or resume authority.
 See docs/APP-RESTART.md for the ownership audit and remaining implementation.`;
 export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDependencies | {runsDir?: string}): Promise<number> {
   if (args[0] === 'restart') {
+    if (args.includes('--help') || args.includes('-h')) {console.log(USAGE); return 0;}
     if (args.length !== 2 || args[1] !== '--json') {console.error(USAGE); return 2;}
     console.log(JSON.stringify(APP_RESTART_HELD));
     return 1;
@@ -38,7 +39,7 @@ export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDepen
     let json = false;
     for (let i = 1; i < args.length; i++) {
       if (args[i] === '--json' && !json) json = true;
-      else if (args[i] === '--text' && text === undefined && args[i + 1] !== undefined) text = args[++i];
+      else if (args[i] === '--text' && text === undefined && args[i + 1] !== undefined && !args[i + 1]!.startsWith('--')) text = args[++i];
       else {console.error(USAGE); return 2;}
     }
     if (!text?.trim()) {console.error(USAGE); return 2;}

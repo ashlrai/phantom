@@ -4,23 +4,28 @@
 
 # Phantom documentation
 
-Mac queue supervisor: [Drive and host bridge integration](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md).
-Prepare queue driver operation, recovery and cutover (planned): [Driver runbook](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md).
-Pick a second always-on machine for failover and the Safari agent browser (pending Mason's yes): [Second computer options](https://github.com/ashlrai/phantom/blob/master/docs/SECOND-COMPUTER-OPTIONS.md).
+- [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
 
-Phantom by AshlrAI is the engineering workbench, formerly Ashlr Verse. Its local
-kernel includes the Universe experiment runtime and compatible command interfaces.
-The published canonical package is `@ashlr/phantom`; existing `@ashlr/hub` SDK
-imports belong to the compatibility releases. `phm`, compatible `ashlr` commands,
-`/verse/` routes and stored identities retain their supported meanings; see
-[the product naming guide](PHANTOM-BRAND.md).
-Historical Ashlrverse research and build contracts keep their original names.
-Use one canonical guide for each task. The North Star is a target, not a claim
-that every integration, provider or autonomous effect is active.
+- [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
 
-Company notes: [Company context](https://github.com/ashlrai/phantom/blob/master/docs/COMPANY-CONTEXT.md).
+- [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.
+
+Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
+
+| Start here | What you will do |
+| --- | --- |
+| [Quickstart](QUICKSTART.md#open-verse) | Install the CLI, open the console and check one resource. |
+| [First useful turn](QUICKSTART.md#make-your-first-useful-turn) | Ask an agent for a small change and review the diff. |
+| [Run the fleet from Phantom](https://github.com/ashlrai/phantom/blob/master/docs/RUN-THE-FLEET.md) | Read Home, find work, steer a job and check Autonomy. |
+| [Fleet guide](AUTOMATIC-OUTCOMES.md#work-for-me) | Save an outcome and understand resident setup. |
+| [Add a computer](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) | Join a node with its own sign-in and owner scope. |
+| [Agent network](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NETWORK.md) | Understand participants, coordination and channel boundaries. |
+
+The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands use the same runtime. Historical Ashlr Verse and Universe names remain in research and compatibility guides. See [product naming](PHANTOM-BRAND.md). The [North Star](NORTH-STAR.md) describes a target, not deployed capability.
 
 ## Agents, start here
+
+- [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
 
 Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
@@ -37,10 +42,13 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Plan bounded cross-provider child agents | [Subagents](https://github.com/ashlrai/phantom/blob/master/docs/SUBAGENTS.md) |
 | Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
+| Publish local reports and browse their pages | [Report pages — source guide](https://github.com/ashlrai/phantom/blob/master/docs/PAGES.md) |
+| Work in a floating personal agent window | [Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md) |
 | See what each fleet lane runs on and is best at | [Fleet lanes](lanes.md) |
 | Choose chat or fleet work | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 
@@ -48,34 +56,51 @@ Synthetic integration checks: [Chain verification](https://github.com/ashlrai/ph
 
 ## All tasks
 
+Host operation: [Drive and host bridge](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md), [driver recovery and planned cutover](https://github.com/ashlrai/phantom/blob/master/docs/DRIVER.md), [second computer options](https://github.com/ashlrai/phantom/blob/master/docs/SECOND-COMPUTER-OPTIONS.md). Company notes: [Company context](https://github.com/ashlrai/phantom/blob/master/docs/COMPANY-CONTEXT.md).
+
 Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlrai/phantom/blob/master/docs/grokbot-lane.md).
 
 | Your task | Canonical guide |
 |-----------|-----------------|
 | Run tests for changed files | [Test changed files](https://github.com/ashlrai/phantom/blob/master/docs/TEST-CHANGED.md) |
+| Use organization, personal, Phantom hero, and social artwork | [Brand media kit](https://github.com/ashlrai/phantom/blob/master/docs/brand/README.md) |
+| Review the proposed risk-based CI path and savings model | [Frictionless merge path](https://github.com/ashlrai/phantom/blob/master/docs/ci/FRICTIONLESS-PATH.md) |
 | Replay CI test feedback and order failures first | [CI test feedback](https://github.com/ashlrai/phantom/blob/master/docs/CI-TEST-FEEDBACK.md) |
 | Inspect changed-file and test dependency relationships | [PR impact map](https://github.com/ashlrai/phantom/blob/master/docs/CI-IMPACT-MAP.md) |
+| Review agent-native CI, risk selection and post-merge metrics | [CI rightsizing proposal](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CI-RIGHTSIZING.md) |
+| Measure fleet outcomes and review weekly policy suggestions | [Fleet outcome metrics](https://github.com/ashlrai/phantom/blob/master/docs/contracts/CONTRACT-FLEET-OUTCOME-METRICS.md) |
 | Explain empty jobs | [Empty jobs](https://github.com/ashlrai/phantom/blob/master/docs/EMPTY-JOBS.md) |
 | Check fleet health, starting with doctor | [Fleet health](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md) |
+| Inspect fleet graphs, agent routes and advisory specialist assignments | [Fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md) |
+| Assign repository owner roles and preview orphan PRs and ready jobs | [Repository owners](REPO-OWNERS.md) |
+| Read fleet observations through a standalone MCP server | [Fleet MCP onramp](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MCP-ONRAMP.md) |
+| Inspect iMessage intake, teammate tasks and acknowledgement evidence | [iMessage](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence) |
 | Drive and watch the fleet from any agent or script | [Fleet API](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-API.md) |
 | Move ops-side fleet machinery into the repo deploy pipeline | [Machinery-as-code migration](https://github.com/ashlrai/phantom/blob/master/docs/MACHINERY-MIGRATION.md) |
+| Trace fleet state, ownership, failure modes and cleanup evidence | [Fleet state map](https://github.com/ashlrai/phantom/blob/master/STATE-MAP.md) |
 | Inspect stage percentiles, queue wait and CI time in Grafana | [Cycle dashboard contract](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Read roster, sensor headroom, pull headlines, bottlenecks, and human steps | [Human observe](https://github.com/ashlrai/phantom/blob/master/docs/OBSERVE.md) (`phm observe --json`) |
 | Read the scheduler world model | [World model](https://github.com/ashlrai/phantom/blob/master/docs/WORLD.md) (`phm world --json`) |
 | Read the Growth chart series | [Growth charts](https://github.com/ashlrai/phantom/blob/master/docs/GROWTH.md) (`phm growth --json`) |
 | Triage mail and hold sends for the owner | [Comms agent](https://github.com/ashlrai/phantom/blob/master/docs/COMMS-AGENT.md) (`phm comms-agent status --json`) |
 | Read one owner thread across desktop, Telegram, email, iMessage and Slack | [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md) (`phm comms thread --json`) |
+| Operate Codex, Claude, Devin, Grok and Cursor apps from Phantom | [Agent app adapters](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-APPS.md) (`phm agents apps --json`) |
 | Resume a multi-turn agent session | [Agent sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md) (`phm sessions`) |
+| Model session batching, sub-agent fan-out, warm retention and swarm work generation | [Session economics — advisory design](https://github.com/ashlrai/phantom/blob/master/docs/strategy/SESSION-ECON.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| See the six irreducible core parts and what is a plugin | [Core spec](https://github.com/ashlrai/phantom/blob/master/docs/CORE-SPEC.md) |
 | Route future work toward the optimized organization architecture | [Phantom end-state architecture](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ENDSTATE.md) |
+| Map org repository ownership, leverage and proposed cross-repo work | [Org repository map](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ORG-REPO-MAP.md) |
 | Plan the chat-first assistant delivery sequence | [Chat-first child jobs](https://github.com/ashlrai/phantom/blob/master/docs/plans/CHAT-FIRST-NORTH-STAR.md) |
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
+| Generate daily frontier direction and track ideation outcomes | [Standing ideation loop](https://github.com/ashlrai/phantom/blob/master/docs/IDEATION.md) |
 | Turn research digests into scored, gated job proposals | [Research loop](https://github.com/ashlrai/phantom/blob/master/docs/RESEARCH-LOOP.md) |
+| Turn feedback into bounded fix jobs and read the morning review queue | [Feedback pipeline contract](https://github.com/ashlrai/phantom/blob/master/docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md) |
 | Evaluate swarm coordination and recursive self-improvement experiments | [Agent swarms and RSI research](https://github.com/ashlrai/phantom/blob/master/docs/research/agent-swarms-rsi.md) |
 | Compare Phantom with current agent platforms using measurable acceptance gates | [Competitive acceptance](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-COMPETITIVE-ACCEPTANCE.md) |
 | Connect a resource and make a first useful turn | [Quickstart](QUICKSTART.md) |
@@ -98,13 +123,17 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Record manual fleet usage and inspect burn pacing | [Fleet Usage Pacing](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-USAGE-PACING.md) |
 | Inspect station/pool queue rates, wait, WIP and Little’s law drift | [Queue statistics](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE-STATS.md) |
 | Manage a local job queue and import router snapshots | [Job queue](https://github.com/ashlrai/phantom/blob/master/docs/QUEUE.md) |
+| See a job's per-model-call tokens and cost in the console or CLI | [Job cost breakdown](https://github.com/ashlrai/phantom/blob/master/docs/JOB-COST.md) |
 | Review the default-off Mac memory pressure policy | [Memguard rules](https://github.com/ashlrai/phantom/blob/master/docs/MEMGUARD-RULES.md) |
 | Plan a persistent Linux node with local capacity limits and cloud cost estimates | [Node VM design](https://github.com/ashlrai/phantom/blob/master/docs/NODES-SANDBOX-VM.md) |
 | Configure native/local workers, quotas, the foreground queue and fleet map | [Resource Pools](RESOURCE-POOLS.md) |
+| Review EOS partner-credit inventory, costs and proposed fleet wiring | [StackSync EOS capacity plan](https://github.com/ashlrai/phantom/blob/master/docs/strategy/STACKSYNC.md) |
 | Sample local machine resources | [Machine telemetry](MACHINE-TELEMETRY.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
 | Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
+| Give any agent one routed model call through the loopback endpoint or `phm run --model auto` | [Router gateway](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-GATEWAY.md) |
+| Route a bounded read-only slice to the 8 GB muse node | [Muse light routing](https://github.com/ashlrai/phantom/blob/master/docs/nodes/MUSE.md) |
 | Serve a measured local model on 8/16 GB Macs as `omlx` pool lanes | [oMLX on the small Macs](https://github.com/ashlrai/phantom/blob/master/docs/OMLX-SMALL-MACS.md) |
 | Explore the proposed path from personal nodes to shared compute | [Node scale path](https://github.com/ashlrai/phantom/blob/master/docs/architecture/scale-path.md) |
 | See the skills learned from merged PRs | [Learned skills](https://github.com/ashlrai/phantom/blob/master/docs/SKILLS.md) |
@@ -117,6 +146,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Preview or remove finished job worktrees | [Worktree prune](https://github.com/ashlrai/phantom/blob/master/docs/WORKTREE-PRUNE.md) |
 | Reclaim rebuildable disk bytes by class, or install the daily maintenance job | [Standing disk maintenance](DISK-MAINT.md) |
+| Act on Eng Ops incident files for a stuck release, a launchd loop, a stalled lane, or outside load | [Autofix](https://github.com/ashlrai/phantom/blob/master/docs/AUTOFIX.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Understand the signed desktop updater feed and its published-state verification | [Desktop update channel](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-UPDATE-CHANNEL.md) |
 | Inspect release dependencies and unresolved publisher ownership across repositories | [Ecosystem release planning](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-RELEASE-CONTRACTS.md) |
@@ -130,12 +160,14 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Save evidence-linked agent checkpoints and compare context retention offline | [Agent checkpoints (source)](https://github.com/ashlrai/phantom/blob/master/docs/CHECKPOINTS.md) |
 | Compare the sanctioned programmatic interfaces of Grok Bot, OpenAI dots and Meta Muse before building peer adapters | [Peer interfaces research](https://github.com/ashlrai/phantom/blob/master/docs/PEERS-INTERFACES.md) |
 | Apply durable sessions, steering, tool discovery and context ideas to the existing harness | [Agent harness evolution](AGENT-HARNESS-EVOLUTION.md) |
+| Send an operator message or prepare a node hand-off | [Steer the leaders](https://github.com/ashlrai/phantom/blob/master/docs/APP-STEER.md) |
 | Review graph registry, addressed bus and routing child jobs with dispatch blockers | [Graph and bus implementation backlog](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-graphbus/README.md) |
 | Choose goal and Leader preferences, inspect review evidence, and run or compare local benchmarks | [Operator preferences and evidence](AGENT-HARNESS-EVOLUTION.md#operator-goal-and-leader-preferences) |
 | Estimate lane idle capacity and identify long-running jobs | [Idle allowance](https://github.com/ashlrai/phantom/blob/master/docs/IDLE-ALLOWANCE.md) |
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
+| Read bridge PR merge, release ancestry and exact npm or crates.io publication | [Bridge production metrics](PRODUCTION-METRICS.md) (`phm metrics prod --json`) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Refresh standalone advertised model metadata through Phantom Secrets | [Model capability cache](https://github.com/ashlrai/phantom/blob/master/docs/MODELCAPS.md) |
 | Read real repository adoption signals | [Repository signals](SIGNALS.md) |
@@ -144,6 +176,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read tokens per merged PR and merged PRs per dollar from local hop events | [Hop efficiency insights — source guide](https://github.com/ashlrai/phantom/blob/master/docs/observability/README.md) |
 | Distinguish reported run tokens from estimates, reservations and unknown totals | [Run token totals — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RUN-TOKEN-PROVENANCE.md) |
 | Roll up coding pool tokens and cost by task class and merged PR | [Router cost feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/router/README.md) |
+| Compare fleet supervision, shared provider quotas, evidence handoffs and outcome learning | [Fleet architecture research — source study](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RESEARCH-FLEET.md) |
 | Evaluate speculative reads, bounded parallelism and evidence-backed memory | [Research and offline experiment protocol](https://github.com/ashlrai/phantom/blob/master/docs/research/speculative-parallel-memory.md) |
 | Decide whether to give one agent the whole context window or four a quarter each | [Plan deep, execute wide](https://github.com/ashlrai/phantom/blob/master/docs/LOCAL-CONTEXT-STRATEGY.md) |
 | Finalize and publish original qualified release artifacts locally | [Releasing locally](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-LOCALLY.md) |
@@ -230,6 +263,13 @@ connected into an unattended subscription-backed product factory. Keep their
 roots, budgets and acceptance evidence explicit.
 
 ## Deeper design and history
+
+The [recursive self-improvement and open fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md)
+proposes verified improvement experiments and a public-work-only contributor fleet.
+
+The [30-day fleet strategy](https://github.com/ashlrai/phantom/blob/master/docs/strategy/FLEET-30D.md)
+ranks the delivery gaps, maps accountable roles to existing runtimes, and sets
+acceptance targets for November 14 through December 13, 2026.
 
 The [ecosystem design](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-NATIVE-ECOSYSTEM.md)
 describes federation across independent products. [Mission OS](MISSION-OS.md)
@@ -343,7 +383,7 @@ canonical release guide for required hosted qualification and publication.
 
 - [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
 
-- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import --json`; metadata and Phantom Secrets references only.
+- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import|exec|config --json`; metadata and Phantom Secrets references, phantom-injected launch and token-free client configs.
 
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 - [Done contract](https://github.com/ashlrai/phantom/blob/master/docs/DONE-CONTRACT.md): the layered `done-contract.v1` file schema, floor checks, frozen acceptance criteria, verify commands, and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).
@@ -351,6 +391,7 @@ canonical release guide for required hosted qualification and publication.
 - [Tier-1 import diagnosis](https://github.com/ashlrai/phantom/blob/master/docs/TIER1-WHY.md): shortest runtime chains and the fleet apps boundary.
 
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
+- [Session handoff](https://github.com/ashlrai/phantom/blob/master/docs/SESSION-HANDOFF.md): model-independent checkpoints, claim-coordinated resume and advisory quota failover.
 - [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers, claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
 
@@ -366,6 +407,6 @@ canonical release guide for required hosted qualification and publication.
 
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
-- [Typed routing decisions](ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+- [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
 
 - [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

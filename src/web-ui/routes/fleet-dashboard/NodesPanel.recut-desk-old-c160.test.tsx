@@ -47,12 +47,14 @@ describe('NodesPanel recut (phantom.nodes.v1)', () => {
     vi.stubGlobal('fetch', respond({ ...base, nodes: [], error: 'inventory missing' }));
     render(<NodesPanel />);
     await waitFor(() => expect(screen.getByText('Nodes (0)')).toBeInTheDocument());
-    expect(screen.getByText('inventory missing')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Node inventory: inventory missing.');
+    expect(screen.getByRole('alert')).toHaveTextContent('Run phm fleet nodes to inspect the inventory.');
   });
 
   it('renders the zero-node empty state when the registry is empty', async () => {
     vi.stubGlobal('fetch', respond({ ...base, nodes: [] }));
     render(<NodesPanel />);
-    await waitFor(() => expect(screen.getByText('No nodes have joined this fleet.')).toBeInTheDocument());
+    const empty = await screen.findByText(/No nodes have joined\./);
+    expect(empty).toHaveTextContent('No nodes have joined. Run phm node join on a machine to add it.');
   });
 });
