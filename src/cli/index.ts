@@ -2190,6 +2190,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'empties': {
+        const { cmdEmpties } = await import('./empties.js');
+        process.exitCode = await cmdEmpties(rest);
+        break;
+      }
+
       case 'jobs': {
         const { cmdJobs } = await import('./jobs-empty.js');
         process.exitCode = await cmdJobs(rest);
