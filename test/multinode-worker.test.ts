@@ -10,6 +10,8 @@ vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ callPool: ports.call })
 vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.capacity,
   nodeRamSlots: () => 4, sampleHostStats: ports.hostStats }));
 vi.mock('../src/core/drive/nodes/host-slots.js', () => ({ hostSlots: () => ({ acquire: ports.acquire }) }));
+vi.mock('../src/core/drive/nodes/provider-binary.js', async original => ({ ...await original<typeof import('../src/core/drive/nodes/provider-binary.js')>(),
+  resolveProviderBinary: (provider: string) => `/usr/local/bin/${provider}` }));
 import { runNodeWorker } from '../src/core/drive/nodes/worker.js';
 
 const config = { role: 'worker' as const, primary: 'main', backup: 'backup', owner: 'mason', node: 'worker' };
@@ -104,6 +106,62 @@ describe('multi-Mac worker lifecycle', () => {
     expect(await result).toEqual({ jobId: 'j', completed: true });
     expect(ports.call.mock.calls.find(c => c[1] === 'complete')?.[2]).toContain('branch:job-j');
     expect(ports.call.mock.calls.at(-1)?.[1]).toBe('leave');
+  });
+  it('sends the probed absolute binary as a lane receipt in the runner envelope', async () => {
+    const { result } = await start();
+    const sent = JSON.parse(String(child.stdin.read()));
+    expect(sent).toMatchObject({ protocol: 'phm-node-worker/v1', providerBinaries: { codex: '/usr/local/bin/codex' } });
+    expect(sent.providerBinaries).not.toHaveProperty('claude');
+    child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
+    await result;
+  });
+  it.each([
+    ['{"resultRef":"branch:job-j","packError":"codex-exit-nonzero"}', 0, 'pack-error'],
+    ['{"resultRef":"branch:job-j","codex":"error"}', 0, 'codex-error'],
+    ['', 1, 'runner-exit-nonzero'],
+  ] as const)('releases an error result for retry instead of completing it (%s)', async (stdout, code, reason) => {
+    const route = ports.call.getMockImplementation()!;
+    let pulls = 0;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'release') return { demoted: false, result: { released: true } };
+      if (args[1] === 'pull' && ++pulls > 1) return { demoted: false, result: { pulled: false } };
+      return route(...args);
+    });
+    const { result } = await start();
+    child.stdout.write(stdout); child.emit('close', code);
+    expect(await result).toMatchObject({ pulled: false, previous: { jobId: 'j', completed: false, held: 'runner-error',
+      reason, released: true, declined: false, failures: 1, pack: 'pack-1' } });
+    const releases = ports.call.mock.calls.filter(c => c[1] === 'release');
+    expect(releases).toHaveLength(1);
+    expect(releases[0]![2]).toEqual(expect.arrayContaining(['--job', 'j', '--token', '4']));
+    expect(releases[0]![2]).not.toContain('--decline');
+    expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('declines a pack after two consecutive error results so another node takes it', async () => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => args[1] === 'release' ? { demoted: false, result: { released: true } } : route(...args));
+    const second = new Child();
+    ports.spawn.mockReturnValueOnce(child).mockReturnValueOnce(second);
+    const { result } = await start();
+    child.stdout.write('{"resultRef":"branch:job-j","packError":"codex-exit-nonzero"}'); child.emit('close', 0);
+    await vi.waitFor(() => expect(ports.spawn).toHaveBeenCalledTimes(2));
+    second.stdout.write('{"codex":"error"}'); second.emit('close', 1);
+    expect(await result).toMatchObject({ jobId: 'j', completed: false, held: 'runner-error', reason: 'codex-error',
+      released: true, declined: true, failures: 2, previous: { declined: false, failures: 1 } });
+    const releases = ports.call.mock.calls.filter(c => c[1] === 'release').map(c => c[2] as string[]);
+    expect(releases.map(r => r.includes('--decline'))).toEqual([false, true]);
+    expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('a success between failures resets the consecutive count', async () => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => args[1] === 'release' ? { demoted: false, result: { released: true } } : route(...args));
+    const second = new Child();
+    ports.spawn.mockReturnValueOnce(child).mockReturnValueOnce(second);
+    const { result } = await start();
+    child.stdout.write('{"packError":"x"}'); child.emit('close', 0);
+    await vi.waitFor(() => expect(ports.spawn).toHaveBeenCalledTimes(2));
+    second.stdout.write('{"resultRef":"branch:job-j"}'); second.emit('close', 0);
+    expect(await result).toMatchObject({ jobId: 'j', completed: true, previous: { reason: 'pack-error', declined: false } });
   });
   it('holds before acquiring a session when memory or disk is pressured', async () => {
     ports.capacity.mockReturnValue({ slots: 0, held: 'memory-pressure' });

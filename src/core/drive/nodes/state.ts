@@ -103,6 +103,7 @@ export function parseState(value: unknown): NodesState {
     (j.executionHostId === undefined || validId(j.executionHostId)) &&
     (j.startedAt === undefined || integer(j.startedAt)) && (j.completedAt === undefined || integer(j.completedAt)) &&
     (j.result === undefined || typeof j.result === 'string') &&
+    (j.producerWithdrawn === undefined || (j.producerWithdrawn === true && j.state === 'completed')) &&
     (j.state !== 'completed' || typeof j.result === 'string') &&
     (j.state === 'pending' ? j.claim === undefined : object(j.claim) && lease(j.claim) &&
       j.claim.jobId === j.id && token(j.claim.leaderToken)))) return fail();

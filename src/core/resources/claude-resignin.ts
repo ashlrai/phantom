@@ -47,7 +47,7 @@ export async function checkClaudeAuth(
   // An unusable launcher (not installed, not absolute) is "could not check", not a crash.
   const status = await probe(probeOptions).catch((): ClaudeAccountStatusResult => ({
     schemaVersion: 1, scope: 'claude-native-auth-status', status: 'failed', reason: 'status-process-failed',
-    loggedIn: null, authMethod: 'unknown', subscriptionType: null, accountHint: null,
+    loggedIn: null, authMethod: 'unknown', subscriptionType: null, accountHint: null, accountScope: null,
     startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
   }));
   return classifyClaudeAuth(status, credentialSeen);

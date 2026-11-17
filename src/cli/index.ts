@@ -2146,6 +2146,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdMessages(rest);
         break;
       }
+      case 'map': {
+        const { cmdMap } = await import('./map.js');
+        process.exitCode = await cmdMap(rest);
+        break;
+      }
       case 'router': {
         const { cmdRouter } = await import('./router.js');
         process.exitCode = await cmdRouter(rest);
@@ -2214,6 +2219,30 @@ async function main(): Promise<void> {
       case 'empties': {
         const { cmdEmpties } = await import('./empties.js');
         process.exitCode = await cmdEmpties(rest);
+        break;
+      }
+
+      case 'subagent': {
+        const { cmdSubagent } = await import('./subagent.js');
+        process.exitCode = await cmdSubagent(rest);
+        break;
+      }
+
+      case 'asks': {
+        const { cmdAsks } = await import('./asks.js');
+        process.exitCode = await cmdAsks(rest);
+        break;
+      }
+
+      case 'home': {
+        const { cmdHome } = await import('./home.js');
+        process.exitCode = await cmdHome(rest);
+        break;
+      }
+
+      case 'throughput': {
+        const { cmdThroughput } = await import('./throughput.js');
+        process.exitCode = await cmdThroughput(rest);
         break;
       }
 
@@ -2391,6 +2420,11 @@ async function main(): Promise<void> {
 
       case 'pool': {
         process.exitCode = await (await import('./pool.js')).cmdPool(rest);
+        break;
+      }
+
+      case 'admission': {
+        process.exitCode = await (await import('./admission.js')).cmdAdmission(rest);
         break;
       }
 
@@ -2623,7 +2657,7 @@ async function main(): Promise<void> {
           process.exitCode = await cmdWorktreesPrune(rest.slice(1));
         } else {
           const { cmdWorktrees } = await import('./worktrees.js');
-          process.exitCode = cmdWorktrees(rest);
+          process.exitCode = await cmdWorktrees(rest);
         }
         break;
       }
@@ -2643,6 +2677,12 @@ async function main(): Promise<void> {
       case 'disk-maint': {
         const { cmdDiskMaint } = await import('./disk-maint.js');
         process.exitCode = await cmdDiskMaint(rest);
+        break;
+      }
+
+      case 'nodes': {
+        const { cmdNodes } = await import('./nodes.js');
+        process.exitCode = await cmdNodes(rest);
         break;
       }
 
@@ -2703,6 +2743,12 @@ async function main(): Promise<void> {
         // M112: one-command spare-Mac worker provisioning (keepAwake daemon + identity)
         const cmdWorker = await loadWorkerCmd();
         process.exitCode = await cmdWorker(rest);
+        break;
+      }
+
+      case 'pr': {
+        const { cmdPr } = await import('./pr.js');
+        process.exitCode = await cmdPr(rest);
         break;
       }
 
@@ -2863,6 +2909,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'autonomy': {
+        const { cmdAutonomy } = await import('./autonomy.js');
+        process.exitCode = await cmdAutonomy(rest);
+        break;
+      }
+
       case 'goals': {
         // Bare `goals` (or only --json/--text) is the fleet scorecard; every subcommand is M28.
         if (rest.every(arg => arg === '--json' || arg === '--text')) {
@@ -3016,6 +3068,12 @@ async function main(): Promise<void> {
       case 'docs': {
         const cmdDocs = await loadDocsCmd();
         process.exitCode = await cmdDocs(rest);
+        break;
+      }
+
+      case 'commands': {
+        const { cmdCommands } = await import('./commands.js');
+        process.exitCode = await cmdCommands(rest);
         break;
       }
 
@@ -3212,6 +3270,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'bots': {
+        const { runBotsCli } = await import('./bots.js');
+        process.exitCode = await runBotsCli(rest);
+        break;
+      }
+
       case 'openai-agents': {
         const cmdOpenaiAgents = await loadOpenaiAgentsCmd();
         process.exitCode = await cmdOpenaiAgents(rest);
@@ -3297,6 +3361,12 @@ async function main(): Promise<void> {
       case 'budget': {
         const { cmdBudget } = await import('./budget.js');
         process.exitCode = await cmdBudget(rest);
+        break;
+      }
+
+      case 'ci': {
+        const { cmdCiBaseline } = await import('./ci-baseline.js');
+        process.exitCode = await cmdCiBaseline(rest);
         break;
       }
 

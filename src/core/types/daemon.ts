@@ -437,6 +437,8 @@ export interface DaemonState {
    * clean tick; absent on pre-existing state.
    */
   lastTickError?: string | null;
+  /** Retry budget-interrupted calibration on the next eligible tick. */
+  counterfactualReplayPending?: boolean;
   /** Calendar day (YYYY-MM-DD) the spend counters apply to; null until first tick. */
   todayDate: string | null;
   /** Estimated USD spent so far today; reset when todayDate rolls over. */

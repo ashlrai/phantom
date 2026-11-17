@@ -159,6 +159,7 @@ export function drainRow(repo: string, pr: RefixPr, key: string, reason: string,
   const prompt = [
     ...(pinned ? [SECURITY_PIN] : []),
     `${url} (head ${pr.headSha.slice(0, 7)}): ${reason}.`,
+    `For conflicts, first run phm pr resolve-conflicts --repo ${repo} --pr ${pr.number} --json; use --apply for proven append unions. Follow ready-supersede bundle plans through publish.sh; needs-agent names the files and hunks to resolve.`,
     'Check out the PR head, reproduce the failure or resolve the conflict, and push one fix-forward commit to the PR branch.',
     'Never force-push to the default branch; no --admin merge, no auto-merge, no check skipping.',
   ].join('\n');
