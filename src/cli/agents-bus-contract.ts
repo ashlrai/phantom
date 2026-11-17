@@ -8,6 +8,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
+ashlr agents mesh status [--root <abs>] [--json]
 ashlr agents edges [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
@@ -58,6 +59,14 @@ export async function runAgentsCli(
     const result = readFleetEdges();
     out(JSON.stringify(sanitizePublicJson(result), null, json ? undefined : 2));
     return result.source === 'unavailable' ? 1 : 0;
+  }
+  if (rest.length === 2 && rest[0] === 'mesh' && rest[1] === 'status') {
+    const { readAgentMesh } = await import('../core/agents/mesh.js');
+    const result = readAgentMesh({ root });
+    out(json ? JSON.stringify(result) : result.status !== 'ok' ? 'Mesh unavailable: ' + result.status : result.agents.map(row =>
+      [row.address, row.lane, row.status, row.lastSeen === null ? 'unknown' : new Date(row.lastSeen).toISOString(),
+        row.currentTask ?? '-'].join('  ')).join('\n') || 'No known agents.');
+    return result.status === 'ok' ? 0 : 1;
   }
   if (rest[0] === 'bus' && rest[1] === 'channels') {
     if (rest.length === 3 && rest[2] === 'list' && root === undefined) {
