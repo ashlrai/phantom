@@ -91,6 +91,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/ci/`
 - `src/core/classify/`
 - `src/core/cloud/`
+- `src/core/commands/`
 - `src/core/comms/`
 - `src/core/comms-agent/`
 - `src/core/connectors/`
