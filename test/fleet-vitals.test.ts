@@ -7,6 +7,8 @@ import { cmdFleetVitals, readFleetVitals, readHostVitals } from '../src/cli/flee
 import { readLaunchVitals } from '../src/core/fleet/launch-vitals.js';
 import { readLaunchCosts } from '../src/core/fleet/launch-cost.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+import { readProcessVitals } from '../src/core/fleet/process-vitals.js';
+vi.mock('../src/core/fleet/process-vitals.js', () => ({ readProcessVitals: vi.fn(async () => ({ asOf: '2026-11-16T00:00:00Z', state: 'unknown', topCpu: null, topMemory: null, reaper: { plan: `sha256:${'0'.repeat(64)}`, candidates: [], signalled: [], skipped: [] } })) }));
 
 it('reads directory deltas and distinguishes missing, partial, stale and invalid evidence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'vitals-'));
@@ -44,7 +46,7 @@ it('keeps the disk contract byte-compatible and adds launch evidence only as ext
   const old = await readFleetVitals(root, 100_000);
   const host = await readHostVitals(root, 100_000);
   expect(host).toMatchObject({ schema: 'fleet.vitals.v1', status: old.status, disk: old.disk });
-  expect(Object.keys(host).sort()).toEqual(['disk', 'launch', 'launchCost', 'schema', 'status']);
+  expect(Object.keys(host).sort()).toEqual(['disk', 'launch', 'launchCost', 'processes', 'schema', 'status']);
   expect(Object.keys(old).sort()).toEqual(['disk', 'schema', 'status']);
   expect(host.launch).toEqual({ reason: null, nextWindowSeconds: null, queued: 3, lanes: [{ lane: 'claude', running: 1, target: 8, queued: 3 }] });
   expect(host.launchCost.launches).toHaveLength(1);
@@ -76,6 +78,9 @@ it('reads measured, partial and unknown launch costs while projecting only metad
   const out = JSON.parse(String(log.mock.calls[0]![0]));
   expect(out.schema).toBe('fleet.vitals.v1');
   expect(out.launchCost.launches).toHaveLength(3);
+  const plan = `sha256:${'0'.repeat(64)}`; expect(await cmdFleetVitals(['--runs-dir', root, '--apply', plan, '--json'])).toBe(0);
+  expect(readProcessVitals).toHaveBeenLastCalledWith(root, plan);
+  vi.mocked(readProcessVitals).mockRejectedValueOnce(new Error('changed plan')); expect(await cmdFleetVitals(['--apply', plan, '--json'])).toBe(1);
   expect(typeof (await FLEET_SUBCOMMAND_LOADERS.vitals!()).cmdFleetVitals).toBe('function');
 });
 
@@ -93,12 +98,14 @@ it('rejects bad arguments and prints text with disk lines first', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   expect(await cmdFleetVitals(['--json', '--json'])).toBe(2);
   expect(await cmdFleetVitals(['--runs-dir'])).toBe(2);
+  expect(await cmdFleetVitals(['--apply'])).toBe(2);
   expect(await cmdFleetVitals(['--bogus'])).toBe(2);
   const root = await fixture({ 'disk-growth.json': disk });
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetVitals(['--runs-dir', root])).toBe(0);
   const lines = log.mock.calls.map(c => String(c[0]));
   expect(lines[0]).toMatch(/^Disk growth: /);
+  expect(lines.some(l => /Process load as of .*CPU unknown; memory unknown/.test(l))).toBe(true);
   expect(lines.some(l => l.startsWith('Launch queue: unknown'))).toBe(true);
   expect(lines.some(l => l.startsWith('Launch cost: unknown (source missing)'))).toBe(true);
   expect(lines).toContain('Next launch window: unknown');

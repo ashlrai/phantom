@@ -5,6 +5,7 @@ import { readSource } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readLaunchCosts } from '../core/fleet/launch-cost.js';
 import { readLaunchVitals, type LaunchVitals } from '../core/fleet/launch-vitals.js';
+import { readProcessVitals } from '../core/fleet/process-vitals.js';
 
 const number = z.number().finite();
 const diskSchema = z.object({
@@ -33,31 +34,40 @@ export async function readFleetVitals(root = join(homedir(), '.ashlr-runs'), now
 
 /** Disk contract (above) is unchanged; launch evidence is additive and carries its own state. */
 export interface HostVitals extends FleetVitals {
+  processes: Awaited<ReturnType<typeof readProcessVitals>>;
   launch: LaunchVitals;
   launchCost: Awaited<ReturnType<typeof readLaunchCosts>>;
 }
-export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<HostVitals> {
-  const [disk, launch, launchCost] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root)]);
-  return { ...disk, launch, launchCost };
+export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now = Date.now(), apply?: string): Promise<HostVitals> {
+  const [disk, launch, launchCost, processes] = await Promise.all([readFleetVitals(root, now), readLaunchVitals(root), readLaunchCosts(root), readProcessVitals(root, apply)]);
+  return { ...disk, launch, launchCost, processes };
 }
 
-const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue and first-minute launch cost. Missing readings are unknown.';
+const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json] [--apply <orphan-plan>]\nPreview CPU and memory owners and orphan roots. Apply the preview plan to send SIGTERM to verified terminal-job roots. Missing readings are unknown.';
 export async function cmdFleetVitals(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
   let root = join(homedir(), '.ashlr-runs'), json = false;
+  let apply: string | undefined;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (seen.has(arg) || !['--json', '--runs-dir'].includes(arg)) { console.error(USAGE); return 2; }
+    if (seen.has(arg) || !['--json', '--runs-dir', '--apply'].includes(arg)) { console.error(USAGE); return 2; }
     seen.add(arg);
     if (arg === '--json') json = true;
+    else if (arg === '--apply' && /^sha256:[a-f0-9]{64}$/.test(args[i + 1] ?? '')) apply = args[++i];
+    else if (arg === '--apply') { console.error(USAGE); return 2; }
     else if (args[i + 1] && !args[i + 1]!.startsWith('-')) root = args[++i]!;
     else { console.error(USAGE); return 2; }
   }
-  const report = sanitizePublicJson(await readHostVitals(root)) as HostVitals;
+  let report: HostVitals;
+  try { report = sanitizePublicJson(await readHostVitals(root, Date.now(), apply)) as HostVitals; }
+  catch { const error = 'Orphan plan could not be applied; preview fleet vitals again.'; if (json) console.log(JSON.stringify({ error })); else console.error(error); return 1; }
   if (json) console.log(JSON.stringify(report));
   else {
     console.log(`Disk growth: ${report.status}; free ${report.disk?.free_gb ?? 'unknown'} GB`);
+    const p = report.processes, cpu = p.topCpu?.map(r => `${r.owner} ${r.cpuPercentOneCore.toFixed(1)}%`).join(', ') ?? 'unknown';
+    const memory = p.topMemory?.map(r => `${r.owner} ${(r.rssBytes / 1024 ** 2).toFixed(1)} MiB`).join(', ') ?? 'unknown';
+    console.log(`Process load as of ${p.asOf} (${p.state}): CPU ${cpu}; memory ${memory}; orphan roots ${p.reaper.candidates.length}; SIGTERM sent ${p.reaper.signalled.length}; skipped ${p.reaper.skipped.length}; apply with --apply ${p.reaper.plan}`);
     for (const row of report.disk?.directories ?? [])
       console.log(`${row.path}: ${row.size_gb ?? 'unknown'} GB; change ${row.delta_gb ?? 'unknown'} GB`);
     console.log(`Launch queue: ${report.launch.queued ?? 'unknown'} queued; reason ${report.launch.reason ?? 'unknown'}`);

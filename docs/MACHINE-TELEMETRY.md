@@ -1,5 +1,9 @@
 # Local machine telemetry
 
+`phm fleet vitals --json` separately samples macOS processes on demand: `processes.asOf`, `topCpu` and `topMemory` group CPU and RSS by worktree job, terminal-job orphan, guardian, daemon, desktop app or unknown. Plain output includes one CPU/memory line. No process arguments or environments are read. CPU is the OS average (100% per core), not load average; shared RSS can repeat and per-process swap is unknown.
+
+Preview `processes.reaper`, then run `phm fleet vitals --apply <orphan-plan> --json` using its `plan` digest. At most ten current-user, detached, CLI roots with matching protected session claims, start/boot identity and a terminal outcome at least 60 seconds old receive SIGTERM after fresh checks. GUI processes and unproven roots are excluded; no process groups or SIGKILL. This partial implementation recognizes MERGED, CLOSED and DONE-NOOP outcomes, canonical `~/Projects/ashlrai/wt/RQ-*` cwd paths, and launchd guardian/daemon labels. Other layouts, missing claims, descendants without root claims and unavailable/oversized (16 MiB) ledgers remain unproven. Signal delivery does not prove exit or reclaimed memory.
+
 Enable `telemetry.machine.enabled = true` in Phantom configuration, then run
 `phm resources sample --json`. Collection is disabled by default. Disabled
 telemetry performs no collection or fleet writes. Help and invalid arguments do
