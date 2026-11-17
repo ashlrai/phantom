@@ -2829,7 +2829,8 @@ async function main(): Promise<void> {
       }
 
       case 'goals': {
-        if (rest.length === 0 || (rest.length === 1 && rest[0] === '--json')) {
+        // Bare `goals` (or only --json/--text) is the fleet scorecard; every subcommand is M28.
+        if (rest.every(arg => arg === '--json' || arg === '--text')) {
           const { cmdGoals } = await import('./goals-view.js');
           process.exitCode = await cmdGoals(rest);
           break;
@@ -2967,7 +2968,7 @@ async function main(): Promise<void> {
       case 'settings': {
         if (wantsHelp(rest)) {
           printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
-            ['phm settings appearance get [--json]', 'Read the four appearance settings'],
+            ['phm settings appearance [--json]', 'Read the four appearance settings'],
             ['phm settings appearance set <key> <value> [--json]', 'Change one; a running app applies it live'],
           ]);
           process.exitCode = 0;

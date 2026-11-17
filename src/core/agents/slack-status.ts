@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
+import { formatAsOf } from '../comms/as-of-label.js';
 import { listWorkBoard, type WorkBoardItem } from '../comms/work-board.js';
 import { readPrivateFileCapped } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -102,6 +103,8 @@ export interface SlackBridgeStatusOptions {
 /** Current receipt-backed work, shared by thread replies and the status CLI. */
 export interface SlackWorkStatus {
   asOf: string | null;
+  /** When asOf was read; absent means staleness cannot be proven. */
+  readAt?: string;
   inbox: 'ok' | 'unavailable';
   truncated: boolean;
   items: Array<Pick<WorkBoardItem, 'id' | 'channelRef' | 'state' | 'owner' | 'claimReceipt'> & {
@@ -121,13 +124,23 @@ export function readSlackWorkStatus(options: { runsDir?: string; busRoot?: strin
     if (typeof tick === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(tick) && Number.isFinite(Date.parse(tick)) && Date.parse(tick) <= now.getTime()) asOf = new Date(tick).toISOString();
   } catch { /* Missing, malformed or future fleet time stays unknown. */ }
   const board = listWorkBoard({ root: options.busRoot ?? join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 100, channelRef: options.channelRef });
-  return { asOf, inbox: board.inbox, truncated: board.truncated, items: board.items
+  return { asOf, readAt: now.toISOString(), inbox: board.inbox, truncated: board.truncated, items: board.items
     .filter(item => item.channel === 'slack' && item.channelRef !== null && parseSlackThreadRef(item.channelRef))
     .map(item => ({ id: item.id, channelRef: item.channelRef, state: item.state,
       owner: safeWorkText(item.owner), claimReceipt: safeWorkText(item.claimReceipt),
       pr: item.result?.kind === 'verified' ? item.result.pr : null,
       head: item.result?.kind === 'verified' ? safeWorkText(item.result.head) : null,
       dependency: item.result?.kind === 'blocked' ? safeWorkText(item.result.dependency) : null })) };
+}
+
+export const SLACK_FLEET_SOURCE = 'fleet tick';
+
+/** Fleet reading label with source; marks stale readings, never presents an unprovable one as current. */
+export function slackFleetAsOf(work: SlackWorkStatus): string {
+  if (work.asOf === null) return 'fleet as of unknown';
+  const readAt = work.readAt === undefined ? null : new Date(work.readAt);
+  if (readAt === null || Number.isNaN(readAt.getTime())) return `fleet as of unknown from ${SLACK_FLEET_SOURCE}`;
+  return `fleet ${formatAsOf(SLACK_FLEET_SOURCE, work.asOf, readAt)}`;
 }
 
 /** Match the exact receipt, never a different request sharing the thread. */
@@ -142,7 +155,7 @@ export function slackWorkStatusLine(work: SlackWorkStatus, body: Record<string, 
   const detail = item?.state === 'VERIFIED' ? `PR ${item.pr ?? 'unknown'}; head ${item.head ?? 'unknown'}`
     : item?.state === 'BLOCKED' ? `dependency ${item.dependency ?? 'unknown'}`
       : `owner ${item?.owner ?? 'unknown'}; claim ${item?.claimReceipt ?? 'unknown'}`;
-  return `${item?.state ?? 'UNKNOWN'}; ${detail}; fleet as of ${work.asOf ?? 'unknown'}`;
+  return `${item?.state ?? 'UNKNOWN'}; ${detail}; ${slackFleetAsOf(work)}`;
 }
 
 function slackIdentityCount(config: AgentNetworkConfig): number {

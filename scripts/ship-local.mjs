@@ -30,9 +30,8 @@ export const APP_ICON_BUILD = 'desktop/src-tauri/icons/icon.icns';
  * Code signing. macOS keys the microphone grant (TCC) to the app's signature: an
  * ad-hoc signature (`--sign -`) changes with every build, so every ship:local made
  * macOS forget that Ashlr may use the mic. A self-signed identity that never changes
- * keeps the grant. It lives in the login keychain, is created (and trusted for code
- * signing — macOS asks for the login password once) by ensureSigningIdentity, and is
- * only ever used to sign this app on this Mac.
+ * keeps the grant. Local builds and installation require that existing identity
+ * in the login keychain; neither path creates or substitutes an identity.
  */
 export const SIGNING_IDENTITY = 'Ashlr Local';
 export const ENTITLEMENTS = 'desktop/src-tauri/Entitlements.plist';
@@ -169,11 +168,10 @@ export function findSigningIdentity(io) {
   return all.find((i) => i.valid) ?? all[0] ?? null;
 }
 
-/** Pure: the codesign argv for an identity hash, or ad-hoc (`-`) when there is none. */
+/** Pure: codesign argv bound to a previously resolved certificate, never ad-hoc. */
 export function codesignArgv(identity, entitlements, app = APP_PATH) {
-  return identity
-    ? ['codesign', '--force', '--deep', '--sign', identity, '--entitlements', entitlements, app]
-    : ['codesign', '--force', '--deep', '--sign', '-', '--entitlements', entitlements, app];
+  if (!/^[0-9A-F]{40}$/.test(identity ?? '')) throw new Refusal('signing requires the existing valid Ashlr Local certificate hash; no ad-hoc fallback is allowed');
+  return ['codesign', '--force', '--deep', '--sign', identity, '--entitlements', entitlements, app];
 }
 
 /** An X.509 v3 config for a leaf code-signing certificate (LibreSSL and OpenSSL 3). */
@@ -345,16 +343,10 @@ export function planShip(ctx) {
     // patches an installed bundle rather than rebuilding it, so write it every time.
     appSteps.push({ id: 'plist-mic', title: 'Info.plist: NSMicrophoneUsageDescription', argv: ['plutil', '-replace', 'NSMicrophoneUsageDescription', '-string', MIC_USAGE, join(APP_PATH, 'Contents', 'Info.plist')] });
     appSteps.push({ id: 'plist-local-network', title: 'Info.plist: allow local Phantom networking', argv: ['plutil', '-replace', 'NSAppTransportSecurity', '-json', LOCAL_NETWORK_ATS, join(APP_PATH, 'Contents', 'Info.plist')] });
-    const valid = ctx.signing.hash;
-    appSteps.push({
-      id: 'codesign',
-      title: valid ? `codesign the bundle as "${SIGNING_IDENTITY}"` : `codesign the bundle as "${SIGNING_IDENTITY}" (ad-hoc if the identity is unavailable)`,
-      argv: codesignArgv(valid ?? SIGNING_IDENTITY, repo(ENTITLEMENTS)),
-      sign: { identity: valid, entitlements: repo(ENTITLEMENTS) },
-    });
+    // installLocalApp owns the single signing pass, after prepare and its final
+    // display-name plist edits. Signing here would sign the staged bundle twice.
     // Finder and the Dock cache the icon until the bundle's mtime changes.
     if (iconNewer) appSteps.push({ id: 'touch-app', title: 'touch the bundle so the Dock picks up the new icon', argv: ['touch', APP_PATH] });
-    appSteps.push({ id: 'codesign-verify', title: 'verify the signature', argv: ['codesign', '--verify', '--deep', '--strict', APP_PATH] });
 
     steps.push({ id: 'native-transaction', title: 'stage, verify and switch the single Phantom installation', app: { selected: ctx.selectedApp, source: ctx.selectedApp?.path ?? ctx.sourceApp.path, sourceProof: ctx.selectedApp ?? ctx.sourceApp, signer: ctx.signing.hash, version: ctx.version, native: ctx.native, entitlements: repo(ENTITLEMENTS), current: join(shareDir, 'current'), dest, steps: appSteps } });
   } else {
@@ -444,8 +436,8 @@ export async function runSteps(steps, io, { dryRun }) {
     if (step.sign) {
       const hash = step.sign.identity ?? identity;
       if (!hash) {
-        io.log(`ship:local: WARNING — signing ad-hoc. macOS forgets Ashlr's microphone permission on every ad-hoc rebuild;`);
-        io.log(`           rerun ship:local in a terminal to create/trust the "${SIGNING_IDENTITY}" identity (docs/RELEASING-LOCALLY.md).`);
+        io.log(`ship:local: requires the existing valid ${SIGNING_IDENTITY} identity; no ad-hoc fallback is allowed.`);
+        return 1;
       }
       const argv = codesignArgv(hash, step.sign.entitlements, step.sign.app);
       const res = io.exec(argv[0], argv.slice(1), { cwd: io.repoRoot, stdio: 'inherit' });

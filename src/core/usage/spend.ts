@@ -6,7 +6,7 @@
  * This module is in the Tier-1 import closure (test/fixtures/authority/
  * tier1-closure.json): add no imports here without that review.
  */
-import { readFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PACE_POOLS } from './pace.js';
@@ -42,6 +42,8 @@ export interface SpendRow {
 export interface SpendSnapshot { v: 1; asOf: string | null; pools: SpendRow[] }
 
 const HOUR_MS = 3_600_000;
+/** Keep absent pools visible; legacy and additional recorded pools remain supported. */
+const SPEND_POOLS = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'zai', 'local', ...PACE_POOLS];
 /** A gift or credit reading older than a day is stale (matches TYPED_MAX_AGE_MS in resources/lane-autopilot.ts). */
 const GIFT_MAX_AGE_MS = 24 * HOUR_MS;
 /** Overage readings above this are malformed, not measured. */
@@ -124,15 +126,30 @@ export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot
   const tick = typeof status.last_tick === 'string' ? Date.parse(status.last_tick) : NaN;
   const fresh = status.schema === 'dispatchd.status.v1' && Number.isFinite(tick) && now >= tick && now - tick <= 120_000;
   const budget = object(status.budget) ? status.budget : {};
-  const names = [...new Set([...PACE_POOLS, ...Object.keys(budget).filter(k => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k))])];
+  const names = [...new Set([...SPEND_POOLS, ...Object.keys(budget).filter(k => /^[a-z0-9][a-z0-9-]{0,63}$/.test(k))])];
   const pools = names.map(pool => {
     const lane = object(budget[pool]) ? budget[pool] : {};
-    return object(lane.gift) ? giftRow(pool, lane.gift, fresh, now) : percentRow(pool, lane, fresh, now);
+    return object(lane.gift) || pool === 'claude-api'
+      ? giftRow(pool, object(lane.gift) ? lane.gift : {}, fresh, now) : percentRow(pool, lane, fresh, now);
   }).sort((a, b) => ORDER[a.verdict] - ORDER[b.verdict]
     || (a.hoursLeft ?? Infinity) - (b.hoursLeft ?? Infinity) || a.pool.localeCompare(b.pool));
   return { v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, pools };
 }
 export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json')): Promise<SpendSnapshot> {
-  try { const text = await readFile(path, 'utf8'); return projectUsageSpend(text.length <= 1024 * 1024 ? JSON.parse(text) as unknown : null); }
+  try {
+    const file = await open(path, 'r');
+    try {
+      // As in readUsagePace, bound the read itself, including a file that grows.
+      const bytes = Buffer.alloc(1024 * 1024 + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+      if (length === bytes.length) return projectUsageSpend(null);
+      return projectUsageSpend(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown);
+    } finally { await file.close(); }
+  }
   catch { return projectUsageSpend(null); }
 }

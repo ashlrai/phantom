@@ -1,4 +1,61 @@
+# Frontier CLI discovery and daemon health
+
+`src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
+execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
+It rejects empty names and names containing `/`, searches PATH before common
+tool directories, `~/.npm-global/bin`, and the Node executable directory, and
+uses file metadata only (regular file with any execute bit). Options default to
+process PATH, HOME, and execPath. Returned paths are absolute. Engine discovery
+and absolute spawn-path resolution retain `which`/`where` first, then use this
+fallback; this does not change service PATH or admission policy.
+
+`src/core/daemon/guard-health.ts` exports `diagnoseFrontierClients(inventory,
+lookup?)`; the injected lookup now returns the executable resolution above or
+null rather than a boolean. Unavailable diagnoses retain `binaryOnPath` and add
+nullable `binaryPath`, nullable `binarySource`, and `cause`: `binary-not-found`,
+`auth-or-seat-not-admitted`, `policy-refused`, `resource-unavailable`,
+`not-selected`, `non-loopback-refused`, `probe-timeout`, or `unavailable`.
+Policy/resource/selection/refusal inventory reasons take precedence over binary
+absence. Admission is inferred, never authenticated by this metadata lookup.
+The health CLI bounds inventory discovery to 30 seconds; a timeout supplies a
+sanitized frontier error and null resolved inventory, preserving unknown health
+semantics and never itself recommending restart. See
+[daemon revival](docs/DAEMON-REVIVE.md).
+
+# Resident off-tick jobs
+
+`buildBacklog` scans up to `BACKLOG_REPO_CONCURRENCY` (4) repositories at once,
+aggregating scanner results in input repository order before existing ranking
+and snapshot persistence. Scanner bounds and observation ordering are unchanged.
+
+`runTickPhase` accepts `detached?: boolean`: detached phases retain deadline,
+abort and grace semantics but do not consume the tick budget, update progress,
+or append to its ledger. `recordTickPhase(record)` appends metadata to an open
+ledger. `DaemonTickPhaseStatus` includes `off-tick`, excluded from tick outcomes;
+`DaemonTickPhase.offTick` carries run identity and previous settled metadata.
+`launchOffTickJob(name, run, opts)` synchronously records an off-tick launch or
+existing run. Jobs are single-flight until both bounded and inner work settle.
+`offTickJobsSnapshot()` returns metadata only; `cancelOffTickJobs(graceMs?)`
+aborts running jobs and bounds shutdown waiting.
+Resident non-once ticks enable `offTickMaintenance` (ignored for dry runs):
+self-heal and ancillary run single-flight in the background, and auto-merge
+precedes backlog refresh. Direct and once ticks retain in-tick maintenance.
+
 # Advisory routing pairing
+
+`explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
+256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
+following). Its `lanes` map contains `posture`, `postureReason`, nullable
+`projectedUnusedPct` and nullable `hoursToReset`. The newest `work-market.v1`
+posture event wins, falling back to the newest route decision's ranking inputs
+only when no posture event exists. Missing or invalid evidence returns null.
+Lane evidence may also include `costClass`, `costClassReason`, `zeroCost`, and
+`allowance` with nullable numeric `used`, `limit`, `in_flight`, `reserve`,
+`session_cap` and `headroom` ACUs, projected from `work-market.v1` receipts.
+Devin's effective class is `included` only within measured weekly allowance
+after reservations and reserve with room for one session, or for an unexpired
+selected Lightning/Flash free preview (`zeroCost: true`); otherwise `metered`.
+Unknown usage stays null. See [queue cost evidence](docs/QUEUE.md#resource-posture-the-lane-is-a-hint).
 
 `run/model-mode-data.ts` owns `ModeTier = lite|normal|ultra|fusion`, the exact
 model classifications and their capability order. `ModelEntry.modeTier` is
@@ -816,3 +873,8 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `read`, `none` or `unknown`; an unreadable source adds no rows. Served by
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
+
+`src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
+`subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
+`publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
+first-paint consumers observe it without importing pane definitions or shortcuts.
