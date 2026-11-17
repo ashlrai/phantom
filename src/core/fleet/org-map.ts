@@ -2,19 +2,28 @@ import type { FleetLiveSnapshotV1 } from './fleet-types.js';
 import type { FleetSessionsV1 } from './runs-sessions.js';
 import type { FleetEdges } from './fleet-edges.js';
 import { providerFor, type ProviderName } from './provider.js';
+import type { FleetOrgTree } from './org-tree.js';
 
 export interface FleetMapNode {
   id: string; kind: 'leader' | 'lane' | 'job' | 'guardian' | 'channel';
   label: string; provider: ProviderName; status: string;
   jobId?: string; lane?: string; model?: string; repo?: string; ageSeconds?: number | null;
+  /** Jobs only. Start instant, and whether a worker process was seen when the map was built. */
+  startedAt?: string | null; processLive?: 'yes' | 'no' | 'unknown';
 }
 /** `provider` is the sender's (`from`) provider: who is behind the reporting agent or the message. */
-export interface FleetMapEdge { id: string; kind: 'reports-to' | 'message'; from: string; to: string; provider: ProviderName; count?: number }
+export interface FleetMapEdge {
+  id: string; kind: 'reports-to' | 'message'; from: string; to: string; provider: ProviderName; count?: number;
+  /** Message edges only: the newest message on this edge (ISO). */
+  lastAt?: string;
+}
 export interface FleetOrgMap {
   schema: 'fleet.map.v2'; generatedAt: string | null; messageWindowMinutes: number;
   nodes: FleetMapNode[]; edges: FleetMapEdge[];
   sources: { fleet: 'available' | 'unknown'; sessions: FleetSessionsV1['sourceState'] | 'unknown'; messages: FleetEdges['source'] | 'unknown' };
   unmappedMessages: number | null; truncated: boolean;
+  /** The same facts as a leader > lanes > jobs tree (`phm org`). Set by the reader; views fall back to `fleetOrgTree(map)`. */
+  tree?: FleetOrgTree;
 }
 export const ORG_LANES = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'] as const;
 const known = (value: string | null | undefined) => value?.trim() || 'unknown';
@@ -51,23 +60,24 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   ORG_LANES.forEach(addLane);
   snapshot?.lanes.forEach(lane => addLane(lane.lane));
   const jobs = new Set<string>();
-  const addJob = (jobId: string, lane: string | null, model: string | null, repo: string | null, status: string, seconds: number | null, title = jobId) => {
+  const addJob = (jobId: string, lane: string | null, model: string | null, repo: string | null, status: string, seconds: number | null, startedAt: string | null, processLive: FleetMapNode['processLive'] = 'unknown', title = jobId) => {
     if (jobs.has(jobId)) return;
     jobs.add(jobId);
     const parent = addLane(lane), id = `job:${jobId}`;
     const node: FleetMapNode = { id, kind: 'job', label: title || jobId, jobId, lane: known(lane), model: known(model), repo: known(repo),
-      provider: providerFor(model, lane).name, status, ageSeconds: age(seconds) };
+      provider: providerFor(model, lane).name, status, ageSeconds: age(seconds),
+      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive };
     nodes.push(node); reportsTo(node, parent);
   };
   // Session evidence wins over the older engine-only snapshot; stale claims never become running jobs.
   const sessionIds = new Set([...(sessions?.sessions ?? []), ...(sessions?.recent ?? [])].map(row => row.job));
   for (const row of sessions?.sessions ?? []) {
-    if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds);
+    if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live);
   }
   for (const row of snapshot?.runs ?? []) {
     const id = row.taskId || row.id;
     if (sessionIds.has(id) || sessionIds.has(row.id) || row.endedAt || row.outcome || ['queued', 'parked'].includes(row.phase)) continue;
-    addJob(id, row.lane, row.model, row.repo, row.phase, row.startedAt ? (now - Date.parse(row.startedAt)) / 1000 : null, row.title);
+    addJob(id, row.lane, row.model, row.repo, row.phase, row.startedAt ? (now - Date.parse(row.startedAt)) / 1000 : null, row.startedAt, 'unknown', row.title);
   }
   // Resolve only exact observed addresses. Unknown peers are counted, never guessed into a lane.
   const byId = new Map(nodes.map(node => [node.id, node]));
@@ -80,8 +90,11 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
     const from = addresses.get(edge.from.address), to = addresses.get(edge.to.address);
     if (!from || !to) { unmappedMessages! += edge.messages; continue; }
     const id = `message:${from}:${to}`, existing = edges.find(row => row.id === id);
-    if (existing) existing.count! += edge.messages;
-    else edges.push({ id, kind: 'message', from, to, provider: byId.get(from)!.provider, count: edge.messages });
+    const lastAt = Number.isFinite(edge.lastAt) ? new Date(edge.lastAt).toISOString() : undefined;
+    if (existing) {
+      existing.count! += edge.messages;
+      if (lastAt && (!existing.lastAt || lastAt > existing.lastAt)) existing.lastAt = lastAt;
+    } else edges.push({ id, kind: 'message', from, to, provider: byId.get(from)!.provider, count: edge.messages, ...(lastAt ? { lastAt } : {}) });
   }
   return { schema: 'fleet.map.v2', generatedAt: sessions?.generatedAt ?? snapshot?.generatedAt ?? null,
     messageWindowMinutes: mapWindowMinutes(options.minutes === undefined ? undefined : String(options.minutes)), nodes, edges,

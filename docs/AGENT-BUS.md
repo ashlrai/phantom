@@ -14,6 +14,16 @@ liveCount, expiredCount }`.  Read endpoints need a current read session and
 return 401 if absent or expired; `source` is `missing` when the store has
 not yet been created, and `unavailable` when the store is unhealthy (503).
 
+To see what agents are saying to each other, run `phm messages` (JSON by
+default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
+`--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
+`since`, `agent` and `limit` params. Both return `agent-messages.v1`: newest
+first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
+unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
+`summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
+counted in `skipped`, never fatal. It reads the same store; it is not a
+second bus.
+
 ## Write
 
 POST `/api/verse/agent-bus` sends one envelope; the caller needs
@@ -258,6 +268,10 @@ dead-letter sink check the same gate for callers that bypass the router.
 
 The Bus pane in the desktop app includes a Durable bus tab that reads and
 writes the same `~/.ashlr-runs` store the API endpoints target.
+The Messages pane shows the same `agent-messages.v1` read as a timeline
+grouped by conversation, with an agent filter; clicking a message with a job
+opens that job's log. The Org pane draws one line per conversation between
+two agents in the last 15 minutes.
 
 ## v2
 

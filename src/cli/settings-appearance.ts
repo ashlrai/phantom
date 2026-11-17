@@ -2,7 +2,7 @@
  * `phm settings appearance` — the desktop and phone app's theme, accent,
  * density and font size, as a typed CLI so agents can read and change them.
  *
- *   phm settings appearance get [--json]
+ *   phm settings appearance [--json]          (read; `get` is an alias)
  *   phm settings appearance set <key> <value> [--json]
  *
  * Reads and writes the SAME shared record the app polls and applies live
@@ -33,7 +33,7 @@ import {
 
 export const SETTINGS_APPEARANCE_SCHEMA = 'phm.settings.appearance.v1';
 
-const USAGE = `Usage: phm settings appearance get [--json]
+const USAGE = `Usage: phm settings appearance [--json]
        phm settings appearance set <key> <value> [--json]
 
 Keys:
@@ -123,7 +123,8 @@ export async function cmdSettings(args: string[], deps: SettingsAppearanceDeps =
   const rest = args.filter((arg) => arg !== '--json');
   if (rest[0] !== 'appearance') return fail(rest.length === 0 ? USAGE : `Unknown settings area "${rest[0]}".\n${USAGE}`, json, 2);
   const [, verb, key, value, ...extra] = rest;
-  if (verb === 'get' && key === undefined) {
+  // Bare `appearance` reads; `get` stays as an explicit alias.
+  if ((verb === undefined || verb === 'get') && key === undefined) {
     print(await view(await readUiAppearanceFile(), deps), json);
     return 0;
   }
