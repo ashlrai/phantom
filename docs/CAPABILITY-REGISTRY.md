@@ -13,6 +13,60 @@ surfaces load, and for the surfaces and models the router pairs them with
 - Generated adapters (pinned, committed): [`capabilities/generated/`](https://github.com/ashlrai/phantom/tree/master/capabilities/generated).
 - CLI: `phm caps list`, `phm caps validate`, `phm caps generate`.
 
+## Execution adapters
+
+`surface.adapter` selects the companion config format. The optional
+`surface.dispatch` selects execution: `engine`, `hosted`, or `unavailable`.
+Omitting it means unavailable. A desktop config format never commissions a
+CLI launch. Engine dispatch requires an existing engine on a directly reachable
+CLI or local-runtime surface, with the corresponding CLI or API transport.
+Hosted dispatch requires a hosted-only surface and retains its hosting edges.
+
+Inspect a selected pair without launching anything:
+
+```sh
+phm caps route --surface codex-cli --model gpt-6.1-sol --json
+phm caps route --surface glm-lite --model glm-5.3 --json
+```
+
+[`caps/dispatch.ts`](../src/core/caps/dispatch.ts) resolves the pair and
+rejects catalog models belonging to another engine, even within a shared lane.
+`planSurfaceModelDispatch` materializes direct routes using the selected
+provider model id and the transport adapters in
+[`run/engine-registry.ts`](../src/core/run/engine-registry.ts).
+The existing `buildEngineCommand` uses those same adapters. Configured CLI
+engines require no provider branch. Selected Grok seat preparation and the
+llama-server API-only invariant stay inside the adapter boundary.
+
+A route is a plan, not admission, a lease, a sandbox, a model call, permission
+to spend, or an installed-provider check. Hosted routes are receipts for the
+host adapter; the direct command planner refuses to bypass that host.
+Uncommissioned desktop, cloud and bot surfaces refuse execution explicitly.
+
+### Remaining provider branches and migration plan
+
+This inventory covers the engine, sandbox, fleet router and Mac dispatcher
+paths inspected for RQ-ADAPTER-NEUTRAL-1. It does not claim all provider branches
+throughout the repository have been removed.
+
+| Location | Remaining behavior | Next migration |
+| --- | --- | --- |
+| `run/engines.ts`, `engineInstalled` | Builtin availability and llama-server endpoint probe | Adapter-owned availability probe, preserving timeout and runtime ownership. |
+| `run/engines.ts`, spawn and output handling | Codex reasoning-config recovery, CLI stream-family detection, Claude rate-limit capture and native-engine protocol hints | Adapter-owned retry and observation hooks, retaining bounded retries, credential stripping and process cancellation. |
+| `run/engine-registry.ts`, configuration folds and `registryEngineForFleetEngine` | Provider convenience config, protected engine specs and fleet lane aliases | Move folds into preparation adapters and replace lane aliases with explicit surface ids. Keep protected Grok and Devin specs immutable. |
+| `run/harness-dispatch.ts` | Claude, Codex and Grok effort flags; local API sampling carriers | Adapter-owned tuning functions with existing clamping and unsupported-field receipts. |
+| `run/orchestrator.ts` | Grok seat config, builtin sandbox refusal, Grok seat forwarding and Devin resume binding | Carry the resolved adapter identity and seat through the run request; retain sandbox and resume gates. |
+| `run/sandboxed-engine.ts` | Claude MCP argv and API gateway, Grok profile, Codex capacity, local context and host verification | Adapter-owned invocation and capability hooks. Preserve all current admission, credential and confinement checks. |
+| `fleet/dispatch-router.ts` | Provider grant, overflow, reserve, model and installed-lane selection | Feed selected surface/model receipts into seat admission. Move resource policies into adapter metadata without changing the budget or producer-role gates. |
+| `contrib/mac/dispatchd.py`, failure and usage parsing | Claude and Devin result parsing, Codex auth/usage distinctions | Provider observation adapters emitting the existing normalized verdicts. |
+| `contrib/mac/dispatchd.py`, slot and admission policy | oMLX cap/health, local-mid limits, Claude API pacing, Devin failure-spike reduction, quota waste boosts | Resource policy adapters backed by measured account snapshots. Keep included-only admission and holds. |
+| `contrib/mac/dispatchd.py`, batching and launch | Claude batch tier, local Python runner vs shell launcher, Codex family metrics | Replace the lane switch with a surface/model launch receipt after Security reviews the existing staged dispatcher work against pin `d5acb03d`. |
+
+No dispatcher or launcher source is changed by this implementation, so there is
+no new pinned dispatcher diff to install or layer over the existing Security
+package. The Mac cutover depends on Security reconciling that package and
+commissioning a reviewed host adapter. No live installation is performed here.
+
 The registry is data only. Loading it starts no process, resolves no
 credential, contacts no provider and grants no authority.
 

@@ -202,7 +202,7 @@
     "tool": "SEC-PIN-STAGE-TOOL-2"
   },
   "registrySchema": "caps.registry.v1",
-  "registrySha256": "5405f88df6b4cb2535f45ddc678beb5c3af074f71414e38c2eb89fb37fcfcfd0",
+  "registrySha256": "03e915c66fdc660a7cb4592be438859c7219580fbc50d3fa33a270d20aa43b32",
   "schema": "caps.adapters.v1",
   "surfaces": {
     "claude-code": {

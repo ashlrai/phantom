@@ -161,6 +161,8 @@ const surface = z.object({
   /** Existing engine id in run/engine-registry.ts, when the fleet drives it. */
   engine: capsId.optional(),
   adapter: z.enum(ADAPTER_FORMATS),
+  /** Execution adapter, separate from companion config format. Absent = unavailable. */
+  dispatch: z.enum(['engine', 'hosted', 'unavailable']).optional(),
   /** True when the surface is only reachable through a hosting edge. */
   hostedOnly: z.boolean().default(false),
   network: localNetwork.optional(),

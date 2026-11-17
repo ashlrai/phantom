@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { generateCapsAdapters } from './generate.js';
+import { routeSurfaceModel } from './dispatch.js';
 import { checkCapsBundle, findRepoRoot, pinStageRoot, writeCapsBundle, type DriftResult } from './output.js';
 import {
   CapsRegistryError,
@@ -68,6 +69,13 @@ export async function capsValidate(opts: { registry?: string } & CapsEnv = {}): 
   const registryPath = resolveRegistryPath(opts.registry, opts);
   const loaded = await load(registryPath);
   return loaded.ok ? { ok: true, registryPath, counts: counts(loaded.registry) } : { ok: false, registryPath, issues: loaded.issues };
+}
+
+/** Read-only route receipt for dispatchers. Does not resolve credentials or probe a seat. */
+export async function capsRoute(opts: { surface: string; model: string; registry?: string } & CapsEnv) {
+  const registryPath = resolveRegistryPath(opts.registry, opts);
+  const loaded = await load(registryPath);
+  return loaded.ok ? routeSurfaceModel(loaded.registry, opts.surface, opts.model) : { ok: false as const, registryPath, issues: loaded.issues };
 }
 
 export interface CapsListView {

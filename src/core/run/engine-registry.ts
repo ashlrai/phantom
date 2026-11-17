@@ -1167,3 +1167,52 @@ export function registryEngineForFleetEngine(
     default: return localEngine;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Transport dispatch adapters shared by engine and OS-1 surface/model routing
+// ---------------------------------------------------------------------------
+
+export interface DispatchOptions {
+  cwd?: string;
+  model?: string;
+  autonomous?: boolean;
+  seatId?: string;
+}
+
+export type EngineDispatch =
+  | { kind: 'cli-agent'; engine: string; command: EngineCommand }
+  | { kind: 'api-model'; engine: string; model?: string }
+  | { kind: 'builtin'; engine: string };
+
+// Provider-specific preparation belongs at the adapter boundary. In particular,
+// selected Grok seats must retain their native-profile gate, and llama-server
+// must never become a CLI through a configured override.
+type Prepare = (cfg: AshlrConfig, opts: DispatchOptions) => EngineSpec | undefined;
+const PREPARE: Readonly<Record<string, Prepare>> = Object.freeze({
+  [GROK_CLI_ENGINE_ID]: (cfg, opts) => opts.seatId === undefined
+    ? resolveEngineSpec(GROK_CLI_ENGINE_ID, cfg)
+    : applyGrokCliProfile(BUILTIN_ENGINE_REGISTRY[GROK_CLI_ENGINE_ID]!, cfg, undefined, opts.seatId),
+  'llama-server': () => BUILTIN_ENGINE_REGISTRY['llama-server'],
+});
+
+type Adapter = (spec: EngineSpec, goal: string, opts: DispatchOptions) => EngineDispatch | null;
+const ADAPTERS: Readonly<Record<EngineSpec['kind'], Adapter>> = Object.freeze({
+  'cli-agent': (spec, goal, opts) => {
+    if (!spec.argv) return null;
+    const cwd = opts.cwd ?? process.cwd();
+    return { kind: 'cli-agent', engine: spec.id, command: {
+      bin: spec.bin ?? spec.bins?.[0] ?? spec.id,
+      args: compileArgv(spec.argv, { goal, cwd, model: opts.model, autonomous: opts.autonomous }, spec.autonomousArgv),
+      cwd,
+    } };
+  },
+  'api-model': (spec, _goal, opts) => ({ kind: 'api-model', engine: spec.id, ...(opts.model ? { model: opts.model } : {}) }),
+  builtin: spec => ({ kind: 'builtin', engine: spec.id }),
+});
+
+/** Plan only. Execution still passes through existing sandbox/admission gates. */
+export function planEngineDispatch(engine: string, goal: string, cfg: AshlrConfig, opts: DispatchOptions = {}): EngineDispatch | null {
+  const prepare = Object.hasOwn(PREPARE, engine) ? PREPARE[engine] : undefined;
+  const spec = prepare ? prepare(cfg, opts) : resolveEngineSpec(engine, cfg);
+  return spec && Object.hasOwn(ADAPTERS, spec.kind) ? ADAPTERS[spec.kind](spec, goal, opts) : null;
+}

@@ -3,16 +3,18 @@
  * Thin: argv parsing and printing only; logic lives in src/core/caps/.
  */
 
-import { capsGenerate, capsList, capsValidate } from '../core/caps/service.js';
+import { capsGenerate, capsList, capsRoute, capsValidate } from '../core/caps/service.js';
 import { rejectUnknownOptions } from './args.js';
 
-export const CAPS_USAGE = `Usage: phm caps <list|validate|generate> [options]
+export const CAPS_USAGE = `Usage: phm caps <list|validate|route|generate> [options]
 
   list       Surfaces, models, (surface, model) pairs, hosting edges,
              sessions, account references and capabilities.
   validate   Check the registry: schema, cross-references, sensitivity
              flags and hard-limit gates, control backends, loopback-only
              local models, reference-only accounts. Exit 1 when invalid.
+  route      Resolve --surface and --model to an execution adapter.
+             Read-only plan; does not launch or authorize execution.
   generate   Emit per-agent adapters (Claude Code, Codex, Fable sessions,
              Devin and hosted surfaces, Cursor, Grok Build, Gemini, Copilot,
              local models) with sha256 sums and a pin-stage manifest.
@@ -22,13 +24,15 @@ export const CAPS_USAGE = `Usage: phm caps <list|validate|generate> [options]
 
 Options:
   --registry <path>  Registry file (default: capabilities/registry.v1.json)
+  --surface <id>     route: selected surface
+  --model <id>       route: selected registry model
   --out <dir>        generate: output directory inside the worktree
   --pin-stage        generate: stage under ~/.ashlr-runs/staged/caps/<sha>/
   --check            generate: compare with the output directory, write nothing
   --json             Machine-readable output
   -h, --help         Show this help`;
 
-const VERBS = ['list', 'validate', 'generate'] as const;
+const VERBS = ['list', 'validate', 'route', 'generate'] as const;
 
 export async function cmdCaps(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(CAPS_USAGE); return 0; }
@@ -44,15 +48,24 @@ export async function cmdCaps(args: string[]): Promise<number> {
   const generateOnly = verb === 'generate';
   const bad = rejectUnknownOptions(rest, {
     flags: ['--json', ...(generateOnly ? ['--check', '--pin-stage'] : [])],
-    values: ['--registry', ...(generateOnly ? ['--out'] : [])],
+    values: ['--registry', ...(generateOnly ? ['--out'] : []), ...(verb === 'route' ? ['--surface', '--model'] : [])],
   });
   if (bad) return usage(bad.message);
-  const positional = rest.filter((a, i) => !a.startsWith('-') && !['--registry', '--out'].includes(rest[i - 1] ?? ''));
+  const positional = rest.filter((a, i) => !a.startsWith('-') && !['--registry', '--out', '--surface', '--model'].includes(rest[i - 1] ?? ''));
   if (positional.length) return usage(`Unexpected argument: ${positional[0]}`);
   const value = (flag: string): string | undefined => { const i = rest.indexOf(flag); return i >= 0 ? rest[i + 1] : undefined; };
   const registry = value('--registry');
 
   try {
+    if (verb === 'route') {
+      const surface = value('--surface'), model = value('--model');
+      if (!surface || !model) return usage('route requires --surface and --model.');
+      const result = await capsRoute({ registry, surface, model });
+      if (json || result.ok) console.log(JSON.stringify(result));
+      else if ('reason' in result) console.log(result.reason);
+      else for (const issue of result.issues) console.log(`${issue.path}: ${issue.message}`);
+      return result.ok ? 0 : 1;
+    }
     if (verb === 'validate') {
       const result = await capsValidate({ registry });
       if (json) console.log(JSON.stringify(result));
