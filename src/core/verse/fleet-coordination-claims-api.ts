@@ -17,7 +17,7 @@ const MAX_CLAIMS = 50;
 const MAX_TASK_CHARS = 200;
 
 export interface FleetCoordinationClaimsApiDeps {
-  /** Reader seam for tests. Default: readFleetBoard(). */
+  /** Reader seam for tests. Default: readFleetBoard({ reap: false }). */
   read?: () => FleetBoard;
   /** Clock seam for tests; stamps generatedAt and expiresInSeconds. */
   now?: () => Date;
@@ -37,7 +37,7 @@ function iso(ms: number): string {
 }
 
 export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsApiDeps = {}): ApiModule {
-  const read = deps.read ?? (() => readFleetBoard());
+  const read = deps.read ?? (() => readFleetBoard({ reap: false }));
   const now = deps.now ?? (() => new Date());
   const mutate = deps.mutate ?? handleFleetCoordinationMutateApi;
   const returns = deps.returns ?? handleFleetCoordinationReturnsApi;
