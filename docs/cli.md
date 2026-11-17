@@ -364,6 +364,7 @@ Every command, grouped by topic.
     queue stats [--json] [--window <seconds>]                                                   Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     queue batches [--runs <directory>] [--json]                                                 Show each batch line’s PR, empty reason, failure or unknown result.
     repos rank [proposals] [--json] [--recompute]                                               Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
+    job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]                        Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.
     job cost <id> [--json]                                                                      Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
     telemetry [status]                                                                          M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                              Emit a synthetic metadata-only test span; report sink+ok.
