@@ -1,3 +1,4 @@
+import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type OwnerChatReceipt } from './chat-owner-receipts.js';
 /**
  * RQ-BUS-UNIFY-1: DMs, channels, handoffs and priority wake on the one bus.
  *
@@ -269,11 +270,12 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const messages: InboxMessage[] = [];
   let cursor = after;
   scan: for (let index = 0; index < MAX_PAGES; index += 1) {
-    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now });
+    const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, { root: options.root, now: options.now, includeOriginalEnvelope: true });
     if (result.status !== 'ok') {
       return { status: result.status === 'retryable' ? 'retryable' : result.status === 'invalid' ? 'invalid' : 'unavailable',
         reason: 'Bus store is not readable.' };
     }
+    let ownerReceipts: OwnerChatReceipt[] | undefined;
     for (const row of result.messages) {
       const envelope = row.envelope;
       let kind: InboxKind | null = null;
@@ -282,6 +284,13 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       else if (envelope.to === self) kind = 'dm';
       else if (target.labels.has(envelope.to)) kind = 'legacy';
       else if (channel && !target.labels.has(envelope.from)) kind = 'channel';
+      if (kind && envelope.origin_bridge === 'agent-chat-owner') {
+        try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
+        catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
+        const receiptState = ownerChatReceiptState(row.originalEnvelope ?? envelope, row.cursor, ownerReceipts, target.identity.id);
+        if (receiptState === 'pending') return { status: 'retryable', reason: 'Owner share receipt pending.' };
+        if (receiptState !== 'accepted') continue;
+      }
       if (kind) {
         messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind, priority: envelope.priority,
           fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
