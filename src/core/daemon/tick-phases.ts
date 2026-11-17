@@ -41,6 +41,7 @@ export const TICK_PHASE_REFLECTION_MS = 3 * 60_000;
 export const TICK_PHASE_CI_RERUN_MS = 5 * 60_000;
 export const TICK_PHASE_CAPACITY_MS = 30_000;
 export const TICK_PHASE_DISPATCH_PLAN_MS = 60_000;
+export const TICK_PHASE_NODE_BRIDGE_MS = 30_000;
 export const TICK_PHASE_BACKLOG_REFRESH_MS = 5 * 60_000;
 /**
  * Whole-tick budget. Per-phase deadlines alone let a tick run for their sum

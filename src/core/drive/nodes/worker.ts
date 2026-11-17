@@ -13,6 +13,7 @@ import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
 import { NODE_PROVIDERS, isNodeProvider, resolveProviderBinary, type NodeProvider, type ProviderBinaries, type ProviderBinaryDeps } from './provider-binary.js';
+import { probeRunnerPacks } from './runner-packs.js';
 import type { JobView } from './index.js';
 import { sampleHostStats } from './capacity.js';
 
@@ -81,7 +82,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
   // Consecutive error results per pack in this session; a success resets the pack.
   const packFailures = new Map<string, number>();
   if (!lanes.length) return { held: 'no-local-provider-login' };
-  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...lanes, versionCap(localPhmVersion())].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
+  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...lanes, versionCap(localPhmVersion()), ...(light ? [] : probeRunnerPacks(runner))].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];

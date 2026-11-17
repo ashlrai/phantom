@@ -51,6 +51,18 @@ export interface JobView {
   secrets: string[];
   /** Accepted completion's executor identity; no result body or fencing token. */
   completedBy?: string;
+  /** Current holder of a running job's claim (lapsed or live); no fencing token. */
+  /** Status views only: the node holding a running claim. Never sent to a runner. */
+  claimedBy?: string;
+}
+
+/** Result body recorded when a producer withdraws a job no node holds; it is never a node result. */
+export const WITHDRAWN_RESULT = 'withdrawn';
+/** `withdrawn`: fenced terminal now (or earlier), safe to run elsewhere. `held`: a live claim still owns it. */
+export interface WithdrawOutcome {
+  state: 'withdrawn' | 'held' | 'completed' | 'absent';
+  /** Accepted node result reference, only for `completed`. */
+  result?: string;
 }
 
 export interface NodeView {
@@ -258,7 +270,8 @@ export class DriveNodes implements QueueV1 {
           ...(n.capacity ? { capacity: n.capacity } : {}),
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
-      jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => this.jobView(j)),
+      jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
+        ...(j.state === 'running' && j.claim ? { claimedBy: j.claim.nodeId } : {}) })),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
     }));
   }
@@ -328,6 +341,32 @@ export class DriveNodes implements QueueV1 {
       job.state = 'completed';
       job.result = result;
       return true;
+    });
+  }
+
+  /** Producer-side fence for a job in `owner`'s scope. A pending job, or one whose claim
+   * lapsed, becomes terminal under a fresh fencing token, so neither a later pull nor the
+   * old holder's renew/complete can succeed. A live claim is left alone (`held`). Idempotent.
+   */
+  withdraw(jobId: string, owner: string): WithdrawOutcome {
+    if (!validId(jobId) || !validId(owner)) throw new Error('Invalid drive job ID');
+    return this.transaction((state, now) => {
+      const job = state.jobs.find(j => j.id === jobId && j.owner === owner);
+      if (!job) return { state: 'absent' as const };
+      if (job.state === 'completed') {
+        return job.result === WITHDRAWN_RESULT && job.claim?.nodeId === WITHDRAWN_RESULT
+          ? { state: 'withdrawn' as const } : { state: 'completed' as const, result: job.result ?? '' };
+      }
+      const stored = job.claim;
+      const leader = this.liveLeader(state, now);
+      if (job.state === 'running' && stored && stored.expiresAt > now && this.liveNode(state, stored, now) &&
+          !!leader && stored.leaderToken === leader.token) return { state: 'held' as const };
+      const token = nextToken(state);
+      job.claim = { nodeId: WITHDRAWN_RESULT, session: token, jobId, token, leaderToken: token, expiresAt: now };
+      job.state = 'completed';
+      job.completedAt = now;
+      job.result = WITHDRAWN_RESULT;
+      return { state: 'withdrawn' as const };
     });
   }
 }

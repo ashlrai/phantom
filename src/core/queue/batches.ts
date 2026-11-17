@@ -177,6 +177,8 @@ export async function readQueueBatches(root = join(homedir(), '.ashlr-runs')): P
   catch { return { ...report, evidence: 'unknown', gaps: [...report.gaps, 'Batch manifests are unavailable.'] }; }
   if (names.length > 1000) { report.evidence = 'partial'; report.gaps.push('Only the first 1000 manifests were read.'); }
   for (const name of names.slice(0, 1000)) {
+    // Node-bridge leases (RQ-BATCH-NODE-*) share the directory dispatchd checks; they are not batch sessions.
+    if (name.startsWith('RQ-BATCH-NODE-')) continue;
     try {
       const raw = await snapshot(join(root, 'queue', 'batches', name), 2 * 1024 * 1024);
       const manifest = manifestSchema.parse(JSON.parse(raw.text));

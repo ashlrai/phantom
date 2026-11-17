@@ -19,11 +19,14 @@ import { nodeStopped } from './worker.js';
 import type { JobClaim, JobView } from './index.js';
 
 const exec = promisify(execFile);
-const PROTOCOL = 'phm-node-worker/v1';
+export const NODE_RUNNER_PROTOCOL = 'phm-node-worker/v1';
+const PROTOCOL = NODE_RUNNER_PROTOCOL;
 const MAX_INPUT = 16 * 1024;
 const OMLX_URL = 'http://127.0.0.1:8000/v1/chat/completions';
 const SHELL_CHECK = 'process.stdout.write("node-shell-check-ok\\n")';
-type Pack = 'shell-check' | 'omlx-chat';
+/** Packs this reference runner executes; `phm node run-once packs` reports them to the worker. */
+export const NODE_RUNNER_PACKS = ['shell-check', 'omlx-chat'] as const;
+type Pack = typeof NODE_RUNNER_PACKS[number];
 export interface NodeRunnerRequest { protocol: typeof PROTOCOL; job: JobView & { pack: Pack }; claim: JobClaim; providerBinaries?: ProviderBinaries }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -47,7 +50,7 @@ export function parseNodeRunnerRequest(text: string): NodeRunnerRequest {
   // validId allows paths; result filenames deliberately accept only one bounded component.
   if (!keys(j, 'id,owner,pack,requires,secrets,state') || !reference(j.id) ||
       !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$/.test(j.id) || !reference(j.owner) || j.state !== 'running' ||
-      !['shell-check', 'omlx-chat'].includes(String(j.pack)) || !Array.isArray(j.secrets) || j.secrets.length ||
+      !(NODE_RUNNER_PACKS as readonly string[]).includes(String(j.pack)) || !Array.isArray(j.secrets) || j.secrets.length ||
       !Array.isArray(j.requires) || j.requires.length > 64 || !j.requires.every(validCap) ||
       new Set(j.requires).size !== j.requires.length ||
       !keys(c, 'expiresAt,jobId,leaderToken,nodeId,session,token') || c.jobId !== j.id || !reference(c.nodeId) ||
