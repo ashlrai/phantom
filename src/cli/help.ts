@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm release notes [--since <tag>] [--json] [--write]', description: 'Draft local mainline release notes. --write updates only the generated Unreleased changelog block. Exit 0 success, 1 unavailable history/write failure, 2 usage.', safety: 'append', jsonShape: 'phantom.release-notes.v1 {since,head,summary,groups:{New,Improved,Fixed,Internal}}; entries: {text,prs,commits}' },
   { usage: 'phm worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', description: 'Read job launches, finishes and merges, newest first. Exit 0 report, 1 unreadable ledger, 2 bad usage.', safety: 'read', jsonShape: 'worklog.v2 {entries:[{kind,at,job,repo,lane,model,mergedAt,openToMergeSeconds,url}],malformedLines}' },
   { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
   { usage: 'phm fleet vitals [--runs-dir <directory>] [--json]', description: 'Read first-minute launch process and sampled CPU costs, plus the top three causes of empty jobs in 24 hours. Missing or incomplete evidence stays unknown or partial; no launches or writes.', safety: 'read', jsonShape: 'fleet.vitals.v1 {status,disk,launch,launchCost:{source,state,launches},emptyCauses:{total,top},stuck:{count,oldestAgeSeconds}}' },
@@ -941,6 +942,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
   { cmd: 'release status [--json] [--file <release-state.json>]', desc: 'Show local release tags, age and commits since each tag. Use --file to read release train state.', topic: 'autonomy' },
+  { cmd: 'release notes [--since <tag>] [--json] [--write]', desc: 'Summarize local mainline changes since the latest release tag. Use --write to prepend notes to CHANGELOG.md.', topic: 'autonomy' },
   { cmd: 'backlog --source <src>',       desc: `Filter backlog by source: ${BACKLOG_SOURCE_FILTER_HELP}.`, topic: 'autonomy' },
   { cmd: 'backlog --repo <path>',        desc: 'Filter backlog to a specific enrolled repo.', topic: 'autonomy' },
   { cmd: 'backlog --limit <n>',          desc: 'Show only the top N items.', topic: 'autonomy' },

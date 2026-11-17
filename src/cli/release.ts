@@ -1,7 +1,38 @@
 import { getReleaseStatus, formatReleaseStatus } from '../core/release/status.js';
 import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '../core/release/train.js';
+import { collectReleaseNotes, formatReleaseNotes, writeReleaseNotes } from '../core/release/notes.js';
+import { execFileSync } from 'node:child_process';
 
-export const RELEASE_USAGE = 'phm release status [--json] [--file <release-state.json>]';
+export const RELEASE_USAGE = 'phm release status [--json] [--file <release-state.json>]\nphm release notes [--since <tag>] [--json] [--write]';
+
+function notesCommand(args: string[]): number {
+  const json = args.includes('--json');
+  let since: string | undefined;
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (!['--since', '--json', '--write'].includes(arg) || seen.has(arg) || (arg === '--since' && (!args[i + 1] || args[i + 1]!.startsWith('-')))) {
+      if (json) emit({ ok: false, reason: RELEASE_USAGE }, true);
+      else process.stderr.write(`${RELEASE_USAGE}\n`);
+      return 2;
+    }
+    seen.add(arg);
+    if (arg === '--since') since = args[++i];
+  }
+  try {
+    const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const notes = collectReleaseNotes(root, since);
+    if (seen.has('--write')) writeReleaseNotes(root, notes);
+    if (json) emit(notes, true);
+    else process.stdout.write(formatReleaseNotes(notes));
+    return 0;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Cannot generate release notes';
+    if (json) emit({ ok: false, reason }, true);
+    else process.stderr.write(`Release notes: ${reason}\n`);
+    return 1;
+  }
+}
 
 function emit(payload: unknown, json: boolean): void {
   process.stdout.write(`${JSON.stringify(payload, null, json ? undefined : 2)}\n`);
@@ -13,6 +44,7 @@ export async function cmdRelease(args: string[]): Promise<number> {
     return 0;
   }
   const json = args.includes('--json');
+  if (args[0] === 'notes') return notesCommand(args.slice(1));
   const rest = args.filter((arg) => arg !== '--json');
   if (rest[0] !== 'status') {
     process.stderr.write(`${RELEASE_USAGE}\n`);
