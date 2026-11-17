@@ -43,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, capability_failure, empty_retry_blocks
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1267,6 +1267,7 @@ def reap_worktrees():
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "empty_class": classify_empty(empty, _rc(j), perr),
+                    "capability_failure": capability_failure(tl) if empty else None,
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
@@ -1860,7 +1861,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if m and re.search(r"(?i)\b(?:P0|critical)\b", r): urgent_jobs.add(m.group(1))
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
+        return (not empty_retry_blocks(claim_identity(m, f[1], f[4]), empty_attempts, NOW)
+                and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
@@ -1914,6 +1916,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         spec = market_specs[j]
         view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
+        blocked = empty_retry_blocks(claim_identity(j, repo, pf), empty_attempts, NOW)
+        if blocked:
+            spec = dict(spec, needs=sorted(set(spec["needs"]) | {"gh"}))
+            for dest, reason in blocked.items():
+                if dest in view: view[dest]["unavailable"] = reason
         for dest in LANES:
             if dest == "devin":
                 size = _size_hint(j, pf)
