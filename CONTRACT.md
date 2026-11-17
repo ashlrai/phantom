@@ -878,3 +878,10 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
 first-paint consumers observe it without importing pane definitions or shortcuts.
+
+### Agent app adapters
+
+`src/core/agents/apps/`: `AgentAppAdapter` (`describe`, `launchTask`, `listSessions`,
+`readSession`, `sendMessage`, `readUsage` → `AgentAppResult<T>`), `createRegistry`,
+`describeAgentApps` (`ashlr.agent-apps.v1`), `createAgentAppRegistry(deps?)`,
+`createCliAgentApps(deps?)`, `createDesktopAgentApps(deps?)`. See [Agent app adapters](docs/AGENT-APPS.md).
