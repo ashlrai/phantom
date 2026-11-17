@@ -76,6 +76,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Read the Growth chart series | [Growth charts](https://github.com/ashlrai/phantom/blob/master/docs/GROWTH.md) (`phm growth --json`) |
 | Triage mail and hold sends for the owner | [Comms agent](https://github.com/ashlrai/phantom/blob/master/docs/COMMS-AGENT.md) (`phm comms-agent status --json`) |
 | Read one owner thread across desktop, Telegram, email, iMessage and Slack | [Owner thread](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-THREAD.md) (`phm comms thread --json`) |
+| Operate Codex, Claude, Devin, Grok and Cursor apps from Phantom | [Agent app adapters](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-APPS.md) (`phm agents apps --json`) |
 | Resume a multi-turn agent session | [Agent sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md) (`phm sessions`) |
 | Model session batching, sub-agent fan-out, warm retention and swarm work generation | [Session economics — advisory design](https://github.com/ashlrai/phantom/blob/master/docs/strategy/SESSION-ECON.md) |
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
