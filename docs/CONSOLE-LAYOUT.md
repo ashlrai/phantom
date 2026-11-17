@@ -52,14 +52,20 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
-Feed puts merges, release announcements, blocked jobs and Leader replies in
-one newest-first stream. Each shared row has a time and one link to its source.
-`phm feed --json --since 1h` and `GET /api/feed?since=1h` return the same typed
-items; `--since` accepts whole minutes, hours or days up to seven days, and
-`--limit` accepts 1–1000 (default 30). Reads cover bounded local journal tails,
-not complete history. Missing sources stay unknown. Release times are recorded
-announcement times, not installation evidence; blocked events record when a job
-was parked, not whether it is still blocked. Empty reads show “Nothing new yet.”
+Feed puts what the fleet did in one newest-first stream: merged PRs (title and
+repo), published releases, failures (main going red, a job failing or ending
+empty with its reason when known), incidents (dispatch incidents, lane holds,
+parked jobs) and Leader replies. Each card has a kind icon, a relative time and
+one link. `phm feed --json --since 1h --kind merged` and
+`GET /api/feed?since=1h&kind=merged` return the same `phantom.feed.v2` report
+(`version: 2`, `items`, `more`, `sources`); `--since` takes 1m to 7d or an ISO
+time within seven days, and `--limit` takes 1–1000 (default 30). The pane's kind
+filter and “Load more” call the same route. Per-tick dispatcher noise
+(`EMPTY_SIGNAL`, `LOADGATE warn`) is dropped, and a notice that repeats is one
+card with a count. The Feed reads existing journals only (jobs ledger,
+dispatch events, Leader plan log, outbox, guardian state); missing sources stay
+unknown. Main recoveries have no recorded time, so only red is shown. Empty reads
+show “Nothing new yet.”
 
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent

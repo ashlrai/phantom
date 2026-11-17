@@ -1038,7 +1038,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'authority ledger verify|tail',  desc: 'Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).', topic: 'autonomy' },
   { cmd: 'authority protect --print|--apply', desc: 'Print (or apply after confirmation) the GitHub rulesets for the grant\'s server-enforced repos.', topic: 'autonomy' },
   { cmd: 'authority setup [--dry-run [--json]]', desc: 'Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service — asks before every step; --dry-run --json prints the checklist as JSON.', topic: 'autonomy' },
-  { cmd: 'feed [--json] [--since 1h] [--limit N]', desc: 'Read merges, release announcements, blocked jobs and Leader replies with times and links, newest first.', topic: 'autonomy' },
+  { cmd: 'feed [--json] [--since 1h] [--kind merged] [--limit N]', desc: 'What the fleet did, newest first: merges, releases, failures, incidents and Leader replies, each with a time and a link.', topic: 'autonomy' },
   { cmd: 'leader show|run|tick|veto',     desc: 'The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).', topic: 'autonomy' },
   { cmd: 'org [--text]', desc: 'The live organization as a tree: leader, lanes with running, target, queued and pool usage, and each running job. JSON by default; unknown stays unknown.', topic: 'autonomy' },
   { cmd: 'org show|join|plan [--file <org.toml>] [--json]', desc: 'Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.', topic: 'autonomy' },
