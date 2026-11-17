@@ -332,6 +332,14 @@ for the same reason. The one system-wide key, ⌃⌥Space, is registered by the 
 (`hotkey.rs`), never by the page; a vitest checks it equals the catalog's
 `app.summon`.
 
+**⌘K also lists every CLI command.** The palette's Commands group is the same
+catalog `phm commands --json` prints (name, description, argument forms,
+whether it changes state), so the two cannot drift. Return on a command shows
+its CLI line (⌘C copies it). A read-only command that needs no input runs
+right there and shows its output. One that changes state asks first; Return
+then puts the line in the Terminal, where you run it. The server never runs a
+state-changing command for the palette.
+
 ### 6. Desktop state (Settings ▸ Desktop)
 
 ```ts
