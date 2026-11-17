@@ -1460,8 +1460,10 @@ def pace_behind(projection):
             or projection.get("stale") is not False or type(projection.get("behind")) is not bool): return None
     return projection["behind"]
 
-def waste_boost(projection, lane, tier, executor):
+def waste_boost(projection, lane, tier, executor, ceiling=None):
     # A tier change never grants paid usage or bypasses the selected executor's contract.
+    # A job's max_tier is binding: spare capacity never lifts it past its declared ceiling.
+    if ceiling and tier == ceiling: return None
     if (executor.get("cost_class") != "included" or executor.get("held")
             or executor.get("auth_failed") or executor.get("backoff") or executor.get("quota") == 0): return None
     boosted = {"mid": "work", "work": "frontier"}.get(tier)
@@ -1818,7 +1820,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             ev("DONE-NOOP %s [%s]" % (f[0], reason))
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
-    seen = set(); pc_n = 0; local_ok = None
+    seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -1862,6 +1864,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         m = f[0]
         return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
+                and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
@@ -1877,18 +1880,22 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
         def solo(c):
-            return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}))
+            return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}), market_specs[c[0]].get("max_tier"))
         if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
-        has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
+        has_capacity = lambda l: (not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
+                                  and work_market.serves_repo(market_view.get(l, {}), f[1]))
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
     market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
                                         hold, market_models, BUS["quota"], JOBS_RAW,
                                         jload(Q + "/adaptive.json", {}), NOW)
+    # Fresh use-it-all evidence that a window is going to waste outranks a preserve default this tick.
+    for _l in LANES:
+        if waste_risk(UIA.get(_l), _l) or pace_behind(UIA.get(_l)) is True: market_view[_l]["posture"] = "burn"
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
@@ -1928,8 +1935,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 elif _size_hint(j, pf) > 60 or (tier == "mid" and local_mid >= LOCAL_MID_CAP):
                     view[dest]["unavailable"] = "local_scope_unavailable"
         decision, receipt = work_market.choose(j, spec, tier, view, route_state.get(j), NOW, route_decision)
+        market_rejects[j] = {} if decision["chosen_lane"] else {r["lane"]: r["reason_codes"] for r in decision["rejected_lanes"]}
         if len(launched) >= GATE["claim_limit"] or sum(running.values()) >= GCAP:
             decision["chosen_lane"] = None; decision["reason_codes"].append("global_admission")
+            market_rejects[j] = dict.fromkeys(view, ["global_admission"])
         market_metric(decision)
         if view.get(f[2], {}).get("quota") == 0:
             advice = handoff_advice(j, f[2], "quota-exhausted", decision["chosen_lane"])
@@ -1943,7 +1952,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if why: ev("DEVIN_ROUTE %s %s -> %s" % (j, why, lane))
         if lane != f[2] and f[2] in LANES:
             FC_MOVES.append((j, f[2], lane))
-            ev("FLEET_REBALANCE %s %s->%s (shared market)" % (j, f[2], lane))
+            ev("FLEET_REBALANCE %s %s->%s (shared market: %s)" % (j, f[2], lane, (decision["override"] or {}).get("reason", "placement_moved")))
         f[2] = lane; line = "\t".join(f); s = slots[lane]
         # Persist at actual claim below, after prechecks and batch formation.
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
@@ -2013,7 +2022,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 seen.add(c["job"])
                 open(RUN + "/" + c["job"] + ".batch-attempts", "w").write(str(batch_attempts(c["job"]) + 1))
                 metric({"event": "batch_claim", "job": c["job"], "batch": bid, "repo": repo, "lane": lane, "tier": c["tier"],
-                        "area": area, "model": c["model"]})
+                        "area": area, "model": c["model"],
+                        **({"lane_hint": c["lane"], "lane_override": "batch_session"} if c["lane"] != lane else {})})
             ev("BATCH %s %d tasks repo=%s area=%s lane=%s size_target=%d" % (bid, len(members), repo, area, lane, size))
             j = bid; s = slots[lane]; line = "\t".join([bid, repo, lane, tier, pf]); batches.append({"job": bid, "tasks": len(members)})
             batch = (members, lane, size)
@@ -2043,7 +2053,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
-        boost = waste_boost(UIA.get(lane), lane, tier, view[lane]) if not batch else None
+        boost = waste_boost(UIA.get(lane), lane, tier, view[lane], spec.get("max_tier")) if not batch else None
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
         requested_tier = tier
         if boost: tier = boost[0]
@@ -2063,7 +2073,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
+        # The job ledger says why a claim left its hinted lane; the full ranking stays in work-market.jsonl.
+        override = decision["override"] if not batch and decision["override"] and decision["override"]["to"] == lane else None
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier,
+                    **({"lane_hint": override["from"], "lane_override": override["reason"],
+                        "lane_hint_blocked_by": override["preferred_lane_blocked_by"]} if override else {})))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane in ("codex-local", "omlx")
                       else ["/bin/bash", BATCH_LAUNCH] if batch else ["/bin/bash", R + "/bin/launch.sh"])
@@ -2091,8 +2105,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap,
                 "batch_size": len(batch[0]) if batch else None})
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
+    _waiting = [(market_specs[f[0]].get("preferred_lane"), market_rejects.get(f[0]))
+                for f in (l.split("\t") for l in rest if not parked_row(l)) if f[0] in market_specs]
+    _stopped = None
 else:
     rest = lines
+    _waiting = [(f[2] or None, None) for f in (l.split("\t") for l in rest if not parked_row(l))
+                if len(f) >= 5 and JID.fullmatch(f[0]) and f[3] in TIERS]
+    _stopped = "admission_stopped"
+# Unfed capacity: executors left with free slots while runnable rows waited under another lane's hint.
+# Counts and reason codes only. One audit row per tick, and only when some lane was unfed.
+UNFED = work_market.unfed_capacity({l: {"running": running[l], "target": tgt(l), "held": bool(slots[l].get("held") or l in hold)}
+                                    for l in LANES}, _waiting, _stopped)
+if UNFED["unfed_lanes"]: market_metric(UNFED)
 FC_MODE = "enforce" if FC_ENFORCE else "shadow"
 FC_LEDGER = fc.ledger_record(NOW, BUS, PLAN, FC_MODE, W.mutations, FC_MOVES, fc.ambiguous_holds(slots, LANES),
                              shadow=PLAN_WOULD if PLAN_WOULD is not PLAN else None)
@@ -2456,6 +2481,7 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                     "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
       "tier_upgrades_this_tick": tier_upgrades,
+      "unfed_capacity": UNFED,
       "use_it_all_behind": {l: pace_behind(UIA.get(l)) for l in LANES},
       "reaping": sorted(active_reaping), "reap_blocked": reap_blocked, "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],

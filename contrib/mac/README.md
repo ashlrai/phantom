@@ -67,7 +67,9 @@ in the dispatcher; installing it needs a Security pin.
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
 free slots (`target - running - queued` above zero) it asks the feed scripts
 beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
-that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+that many `READY` lines. A line that declares no lane gets `pool=<lane>` as its
+hint; a lane the line declares for itself stays, because the dispatcher's shared
+market treats `pool=` as a preference and runs the line wherever capacity is. Ids already in the router queue or
 claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
 lines to `router-queue.md` under `ready.lock`, logging
 `SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next

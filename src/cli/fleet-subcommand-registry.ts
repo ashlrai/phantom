@@ -431,6 +431,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'trim': () => import('./fleet-trim.js'),
   'tsc-warm': () => import('./fleet-tsc-warm.js'),
   'ttm': () => import('./fleet-ttm.js'),
+  'unfed': () => import('./fleet-unfed.js'),
   'union-apply': () => import('./fleet-union-apply.js'),
   'union-preview': () => import('./fleet-union-preview.js'),
   'update-why': () => import('./fleet-update-why.js'),
