@@ -1203,7 +1203,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'serve --allow-dispatch',       desc: 'Enable guarded POST /api/run + web inbox approve/reject (prints session token).', topic: 'web' },
   { cmd: 'console [--port N] [--no-open]', desc: 'Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.', topic: 'web' },
   { cmd: 'verse [--port N] [--no-open]', desc: 'Alias of `console` (the original name; same flags). Opens /verse/, the same page.', topic: 'web' },
-  { cmd: 'settings appearance get|set', desc: 'Read or change the app theme, accent (hex), density and fontSize: get [--json], set <key> <value> [--json]. A running desktop or phone app applies it live.', topic: 'web' },
+  { cmd: 'settings appearance [set]', desc: 'Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.', topic: 'web' },
 
   { cmd: 'new <name> [opts]',            desc: 'Scaffold a project from a template (next-app, node-cli, mcp-server, minimal).', topic: 'scaffold' },
   { cmd: 'ship [path] [opts]',           desc: 'Pre-ship gate (lint/test/build) + optional confirm-gated deploy.', topic: 'scaffold' },
