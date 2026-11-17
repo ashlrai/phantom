@@ -81,6 +81,24 @@ test('dist-bound tests are deferred, not run without a build', (t) => {
   assert.ok(!selectFallback({ cwd: dir }).tests.includes('test/gamma-dist.test.ts'));
 });
 
+test('the native gateway declares its build requirement and stays in the full lane', (t) => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const gateway = 'test/m31.gateway-native.test.ts';
+  const { dir: cwd, commit } = repo(t, {
+    [gateway]: readFileSync(join(root, gateway), 'utf8'),
+    'test/source-only.test.ts': 'export {};\n',
+  });
+  commit('native gateway suite');
+  const selected = selectRelated({ cwd, paths: [gateway] });
+  assert.deepEqual(selected.tests, []);
+  assert.deepEqual(selected.deferred, [gateway]);
+  assert.ok(!selectFallback({ cwd }).tests.includes(gateway));
+  const config = readFileSync(join(root, 'vitest.config.ts'), 'utf8');
+  assert.match(config, /include: \['test\/\*\*\/\*\.test\.ts'\]/);
+  const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(workflow, /run: npm run build[\s\S]*run: npm run test:ci -- \$\{\{ matrix\.test_args \}\}/);
+});
+
 test('a code change that maps to no test never skips: it falls back', (t) => {
   const { dir, commit } = repo(t, { 'src/core/lonely.ts': 'export {};\n', 'test/one.test.ts': 'export {};\n' });
   commit('seed');

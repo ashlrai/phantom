@@ -62,6 +62,23 @@ updates only after current master test-pass and merged-fix ancestry evidence.
 Unknown evidence never authorizes mutation. See [CI baseline](docs/CI-BASELINE.md).
 # Frontier CLI discovery and daemon health
 
+## Router catalog refresh
+
+`DailyJobSpec` in `src/core/steward/schedule.ts` accepts optional `weekday`
+(0=Sunday through 6=Saturday). When absent, daily unit output is unchanged.
+When set, launchd receives Weekday and systemd receives a weekday-qualified
+OnCalendar expression and Weekly timer description. Invalid weekdays throw.
+
+`src/core/routing/catalog-refresh.ts` exports pure `diffCatalog(current,
+sources, patterns, now, dryRun?)`, returning `{report, data}`, deterministic
+`renderCatalog(data)` and `catalogPatch(before, after)`, and async
+`refreshCatalog(options?, deps?)`. Refresh writes versioned report/patch
+artifacts; only explicit apply writes the generated data file. Source runners,
+fetch, seat discovery, current data and time are injectable. Source failures
+are unknown; existing tiers and catalog entries are never removed or changed.
+Only lite/normal pattern tiers may be assigned to additions. Reports use schema
+`router.catalog-refresh.v1`.
+
 `src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
 execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
 It rejects empty names and names containing `/`, searches PATH before common
@@ -814,6 +831,15 @@ stores seven days, at most 2016 points per allowance, spaced at least five minut
 with hourly real points, measured burn, exhaustion and reset. CLI: `cmdUsageHistory`.
 
 ## Devin weekly capacity
+
+`DevinWeeklyInput` and `DevinWeeklyDeps` accept optional `accountId` and `model`.
+`DevinWeeklyCapacity` emits optional `account_id` and `model`: the connected Devin
+org ID and configured fleet model, omitted when unknown. Explicit dependencies
+override these defaults. `devinWeeklyObservation` forwards these and `window_start`.
+`ResourceLiveObservation` accepts optional `account_id`, `model`, `window_start`;
+the engine retains them in verified readings and normalizes window instants like
+`reset_at`. Preview observations carry the first matched free model ID, never an
+account ID (the CLI catalog exposes none).
 
 `src/core/devin/weekly-capacity.ts`: `measureDevinWeekly`, `readDevinWeeklyCapacity`,
 `publishDevinWeeklyCapacity`, `readPublishedDevinWeekly`, `devinWeeklyObservation`,

@@ -30,6 +30,8 @@ import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLA
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
+import { VERSE_FLEET_RUNS_CONTROL_PATH, isJobControlAction } from '../fleet/job-control-types.js';
+import type { requestJobControl } from '../fleet/job-control.js';
 import { laneMedians, overrunOf } from '../fleet/job-overrun.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
@@ -130,6 +132,8 @@ export interface FleetRunsApiDeps {
   /** One-job stop behind POST .../runs/stop. Injected so tests never signal a real process. */
   stopJob?: (id: string, opts: StopJobOptions) => Promise<JobStopResult>;
   reassign?: typeof reassignQueuedJobs;
+  /** Pause, resume, stop or move one job behind POST .../runs/control. Default: fleet/job-control.ts. */
+  jobControl?: typeof requestJobControl;
   /** Briefing behind GET .../runs/mission. Default reads the runs directory. */
   readMission?: () => Promise<MissionControlV1>;
   /** Owner-thread mirror roots (tests); default is the fixed owner dirs. */
@@ -663,6 +667,28 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
           else sendJson(res, 503, { code: 'REASSIGN_UNAVAILABLE' });
         }
       } catch { sendJson(res, 503, { code: 'REASSIGN_UNAVAILABLE' }); }
+      return true;
+    }
+    if (path === VERSE_FLEET_RUNS_CONTROL_PATH) {
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!record(body) || Object.keys(body).some(k => !['id', 'action', 'lane', 'dryRun'].includes(k)) ||
+        typeof body.id !== 'string' || !STRAY_ID_PATTERN.test(body.id) || !isJobControlAction(body.action) ||
+        (body.action === 'move' ? typeof body.lane !== 'string' || !/^[a-z][a-z0-9-]{1,30}$/.test(body.lane) : body.lane !== undefined) ||
+        (body.dryRun !== undefined && typeof body.dryRun !== 'boolean')) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid job control body' }); return true;
+      }
+      try {
+        // A refusal is an answer, not a transport failure: every receipt is a 200.
+        const control = deps.jobControl ?? (await import('../fleet/job-control.js')).requestJobControl;
+        const receipt = await control({ action: body.action, job: body.id, lane: body.lane as string | undefined, dryRun: body.dryRun === true },
+          { runsDir: deps.runsDir ?? defaultRunsDir(), by: req.headers['x-ashlr-channel'] === 'mobile' ? 'mobile' : 'desktop' });
+        if (!receipt.dryRun && receipt.status === 'applied') { generation++; cached = undefined; }
+        sendJson(res, 200, receipt);
+      } catch { sendJson(res, 503, { code: 'JOB_CONTROL_UNAVAILABLE' }); }
       return true;
     }
     if (path === VERSE_FLEET_RUNS_STOP_PATH) {

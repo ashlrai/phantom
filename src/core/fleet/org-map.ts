@@ -12,7 +12,11 @@ export interface FleetMapNode {
   startedAt?: string | null; processLive?: 'yes' | 'no' | 'unknown';
 }
 /** `provider` is the sender's (`from`) provider: who is behind the reporting agent or the message. */
-export interface FleetMapEdge { id: string; kind: 'reports-to' | 'message'; from: string; to: string; provider: ProviderName; count?: number }
+export interface FleetMapEdge {
+  id: string; kind: 'reports-to' | 'message'; from: string; to: string; provider: ProviderName; count?: number;
+  /** Message edges only: the newest message on this edge (ISO). */
+  lastAt?: string;
+}
 export interface FleetOrgMap {
   schema: 'fleet.map.v2'; generatedAt: string | null; messageWindowMinutes: number;
   nodes: FleetMapNode[]; edges: FleetMapEdge[];
@@ -86,8 +90,11 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
     const from = addresses.get(edge.from.address), to = addresses.get(edge.to.address);
     if (!from || !to) { unmappedMessages! += edge.messages; continue; }
     const id = `message:${from}:${to}`, existing = edges.find(row => row.id === id);
-    if (existing) existing.count! += edge.messages;
-    else edges.push({ id, kind: 'message', from, to, provider: byId.get(from)!.provider, count: edge.messages });
+    const lastAt = Number.isFinite(edge.lastAt) ? new Date(edge.lastAt).toISOString() : undefined;
+    if (existing) {
+      existing.count! += edge.messages;
+      if (lastAt && (!existing.lastAt || lastAt > existing.lastAt)) existing.lastAt = lastAt;
+    } else edges.push({ id, kind: 'message', from, to, provider: byId.get(from)!.provider, count: edge.messages, ...(lastAt ? { lastAt } : {}) });
   }
   return { schema: 'fleet.map.v2', generatedAt: sessions?.generatedAt ?? snapshot?.generatedAt ?? null,
     messageWindowMinutes: mapWindowMinutes(options.minutes === undefined ? undefined : String(options.minutes)), nodes, edges,

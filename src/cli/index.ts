@@ -2146,6 +2146,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdMessages(rest);
         break;
       }
+      case 'map': {
+        const { cmdMap } = await import('./map.js');
+        process.exitCode = await cmdMap(rest);
+        break;
+      }
       case 'router': {
         const { cmdRouter } = await import('./router.js');
         process.exitCode = await cmdRouter(rest);
@@ -2400,6 +2405,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'admission': {
+        process.exitCode = await (await import('./admission.js')).cmdAdmission(rest);
+        break;
+      }
+
       case 'daily-fix': {
         const cmdDailyFix = await loadDailyFixCmd();
         process.exitCode = await cmdDailyFix(rest);
@@ -2649,6 +2659,12 @@ async function main(): Promise<void> {
       case 'disk-maint': {
         const { cmdDiskMaint } = await import('./disk-maint.js');
         process.exitCode = await cmdDiskMaint(rest);
+        break;
+      }
+
+      case 'nodes': {
+        const { cmdNodes } = await import('./nodes.js');
+        process.exitCode = await cmdNodes(rest);
         break;
       }
 

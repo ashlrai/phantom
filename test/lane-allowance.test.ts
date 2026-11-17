@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleApi } from '../src/core/web/api.js';
 import type { AshlrConfig } from '../src/core/types.js';
+import type { DevinWeeklyCapacity } from '../src/core/devin/weekly-capacity.js';
 
 const now = Date.parse('2026-12-02T00:00:00.000Z');
 const iso = (offset: number) => new Date(now + offset).toISOString();
@@ -19,6 +20,28 @@ const scopedPosture = () => ({ posture: 'burn', postureReason: 'fixture', projec
   observedAt: iso(0), accountId: 'account-a', model: 'claude-opus', windowStart: iso(-3_600_000), resetAt: iso(3_600_000),
   costClass: 'included', freePreview: true, allowance: { in_flight: 2 } });
 describe('lane allowance', () => {
+  it('verifies the Python dispatcher receipt against its weekly measurement and rejects altered scope', async () => {
+    const fixtures = new URL('../contrib/mac/tests/fixtures/posture-provenance/', import.meta.url);
+    const weekly = JSON.parse(await readFile(new URL('weekly-capacity.json', fixtures), 'utf8')) as DevinWeeklyCapacity;
+    const row = JSON.parse(await readFile(new URL('work-market-posture.json', fixtures), 'utf8'));
+    const at = Date.parse(weekly.observed_at!);
+    const root = await mkdtemp(join(tmpdir(), 'producer-posture-'));
+    try {
+      await mkdir(join(root, 'metrics'));
+      const project = async (entry: Record<string, unknown>) => {
+        await writeFile(join(root, 'metrics/work-market.jsonl'), JSON.stringify({ ...row, lanes: { devin: entry } }) + '\n');
+        return projectLaneAllowance({ weekly, posture: await postureEvidence(root) }, at).lanes.find(l => l.lane === 'devin')!.posture;
+      };
+      expect(await project(row.lanes.devin)).toBe('burn');
+      for (const key of ['account_id', 'model', 'reset_at', 'window_start']) {
+        expect(await project({ ...row.lanes.devin, [key]: 'mismatch' })).toBe('unknown');
+      }
+      for (const key of ['account_id', 'model', 'reset_at', 'window_start']) {
+        const entry = { ...row.lanes.devin }; delete entry[key];
+        expect(await project(entry)).toBe('unknown');
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('preserves journal timestamp and scoped provenance without trusting it yet', async () => {
     const root = await mkdtemp(join(tmpdir(), 'lane-provenance-'));
     try {
