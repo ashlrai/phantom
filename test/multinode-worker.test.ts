@@ -46,6 +46,8 @@ describe('multi-Mac worker lifecycle', () => {
     const { result } = await start();
     const beatArgs = ports.call.mock.calls.find(c => c[1] === 'beat')![2] as string[];
     expect(beatArgs).not.toContain('--host-stats');
+    expect(JSON.parse(beatArgs[beatArgs.indexOf('--capacity') + 1]!)).toMatchObject({ slots: 1, held: null,
+      ramBytes: 16 * 1024 ** 3, hostId: expect.any(String), sampledAtMs: Date.now() });
     child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
     expect(await result).toEqual({ jobId: 'j', completed: true });
   });
@@ -122,6 +124,8 @@ describe('multi-Mac worker lifecycle', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(await result).toMatchObject({ completed: false });
     expect(child.kill).toHaveBeenCalled();
+    const args = ports.call.mock.calls.filter(c => c[1] === 'beat').at(-1)![2] as string[];
+    expect(JSON.parse(args[args.indexOf('--capacity') + 1]!)).toMatchObject({ slots: 0, held: 'disk-pressure' });
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
   });
   it('runs both Air slots under one session and leaves only after both finish', async () => {

@@ -63,6 +63,8 @@ describe('multi-Mac durable fencing witness', () => {
   it('fences pre-promotion claims and refuses primary resurrection on return', () => {
     const f = fixture();
     const s = f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+    const capacity = JSON.stringify({ hostId: 'mac', sampledAtMs: 1000, ramBytes: 8 * 1024 ** 3, slots: 1, held: null });
+    f.run('primary', 'beat', ['--node', 'worker', '--session', String(s), '--capacity', capacity]);
     f.run('primary', 'enqueue', ['--job', 'j', '--requires', 'codex']);
     const old = f.run('primary', 'pull', ['--node', 'worker', '--session', String(s)]).result['claim'] as
       { token: number; leaderToken: number };
@@ -77,6 +79,8 @@ describe('multi-Mac durable fencing witness', () => {
     f.store.state.nodes[0]!.expiresAt = 0;
     f.store.state.jobs[0]!.claim!.expiresAt = 0;
     const next = f.run('backup', 'join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+    f.run('backup', 'beat', ['--node', 'worker', '--session', String(next), '--capacity',
+      JSON.stringify({ ...JSON.parse(capacity), sampledAtMs: 1000 + PRIMARY_TIMEOUT_MS })]);
     const fresh = f.run('backup', 'pull', ['--node', 'worker', '--session', String(next)]).result['claim'] as typeof old;
     expect(fresh.token).toBeGreaterThan(old.token);
     const stale = ['--node', 'worker', '--session', String(s), '--job', 'j', '--token', String(old.token), '--leader-token', String(old.leaderToken)];
@@ -177,6 +181,8 @@ describe('durable SSH pool round trip', () => {
       const ssh = (_host: string, request: unknown) => at(backupRoot, () => serveNodeRpc(backup, request as NodeRpcRequest));
       const run = (verb: string, args: string[]) => at(primaryRoot, () => callPool(primary, verb, args, ssh));
       const session = run('join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+      run('beat', ['--node', 'worker', '--session', String(session), '--capacity', JSON.stringify({
+        hostId: 'mac', sampledAtMs: now, ramBytes: 8 * 1024 ** 3, slots: 1, held: null })]);
       run('enqueue', ['--job', 'disk-job', '--requires', 'codex']);
       expect(run('pull', ['--node', 'worker', '--session', String(session)]).result['pulled']).toBe(true);
       const mirror = JSON.parse(readFileSync(join(primaryRoot, 'node-pool', 'primary-mirror.json'), 'utf8')) as NodesState;
