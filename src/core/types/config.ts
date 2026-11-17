@@ -1293,6 +1293,10 @@ export interface AshlrConfig {
    */
   devin?: {
     enabled?: boolean;
+    /** Weekly ACU allowance of the Devin plan (Max meters weekly, not daily). Absent falls back to the local budget total. */
+    weeklyAcuAllowance?: number;
+    /** Any past or future weekly reset instant (ISO). Absent leaves the window, and so the measured use, unknown. */
+    weeklyResetAt?: string;
     /**
      * Let the fleet launch Devin sessions without a click (origin `fleet`).
      * Default false. Even when true a fleet launch also needs a live standing

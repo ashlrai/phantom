@@ -33,6 +33,18 @@ describe('mergeThread with MASON-OUTBOX answers', () => {
     expect(lines.map(line => line.id)).toEqual(['outbox-0', 'later']);
   });
 
+  it('shows a late-evening PLAN-LOG reply once, timed, when the thread projects the same file', () => {
+    // 22:55 ET on Nov 16 is 03:55 UTC on Nov 17: the dates differ as strings.
+    const text = 'Update 11 PM Nov 16: main is "green" everywhere.';
+    const { lines, undated } = mergeThread(
+      [post({ id: `leader-file-${'a'.repeat(48)}`, at: '2026-11-17T03:55:00.000Z', channel: 'system', kind: 'answer', text }),
+        post({ id: 'copied', at: '2026-11-17T04:00:00.000Z', channel: 'system', kind: 'answer', text })],
+      [], NOW, undefined, [answer('2026-11-16 22:55', text)],
+    );
+    expect(undated).toEqual([]);
+    expect(lines.map(line => [line.id, line.at])).toEqual([['outbox-0', Date.UTC(2026, 10, 17, 3, 55)]]);
+  });
+
   it('sorts the Mason inbox entry first on a tied timestamp', () => {
     const at = iso(NOW - 5 * MIN);
     const { lines } = mergeThread(
