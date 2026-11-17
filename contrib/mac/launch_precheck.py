@@ -73,6 +73,8 @@ def terminal_target(job, repo, prompt, states):
     targets = re.findall(r"(?:^|[(,\s])pr=([1-9][0-9]*)(?=[,\s)]|$)", envelope, re.I)
     drain = re.fullmatch(r"RQ-DRAIN-" + re.escape(repo) + r"-([1-9][0-9]*)-[0-9a-fA-F]{7}", job)
     if drain: targets.append(drain.group(1))
+    repair = repair_target(job, repo)
+    if repair: targets.append(repair.group(2))
     if len(set(targets)) != 1: return None
     state = states.get("https://github.com/ashlrai/%s/pull/%s" % (repo, targets[0]))
     return "target_pr_" + state.lower() if state in ("MERGED", "CLOSED") else None
@@ -164,6 +166,57 @@ def run(cmd, timeout, **kwargs):
         p.communicate()
         raise
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def repair_target(job, repo):
+    """Only producer-shaped identities name repair targets; prose is not evidence."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", repo): return None
+    return re.fullmatch(r"RQ-(FIXUP|REBASE|RECUT)-" + re.escape(repo)
+                        + r"-([1-9][0-9]*)(?:-([0-9a-f]{7}))?", job)
+
+
+def repair_freshness(job, repo, prompt, home, runner=run):
+    """Bounded current PR read through the host's scoped identity; fail open.
+
+    Only a closed/merged PR or a resolved repair on the queued head retires work.
+    Pending, absent, malformed and moved-head evidence never proves resolution.
+    Return fixed reason codes only, never subprocess text.
+    """
+    target = repair_target(job, repo)
+    if not target: return None
+    try:
+        result = runner(["locus", "exec", "--", "gh", "pr", "view", target.group(2),
+                         "--repo", "ashlrai/" + repo, "--json",
+                         "number,state,headRefOid,mergeable,statusCheckRollup"], 3, cwd=home)
+        if result.returncode or len(result.stdout) > 65536: return None
+        pr = json.loads(result.stdout)
+        if not isinstance(pr, dict) or type(pr.get("number")) is not int or pr["number"] != int(target.group(2)):
+            return None
+        state = pr.get("state")
+        if state in ("MERGED", "CLOSED"): return "target_pr_" + state.lower()
+        sha = pr.get("headRefOid")
+        if (state != "OPEN" or not target.group(3) or not isinstance(sha, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", sha) or not sha.startswith(target.group(3))):
+            return None
+        if target.group(1) in ("REBASE", "RECUT"):
+            return "target_pr_conflicts_resolved" if pr.get("mergeable") == "MERGEABLE" else None
+        task = next((t for t in prompt.splitlines() if t.startswith(job + " (")), "")
+        expected = re.search(r'\bcheck="([^"\r\n]+)"', task)
+        if not expected: return None
+        checks = pr.get("statusCheckRollup")
+        if not isinstance(checks, list) or not checks: return None
+        matched = False
+        for check in checks:
+            if not isinstance(check, dict): return None
+            matched |= check.get("name", check.get("context")) == expected.group(1)
+            if check.get("__typename") == "CheckRun":
+                if check.get("status") != "COMPLETED" or check.get("conclusion") not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+                    return None
+            elif check.get("__typename") != "StatusContext" or check.get("state") != "SUCCESS":
+                return None
+        return "target_pr_checks_resolved" if matched else None
+    except Exception:
+        return None
 
 
 def precheck(job, repo, prompt, home, runs, runner=run):

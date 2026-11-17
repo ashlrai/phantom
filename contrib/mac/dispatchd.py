@@ -42,7 +42,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1794,7 +1794,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
         if reason:
             admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
-            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason))
+            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason, launched=False))
             ev("DONE-NOOP %s [%s]" % (f[0], reason))
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
@@ -1951,6 +1951,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
+        if repair_target(j, repo):
+            # Repairs must cross the freshness boundary before claiming or batching.
+            if pc_n >= PC_MAX or over_budget():
+                rest.append(line); continue
+            pc_n += 1
+            reason = repair_freshness(j, repo, rd(pf), H, _run)
+            if reason:
+                metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                            reason=reason, launched=False))
+                ev("DONE-NOOP %s [%s]" % (j, reason)); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
         if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
