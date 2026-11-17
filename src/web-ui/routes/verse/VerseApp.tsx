@@ -46,7 +46,7 @@
 import { FrictionFeedback } from './feedback/FrictionFeedback.js';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { reportThemeToShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
+import { trackThemeForShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
 import { RouteErrorBoundary } from '../../components/primitives/RouteErrorBoundary.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
 import { useToast } from '../../components/primitives/Toast.js';
@@ -474,7 +474,7 @@ export function PhantomApp() {
   useEffect(() => subscribeAnchorRequests(VERSE_ANCHOR_EVENT), []);
   // Report the PAINTED theme so the native window pre-paints its background
   // on the next cold launch instead of flashing white. No-op in a browser.
-  useEffect(() => { reportThemeToShell(theme.theme); }, [theme.theme]);
+  useEffect(() => trackThemeForShell(theme.theme), [theme.theme]);
 
   // ── one-time announcements ──────────────────────────────────────────────
   useEffect(() => {

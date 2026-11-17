@@ -30,6 +30,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 ## Tools for agents working here
 
+- Cross-provider subagents: `phm subagent spawn --parent session-id --tier fast --task "Review a bounded change" --json` plans a scope-limited child through the provider-neutral router. Dry-run writes nothing; `--apply` stores held records only, never dispatches. No metered fallback. See [subagents](docs/SUBAGENTS.md).
+
 - CI baseline analysis: `phm ci baseline --json` groups fresh Vitest failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
 
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
@@ -433,5 +435,7 @@ each lane CLI. Local models must be on loopback. Nothing is called while the
 kill switch is on.
 
 ## Typed routing decisions
+
+Provider-neutral [failover chains](docs/ROUTING.md#failover-chains) remain inert with `failover_dispatcher_unwired`; no dispatcher installation is authorized by a plan.
 
 `phm route decide --input request.json --json` validates a closed set from local model, slot and admission snapshots. Local fast, one schema retry, existing Jev escalation and deterministic fallback share a 450 ms service budget. Advisory only; dispatcher observations append `metrics/route.explain.jsonl` without changing launches. See [typed routing](docs/ROUTING.md) for the request schema and a copy-paste offline example.

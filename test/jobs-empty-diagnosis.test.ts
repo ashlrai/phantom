@@ -58,7 +58,9 @@ it('keeps all empty diagnoses, newest finish semantics, window bounds and safe p
   const ledger = [row('RETRIED'), row('RETRIED', { empty: false, ts: '2026-11-17T11:30:00Z' }),
     row('OLD', { ts: '2026-11-15T11:00:00Z' }), row('../escape'), row('FUTURE', { ts: '2026-11-18T11:00:00Z' }),
     ...Array.from({ length: 60 }, (_, i) => row(`SAMPLE${i}`))].join('\n');
-  const report = await readEmptyJobs(24, '/fixture/runs', '/fixture/wt', now, { read: reader(ledger) });
+  const read = vi.fn(reader(ledger));
+  const report = await readEmptyJobs(24, '/fixture/runs', '/fixture/wt', now, { read });
+  expect(read.mock.calls.every(([path]) => !path.includes('escape'))).toBe(true);
   expect(report?.diagnosis?.jobs).toHaveLength(60);
   expect(report?.diagnosis?.jobs.every(j => j.reason === 'unknown')).toBe(true);
   expect(await readEmptyJobs(24, '/fixture/runs', '/fixture/wt', now, { read: async () => { throw new Error('unreadable'); } })).toBeNull();

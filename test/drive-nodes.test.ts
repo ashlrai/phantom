@@ -221,6 +221,17 @@ describe('drive node leases', () => {
       expect(() => parseState(value)).toThrow('Invalid');
     }
   });
+
+  it('persists an explicit marker for producer withdrawals', () => {
+    const f = fixture();
+    f.a.enqueue('withdrawn-job', { owner: 'o' });
+    expect(f.a.withdraw('withdrawn-job', 'o')).toEqual({ state: 'withdrawn' });
+    expect(parseState(f.store.state).jobs[0]).toMatchObject({
+      state: 'completed',
+      result: 'withdrawn',
+      producerWithdrawn: true,
+    });
+  });
 });
 
 describe('release: decline versus retry (CLI + router)', () => {

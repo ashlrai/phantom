@@ -2222,6 +2222,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'subagent': {
+        const { cmdSubagent } = await import('./subagent.js');
+        process.exitCode = await cmdSubagent(rest);
+        break;
+      }
+
       case 'asks': {
         const { cmdAsks } = await import('./asks.js');
         process.exitCode = await cmdAsks(rest);
@@ -2651,7 +2657,7 @@ async function main(): Promise<void> {
           process.exitCode = await cmdWorktreesPrune(rest.slice(1));
         } else {
           const { cmdWorktrees } = await import('./worktrees.js');
-          process.exitCode = cmdWorktrees(rest);
+          process.exitCode = await cmdWorktrees(rest);
         }
         break;
       }
@@ -2737,6 +2743,12 @@ async function main(): Promise<void> {
         // M112: one-command spare-Mac worker provisioning (keepAwake daemon + identity)
         const cmdWorker = await loadWorkerCmd();
         process.exitCode = await cmdWorker(rest);
+        break;
+      }
+
+      case 'pr': {
+        const { cmdPr } = await import('./pr.js');
+        process.exitCode = await cmdPr(rest);
         break;
       }
 
@@ -3255,6 +3267,12 @@ async function main(): Promise<void> {
         // nothing merges from here.
         const cmdDevin = await loadDevinCmd();
         process.exitCode = await cmdDevin(rest);
+        break;
+      }
+
+      case 'bots': {
+        const { runBotsCli } = await import('./bots.js');
+        process.exitCode = await runBotsCli(rest);
         break;
       }
 

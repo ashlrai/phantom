@@ -207,6 +207,7 @@ import {
   tickPhasesSnapshot,
   TICK_PHASE_BACKLOG_REFRESH_MS,
   TICK_PHASE_CAPACITY_MS,
+  TICK_PHASE_NODE_BRIDGE_MS,
   TICK_PHASE_DISPATCH_PLAN_MS,
   TICK_PHASE_FRONTIER_PROBE_MS,
   TICK_PHASE_GRACE_MS,
@@ -384,6 +385,9 @@ import {
 } from '../fleet/proposal-matching.js';
 import { loadConfig, resolveSubscriptionMaxPercent } from '../config.js';
 import { homedir, hostname as osHostname } from 'node:os';
+import { spawn as spawnChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { ashlrHome } from '../cloud/store.js';
 import {
   buildResourceStrategyReport,
   fleetStatusForDirection,
@@ -420,6 +424,7 @@ import {
 } from '../fleet/generated-repair-lifecycle.js';
 import { generatedRepairLifecycleAttemptHash } from '../fleet/generated-repair-identity.js';
 import {
+  childRuntimeArgs,
   scheduleResolutionObserverChild,
   type ScheduledResolutionObserverChild,
 } from './resolution-observer-scheduler.js';
@@ -1387,6 +1392,39 @@ const SEAT_SHADOW_MAX_IN_FLIGHT = 2;
  * make it Tier-1 code. No snapshot ⇒ no shadow (nothing honest to compare).
  * `foundry.seatRouterShadow: false` turns it off. Never throws, never awaited.
  */
+/**
+ * One `node-bridge` pass in a child spawned by path, not imported: the bridge and node router
+ * stay out of this module's Tier-1 import closure. Abort sends SIGTERM, then SIGKILL after 2 s.
+ */
+function runNodeBridgeChild(signal: AbortSignal): Promise<Record<string, unknown> | TickPhaseSkipped> {
+  const entry = fileURLToPath(new URL(import.meta.url.endsWith('.ts')
+    ? '../drive/nodes/ready-bridge-child.ts' : '../drive/nodes/ready-bridge-child.js', import.meta.url));
+  return new Promise((resolveChild, rejectChild) => {
+    const child = spawnChildProcess(process.execPath, [...childRuntimeArgs(), entry],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    let out = '';
+    let hardKill: ReturnType<typeof setTimeout> | undefined;
+    child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { if (out.length < 65_536) out += chunk; });
+    const abort = () => {
+      child.kill('SIGTERM');
+      hardKill = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      hardKill.unref();
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    const done = () => { signal.removeEventListener('abort', abort); if (hardKill) clearTimeout(hardKill); };
+    child.once('error', (error) => { done(); rejectChild(error); });
+    child.once('close', (code) => {
+      done();
+      if (signal.aborted) return rejectChild(signal.reason);
+      let summary: unknown = null;
+      try { summary = JSON.parse(out); } catch { /* reported below */ }
+      if (code !== 0 || !summary || typeof summary !== 'object') return rejectChild(new Error(`node-bridge child exited ${code}`));
+      const inert = (summary as Record<string, unknown>)['inert'];
+      resolveChild(typeof inert === 'string' ? skipTickPhase(inert) : summary as Record<string, unknown>);
+    });
+  });
+}
+
 function shadowSeatRouteBeside(cfg: AshlrConfig, item: WorkItem, backend: string): void {
   if ((cfg.foundry as Record<string, unknown> | undefined)?.['seatRouterShadow'] === false) return;
   if (seatShadowInFlight >= SEAT_SHADOW_MAX_IN_FLIGHT) return;
@@ -6529,6 +6567,11 @@ export async function tick(
   const batchParallelCeiling = dcfg.mode !== 'continuous' &&
     typeof liveCfg.daemon?.parallel === 'number' && Number.isSafeInteger(liveCfg.daemon.parallel) && liveCfg.daemon.parallel > 0
     ? liveCfg.daemon.parallel : null;
+  // RQ-NODE-BRIDGE-1: offload eligible ready.tsv rows to idle node-router workers. No
+  // awaited stage (and no phase record) until ~/.ashlr/node-bridge.json exists.
+  if (existsSync(join(ashlrHome(), 'node-bridge.json'))) {
+    await runPhase('node-bridge', TICK_PHASE_NODE_BRIDGE_MS, runNodeBridgeChild);
+  }
   const fleetMonitor = localFleetMonitor();
   const localFleet: LocalFleetSettings = readLocalFleetSettings(routingCfg);
   fleetMonitor.setSettings(localFleet);
@@ -10506,6 +10549,9 @@ async function runDaemonInEnrollmentScope(
   // Stopped in the shutdown block below (see startResidentCapacityPublisher).
   const residentPublisherRun = { dryRun: opts.dryRun, once: opts.once, standing: standing !== null };
   await startResidentCapacityPublisher(activationCfg, residentPublisherRun);
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).ensureDevinAutolandTimer(); } catch { /* Optional resident maintenance. */ }
+  }
 
   // Refresh independently of dispatch ticks; a slow GitHub call cannot overlap itself.
   let factsBusy = false;
@@ -11374,6 +11420,9 @@ async function runDaemonInEnrollmentScope(
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
   if (!opts.dryRun) await stopResidentCapacityPublisher();
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).stopDevinAutolandTimer(); } catch { /* Nothing to stop. */ }
+  }
   await cancelOffTickJobs();
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,

@@ -1295,6 +1295,8 @@ export interface AshlrConfig {
    */
   devin?: {
     enabled?: boolean;
+    /** Devin Review requests per local day; default 5, 0 disables reviews. */
+    review?: { maxPerDay?: number };
     /** Weekly ACU allowance of the Devin plan (Max meters weekly, not daily). Absent falls back to the local budget total. */
     weeklyAcuAllowance?: number;
     /** Any past or future weekly reset instant (ISO). Absent leaves the window, and so the measured use, unknown. */

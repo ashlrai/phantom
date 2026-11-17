@@ -1875,7 +1875,8 @@ export async function handleApi(
 
     if (path === '/api/fleet/release-chain' && method === 'GET') {
       const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
+      const { getLocalReleaseStatus } = await import('../fleet/release-chain-status.js');
+      sendJson(res, 200, { ...releaseChainResponse(), release: await getLocalReleaseStatus() });
       return true;
     }
 
@@ -1886,15 +1887,6 @@ export async function handleApi(
       return true;
     }
 
-    // Read-only release-chain status: same local signing/feed evidence as
-    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
-    if (path === '/api/fleet/release-chain' && method === 'GET') {
-      const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
-      return true;
-    }
-
-    // One work log for the CLI and the desktop: /api/worklog?hours=6&kind=merged&repo=&lane= (since=6h still works).
     if (path === '/api/worklog' && method === 'GET') {
       const { readWorklog, filterWorklog, worklogHours, WORKLOG_KINDS } = await import('../fleet/worklog.js');
       const param = (name: string) => getQueryParam(req.url ?? '', name);
@@ -2317,11 +2309,11 @@ export async function handleApi(
     }
 
     if (path === '/api/feed' && method === 'GET') {
-      const { parseFeedQuery, readFeed } = await import('../feed.js');
+      const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
       const params = new URL(req.url ?? '', 'http://localhost').searchParams;
-      const query = parseFeedQuery(params.get('limit') ?? undefined, params.get('since') ?? undefined);
-      if (!query) sendJson(res, 400, { error: 'Use limit 1 to 1000 and since 1m to 7d.' });
-      else sendJson(res, 200, await readFeed(query.limit, query));
+      const query = parseFeedQuery({ limit: params.get('limit') ?? undefined, since: params.get('since') ?? undefined, kind: params.get('kind') ?? undefined });
+      if (!query) sendJson(res, 400, { error: FEED_QUERY_ERROR });
+      else sendJson(res, 200, await readFeed(query));
       return true;
     }
 

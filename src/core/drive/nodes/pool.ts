@@ -56,7 +56,7 @@ export function executePool(store: NodesStore, request: PoolRequest, owner: stri
       return { schemaVersion: 1, active: pool.active, epoch: pool.epoch, demoted, result: { heartbeatAt: pool.heartbeatAt } };
     }
     const verb = request.verb;
-    if (!verb || !['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'list', 'status', 'leave'].includes(verb)) {
+    if (!verb || !['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'release', 'withdraw', 'list', 'status', 'leave'].includes(verb)) {
       throw new Error('Invalid drive pool verb');
     }
     const read = ['list', 'status', 'plan'].includes(verb);
@@ -69,7 +69,7 @@ export function executePool(store: NodesStore, request: PoolRequest, owner: stri
       const value = flag.includes('=') ? flag.slice(8) : args[suppliedOwner + 1];
       if (value !== owner) throw new Error('Invalid drive pool owner');
     }
-    const scoped = ['join', 'enqueue', 'status', 'list'].includes(verb) && suppliedOwner < 0 ? [...args, '--owner', owner] : args;
+    const scoped = ['join', 'enqueue', 'withdraw', 'status', 'list'].includes(verb) && suppliedOwner < 0 ? [...args, '--owner', owner] : args;
     const nodes = new DriveNodes({ transaction: fn => fn(state) }, { now: () => now });
     return { schemaVersion: 1, active: pool.active, epoch: pool.epoch, demoted,
       result: executeNodeFleet(verb, scoped, nodes) };

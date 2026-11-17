@@ -10,6 +10,10 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 
 [Quickstart](#quickstart) · [Documentation](docs/README.md) · [For agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) · [Desktop](#the-desktop-app-macos) · [Guided onboarding](https://phm.dev/connect)
 
+## Mission
+
+Chasing open-source RSI (recursive self-improvement) is Phantom's mission. We're building Phantom into an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute. The [strategy for recursive self-improvement and an open fleet](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md) explains how we'll test improvements and open the fleet without sharing credentials.
+
 ![Phantom fleet console showing sample worker assignments and lane capacity; labeled demo data, no live execution.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-fleet-demo.png)
 
 *Current source UI with synthetic demo data, captured at 2× resolution. No provider or fleet ran. [Capture details](https://github.com/ashlrai/phantom/blob/master/docs/images/CAPTURES.md).*
@@ -50,7 +54,7 @@ Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the 
 
 Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-This source tree targets version 3.30.35; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.36; check canonical release availability and exact matching assets before installation.
 The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
 ### Connect your coding agent
@@ -125,7 +129,7 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 | --- | --- |
 | Summarize local metrics. | `phm metrics summary --json` |
 | Check the release train. | `phm release status --json` |
-| Preview cleanup of finished worktrees. | `phm worktrees prune --dry-run --json` |
+| Preview cleanup of finished worktrees. | `phm worktrees --reap --json` |
 | Explain dispatcher routes. | `phm route explain --json` |
 | Show usage by engine. | `phm usage` |
 

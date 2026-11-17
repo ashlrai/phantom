@@ -135,7 +135,10 @@ outside this change; any such integration needs its separate security review.
 The runner must be an absolute, owned executable with safe ancestors, checked by
 the existing Drive executable validator. It is invoked as `<runner> run`, receives
 one JSON object on stdin with `protocol: "phm-node-worker/v1"`, the existing node
-`job` view and its `claim`, and must return exactly one bounded JSON object:
+`job` view and its `claim`, plus an optional `providerBinaries` receipt naming the
+absolute provider binary the worker's probe signed in with (see
+[node runner](NODES.md#reference-runner-security-review-before-installation)), and
+must return exactly one bounded JSON object:
 
 ```json
 {"resultRef":"branch:example-1"}
@@ -145,7 +148,9 @@ The result reference must satisfy the existing node identifier grammar. The runn
 owns pack resolution, sandboxed execution on the requested locally signed-in lane,
 and artifact storage accessible to the primary. Its stdout is limited to 4096
 bytes and stderr is discarded. A successful process without a valid result
-reference is not completion. The worker forwards only the reference, never raw
+reference is not completion. A reply with `packError` or `codex: "error"`, or a
+nonzero exit, releases the lease for retry; two consecutive failures of one pack
+decline it for the session. The worker forwards only the reference, never raw
 provider transcripts. The runner must not publish, resolve copied credentials or
 perform unfenced external effects. It must pass the claim token to any effect sink
 that accepts effects; a preflight lease check alone cannot fence external effects.

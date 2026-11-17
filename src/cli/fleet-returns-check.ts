@@ -4,7 +4,7 @@
  * receipt stops being only the returning agent's word. Read-only: nothing is
  * written, commented, merged or dispatched, and the verdict grants no
  * authority. Exit 0 only with current receipts merged at their claimed heads;
- * 1 when any did not or could not be read (including an unreadable ledger);
+ * 1 when coverage is truncated or any did not or could not be read (including an unreadable ledger);
  * 2 on bad arguments. */
 import type { Gh } from '../core/autopilot/github.js';
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
@@ -17,7 +17,8 @@ whether each PR merged at the claimed head. One line per checked row:
 <verdict>  <repo>#<pr>  claimed <head7> observed <head7|-> (<claimId>).
 Receipt lines label temporal currency at as-of; GitHub verifies only the PR.
 Exit 0 when all PR receipts are current and checked rows merged-at-head; 1 otherwise; 2 on bad
-arguments. Read-only; the verdict grants no authority.`;
+arguments. Limit-truncated checks have incomplete coverage and cannot succeed.
+Read-only; the verdict grants no authority.`;
 
 const head7 = (head: string | null): string => head === null ? '-' : head.slice(0, 7);
 
@@ -54,8 +55,9 @@ export async function cmdFleetReturnsCheck(args: string[], deps: { gh?: Gh; now?
     }
     for (const row of receipts) console.log(`receipt temporal=${row.temporal}  ${row.repo}#${row.pr} (${row.claimId})`);
     console.log(`checked=${check.checked.length} skipped=${check.skipped} truncated=${check.truncated ? 'yes' : 'no'} as-of=${view.asOf}`);
+    if (check.truncated) console.log('incomplete coverage: the limit prevented checking all eligible PR returns');
   }
   if (view.state === 'unknown') return 1;
-  return receipts.every(row => row.temporal === 'current')
+  return !check.truncated && receipts.every(row => row.temporal === 'current')
     && check.checked.every(row => row.verdict === 'merged-at-head') ? 0 : 1;
 }

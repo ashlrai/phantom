@@ -368,6 +368,7 @@
 /test/decide-resource-choice.test.ts @masonwyatt23
 /test/desktop-artifact-installer.test.ts @masonwyatt23
 /test/desktop-consumer-install.test.ts @masonwyatt23
+/test/desktop-consumer-upgrade.test.ts @masonwyatt23
 /test/desktop-metadata-launch-trust.test.ts @masonwyatt23
 /test/desktop-operator-screenshot-mcp.test.ts @masonwyatt23
 /test/desktop-operator.test.ts @masonwyatt23
@@ -384,6 +385,7 @@
 /test/devin-intake-315.test.ts @masonwyatt23
 /test/devin-lane-315.test.ts @masonwyatt23
 /test/devin-lane-adapter-contracts.test.ts @masonwyatt23
+/test/devin-pr-review.test.ts @masonwyatt23
 /test/devin-usage-reader.test.ts @masonwyatt23
 /test/dispatch-router-310b.test.ts @masonwyatt23
 /test/doctor-dedupe.test.ts @masonwyatt23
@@ -1202,6 +1204,7 @@
 /test/role-completion.test.ts @masonwyatt23
 /test/role-slots-leader-agnostic.test.ts @masonwyatt23
 /test/route-decision.test.ts @masonwyatt23
+/test/route-fallback.test.ts @masonwyatt23
 /test/router-arms-replay.test.ts @masonwyatt23
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-catalog-refresh.test.ts @masonwyatt23
