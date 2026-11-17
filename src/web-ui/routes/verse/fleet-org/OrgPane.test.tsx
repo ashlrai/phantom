@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
+import { fleetOrgTree } from '../../../../core/fleet/org-tree.js';
+import type { FleetRunsDirState } from '../../../../core/fleet/runs-dir-state.js';
+import type { FleetSessionsV1 } from '../../../../core/fleet/runs-sessions.js';
 import { evictAll } from '../../../data/cache.js';
-import { SEATS_FIXTURE } from '../../../data/agent-roster.fixtures.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { OrgPane } from './OrgPane.js';
 
 const props = { visible: true, host: { openPane: vi.fn() } } as unknown as PaneProps;
+const AT = new Date().toISOString();
 const office = {
   org: { roles: [
     { id: 'leader', title: 'Digital co-founder', owner: 'leader', lane: 'frontier' },
@@ -14,8 +18,16 @@ const office = {
   priorities: [{ rq: 'RQ-A-1', owner: 'engineering', status: 'in_progress', due: null, outcome: null }],
   outbox: [],
 };
-const runs = { lanes: [{ lane: 'claude', running: 1, target: 8, queued: 0, held: false, heldReason: null }, { lane: 'grok', running: 0, target: 4, queued: 0, held: true, heldReason: 'quota' }] };
-const roster = { schema: 'agent-roster.v1', claims: { source: 'claim-store', items: [{ owner: 'claude', completed: false }] } };
+/** GET /api/verse/fleet/control/map as the server sends it: the graph plus the `phm org` tree. */
+function orgMap() {
+  const sessions = { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: [
+    { job: 'RQ-A', lane: 'claude', repo: 'phantom', model: 'fixture-model', status: 'running', elapsedSeconds: 60, startedAt: AT, live: 'yes' }] } as unknown as FleetSessionsV1;
+  const map = fleetOrgMap(null, { sessions });
+  const runs = { lastTick: AT, paused: false, events: [], sources: { status: 'healthy' }, lanes: [
+    { lane: 'claude', running: 1, target: 8, queued: 0, held: false, heldReason: null }, { lane: 'grok', running: 0, target: 4, queued: 0, held: true, heldReason: 'quota' }] } as unknown as FleetRunsDirState;
+  return { ...map, tree: fleetOrgTree(map, { runs }) };
+}
+const MAP = '/api/verse/fleet/control/map', OFFICE = '/api/verse/leader/office';
 
 function stub(map: Record<string, unknown>) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -27,40 +39,42 @@ function stub(map: Record<string, unknown>) {
 beforeEach(() => evictAll());
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-it('renders the leader, executives and teammates from live feeds', async () => {
-  stub({ '/api/verse/leader/office': office, '/api/verse/fleet/runs': runs, '/api/verse/fleet/agent-roster': roster, '/api/verse/seats': { seats: SEATS_FIXTURE } });
+it('draws the phm org tree first, then the executives from the leader office', async () => {
+  stub({ [OFFICE]: office, [MAP]: orgMap() });
   render(<OrgPane {...props} />);
-  const leader = await screen.findByRole('region', { name: 'Leader' });
-  expect(within(leader).getByText('Digital co-founder')).toBeInTheDocument();
-  expect(within(leader).getByText('Working')).toBeInTheDocument();
-  const execs = screen.getByRole('region', { name: 'Executives' });
+  const tree = await screen.findByRole('region', { name: 'Org tree' });
+  expect(within(tree).getByText('Leader (CEO)').parentElement).toHaveTextContent('Directing 1 running job across 1 lane');
+  expect(within(tree).getByRole('button', { name: /^claude,/ })).toHaveTextContent('1 of 8 running');
+  expect(within(tree).getByRole('button', { name: 'Open job RQ-A' })).toHaveTextContent('Working in phantom');
+  expect(within(tree).getByRole('button', { name: /^grok,/ }).closest('li')).toHaveAttribute('data-state', 'held');
+  const execs = await screen.findByRole('region', { name: 'Executives' });
   expect(within(execs).getByText('Engineering')).toBeInTheDocument();
   expect(within(execs).getByText('1 active')).toBeInTheDocument();
-  const team = screen.getByRole('region', { name: 'Teammates' });
-  const claude = within(team).getByText('Claude').closest('li')!;
-  expect(within(claude).getByText('Opus 5.5')).toBeInTheDocument();
-  expect(within(claude).getByText('1 of 8 slots')).toBeInTheDocument();
-  expect(within(team).getByText('Grok').closest('li')).toHaveAttribute('data-status', 'held');
-  expect(screen.getByRole('heading', { name: /1 executive · 2 teammates/ })).toBeInTheDocument();
+  expect(within(execs).getByText('Working')).toBeInTheDocument();
+  // The leader appears once, in the tree; the office's leader role is not drawn again as a card.
+  expect(within(execs).queryByText('Digital co-founder')).toBeNull();
 });
 
-it('falls back to initials when an avatar image fails, and for members without one', async () => {
-  stub({ '/api/verse/leader/office': office, '/api/verse/fleet/runs': runs, '/api/verse/fleet/agent-roster': roster, '/api/verse/seats': { seats: SEATS_FIXTURE } });
+it('falls back to initials for an executive without an image', async () => {
+  stub({ [OFFICE]: office, [MAP]: orgMap() });
   render(<OrgPane {...props} />);
-  const leader = await screen.findByRole('region', { name: 'Leader' });
-  const img = leader.querySelector('img')!;
-  expect(img).toHaveAttribute('src', '/phantom-mark.svg');
-  fireEvent.error(img);
-  expect(leader.querySelector('img')).toBeNull();
-  expect(within(leader).getByText('LE')).toBeInTheDocument();
-  const team = screen.getByRole('region', { name: 'Teammates' });
-  expect(within(team).getByText('CL')).toBeInTheDocument();
+  const execs = await screen.findByRole('region', { name: 'Executives' });
+  expect(execs.querySelector('img')).toBeNull();
+  expect(within(execs).getByText('EN')).toBeInTheDocument();
 });
 
-it('names the sources that are down instead of rendering an empty team', async () => {
-  stub({ '/api/verse/fleet/runs': runs });
+it('names what is down instead of rendering an empty organization', async () => {
+  stub({});
   render(<OrgPane {...props} />);
-  expect(await screen.findByText(/Not reported right now: org chart, claims, models\./)).toBeInTheDocument();
-  expect(screen.getByText('No executives reported.')).toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Teammates' })).toHaveTextContent('Claude');
+  expect(await screen.findByText('The organization could not be read.')).toBeInTheDocument();
+  expect(await screen.findByText('Executives not reported right now.')).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Org tree' })).toBeNull();
+});
+
+it('rebuilds the tree from the graph when the server sends a tree this build cannot read', async () => {
+  stub({ [MAP]: { ...orgMap(), tree: { schema: 'fleet.org.v1', version: 99, lanes: [], leader: { dispatcher: {} }, sources: {} } } });
+  render(<OrgPane {...props} />);
+  const tree = await screen.findByRole('region', { name: 'Org tree' });
+  expect(within(tree).getByRole('button', { name: 'Open job RQ-A' })).toBeInTheDocument();
+  expect(within(tree).getByRole('button', { name: /^claude,/ })).toHaveTextContent('unknown of unknown running');
 });
