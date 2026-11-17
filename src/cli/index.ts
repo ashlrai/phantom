@@ -90,6 +90,11 @@ import { pad, makeColors } from './ui.js';
 import { authoritySetupPlatformRefusal } from './first-run-guidance.js';
 import type { AshlrConfig, AshlrIndex, IndexedItem, GitStatus, ToolsRegistry, McpRegistry } from '../core/types.js';
 
+// iMessage ack status reply: literal import (bundled into the compiled sidecar), loaded on first
+// use. The Tier-1 bridge reads this key instead of importing the composer (see imessage-inbox-bridge.ts).
+(globalThis as Record<symbol, unknown>)[Symbol.for('ashlr.imessage.statusReplyLoader')] =
+  async () => (await import('../core/agents/owner-status-reply.js')).ownerStatusReply();
+
 // ─── Lazy command loaders ───────────────────────────────────────────
 //
 // Each command module is imported on demand so the CLI degrades gracefully when
