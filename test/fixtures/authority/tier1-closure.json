@@ -392,6 +392,7 @@
     "src/core/comms-agent/run.ts",
     "src/core/comms-agent/store.ts",
     "src/core/comms-agent/triage.ts",
+    "src/core/comms/as-of-label.ts",
     "src/core/comms/change-digest.ts",
     "src/core/comms/comms-confirm.ts",
     "src/core/comms/director-context.ts",
