@@ -2,6 +2,8 @@
 
 # Devin in Phantom
 
+See [Phantom Bots](BOTS.md) for provider-neutral bot metadata and routing.
+
 ## Devin Review
 
 `phm devin review https://github.com/owner/repo/pull/123 --json` plans a
