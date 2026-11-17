@@ -12,6 +12,66 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## External bot seats
+
+`src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
+`SeatState`, `SeatHandoff` and `SeatOptions`. The strict on-disk roster schema is
+`phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
+Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
+provider, all others derive it. Secret handles are names only; secret-shaped
+metadata is rejected. Unknown quota has no numeric usage value.
+
+Exports:
+- `transitionSeatState(prev: SeatState, state: SeatState['state'], now: string): SeatState`
+  enforces active to draining to idle to active; invalid edges throw.
+- `nextSeatState(prev, {quota, openWork, now}): SeatState` is pure. Fresh measured
+  evidence below 100, newer than idle time and after any recorded exhausted
+  reset, permits reactivation. Unknown evidence does not change state.
+- `advisorySeatAdapter(seat: BotSeat, usage: () => Promise<QuotaEvidence>): SeatAdapter`
+  is inert; local is loopback-only.
+- `listSeats(opts?: SeatOptions)` returns `{schema:'phantom-bot-seats.v1', seats}`.
+  Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
+  claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
+  transitions may persist during listing; missing node stores stay missing.
+- `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
+  with measured quota. The module acquires no claims.
+- `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;
+  draining/idle map to idle. `phm agents bus id list` adds these as `participants`
+  without modifying stored identities, channels or authority.
+- `planSeatHandoff(id: string, opts?)` is a dry-run projection; active seats are
+  refused. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
+  `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
+  retries held releases on replay, declines node sessions and releases bus
+  claims by source. It returns `phantom-bot-handoff-plan.v1` with `apply`, state
+  and handoffs; apply handoffs include `notifications: {bus, owner}` statuses.
+  Durable notice receipts suppress repeated attempts; crashes before receipt
+  persistence retry with stable deduplication keys. Notification exceptions are
+  value-free statuses, not post-release exceptions.
+- `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
+  unified bus DMs or owner notices; unknown seats/secret-shaped text are refused.
+
+`SeatOptions` injects home, runs, clock, quota reader, node store, node-release
+port, owner-thread options, owner notice and bus post. Default coordination and
+node storage use canonical roots; owner defaults on apply use the same fixed
+settings/runs construction as the comms CLI and retain KILL/pause checks.
+Injected homes relocate storage for hermetic tests. Public handoff metadata
+uses unknown/null when evidence is unavailable; tokens are never serialized.
+
+`src/core/bots/devin-bot-adapter.ts` exports:
+- `devinQuota(read?: () => Promise<DevinUsageResult>): Promise<QuotaEvidence>`
+  maps the existing documented org-cycle consumption reader without guessing.
+- `createDevinBotAdapter(options?: {secretHandle?: string; readUsage?: () => Promise<QuotaEvidence>}): SeatAdapter`
+  exposes kind, message, status and usage. Status is unknown and messaging is
+  advisory (`no-documented-bot-messaging-api`); default messaging never makes a
+  network call. Missing/exhausted evidence refuses, and no evidence enables
+  paid execution. Usage source is `devin-api-v3-org-cycle`, not per-Bot quota.
+
+`GET /api/bots/seats` delegates to `listSeats()` through `handleBotTemplates`,
+returns 503 with a value-free error if unavailable, and disallows mutation
+methods. `/bots` consumes `botSeatsQuery` and renders accessible measured quota
+meters, unknown evidence, claims/jobs and handoffs; there is no web apply route.
+See [bot seats](docs/BOT-SEATS.md) for storage and API-gap boundaries.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`

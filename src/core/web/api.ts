@@ -26,6 +26,7 @@ import { passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
  *   GET /api/bots/templates    -> starter bot templates; GET /api/bots -> bots created from them
+ *   GET /api/bots/seats        -> external bot seats, quota evidence, claims and recent handoffs (no dispatch)
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):

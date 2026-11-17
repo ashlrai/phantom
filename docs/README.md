@@ -5,6 +5,7 @@
 # Phantom documentation
 
 - [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
+- [External bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md): unified roster, quota-driven draining, write-ahead handoffs and the Devin Bot advisory API gap.
 
 - [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
 
