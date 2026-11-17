@@ -181,18 +181,28 @@ describe('ci-receipt-retry-batch', () => {
       }
     });
 
-    it('skips bound entries and deduplicates by identity', () => {
+    it.each(['bound', 'failed', 'not-started'] as const)('rejects duplicate identities when the first entry is %s', (outcome) => {
       const report = buildBatchReport([
-        { repo: 'ashlrai/phantom', run: 991, attempt: 2, artifactName: 'ci-resume-receipts', outcome: 'bound', prior: null, reason: null },
+        { repo: 'ashlrai/phantom', run: 991, attempt: 2, artifactName: 'ci-resume-receipts', outcome, prior: null, reason: null },
         { repo: 'ashlrai/PHANTOM', run: 991, attempt: 2, artifactName: 'ci-resume-receipts', outcome: 'failed', prior: null, reason: 'timeout' },
       ]);
       const parsed = parseCiReceiptRetryBatchInput(report);
-      expect(parsed.ok).toBe(true);
-      if (parsed.ok) expect(parsed.targets).toHaveLength(1); // deduped by identity
+      expect(parsed).toEqual({ ok: false, reason: 'target_invalid' });
     });
   });
 
   describe('CLI', () => {
+    it('rejects duplicate report identities before any network call', async () => {
+      const report = buildBatchReport([
+        { repo: 'ashlrai/phantom', run: 991, attempt: 2, artifactName: 'ci-resume-receipts', outcome: 'bound', prior: null, reason: null },
+        { repo: 'ashlrai/PHANTOM', run: 991, attempt: 2, artifactName: 'ci-resume-receipts', outcome: 'failed', prior: null, reason: 'timeout' },
+      ]);
+      const calls: Call[] = [];
+      const result = await cli(LONG_ARGS, { gh: fakeGh([], calls), input: streamIn(report) });
+      expect(result.code).toBe(2);
+      expect(calls).toEqual([]);
+    });
+
     it('exits 2 on missing --stdin flag', async () => {
       const calls: Call[] = [];
       expect((await cli(['--timeout-ms', '60000', '--poll-ms', '250', '--json'],

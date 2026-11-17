@@ -25,6 +25,7 @@
  */
 
 import fs from 'node:fs';
+import { ancillaryStopReason, type AncillaryBudgetOptions, type AncillarySkipReason } from './ancillary-budget.js';
 import { appendHubEntry, hubStorePath } from '../genome/store.js';
 import { readDecisions, readDecisionsDetailed, recordDecision } from './decisions-ledger.js';
 import type { AshlrConfig, DecisionEntry, GenomeEntry } from '../types.js';
@@ -288,6 +289,7 @@ export interface RejectionLearningSweepResult {
   /** False when the decisions source was incomplete/degraded, or the
    *  candidate cap was hit — a hint the pass should be retried. */
   sourceComplete: boolean;
+  skippedReason?: AncillarySkipReason;
 }
 
 /**
@@ -310,14 +312,22 @@ export interface RejectionLearningSweepResult {
  */
 export function sweepRejectionLearning(
   cfg: AshlrConfig,
-  opts: { sinceMs?: number; listDecisions?: () => DecisionEntry[] } = {},
+  opts: { sinceMs?: number; listDecisions?: () => DecisionEntry[] } & AncillaryBudgetOptions = {},
 ): RejectionLearningSweepResult {
   const result: RejectionLearningSweepResult = {
     scanned: 0, written: 0, skipped: 0, sourceComplete: true,
   };
+  const interrupted = (): boolean => {
+    const reason = ancillaryStopReason(opts);
+    if (!reason) return false;
+    result.skippedReason = reason;
+    result.sourceComplete = false;
+    return true;
+  };
   try {
     const foundry = cfg.foundry as Record<string, unknown> | undefined;
     if (foundry?.['selfImprove'] !== true) return result;
+    if (interrupted()) return result;
 
     let decisions: DecisionEntry[];
     if (typeof opts.listDecisions === 'function') {
@@ -347,6 +357,7 @@ export function sweepRejectionLearning(
     // superseded.
     const latestJudged = new Map<string, DecisionEntry>();
     for (const entry of decisions) {
+      if (interrupted()) return result;
       if (entry.action !== 'judged') continue;
       const existing = latestJudged.get(entry.proposalId);
       if (!existing || Date.parse(entry.ts) > Date.parse(existing.ts)) {
@@ -355,11 +366,13 @@ export function sweepRejectionLearning(
     }
     const latestRejection = new Map<string, DecisionEntry>();
     for (const [proposalId, entry] of latestJudged) {
+      if (interrupted()) return result;
       if (isConsideredRejection(entry)) latestRejection.set(proposalId, entry);
     }
 
     let inspected = 0;
     for (const [proposalId, entry] of latestRejection) {
+      if (interrupted()) return result;
       if (inspected >= MAX_REJECTION_SWEEP_CANDIDATES) {
         result.sourceComplete = false;
         break;
@@ -378,6 +391,7 @@ export function sweepRejectionLearning(
         }
         if (existing.some((row) => row.action === 'self-improve:written')) continue;
 
+        if (interrupted()) return result;
         if (learnFromRejection(proposalId, '', entry.verdict ?? 'review', '', cfg)) {
           result.written++;
         } else {
@@ -387,6 +401,7 @@ export function sweepRejectionLearning(
         result.skipped++;
       }
     }
+    interrupted();
     return result;
   } catch {
     return result;

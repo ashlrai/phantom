@@ -20,7 +20,7 @@ import { defaultReleasePublicReader, discoverLatestRelease, parseProposedRelease
   type ProposedRelease, type PublishedReleaseFacts, type ReleasePublicReader } from './release-public-facts.js';
 import { desktopUpdateProfileForPackage } from './desktop/update-manifest.js';
 
-export const RELEASE_ARTICLE_REPO = 'ashlrai/ashlar-landing';
+export const RELEASE_ARTICLE_REPO = 'ashlrai/ashlr-landing';
 export const RELEASE_TEASER_REPO = 'ashlrai/phantom-secrets';
 export type ArticleState = 'pending-public-verification' | 'blocked-repository-authority' | 'ready' | 'enqueueing' | 'queued' | 'awaiting-production' | 'published';
 export interface ArticleRecord {

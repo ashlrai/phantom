@@ -1,7 +1,35 @@
 /** Shared child-process PATH construction and verification memory budgets. */
 import { availableParallelism, freemem } from 'node:os';
-import { closeSync, fstatSync, mkdtempSync, openSync, readSync, rmSync, writeFileSync, constants } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { closeSync, fstatSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeFileSync, constants } from 'node:fs';
+import { delimiter, dirname, join, resolve } from 'node:path';
+
+export interface ExecutableResolution {
+  path: string;
+  source: 'path' | 'well-known';
+}
+
+/** Metadata only; does not launch binaries or inspect authentication. */
+export function resolveExecutable(name: string, opts: {
+  pathValue?: string; home?: string; execPath?: string;
+} = {}): ExecutableResolution | null {
+  if (!name || name.includes('/')) return null;
+  const home = opts.home ?? process.env.HOME ?? '';
+  const groups = [
+    { source: 'path' as const, dirs: (opts.pathValue ?? process.env.PATH ?? '').split(delimiter).filter(Boolean) },
+    { source: 'well-known' as const, dirs: [...commonToolBinPaths(home),
+      ...(home ? [join(home, '.npm-global', 'bin')] : []), dirname(opts.execPath ?? process.execPath)] },
+  ];
+  for (const { source, dirs } of groups) {
+    for (const dir of dirs) {
+      const path = resolve(dir, name);
+      try {
+        const metadata = statSync(path);
+        if (metadata.isFile() && (metadata.mode & 0o111) !== 0) return { path, source };
+      } catch { /* Absent or inaccessible candidate. */ }
+    }
+  }
+  return null;
+}
 
 export function commonToolBinPaths(home = process.env.HOME ?? process.env.USERPROFILE ?? ''): string[] {
   return [

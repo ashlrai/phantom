@@ -51,6 +51,7 @@ const fakes = (): StatusDigestSources => ({
   needs: () => ({ status: 'available', items: [] }),
   inbox: async () => ({ sourceState: 'healthy', entries: [] }),
   workClaims: () => ({ source: 'missing', claims: [] }),
+  nodeRuns: undefined, // the Node runs line postdates this suite's line counts
 });
 
 describe('buildStatusDigest claims line', () => {

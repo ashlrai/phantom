@@ -5,6 +5,7 @@ import { realHome } from '../real-home.js';
 import type { AshlrConfig } from '../types.js';
 import { chatDbPath, imessageAllowlist, isSelfIMessageHandle, readOnlyUri } from '../integrations/imessage.js';
 import { checkSendPolicy, parseCommsConfirmation, parseTeamIdentities } from '../agents/channel-policy.js';
+import { killSwitchOn } from '../sandbox/policy.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { isPaused } from './pause.js';
 import { senderIdFor } from './imessage-teammate-inbox.js';
@@ -26,7 +27,7 @@ function readConfig(name: string, options: TeamTransportOptions): string {
 
 /** Raw handles are resolved only from local configuration, never a message body. */
 export function approvedTeammateHandle(senderId: string, cfg: AshlrConfig, options: TeamTransportOptions = {}): string | null {
-  if (cfg.comms?.enabled !== true || isPaused()) return null;
+  if (cfg.comms?.enabled !== true || isPaused() || killSwitchOn()) return null;
   const handle = imessageAllowlist(cfg).find(value => senderIdFor(value) === senderId && !isSelfIMessageHandle(value, cfg));
   if (!handle) return null;
   const decision = checkSendPolicy({ channel: 'imessage', recipients: [senderId], external: false,

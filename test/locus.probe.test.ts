@@ -7,6 +7,10 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import * as locus from '../src/core/integrations/locus.js';
+import * as actionLedger from '../src/core/fleet/agent-action-ledger.js';
+import * as engines from '../src/core/run/engines.js';
+import { runApiModelSandboxed } from '../src/core/run/sandboxed-engine.js';
 import {
   REQUIRED_SERVERS,
   parseStatusOneline,
@@ -724,35 +728,20 @@ describe('pre-mutate gate call sites (LOCUS_ENFORCE)', () => {
   });
 
   it('runApiModelSandboxed refuses when enforce blocks (bypasses spawnEngine)', async () => {
-    vi.doMock('../src/core/integrations/locus.js', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('../src/core/integrations/locus.js')>();
-      return {
-        ...actual,
-        applyLocusPreMutateGate: () => ({
-          allow: false,
-          mode: 'enforce' as const,
-          blockers: ['pin unhealthy: unpinned (unpinned)'],
-          shouldWarn: false,
-          gateOk: false,
-          status_oneline: 'unpinned',
-        }),
-      };
+    // Load the engine graph during collection, outside this test's 5s budget.
+    // The refusal itself is immediate; a cold dynamic import dominated it.
+    const gate = vi.spyOn(locus, 'applyLocusPreMutateGate').mockReturnValue({
+      allow: false,
+      mode: 'enforce',
+      blockers: ['pin unhealthy: unpinned (unpinned)'],
+      shouldWarn: false,
+      gateOk: false,
+      status_oneline: 'unpinned',
     });
     // Avoid ledger FS writes when recording the failed action.
-    vi.doMock('../src/core/fleet/agent-action-ledger.js', async (importOriginal) => {
-      const actual = await importOriginal<
-        typeof import('../src/core/fleet/agent-action-ledger.js')
-      >();
-      return {
-        ...actual,
-        recordAgentAction: () => {},
-      };
-    });
-
-    const mod = await import(
-      '../src/core/run/sandboxed-engine.js?locus-gate=' + randomUUID()
-    );
-    const result = await mod.runApiModelSandboxed(
+    vi.spyOn(actionLedger, 'recordAgentAction').mockImplementation(() => {});
+    const spawn = vi.spyOn(engines, 'spawnEngine').mockRejectedValue(new Error('unexpected engine spawn'));
+    const result = await runApiModelSandboxed(
       'local-coder',
       'test goal',
       {} as never,
@@ -761,6 +750,8 @@ describe('pre-mutate gate call sites (LOCUS_ENFORCE)', () => {
     expect(result.state.status).toBe('failed');
     expect(result.state.result).toMatch(/locus pre-mutate|unpinned/);
     expect(result.proposalOutcome?.kind).toBe('engine-failed-no-diff');
+    expect(gate).toHaveBeenCalledOnce();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('runApiModelSandboxed proceeds past gate when mode=off (mock allow)', async () => {

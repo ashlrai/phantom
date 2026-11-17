@@ -125,9 +125,12 @@ import type { RetryPolicy } from '../types.js';
  * Run `fn` with bounded exponential backoff.
  * - `fn` receives the 1-based attempt number.
  * - Retries ONLY while isRetryable(err) is true AND attempts < policy.maxAttempts.
- * - Backoff delay = policy.baseDelayMs * 2^(attempt-1) (bounded by maxAttempts; no jitter required).
+ * - Backoff delay = policy.baseDelayMs * 2^(attempt-1), capped at 30 seconds (no jitter).
+ * - Snapshots the policy before callbacks run; later mutations do not change the run.
+ * - Rejects invalid policies with RangeError before invoking either callback:
+ *   maxAttempts must be a positive safe integer; baseDelayMs must be finite and non-negative.
  * - Rethrows the last error when attempts are exhausted or the error is non-retryable.
- * - Bounded by construction: NEVER loops more than policy.maxAttempts times.
+ * - Bounded by construction: NEVER loops more than the initial maxAttempts times.
  */
 export async function withRetry<T>(
   fn: (attempt: number) => Promise<T>,

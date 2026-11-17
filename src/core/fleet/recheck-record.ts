@@ -2,21 +2,25 @@
  * core/fleet/recheck-record.ts: retained, sanitized as-of evidence for
  * `ashlr fleet recheck`. Projects a FleetRecheck verdict to a small row (no
  * claim task text, no message bodies) plus bounded per-section missing[]
- * reason lists and the task.lastVerified {id, owner, asOf} evidence triple,
- * and appends it to `<root>/fleet/recheck-log.jsonl`, capped at
+ * reason lists, the task.lastVerified {id, owner, asOf} evidence triple and
+ * bounded tailnet computer evidence (counts over every peer seen, up to
+ * RECHECK_TAILNET_PEERS_MAX {name, online} peers), and appends it to
+ * `<root>/fleet/recheck-log.jsonl`, capped at
  * 500 lines. Takes no lock beyond the atomic rename, sends nothing, and
  * grants no authority. Never throws.
  */
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetRecheck } from './fleet-recheck.js';
-import { sanitizeIdentityText } from './runtime-identity.js';
+import { sanitizeIdentityText, UNKNOWN } from './runtime-identity.js';
 
 export const RECHECK_RECORD_SCHEMA = 'fleet.recheck-record.v1';
 export const RECHECK_LOG_MAX_LINES = 500;
 /** Per-list reason cap and per-reason character cap, applied at record time. */
 export const RECHECK_MISSING_MAX = 8;
 export const RECHECK_REASON_MAX = 160;
+/** Peers listed in the retained tailnet block, matching the verdict cap. */
+export const RECHECK_TAILNET_PEERS_MAX = 8;
 
 /** Bounded, sanitized missing-reason evidence: why the verdict did not verify.
  * Lists mirror the verdict's own missing[] fields (overall is the flattened
@@ -29,13 +33,30 @@ export interface RecheckMissing {
   task: string[];
 }
 
+/** Bounded tailnet computer evidence: online/offline/unknown counts over
+ * every peer the verdict saw, plus the first RECHECK_TAILNET_PEERS_MAX
+ * listed peers as {name, online}. Addresses, OS, lastSeen, self and reasons
+ * are never copied. */
+export interface RecheckTailnet {
+  online: number;
+  offline: number;
+  unknown: number;
+  peers: { name: string; online: boolean | 'unknown' }[];
+}
+
 export interface RecheckRecord {
   schema: typeof RECHECK_RECORD_SCHEMA;
   asOf: string;
   overall: string;
   sections: {
     runtime: { state: string; host: string; installedVersion: string; asOf: string };
-    claims: { state: string; active: number | null; asOf: string };
+    claims: {
+      state: string;
+      /** Live-claim count from the verdict; null when the ledger was
+       * unreadable. Writes and reads both require a non-negative integer. */
+      active: number | null;
+      asOf: string;
+    };
     bridge: { state: string; missingBridge: string | null; asOf: string };
     task: {
       state: string; id: string | null; owner: string | null; claimReceipt: string | null; asOf: string;
@@ -46,6 +67,9 @@ export interface RecheckRecord {
     };
     /** Reason evidence; null on rows recorded before reasons were retained. */
     missing: RecheckMissing | null;
+    /** Computer evidence; null on rows recorded before tailnet was retained
+     * or when the verdict's tailnet block was absent or malformed. */
+    tailnet?: RecheckTailnet | null;
   };
 }
 
@@ -80,20 +104,65 @@ function boundLastVerified(lv: FleetRecheck['sections']['task']['lastVerified'])
   };
 }
 
+/** Bounded tailnet computer evidence: non-negative integer counts over every
+ * peer seen, then the first RECHECK_TAILNET_PEERS_MAX peers as {name,
+ * online} with each name capped like a reason. A peer entry that is not a
+ * {string name, online flag} pair is dropped like a bad reason; counts that
+ * are not all non-negative integers, a peers field that is not a list, or an
+ * absent block collapses the whole field to null. ageSeconds, self, asOf and
+ * reasons are deliberately not copied — the row names which computers were
+ * online, not how that was seen. */
+function boundTailnet(t: FleetRecheck['tailnet']): RecheckTailnet | null {
+  if (t === null || t === undefined || typeof t !== 'object') return null;
+  const count = (v: unknown): number | null =>
+    (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null);
+  const online = count(t.online);
+  const offline = count(t.offline);
+  const unknown = count(t.unknown);
+  if (online === null || offline === null || unknown === null || !Array.isArray(t.peers)) return null;
+  const peers: RecheckTailnet['peers'] = [];
+  for (const p of t.peers) {
+    if (peers.length >= RECHECK_TAILNET_PEERS_MAX) break;
+    if (typeof p !== 'object' || p === null) continue;
+    const name = (p as { name?: unknown }).name;
+    const on = (p as { online?: unknown }).online;
+    if (typeof name !== 'string' || name === '' || (on !== true && on !== false && on !== 'unknown')) continue;
+    peers.push({ name: name.slice(0, RECHECK_REASON_MAX), online: on });
+  }
+  return { online, offline, unknown, peers };
+}
+
+/** Stored string-or-null evidence: anything that is not a string collapses to
+ * null so a malformed verdict can never write a wrong-typed row. */
+const textOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/** Stored claims.active evidence: a non-negative integer count or null. */
+const activeOrNull = (v: unknown): number | null =>
+  (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null);
+
 /** Projection only: nothing beyond the named fields is copied from the verdict. */
 export function projectRecheck(r: FleetRecheck): RecheckRecord {
   const { runtime, claims, bridge, task } = r.sections;
+  const boardTask = task.task ?? null;
   return {
     schema: RECHECK_RECORD_SCHEMA,
     asOf: r.asOf,
     overall: r.overall.state,
     sections: {
-      runtime: { state: runtime.state, host: runtime.host, installedVersion: runtime.installedVersion, asOf: runtime.asOf },
-      claims: { state: claims.state, active: claims.active, asOf: claims.asOf },
-      bridge: { state: bridge.state, missingBridge: bridge.missingBridge, asOf: bridge.asOf },
+      runtime: {
+        state: runtime.state,
+        host: textOrNull(runtime.host) ?? UNKNOWN,
+        installedVersion: textOrNull(runtime.installedVersion) ?? UNKNOWN,
+        asOf: runtime.asOf,
+      },
+      claims: { state: claims.state, active: activeOrNull(claims.active), asOf: claims.asOf },
+      bridge: { state: bridge.state, missingBridge: textOrNull(bridge.missingBridge), asOf: bridge.asOf },
       task: {
-        state: task.state, id: task.task?.id ?? null, owner: task.task?.owner ?? null,
-        claimReceipt: task.task?.claimReceipt ?? null, asOf: task.asOf,
+        state: task.state,
+        id: textOrNull(boardTask?.id),
+        owner: textOrNull(boardTask?.owner),
+        claimReceipt: textOrNull(boardTask?.claimReceipt),
+        asOf: task.asOf,
         lastVerified: boundLastVerified(task.lastVerified),
       },
       missing: {
@@ -103,6 +172,7 @@ export function projectRecheck(r: FleetRecheck): RecheckRecord {
         bridge: boundReasons(bridge.missing),
         task: boundReasons(task.missing),
       },
+      tailnet: boundTailnet(r.tailnet),
     },
   };
 }
@@ -173,15 +243,54 @@ function isLastVerifiedField(v: unknown): boolean {
   return typeof lv.id === 'string' && typeof lv.owner === 'string' && typeof lv.asOf === 'string';
 }
 
+/** Stored tailnet evidence: absent on pre-352 rows, null, or the bounded
+ * {online, offline, unknown, peers[]} block where every peer is a {string
+ * name, online flag} pair. Anything else marks the row malformed. */
+function isTailnetField(v: unknown): boolean {
+  if (v === undefined || v === null) return true;
+  if (typeof v !== 'object') return false;
+  const t = v as Record<string, unknown>;
+  const count = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 0;
+  if (!count(t['online']) || !count(t['offline']) || !count(t['unknown']) || !Array.isArray(t['peers'])) return false;
+  return (t['peers'] as unknown[]).every(p =>
+    typeof p === 'object' && p !== null
+    && typeof (p as Record<string, unknown>)['name'] === 'string'
+    && ((p as Record<string, unknown>)['online'] === true
+      || (p as Record<string, unknown>)['online'] === false
+      || (p as Record<string, unknown>)['online'] === 'unknown'));
+}
+
 function isRecord(v: unknown): v is RecheckRecord {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
-  const s = o.sections as Record<string, unknown> | undefined;
-  return o.schema === RECHECK_RECORD_SCHEMA && typeof o.asOf === 'string' && typeof o.overall === 'string'
-    && typeof s === 'object' && s !== null
-    && ['runtime', 'claims', 'bridge', 'task'].every(k => typeof (s[k] as Record<string, unknown> | undefined)?.state === 'string')
-    && (s['missing'] === undefined || s['missing'] === null || isMissing(s['missing']))
-    && isLastVerifiedField((s['task'] as Record<string, unknown> | undefined)?.['lastVerified']);
+  const s = o.sections;
+  if (o.schema !== RECHECK_RECORD_SCHEMA || typeof o.asOf !== 'string' || typeof o.overall !== 'string'
+    || typeof s !== 'object' || s === null) return false;
+  const sections = s as Record<string, unknown>;
+  const part = (key: string): Record<string, unknown> | undefined => {
+    const x = sections[key];
+    return typeof x === 'object' && x !== null ? x as Record<string, unknown> : undefined;
+  };
+  const runtime = part('runtime');
+  const claims = part('claims');
+  const bridge = part('bridge');
+  const task = part('task');
+  if (runtime === undefined || claims === undefined || bridge === undefined || task === undefined) return false;
+  const nullableString = (x: unknown): boolean => x === null || typeof x === 'string';
+  const active = claims['active'];
+  return typeof runtime['state'] === 'string'
+    && typeof runtime['host'] === 'string' && typeof runtime['installedVersion'] === 'string'
+    && typeof runtime['asOf'] === 'string'
+    && typeof claims['state'] === 'string'
+    && (active === null || (typeof active === 'number' && Number.isInteger(active) && active >= 0))
+    && typeof claims['asOf'] === 'string'
+    && typeof bridge['state'] === 'string' && nullableString(bridge['missingBridge'])
+    && typeof bridge['asOf'] === 'string'
+    && typeof task['state'] === 'string' && nullableString(task['id']) && nullableString(task['owner'])
+    && nullableString(task['claimReceipt']) && typeof task['asOf'] === 'string'
+    && isLastVerifiedField(task['lastVerified'])
+    && (sections['missing'] === undefined || sections['missing'] === null || isMissing(sections['missing']))
+    && isTailnetField(sections['tailnet']);
 }
 
 /** Newest-first rows; unreadable or malformed lines are counted, not thrown. */
@@ -202,6 +311,7 @@ export function readRecheckRecords(root: string, last: number): ReadRecords {
       if (isRecord(v)) {
         v.sections.missing ??= null;
         v.sections.task.lastVerified ??= null;
+        v.sections.tailnet ??= null;
         rows.push(v);
       } else skipped++;
     } catch { skipped++; }

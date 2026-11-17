@@ -9,7 +9,7 @@
 #   pick     restock.py --dry-run (subprocess)
 # Use --dispatchd/--disk/--restock to point at another copy for before/after diffs,
 # and --profile to run one tick under cProfile and print the top cumulative rows.
-import argparse, cProfile, importlib.util, io, json, os, pstats, statistics, subprocess, sys, tempfile, time
+import argparse, importlib.util, io, json, os, pstats, statistics, subprocess, sys, tempfile, time
 from pathlib import Path
 
 MAC = Path(__file__).resolve().parent                      # contrib/mac

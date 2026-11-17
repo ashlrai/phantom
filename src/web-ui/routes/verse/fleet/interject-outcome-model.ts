@@ -21,8 +21,8 @@ function prNumber(job: OrderTraceJob): string | null {
 function contractOf(entryAt: string, job: OrderTraceJob | undefined, trace: OrderTraceV1 | null, nowIso: string): InterjectOutcome['contract'] {
   const evidence: WorkItemEvidence = { id: job?.id ?? entryAt };
   if (!job) {
-    const ms = Date.parse(entryAt);
-    const at = Number.isNaN(ms) ? parseInboxAt(entryAt, Date.parse(nowIso)) : ms;
+    const at = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(entryAt)
+      ? parseInboxAt(entryAt, Date.parse(nowIso)) : Date.parse(entryAt);
     if (at !== null && !Number.isNaN(at)) evidence.receivedAt = new Date(at).toISOString();
   } else {
     if (job.lane) evidence.owner = job.lane;

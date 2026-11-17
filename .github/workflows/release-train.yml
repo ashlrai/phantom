@@ -1,11 +1,11 @@
-# Continuous release train. Cuts at most hourly, builds the tagged SHA, and
+# Continuous release train. Wakes every five minutes, builds the tagged SHA, and
 # resumes the sanctioned attest and npm workflows. Signing and notarization
 # stay on the Mac wrapper. KILL fails closed. See docs/RELEASING.md.
 name: Release train
 
 on:
   schedule:
-    - cron: '7 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
   workflow_run:
     workflows: ["Release PR", "Auto-tag", "CI"]
@@ -57,6 +57,9 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
+      # Admitted candidates dispatch dependency-audit.yml on the tag ref
+      # (vX.Y.Z) from this step, using the job GITHUB_TOKEN. That is the
+      # tag-ref audit the Mac autorun reads for the release SHA.
       - name: Plan and apply the release train
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { FablePlan } from '../routing/fable-orchestrator.js';
+import type { LaneHistory } from '../usage/resource-live/types.js';
 import { FABLE_ORCHESTRATOR_MODEL } from '../routing/fable-orchestrator.js';
 /**
  * Pure world-model projection. Callers pass readings they already have.
@@ -16,9 +17,10 @@ import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type F
 export const MAX_STALE_INTENT_SPOTS = 20;
 const INTENT_SOURCE = 'ashlr.intent-ledger/v1';
 
-const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and runwayHours on usage.sensors.v1. Those keys are absent, so pace stays unknown.';
+const PACE_NEED = 'pacePerHour, requiredPacePerHour, and runwayHours (RQ-SENSORS-PACE-1) come from the burn-down plan in state/resource-live.json. They need a fresh plan, a known reset, and two readings in one window, so pace stays unknown until then.';
 
 export interface WorldProjectInput {
+  laneHistory?: Record<string, LaneHistory>;
   nowMs: number;
   fablePlan?: FablePlan;
   sensors: UsageSensorReport | null;
@@ -126,7 +128,8 @@ export function blindSpotsFrom(model: Omit<WorldModel, 'blindSpots'>): { spots: 
   const walk = (node: unknown, path: string): void => {
     if (isField(node)) {
       if (node.freshness === 'fresh') fresh += 1;
-      else spots.push({ id: stableFieldId(path), path, freshness: node.freshness, need: needFor(path) });
+      // Not at zero is the normal state; its absence is not a blind spot.
+      else if (!path.endsWith('.zeroCapacityUntil')) spots.push({ id: stableFieldId(path), path, freshness: node.freshness, need: needFor(path) });
       return;
     }
     if (Array.isArray(node)) {
@@ -167,7 +170,14 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       }
       return reading(value, source ?? 'usage.sensors.v1', observedAt, 'fresh');
     };
-    const remaining = laneNumber(lane.remaining);
+    const remaining = lane.zeroCapacityUntil
+      ? reading(0, source ?? 'usage.sensors.v1', observedAt, 'fresh')
+      : laneNumber(lane.remaining);
+    const resetKnown = lane.resetAt !== null && Date.parse(lane.resetAt) > input.nowMs;
+    const resetAt = resetKnown ? reading(lane.resetAt, source ?? 'usage.sensors.v1', observedAt, 'fresh') : unknown<string>(source ?? 'usage.sensors.v1');
+    const zeroCapacityUntil = lane.zeroCapacityUntil
+      ? reading(lane.zeroCapacityUntil, source ?? 'usage.sensors.v1', observedAt, 'fresh')
+      : unknown<string>(source ?? 'usage.sensors.v1');
     const burnRate = laneNumber(lane.burnRate);
     const idleIncludedWastedPerWeek = laneNumber(lane.idleIncludedWastedPerWeek);
     const paceFreshness: Freshness = fresh ? 'fresh' : 'unknown';
@@ -181,7 +191,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
     const paceHour = paceField(pacePerHour);
     const required = paceField(requiredPacePerHour);
     const runway = paceField(runwayHours);
-    return { lane: lane.lane, headroom, used, limit, remaining, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
+    return { lane: lane.lane, ...(input.laneHistory?.[lane.lane] ? { history: input.laneHistory[lane.lane] } : {}), headroom, used, limit, remaining, resetAt, zeroCapacityUntil, burnRate, idleIncludedWastedPerWeek, pacePerHour: paceHour, requiredPacePerHour: required, runwayHours: runway };
   });
   if (input.fablePlan) {
     const plan = input.fablePlan;
@@ -192,6 +202,7 @@ export function projectWorldModel(input: WorldProjectInput): WorldModel {
       fableOverallWeeklyUsedPercent: percent(plan.fableOverallWeeklyUsedPercent),
       used: percent(plan.fableOverallWeeklyUsedPercent), limit: percent(plan.fableOverallWeeklyUsedPercent === null ? null : 100),
       remaining: percent(plan.fableOverallWeeklyUsedPercent === null ? null : Math.max(0, plan.sharePercent - plan.fableOverallWeeklyUsedPercent)),
+      resetAt: unknown<string>('claude-usage'), zeroCapacityUntil: unknown<string>('claude-usage'),
       headroom: unknown('claude-usage'), burnRate: unknown('claude-usage'), idleIncludedWastedPerWeek: unknown(),
       pacePerHour: unknown(), requiredPacePerHour: unknown(), runwayHours: unknown() });
   }

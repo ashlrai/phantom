@@ -16,7 +16,8 @@ describe('leader daily brief', () => {
     expect(text).toContain('merged feature');
     expect(text).toContain('2FA required');
     expect(text).not.toContain('review a PR');
-    expect(text).toContain('claude weeklyPct=42% (held)');
+    expect(text).toContain('claude weeklyPct=42%');
+    expect(text).not.toContain('(held)');
     expect(text).toContain('Improve routing [p-1]');
   });
   it('reports unavailable sources without claiming empty results', async () => {
