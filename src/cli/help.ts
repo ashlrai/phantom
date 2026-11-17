@@ -206,6 +206,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
   { usage: 'phm jobs retry-empty --dry-run|--apply [--file <router-queue.md>] [--json]', description: 'Preview or queue one scoped retry per eligible empty job.', safety: 'append', jsonShape: 'jobs.retry-empty.v1 {applied,lines}' },
+  { usage: 'phm empties [--since 24h] [--text] [--metrics <file>] [--runs-dir <directory>] [--notes-dir <directory>]', description: 'Why jobs finished with no change, grouped by reason, with share of all finishes, tokens, the lanes and job families most affected and one next step each. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'empties.v1 {since_hours,metrics_path,metrics,finishes,empties,empty_share,tokens,tokens_unknown_jobs,malformed_lines,notes_missing,reasons:[{reason,label,count,share_of_finishes,tokens,tokens_unknown_jobs,lanes,prefixes,examples,next_step}]}' },
   { usage: 'phm jobs empty [--since 24h] [--json]', description: 'Explain empty jobs from local notes and logs.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs}' },
   {
     usage: 'phm metrics ingest --jobs <jobs.jsonl> --status <status.json> [--json]',
@@ -844,6 +845,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
+  { cmd: 'empties [--since 24h] [--text]', desc: 'Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.', topic: 'observability' },
   { cmd: 'jobs empty [--since 24h] [--json]', desc: 'Explain empty jobs from local notes and logs.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },

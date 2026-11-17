@@ -24,7 +24,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (jobs, radar, observe, …)
+    observability   Observability - cost, telemetry, audit (empties, jobs, radar, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -295,6 +295,7 @@ Phantom - every command (phm or ashlr)
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
+    empties [--since 24h] [--text]                                                             Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     jobs empty [--since 24h] [--json]                                                          Explain empty jobs from local notes and logs.
     radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                           Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
@@ -310,7 +311,7 @@ Phantom - every command (phm or ashlr)
     router serve|models|pick|config [--json]                                                   Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
     worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                             Show job launches, finishes and merges from the jobs ledger.
-    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]             Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
+    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]       Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                      Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
     signals [--json]                                                                           Read real repository adoption signals.
     radar list|run|diff [--json]                                                               Observe public docs and package metadata; GET only, six-hour per-source floor.

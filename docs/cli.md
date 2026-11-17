@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (jobs, radar, observe, …)
+    observability   Observability - cost, telemetry, audit (empties, jobs, radar, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -218,7 +218,7 @@ Every command, grouped by topic.
     authority ledger verify|tail                                                                                                                                  Verify or read the hash-chained authority ledger (~/.ashlr/authority/ledger.jsonl).
     authority protect --print|--apply                                                                                                                             Print (or apply after confirmation) the GitHub rulesets for the grant's server-enforced repos.
     authority setup [--dry-run [--json]]                                                                                                                          Guided Phase 0: custody key, trust-root PR, GitHub App, Claude token, canary, rulesets, first grant, switch, daemon service - asks before every step; --dry-run --json prints the checklist as JSON.
-    feed [--json] [--limit N]                                                                                                                                     Read recent fleet events, newest first; unavailable sources remain unknown.
+    feed [--json] [--since 1h] [--limit N]                                                                                                                        Read merges, release announcements, blocked jobs and Leader replies with times and links, newest first.
     leader show|run|tick|veto                                                                                                                                     The Leader (Visionary): show the latest memo and actions, run it now, apply due class-B actions (tick), veto an action or a whole memo (--memo).
     org show|join|plan [--file <org.toml>] [--json]                                                                                                               Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.
     leader status|ask|org|assign [--json]                                                                                                                         Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.
@@ -308,6 +308,7 @@ Every command, grouped by topic.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
+    empties [--since 24h] [--text]                                                             Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     jobs empty [--since 24h] [--json]                                                          Explain empty jobs from local notes and logs.
     radar list|run|diff [--json]                                                               Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                           Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
@@ -323,7 +324,7 @@ Every command, grouped by topic.
     router serve|models|pick|config [--json]                                                   Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                    Compare recorded router predictions with outcomes and usage.
     worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]                             Show job launches, finishes and merges from the jobs ledger.
-    library list [--json]                                                                      List leader files. Read-only.
+    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]       Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                      Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
     signals [--json]                                                                           Read real repository adoption signals.
     radar list|run|diff [--json]                                                               Observe public docs and package metadata; GET only, six-hour per-source floor.
