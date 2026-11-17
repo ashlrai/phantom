@@ -696,10 +696,14 @@ export class DevinClient {
    */
   async downloadAttachment(orgId: string, uuid: string, name: string, maxBytes: number): Promise<Buffer> {
     const org = checkOrg(orgId);
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uuid) || !/^[A-Za-z0-9._-]{1,255}$/.test(name) || name.includes('..')) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uuid) || typeof name !== 'string' || name.length < 1 || name.length > 255
+      || name.includes('/') || name.includes('\\') || name === '..' || name.includes('\0')) {
       throw new DevinApiError('invalid-request', 'That is not a Devin attachment.');
     }
-    let url = `${this.baseUrl}/organizations/${encodeURIComponent(org)}/attachments/${encodeURIComponent(uuid)}/${encodeURIComponent(name)}`;
+    let nameSegment: string;
+    try { nameSegment = encodeURIComponent(name); }
+    catch { throw new DevinApiError('invalid-request', 'That is not a Devin attachment.'); }
+    let url = `${this.baseUrl}/organizations/${encodeURIComponent(org)}/attachments/${encodeURIComponent(uuid)}/${nameSegment}`;
     let headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
     for (let hop = 0; hop < 3; hop += 1) {
       const controller = new AbortController();
