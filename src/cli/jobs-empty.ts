@@ -1,8 +1,9 @@
 import { EMPTY_CLASSES, readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs empty [--json] [--since <hours>h] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
+const usage = 'Usage: phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
 export async function cmdJobs(args: string[]): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
+  if (args[0] === 'state') return cmdJobsState(args.slice(1));
   if (args[0] === 'retry-empty') return (await import('./jobs-retry-empty.js')).cmdJobsRetryEmpty(args.slice(1));
   if (args[0] !== 'empty') { console.error(usage); return 2; }
   let hours = 24;
@@ -23,6 +24,22 @@ export async function cmdJobs(args: string[]): Promise<number> {
     console.log(`${report.total} empty jobs in the last ${hours} hours`);
     for (const kind of EMPTY_CLASSES) console.log(`${kind}: ${report.counts[kind]}`);
     for (const job of report.jobs) console.log(`${job.id} (${job.lane}): ${job.reason}`);
+  }
+  return 0;
+}
+
+async function cmdJobsState(args: string[]): Promise<number> {
+  const json = args.includes('--json');
+  const rest = args.filter(a => a !== '--json');
+  if (rest.length !== 1 || rest[0]!.startsWith('-')) { console.error(usage); return 2; }
+  const { readJobState } = await import('../core/fleet/job-state.js');
+  let state;
+  try { state = await readJobState(rest[0]!); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); return 2; }
+  if (json) console.log(JSON.stringify(state));
+  else {
+    const result = state.result ? (state.result.kind === 'pr' ? `; result PR ${state.result.url}` : '; result empty') : '';
+    console.log(`${state.job}: ${state.state}${result}`);
+    for (const line of state.evidence) console.log(`- ${line}`);
   }
   return 0;
 }
