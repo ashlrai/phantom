@@ -1352,6 +1352,11 @@ export async function handleApi(
     }
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
     if (path.startsWith('/api/bots') && ctx.botTemplatesApi && await ctx.botTemplatesApi(req, res, ctx)) return true;
+    if (path === '/api/usage/lanes' && method === 'GET') {
+      const { readLaneAllowance } = await import('../usage/lane-allowance.js');
+      sendJson(res, 200, await readLaneAllowance());
+      return true;
+    }
     if (path === '/api/usage/spend' && method === 'GET') {
       const { readUsageSpend } = await import('../usage/spend.js');
       sendJson(res, 200, await readUsageSpend());
