@@ -155,7 +155,7 @@ effect on Phantom. Rows exclude task content, owner, and credentials.
 
 Companions install separately. Each has its own capabilities and authorization boundaries.
 
-The repo's `.mcp.json` declares five companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `ashlr`. Registration does not prove readiness; see the [toolchain guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md) for limits and approvals.
+The repo's `.mcp.json` declares six companion MCP servers: `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7`, `ashlr`. Registration does not prove readiness; see the [toolchain guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md) for limits and approvals.
 
 | Project | Purpose |
 | --- | --- |
