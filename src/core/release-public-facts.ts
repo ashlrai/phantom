@@ -292,6 +292,10 @@ const COMBINED_COMPLETE_CI_WORKFLOW_SHA256 = new Set([
 // never qualify a release. Exact bytes only.
 const COMBINED_COMPLETE_CI_WORKFLOW_SCAN_SHA256 = new Set([
   '071527b2a95fc6845d93dd2088e22e83e977eb006b99ccf8650a65e9a379f4cc',
+  // Same combined scan topology after the half-hour release cron was removed
+  // and Quick's Core no-emit type check was limited to master pushes.
+  // Exact bytes only. A skipped or failed secret scan still cannot qualify.
+  '963bdf97974d8bc707049bb5b7eb4f0c30e9f91b297830398b2393df0c8a0ccb',
 ]);
 const completeSkippedJobs = (topology: CiAncillaryTopology): readonly string[] => isCombinedTopology(topology)
   ? COMPLETE_SKIPPED_JOBS.filter(name => name !== 'Prepare unsigned desktop release') : COMPLETE_SKIPPED_JOBS;

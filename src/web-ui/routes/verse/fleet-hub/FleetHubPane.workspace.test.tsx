@@ -30,6 +30,8 @@ it('opens the curated workspace, all present panes, and individual tiles', () =>
   addPane('leader-journal', 'Leader journal');
   addPane('terminal', 'Terminal');
   render(<FleetHubPane visible />);
+  fireEvent.click(screen.getByRole('button', { name: 'Company overview' }));
+  expect(openDockPane).toHaveBeenCalledWith('company');
   fireEvent.click(screen.getByRole('button', { name: 'Open fleet workspace' }));
   expect(openFleetWorkspace).toHaveBeenLastCalledWith(['fleet-lanes', 'fleet-inbox', 'fleet-releases']);
   fireEvent.click(screen.getByRole('button', { name: 'Open all fleet panes' }));

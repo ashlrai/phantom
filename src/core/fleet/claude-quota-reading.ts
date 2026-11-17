@@ -8,6 +8,7 @@ import { writePrivateFileAtomicallyAsync } from '../util/private-file-write.js';
 
 export interface ClaudeQuotaReadingV1 {
   v: 1; observedAt: string; reason: string; fresh: boolean;
+  accountId?: string;
   windows: { id: string; usedPct: number; resetAt: string | null }[];
 }
 const MAX_BYTES = 64 * 1024;
@@ -28,11 +29,14 @@ export function toClaudeQuotaReading(result: ClaudeAccountUsageResult, observedA
   const windows = result.windows.flatMap(w => typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent) &&
     typeof w.id === 'string' && ID.test(w.id)
     ? [{ id: w.id, usedPct: w.usedPercent, resetAt: typeof w.resetsAt === 'string' ? w.resetsAt : null }] : []);
-  return { v: 1, observedAt, reason, fresh: true, windows: windows.slice(0, MAX_WINDOWS) };
+  return { v: 1, observedAt, reason, fresh: true, windows: windows.slice(0, MAX_WINDOWS),
+    ...(result.accountScope ? { accountId: result.accountScope } : {}) };
 }
 
 export function parseClaudeQuotaReading(value: unknown): ClaudeQuotaReadingV1 | null {
-  if (!plain(value) || !exactKeys(value, ['v', 'observedAt', 'reason', 'fresh', 'windows'])) return null;
+  if (!plain(value) || !exactKeys(value, ['v', 'observedAt', 'reason', 'fresh', 'windows',
+    ...(Object.hasOwn(value, 'accountId') ? ['accountId'] : [])])) return null;
+  if (Object.hasOwn(value, 'accountId') && (typeof value.accountId !== 'string' || !/^claude:[0-9a-f]{16}$/.test(value.accountId))) return null;
   if (value.v !== 1 || !isoTime(value.observedAt) || typeof value.reason !== 'string' || value.reason.length > 120 ||
       typeof value.fresh !== 'boolean' || !Array.isArray(value.windows) || value.windows.length > MAX_WINDOWS) return null;
   const windows: ClaudeQuotaReadingV1['windows'] = [];
@@ -43,7 +47,8 @@ export function parseClaudeQuotaReading(value: unknown): ClaudeQuotaReadingV1 | 
     windows.push({ id: w.id, usedPct: w.usedPct, resetAt: w.resetAt });
   }
   if (!value.fresh && windows.length) return null;
-  return { v: 1, observedAt: value.observedAt, reason: value.reason, fresh: value.fresh, windows };
+  return { v: 1, observedAt: value.observedAt, reason: value.reason, fresh: value.fresh, windows,
+    ...(typeof value.accountId === 'string' ? { accountId: value.accountId } : {}) };
 }
 
 /** Missing, oversized, non-regular, symlinked or malformed files all read as null. */
@@ -83,5 +88,6 @@ export function usableClaudeWeekly(reading: ClaudeQuotaReadingV1 | null, now: nu
   if (!Number.isFinite(at) || at > now || now - at > MAX_AGE_MS) return null;
   const weekly = reading.windows.find(w => w.id === 'seven_day');
   if (!weekly) return null;
-  return { weekly, observedAt: reading.observedAt, scopes: reading.windows.filter(w => SCOPES.has(w.id)) };
+  return { weekly, observedAt: reading.observedAt, scopes: reading.windows.filter(w => SCOPES.has(w.id)),
+    ...(reading.accountId ? { accountId: reading.accountId } : {}) };
 }

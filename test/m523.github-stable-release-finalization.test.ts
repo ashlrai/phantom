@@ -17,7 +17,7 @@ const load = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 const workflowText = load('.github/workflows/finalize-github-release.yml');
 const verifierText = load('scripts/finalize-github-release.mjs');
 const workflow = parse(workflowText);
-const effect = workflow.jobs.finalize.steps.find((step: {run?: string}) => step.run)?.run as string;
+const effect = workflow.jobs.finalize.steps.find((step: {run?: string}) => step.run?.includes('gh api --method PATCH'))?.run as string;
 const hash = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
 const bytes = Buffer.from('disposable CLI fixture');
 const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
@@ -252,6 +252,11 @@ describe('M523 — workflow authority and protected effect', () => {
     expect(workflow.jobs.verify.permissions).toEqual({actions: 'read', contents: 'read'});
     expect(workflow.jobs.verify.environment).toBeUndefined();
     expect(workflow.jobs.finalize.permissions).toEqual({actions: 'read', contents: 'write'});
+    expect(workflow.jobs.verify.permissions).toEqual({actions: 'read', contents: 'read'});
+    const kill = "PHANTOM_RELEASE_TRAIN\" = on";
+    expect(workflow.jobs.verify.steps.some((step: {run?: string}) => step.run?.includes(kill))).toBe(true);
+    expect(workflow.jobs.finalize.steps.some((step: {run?: string}) => step.run?.includes(kill))).toBe(true);
+    expect(workflowText).not.toContain('.ashlr/KILL');
     expect(workflow.jobs.finalize.environment).toBe('github-stable-release-finalization');
     expect(workflow.jobs.finalize.needs).toBe('verify');
     for (const job of Object.values(workflow.jobs) as {steps: {uses?: string}[]}[]) {
@@ -265,7 +270,7 @@ describe('M523 — workflow authority and protected effect', () => {
   it('binds cross-run admission and current-run preflight with digest enforcement', () => {
     const download = workflow.jobs.verify.steps.find((step: {uses?: string}) => step.uses?.startsWith('actions/download-artifact@'));
     expect(download.with).toMatchObject({'artifact-ids': '${{ steps.prepare.outputs.artifact_id }}', 'run-id': '${{ inputs.publish_run_id }}', 'digest-mismatch': 'error'});
-    const receiptDownload = workflow.jobs.finalize.steps[0];
+    const receiptDownload = workflow.jobs.finalize.steps.find((step: {uses?: string}) => step.uses?.startsWith('actions/download-artifact@'));
     expect(receiptDownload.with.name).toBe('github-stable-finalization-preflight-${{ github.run_id }}-${{ github.run_attempt }}');
     expect(receiptDownload.with['digest-mismatch']).toBe('error');
     for (const fragment of ['"$EXPECTED_RECEIPT_SHA256"', '.input.workflowSha == $sha', '.input.workflowRun == ($run|tonumber)', '.input.workflowAttempt == ($attempt|tonumber)', '.input.publishAttempt == ($publishAttempt|tonumber)', '.evidence.artifactDigest', '.expired == false']) expect(effect).toContain(fragment);
@@ -284,7 +289,7 @@ describe('M523 — workflow authority and protected effect', () => {
   it('preserves protected environment, exact live source and fresh before/after snapshots', () => {
     for (const fragment of [
       '.can_admins_bypass == false', '.deployment_branch_policy.protected_branches == true', '.deployment_branch_policy.custom_branch_policies == false',
-      '$rules[0].prevent_self_review == false', '$rules[0].reviewers[0].type == "User"', '$rules[0].reviewers[0].reviewer.login == "masonwyatt23"',
+      '(.protection_rules | type == "array")', '.type == "branch_policy"', '($rules | length) == 0',
       '.protected == true and .commit.sha == $sha', '.path == ".github/workflows/publish-canonical-npm.yml"',
       '.bodySha256', '.assetsSha256', 'verify_tag', 'verify_release true', 'verify_release false', '.draft == true', 'length == 7',
     ]) expect(effect).toContain(fragment);
@@ -364,7 +369,16 @@ if (args.includes('--method')) {
   if (mode === 'ambiguous-patch') {process.stderr.write('Simulated lost response');process.exit(1);}
   out({...f.release,draft:false});process.exit(0);
 }
-if (suffix === 'environments/github-stable-release-finalization') out({name:'github-stable-release-finalization',can_admins_bypass:mode === 'environment-bypass',deployment_branch_policy:{protected_branches:true,custom_branch_policies:false},protection_rules:[{type:'required_reviewers',prevent_self_review:false,reviewers:[{type:'User',reviewer:{login:'masonwyatt23'}}]}]});
+if (suffix === 'environments/github-stable-release-finalization') {
+  if (mode === 'environment-unavailable') process.exit(1);
+  if (mode === 'environment-shape') { out({name:'not-an-environment'}); process.exit(0); }
+  const rules = mode === 'reviewers'
+    ? [{type:'required_reviewers', prevent_self_review:false, reviewers:[{type:'User', reviewer:{login:'someone'}}]}]
+    : mode === 'other-rule'
+    ? [{type:'wait_timer', wait_timer:1}]
+    : [{type:'branch_policy'}];
+  out({name:'github-stable-release-finalization', can_admins_bypass: mode === 'environment-bypass', deployment_branch_policy:{protected_branches: mode !== 'unprotected', custom_branch_policies:false}, protection_rules: rules});
+}
 else if (suffix === 'branches/master') out({protected:true, commit:{sha:f.input.workflowSha}});
 else if (suffix.startsWith('compare/')) out({status:'ahead'});
 else if (suffix === 'actions/runs/12/attempts/3') out(f.run);
@@ -406,7 +420,7 @@ describe('M523 — executable protected shell with fake transports', () => {
     expect(writes).toEqual([{method: 'PATCH', endpoint: 'repos/ashlrai/phantom/releases/14', fields: {draft: false, make_latest: 'true'}}]);
     expect(postReceipt).toMatchObject({githubReleaseMutationExecuted: true, npmMutationAuthority: false, installAuthority: false, mutation: {count: 1}});
   }, 30_000);
-  it.each(['expired', 'environment-bypass', 'failed-job', 'latest-moved', 'tag-moved', 'duplicate-release', 'already-public', 'notes-race', 'asset-race', 'target-race', 'prerelease-race', 'name-race'])('holds %s before any write', mode => {
+  it.each(['expired', 'environment-bypass', 'environment-unavailable', 'environment-shape', 'reviewers', 'unprotected', 'other-rule', 'failed-job', 'latest-moved', 'tag-moved', 'duplicate-release', 'already-public', 'notes-race', 'asset-race', 'target-race', 'prerelease-race', 'name-race'])('holds %s before any write', mode => {
     const {result, writes, postReceipt} = runEffect(mode);
     expect(result.status).not.toBe(0); expect(writes).toEqual([]); expect(postReceipt).toBeNull();
   }, 30_000);
@@ -454,7 +468,7 @@ describe('M523 — retained bounded publication-attempt evidence', () => {
         state: mode === 'ambiguous-patch' ? 'unknown' : 'postcheck_failed', githubReleaseMutationExecuted: null});
     }
   }, 30_000);
-  it.each(['expired', 'environment-bypass', 'failed-job', 'latest-moved', 'tag-moved', 'notes-race',
+  it.each(['expired', 'environment-bypass', 'environment-unavailable', 'environment-shape', 'reviewers', 'unprotected', 'other-rule', 'failed-job', 'latest-moved', 'tag-moved', 'notes-race',
     'unexpected-event', 'wrong-ref', 'wrong-repository', 'unconfirmed', 'wrong-receipt-hash'])('does not manufacture an attempt after prewrite refusal %s', mode => {
     const {result, writes, attempt, outcome, intentAtPatch} = runEffect(mode);
     expect(result.status).not.toBe(0); expect(writes).toEqual([]);

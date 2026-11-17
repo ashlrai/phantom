@@ -13,6 +13,14 @@ export interface ParkedUnmetDep { job: string; lane: string | null; unmet: strin
 export interface ParkedMetDep { job: string; lane: string | null; gates: string[] }
 export interface ParkedGroup { reason: string; lane: string | null; count: number; jobs: string[] }
 export interface PrecheckSkip { at: string; job: string; code: string; reason: string }
+export interface QueueHealthReport {
+  schema: 'fleet.queue-health.v1';
+  windowHours: 24;
+  /** Counts cover the bounded readable snapshot; source states describe gaps. */
+  counts: { ready: number | null; parked: number | null; skips: number | null; repeatedSkipGroups: number | null };
+  /** Same job, code and reason observed at least twice in the trailing 24 hours. */
+  repeatedSkips: Array<{ job: string; code: string; reason: string; count: number; lastAt: string }>;
+}
 export type Source = 'healthy' | 'missing' | 'degraded';
 export interface FleetQueueV1 {
   v: 1; generatedAt: string;
@@ -29,6 +37,7 @@ export interface FleetQueueV1 {
   metDeps?: ParkedMetDep[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
+  health?: QueueHealthReport;
 }
 
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
@@ -113,10 +122,11 @@ export function localTimestamp(raw: string): { at: string; ms: number } {
   return { at: raw, ms: Number.NaN };
 }
 
-function parseSkips(text: string, nowMs: number, limit?: number): { skips: PrecheckSkip[]; last24h: number; dropped: number } {
+function parseSkips(text: string, nowMs: number, limit?: number): { skips: PrecheckSkip[]; last24h: number; dropped: number; repeatedSkips: QueueHealthReport['repeatedSkips'] } {
   const rows: Array<{ value: PrecheckSkip; ms: number; order: number }> = [];
   let dropped = 0;
   let last24h = 0;
+  const groups = new Map<string, { job: string; code: string; reason: string; count: number; lastAt: string; ms: number }>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const cells = line.replace(/\r$/, '').split('\t');
@@ -128,11 +138,22 @@ function parseSkips(text: string, nowMs: number, limit?: number): { skips: Prech
       continue;
     }
     const timestamp = localTimestamp(at);
-    if (timestamp.ms <= nowMs && timestamp.ms >= nowMs - 24 * 60 * 60 * 1000) last24h++;
-    rows.push({ value: { at: scrubSecrets(timestamp.at), job, code: scrubSecrets(code), reason: scrubSecrets(reason) }, ms: timestamp.ms, order: rows.length });
+    const value = { at: scrubSecrets(timestamp.at), job: scrubSecrets(job), code: scrubSecrets(code), reason: scrubSecrets(reason) };
+    if (timestamp.ms <= nowMs && timestamp.ms >= nowMs - 24 * 60 * 60 * 1000) {
+      last24h++;
+      const key = JSON.stringify([value.job, value.code, value.reason]);
+      const group = groups.get(key) ?? { ...value, count: 0, lastAt: value.at, ms: timestamp.ms };
+      group.count++;
+      if (timestamp.ms > group.ms) { group.ms = timestamp.ms; group.lastAt = value.at; }
+      groups.set(key, group);
+    }
+    rows.push({ value, ms: timestamp.ms, order: rows.length });
   }
   rows.sort((a, b) => (Number.isFinite(b.ms) ? b.ms : -Infinity) - (Number.isFinite(a.ms) ? a.ms : -Infinity) || b.order - a.order);
-  return { skips: rows.slice(0, boundedLimit(limit)).map((row) => row.value), last24h, dropped };
+  const repeatedSkips = [...groups.values()].filter(group => group.count > 1)
+    .sort((a, b) => b.count - a.count || a.job.localeCompare(b.job) || a.code.localeCompare(b.code) || a.reason.localeCompare(b.reason))
+    .map(({ job, code, reason, count, lastAt }) => ({ job, code, reason, count, lastAt }));
+  return { skips: rows.slice(0, boundedLimit(limit)).map((row) => row.value), last24h, dropped, repeatedSkips };
 }
 
 export function parsePrecheckSkips(text: string, nowMs: number, limit?: number): { skips: PrecheckSkip[]; last24h: number } {
@@ -198,7 +219,13 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const first = cells[0] ?? '';
     const positional = !header || (statusColumn !== 0 && (/^READY$/i.test(first) || PARKED.test(first)));
     const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
-    const result = parseReadyTsv(positional ? input : `${header}\n${input}`);
+    // Dispatcher rows are [job, repo, pool, tier, prompt], unlike the
+    // generic positional format [job, pool, tier, repo, title].
+    const dispatcher = positional && cells.length === 5 && JOB_ID.test(first) &&
+      !/^READY$/i.test(first) && !PARKED.test(first) &&
+      /^(?:frontier|work|mid|fast)$/.test(cells[3] ?? '');
+    const result = parseReadyTsv(dispatcher ? `id\trepo\tpool\ttier\ttitle\n${line}`
+      : positional ? input : `${header}\n${input}`);
     dropped += result.dropped;
     const row = result.rows[0];
     if (!row) continue;
@@ -277,6 +304,16 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
       .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason) || (a.lane ?? '').localeCompare(b.lane ?? '')),
     unmetDeps,
     ...(metDeps === undefined ? {} : { metDeps }),
+    health: {
+      schema: 'fleet.queue-health.v1', windowHours: 24,
+      counts: {
+        ready: readySource.state === 'healthy' || readySource.text ? ready : null,
+        parked: readySource.state === 'healthy' || readySource.text ? parked : null,
+        skips: skipsSource.state === 'healthy' || skipsSource.text ? skips.last24h : null,
+        repeatedSkipGroups: skipsSource.state === 'healthy' || skipsSource.text ? skips.repeatedSkips.length : null,
+      },
+      repeatedSkips: skips.repeatedSkips,
+    },
     skips: skips.skips, skipsLast24h: skipsSource.state === 'degraded' && !skipsSource.text ? null : skips.last24h,
   };
 }

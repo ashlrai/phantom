@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
 LANES = ['codex-cmp', 'codex-personal', 'devin', 'codex-local', 'claude-api']
@@ -90,6 +91,30 @@ def line(job, text='routine fix', **attrs):
     return f'- READY {job} ({", ".join(toks)}): {text}'
 
 
+class MuseLightTests(unittest.TestCase):
+    def test_light_slice_is_opt_in_independent_of_lane_gate_and_dry_run_safe(self):
+        tmp = build('')
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs' / 'queue'
+        (q / 'admission.json').write_text(json.dumps({'cap': 0}))
+        tools = home / 'bin'
+        tools.mkdir()
+        phm = tools / 'phm'
+        phm.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/node-light-called"\n')
+        phm.chmod(0o700)
+        receipt = home / 'node-light-called'
+        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}):
+            self.assertEqual(restock(home).returncode, 0)
+            self.assertFalse(receipt.exists())
+            (q / 'muse-light.enabled').touch()
+            self.assertEqual(restock(home, '--dry-run').returncode, 0)
+            self.assertFalse(receipt.exists())
+            self.assertEqual(restock(home).returncode, 0)
+            self.assertEqual(receipt.read_text().strip(), 'node light restock --apply --json')
+            self.assertEqual((q / 'ready.tsv').read_text(), '')
+
+
 class BoldFloorTests(unittest.TestCase):
     def test_under_floor_reports_bold_share_but_preserves_higher_priority_work(self):
         # 2 of 8 READY lines are bet=bold (25% < 30% floor): preference lifts the
@@ -147,15 +172,15 @@ class BoldFloorTests(unittest.TestCase):
 
 class ExclusionTests(unittest.TestCase):
     def test_non_fleet_repos_never_selected(self):
-        # measurably and ashlar-landing exist as local dirs but sit outside GS_REPOS.
+        # measurably and ashlr-landing exist as local dirs but sit outside GS_REPOS.
         rows = [
             line('RQ-NF-MEAS', P=1, pool='devin', tier='mid', repo='measurably', text='measurably fix'),
-            line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlar-landing', text='landing fix'),
+            line('RQ-NF-LAND', P=1, pool='devin', tier='mid', repo='ashlr-landing', text='landing fix'),
             line('RQ-NF-GHOST', P=1, pool='devin', tier='mid', repo='ghost-repo', text='missing dir'),
             line('RQ-NF-NONE', P=1, pool='devin', tier='mid', text='no repo attr'),
             line('RQ-NF-FLEET', P=2, pool='devin', tier='mid', repo='phantom', text='fleet fix'),
         ]
-        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'measurably', 'ashlar-landing'))
+        tmp = build('\n'.join(rows) + '\n', repos=('phantom', 'measurably', 'ashlr-landing'))
         self.addCleanup(tmp.cleanup)
         r = restock(Path(tmp.name), '--dry-run', '--per-lane', '4')
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -560,6 +585,55 @@ class ReplenishmentDiagnosticsTests(unittest.TestCase):
 class NoopCutTests(unittest.TestCase):
     """RQ-PSEL-4-NOOPCUT: PR/file dedupe and the 2-NOOPs-in-24h park."""
 
+    def test_incident_and_filler_terminal_prechecks_record_noop_without_launch(self):
+        from datetime import datetime, timezone, timedelta
+        from test_dispatchd import build as dispatch_home, held_lanes, devin_slot, launch_stubs, tick
+        task = 'Add one test case in test/example.test.ts'
+        old, filler, real_filler = 'RQ-OLDA123456Q8', 'RQ-COPYA123456Q8', 'RQ-REALA123456Q8'
+        noops = ['INC-d-codex-personal-fixed', 'INC-d-codex-personal-closed', filler, old, 'INC-d-codex-personal-landed']
+        real = ['INC-d-codex-personal-real', 'INC-d-codex-personal-stale', 'INC-d-codex-personal-unknown', real_filler]
+        rows = [line(job, pool='devin', repo='phantom', pr=n, text='Repair target PR')
+                for job, n in zip(noops[:2] + real[:3], range(7, 12))]
+        rows += [line(job, pool='devin', repo='phantom', text=task + (' for invalid input' if job == real_filler else ''))
+                 for job in (old, filler, real_filler)]
+        rows.append(line(noops[-1], pool='devin', repo='phantom'))
+        tmp = dispatch_home(slots={**held_lanes(), 'devin': devin_slot()}, queue_md='\n'.join(rows) + '\n')
+        self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home)
+        runs = home / '.ashlr-runs'; q = runs / 'queue'; metrics = runs / 'metrics/jobs.jsonl'
+        (q / 'admission.json').write_text(json.dumps({'cap': 1000}))
+        now = datetime.now(timezone.utc) - timedelta(seconds=1)
+        records = [dict(event='outcome', state=state, job=f'RQ-PR-{n}', repo='phantom',
+                        url=f'https://github.com/ashlrai/phantom/pull/{n}', ts=(now - timedelta(seconds=age)).isoformat())
+                   for n, state, age in [(7, 'MERGED', 600), (8, 'CLOSED', 0), (9, 'OPEN', 0), (10, 'CLOSED', 600)]]
+        records.append(dict(event='outcome', state='MERGED', job=old, repo='phantom', ts=now.isoformat()))
+        records.append(dict(event='outcome', state='MERGED', job=noops[-1], repo='phantom', ts=now.isoformat()))
+        metrics.write_text(''.join(json.dumps(row) + '\n' for row in records))
+        snapshot = lambda: {str(p): p.read_bytes() for p in runs.rglob('*') if p.is_file()}
+        before = snapshot()
+        dry = restock(home, '--dry-run', '--json')
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        self.assertEqual(set(json.loads(dry.stdout)['done_noop']), set(noops))
+        self.assertEqual(snapshot(), before)
+        result = restock(home, '--json')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(json.loads(result.stdout)['done_noop']), set(noops))
+        self.assertEqual({row.split('\t')[0] for row in (q / 'ready.tsv').read_text().splitlines()}, set(real))
+        outcomes = [json.loads(row) for row in metrics.read_text().splitlines()][len(records):]
+        self.assertEqual({row['job'] for row in outcomes}, set(noops))
+        self.assertTrue(all(row['event'] == 'outcome' and row['state'] == 'DONE-NOOP' and row['launched'] is False for row in outcomes))
+        for job in noops:
+            self.assertIn(f'- DONE-NOOP {job} ', (q / 'router-queue.md').read_text())
+            self.assertFalse((q / f'prompts/{job}.md').exists())
+        with (q / 'router-queue.md').open('a') as stream:
+            stream.write(line('RQ-COPY2A123456Q8', pool='devin', repo='phantom', text=task) + '\n')
+        again = restock(home, '--json')
+        self.assertEqual(json.loads(again.stdout)['done_noop'], ['RQ-COPY2A123456Q8'])
+        launched = tick(home, env)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        launches = {row['job'] for row in map(json.loads, metrics.read_text().splitlines()) if row.get('event') == 'launch'}
+        self.assertTrue(launches and launches <= set(real), (launched.stdout, (runs / 'dispatch-events.log').read_text()))
+
     def make(self, rows, precheck_code=None):
         tmp = build('\n'.join(rows) + '\n', slots={
             **{l: {'held': True} for l in LANES}, 'devin': {'target': 6}, 'claude-api': {'target': 0}})
@@ -613,6 +687,8 @@ class NoopCutTests(unittest.TestCase):
     def test_single_noop_does_not_park_and_a_real_run_clears(self):
         row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
         home = self.make([row], precheck_code=10)
+        (home / '.ashlr-runs/metrics/jobs.jsonl').unlink()
+        (home / '.ashlr-runs/metrics').rmdir()
         restock(home, '--per-lane', '4')
         self.assertEqual(self.state(home)['RQ-N']['n'], 1)
         (home / '.ashlr-runs' / 'bin' / 'precheck.sh').write_text('exit 0\n')   # real work now
@@ -656,7 +732,7 @@ class PrecheckAuthoringTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             out = json.loads(result.stdout)
             self.assertEqual(out['queued'], 1, out)
-            self.assertEqual(out['done_noop'], [])
+            self.assertEqual(out['done_noop'], ['RQ-SATISFIED'])
             self.assertEqual(out['skips'], {'already-merged': 1, 'precheck-parked': 1})
             self.assertIn(f'{job}\tphantom\tdevin\t', (q / 'ready.tsv').read_text())
             self.assertTrue((q / f'prompts/{job}.md').exists())
@@ -973,6 +1049,31 @@ class QueueDepthGateTests(unittest.TestCase):
                     tmp.cleanup()
 
 class QueueQualityTests(unittest.TestCase):
+    def test_semantic_incident_admission_and_repeated_pass(self):
+        fixture = (SCRIPT.parents[2] / 'test/fixtures/queue-semantic-nov16.md').read_text()
+        tmp = build(fixture)
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        preview = restock(home, '--dry-run', '--per-lane', '20', '--json')
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        report = json.loads(preview.stdout)
+        self.assertEqual(report['queued'], 2)
+        self.assertEqual(len(report['dedupe']['repeats']), 12)
+        self.assertEqual(report['dedupe']['unknown'], [])
+        self.assertTrue(all(r['reason'] == 'semantic-goal-overlap' and r['jaccard'] >= .5 for r in report['dedupe']['repeats']))
+        self.assertEqual((q / 'router-queue.md').read_text(), fixture)
+        applied = restock(home, '--per-lane', '20', '--json')
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(len((q / 'ready.tsv').read_text().splitlines()), 2)
+        self.assertEqual((q / 'router-queue.md').read_text().count('- DUPLICATE-OF-'), 12)
+        self.assertEqual(json.loads(restock(home, '--per-lane', '20', '--json').stdout)['queued'], 0)
+        new = fixture.splitlines()[1].replace('RQ-GUARDIANROUTINGQ8', 'RQ-LATE')
+        with (q / 'router-queue.md').open('a') as f: f.write(new + '\n')
+        late = json.loads(restock(home, '--per-lane', '20', '--json').stdout)
+        self.assertEqual(late['queued'], 0)
+        self.assertEqual(late['dedupe']['repeats'][0]['repeatOf'], 'RQ-GUARDIANROUTINGQ8')
+
     def test_identical_filler_grouped_at_any_rate_and_distinct_work_kept(self):
         rows = [
             line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),

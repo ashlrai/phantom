@@ -19,7 +19,7 @@ export function metricValueText(m: Metric): string {
 }
 
 export function deltaText(m: Metric): string {
-  if (m.delta24h === null) return 'Δ24h unknown';
+  if (m.delta24h === null) return '24h change unknown';
   const d = Math.round(m.delta24h * 10) / 10;
   return `${d > 0 ? '▲' : d < 0 ? '▼' : '→'} ${d > 0 ? '+' : ''}${d} / 24h`;
 }

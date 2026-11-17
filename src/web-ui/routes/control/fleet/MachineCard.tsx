@@ -9,7 +9,7 @@ const show = (n: number | null | undefined, unit = '') => n == null ? 'unknown' 
 
 export function MachineCard() {
   const { data } = useQuery(query);
-  return <section className={styles.section} aria-label="Machine">
+  return <section className={styles.section} aria-label="Machine" title="GET /api/fleet/machine · loadPerCpu / load1 / cpus / swapGb / diskFreeGb / worktrees / runningWorkers">
     <h2 className={styles.sectionTitle}>Machine</h2>
     {data?.overloaded && <p role="alert">Warning: load is over 4 times the number of CPUs.</p>}
     <dl>

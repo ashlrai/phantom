@@ -8,10 +8,11 @@
 # still in the queue, never fails, and its job name is not a required check.
 name: Merge Queue Reaper
 
+# Runs on each merge_group event (the only trigger that has reaped anything:
+# 3 cancels in 25 sampled runs) and on demand. The 30-minute schedule reaped
+# nothing in 25 of 25 sampled runs and was dropped (CI-PHANTOM-MQ-REAPER-CRON).
 on:
   merge_group:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:

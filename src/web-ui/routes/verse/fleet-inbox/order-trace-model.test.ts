@@ -29,7 +29,7 @@ describe('order traces', () => {
     expect(orderJobsLine([job, job, job])).toBe('3 jobs');
     expect(stateWord(job)).toBe('PR #1938');
     expect(stateWord({ ...job, state: 'queued' })).toBe('queued');
-    expect(stateWord({ ...job, state: 'launched' })).toBe('running');
+    expect(stateWord({ ...job, state: 'launched' })).toBe('launched');
     expect(stateWord({ ...job, url: null })).toBe('published');
     expect(githubUrl({ ...job, url: 'https://github.com.evil.test/a/b/pull/1' })).toBeNull();
     expect(githubUrl({ ...job, url: 'javascript:alert(1)' })).toBeNull();

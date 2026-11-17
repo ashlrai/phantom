@@ -21,7 +21,7 @@ import { codexCreditsAvailable } from '../../../../core/resources/codex-credits.
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle } from './codex-credit-value.js';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { formatMetric } from '../../../components/charts/format-metric.js';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { IconChevronDown, IconChevronUp } from '../../../components/primitives/icons.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { getQuerySnapshot, subscribeQuery } from '../../../data/cache.js';
@@ -49,6 +49,7 @@ import { devinConsumptionEvidence, devinUsageEvidence, formatAcu } from '../devi
 import { DEVIN_POLL_MS, devinQuery } from '../devin/devin-queries.js';
 import { closeResources, openResources, setResourcesCompact, useResourcesUi } from './resources-store.js';
 import { WorldLaneRows } from './WorldLaneRows.js';
+import { NodeProfileRows } from './NodeProfileRows.js';
 import { moveResource, orderedResources, useResourceOrder } from './resource-order.js';
 import { proactiveProfilesQuery } from '../proactive/proactive-queries.js';
 import { setVerseSection } from '../verse-ui-store.js';
@@ -278,7 +279,7 @@ function RowTip({ row }: { row: BarRow }) {
   return (
     <div className={styles.tip}>
       <div className={styles.tipHead}>
-        <ProviderLogo engine={row.engine} size={14} />
+        <BrandMark brand={row.engine} size={14} />
         <strong>{row.name}</strong>
       </div>
       <div className={styles.tipSummary} title={nativeCreditBalanceTitle(row.exactCreditBalance) ?? undefined}>{row.summary.slice(row.name.length + 2)}</div>
@@ -323,6 +324,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
   const observeRead = useQuery(observeQuery, { enabled: resources.bar, freshMs: 60_000 });
+  const usageWindows = observeRead.data?.usage?.windows;
+  const observationsAvailable = Array.isArray(usageWindows) && usageWindows.every(window => window && typeof window.lane === 'string');
   const refreshCredits = useRefetch(creditPoolsQuery);
   const devin = devinRead.data?.value ?? null;
   const [coldStartedAt] = useState(() => Date.now());
@@ -373,8 +376,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     void drainFirstReadQueue();
   }, [capacityRows, data.loading, documentVisible]);
   const rows = useMemo(
-    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null),
-    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
+    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observationsAvailable ? usageWindows : null),
+    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observationsAvailable, usageWindows],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
@@ -413,7 +416,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             {expanded ? (
               <>
                 <span className={styles.line}>
-                  <ProviderLogo engine={row.engine} size={14} className={styles.logo} />
+                  <BrandMark brand={row.engine} size={14} className={styles.logo} />
                   <span className={styles.name}>{row.engine === 'grok' && row.name === 'Grok' ? 'Grok Build' : row.name}</span>
                 </span>
                 <span className={styles.line}>
@@ -429,7 +432,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
               </>
             ) : (
               <>
-                <ProviderLogo engine={row.engine} size={14} className={styles.logo} />
+                <BrandMark brand={row.engine} size={14} className={styles.logo} />
                 <Battery left={row.leftPercent} level={row.level} vertical />
               </>
             )}
@@ -462,7 +465,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     <Tooltip content={<RowTip row={personalRow} />} placement="right">
       <button type="button" className={styles.row} data-level={personalRow.level}
         aria-label={`${personalRow.summary}. Open Resources`} onClick={() => openResources()}>
-        <span className={styles.line}><ProviderLogo engine="codex" size={14} className={styles.logo} />
+        <span className={styles.line}><BrandMark brand="codex" size={14} className={styles.logo} />
           {expanded ? <span className={styles.name}>{personalRow.name}</span> : null}</span>
         <span className={styles.line}><Battery left={personalLeft} level={personalRow.level} vertical={!expanded} />
           {expanded ? <span className={styles.value}>{personalRow.value}</span> : null}</span>
@@ -478,7 +481,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     entries.push({ key: `proactive:${profile.id}`, name, content: (
       <Tooltip placement="right" content={
         <div className={styles.tip}>
-          <div className={styles.tipHead}><ProviderLogo engine="grok" size={14} /><strong>{name}</strong></div>
+          <div className={styles.tipHead}><BrandMark brand="grok" size={14} /><strong>{name}</strong></div>
           <div className={styles.tipSummary}>{preference} · usage unknown</div>
           <div className={styles.tipLine}>Weekly Bot allowance and reset unknown. Separate from Grok Build and xAI API credits.</div>
           <div className={styles.tipLine}>Saved account: {profile.identity.accountId} · agent: {profile.identity.agentId}. Provider binding unverified.</div>
@@ -490,7 +493,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           aria-label={`${name}: ${preference.toLowerCase()}, usage and reset unknown. Open Proactive agents`}
           onClick={() => { closeResources(); setVerseSection('agents', 'proactive-agents'); }}>
           <span className={styles.line}>
-            <ProviderLogo engine="grok" size={14} className={styles.logo} />
+            <BrandMark brand="grok" size={14} className={styles.logo} />
             {expanded ? <span className={styles.name}>{name}</span> : null}
           </span>
           {expanded ? <span className={styles.credits}>{resources.compact ? 'Unknown' : `${preference} · usage unknown`}</span> : null}
@@ -511,7 +514,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     entries.push({ key: 'budget:claude-api-promotions', name: 'Claude API promotion', content: (
       <Tooltip placement="right" content={
         <div className={styles.tip}>
-          <div className={styles.tipHead}><ProviderLogo engine="claude" size={14} /><strong>Claude API promotion</strong></div>
+          <div className={styles.tipHead}><BrandMark brand="claude" size={14} /><strong>Claude API promotion</strong></div>
           {apiGrants.map((grant, index) => {
             const display = apiGrantDisplay(grant);
             return <div key={index}>
@@ -528,7 +531,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           aria-label={`Claude API promotion: ${amount}. Automatic use held. Open Resources`}
           title={recordedTitle} onClick={() => openResources()}>
           <span className={styles.line}>
-            <ProviderLogo engine="claude" size={14} className={styles.logo} />
+            <BrandMark brand="claude" size={14} className={styles.logo} />
             {expanded ? <span className={styles.name}>Claude API promotion</span> : null}
           </span>
           <span className={styles.credits}>
@@ -542,7 +545,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         <Tooltip
           content={
             <div className={styles.tip}>
-              <div className={styles.tipHead}><ProviderLogo engine="claude" size={14} /><strong>Cloud estimate</strong></div>
+              <div className={styles.tipHead}><BrandMark brand="claude" size={14} /><strong>Cloud estimate</strong></div>
               <div className={styles.tipSummary}>{formatUsd(cloud.remainingUsd)} of {formatUsd(cloud.totalUsd)} left · estimate</div>
               <div className={styles.tipLine}>{formatMetric(cloud.running)} running · {formatMetric(cloud.sessionsToday)} today</div>
               <div className={styles.tipHint}>Click for Resources · ⌘.</div>
@@ -560,7 +563,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             {expanded ? (
               <>
                 <span className={styles.line}>
-                  <span className={styles.cloudLogo}><ProviderLogo engine="claude" size={14} className={styles.logo} /></span>
+                  <span className={styles.cloudLogo}><BrandMark brand="claude" size={14} className={styles.logo} /></span>
                   <span className={styles.name}>Cloud estimate</span>
                 </span>
                 <span className={styles.line}>
@@ -570,7 +573,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
               </>
             ) : (
               <>
-                <span className={styles.cloudLogo}><ProviderLogo engine="claude" size={14} className={styles.logo} /></span>
+                <span className={styles.cloudLogo}><BrandMark brand="claude" size={14} className={styles.logo} /></span>
                 <Battery left={cloudLeft} level={cloudLevel} vertical />
               </>
             )}
@@ -581,7 +584,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         <Tooltip
           content={
             <div className={styles.tip}>
-              <div className={styles.tipHead}><ProviderLogo engine="devin" size={14} className={styles.logo} /><strong>Devin budget</strong></div>
+              <div className={styles.tipHead}><BrandMark brand="devin" size={14} className={styles.logo} /><strong>Devin budget</strong></div>
               <div className={styles.tipSummary}>{devinAccountingKnown ? <>{formatAcu(devinAvailable)} of {formatAcu(devin.budget.acuBudgetTotal)} {devinUsage ? 'available' : 'left'} · tracked budget{devin.budget.paused ? ' · paused' : ''}</> : 'Local budget capacity unknown · task evidence unavailable'}</div>
               {devinUsage ? <div className={styles.tipLine}>{formatAcu(devinUsage.reported)} reported usage + adjustment · {formatAcu(devinUsage.held)} held exposure</div> : null}
               {devinAccountingKnown ? <div className={styles.tipLine}>{formatMetric(devin.budget.running)} running · {formatMetric(devin.budget.sessionsToday)} today</div> : null}
@@ -602,7 +605,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             {expanded ? (
               <>
                 <span className={styles.line}>
-                  <ProviderLogo engine="devin" size={14} className={styles.logo} />
+                  <BrandMark brand="devin" size={14} className={styles.logo} />
                   <span className={styles.name}>Devin budget</span>
                 </span>
                 <span className={styles.line}>
@@ -614,7 +617,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
               </>
             ) : (
               <>
-                <ProviderLogo engine="devin" size={14} className={styles.logo} />
+                <BrandMark brand="devin" size={14} className={styles.logo} />
                 <Battery left={devinLeft} level={devinLevel} vertical />
               </>
             )}
@@ -696,7 +699,9 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
+      {(observeRead.data !== undefined || observeRead.error) && !observationsAvailable ? <span role="status">Usage observations unavailable.</span> : null}
       <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
+      <NodeProfileRows enabled={resources.bar} />
       {providerView && expanded ? <Suspense fallback={null}>
         <LazyProviderResourceGroups resources={descriptors} nowMs={now} maxAgeMs={data.budget?.readingMaxAgeMs} kind="bar" ready={providerView === 2} onReady={setProviderView}
           classes={{ group: styles.providerGroup, account: styles.accountGroup, note: styles.coverageNote }}

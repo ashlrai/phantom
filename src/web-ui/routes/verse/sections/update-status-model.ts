@@ -29,18 +29,19 @@ export function describeUpdateStatus({ native, server, appVersion, desktopVersio
   const newerCandidate = typeof candidate === 'string' && newerVersion(candidate, appVersion) ? candidate : null;
   switch (native?.phase) {
     case 'installing': headline = `Installing ${version}…`; tone = 'success'; break;
-    case 'installed': headline = `Installed ${version}; restarts when idle`; tone = 'success'; break;
-    case 'staged': case 'waiting-for-idle': case 'waiting-for-app-quit':
-      headline = `Update${readyVersion} ready · installs when idle`; tone = 'info'; break;
+    case 'installed': headline = `Installed ${version}${native?.version === (desktopVersion ?? appVersion) ? '' : '; reopen Phantom'}`; tone = 'success'; break;
+    case 'staged': headline = `Update${readyVersion} ready · checking host admission`; tone = 'info'; break;
+    case 'waiting-for-idle': headline = `Update${readyVersion} ready · waiting for idle`; tone = 'info'; break;
+    case 'waiting-for-app-quit': headline = `Quit Phantom to install ${version}`; tone = 'info'; break;
     case 'adoption-held': headline = `Update held: ${describeDesktopUpdateReason(native.reason)}`; tone = 'warning'; break;
     case 'downloading': headline = `Downloading ${version}${native.bytesTotal ? ` · ${Math.floor(native.bytesReceived / native.bytesTotal * 100)}%` : ''}`; tone = 'info'; break;
     case 'failed': headline = `Update failed: ${describeDesktopUpdateReason(native.reason)}`; tone = 'danger'; break;
     case 'disabled': case 'uncommissioned': headline = 'Automatic updates off'; break;
     case 'current': headline = 'Up to date'; tone = 'success'; break;
     case 'checking': headline = 'Checking for updates…'; tone = 'info'; break;
-    case 'idle': headline = 'Automatic updates on · checks when idle'; tone = 'neutral'; break;
+    case 'idle': headline = 'Automatic updates on · checks every 15 minutes'; tone = 'neutral'; break;
     default:
-      if (native?.phase === 'available') { headline = `Update${readyVersion} available · downloads when idle`; tone = 'info'; }
+      if (native?.phase === 'available') { headline = `Update${readyVersion} available · preparing download`; tone = 'info'; }
       else if (facts?.sourceState === 'unavailable') headline = 'Not running from a git checkout';
       else if (facts?.behind != null && facts.behind > 0 && facts.canFastForward) { headline = newerCandidate ? `${newerCandidate} ready · ${commits(facts.behind)} behind ${facts.branch ?? 'master'} · fast-forward` : `${commits(facts.behind)} behind ${facts.branch ?? 'master'} · ready to fast-forward`; tone = 'info'; }
       else if (facts?.behind != null && facts.behind > 0 && facts.dirty) { headline = `${newerCandidate ? `${newerCandidate} available · ` : ''}${facts.behind} behind · local changes block the update`; tone = 'warning'; }

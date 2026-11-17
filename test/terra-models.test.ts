@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AshlrConfig, WorkItem } from '../src/core/types.js';
 import {
   CODEX_ASTRA_MODEL_ID, CODEX_TERRA_MODEL_ID, DEFAULT_CODEX_MODEL_ID,
-  KNOWN_MODELS, canonicalModelTag, catalogFor, costOf, pickModel,
+  KNOWN_MODELS, canonicalModelTag, costOf, pickModel,
   type ModelRoutingTier,
 } from '../src/core/run/model-catalog.js';
 import { modelForSelectedEngine, modelTierForTask, routeTask } from '../src/core/run/router.js';
@@ -30,8 +30,8 @@ function config(model?: string): AshlrConfig {
 }
 const context = { availableEngines: ['codex', 'builtin'] };
 const defaults: [ModelRoutingTier, string][] = [
-  ['fast', CODEX_TERRA_MODEL_ID], ['mid', CODEX_TERRA_MODEL_ID],
-  ['computer', CODEX_TERRA_MODEL_ID], ['work', DEFAULT_CODEX_MODEL_ID],
+  ['fast', DEFAULT_CODEX_MODEL_ID], ['mid', DEFAULT_CODEX_MODEL_ID],
+  ['computer', DEFAULT_CODEX_MODEL_ID], ['work', DEFAULT_CODEX_MODEL_ID],
   ['frontier', CODEX_ASTRA_MODEL_ID],
 ];
 
@@ -42,7 +42,7 @@ beforeEach(() => {
 
 describe('Terra catalog identity and estimates', () => {
   it('exposes exact context, efforts, pricing, speed and allowance estimates', () => {
-    const terra = catalogFor('codex').find(entry => entry.apiModelId === CODEX_TERRA_MODEL_ID)!;
+    const terra = KNOWN_MODELS.find(entry => entry.apiModelId === CODEX_TERRA_MODEL_ID)!;
     const sol = KNOWN_MODELS.find(entry => entry.apiModelId === DEFAULT_CODEX_MODEL_ID)!;
     const astra = KNOWN_MODELS.find(entry => entry.apiModelId === CODEX_ASTRA_MODEL_ID)!;
     expect(terra.contextWindowTokens).toBe(1_050_000);
@@ -64,7 +64,7 @@ describe('Terra catalog identity and estimates', () => {
   it('keeps historical identity and ordinary catalog work defaults stable', () => {
     expect(canonicalModelTag('codex', 'gpt-5.5')).toBe('gpt-5.5');
     expect(pickModel({ engine: 'codex', maxEffort: 5 })?.apiModelId).toBe(DEFAULT_CODEX_MODEL_ID);
-    expect(pickModel({ engine: 'codex', preferCheap: true })?.apiModelId).toBe(CODEX_TERRA_MODEL_ID);
+    expect(pickModel({ engine: 'codex', preferCheap: true })?.apiModelId).toBe(DEFAULT_CODEX_MODEL_ID);
   });
 });
 
@@ -83,7 +83,7 @@ describe('Codex model tiers through production enrichment and legacy routing', (
     task({ title: 'Triage pending jobs' }), task({ tags: ['verify'] }),
   ])('classifies routine work as fast: $title ($source)', item => {
     expect(modelTierForTask(item)).toBe('fast');
-    expect(modelForSelectedEngine(item, 'codex', config()).model).toBe(CODEX_TERRA_MODEL_ID);
+    expect(modelForSelectedEngine(item, 'codex', config()).model).toBe(DEFAULT_CODEX_MODEL_ID);
   });
 
   it.each([
@@ -91,7 +91,7 @@ describe('Codex model tiers through production enrichment and legacy routing', (
     task({ title: 'Inspect the GUI controls' }), task({ title: 'Browser automation smoke pass' }),
   ])('classifies computer work: $title', item => {
     expect(modelTierForTask(item)).toBe('computer');
-    expect(routeTask(item, config(), context).model).toBe(CODEX_TERRA_MODEL_ID);
+    expect(routeTask(item, config(), context).model).toBe(DEFAULT_CODEX_MODEL_ID);
   });
 
   it('keeps difficult implementation on Sol and explicit frontier on Astra', () => {
@@ -145,7 +145,7 @@ describe('Codex model tiers through production enrichment and legacy routing', (
     expect(routeTask(task({ tags: ['tier=computer'] }), config(), { availableEngines: ['builtin'] }).engine).toBe('builtin');
   });
 
-  it.each(['work', 'frontier'] as const)('does not let legacy model scores promote Terra into %s', tier => {
+  it.each(['fast', 'mid', 'computer', 'work', 'frontier'] as const)('does not let legacy model scores promote Terra into %s', tier => {
     const cfg = config();
     cfg.foundry!.modelGranularRouting = { enabled: true, minShipRate: 0.6 };
     gates.scores.mockReturnValue(new Map([[`codex:${CODEX_TERRA_MODEL_ID}`, {
@@ -153,14 +153,14 @@ describe('Codex model tiers through production enrichment and legacy routing', (
       score: 1, samples: 100,
     }]]));
     const item = task({ tags: [`tier=${tier}`] });
-    const expected = tier === 'work' ? DEFAULT_CODEX_MODEL_ID : CODEX_ASTRA_MODEL_ID;
+    const expected = tier === 'frontier' ? CODEX_ASTRA_MODEL_ID : DEFAULT_CODEX_MODEL_ID;
     expect(modelForSelectedEngine(item, 'codex', cfg).model).toBe(expected);
     expect(routeTask(item, cfg, context).model).toBe(expected);
   });
 
   it('retains autonomous fail-closed subscription admission', () => {
     const item = task({ tags: ['tier=fast'] });
-    expect(routeTask(item, config(), context).model).toBe(CODEX_TERRA_MODEL_ID);
+    expect(routeTask(item, config(), context).model).toBe(DEFAULT_CODEX_MODEL_ID);
     expect(routeTask(item, config(), { ...context, autonomous: true }).engine).toBe('builtin');
   });
 });

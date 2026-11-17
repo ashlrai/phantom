@@ -15,7 +15,7 @@
  *   - findSupersededPrs — a merged job whose prompt already names this PR
  *     (this is the guard against recutting the same PR twice);
  *   - the recut ledger <runsDir>/queue/recut-loop.jsonl — a PR written within
- *     the last 24 h is skipped;
+ *     the last 24 h on the same head is skipped;
  *   - an in-flight recut — root and queue prompts or pending drop files whose
  *     body names `pull/<N>/head` (at most 10000 files, 8000 bytes each; overflow fails closed). A
  *     completed prompt is ignored unless a later enqueue, claim or launch
@@ -48,7 +48,9 @@
  * Every other structural check (id shape, lane, tier, non-empty body,
  * control characters, the 8 KB file cap) still runs before publish.
  *
- * Ticks share a recoverable local-store lock across processes.
+ * Ticks share a recoverable local-store lock across processes. Before publishing,
+ * a durable ten-minute per-PR reservation fences uncertain writes. An expired
+ * reservation can retry; published work remains guarded by the ledger and prompts.
  *
  * THE LOOP is opt-in per process: GET /api/verse/health arms it once when
  * dispatch is allowed (the desktop polls that route while the app is open)
@@ -113,6 +115,8 @@ const GH_LIST_MAX_BYTES = 16 * 1024 * 1024;
 const MERGED_PR_LIMIT = 1000;
 
 const LEDGER_FILE = join('queue', 'recut-loop.jsonl');
+const LEASE_FILE = join('queue', 'recut-loop-leases.jsonl');
+const LEASE_MS = 10 * 60 * 1000;
 const OFF_FILE = join('queue', 'recut-loop.off');
 const BRIDGE_TITLE_RE = /^bridge: RQ-PHX-/;
 const PULL_HEAD_RE = /pull\/(\d+)\/head/g;
@@ -162,7 +166,7 @@ export interface RecutLoopWritten {
 
 export interface RecutLoopSkipped {
   pr: number;
-  /** superseded | recent | in-flight | capped | no-head | empty-yield | landed | no-id | exists | write-failed */
+  /** superseded | recent | in-flight | capped | no-head | leased | lease-failed | empty-yield | landed | no-id | exists | write-failed */
   reason: string;
 }
 
@@ -182,6 +186,8 @@ export interface RecutLoopLedgerEntry {
   id: string;
   headSha: string;
   file: string;
+  /** Present only on pre-publication reservations, not successful-write entries. */
+  leaseUntil?: number;
 }
 
 export interface RecutLoopState {
@@ -307,6 +313,7 @@ async function appendLine(path: string, line: string): Promise<void> {
     const stat = await handle.stat();
     if (!stat.isFile() || !owned(stat) || stat.nlink !== 1) throw new Error('invalid sink');
     await handle.writeFile(line);
+    await handle.sync();
   } finally {
     await handle.close();
   }
@@ -325,14 +332,20 @@ const parseLedgerLine = (line: string): RecutLoopLedgerEntry | null => {
     id: typeof row['id'] === 'string' ? row['id'] : '',
     headSha: typeof row['headSha'] === 'string' ? row['headSha'] : '',
     file: typeof row['file'] === 'string' ? row['file'] : '',
+    ...(typeof row['leaseUntil'] === 'number' && Number.isFinite(row['leaseUntil'])
+      ? { leaseUntil: row['leaseUntil'] } : {}),
   };
 };
 
 /** Newest-first: the last 64 KiB of the recut ledger, malformed lines skipped. */
 export async function readRecutLoopLedger(runsDir: string): Promise<RecutLoopLedgerEntry[]> {
+  return readLedger(runsDir, LEDGER_FILE);
+}
+
+async function readLedger(runsDir: string, relativeFile: string): Promise<RecutLoopLedgerEntry[]> {
   let tail: string;
   try {
-    const file = await open(join(runsDir, LEDGER_FILE), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const file = await open(join(runsDir, relativeFile), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = await file.stat();
       if (!info.isFile()) throw new Error('invalid source');
@@ -603,17 +616,18 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     readPromptTexts(runsDir),
     readRecutLoopLedger(runsDir),
     readInflightPrs(runsDir, dropDir),
+    readLedger(runsDir, LEASE_FILE),
   ]).catch(() => null);
   if (guardReads === null) {
     result.outcome = 'read-failed';
     return result;
   }
-  const [prompts, ledger, inflightRead] = guardReads;
+  const [prompts, ledger, inflightRead, leases] = guardReads;
   const inflight = inflightRead.prs;
   const outcomes = collapseJobOutcomes(parseJobOutcomeRows(inflightRead.metricsText, nowMs, EMPTY_YIELD_WINDOW_MS));
 
   const superseded = new Set(findSupersededPrs(backlog.items, merged, prompts).map((row) => row.pr.number));
-  const recent = new Set(ledger.filter((entry) => Date.parse(entry.at) >= nowMs - RECENT_WINDOW_MS).map((entry) => entry.pr));
+  const recent = new Set(ledger.filter((entry) => Date.parse(entry.at) >= nowMs - RECENT_WINDOW_MS).map((entry) => `${entry.pr}:${entry.headSha}`));
   const hourCount = ledger.filter((entry) => Date.parse(entry.at) >= nowMs - HOUR_MS).length;
   let states: ReadonlyMap<number, FleetMergeStateRead>;
   try {
@@ -631,11 +645,15 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     const pr = item.number;
     const skip = (reason: string): void => { result.skipped.push({ pr, reason }); };
     if (superseded.has(pr)) { skip('superseded'); continue; }
-    if (recent.has(pr)) { skip('recent'); continue; }
+    const headSha = await readHeadSha(pr);
+    if (headSha === null || !SHA_RE.test(headSha)) { skip('no-head'); continue; }
+    const key = `${pr}:${headSha}`;
+    if (recent.has(key)) { skip('recent'); continue; }
+    if (leases.some(entry => entry.pr === pr && (entry.leaseUntil ?? 0) > now()
+      && !ledger.some(written => written.pr === pr && written.id === entry.id
+        && written.headSha === entry.headSha && Date.parse(written.at) >= Date.parse(entry.at)))) { skip('leased'); continue; }
     if (inflight.has(pr)) { skip('in-flight'); continue; }
     if (allowance <= 0) { skip('capped'); capped = true; continue; }
-    const headSha = await readHeadSha(pr);
-    if (headSha === null) { skip('no-head'); continue; }
     if (emptyYieldStreak(ledger, pr, headSha, outcomes) >= EMPTY_YIELD_STREAK) { skip('empty-yield'); continue; }
     // Fail open: a degraded landed read must never block a real recut.
     const landed = await readLanded({ number: pr, headSha, title: item.title }).catch(() => null);
@@ -645,6 +663,14 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     const file = join(dropDir, `${DROP_JOB_FILE_PREFIX}${id}.md`);
     const unionSafe = await readUnionSafe({ number: pr, headSha }).catch(() => false);
     const body = renderBacklogRecutJob(pr, headSha, item.title, { unionSafe });
+    // Persist intent before any external publication. Failure or process death
+    // leaves a bounded reservation; the process lock fences live publishers.
+    const lease: RecutLoopLedgerEntry = { at, pr, id, headSha, file, leaseUntil: now() + LEASE_MS };
+    try {
+      // A leading separator isolates any torn append left by a dead publisher.
+      await appendLine(join(runsDir, LEASE_FILE), `\n${JSON.stringify(lease)}\n`);
+      leases.unshift(lease);
+    } catch { skip('lease-failed'); continue; }
     try {
       await writeJob(file, body);
     } catch (error) {
@@ -652,7 +678,7 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
       continue;
     }
     allowance -= 1;
-    recent.add(pr);
+    recent.add(key);
     inflight.add(pr);
     result.written.push({ pr, id, file });
     try {

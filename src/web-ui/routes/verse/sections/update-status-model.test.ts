@@ -9,9 +9,9 @@ const base = { native: null, server: facts, appVersion: '1.0.0', desktopVersion:
 
 describe('describeUpdateStatus', () => {
   it.each([
-    ['installing', 'Installing 2.0.0…', 'success'], ['installed', 'Installed 2.0.0; restarts when idle', 'success'],
-    ['staged', 'Update 2.0.0 ready · installs when idle', 'info'], ['waiting-for-idle', 'Update 2.0.0 ready · installs when idle', 'info'],
-    ['waiting-for-app-quit', 'Update 2.0.0 ready · installs when idle', 'info'], ['adoption-held', 'Update held: Busy', 'warning'],
+    ['installing', 'Installing 2.0.0…', 'success'], ['installed', 'Installed 2.0.0; reopen Phantom', 'success'],
+    ['staged', 'Update 2.0.0 ready · checking host admission', 'info'], ['waiting-for-idle', 'Update 2.0.0 ready · waiting for idle', 'info'],
+    ['waiting-for-app-quit', 'Quit Phantom to install 2.0.0', 'info'], ['adoption-held', 'Update held: Busy', 'warning'],
     ['downloading', 'Downloading 2.0.0 · 25%', 'info'], ['failed', 'Update failed: Busy', 'danger'],
     ['disabled', 'Automatic updates off', 'neutral'], ['uncommissioned', 'Automatic updates off', 'neutral'],
   ] as const)('prioritizes native %s', (phase, headline, tone) => {

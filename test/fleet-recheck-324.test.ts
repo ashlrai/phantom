@@ -85,7 +85,7 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
     readChannelHealth: () => healthyChannels,
     listWorkBoard: () => healthyWork,
     listCoordination: () => ({ source: 'available', claims: [coordRow] }),
-    listLiveWorkers: async () => emptyWorkers,
+    listLiveWorkers: () => emptyWorkers,
     ...over,
   };
 }
@@ -93,6 +93,19 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
 afterEach(() => vi.restoreAllMocks());
 
 describe('readFleetRecheck', () => {
+  it('returns the same verdict for synchronous and asynchronous readers', async () => {
+    const synchronous = await readFleetRecheck(deps());
+    const asynchronous = await readFleetRecheck(deps({
+      readRuntimeIdentity: async () => healthyRuntime,
+      readFleetBoard: async () => healthyBoard,
+      readChannelHealth: async () => healthyChannels,
+      listWorkBoard: async () => healthyWork,
+      listCoordination: async () => ({ source: 'available', claims: [coordRow] }),
+      listLiveWorkers: async () => emptyWorkers,
+    }));
+    expect(asynchronous).toEqual(synchronous);
+  });
+
   it('verifies all four sections when every reader is healthy', async () => {
     const recheck = await readFleetRecheck(deps());
     expect(recheck.schema).toBe('fleet.recheck.v1');
