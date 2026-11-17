@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (metrics, enroll, …)
-    observability   Observability - cost, telemetry, audit (empties, throughput, jobs, …)
+    observability   Observability - cost, telemetry, audit (empties, home, throughput, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -73,7 +73,7 @@ Every command, grouped by topic.
     doctor merge-path --repo owner/name                                                                            Read-only required-check sentinel for recent PR heads.
     doctor                                                                                                         One-glance health check: config, phantom, providers, ecosystem.
     init [--yes]                                                                                                   Idempotent onboarding: ensure config, detect phantom + models, set editor.
-    desktop install [--apply]                                                                                      Inspect original signed app/CLI artifacts; explicitly install only on an empty macOS arm64 installation after Stop/drain. Does not resume authority.
+    desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]                                Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.
     desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]                              Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.
     apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]                Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.
     desktopctl capabilities|status|run <resource> [--json]                                                         Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.
@@ -316,6 +316,7 @@ Every command, grouped by topic.
 
   Observability - cost, telemetry, audit
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
+    home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
     throughput [--hours 24] [--by lane|repo|tier] [--text]                                      Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
     jobs empty [--since 24h] [--json]                                                           Explain empty jobs from local notes and logs.
     radar list|run|diff [--json]                                                                Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.

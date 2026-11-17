@@ -1,3 +1,21 @@
+# Managed desktop CLI upgrade
+
+`src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`
+(the consumer install ports plus `smokeVersion` and lowering-only
+`residentStop`), `ConsumerUpgradeOptions`, `ConsumerUpgradeResult`,
+`createConsumerUpgradeDependencies`, `inspectConsumerDesktopUpgrade` and
+`applyConsumerDesktopUpgrade`. Inspection returns frozen `desktop-upgrade.v1`
+observations and stages verified paired public artifacts privately. Apply
+consumes an invocation-owned admission once; it requires Stop/drain, stops the
+resident, switches the managed CLI pointer atomically and keeps the old release.
+`desktop-upgrade-journal.v1` records the previous/current release and version
+for explicit rollback. Neither mode replaces the native app, grants authority,
+or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
+its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
+install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
+The install module also exports its existing `directory`, `parents`, `owned`,
+`regular`, `write`, `sha`, `ioRead` and `packageReady` guards for shared use.
+
 # Lane allowance evidence
 
 `src/core/usage/lane-allowance.ts` exports pure `projectLaneAllowance(inputs,
