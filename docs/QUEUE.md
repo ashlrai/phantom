@@ -575,6 +575,8 @@ is executed by the planner. The planner does not install or change host scripts.
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
 
+Restock also checks semantic goal overlap before admitting READY rows. Within the same repo, a shared explicit file/module and normalized token Jaccard score of at least 0.5 marks `DUPLICATE-OF-<id>`; CLAIMED/RUNNING rows take precedence, then the first READY row. Different explicit PR targets stay separate. Paths, stop words and generic single-case scaffolding do not count as goal tokens; fewer than three tokens is unknown. `phm queue dedupe --json` exposes these matches as `reason: "semantic-goal-overlap"` with `jaccard`, and restock JSON includes `dedupe.repeats` and `dedupe.unknown`. This partial check uses router-queue text, not external running-process or PR inventories; other ingest paths are not covered. Live restock adoption still requires Security review and re-pinning.
+
 ### Suggest work for an idle lane
 
 Run `phm fleet supply --lane codex-personal --n 5 --json` from the Phantom
