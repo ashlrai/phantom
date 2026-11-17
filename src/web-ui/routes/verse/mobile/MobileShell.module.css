@@ -13,7 +13,7 @@
 .tabbar {
   flex: none;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
   backdrop-filter: saturate(1.6) blur(18px);

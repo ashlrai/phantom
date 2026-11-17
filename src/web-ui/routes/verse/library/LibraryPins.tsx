@@ -5,33 +5,19 @@
  * shared with `ashlr fleet library-pins` and the fleet context pack.
  */
 import { useState } from 'react';
-import type { LibraryPin, LibraryPinKind } from '../../../../core/fleet/library-pins.js';
+import type { LibraryPinKind } from '../../../../core/fleet/library-pins.js';
 import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
 import { refetchQuery } from '../../../data/cache.js';
-import { ApiError, apiGet, apiPost } from '../../../data/client.js';
+import { ApiError, apiPost } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';
-import type { QueryDef } from '../../../data/queries.js';
 import { CardNote } from '../command/Surface.js';
 import { oneShotFetcher } from '../health/health-queries.js';
 import { VerseMutationLockedError } from '../verse-queries.js';
+import { libraryPinsQuery, LIBRARY_PINS_PATH, LIBRARY_PINS_KEY, type PinsResponse } from './library-queries.js';
+export { libraryPinsQuery, LIBRARY_PINS_PATH, LIBRARY_PINS_KEY } from './library-queries.js';
 import styles from './library.module.css';
 
-export const LIBRARY_PINS_PATH = '/api/verse/library/pins';
-export const LIBRARY_PINS_KEY = 'verse-library-pins';
 const TITLE_MAX = 160;
-
-interface PinsResponse { v: 1; pins: LibraryPin[] }
-
-/** A server without the route answers 404: no pins there, and no toggles either. */
-export const libraryPinsQuery: QueryDef<PinsResponse | null> = {
-  key: LIBRARY_PINS_KEY,
-  fetch: async (signal) => {
-    try { return await apiGet<PinsResponse>(LIBRARY_PINS_PATH, signal); } catch (err) {
-      if (err instanceof ApiError && err.status === 404) return null;
-      throw err;
-    }
-  },
-};
 
 async function mutatePins(body: Record<string, string>): Promise<void> {
   const token = getMutationToken();

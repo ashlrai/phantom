@@ -1,6 +1,6 @@
 /**
- * routes/verse/mobile/MobileShell.tsx — Verse on a phone: five tabs (Home,
- * Agents, Needs you, Leader, More), one screen at a time, one activity loop.
+ * routes/verse/mobile/MobileShell.tsx — Verse on a phone: six tabs (Home,
+ * Agents, Needs you, Leader, Library, More), one screen at a time, one activity loop.
  *
  * FIRST PAINT: this shell and Home's frame are the whole first-paint bundle
  * (check-first-paint-budget.mjs measures them against 250 KB; React is ~220 KB
@@ -19,7 +19,7 @@ import { PRODUCT_NAME } from '../../../app/product-brand.js';
 import { Component, Suspense, useCallback, useEffect, type ComponentType, type ReactNode } from 'react';
 import { preloadedLazy } from '../shell/preloaded.js';
 import { BOOT_CONTEXT, MobileContext, type MobileContextValue } from './mobile-context.js';
-import { AgentsGlyph, HomeGlyph, LeaderGlyph, MoreGlyph, NeedsGlyph } from './mobile-icons.js';
+import { AgentsGlyph, HomeGlyph, LeaderGlyph, LibraryGlyph, MoreGlyph, NeedsGlyph } from './mobile-icons.js';
 import { tabOf, tabRoot, useMobileRoute, type MobileRoute, type MobileTab } from './mobile-router.js';
 import type { MobileRuntimeProps } from './MobileRuntime.js';
 import { HomeScreen } from './screens/HomeScreen.js';
@@ -42,6 +42,7 @@ const TABS: ReadonlyArray<{ id: MobileTab; label: string; Glyph: ComponentType<{
   { id: 'agents', label: 'Agents', Glyph: AgentsGlyph },
   { id: 'needs', label: 'Needs you', Glyph: NeedsGlyph },
   { id: 'leader', label: 'Leader', Glyph: LeaderGlyph },
+  { id: 'library', label: 'Library', Glyph: LibraryGlyph },
   { id: 'more', label: 'More', Glyph: MoreGlyph },
 ];
 

@@ -1,0 +1,6 @@
+.items { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding: 0; list-style: none; }
+.item { border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.item summary { min-height: 3rem; padding: var(--space-3); cursor: pointer; touch-action: manipulation; }
+.item summary span { display: block; }
+.item summary:focus-visible { outline: 2px solid var(--accent-500); outline-offset: -2px; }
+.content { white-space: pre-wrap; padding: 0 var(--space-3) var(--space-3); margin: 0; }

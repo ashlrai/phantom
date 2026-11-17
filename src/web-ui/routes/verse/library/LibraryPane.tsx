@@ -6,8 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { VerseSearchResponse } from '../../../../core/verse/types.js';
-import { ApiError, apiGet } from '../../../data/client.js';
-import type { QueryDef } from '../../../data/queries.js';
+import { ApiError } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';
 import { Card, CardNote } from '../command/Surface.js';
 import { openChat } from '../command/nav.js';
@@ -18,11 +17,11 @@ import { verseSessionsQuery } from '../verse-queries.js';
 import { CosMemorySection } from './CosMemorySection.js';
 import { MediaSection } from './MediaSection.js';
 import { HandoffsSection } from './HandoffsSection.js';
-import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
-import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
+import { leaderFileRows } from './library-leader-files-model.js';
 import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
 import { PinnedGroup, PinToggle } from './LibraryPins.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
+import { leaderFilesQuery, handoffsQuery } from './library-queries.js';
 import styles from './library.module.css';
 
 export const LIBRARY_SEARCH_DEBOUNCE_MS = 300;
@@ -170,24 +169,6 @@ function AgentConversation({ visible }: { visible: boolean }) {
     </section>
   );
 }
-
-const leaderFilesQuery: QueryDef<LeaderFilesResponse> = {
-  key: 'verse-fleet-library-files',
-  fetch: async (signal) => {
-    const body = narrowLeaderFiles(await apiGet<unknown>('/api/verse/fleet/library-files', signal));
-    if (!body) throw new Error('malformed leader files response');
-    return body;
-  },
-};
-
-const handoffsQuery: QueryDef<HandoffsResponse> = {
-  key: 'verse-fleet-handoffs',
-  fetch: async (signal) => {
-    const body = narrowHandoffs(await apiGet<unknown>('/api/verse/fleet/handoffs', signal));
-    if (!body) throw new Error('malformed handoffs response');
-    return body;
-  },
-};
 
 function LeaderFileItem({ row }: { row: ReturnType<typeof leaderFileRows>[number] }) {
   const [open, setOpen] = useState(false);

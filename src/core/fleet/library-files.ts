@@ -9,6 +9,7 @@ export interface LibraryFile {
   size: number;
   modifiedAt: string;
   preview: string;
+  unavailable?: boolean;
 }
 
 // Read complete, bounded files before redaction: cutting a token at a byte
@@ -32,10 +33,15 @@ export async function listLeaderFiles(root = join(homedir(), '.ashlr-runs')): Pr
   } catch { /* An absent drafts directory is normal. */ }
   const rows = await Promise.all(names.map(async name => {
     let file;
+    let unavailable: LibraryFile | null = null;
     try {
+      const metadata = await lstat(join(leader, name));
+      if (!metadata.isFile()) return null;
+      unavailable = { name: scrubPrivateText(name), size: metadata.size, modifiedAt: metadata.mtime.toISOString(), preview: '', unavailable: true };
       file = await open(join(leader, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const stat = await file.stat();
-      if (!stat.isFile() || stat.size > MAX_BYTES) return null;
+      if (!stat.isFile()) return null;
+      if (stat.size > MAX_BYTES) return unavailable;
       const buffer = Buffer.alloc(MAX_BYTES + 1);
       let used = 0;
       while (used < buffer.length) {
@@ -43,11 +49,11 @@ export async function listLeaderFiles(root = join(homedir(), '.ashlr-runs')): Pr
         if (!bytesRead) break;
         used += bytesRead;
       }
-      if (used > MAX_BYTES) return null;
+      if (used > MAX_BYTES) return unavailable;
       const content = buffer.subarray(0, used).toString('utf8');
       return { name: scrubPrivateText(name), size: stat.size, modifiedAt: stat.mtime.toISOString(),
         preview: scrubPrivateText(content).replace(/\s+/g, ' ').trim().slice(0, 240) };
-    } catch { return null; } finally { await file?.close(); }
+    } catch { return unavailable; } finally { await file?.close(); }
   }));
   return rows.filter((row): row is LibraryFile => row !== null)
     .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt) || a.name.localeCompare(b.name));

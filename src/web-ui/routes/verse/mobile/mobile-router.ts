@@ -10,7 +10,7 @@
 import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { useCallback, useSyncExternalStore } from 'react';
 
-export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'more';
+export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'library' | 'more';
 
 export type AgentPane = 'transcript' | 'changes';
 
@@ -21,6 +21,7 @@ export type MobileRoute =
   | { screen: 'new' }
   | { screen: 'needs' }
   | { screen: 'leader' }
+  | { screen: 'library' }
   | { screen: 'more' }
   | { screen: 'fleet' }
   | { screen: 'runs' }
@@ -32,7 +33,7 @@ export type MobileRoute =
   | { screen: 'drop-job' }
   | { screen: 'watch' };
 
-const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'runs', 'inbox', 'feed', 'goals', 'ideas', 'drop-job', 'watch']);
+const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'library', 'more', 'fleet', 'runs', 'inbox', 'feed', 'goals', 'ideas', 'drop-job', 'watch']);
 
 /** `#/agents/abc/changes` → the route. Anything unrecognised is Home, never an error. */
 export function parseMobileHash(hash: string): MobileRoute {
@@ -87,6 +88,8 @@ export function tabOf(route: MobileRoute): MobileTab {
       return 'needs';
     case 'leader':
       return 'leader';
+    case 'library':
+      return 'library';
     case 'more':
     case 'fleet':
     case 'runs':

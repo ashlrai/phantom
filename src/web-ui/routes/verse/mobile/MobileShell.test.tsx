@@ -104,18 +104,22 @@ async function openFleet() {
 }
 
 describe('the shell', () => {
-  it('draws five tabs with Home current, and badges once the runtime has counted', async () => {
+  it('draws six tabs with Home current, and badges once the runtime has counted', async () => {
     mac();
     render(<MobileShell />);
     // The frame paints before the runtime chunk: tabs, no badges yet.
     const frameTabs = screen.getByRole('navigation', { name: 'Phantom' });
-    expect(within(frameTabs).getAllByRole('button')).toHaveLength(5);
+    expect(within(frameTabs).getAllByRole('button')).toHaveLength(6);
     expect(within(frameTabs).getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     expect(within(frameTabs).getByRole('button', { name: 'Needs you' })).toBeInTheDocument();
     // Then the runtime lands (the frame is redrawn with the live context).
     expect(await screen.findByRole('button', { name: 'Needs you, 1 waiting' }, { timeout: 4000 })).toBeInTheDocument();
     const tabs = screen.getByRole('navigation', { name: 'Phantom' });
     expect(within(tabs).getByRole('button', { name: 'Agents, 1 working' })).toBeInTheDocument();
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Library' }));
+    await screen.findByRole('heading', { name: 'Library' });
+    expect(window.location.hash).toBe('#/library');
+    expect(within(tabs).getByRole('button', { name: 'Library' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('switches screens through the hash (so Back works), and a re-tap pops to the tab root', async () => {

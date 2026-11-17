@@ -1,0 +1,11 @@
+--- a/src/core/fleet/mason-asks.ts
++++ b/src/core/fleet/mason-asks.ts
+@@ -93,7 +93,7 @@
+       { need: 'the phone Feed screen', path: `${VERSE}/mobile/screens/FeedScreen.tsx`, exportName: 'FeedScreen' },
+       { need: 'the phone Ideas screen', path: `${VERSE}/mobile/screens/IdeasScreen.tsx`, exportName: 'IdeasScreen' },
+       { need: 'the phone Goals screen', path: `${VERSE}/mobile/screens/GoalsScreen.tsx`, exportName: 'GoalsScreen' },
+-      { need: 'a Library screen in the phone view' },
++      { need: 'a Library screen in the phone view', path: `${VERSE}/mobile/screens/LibraryScreen.tsx`, exportName: 'LibraryScreen' },
+     ],
+   },
+   {

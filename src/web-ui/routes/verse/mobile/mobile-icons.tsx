@@ -67,3 +67,7 @@ export function BackGlyph(props: IconProps) {
     </Icon>
   );
 }
+
+export function LibraryGlyph(props: IconProps) {
+  return <Icon {...props}><path d="M2 3h3v10H2zM7 3h3v10H7zM12 3l2-0.5 2 10-2 0.5z" /></Icon>;
+}

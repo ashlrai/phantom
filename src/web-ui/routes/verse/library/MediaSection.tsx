@@ -1,28 +1,13 @@
 import { useEffect } from 'react';
-import { getMutationToken } from '../../../data/auth-store.js';
-import { useQuery, useRefetch } from '../../../data/hooks.js';
-import type { QueryDef } from '../../../data/queries.js';
-import { isRemoteMobileMode } from '../../../data/remote-mode.js';
+import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
 import { CardNote } from '../command/Surface.js';
 import { ThreadScreenshot } from '../leader-thread/ThreadScreenshot.js';
 import { leaderFileAge, leaderFileSize } from './library-leader-files-model.js';
-import { narrowMedia, type MediaList } from './library-media-model.js';
+import { libraryMediaQuery as query } from './library-queries.js';
 import styles from './library.module.css';
 
-const query: QueryDef<MediaList> = {
-  key: 'verse-leader-attachments',
-  fetch: async (signal) => {
-    const token = getMutationToken();
-    if (!token || isRemoteMobileMode()) throw new Error('Attachments unavailable');
-    const response = await fetch('/api/verse/leader/attachments', { credentials: 'same-origin', headers: { 'x-ashlr-token': token }, signal });
-    if (!response.ok) throw new Error('Attachments unavailable');
-    const body = narrowMedia(await response.json());
-    if (!body) throw new Error('Invalid attachments response');
-    return body;
-  },
-};
-
 export function MediaSection({ visible }: { visible: boolean }) {
+  const { hasHold } = useMutationHold();
   const media = useQuery(query, { enabled: visible, freshMs: 30_000 });
   const refetch = useRefetch(query);
   useEffect(() => {
@@ -39,7 +24,8 @@ export function MediaSection({ visible }: { visible: boolean }) {
       : media.data.items.length === 0 ? <CardNote>No screenshots yet. Paste one into the Leader box.</CardNote>
       : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '1rem' }}>
         {media.data.items.map(item => <div key={item.name}>
-          <ThreadScreenshot name={item.name} raw={item.name} />
+          {/* Retry after unlock; discard loaded bytes when the hold expires. */}
+          <ThreadScreenshot key={`${item.name}:${hasHold}`} name={item.name} raw={item.name} />
           <p className={styles.meta}>{leaderFileAge(item.modifiedAt, Date.now())} · {leaderFileSize(item.bytes)}</p>
         </div>)}
       </div>}
