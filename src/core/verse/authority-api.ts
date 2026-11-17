@@ -44,7 +44,7 @@ import type { ApiModule } from './api-modules.js';
 import { autonomyLadder, LEDGER_DECISIONS_VIEW, readShadowDecisions, resetShadowDecisionsCacheForTest, type AuthorityStatusWithLadder } from './autonomy-ladder.js';
 import type { VerseApiContext } from './verse-api.js';
 import type { NeedsYouItem, VerseAutonomyBadge } from './workbench-types.js';
-import { passesMutationGate, readBody } from '../web/api.js';
+import { passesMutationGate, readBody } from '../web/api-http-helpers.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { clearStop, revokeStandingAndDrain, stopAutonomyAndDrain } from '../authority/clamp.js';

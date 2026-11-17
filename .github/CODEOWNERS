@@ -1336,6 +1336,7 @@
 /test/verse-merge-latency-api.test.ts @masonwyatt23
 /test/verse-merge-pace-api-02.test.ts @masonwyatt23
 /test/verse-multimodel-auto-316.test.ts @masonwyatt23
+/test/verse-outcomes-api-reissue.test.ts @masonwyatt23
 /test/verse-reliability.test.ts @masonwyatt23
 /test/verse-resources-ready-314.test.ts @masonwyatt23
 /test/verse-search-budget-31n.test.ts @masonwyatt23
