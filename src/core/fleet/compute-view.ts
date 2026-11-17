@@ -1,3 +1,4 @@
+import { readFleetAwareness } from './awareness-read.js';
 /** Read-only compute projection. Registry mirrors remain evidence, never authority. */
 import { readLaunchVitals, type LaunchVitals } from './launch-vitals.js';
 import { hostname, homedir } from 'node:os';
@@ -20,6 +21,7 @@ export interface ComputeNode {
   caps?: string[] | null;
 }
 export interface FleetCompute {
+  awareness?: Awaited<ReturnType<typeof readFleetAwareness>>;
   schema: 'fleet.compute.v1'; generatedAt: string; localNodeId: string; truncated: boolean;
   nodes: ComputeNode[];
   /** Additive rollup of workers per physical Mac; absent in payloads from older servers. */
@@ -105,8 +107,8 @@ export async function readFleetCompute(options: {
       warnings: Array.isArray(admission.warnings) ? admission.warnings.filter((v): v is string => typeof v === 'string').slice(0, 32).map(clean) : null,
       observedAt: typeof stamp === 'string' && Number.isFinite(Date.parse(stamp)) ? stamp : null },
   };
-  const launchVitals = await readLaunchVitals(runs);
+  const [launchVitals, awareness] = await Promise.all([readLaunchVitals(runs), readFleetAwareness({ home, runsDir: runs, now })]);
   const all = [...nodes.values()], { hosts, totals } = summarizeHosts(all);
-  return { launchVitals, schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
+  return { launchVitals, awareness, schema: 'fleet.compute.v1', generatedAt: new Date(now).toISOString(), localNodeId, truncated,
     nodes: all, hosts, pool: totals, sources, operations, dispatcherAt: typeof tick === 'string' && Number.isFinite(Date.parse(tick)) ? tick : null, lanes };
 }

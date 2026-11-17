@@ -15,6 +15,10 @@ export interface QueueJobV1 {
   secrets?: string[];
   claim?: JobClaim;
   result?: string;
+  /** Witness-clock execution boundaries; retries replace startedAt. */
+  startedAt?: number;
+  executionHostId?: string;
+  completedAt?: number;
 }
 
 export interface NodeSession {
