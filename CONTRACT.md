@@ -73,6 +73,15 @@ and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
 Dispatch is a read-only preview unless apply is exactly true. Results use only
 the local bus and its current comms/participant allowlist, never a Slack send.
 
+Devin landing (additive): `src/core/devin/land.ts` exports
+`landDevinSession(request: DevinLandRequest, deps?: DevinLandDeps): Promise<DevinLandResult>`
+and its parsers; `DevinClient` gains `listSessionAttachments(orgId, sessionId)`
+and `downloadAttachment(orgId, uuid, name, maxBytes)` (the key is never sent past
+the API's redirect), and `DevinFetch` init gains optional `redirect: 'manual'`.
+The CLI adds `phm devin land --session <id> [--repo <name>] [--base <b>] [--job <id>]
+[--bundle <name>] [--apply] [--json]`, a dry run unless `--apply`; it runs the
+pinned `publish.sh` unchanged and refuses repos outside its allowlist.
+
 ---
 
 ## src/core/types.ts — THE CONTRACT (types only)

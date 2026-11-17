@@ -323,6 +323,33 @@ PRs, so there is no Land or Close; the item expires after 7 days.
 
   `launch` defaults `--repo` to the folder's GitHub origin and `--base` to the
   repository's default branch. Exit codes: 0 ok, 1 error or refused, 2 usage.
+- **Land a session that could not push.** Devin sessions cannot push upstream,
+  so a session attaches `<slug>.bundle` (`git bundle create <slug>.bundle
+  origin/master..HEAD`) and `<slug>.pr.md` (first line title, rest body).
+  `land` publishes that work through the pinned, fork-only
+  `~/.ashlr-runs/bin/publish.sh`:
+
+  ```sh
+  ashlr devin land --session devin-… [--repo phantom] [--json]          # dry run: the plan and the session's commits
+  ashlr devin land --session devin-… [--repo phantom] --apply [--json]  # act
+  ```
+
+  It reads both attachments through the Devin API with the key in the existing
+  custody, runs `git bundle verify`, and takes the session's own commits as
+  `merge-base(origin/<base>, bundle tip)..tip` (linear, at most 100). With
+  `--apply` it fetches origin, adds `~/Projects/ashlrai/wt/<J>` on
+  `codex-bridge/<J>` (`<J>` defaults to `DEVIN-<id prefix>`; `--job` overrides),
+  rebases those commits onto `origin/<base>`, writes `queue/run/<J>.line`
+  (`J, repo, devin, frontier, prompt`), `<J>.base`, `<J>.body.md`, `<J>.prompt`
+  and the worktree's `BRIDGE_NOTES.md`, then runs `publish.sh <J>` unchanged and
+  reads its `RESULT PR <url>` line. publish.sh squashes the commits into one,
+  scrubs and opens the PR; when it withheld auto-merge (sensitive paths, judge,
+  red CI, deferral) `land` leaves it off, and otherwise runs
+  `gh pr merge --auto --squash`. Each apply appends a line to
+  `~/.ashlr/devin/landings.jsonl` and, when the session is a tracked task, sets
+  its PR. Repos outside publish.sh's allowlist, an existing job record, worktree
+  or branch, and a rebase conflict are refused (the worktree is removed). A
+  dry run writes nothing.
 - **Playbooks.** A launch whose text contains a `!macro`, or that names a
   playbook, carries that playbook's text ahead of the delivery contract and
   records its version on the task. A named playbook that does not exist
