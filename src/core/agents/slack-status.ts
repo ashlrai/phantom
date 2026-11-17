@@ -132,8 +132,13 @@ export function readSlackWorkStatus(options: { runsDir?: string; busRoot?: strin
 
 /** Match the exact receipt, never a different request sharing the thread. */
 export function slackWorkStatusLine(work: SlackWorkStatus, body: Record<string, unknown>): string {
-  const item = work.items.find(row => row.id === body.inReplyTo || row.id === body.in_reply_to ||
-    createHash('sha256').update(JSON.stringify(['slack', row.id])).digest('hex') === body.requestId);
+  const aliases = [body.inReplyTo, body.in_reply_to, body.requestId];
+  const supplied = aliases.map(value => typeof value === 'string' && value.length > 0 ? value : null);
+  const matches = work.items.filter(row => supplied.some((value, index) => value !== null &&
+    (index === 2 ? createHash('sha256').update(JSON.stringify(['slack', row.id])).digest('hex') : row.id) === value));
+  const candidate = matches.length === 1 ? matches[0] : undefined;
+  const item = candidate && supplied.every((value, index) => value === null || value === (index === 2
+    ? createHash('sha256').update(JSON.stringify(['slack', candidate.id])).digest('hex') : candidate.id)) ? candidate : undefined;
   const detail = item?.state === 'VERIFIED' ? `PR ${item.pr ?? 'unknown'}; head ${item.head ?? 'unknown'}`
     : item?.state === 'BLOCKED' ? `dependency ${item.dependency ?? 'unknown'}`
       : `owner ${item?.owner ?? 'unknown'}; claim ${item?.claimReceipt ?? 'unknown'}`;
