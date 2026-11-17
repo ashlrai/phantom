@@ -1,12 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
 import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps.js';
 import { callPool, type PoolConfig } from './pool-host.js';
-import { isHostStats, validId } from './state.js';
+import { NODE_HEARTBEAT_MS, isHostStats, validId } from './state.js';
 import { readNodeCapacity } from './capacity.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
@@ -60,12 +60,14 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       return isHostStats(sample) && json.length <= 64 * 1024 ? ['--host-stats', json] : [];
     } catch { return []; }
   };
+  const capacityReport = (capacity: ReturnType<typeof readNodeCapacity>) => ['--capacity', JSON.stringify({ ...capacity,
+    hostId: hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100), sampledAtMs: Date.now() })];
   let active = 0;
   const usage = () => String(Math.min(1000, Math.round(active / capacity.slots * 1000)));
   const attempt = async (): Promise<Record<string, unknown>> => {
     const admission = capacityNow();
+    callPool(config, 'beat', [...identity, ...telemetry(), ...capacityReport(admission), '--usage', usage(), '--slots', String(admission.slots), ...(auth ? ['--auth', auth] : [])]);
     if (admission.held) return { held: admission.held };
-    callPool(config, 'beat', [...identity, ...telemetry(), '--usage', usage(), '--slots', String(admission.slots), ...(auth ? ['--auth', auth] : [])]);
     const pulled = callPool(config, 'pull', identity);
     if (pulled.demoted || !pulled.result['pulled']) return { pulled: false };
     const claim = pulled.result['claim'] as JobClaim;
@@ -99,12 +101,15 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       process.once('SIGTERM', stop);
       const timer = setInterval(() => {
         try {
-          if (nodeStopped() || capacityNow().held) return stop();
-          callPool(config, 'beat', [...identity, ...telemetry(), '--usage', usage(), '--slots', String(capacityNow().slots)]);
+          if (nodeStopped()) return stop();
+          const observed = capacityNow();
+          if (observed.held) stop();
+          callPool(config, 'beat', [...identity, ...telemetry(), ...capacityReport(observed), '--usage', usage(), '--slots', String(observed.slots)]);
+          if (observed.held) return;
           const current = callPool(config, 'renew', lease);
           if (current.demoted || !current.result['expiresAt']) stop();
         } catch { stop(); }
-      }, 3000);
+      }, NODE_HEARTBEAT_MS);
       const deadline = setTimeout(stop, 30 * 60_000);
       child.on('error', () => { fenced = true; });
       child.stdin.on('error', stop);

@@ -15,6 +15,12 @@ async function store(): Promise<QueueStore> {
 const job = (id = 'RQ-TEST'): QueueJob => ({ id, status: 'READY', priority: 'P0', pool: 'codex-personal', tier: 'frontier', repo: 'phantom', deps: [], scope: 'Own the queue', acceptance: 'Tests pass', claims: [] });
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 describe('queue.v1', () => {
+  it('retires stale PR repairs before shared queue dispatch without claiming work', async () => {
+    const s = await store();
+    execFileSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'contrib/mac/tests', '-p', 'test_dispatchd_repo_rank.py'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)), env: { ...process.env, HOME: s.directory }, timeout: 45_000,
+    });
+  });
   it('routes shared jobs through real dispatcher ticks with capability, quota and hysteresis fences', async () => {
     const s = await store();
     const output = execFileSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'contrib/mac/tests', '-p', 'test_work_market.py'], {

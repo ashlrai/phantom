@@ -1,9 +1,24 @@
+import { scrubSecrets } from '../../util/scrub.js';
+import type { NodeCapacity } from './capacity.js';
 import type { LeaderLease, NodeSession, QueueJobV1 } from './queue-v1.js';
 
 /** Local-auth status as observed by the node itself; never a credential. */
 export type NodeAuth = 'ok' | 'missing' | 'unknown';
 
+export const NODE_HEARTBEAT_MS = 3_000;
+export interface NodeCapacitySample extends NodeCapacity { hostId: string; sampledAtMs: number }
+
+export function isNodeCapacity(v: unknown): v is NodeCapacitySample {
+  if (!object(v)) return false;
+  return Object.keys(v).sort().join() === 'held,hostId,ramBytes,sampledAtMs,slots' && validId(v.hostId) && scrubSecrets(v.hostId) === v.hostId &&
+    integer(v.sampledAtMs) && v.sampledAtMs > 0 && integer(v.ramBytes) && v.ramBytes > 0 &&
+    integer(v.slots) && v.slots <= 64 &&
+    (v.held === null || ['memory-unmeasured', 'memory-pressure', 'disk-unmeasured', 'disk-pressure'].includes(String(v.held))) &&
+    (v.held === null || v.slots === 0);
+}
+
 export interface NodeRecord extends NodeSession {
+  capacity?: NodeCapacitySample;
   heartbeatAt: number;
   expiresAt: number;
   /** Owner scopes this node belongs to. */
@@ -76,6 +91,7 @@ export function parseState(value: unknown): NodesState {
     (n.owners === undefined || list(n.owners, validId)) && (n.caps === undefined || list(n.caps, validCap)) &&
     (n.usage === undefined || (integer(n.usage) && n.usage <= 1000)) &&
     (n.slots === undefined || (integer(n.slots) && n.slots <= 64)) &&
+    (n.capacity === undefined || isNodeCapacity(n.capacity)) &&
     (n.auth === undefined || ['ok', 'missing', 'unknown'].includes(String(n.auth))))) return fail();
   if (new Set(value.nodes.map(n => n.nodeId)).size !== value.nodes.length) return fail();
   if (value.leader !== null && (!object(value.leader) || !lease(value.leader))) return fail();
@@ -83,6 +99,8 @@ export function parseState(value: unknown): NodesState {
     (j.owner === undefined || validId(j.owner)) && (j.requires === undefined || list(j.requires, validCap)) &&
     (j.pack === undefined || validId(j.pack)) && (j.secrets === undefined || list(j.secrets, validSecretName)) &&
     ['pending', 'running', 'completed'].includes(String(j.state)) &&
+    (j.executionHostId === undefined || validId(j.executionHostId)) &&
+    (j.startedAt === undefined || integer(j.startedAt)) && (j.completedAt === undefined || integer(j.completedAt)) &&
     (j.result === undefined || typeof j.result === 'string') &&
     (j.state !== 'completed' || typeof j.result === 'string') &&
     (j.state === 'pending' ? j.claim === undefined : object(j.claim) && lease(j.claim) &&

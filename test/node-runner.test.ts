@@ -132,7 +132,7 @@ describe('reference node runner', () => {
     const rpc = (verb: string, args: string[]) => executePool(store, { origin: 'primary', action: 'execute', verb, args }, 'mason');
     const session = String(rpc('join', ['--node', 'muse', '--caps', 'codex']).result.session);
     const identity = ['--node', 'muse', '--session', session];
-    rpc('beat', identity);
+    rpc('beat', [...identity, '--capacity', JSON.stringify({ hostId: 'mac', sampledAtMs: Date.now(), ramBytes: 8 * 1024 ** 3, slots: 1, held: null })]);
     rpc('enqueue', ['--job', 'job-1', '--requires', 'codex', '--pack', 'shell-check']);
     const pulled = rpc('pull', identity).result;
     const r = parseNodeRunnerRequest(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.job, claim: pulled.claim }));
