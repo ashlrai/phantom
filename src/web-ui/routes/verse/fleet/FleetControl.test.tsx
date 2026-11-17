@@ -318,6 +318,15 @@ describe('the header', () => {
     const region = await control();
     expect(region).not.toHaveTextContent('old preparation');
     expect(region).not.toHaveTextContent('last completed');
+    expect(region.querySelector('[data-stale-tick]')).toHaveTextContent(/Daemon tick is stale.*last tick/);
+  });
+
+  it('does not flag the daemon tick when the daemon is alive', async () => {
+    stubSurfaceFetch({ kind: 'live' });
+    render(<FleetSection />);
+    const region = await control();
+    expect(region.querySelector('[data-stale-tick]')).toBeNull();
+    expect(region).not.toHaveTextContent('Daemon tick is stale');
   });
 
   it('says what the fleet is doing, with the grant, spend, daemon and agents', async () => {

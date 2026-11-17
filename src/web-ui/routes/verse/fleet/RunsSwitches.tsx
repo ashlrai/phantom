@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Switch } from '../../../components/primitives/Switch.js';
+import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { ApiError, readFailureReason } from '../../../data/client.js';
 import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -65,14 +66,20 @@ export function RunsSwitches({ readOnly = false }: { readOnly?: boolean }) {
     <div className={styles.strip} role="group" aria-label="Fleet switches">
       <div className={styles.heading}><strong>Switches</strong>{!missing && data && data.sourceState !== 'missing' ? <span>{data.sourceState === 'degraded' && !data.switches.length ? 'Status incomplete' : switchSummary(data.switches)}</span> : null}</div>
       {missing ? <p>Switches are not in this build yet.</p> : data?.sourceState === 'missing' ? <p>No fleet runs directory on this Mac.</p> : data ? (
-        <div className={styles.rows}>
-          {data.switches.map(row => (
-            <div className={styles.row} key={row.id}>
-              <Switch label={switchLabel(row.id)} checked={row.id === 'HOLD' ? row.on : !row.on} onChange={checked => void change(row.id, checked)} disabled={readOnly || row.id === 'HOLD' || pending.includes(row.id)} aria-describedby={`switch-description-${row.id}`} />
-              <p id={`switch-description-${row.id}`}>{row.effect}{row.id !== 'HOLD' && row.on && sinceText(row.since, Date.now()) ? ` · ${sinceText(row.since, Date.now())}` : ''}</p>
-            </div>
-          ))}
-        </div>
+        <ul className={styles.rows}>
+          {data.switches.map(row => {
+            const since = row.id !== 'HOLD' && row.on ? sinceText(row.since, Date.now()) : null;
+            const description = `${row.effect}${since ? ` · ${since}` : ''}`;
+            return (
+              <Tooltip key={row.id} placement="top" content={description}>
+                <li className={styles.row}>
+                  <Switch label={switchLabel(row.id)} checked={row.id === 'HOLD' ? row.on : !row.on} onChange={checked => void change(row.id, checked)} disabled={readOnly || row.id === 'HOLD' || pending.includes(row.id)} aria-describedby={`switch-description-${row.id}`} />
+                  <span className={styles.description} id={`switch-description-${row.id}`}>{description}</span>
+                </li>
+              </Tooltip>
+            );
+          })}
+        </ul>
       ) : !error ? <p>Reading switches…</p> : null}
       {data?.sourceState === 'degraded' && !missing ? <p role="status">Switches may be incomplete; the source is degraded.</p> : null}
       {error && !missing ? <p role="status">{error}</p> : null}

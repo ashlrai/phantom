@@ -164,7 +164,8 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
   border: 1px solid var(--border-subtle);
   background: var(--bg-canvas);
   cursor: pointer;
@@ -599,3 +600,37 @@
 .surface { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg-surface); }
 .views { flex: none; padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); }
 .viewBody { flex: 1; min-height: 0; overflow: hidden; }
+
+/* ---- agent roster: one identity avatar per agent ----------------------- */
+.roster { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+.avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--control-h) + var(--space-1));
+  height: calc(var(--control-h) + var(--space-1));
+  border-radius: var(--radius-full);
+  background: var(--bg-selected);
+  color: var(--text-on-accent);
+  font-size: var(--text-xs-size);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: 0 0 0 2px var(--bg-canvas);
+}
+.avatar[data-engine='claude'] { background: var(--engine-claude); }
+.avatar[data-engine='codex'] { background: var(--engine-codex); }
+.avatar[data-engine='devin'] { background: var(--engine-devin); }
+.avatar[data-engine='grok'] { background: var(--engine-grok); }
+.avatar[data-engine='local'] { background: var(--engine-local); }
+.avatar:not([data-engine]) { color: var(--text-secondary); }
+.avatar[data-working]::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--status-success-solid);
+  box-shadow: 0 0 0 2px var(--bg-canvas);
+}

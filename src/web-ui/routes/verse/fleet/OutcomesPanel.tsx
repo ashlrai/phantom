@@ -38,7 +38,6 @@ function managerStatus(outcome: OutcomeView): string {
 function FailureSummary({ outcome }: { outcome: OutcomeView }) {
   const failure = describeOutcomeFailure(outcome);
   return <div role="group" aria-label="Why this outcome failed">
-    <p className={styles.note}><strong>{failure.headline}</strong></p>
     {failure.failedTasks.length ? <ul aria-label="Failed tasks">
       {failure.failedTasks.map(task => <li key={task.id}>
         <strong>{formatProductDisplayText(task.title)}</strong>{task.state === 'aborted' ? <span>Stopped</span> : null}
@@ -47,7 +46,6 @@ function FailureSummary({ outcome }: { outcome: OutcomeView }) {
       </li>)}
       {failure.moreFailed ? <li>+{failure.moreFailed} more</li> : null}
     </ul> : null}
-    <p className={styles.note}>{failure.nextStep}</p>
   </div>;
 }
 
@@ -135,8 +133,14 @@ export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
       <div className={styles.actions}><Button type="submit" size="sm" variant="primary" disabled={disabled || !valid}>{editor.existing ? 'Save outcome' : 'Start outcome'}</Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => setEditor(null)}>Cancel outcome edit</Button></div>
     </form> : null}
-    {read.status !== 'error' && value?.outcomes ? <div className={styles.list}>{value.outcomes.map(outcome => <details key={outcome.id} className={styles.row}>
-      <summary><strong>{formatProductDisplayText(outcome.scope.desiredOutcome)}</strong><span data-status={outcome.status}>{LABEL[outcome.status]}</span></summary>
+    {read.status !== 'error' && value?.outcomes ? <div className={styles.list}>{value.outcomes.map(outcome => {
+      const failure = outcome.status === 'failed' ? describeOutcomeFailure(outcome) : null;
+      return <div key={outcome.id} className={styles.item} data-status={outcome.status}><details className={styles.row}>
+      <summary>
+        <span className={styles.status} data-status={outcome.status}>{LABEL[outcome.status]}</span>
+        <strong>{formatProductDisplayText(outcome.scope.desiredOutcome)}</strong>
+        {failure ? <span className={styles.reason}>{failure.headline}</span> : null}
+      </summary>
       <div className={styles.detail}>
         {outcome.status === 'waiting-plan' && !outcome.manager ? <p className={styles.note}>The desired result is saved. Waiting for the Leader to refine a plan.</p> : null}
         {outcome.status === 'plan-verified' ? <p className={styles.note}>All active plan tasks have verification or explicit gate evidence. Check the desired result against your acceptance criteria.</p> : null}
@@ -172,6 +176,12 @@ export function OutcomesPanel({ actions }: { actions: SurfaceActions }) {
         {!outcome.manager && outcome.status === 'paused' ? <p className={styles.note}>Resume this outcome before enabling its manager.</p> : null}
         <p className={styles.note}>Pause stops new requests and asks running work to stop. External provider jobs may continue until cancellation is confirmed.</p>
       </div>
-    </details>)}</div> : null}
+    </details>
+      {failure ? <div className={styles.nextAction} role="group" aria-label="Next step">
+        <p>{failure.nextStep}</p>
+        <Button size="sm" variant="primary" disabled={disabled} onClick={() => edit(outcome)}>Edit and re-plan</Button>
+      </div> : null}
+    </div>;
+    })}</div> : null}
   </section>;
 }

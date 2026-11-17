@@ -15,7 +15,7 @@ function field(value: unknown, freshness: 'fresh' | 'stale' | 'unknown' = 'fresh
 afterEach(() => { cleanup(); });
 
 describe('WorldLaneRows', () => {
-  it('renders usage, remaining, reset, burn, source and a fresh badge', () => {
+  it('renders one compact row: usage, a reset countdown and a live chip; burn and source stay in the tooltip', () => {
     const resetAt = new Date(NOW + 3_600_000).toISOString();
     render(<WorldLaneRows expanded now={NOW} snapshot={{
       sensors: { lanes: [{
@@ -30,12 +30,13 @@ describe('WorldLaneRows', () => {
     }} />);
     const row = screen.getByRole('button', { name: /Claude subscription/ });
     expect(row).toHaveAttribute('data-freshness', 'fresh');
-    expect(row).toHaveTextContent('Used 40%');
-    expect(row).toHaveTextContent('left 60%');
-    expect(row).toHaveTextContent('Burn 1%/h');
-    expect(row).toHaveTextContent('reset Nov 9, 1:00 PM UTC');
-    expect(row).toHaveTextContent('Source claude-usage');
-    expect(row).toHaveTextContent('fresh · 2m ago');
+    expect(row).toHaveTextContent('Used 40% · 60% left · meets reset');
+    expect(row).toHaveTextContent('resets in 1h');
+    expect(row).toHaveTextContent('live · 2m');
+    expect(row).not.toHaveTextContent('Burn');
+    expect(row).not.toHaveTextContent('Source');
+    expect(row).not.toHaveTextContent('unknown');
+    expect(screen.getByRole('group', { name: 'Claude resources' })).toContainElement(row);
     expect(row.querySelector('[data-forecast="on-pace"]')).toHaveAttribute('data-gauge', 'qualitative');
   });
 
@@ -45,13 +46,20 @@ describe('WorldLaneRows', () => {
     }} />);
     const dot = screen.getByRole('button', { name: /Dot:/ });
     expect(dot).toHaveAttribute('data-freshness', 'stale');
-    expect(dot).toHaveTextContent('Used unknown');
-    expect(dot).toHaveTextContent('left unknown');
     expect(dot).toHaveTextContent('stale · 20m ago');
-    expect(dot.querySelector('[data-forecast="unknown"]')).toHaveAttribute('data-gauge', 'unknown');
+    expect(dot).not.toHaveTextContent('unknown');
+    expect(dot.querySelector('[data-gauge]')).toBeNull();
     const missing = screen.getByRole('button', { name: /Cursor cloud: usage unknown/ });
     expect(missing).toHaveAttribute('data-freshness', 'unknown');
-    expect(missing).toHaveTextContent('unknown');
-    expect(missing.querySelector('[data-gauge="timed"]')).toBeNull();
+    expect(missing).toHaveTextContent('Cursor cloudnot connectedNot measured yet · connect');
+    expect(dot).not.toHaveTextContent('Not measured yet');
+    expect(missing.querySelector('[data-gauge]')).toBeNull();
+  });
+
+  it('keeps the unknown gauge in the collapsed rail so every lane still has a meter', () => {
+    render(<WorldLaneRows expanded={false} now={NOW} snapshot={{ sensors: { lanes: [] } }} />);
+    const missing = screen.getByRole('button', { name: /Cursor cloud: usage unknown/ });
+    expect(missing.querySelector('[data-forecast="unknown"]')).toHaveAttribute('data-gauge', 'unknown');
+    expect(missing).toHaveTextContent('?');
   });
 });
