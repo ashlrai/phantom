@@ -18,6 +18,8 @@ The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands
 
 ## Agents, start here
 
+- [CI baseline analyzer](CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
+
 Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
 ```sh

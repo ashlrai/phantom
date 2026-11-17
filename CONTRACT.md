@@ -1,3 +1,13 @@
+# CI baseline evidence
+
+`src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
+read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
+scrubbed Vitest failure identities and summaries. `enqueueBaselineFixes(report,
+absoluteQueuePath)` explicitly writes deduplicated work-tier master-fix rows.
+`applyBaselineUpdates(report, gh?)` explicitly applies expected-head guarded
+updates only after current master test-pass and merged-fix ancestry evidence.
+Unknown evidence never authorizes mutation. See [CI baseline](docs/CI-BASELINE.md).
+
 # Frontier CLI discovery and daemon health
 
 `src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,

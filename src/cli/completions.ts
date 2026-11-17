@@ -61,7 +61,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
   'trail',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
-  'estates', 'ci-metrics', 'daily-fix', 'main',
+  'estates', 'ci', 'ci-metrics', 'daily-fix', 'main',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
   'disk', 'app', 'radar',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
@@ -146,6 +146,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
+  'ci': ['baseline', '--repo', '--json', '--queue', '--queue-file', '--apply', '--help'],
   'ci-metrics': ['--json', '--help'],
   main: ['blame', '--repo', '--good', '--bad', '--check', '--timeout-ms', '--json', '--help'],
   'daily-fix': ['validate', 'filter', 'dispatch', 'parse-fixup', '--json', '--help'],

@@ -309,6 +309,7 @@
 /test/bus-wake-queue-custody.test.ts @masonwyatt23
 /test/channel-mirror-deadline-soln1.test.ts @masonwyatt23
 /test/channel-mirror-recovery-solu1.test.ts @masonwyatt23
+/test/ci-baseline.test.ts @masonwyatt23
 /test/claim-notice-cli-kill-resume-494s.test.ts @masonwyatt23
 /test/claude-api-grant.test.ts @masonwyatt23
 /test/claude-json-control-characters.test.ts @masonwyatt23

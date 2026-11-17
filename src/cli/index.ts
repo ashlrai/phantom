@@ -3264,6 +3264,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'ci': {
+        const { cmdCiBaseline } = await import('./ci-baseline.js');
+        process.exitCode = await cmdCiBaseline(rest);
+        break;
+      }
+
       case 'ci-metrics': {
         const cmdCiMetrics = await loadCiMetricsCmd();
         process.exitCode = await cmdCiMetrics(rest);

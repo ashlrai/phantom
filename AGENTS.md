@@ -30,6 +30,8 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 
 ## Tools for agents working here
 
+- CI baseline analysis: `phm ci baseline --json` groups fresh Vitest failures and plans narrow master fixes. Queueing and post-merge updates are opt-in; see [CI baseline analyzer](docs/CI-BASELINE.md).
+
 - Ecosystem onboarding: `phm onboard --ecosystem --json` previews names/state only.
   Grant a reviewed selection with `phm onboard --ecosystem --grant --plan <planId> --select lexicon,stack --json`.
   `--yes` never grants. Locked vaults offer existing-vault access; imports stay
