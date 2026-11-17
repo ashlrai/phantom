@@ -5,6 +5,7 @@
  */
 
 export { buildWiki, wikiBuildInFlight, type BuildWikiOptions, type BuildWikiResult, type WikiBuildProgress } from './generate.js';
+export { wikiBrief, renderWikiBriefBlock, wikiPromptBlock } from './brief.js';
 export { askWiki, type AskWikiOptions } from './ask.js';
 export { wikiStatus, statusFromManifest, listWikiRepos, wikiCandidateRepos, type WikiRepoSummary } from './status.js';
 export { readManifest, readPage, wikiKey, isWikiKey, isPageId, wikiRoot } from './store.js';

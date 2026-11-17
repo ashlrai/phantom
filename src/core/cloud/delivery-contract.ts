@@ -94,8 +94,9 @@ const STATUSES: readonly CloudTaskReport['status'][] = ['done', 'partial', 'bloc
  * `companions` is companionToolsBlock() for the repo's `.mcp.json`; it
  * follows the lessons and adds the optional "toolsUsed" report field to the
  * contract. Empty ⇒ unchanged.
+ * `wiki` is bounded, untrusted wiki reference content before the contract; empty ⇒ unchanged.
  */
-export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '', companions = ''): string {
+export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '', companions = '', wiki = ''): string {
   const example = JSON.stringify({
     status: 'done',
     summary: 'One or two plain sentences on what changed and why.',
@@ -112,6 +113,7 @@ export function buildCloudPrompt(task: CloudTaskV1, knowledge = '', playbook = '
     // 3.15: approved lessons for this repo / kind of task (learn/retro/inject.ts), before the contract.
     ...(knowledge.trim() ? ['', knowledge.trim()] : []),
     ...(companions.trim() ? ['', companions.trim()] : []),
+    ...(wiki.trim() ? ['', wiki.trim()] : []),
     '',
     '---',
     `DELIVERY CONTRACT (Phantom cloud task ${task.id}) — follow it exactly; Phantom only sees what arrives on GitHub.`,

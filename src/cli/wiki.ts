@@ -63,6 +63,7 @@ const WIKI_OPTIONS: Record<string, { allowed: AllowedOptions; usage: string }> =
     usage: 'Usage: ashlr wiki build [repo] [--all] [--force] [--no-model] [--pages N] [--tokens N] [--json]',
   },
   status: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki status [repo] [--json]' },
+  brief: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki brief [repo] [--json]' },
   list: { allowed: { flags: ['--json'] }, usage: 'Usage: ashlr wiki list [repo] [--json]' },
   show: { allowed: {}, usage: 'Usage: ashlr wiki show <repo> [page]' },
   ask: {
@@ -128,6 +129,7 @@ function printHelp(): void {
   out('');
   out(`    ${cyan('build [repo] [--all]')}         Generate or refresh (only stale pages are rebuilt).`);
   out(`    ${cyan('status [repo]')}                Freshness: generated at <commit>, N pages stale.`);
+  out(`    ${cyan('brief [repo]')}                 Local page paths and freshness for job context.`);
   out(`    ${cyan('show <repo> [page]')}           Print a page (default: overview).`);
   out(`    ${cyan('ask "<question>" [--repo r]')}  Answer from the wiki, index and genome with file:line citations.`);
   out('');
@@ -320,6 +322,13 @@ export async function cmdWiki(args: string[]): Promise<number> {
   const wiki = await import('../core/knowledge/wiki/index.js');
   const p = parse(rest);
   switch (sub) {
+    case 'brief': {
+      const r = resolveRepo(wiki, p.positional[0]);
+      if ('error' in r) { process.stderr.write(`${r.error}\n`); return 2; }
+      const brief = await wiki.wikiBrief(r.repo);
+      process.stdout.write(`${p.flags.has('--json') ? JSON.stringify(brief, null, 2) : wiki.renderWikiBriefBlock(brief)}\n`);
+      return 0;
+    }
     case 'build':
       return cmdBuild(wiki, p);
     case 'status':
