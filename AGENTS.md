@@ -103,6 +103,10 @@ Docker, client trees, `~/Documents`, git internals, auth, secrets) applies at
 plan and apply time; gated classes (`venvs`, `hub-claude`) need `--allow`.
 See [DISK-MAINT](docs/DISK-MAINT.md).
 
+Router catalog refresh: `phm router catalog refresh --json` writes a review-only
+report and patch; `phm router catalog schedule` prints weekly user units.
+See [Router catalog](docs/ROUTER-CATALOG.md) for explicit apply and discovery rules.
+
 pass^k eval: `phm eval passk [--lane <lane:engine>]... [--trials N] [--k K]`
 runs the pinned golden set in `benchmarks/passk/` N times per task in clean
 worktrees and reports pass@1/pass@k/pass^k per lane/model. `scores` and

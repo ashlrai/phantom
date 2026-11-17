@@ -4,6 +4,8 @@
 
 # Phantom documentation
 
+- [Router catalog refresh](ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
+
 Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
 
 | Start here | What you will do |

@@ -17,6 +17,23 @@ the shared bounded journal parser, including optional `freePreview` and
 
 # Frontier CLI discovery and daemon health
 
+## Router catalog refresh
+
+`DailyJobSpec` in `src/core/steward/schedule.ts` accepts optional `weekday`
+(0=Sunday through 6=Saturday). When absent, daily unit output is unchanged.
+When set, launchd receives Weekday and systemd receives a weekday-qualified
+OnCalendar expression and Weekly timer description. Invalid weekdays throw.
+
+`src/core/routing/catalog-refresh.ts` exports pure `diffCatalog(current,
+sources, patterns, now, dryRun?)`, returning `{report, data}`, deterministic
+`renderCatalog(data)` and `catalogPatch(before, after)`, and async
+`refreshCatalog(options?, deps?)`. Refresh writes versioned report/patch
+artifacts; only explicit apply writes the generated data file. Source runners,
+fetch, seat discovery, current data and time are injectable. Source failures
+are unknown; existing tiers and catalog entries are never removed or changed.
+Only lite/normal pattern tiers may be assigned to additions. Reports use schema
+`router.catalog-refresh.v1`.
+
 `src/core/run/tool-path.ts` exports `resolveExecutable(name, {pathValue?, home?,
 execPath?}?)`, returning `{path: string, source: 'path' | 'well-known'} | null`.
 It rejects empty names and names containing `/`, searches PATH before common
