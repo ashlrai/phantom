@@ -20,7 +20,7 @@ it('renders real rows, raw lane titles, queued and held notes and unknown metric
   stub(); render(card());
   const table = await screen.findByRole('table');
   expect(within(table).getAllByRole('row')).toHaveLength(3);
-  expect(screen.getByTitle('codex-personal')).toHaveTextContent('CODE');
+  expect(screen.getByTitle('codex-personal')).toHaveTextContent('PERS');
   for (const text of ['24 / 24', '10 / 10', '12000', 'queued 2 · drains in ~13 min', 'held: quota']) expect(within(table).getByText(text)).toBeInTheDocument();
   expect(within(screen.getByTitle('codex-personal').closest('tr')!).getByTitle('queued 2 · drains in ~13 min')).toHaveTextContent('2');
   expect(within(screen.getByTitle('devin').closest('tr')!).getByTitle('held: quota')).toHaveTextContent('2');

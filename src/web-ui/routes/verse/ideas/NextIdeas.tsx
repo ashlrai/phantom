@@ -15,8 +15,9 @@ export function NextIdeas({ visible }: { visible: boolean }) {
   const refetch = useRefetch(query);
   usePollWhileVisible(() => { refetch(); }, 30_000, { enabled: visible });
   const [job, setJob] = useState<string | null>(null);
+  const malformed = result.data !== undefined && (!Array.isArray(result.data?.missing) || !Array.isArray(result.data?.ideas));
   return <Card title="Next bets">
-    {result.data === undefined ? <CardNote>{result.status === 'error' ? 'Could not read ideas.' : 'Loading ideas…'}</CardNote> : <>
+    {result.data === undefined || malformed ? <CardNote>{result.status === 'error' || malformed ? 'Could not read ideas.' : 'Loading ideas…'}</CardNote> : <>
       {result.data.missing.length > 0 && <CardNote>Some idea sources are unavailable.</CardNote>}
       {result.data.ideas.length === 0 ? <CardNote>No ideas yet.</CardNote> : <ol className={styles.list}>
         {result.data.ideas.map(idea => <li key={idea.id} className={styles.row}>
