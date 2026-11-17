@@ -12,13 +12,14 @@ afterEach(() => {
   dispose = () => undefined;
 });
 
-it('lists pane-registry chords alongside the command catalog', () => {
+it('lists pane-registry chords alongside the command catalog', async () => {
   // Registered before the mount so this pane holds 'mod+alt+i' when the
   // lazy panes/index.js load resolves (fleet-inbox wants the same chord).
   act(() => {
     dispose = registerPane({ id: 'overlay-probe', title: 'Overlay probe pane', icon: Blank, component: Blank, shortcut: 'mod+alt+i' });
   });
   render(<ShortcutsOverlay />);
+  await act(async () => { await import('../panes/index.js'); });
   const group = within(screen.getByRole('region', { name: 'Fleet panes' }));
   const term = group.getByText('Overlay probe pane');
   expect(term.parentElement).toHaveTextContent(detectKeyPlatform() === 'mac' ? '⌥⌘I' : 'Ctrl+Alt+I');

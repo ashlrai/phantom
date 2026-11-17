@@ -74,7 +74,7 @@ describe('fleet spend projection', () => {
 
   it('sorts behind first, then unknown, expired, on pace, used up', () => {
     expect(rows().map(r => `${r.verdict}:${r.pool}`)).toEqual([
-      'behind:claude', 'unknown:claude-api', 'unknown:gemini', 'expired:devin', 'on-pace:codex-personal', 'used-up:zai']);
+      'behind:claude', 'unknown:claude-api', 'unknown:codex-cmp', 'unknown:gemini', 'unknown:local', 'expired:devin', 'on-pace:codex-personal', 'used-up:zai']);
   });
 
   it('counts down in days and hours, then hours and minutes', () => {

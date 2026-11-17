@@ -10,6 +10,7 @@ import { resetHomeChoice, setHomeChoice, useHomeView } from '../shell/home-view-
 import { FeedAskButton } from './FeedAskButton.js';
 import './feed.pane.js';
 import type { FeedItem } from './feed-model.js';
+import './feed.pane.js';
 
 const item: FeedItem = { id: 'alert:1', at: '2026-01-01T00:00:00Z', kind: 'alert', title: 'Disk is filling', href: 'https://example.com/x' };
 

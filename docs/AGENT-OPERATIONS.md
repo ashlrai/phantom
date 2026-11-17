@@ -436,8 +436,21 @@ Check each command's root options before comparing evidence from different proce
 | `phm automations ...` | Turn triggers (labels, red CI, schedules, webhooks) into fleet tasks |
 | `phm website status\|auto\|pause\|off` | Inspect or pause automatic phm.dev publication |
 | `phm top [--once] [--json]` | Read-only per-account pool capacity and reset-pressure snapshot; always includes codex-personal. JSON schemaVersion is 1; missing telemetry stays unknown. Local subscription readings are engine-wide, with no account attribution. |
-| `phm resources [--json]`, `phm usage`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
+| `phm resources [--json]`, `phm usage [--json]`, `phm usage sensors --json` | Per-backend capacity and usage, read-only. `phm usage --json` preserves engine totals and adds `spend`, the desktop Resources snapshot described below. `phm usage sensors --json` prints each lane's reading, age and stale status (`usage.sensors.v1`). A reading at or after `staleAfter` is unknown and its headroom is null. `phm usage sensors --refresh --json` pulls the Devin official daily ACU API and official Codex, Claude and Grok status output. It does not read `~/.codex` or print secret values. |
 | `phm audit [N] [--json]` | Tail the append-only audit trail |
+
+### Desktop pool usage
+
+Resources → Spend down shows used share, reset time, burn per hour and projected
+unused capacity for each pool, with `on pace`, `behind`, `exhausted` or `unknown`.
+`phm usage --json` returns these same numbers in `spend` (`v: 1`, `asOf`, `pools`),
+also available directly from `phm usage spend --json` and `GET /api/usage/spend`.
+Each row keeps `pool`, `unit`, `usedPercent`, `resetAt`, `burnPerHour`,
+`projectedUnusedPercent`, `projectedUnusedUsd` and the existing `verdict` keys.
+Percent burn means percentage points per hour; gifts use USD per hour and expiry.
+Missing, stale or malformed status reads produce nulls, displayed as unknown.
+The seven core pools remain visible, including the Claude API gift and local;
+other recorded pools remain supported. Local has no inferred quota or reset.
 
 ### Metrics levers
 
@@ -787,6 +800,7 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
+| Is the fleet on track (merges, publish-to-merge, empty finishes, mains, releases, pools)? | `phm goals` (JSON: target, value, as-of, source, 24 h trend, status; unknown when a signal is missing) or `phm goals --text`; the desktop Goals view shows the same cards |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
 | Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
