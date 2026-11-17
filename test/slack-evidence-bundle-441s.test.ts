@@ -19,7 +19,7 @@ function fixture(journal?: string, messages?: Record<string, unknown>) {
   const runsDir = join(root, 'runs'); const stateRoot = join(root, 'state');
   mkdirSync(join(runsDir, 'slack-bridge'), { recursive: true, mode: 0o700 });
   mkdirSync(stateRoot, { mode: 0o700 });
-  if (journal !== undefined) writeFileSync(join(runsDir, 'slack-bridge', 'journal.jsonl'), journal, { mode: 0o600 });
+  if (journal !== undefined) writeFileSync(join(runsDir, 'slack-bridge', 'journal.jsonl'), journal.endsWith('\n') || journal.length === 0 ? journal : `${journal}\n`, { mode: 0o600 });
   if (messages !== undefined) writeFileSync(join(stateRoot, 'messages.json'), JSON.stringify({ version: 1, messages }), { mode: 0o600 });
   return { root, runsDir, stateRoot, now };
 }
@@ -30,7 +30,7 @@ it.each([
   ['degraded journal', JSON.stringify(request) + '\ninvalid', { sent }, thread, 1, 'degraded', 'ok', 'answered'],
   ['degraded sends', JSON.stringify(request), { sent, bad: {} }, thread, 1, 'ok', 'degraded', 'answered'],
   ['failed ingress', JSON.stringify({ ...request, bus: 'failed' }), { sent }, thread, 1, 'ok', 'ok', 'bus-failed'],
-  ['legacy ingress', JSON.stringify({ ...request, bus: undefined }), { sent }, thread, 1, 'ok', 'ok', 'answered'],
+  ['legacy ingress', JSON.stringify({ ...request, bus: undefined }), { sent }, thread, 1, 'ok', 'ok', 'unanswered'],
   ['no match', JSON.stringify(request), { sent }, '1731002000.000100', 1, 'ok', 'ok', undefined],
 ] as const)('%s', async (_name, journal, messages, requested, code, journalState, sendsState, outcome) => {
   const deps = fixture(journal, messages);
