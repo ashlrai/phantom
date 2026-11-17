@@ -12,6 +12,17 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 afterEach(() => { clearMutationToken(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('RunsSwitches', () => {
+  it('lists one-line toggles and keeps each description in a tooltip and the accessible description', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(healthy)));
+    render(<RunsSwitches />);
+    const group = await screen.findByRole('group', { name: 'Fleet switches' });
+    expect(within(group).getAllByRole('listitem')).toHaveLength(6);
+    const launches = within(group).getByRole('switch', { name: 'Launches' });
+    expect(launches).toHaveAccessibleDescription('Effect 2');
+    fireEvent.mouseEnter(launches.closest('li')!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Effect 2');
+  });
+
   it('renders running state and applies only the server readback after a token-authorized write', async () => {
     const token = 'a'.repeat(64);
     setMutationToken(token);

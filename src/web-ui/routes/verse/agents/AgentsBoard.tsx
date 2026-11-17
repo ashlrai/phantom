@@ -60,6 +60,7 @@ import {
   type SpawnInput,
 } from './agents-queries.js';
 import { AgentDetails } from './AgentDetails.js';
+import { AgentRoster } from './AgentRoster.js';
 import { NewAgentDialog } from './NewAgentDialog.js';
 import styles from './Agents.module.css';
 
@@ -283,6 +284,7 @@ export function AgentsBoard() {
               ? ` · ${read.data.liveWorkspaces} workspaces · no retention cap`
               : ` · ${read.data.liveWorkspaces} of ${read.data.cap} workspaces` : ''}
           </p>
+          <AgentRoster cards={allCards} />
         </div>
         <div className={styles.headerActions}>
           <Select aria-label="Repository" size="sm" value={filter.repo ?? ''} onChange={(e) => setFilter((f) => ({ ...f, repo: e.target.value || null }))}>

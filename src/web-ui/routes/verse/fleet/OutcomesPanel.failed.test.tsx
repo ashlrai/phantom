@@ -27,17 +27,22 @@ beforeEach(() => { evictAll(); clearMutationToken(); localStorage.clear(); setMu
 afterEach(() => { vi.unstubAllGlobals(); clearMutationToken(); });
 
 describe('failed outcome explanation', () => {
-  it('shows which tasks failed and the next step, without a write button', async () => {
+  it('shows the failure reason on the collapsed row and one next action that only opens the editor', async () => {
     const fetch = serve(base('failed', [task(1, 'failed'), task(2, 'aborted'), task(3, 'complete'), task(4, 'pending'), task(5, 'running')]));
     const user = userEvent.setup(); render(<Host />);
+    expect(await screen.findByText('2 of 5 tasks failed')).toBeVisible();
+    const next = screen.getByRole('group', { name: 'Next step' });
+    expect(next).toHaveTextContent('Open the run log to see the error, then retry.');
+    expect(screen.getAllByRole('button', { name: /re-plan/i })).toHaveLength(1);
     await user.click(await screen.findByText('Continuously improve Phantom'));
-    expect(screen.getByText('2 of 5 tasks failed')).toBeInTheDocument();
     const list = screen.getByRole('list', { name: 'Failed tasks' });
     expect(list).toHaveTextContent('Task title 1');
     expect(list).toHaveTextContent('Task title 2');
     expect(list).toHaveTextContent('Run run-1');
     expect(screen.getByText('Open the run log to see the error, then retry.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry|resume outcome/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit and re-plan' }));
+    expect(screen.getByRole('button', { name: 'Save outcome' })).toBeInTheDocument();
     expect(fetch.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(true);
   });
   it('shows a failed manager stage when no task failed', async () => {
@@ -55,5 +60,6 @@ describe('failed outcome explanation', () => {
     const user = userEvent.setup(); render(<Host />);
     await user.click(await screen.findByText('Continuously improve Phantom'));
     expect(screen.queryByRole('group', { name: 'Why this outcome failed' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Next step' })).not.toBeInTheDocument();
   });
 });

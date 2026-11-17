@@ -27,6 +27,8 @@ export interface WorldLaneRow {
   remaining: string;
   reset: string;
   resetAt: string | null;
+  /** Countdown to the fresh reset, e.g. "resets in 3h 12m"; null when the reset is unknown. */
+  resetIn: string | null;
   burn: string;
   forecast: LaneForecast;
   forecastText: string;
@@ -142,6 +144,19 @@ function isoLabel(value: string): string | null {
   const h12 = hours % 12 === 0 ? 12 : hours % 12;
   const minutes = String(date.getUTCMinutes()).padStart(2, '0');
   return `${months[date.getUTCMonth()]} ${date.getUTCDate()}, ${h12}:${minutes} ${hours < 12 ? 'AM' : 'PM'} UTC`;
+}
+
+export function resetCountdown(resetAt: string | null, nowMs: number): string | null {
+  if (!resetAt) return null;
+  const left = Date.parse(resetAt) - clock(nowMs);
+  if (!Number.isFinite(left)) return null;
+  if (left <= 0) return 'reset due';
+  const minutes = Math.ceil(left / 60_000);
+  if (minutes < 60) return `resets in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `resets in ${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`;
+  const days = Math.floor(hours / 24);
+  return `resets in ${days}d${hours % 24 ? ` ${hours % 24}h` : ''}`;
 }
 
 function forecastText(verdict: LaneForecast): string {
@@ -303,7 +318,7 @@ function badgeOf(primary: Signal, nowMs: number): { freshness: LaneFreshness; ob
 function unknownRow(lane: string, label: string, engine: LaneEngine, key: string): WorldLaneRow {
   const summary = `${label}: usage unknown, remaining unknown, reset unknown, burn unknown, forecast unknown. Source unknown. Observed unknown.`;
   return {
-    key, lane, label, engine, history: null, usage: 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null,
+    key, lane, label, engine, history: null, usage: 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null, resetIn: null,
     burn: 'unknown', forecast: 'unknown', forecastText: 'unknown', exhaustFraction: null,
     source: 'unknown', observedAt: null, freshness: 'unknown', age: 'unknown', summary,
   };
@@ -352,7 +367,7 @@ function project(lane: Record<string, unknown>, label: string, engine: LaneEngin
   const summary = `${label}: usage ${usage}, remaining ${remainingText}, reset ${resetText}, burn ${burnText}, forecast ${text}. Source ${source}. Observed ${badge.freshness}${badge.observedAt ? ` ${badge.observedAt}` : ''}.`;
   return {
     key, lane: laneName, label, engine, history: parseHistory(lane['history']), usage, remaining: remainingText, reset: resetText, resetAt,
-    burn: burnText, forecast: verdict, forecastText: text, exhaustFraction: fractionOf(exhaust, reset, nowMs),
+    resetIn: resetCountdown(resetAt, nowMs), burn: burnText, forecast: verdict, forecastText: text, exhaustFraction: fractionOf(exhaust, reset, nowMs),
     source, observedAt: badge.observedAt, freshness: badge.freshness, age: badge.age, summary,
   };
 }
@@ -434,7 +449,7 @@ export function worldLaneRows(document: unknown, nowMs: number): WorldLaneRow[] 
 export function sameWorldLaneRow(left: WorldLaneRow, right: WorldLaneRow): boolean {
   return left.key === right.key && left.lane === right.lane && left.label === right.label
     && left.engine === right.engine && left.usage === right.usage && left.remaining === right.remaining
-    && left.reset === right.reset && left.resetAt === right.resetAt && left.burn === right.burn
+    && left.reset === right.reset && left.resetAt === right.resetAt && left.resetIn === right.resetIn && left.burn === right.burn
     && left.forecast === right.forecast && left.forecastText === right.forecastText
     && left.exhaustFraction === right.exhaustFraction && left.source === right.source
     && left.observedAt === right.observedAt && left.freshness === right.freshness && left.age === right.age
