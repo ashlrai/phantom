@@ -103,7 +103,7 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 
 | Group | Commands |
 | --- | --- |
-| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
+| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `commands`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
 | Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |

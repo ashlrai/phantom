@@ -3053,6 +3053,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'commands': {
+        const { cmdCommands } = await import('./commands.js');
+        process.exitCode = await cmdCommands(rest);
+        break;
+      }
+
       case 'completions': {
         const cmdCompletions = await loadCompletionsCmd();
         process.exitCode = await cmdCompletions(rest);

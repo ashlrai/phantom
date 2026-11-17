@@ -77,6 +77,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     safety: 'read',
     jsonShape: '{ ok, ruleCount, referenceCount, filesChecked, diagnostics: [{ path, line, id, kind }] }',
   },
+  { usage: 'phm commands [--json]', description: 'List every user-facing command with its description, argument forms and whether it changes state. Unclassified commands report changesState true. Read-only; exit 0, 2 usage.', safety: 'read', jsonShape: 'phantom.commands.v1 {schema,commands:[{name,description,arguments:[form],changesState,needsInput}]}' },
   { usage: 'phm check [--base <ref>] [--json]', description: 'In the Phantom repository, run incremental typechecks, cached lint and affected tests concurrently. Development feedback only; run the gate for release checks.', safety: 'append', jsonShape: '{ok, mode, base, durationMs, steps}' },
   { usage: 'phm tune prepare <reviewed-samples.jsonl> <new-output-directory> <scrub.pl> | evaluate <paired-report.json>', description: 'Prepare scrub-gated local-model datasets or assess paired evaluation evidence; never train or activate a lane.', safety: 'append', jsonShape: 'Dataset counts/hashed task IDs or paired evaluation decision' },
   {
@@ -914,6 +915,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
   { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
+  { cmd: 'commands [--json]',            desc: 'List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
   { cmd: 'plugins init|list|info|enable|disable', desc: 'Plugins under ~/.ashlr/plugins/ (default-off). --json on every verb. init, enable and disable take --dry-run (writes nothing). enable prompts only on a terminal; otherwise use --yes. list --all adds Claude Code plugins (the Plugins pane).', topic: 'core' },
   { cmd: 'x <name> [args...]',           desc: "Run an enabled plugin's command.", topic: 'core' },

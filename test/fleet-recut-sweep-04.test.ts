@@ -40,7 +40,7 @@ it('writes once per head even on a later UTC day, never dropping landed work', a
   s.nextDay(); expect(await s.run(['--apply'])).toBe(0);
   expect(s.report().written).toBe(0);
   expect(s.report().skipped).toContainEqual({ pr: 12, reason: 'already-recut' });
-  expect(s.report().skipped).toContainEqual({ pr: 11, reason: 'class' });
+  expect(s.report().skipped).toContainEqual({ pr: 11, reason: 'already-present-on-base' });
 });
 it('skips existing desktop ids', async () => {
   const s = setup(); mkdirSync(join(s.drop, 'leader/drop/claude'), { recursive: true });
