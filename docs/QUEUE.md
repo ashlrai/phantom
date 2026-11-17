@@ -28,6 +28,15 @@ stay binding even when the preferred executor is full. `min_tier` and `tier`
 use `fast`, `mid`, `work`, `frontier`; a requested execution tier below its
 minimum stays unrunnable. `max_cost_class` is `local`, `included`, or `metered`.
 The ordering is a budget constraint, not a dollar estimate or spending authority.
+`max_tier` is a tier ceiling: a row whose `tier` is above it is never runnable,
+and spare-capacity upgrades stop at it. `data_class` is `public`, `internal`,
+`confidential`, or `restricted`; only an executor cleared for that class or a
+higher one may take the job. A job without `data_class` is unclassified and
+keeps the earlier behavior. `work_class` is `bulk`, `standard`, or `judgment`.
+It ranks resources and never excludes one. When absent it is derived: `frontier`
+tier or `P0` is judgment, `fast` and `mid` are bulk, the rest is standard. The
+row's repo column is the job's repo; a `repo` key in the requirements may only
+restate it.
 `exclusive=true` keeps a job out of combined agent sessions. It does not stop
 unrelated workers. Priority (`P0` before `P1`, etc.) precedes descending numeric
 impact. Existing repair, repository, size and use-it-all preferences break ties;
@@ -46,7 +55,7 @@ job<TAB>repo<TAB>lane-hint-or-empty<TAB>tier<TAB>prompt-path<TAB>requirements-js
 For example, the sixth column can be:
 
 ```json
-{"preferred_lane":null,"needs":["git","gh","node"],"min_tier":"work","max_cost_class":"included","priority":"P0","impact":90,"exclusive":true}
+{"preferred_lane":null,"needs":["git","gh","node"],"min_tier":"work","max_tier":"frontier","max_cost_class":"included","data_class":"internal","work_class":"judgment","priority":"P0","impact":90,"exclusive":true}
 ```
 
 Invalid requirement objects remain queued with `invalid_requirements`; they
@@ -58,7 +67,8 @@ the same global queue capacity, preventing over-admission.
 ## Executor admission and selection
 
 Host-owned `queue/slots.json` supplies targets, bounds, holds, quota and optional
-`capabilities`, `tiers`, and `cost_class`. Existing executor contracts default to
+`capabilities`, `tiers`, `cost_class`, `repos`, `data_class`, `posture`, and
+`free_until`. Existing executor contracts default to
 `git`, `gh`, `node` and their own CLI where supported. Browser and secret names
 must be advertised explicitly. Local models require explicit local selection,
 loopback health and the existing size and concurrency checks.
@@ -71,7 +81,14 @@ New executors also need explicit `tiers` and `cost_class`; unknown tier or cost
 evidence excludes them. Advertise only supported `tiers`. Targets and operator
 bounds remain enforced; no new fixed market concurrency limit is introduced.
 
-The market rejects capability, tier and cost mismatches, holds, auth failures,
+`repos` is an allowlist of repository names the executor serves; absent means
+every repo. `data_class` is the executor's clearance. Without it, the remote
+built-in executors are cleared for `internal`, on-host models for `restricted`,
+and any other advertised executor for `public` only. Malformed values fail
+closed (no repos, `public`).
+
+The market rejects capability, tier, tier-ceiling, repo, data-class and cost
+mismatches, holds, auth failures,
 exhausted quota, provider backoff, unhealthy local endpoints and saturated lanes.
 It checks `models.json` tier availability, the fleet controller's budget quota
 projection, and the effective targets after load shedding. Capacity is checked
@@ -79,7 +96,118 @@ again for every candidate so several jobs cannot reserve the same final slot.
 The existing admission gate remains the authority for host load, processes,
 worktrees, disk, adaptive global concurrency and the per-tick claim limit.
 
-Among eligible executors, preference comes first, followed by utilization,
+### Use spare subscription capacity for frontier work
+
+When fresh `use-it-all.v1` evidence reports `known:true`, `stale:false` and
+`behind:true`, a work job launches as frontier on its selected lane if that
+executor supports frontier and its cost class is `included`. Holds, quota,
+backoff and admission still apply. Eligible jobs run individually so batching
+cannot substitute a work-tier model. Existing waste-risk upgrades remain.
+
+`queue/status.json` exposes `tier_upgrades_this_tick`: typed records of `job`,
+`lane`, `from_tier`, `to_tier` and a plain-language `reason`. The reason also
+persists in `queue/route-state.json` as `waste_reason` and in `ROUTE_BOOST` events.
+Run `phm route explain --json` to read it as `lines[].wasteReason`.
+`use_it_all_behind` reports each lane's boolean reading or null for unknown,
+missing or stale evidence. This bounded policy responds to measured work-tier
+underperformance; it does not infer a causal yield gain or train a tier optimizer.
+
+### Resource posture: the lane is a hint
+
+Measured `work-market.v1` posture entries carry `lane`, `account_id`, `model`,
+`window_start` and `reset_at`, with the journal row's `ts` proving freshness.
+Only usage-derived posture carries reading provenance; host declarations, free
+windows, previews and use-it-all overrides do not. Devin uses the weekly API
+measurement's scope verbatim and drops a model that differs from the dispatcher
+selection. Other lanes normalize budget-reading instants to UTC milliseconds.
+Unknown scope is omitted, never invented; incomplete or mismatched receipts do
+not establish allowance posture.
+
+Each executor has a posture: `burn` (spend the window on volume), `preserve`
+(keep the window for judgment work), or `balanced`. The defaults are `burn` for
+`codex-cmp` and `preserve` for `codex-personal` and `claude`; every other
+executor is `balanced`. The host overrides this with `posture` in `slots.json`.
+A `free_until` instant (epoch seconds or an ISO date) reads as `burn` until it
+passes, which is how a free-session window on an executor is declared. Nothing
+is free by default. Fresh `use-it-all.v1` evidence that an executor's window is
+at waste risk or behind pace also reads as `burn` for that tick, so a preserved
+window that would otherwise expire unused takes volume.
+
+Fresh measured `queue/budget-overrides.json` allowance also sets posture for
+`included` subscriptions only (never metered/API-credit or local lanes).
+Per-lane `weekly_used_pct` (0–100), finite nonnegative `burn_pct_per_hour`
+(including measured zero), `reset_at` and `as_of` are required. Times accept
+epoch seconds or ISO timestamps; observations older than 30 minutes, more than
+60 seconds in the future, or already elapsed resets are unknown.
+With hours remaining to reset, projected unused allowance is
+`max(0, 100 - weekly_used_pct - burn_pct_per_hour * hours)` (see
+[projected waste](AMPLIFY.md)). At least 10 percentage points unused selects
+`burn` (`spend_down_projected_unused`); projected consumption above 110% selects
+`preserve` (`spend_down_projected_exhaustion`); otherwise `balanced`
+(`spend_down_on_pace`). Precedence is unexpired `free_until`, valid host-declared
+`posture`, measured spend-down, then built-in defaults. Reasons are `free_until`,
+`host_declared`, or the spend-down code; defaults retain `spend_down_unknown`
+or `spend_down_not_subscription`. The existing use-it-all tick override remains
+last, with reason `use_it_all_waste_risk` or `use_it_all_behind`.
+
+The Devin CLI lane derives an allowance-bounded cost class instead of trusting
+a `slots.json` cost override. It reads the existing published
+`~/.ashlr/devin/weekly-capacity.json` measurement (`phm capacity publish`),
+`devin.weeklyAcuAllowance` (falling back to the local budget's `acuBudgetTotal`),
+and the configured recurring `devin.weeklyResetAt` anchor. The measurement must
+be live, at most 15 minutes old, and belong to the configured window with a
+future reset. Unknown ACU values stay null. It counts as `included` only when
+`allowance - measured usage - reservations - reserveAcu >= maxAcuPerSession`.
+Reservations conservatively hold the full cap of unsettled local Devin tasks
+(including suspended/dismissed sessions and ambiguous creates), plus one cap
+per running dispatcher session. This can double-reserve a tracked worker;
+it protects usage since the weekly observation. Claims in the same tick each
+reserve another cap before the next decision. Missing budget or task inventory
+makes reservations unknown. No allowance, reset, measurement or sufficient
+headroom means `metered`, which cannot burn, including through host posture
+or use-it-all overrides. This classification grants no launch authority and
+does not change billing, plan settings or the launcher's spending gates.
+
+Selected SWE-2 Lightning/Flash CLI preview models are `included` with
+`zero_cost: true` and posture `burn` until 2026-12-01 05:00 UTC (the shared
+resource-live expiry). They need no ACU reservation. At expiry they become
+`metered`; `free_until` cannot extend them. Tier-specific model picks apply per
+job; a batch or tier boost cannot silently substitute a differently priced
+Devin model for the cost receipt's selected model.
+
+Devin receipts add `cost_class_reason`, `zero_cost` and nullable ACU `allowance`
+evidence. Reasons are `devin_within_allowance`, `devin_allowance_headroom`,
+`devin_usage_unknown`, `devin_usage_stale`, `devin_reset_unknown`,
+`devin_reset_expired`, `devin_allowance_unknown`, `devin_reservations_unknown`,
+`devin_free_preview` and `devin_preview_expired`.
+
+`work-market.v1` routing receipts include `posture_reason` and `spend_down` in
+each lane's ranking inputs. When allowance readings exist, one `event: posture`
+snapshot per market tick records all lane postures and projections, including
+ticks without a routing decision. `phm route explain --json` returns nullable
+`posture.lanes` with `posture`, `postureReason`, `projectedUnusedPct` and
+`hoursToReset`, using the newest posture snapshot in a bounded 256 KiB journal
+tail, or the newest routing decision if no snapshot exists. Missing or invalid
+evidence stays null. These ranking inputs never grant quota or eligibility.
+Devin's cost evidence is exposed there as `costClass`, `costClassReason`,
+`zeroCost` and `allowance` (ACU keys retain their receipt names).
+
+| Posture | bulk | standard | judgment |
+| --- | --- | --- | --- |
+| `burn` | best | best | neutral |
+| `balanced` | neutral | neutral | neutral |
+| `preserve` | last | neutral | best |
+
+Fit ranks ahead of the lane hint. Bulk work hinted at a preserved window runs
+on a burnable executor that has a free slot, and the decision records
+`resource_fit`. Within one fit class the hinted lane wins. When the better-fit
+executors are full, held or otherwise unavailable, the job still runs on any
+eligible executor, so an idle preserved lane is fed rather than left empty.
+Posture is a ranking input only. It never grants a capability, a cost class,
+quota, clearance or a slot, and weekly pacing, holds and spend rules apply
+unchanged.
+
+Among eligible executors, resource fit comes first, then the hint, followed by utilization,
 measured empty rate and yield, cost class, known remaining quota, measured model
 latency and stable executor order. Recent finish events supply empty-rate and
 `model_s` latency observations, with measured `wall_s` session duration as a
@@ -98,10 +226,27 @@ Every evaluated decision appends a private JSON record to
 The decision shape is:
 
 ```json
-{"schema":"work-market.v1","event":"route_decision","job":"RQ-MARKET","chosen_lane":"claude","rejected_lanes":[{"lane":"codex-personal","reason_codes":["saturated"]}],"reason_codes":["healthy_capacity","preferred_lane_fallback"],"ranking_inputs":{"claude":{"running":0,"target":2,"quota":null,"empty_rate":null,"yield_rate":null,"cost_class":"included","latency_s":null}}}
+{"schema":"work-market.v1","event":"route_decision","job":"RQ-MARKET","chosen_lane":"claude","preferred_lane":"codex-personal","work_class":"judgment","override":{"from":"codex-personal","to":"claude","reason":"preferred_lane_fallback","preferred_lane_blocked_by":["saturated"]},"rejected_lanes":[{"lane":"codex-personal","reason_codes":["saturated"]}],"reason_codes":["healthy_capacity","preferred_lane_fallback"],"ranking_inputs":{"claude":{"running":0,"target":2,"quota":null,"empty_rate":null,"yield_rate":null,"cost_class":"included","latency_s":null,"posture":"preserve","fit":0}}}
 ```
 
+`override` is null unless the job runs somewhere other than its hinted lane.
+Its `reason` is `resource_fit` (the hinted lane could run it, another resource
+suits the work better), `preferred_lane_fallback` (the hinted lane could not;
+`preferred_lane_blocked_by` lists why) or `unknown_preference`. The same reason
+is written to the job ledger: the `claim` row in `metrics/jobs.jsonl` gains
+`lane_hint`, `lane_override` and `lane_hint_blocked_by` when the claim left its
+hint, and a member that joins a combined session on another lane records
+`lane_override:"batch_session"` on its `batch_claim` row. The event log line is
+`FLEET_REBALANCE <job> <from>-><lane> (shared market: <reason>)`; the reason is
+`placement_moved` when the row declared no lane and only its provisional
+lane column changed.
+
+Advisory [failover receipts](ROUTING.md#failover-chains) use `lane_override`
+codes `failover_quota`, `failover_5xx`, `failover_timeout` and
+`failover_near_reset` on `failover` rows. These do not wire the live dispatcher.
+
 Other reason codes include `missing_capability`, `tier_unavailable`,
+`tier_ceiling_exceeded`, `repo_unserved`, `data_class_exceeded`,
 `cost_class_exceeded`, `quota_exhausted`, `provider_backoff`, `held`,
 `no_runnable_lane`, `global_admission`, and `hysteresis_*`. An evaluated job with
 no eligible executor records `chosen_lane:null`. No task text or credentials
@@ -121,6 +266,35 @@ Changing preferences cannot move a running job. See
 phm route explain --json
 phm pool admission --json
 ```
+
+## Utilization and unfed capacity
+
+An executor is unfed when it has free slots while runnable rows wait under
+another lane's hint. Each tick the dispatcher computes this after its launches
+and publishes it as `unfed_capacity` in `queue/status.json`: per lane `running`,
+`target`, `held`, `utilization`, `headroom`, `waiting_elsewhere`, `unfed`, and
+`blocked`, a count per reason code saying why those rows did not run there
+(`missing_capability`, `data_class_exceeded`, `provider_backoff`,
+`global_admission`, `deferred_after_selection`, `not_evaluated`, and the other
+decision codes; `admission_stopped` when the load gate, a pause or the disk
+guard stopped the whole tick). Held, full and zero-target lanes are never
+unfed. When at least one lane is unfed the same record is appended to
+`metrics/work-market.jsonl` as an `unfed_capacity` event, one row per tick. It
+holds counts and codes only: no job ids, task text or credentials.
+
+```sh
+phm fleet unfed
+phm fleet unfed --window 6 --json
+```
+
+`phm fleet unfed` prints each resource's utilization and its unfed capacity
+now, then folds the unfed ticks of the last `--window` hours (default 24, at
+most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
+`--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
+carries the block and `derived` when the running dispatcher predates it; a
+derived report compares lane counts with `ready.tsv` hints and has no reasons.
+It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
+is read-only: no writes, no child processes, no network.
 
 ## Dispatch-neutral queue snapshot
 
@@ -167,7 +341,7 @@ and a `jobs` array. Each job has a unique `id`, status
 `READY|CLAIMED|PR-OPEN|BLOCKED|HOLD|PROPOSED|SPLIT-PARENT|FIXUP|LAND|DONE|RETIRED|DROPPED`,
 `priority`, `tier`, `repo`, `deps`, `scope`, `acceptance`, and `claims`.
 The optional compatibility `pool` defaults to `any` when adding a job. Optional `preferred_lane`, `needs`,
-`min_tier`, `max_cost_class`, `exclusive`, and `impact` carry the market contract;
+`min_tier`, `max_tier`, `max_cost_class`, `data_class`, `work_class`, `exclusive`, and `impact` carry the market contract;
 JSON import, replay, and Markdown exports preserve them.
 Claims record `owner`, `claimedAt`, and optional `finishedAt`. Jobs optionally
 carry `prUrl` and `blockedReason`. Timestamps are ISO dates, PR URLs are
@@ -196,7 +370,7 @@ header (everything before the first `:` that follows the first `RQ-*` token),
 excluding tokens claimed by a dependency or `children`/`parent` keyword. Field
 groups are balanced parentheses, so inner `(...)` pairs do not truncate them.
 Fields accept comma or semicolon separators. Routing fields (`priority`, `pool`, `preferred_lane`, `needs`,
-`min_tier`, `max_cost_class`, `exclusive`, `impact`, `tier`, `repo`, `deps`) come only from parenthesized groups; `pool` may also be
+`min_tier`, `max_tier`, `max_cost_class`, `data_class`, `work_class`, `exclusive`, `impact`, `tier`, `repo`, `deps`) come only from parenthesized groups; `pool` may also be
 inferred from a known pool name in the pre-id tokens. Dependencies use `|`, `+`,
 commas, or spaces within the field (CLI `--deps` uses commas), and are also
 collected from prose (`deps=`, `depends on`, `after`, `waits for`, `blocked by`,
@@ -323,8 +497,8 @@ code 14.
 `merge-queue-loop` ([`merge-queue-loop.ts`](../src/core/drive/merge-queue-loop.ts),
 run by `node scripts/merge-queue-loop.mjs cycle [--dry-run]`) makes one pass
 over the fleet PRs of the seven approved repos. A green, mergeable PR is
-added to the default branch's GitHub merge queue (`enqueuePullRequest` with
-`expectedHeadOid`, so a moved head is refused); the queue still runs every
+added to the default branch's GitHub merge queue (`gh pr merge --auto` with
+`--match-head-commit`, so a moved head is refused); the queue still runs every
 required check on the merge group. A BEHIND PR gets `updatePullRequestBranch`
 with the MERGE method (a base merge commit, never a rewrite or force-push) only
 where it helps: in a repo without a merge queue, or when its head reports no
@@ -335,6 +509,24 @@ queue are never auto-enqueued, and PRs touching Security-pinned paths (or with
 a truncated file list) are reported as `pinned`, not enqueued. Each action is
 written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
 per cycle.
+
+The same cycle recovers eligible PRs stranded outside the queue, including
+those with auto-merge already armed. Live PR or repository claims in the
+coordination ledger report `owned`; unreadable ownership stops that repo.
+JSON `repos[].latency` reports each PR's head, state, state entry time (`since`),
+observation time (`observedAt`, both epoch milliseconds) and cumulative `stateMs`. Times are sampled
+at successful reads: intervals belong to the preceding observed state, not
+exact GitHub transition times. New heads, failed reads and backward clocks
+reset the timing window; closed PRs are removed. Dry runs report without saving.
+
+Within each repository, ready PRs enter the queue before branch updates and
+conflict resolution. Each group keeps PR-number order; already queued PRs
+are left alone and auto-merge stays armed. The offline scheduling fixture in
+`test/merge-queue-loop.test.ts` models a 60-second update and a 90-second
+conflict resolution: two ready PRs enroll after 0.1 and 0.2 seconds instead
+of 150.1 and 150.2 seconds, including when the update fails. These are fixture
+times, not measured production latency; repository reads and enrollment API
+latency still apply.
 
 `node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE ...`
 counts merged PRs per UTC day from each clone's first-parent history
@@ -559,6 +751,8 @@ is executed by the planner. The planner does not install or change host scripts.
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
 
+Run `phm queue supersede` to list queued jobs that a newer cycle of the same job replaces, for example `RQ-PHX-RECUTCOREC541` once `RQ-PHX-RECUTCOREC544` is queued. Jobs match when they share a repo and an id that differs only in its cycle: `C<number>`, `<number>S` or `<number>C` at the end, with two or more digits. Only the newest cycle stays; ids without a cycle, parked rows and running jobs are left alone, and a claimed or running newer cycle still replaces an older queued one. It reads `ready.tsv` and `router-queue.md` and changes nothing by default. Add `--apply` to copy the older `ready.tsv` rows to `superseded.tsv` beside it, mark their router lines `SUPERSEDED-BY-<newer id>` so restock does not add them again, remove the rows, and append one `SUPERSEDED <id> by <newer id>` line per job to `dispatch-events.log`. Nothing is deleted: to restore a job, paste its row back from `superseded.tsv`. A second run finds nothing to do. `--json` prints the typed `queue.supersede.v1` report (`applied`, `queued`, `count`, `superseded[]` with `id`, `repo`, `family`, `cycle`, `supersededBy`), and `phm queue batches` shows the count as `superseded`.
+
 Restock also checks semantic goal overlap before admitting READY rows. Within the same repo, a shared explicit file/module and normalized token Jaccard score of at least 0.5 marks `DUPLICATE-OF-<id>`; CLAIMED/RUNNING rows take precedence, then the first READY row. Different explicit PR targets stay separate. Paths, stop words and generic single-case scaffolding do not count as goal tokens; fewer than three tokens is unknown. `phm queue dedupe --json` exposes these matches as `reason: "semantic-goal-overlap"` with `jaccard`, and restock JSON includes `dedupe.repeats` and `dedupe.unknown`. This partial check uses router-queue text, not external running-process or PR inventories; other ingest paths are not covered. Live restock adoption still requires Security review and re-pinning.
 
 ### Suggest work for an idle lane
@@ -604,6 +798,48 @@ Run `phm jobs retry-empty --dry-run` to preview READY lines for empty jobs from
  when moving the queue. A crash between recording a receipt and writing the
  queue can leave a job unqueued; inspect the queue before manual recovery.
 
+## Coalesce small jobs into batches
+
+Run `phm queue coalesce <file>` (or pipe queue lines on stdin) to merge small
+READY lines for the same repo into batch jobs, so one session takes several
+related tasks instead of one launch slot each. Lines join a batch only when
+they share repo, pool and tier and declare `size<=200` or less; a batch holds
+at most 8 tasks and the rest form the next batch. A batch id is derived from
+its member ids, and each batch lists the ids it replaces. P0 lines,
+`tier=frontier` lines, FIXUP ids, `src=leader` lines and lone lines stay as
+they are. Malformed READY lines stay as they are and are reported.
+
+Each batch also has a prompt: a numbered checklist of the tasks with their
+acceptance, then fixed rules (skip a task that is already covered and say so,
+ship the finished subset, end with no changes only when every task is already
+covered, run only the touched tests).
+
+The default is a dry run: one plain line per batch, or `--json` for the
+`phantom.queue-coalesce.v1` report. `--apply --out <directory>` first saves
+`router-queue.original.md`, then writes `router-queue.md` and
+`prompts/<batch id>.md` there. It never replaces existing files and never
+edits the input queue.
+
+## Steer the queue
+
+Run `phm queue` to list the queued jobs in the order they launch: position, id,
+repo, lane, tier, age and, when a newer cycle of the same job is queued, the id
+that replaces it. `phm queue --json` returns the same list as the `launch` field
+(schema `queue.order.v1`, `version` 1) beside the batch report.
+
+Three actions change one queued job. Each takes `--dry-run`, which prints the
+change and writes nothing, and `--json` (schema `queue.action.v1`):
+
+- `phm queue top <id>` moves the job to the front.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
+
+Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
+keeps the earlier text in `queue/ready.tsv.bak`. If the dispatcher was in the
+middle of a run and wrote the old queue back, the command says so and exits 1;
+run it again. The Queue pane in the desktop app uses the same calls through
+`GET` and `POST /api/verse/fleet/queue/order`.
+
 ## Batch session results
 
 Run `phm queue batches` to see one plain summary of batch sessions, or
@@ -611,6 +847,13 @@ Run `phm queue batches` to see one plain summary of batch sessions, or
 `phm queue --json` also returns this report. Use `--runs <directory>` with
 `batches` to inspect a fixture or another local runs directory.
 This is read-only. The same report backs both forms.
+
+The report also carries `routeSkips`: ready jobs whose prompt needs something
+their lane is declared unable to do, each with the typed code
+`route_skip: lane lacks gh` and one plain sentence. The human form adds one
+line only when such jobs exist. It is a forecast from `queue/ready.tsv` and
+`queue/prompts`; it moves nothing. Unreadable files report `unknown`, never an
+empty all-clear. See [lane capability fit](ROUTING.md#lane-capability-fit).
 
 `emptyPrefixes` reports the top five job-ID prefixes by empty `finish` rows in
 the last 24 hours, with counts and a total. Retries count separately; filler

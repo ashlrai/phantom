@@ -49,20 +49,21 @@
 
 .label {
   color: var(--text-tertiary);
+  font-family: var(--font-display);
   font-size: var(--text-2xs-size);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
 
 .value {
-  font-size: var(--text-lg-size, 18px);
+  font-size: var(--text-lg-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--font-weight-semibold);
 }
 
 .missing {
   color: var(--text-tertiary);
-  font-size: var(--text-sm-size, 14px);
+  font-size: var(--text-sm-size);
   font-weight: var(--font-weight-regular, 400);
 }
 

@@ -452,12 +452,8 @@ function learnedEntryForEngine(
 ): ModelEntry | null {
   if (!scores || scores.size === 0) return null;
   const candidates = KNOWN_MODELS.filter((entry) =>
-    !entry.historical && entry.engine === engine &&
-    // Work promotion needs a complete TERRA-AB-1 comparison, which legacy
-    // producer scores cannot attest. Preserve work/frontier until that proof
-    // can pass the existing operational learning authority gate.
-    (engine !== 'codex' || (modelTier !== 'work' && modelTier !== 'frontier') ||
-      entry.apiModelId === codexModelForTier(modelTier)) &&
+    !entry.historical && !entry.explicitOnly && entry.engine === engine &&
+    (engine !== 'codex' || entry.apiModelId === codexModelForTier(modelTier)) &&
     (!capability || entry.capabilities.includes(capability)) &&
     entry.minEffort <= effortCap && !excludes.has(entry.id));
   return selectCostAwareModel(candidates, scores, { minShipRate });

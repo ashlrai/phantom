@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetSlackTrace } from '../src/cli/fleet-slack-trace.js';
 import { recordSlackObservation, slackJournalPath } from '../src/core/agents/slack-journal.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 
 // Plainly synthetic channels, identities and persisted receipts; no Slack access.
 const ANSWERED = 'C0FAKE0001';
@@ -19,6 +20,8 @@ const AUTHOR = 'U0FAKE0001';
 const TEXT = 'synthetic-private-message-455s';
 const DIGEST = 'a'.repeat(64);
 const CLIENT = '11111111-1111-1111-1111-111111111111';
+/** Each request has its own Leader request id even when channels share thread and message timestamps. */
+const rid = (channelId: string, threadTs: string) => fakeRequestId(`${channelId}:${threadTs}:${MESSAGE}`);
 const roots: string[] = [];
 
 afterEach(() => {
@@ -33,12 +36,12 @@ function fixture() {
   for (const channelId of [ANSWERED, UNANSWERED]) {
     expect(recordSlackObservation({
       at: AT, decision: 'ingested', channelId, threadTs: THREAD, messageTs: MESSAGE,
-      authorId: AUTHOR, bus: 'posted',
+      authorId: AUTHOR, bus: 'posted', requestId: rid(channelId, THREAD),
     }, deps)).toBe('recorded');
   }
   mkdirSync(deps.stateRoot, { recursive: true, mode: 0o700 });
   writeFileSync(join(deps.stateRoot, 'messages.json'), JSON.stringify({
-    version: 1, messages: { ['0'.repeat(64)]: {
+    version: 1, messages: { [replyKey(rid(ANSWERED, THREAD))]: {
       digest: DIGEST, clientId: CLIENT, expiresAt: 9e12,
       channel: ANSWERED, thread: THREAD, state: 'sent', ts: REPLY, text: TEXT,
     } },
@@ -82,6 +85,7 @@ describe('fleet slack-trace channel scope (455s)', () => {
     const deps = fixture();
     expect(recordSlackObservation({
       at: AT, decision: 'ingested', channelId: ANSWERED, threadTs: OTHER_THREAD, messageTs: MESSAGE,
+      requestId: rid(ANSWERED, OTHER_THREAD),
     }, deps)).toBe('recorded');
     const channelOnly = await run(['--json', '--channel', ANSWERED], deps);
     const trace = JSON.parse(channelOnly.lines[0]!);
@@ -121,7 +125,7 @@ describe('fleet slack-trace channel scope (455s)', () => {
       // A valid receipt plus an invalid row keeps the source degraded.
       const path = join(deps.stateRoot, 'messages.json');
       writeFileSync(path, JSON.stringify({ version: 1, messages: {
-        good: { channel: ANSWERED, thread: THREAD, state: 'sent', ts: REPLY }, bad: {},
+        [replyKey(rid(ANSWERED, THREAD))]: { channel: ANSWERED, thread: THREAD, state: 'sent', ts: REPLY }, bad: {},
       } }), { mode: 0o600 });
     }
     const { code, lines } = await run(['--channel', ANSWERED, '--json'], deps);

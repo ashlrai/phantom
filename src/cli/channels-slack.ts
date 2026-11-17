@@ -1,3 +1,4 @@
+import { injectedSlackCredentialResolver } from '../core/agents/slack-credentials.js';
 /**
  * `phm channels slack` -- offline inspection of the Slack bridge adapter
  * (RQ-AGENTNET-SLACK-1).
@@ -19,7 +20,7 @@
  * run the bounded existing-bus transport without accepting token arguments.
  * Exit codes: 0 report printed, 1 input error, 2 bad usage.
  */
-import { buildSlackBridgeStatus, buildSlackMapReport, slackWorkStatusLine, type SlackBridgeStatus } from '../core/agents/slack-status.js';
+import { buildSlackBridgeStatus, buildSlackMapReport, slackFleetAsOf, slackWorkStatusLine, type SlackBridgeStatus } from '../core/agents/slack-status.js';
 import type { SlackAudienceSnapshot } from '../core/agents/slack-audience.js';
 import { readPrivateFileCapped } from '../core/verse/preferences.js';
 import { rejectUnknownOptions } from './args.js';
@@ -67,8 +68,8 @@ function printStatus(status: SlackBridgeStatus): void {
   const ignoredReasons = status.journal.ignoredReasons ?? [];
   console.log(`ignored reasons: ${ignoredReasons.length === 0 ? 'none' : ignoredReasons.map((row) => `${row.reason}=${row.count}`).join(', ')}`);
   const r = status.replies;
-  console.log(`replies: ${r.state} answered=${r.answered} unanswered=${r.unanswered} oldest=${cell(r.oldestUnansweredAt)} uncertain=${r.uncertainSends}`);
-  console.log(`work: ${status.work.inbox}; fleet as of ${status.work.asOf ?? 'unknown'}${status.work.truncated ? '; latest only' : ''}`);
+  console.log(`replies: ${r.state} answered=${r.answered} unanswered=${r.unanswered} oldest=${cell(r.oldestUnansweredAt)} uncertain=${r.uncertainSends} unverified=${r.unverified} uncertainRequests=${r.uncertainRequests} busFailed=${r.busFailed}`);
+  console.log(`work: ${status.work.inbox}; ${slackFleetAsOf(status.work)}${status.work.truncated ? '; latest only' : ''}`);
   for (const item of status.work.items) console.log(`  ${item.id}: ${slackWorkStatusLine(status.work, { inReplyTo: item.id })}`);
   console.log(`ready: ${cell(status.ready)}`);
   // Configuration readiness is not transport evidence: only an authenticated
@@ -179,10 +180,7 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
   const config = parsed.slack;
   const controller = new AbortController();
   const deadline = run ? Date.now() + seconds * 1000 : Infinity;
-  const call = createSlackApi({ config, resolveCredential: reference => {
-    if (!/^phm_SLACK_(?:AGENTNET_)?(?:BOT|APP)_TOKEN$/.test(reference)) return undefined;
-    return process.env[reference.slice(4)];
-  }, signal: controller.signal });
+  const call = createSlackApi({ config, resolveCredential: injectedSlackCredentialResolver(config, process.env), signal: controller.signal });
   let socket: SlackSocketSession | undefined;
   let stopped = false;
   let disconnected = false;

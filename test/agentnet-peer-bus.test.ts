@@ -10,6 +10,7 @@ import { cmdAgentnet } from '../src/cli/agentnet.js';
 import { localWriteGate } from '../src/core/agents/send-gate.js';
 import type { SlackCall, SlackDeliveryPolicy } from '../src/core/agents/slack-transport.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { readPeerFleet } from '../src/core/agentnet/mesh-read.js';
 vi.mock('../src/core/agents/send-gate.js', () => ({ localWriteGate: vi.fn(() => null) }));
 let root: string, bindings: string, peers: PeerBinding[], now: number, shared: boolean, approved: boolean;
 const session = (n = 0) => ({ lane: `lane-${n}`, sessionId: `session-${n}`, token: `synthetic-session-${n}-` + 'a'.repeat(32) });
@@ -38,6 +39,22 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); vi.restoreAllM
 const posts = (call: SlackCall) => vi.mocked(call).mock.calls.filter(([method]) => method === 'chat.postMessage');
 
 describe('team peer mesh', () => {
+  it('shares mesh and work metadata with every authenticated lane without a send grant or lease', () => {
+    approved = false;
+    vi.mocked(localWriteGate).mockReturnValue({ status: 'refused', reason: 'Communications are paused.' });
+    appendBusInbox({ id: 'shared-work', from: 'agent0', to: 'leaders', priority: 'P2', ttl: 60000,
+      body: { kind: 'work.post', jobId: 'RQ-SHARED', title: 'Review', repo: 'fake/repo', provider: 'claude', claimKeys: [] } },
+    { root, now: () => now });
+    const before = readFileSync(join(root, 'bus-inbox', 'messages.json'), 'utf8');
+    for (let n = 0; n < peers.length; n++) {
+      expect(readPeerFleet('mesh', session(n), options(n)).status).toBe('ok');
+      expect(readPeerFleet('work-feed', session(n), options(n))).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-SHARED' }] });
+    }
+    expect(readFileSync(join(root, 'bus-inbox', 'messages.json'), 'utf8')).toBe(before);
+    expect(() => readPeerFleet('mesh', { ...session(), token: 'wrong' }, options())).toThrow();
+    now += 3600_000;
+    expect(() => readPeerFleet('work-feed', session(), options())).toThrow();
+  });
   it('binds callsigns across arbitrary lanes and sends through the existing authenticated broker', async () => {
     const call = api(), result = await sendPeerMessage(request, session(), options(0, call));
     expect(result).toMatchObject({ status: 'posted', slack: 'sent', hopCount: 1 });

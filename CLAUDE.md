@@ -34,7 +34,7 @@ documentation check and affected tests. Merge Gate stays the full check.
 ## Companion tools
 
 The repo config `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`,
-`stack`, `ashlr`. These are companion servers, distinct from the Phantom MCP
+`stack`, `context7`, `ashlr`. These are companion servers, distinct from the Phantom MCP
 gateway started by `phm mcp`. See [the toolchain guide](docs/AGENT-TOOLCHAIN.md)
 for limits and approval requirements. Server registration does not prove readiness.
 

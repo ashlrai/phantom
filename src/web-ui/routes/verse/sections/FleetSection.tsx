@@ -52,6 +52,7 @@ import { useViewport } from '../shell/viewport.js';
 import { executeCatalogCommand } from '../shell/run-command.js';
 import { GateFunnelCards, LanesStrip, LiveSwimlane, OvernightCard, ParkedCard, WhySeatCard } from '../fleet/FleetCards.js';
 import { MainHealthRows } from '../fleet/MainHealthRows.js';
+import { AutonomyCard } from '../fleet/AutonomyCard.js';
 import { RepoTable } from '../fleet/RepoTable.js';
 import { FleetScheduling } from '../resources/SchedulingEvidence.js';
 import { ExecutionFeedback } from '../fleet/ExecutionFeedback.js';
@@ -150,6 +151,7 @@ export function FleetSection() {
           </div>
           <InterjectBox />
           <CosTaskList />
+          <AutonomyCard />
           <OperationsDeck />
           <WorkersCard />
           <RunsLanesCard />

@@ -42,6 +42,8 @@ export function createClaimNoticeTick(opts: {
       if (signal?.aborted) return { ran: false, reason: 'aborted' };
       if (inFlight) return { ran: false, reason: 'in-flight' };
       const at = now();
+      // Rebase on rollback and wait a full interval; repeated rollbacks never trigger immediate attempts.
+      if (lastAt !== undefined && at < lastAt) lastAt = at;
       if (lastAt !== undefined && at - lastAt < intervalMs) return { ran: false, reason: 'interval' };
       // The attempt (not its success) starts the interval, so a failing or
       // KILLed pass is retried next interval rather than on every loop turn.

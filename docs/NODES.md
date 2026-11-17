@@ -28,7 +28,12 @@ recover an unavailable witness.
 
 Secondary workers probe their own native Codex and Claude CLI sign-in status,
 advertise only those lanes, pull fenced owner-scoped jobs and return result
-references. They check host-local PAUSE and KILL and stop the runner process group
+references. Provider binaries are resolved without a `PATH` lookup: the first
+executable regular file among `/opt/homebrew/bin`, `/usr/local/bin`,
+`~/.local/bin`, `~/.npm-global/bin` and the running Node's `bin` directory
+(`resolveProviderBinary` in `src/core/drive/nodes/provider-binary.ts`). A lane is
+advertised only when that exact path exits 0 for `login status` (Codex) or
+`auth status --json` (Claude); output and auth files are never read. They check host-local PAUSE and KILL and stop the runner process group
 when a lease cannot be renewed. Auth stays device-bound: never copy `~/.codex`,
 `~/.claude` or any auth directory. Publication remains exclusively on the primary
 through the existing `publish.sh` path. Backup promotion grants compute admission,
@@ -62,6 +67,34 @@ The closed request contains `protocol`, the router's running `job` view
 must be empty. Job IDs must be a single filename component: an alphanumeric
 character followed by at most 119 alphanumerics, dots, underscores or hyphens.
 Unknown fields and packs are refused; requests cannot supply commands or prompts.
+The worker adds an optional `providerBinaries` lane receipt (for example
+`{"codex":"/usr/local/bin/codex"}`) naming the absolute binary its probe signed in
+with, one entry per required provider lane. It is a witness, not a command: the
+runner accepts only allowlisted candidate paths and refuses the request unless its
+own resolver returns the same path.
+
+A runner reply carrying `packError`, `codex: "error"`, or a nonzero exit is a
+failed attempt: the worker releases the lease (the job returns to pending) and
+never completes it. Its JSON records `held: "runner-error"`, a `reason`
+(`pack-error`, `codex-error` or `runner-exit-nonzero`), the `pack` and the
+consecutive `failures`. The slot pulls once more in the same session; a second
+consecutive failure of the same pack is released with `--decline`, so another node
+takes it, and a success resets the count.
+
+### `codex-file` scratch directory
+
+`runCodexFilePack` (`src/core/drive/nodes/codex-pack.ts`) is the reference for the
+host runner's `codex-file` pack. It creates `~/.ashlr-runs/node-work/<jobId>/`
+as a new, empty mode-0700 directory, runs the resolved binary as
+`codex exec --sandbox read-only --skip-git-repo-check -C <scratch> -` with the task
+text on stdin only, and removes the directory afterwards. On success it keeps the
+last 48 KiB of stdout and writes an immutable mode-0600
+`~/.ashlr-runs/node-results/<jobId>.json` artifact
+(`{schemaVersion:1, jobId, pack:"codex-file", completedAt, result:{codex, output}}`),
+returning `node-results:<jobId>`; error replies write no artifact. It never uses the home directory as `-C`.
+A pre-existing scratch directory, a missing binary or a receipt mismatch is
+refused before spawn. Errors return `{"codex":"error","packError":"<code>"}` and
+the runner must exit nonzero.
 
 | Pack | Fixed action | Boundary |
 | --- | --- | --- |
@@ -116,10 +149,12 @@ uses the saved identity and preserves primary/backup roles. SSH trust and each
 provider's local sign-in remain prerequisites; join does not discover devices or
 install a runner.
 
-The 16 GiB Air has a two-slot RAM ceiling; the 8 GiB Pro has one. Reserve at least
-4 GiB or 30% of RAM, whichever is larger, and budget 4 GiB per job. Memory below
-30% available, swap in use, disk below 20 GB free or unknown telemetry holds
-admission; runtime pressure stops the worker. A worker launches one bounded batch
+Reserve at least 4 GiB or 30% of RAM, whichever is larger. The advertised
+`codex-file` budget is 1 GiB per slot (11 slots at 16 GiB; 4 at 8 GiB), capped
+at 64; unknown pack RAM estimates remain 4 GiB. Kernel memory pressure must be
+normal, free-memory/swap readings must be measured, and disk must have at least
+20 GB free. Unknown telemetry holds admission; runtime pressure stops the worker.
+A worker launches one bounded batch
 of up to its RAM slot ceiling concurrently under one session, waits for every
 started slot, then leaves. No permanent supervisor is installed. Disk telemetry
 covers the home filesystem; the runner's existing DISKGUARD must also cover
@@ -127,6 +162,29 @@ checkout and artifact volumes. Pressure checks target three seconds, subject to
 bounded synchronous telemetry and SSH delays. These checks add to DISKGUARD.
 Use independent per-node lanes; no sharded-inference speedup has been measured.
 iPad Pro and phone are mobile control surfaces, not compute nodes.
+
+Worker identities on the same OS account share that physical host budget through
+atomic slot leases, even with different `ASHLR_HOME` directories. The registry is
+`~/.ashlr-runs/node-host-slots/<hardware-digest>/<boot-uuid>/`, using the OS account
+home rather than the process `HOME`. New directories are 0700 and lease files 0600;
+symlinks, ambiguous identity, malformed state and unsafe permissions hold admission.
+The lowest free slot is leased before pull and released only after runner close.
+Exhaustion reports `slots: 0, held: host-slots-exhausted`; unmeasured registry state
+reports `host-slots-unmeasured`. `phm node status --json` includes local `capacity`.
+Heartbeats send the same slot count in `--slots` and in the capacity sample: this
+session's running jobs plus the host's free slots. Host-slot and CPU holds send
+zero slots without a sample, so the pool shows that host's capacity as unknown.
+Reservations are never stolen on timeout or worker PID death: a detached runner
+may still be alive. After a crash, drain/stop all workers and runners before any
+manual registry cleanup; a reboot selects a fresh boot directory automatically.
+All sibling workers must run the coordinated build. Different OS accounts need
+a separately commissioned shared registry; per-account budgets must not be added.
+
+The optional trusted per-pack resource hint is `memory-bound` or `cpu-bound`.
+`codex-file` and `shell-check` ignore load average. `omlx-chat` requires measured
+CPU parallelism and load, with room for one additional runnable task. Missing CPU
+telemetry reports `cpu-unmeasured`; insufficient headroom reports `cpu-pressure`.
+The worker checks the actual claimed pack before spawn and throughout execution.
 
 Share reviewed project MCP and skill files with the same checkout revision, and
 credential-free Phantom connector profiles with local vault bindings. There is no

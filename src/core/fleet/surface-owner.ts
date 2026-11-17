@@ -15,7 +15,7 @@ const UNKNOWN = 'UNKNOWN';
 /**
  * Named slices of the tree an owner question can be asked about. Every entry
  * is a repo-relative literal path that must exist on the default branch —
- * test/fleet-surface-owner-379.test.ts fails if one rots. At most 12 each.
+ * test/fleet-surface-owner-379.test.ts fails if one rots. At most 13 each (slack-bridge owns 13: audience authority and reply identity are both owner-sensitive).
  */
 export const SURFACES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'slack-bridge': Object.freeze([
@@ -25,6 +25,7 @@ export const SURFACES: Readonly<Record<string, readonly string[]>> = Object.free
     'src/core/agents/slack-leader.ts',
     'src/core/agents/slack-network.ts',
     'src/core/agents/slack-reply-binding.ts',
+    'src/core/agents/slack-reply-identity.ts',
     'src/core/agents/slack-request-trace.ts',
     'src/core/agents/slack-send-receipts.ts',
     'src/core/agents/slack-status.ts',
@@ -106,7 +107,7 @@ export async function readSurfaceOwner(surface: string, deps: SurfaceOwnerDeps =
   let ownerSource: SurfaceOwnerReport['ownerSource'] = 'none';
   let board: FleetBoard;
   try {
-    board = (deps.board ?? readFleetBoard)({ now });
+    board = (deps.board ?? readFleetBoard)({ now, reap: false });
   } catch {
     board = { schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null };
   }

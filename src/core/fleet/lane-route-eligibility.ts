@@ -9,16 +9,20 @@
  *   - it is held and the hold has not expired (a hold with no end stays),
  *   - its target is 0, or it already runs its target (no room),
  *   - it is a zero-paid lane (Grok, Cursor) without a fresh flat-rate
- *     reading: paid, credit, stale or missing readings all count as paid.
+ *     reading: paid, credit, stale or missing readings all count as paid,
+ *   - the job needs a capability the lane is declared to lack (for example
+ *     gh on claude). A gh context pack covers a read-only gh need.
  * A target outside the lane's own floor..ceiling is stale; it is clamped
  * before room is counted, so an old number cannot over-admit a lane.
  */
 import { ZERO_PAID_LANES, type ThroughputWindow } from '../daemon/count-preferences.js';
+import { laneLacks, routeSkipCode, type CapabilityNeed, type LaneCapabilityOverrides, type RouteSkipCode } from './lane-capabilities.js';
 import type { LaneTargetRow, LaneTargetsV1 } from './runs-lane-targets.js';
 
-export type LaneSkipKind = 'snapshot' | 'held' | 'no-target' | 'full' | 'paid-unproven' | 'excluded';
+export type LaneSkipKind = 'snapshot' | 'held' | 'no-target' | 'full' | 'paid-unproven' | 'excluded' | 'lacks-capability';
 
-export interface LaneSkip { lane: string; kind: LaneSkipKind; reason: string }
+/** `code` is set only for `lacks-capability`, e.g. "route_skip: lane lacks gh". */
+export interface LaneSkip { lane: string; kind: LaneSkipKind; reason: string; code?: RouteSkipCode }
 
 export interface LaneRouteInput {
   targets: LaneTargetsV1;
@@ -30,6 +34,11 @@ export interface LaneRouteInput {
   exclude?: readonly string[];
   /** Tie-break order when lanes have equal room; unlisted lanes follow alphabetically. */
   prefer?: readonly string[];
+  /** What the job needs (inferRequiredCapabilities). A lane declared to lack one is skipped. */
+  needs?: readonly CapabilityNeed[];
+  /** A gh context pack is attached, which covers read-only gh needs. */
+  pack?: boolean;
+  capabilities?: LaneCapabilityOverrides;
   now?: Date;
 }
 
@@ -67,6 +76,8 @@ export function routeToEligibleLane(input: LaneRouteInput): LaneRouteDecision {
   for (const row of input.targets.lanes) {
     const skip = (kind: LaneSkipKind, reason: string): void => { skipped.push({ lane: row.lane, kind, reason }); };
     if (input.exclude?.includes(row.lane)) { skip('excluded', 'The caller ruled this lane out.'); continue; }
+    const lacks = input.needs?.length ? laneLacks(row.lane, input.needs, input.pack === true, input.capabilities) : null;
+    if (lacks) { skipped.push({ lane: row.lane, kind: 'lacks-capability', code: routeSkipCode(lacks), reason: `Lane cannot use ${lacks}.` }); continue; }
     if (laneHoldActive(row, now)) { skip('held', `Lane is held${row.heldReason ? `: ${row.heldReason}` : ''}.`); continue; }
     if (ZERO_PAID_LANES.has(row.lane) && !paidProven(row.lane, input.windows ?? [])) {
       skip('paid-unproven', 'No fresh flat-rate reading, so this zero-paid lane is treated as paid.');

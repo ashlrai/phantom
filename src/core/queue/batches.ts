@@ -1,10 +1,12 @@
 import { constants } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { z } from 'zod';
 import { scrubPrivateText } from '../util/scrub.js';
+import { fitRoute, type RouteSkipCode } from '../fleet/lane-capabilities.js';
+import { supersedeQueue } from './supersede.js';
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(value => scrubPrivateText(value) === value);
 const status = z.enum(['done', 'skipped', 'failed', 'deferred', 'unreported', 'released']);
@@ -32,6 +34,15 @@ export interface EmptyPrefixReport {
   total: number | null; malformedLines: number | null;
   top: Array<{ prefix: string; count: number }>;
 }
+/** Ready jobs whose lane is declared unable to do them. A forecast from queue files; nothing is moved. */
+export interface RouteSkipReport {
+  evidence: 'available' | 'partial' | 'unknown';
+  /** Ready rows whose prompt was read; null when ready.tsv is unreadable. */
+  checked: number | null;
+  /** Rows kept on their lane because a gh context pack is attached. */
+  packed: number | null;
+  skips: Array<{ job: string; lane: string; code: RouteSkipCode; packWouldFix: boolean; line: string }>;
+}
 export interface QueueBatchReport {
   schema: 'phantom.queue-batches.v1'; evidence: 'available' | 'partial' | 'unknown';
   sessions: Array<{ id: string; repo: string; area: string; outcomes: BatchLineOutcome[] }>;
@@ -39,6 +50,9 @@ export interface QueueBatchReport {
   gaps: string[];
   ranking: z.infer<typeof rankingSchema> | null;
   emptyPrefixes: EmptyPrefixReport;
+  routeSkips: RouteSkipReport;
+  /** Queued jobs a newer cycle of the same job replaces (`phm queue supersede`); null when the queue is unreadable. */
+  superseded: number | null;
 }
 
 /** Bound each read and refuse symlinks/devices; receipts are evidence, never executable input. */
@@ -90,6 +104,29 @@ async function readEmptyPrefixes(root: string, now: number): Promise<EmptyPrefix
   return report;
 }
 
+/** ready.tsv rows are job, repo, lane, tier, prompt path. Prompts are read only from queue/prompts. */
+async function readRouteSkips(root: string): Promise<RouteSkipReport> {
+  const report: RouteSkipReport = { evidence: 'unknown', checked: null, packed: null, skips: [] };
+  let rows: string[];
+  try { rows = (await snapshot(join(root, 'queue', 'ready.tsv'), 4 * 1024 * 1024)).text.split(/\r?\n/).filter(Boolean); }
+  catch { return report; }
+  report.evidence = rows.length > 1000 ? 'partial' : 'available'; report.checked = 0; report.packed = 0;
+  for (const row of rows.slice(0, 1000)) {
+    const [job, , lane, , prompt] = row.split('\t');
+    if (job?.startsWith('PARKED-')) continue;
+    try {
+      const fit = fitRoute({ job: id.parse(job), lane: id.parse(lane),
+        prompt: (await snapshot(join(root, 'queue', 'prompts', basename(prompt ?? '')), 1024 * 1024)).text });
+      report.checked++;
+      if (fit.decision === 'route_with_pack') report.packed++;
+      // The forecast knows no candidate lanes, so it says where the job sits, not where it goes.
+      if (fit.code) report.skips.push({ job: fit.job!, lane: fit.lane, code: fit.code, packWouldFix: fit.pack_would_fix,
+        line: `${fit.job} is queued on ${fit.lane}, which cannot use ${fit.code.slice('route_skip: lane lacks '.length)}.${fit.pack_would_fix ? ' A gh context pack would let it stay.' : ''}` });
+    } catch { report.evidence = 'partial'; }
+  }
+  return report;
+}
+
 async function lineOutcome(root: string, manifest: Manifest, job: string): Promise<BatchLineOutcome> {
   const detail = manifest.results?.[job];
   const state = manifest.handled?.[job] ?? manifest.outcomes?.[job] ?? detail?.outcome;
@@ -127,7 +164,8 @@ async function lineOutcome(root: string, manifest: Manifest, job: string): Promi
 /** Read the dispatcher's existing per-line manifests; no launch, publication or GitHub calls. */
 export async function readQueueBatches(root = join(homedir(), '.ashlr-runs')): Promise<QueueBatchReport> {
   const report: QueueBatchReport = { schema: 'phantom.queue-batches.v1', evidence: 'available', sessions: [], totals: null, ranking: null,
-    emptyPrefixes: await readEmptyPrefixes(root, Date.now()),
+    emptyPrefixes: await readEmptyPrefixes(root, Date.now()), routeSkips: await readRouteSkips(root),
+    superseded: await supersedeQueue({ runsDir: root }).then(plan => plan.count, () => null),
     gaps: ['Publication and auto-merge reflect local receipts; missing evidence is unknown, not live GitHub state.'] };
   try {
     const ranking = rankingSchema.parse(JSON.parse((await snapshot(join(root, 'queue', 'ranking.json'), 4 * 1024 * 1024)).text));
@@ -139,6 +177,8 @@ export async function readQueueBatches(root = join(homedir(), '.ashlr-runs')): P
   catch { return { ...report, evidence: 'unknown', gaps: [...report.gaps, 'Batch manifests are unavailable.'] }; }
   if (names.length > 1000) { report.evidence = 'partial'; report.gaps.push('Only the first 1000 manifests were read.'); }
   for (const name of names.slice(0, 1000)) {
+    // Node-bridge leases (RQ-BATCH-NODE-*) share the directory dispatchd checks; they are not batch sessions.
+    if (name.startsWith('RQ-BATCH-NODE-')) continue;
     try {
       const raw = await snapshot(join(root, 'queue', 'batches', name), 2 * 1024 * 1024);
       const manifest = manifestSchema.parse(JSON.parse(raw.text));
@@ -159,6 +199,11 @@ export function formatQueueBatches(report: QueueBatchReport): string {
   const prs = report.sessions.flatMap(session => session.outcomes).filter(line => line.outcome === 'pr');
   const armed = prs.filter(line => line.autoMerge === 'armed').length;
   const off = prs.filter(line => line.autoMerge === 'off').length;
-  return n ? `${n.sessions} sessions, ${n.lines} lines: ${n.pr} PRs, ${n.empty} empty, ${n.failed} failed, ${n.unknown} unknown; auto-merge ${armed} armed, ${off} off, ${prs.length - armed - off} unknown${report.evidence === 'partial' ? '; incomplete evidence' : ''}.`
-    : 'Batch sessions unknown: evidence unavailable; auto-merge unknown.';
+  const skips = report.routeSkips.skips;
+  // One plain line, only when a ready job sits on a lane that cannot do it.
+  const wrong = skips.length ? `\n${skips.length} ready ${skips.length === 1 ? 'job sits' : 'jobs sit'} on a lane that cannot do the work (${[...new Set(skips.map(s => s.code))].join('; ')}): ${skips.slice(0, 5).map(s => s.job).join(', ')}${skips.length > 5 ? ' and more' : ''}.` : '';
+  const old = report.superseded ?? 0;
+  const stale = old ? `\n${old} queued ${old === 1 ? 'job has' : 'jobs have'} a newer cycle queued. Run phm queue supersede --apply to archive ${old === 1 ? 'it' : 'them'}.` : '';
+  return (n ? `${n.sessions} sessions, ${n.lines} lines: ${n.pr} PRs, ${n.empty} empty, ${n.failed} failed, ${n.unknown} unknown; auto-merge ${armed} armed, ${off} off, ${prs.length - armed - off} unknown${report.evidence === 'partial' ? '; incomplete evidence' : ''}.`
+    : 'Batch sessions unknown: evidence unavailable; auto-merge unknown.') + wrong + stale;
 }

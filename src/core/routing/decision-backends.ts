@@ -16,7 +16,7 @@ export interface RouteBackend {
   ask(input: RouteBackendInput): Promise<unknown>;
 }
 export const candidateDecision = (c: RouteCandidate): RouteDecision => ({
-  lane: c.lane, model: c.model, effort: c.effort, speed_tier: c.speed_tier, reason_codes: ['adequate-tier'],
+  lane: c.lane, model: c.model, mode_tier: c.mode_tier, effort: c.effort, speed_tier: c.speed_tier, reason_codes: ['adequate-tier'],
 });
 
 export function routeModelsDisabled(): boolean {
@@ -35,7 +35,7 @@ function localBackend(model: 'fast' | 'strong'): RouteBackend {
         maxRequestBytes: 32 * 1024, maxResponseBytes: 16 * 1024, maxOutputTokens: 160,
       });
       const response = await client.chatStream!([
-        { role: 'system', content: 'Select the cheapest, fastest adequate route from the supplied candidates. Return ONLY one candidate decision as a JSON object with lane, model, effort, speed_tier, reason_codes:["adequate-tier"]. No tools or authority. /no_think' },
+        { role: 'system', content: 'Select the cheapest, fastest adequate route from the supplied candidates. Return ONLY one candidate decision as a JSON object with lane, model, mode_tier, effort, speed_tier, reason_codes:["adequate-tier"]. No tools or authority. /no_think' },
         // No repository identifiers, prompt bodies, account names or raw machine telemetry leave this projection.
         { role: 'user', content: JSON.stringify({ task_class: input.request.task_class, tier: input.request.tier_hint,
           candidates: input.candidates.map(candidateDecision), retry: input.retry }) },

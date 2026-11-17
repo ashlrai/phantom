@@ -9,6 +9,7 @@ import {
   type ChannelSource,
   type ReplyBindingEvidence,
 } from '../src/core/fleet/channel-health.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 
 const NOW = new Date('2026-11-13T18:00:00.000Z');
 const ago = (min: number): string => new Date(NOW.getTime() - min * 60_000).toISOString();
@@ -156,8 +157,9 @@ describe('channel health falls back when the reply binding is unavailable', () =
 const SLACK_TOML = `[mason]\nidentities=[{channel="slack",id="U0FAKEOWNER"}]\n[team]\nidentities=[{channel="slack",id="U0FAKEOWNER"}]\n[slack]\nbridge_id="slack"\nteam_id="T0FAKETEAM"\nown_user_id="U0FAKEBOT"\nown_bot_id="B0FAKEBOT"\nbot_token_ref="phm_SLACK_AGENTNET_BOT_TOKEN"\napp_token_ref="phm_SLACK_AGENTNET_APP_TOKEN"\n[[slack.map]]\ntopic="leaders"\nchannel="C0FAKELEADER"\n`;
 
 const CH = 'C0FAKELEADER';
+const rid = (messageTs: string) => fakeRequestId(`338:${messageTs}`);
 const request = (at: string, messageTs: string, threadTs = messageTs) =>
-  ({ at, decision: 'ingested', eventId: `ev-${messageTs}`, channelId: CH, authorId: 'U0FAKEOWNER', messageTs, threadTs, bus: 'posted' });
+  ({ at, decision: 'ingested', eventId: `ev-${messageTs}`, channelId: CH, authorId: 'U0FAKEOWNER', messageTs, threadTs, bus: 'posted', requestId: rid(messageTs) });
 
 function fakeProcess(argv0: string): ChildProcess {
   return spawn('bash', ['-c', `exec -a "${argv0}" sleep 30`], { stdio: 'ignore' });
@@ -198,10 +200,10 @@ async function withSlackStores(
 }
 
 describe('channel health default Slack reply binding', () => {
-  it('a same-thread sent receipt verifies the request', async () => {
+  it('a sent receipt under the request reply key verifies the request', async () => {
     await withSlackStores(
       [request(ago(30), '1700000000.000100')],
-      { m1: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
+      { [replyKey(rid('1700000000.000100'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
       (s) => {
         expect(s).toMatchObject({ configured: true, processAlive: true, state: 'LIVE', unansweredCount: 0, missing: [] });
         expect(s.proof).toEqual({
@@ -221,11 +223,11 @@ describe('channel health default Slack reply binding', () => {
       ],
       {
         // Thread answer for the first request.
-        m1: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' },
-        // Only an attempt (never confirmed) in the second request's thread.
-        m2: { channel: CH, thread: '1700000100.000100', state: 'attempted' },
-        // A top-level send after the third request, outside its thread.
-        m3: { channel: CH, state: 'sent', ts: '1700000200.000200' },
+        [replyKey(rid('1700000000.000100'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' },
+        // Only an attempt (never confirmed) under the second request's exact key: uncertain, never answered.
+        [replyKey(rid('1700000100.000100'))]: { channel: CH, thread: '1700000100.000100', state: 'attempted' },
+        // A top-level send under the third request's exact key: channel/thread disagree, so uncertain.
+        [replyKey(rid('1700000200.000100'))]: { channel: CH, state: 'sent', ts: '1700000200.000200' },
       },
       (s) => {
         expect(s.state).toBe('DEGRADED');
@@ -240,7 +242,8 @@ describe('channel health default Slack reply binding', () => {
   it('id-less legacy rows can never be counted as answered', async () => {
     await withSlackStores(
       [{ at: ago(30), decision: 'ingested', eventId: 'ev-legacy' }],
-      { m1: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
+      // A same-thread sent receipt exists under an unrelated key: legacy rows are never answered by thread.
+      { [replyKey(fakeRequestId('338:unrelated'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
       (s) => {
         expect(s).toMatchObject({ state: 'DEGRADED', unansweredCount: 1 });
         expect(s.proof).toMatchObject({ requestCoverage: 'unproven', answeredCount: 0 });
@@ -254,5 +257,28 @@ describe('channel health default Slack reply binding', () => {
       expect(s.proof).toMatchObject({ requestCoverage: 'unproven', answeredCount: 0 });
       expect(s.missing).not.toContain('slack reply binding unreadable');
     });
+  }, 30_000);
+
+  it('a bus-failed row never counts as answered, even with a matching keyed receipt', async () => {
+    await withSlackStores(
+      [{ ...request(ago(30), '1700000000.000100'), bus: 'failed' }],
+      { [replyKey(rid('1700000000.000100'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
+      (s) => {
+        expect(s.state).toBe('DEGRADED');
+        expect(s.proof).toMatchObject({ requestCoverage: 'unproven', answeredCount: 0 });
+      },
+    );
+  }, 30_000);
+
+  it('a keyed row with unknown bus ingress never counts as answered', async () => {
+    const { bus: _bus, ...noBus } = request(ago(30), '1700000000.000100') as Record<string, unknown>;
+    await withSlackStores(
+      [noBus as ReturnType<typeof request>],
+      { [replyKey(rid('1700000000.000100'))]: { channel: CH, thread: '1700000000.000100', state: 'sent', ts: '1700000000.000200' } },
+      (s) => {
+        expect(s.state).toBe('DEGRADED');
+        expect(s.proof).toMatchObject({ requestCoverage: 'unproven', answeredCount: 0 });
+      },
+    );
   }, 30_000);
 });

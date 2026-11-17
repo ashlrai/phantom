@@ -7,6 +7,7 @@ import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js'
 import { leaderInboxAppender, leaderNetworkSources, noteUnifiedOwner, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
 import { recordSlackObservation } from './slack-journal.js';
+import { isSlackRequestId } from './slack-reply-identity.js';
 import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
@@ -109,7 +110,12 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
       message.id === `slack-${ref.teamId}-${ref.channelId}-${messageRef.rootTs}` && result.status !== 'duplicate') {
     recordSlackObservation({ at: new Date(receivedAt).toISOString(), decision: 'ingested',
       channelId: ref.channelId, threadTs: ref.rootTs, messageTs: messageRef.rootTs,
-      bus: result.status === 'accepted' ? 'posted' : 'failed' }, { runsDir });
+      bus: result.status === 'accepted' ? 'posted' : 'failed',
+      // Only a positive Leader-route result carries a reply identity: the ingest
+      // either returned the Leader-addressed envelope or recorded it in the
+      // Leader inbox. An agent-addressed owner request gets no Leader reply.
+      ...(isSlackRequestId(result.requestId) && (result.envelope?.to === 'leader' || result.recorded === true)
+        ? { requestId: result.requestId } : {}) }, { runsDir });
   }
   let statusAnswer: Promise<SlackStatusAnswer> | undefined;
   if (statusAsk && result.requestId && result.status !== 'duplicate') {
@@ -179,6 +185,7 @@ export async function deliverSlackLeaderMessage(identity: TeamIdentity, message:
   const result = await deliverSlackEnvelope({ ...message, to: route.topic,
     body: { kind: 'note', text: body.text, thread: message.channel_ref! } }, {
     ...policy, call, signal, runsDir: options.runsDir, busRoot: options.busRoot, leaderRequestId: typeof body.requestId === 'string' ? body.requestId : undefined,
+    plainReply: options.statusReply !== undefined && body.text === `Leader: ${options.statusReply.fallback}`,
     stateRoot: options.runsDir ? join(options.runsDir, 'slack-transport') : undefined,
     readPolicy: () => {
       const current = readLeaderNetworkConfig(options);

@@ -6,6 +6,21 @@ model calls, writes, routing changes or sending. The CLI only reads a ledger.
 
 ## Interface and commands
 
+`phm fleet metrics --json` (or `metrics series --json`) returns
+`fleet.metrics-series.v1`, shared with the Metrics pane through
+`GET /api/verse/fleet/runs/metrics` (`series`). It streams the same
+`<fleet runs dir>/metrics/jobs.jsonl` source as `phm fleet yield` and honors
+`ASHLR_RUNS_DIR` or `--jobs <file>`. The 24 rolling one-hour intervals carry
+merge counts by repo, launches and merges per launch, plus last-hour/24h totals.
+MERGED outcomes use recorded `ts`, including reconciler rows; repeated PR URLs
+count once at their earliest timestamp (repo/job identity when URL is absent).
+Future rows are excluded. Empty readable files measure zero; unreadable or
+interrupted reads produce null counts. Skipped invalid rows are counted.
+Human actions are not recorded: merges per launch is a throughput ratio, not
+autonomy or launch-cohort success. Merges may originate from earlier launches;
+hours with no launches have null ratios. Series covers exactly 24 hours and
+rejects `--hours`. Exit 0 means readable, 1 unreadable, 2 invalid arguments.
+
 `src/core/fleet/outcome-metrics.ts` exports `buildOutcomeMetrics(input)`:
 `{ events: readonly unknown[] | null, nowMs: number, hours?: number,
 sourceState?: 'healthy' | 'degraded' }` to `OutcomeMetrics`

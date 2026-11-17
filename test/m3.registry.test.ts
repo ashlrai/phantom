@@ -34,8 +34,13 @@ vi.mock('../src/core/mcp-registry.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../src/core/tools-registry.js', () => ({
+  getToolsRegistry: () => ({ tools: [], installedCount: 0 }),
+}));
+
 import { discoverMcpServers, knownConfigPaths, redactEnv } from '../src/core/mcp-registry.js';
 import { cmdMcp } from '../src/cli/mcp.js';
+import '../src/core/mcp-native-fleet.js';
 import type { McpServerSpec } from '../src/core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -492,13 +497,17 @@ describe('cmdMcp list — fleet-engine host isolation', () => {
     );
     _overridePaths = [p];
 
+    expect(discoverMcpServers(knownConfigPaths()).servers.map(server => server.name))
+      .toEqual(['globalSecretServer']);
+
     const prev = process.env.ASHLR_MCP_HOST;
     process.env.ASHLR_MCP_HOST = 'ashlr-fleet-engine';
     try {
       const { code, stdout } = await captureStdout(() => cmdMcp(['list', '--json']));
       expect(code).toBe(0);
-      const parsed = JSON.parse(stdout) as { servers: McpServerSpec[] };
+      const parsed = JSON.parse(stdout) as { servers: McpServerSpec[]; native: { name: string }[] };
       expect(parsed.servers).toEqual([]);
+      expect(parsed.native.some(tool => tool.name === 'phantom_fleet_apps_history')).toBe(true);
       expect(stdout).not.toContain('globalSecretServer');
       expect(stdout).not.toContain('global-mcp.js');
     } finally {

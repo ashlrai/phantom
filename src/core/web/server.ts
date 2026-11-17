@@ -33,6 +33,7 @@ import { createReadProjectionWorker, type ReadProjectionReader } from './read-pr
 import { governReadProjections } from './read-projection-governor.js';
 import { createReadSessionBoundary, headerValue, isAllowedHost, requestUrl, safeEqual, sendJson } from './read-session.js';
 import { isPhoneShellPath, serveStatic } from './static.js';
+import { isPagesApiPath, pagesApiGetResponse, PAGE_SLUG_RE } from '../cos/pages.js';
 import { gcRunStreams } from '../run/streaming.js';
 import { resetVerseEngine } from '../verse/verse-api.js';
 import { isPreviewFramePath } from '../verse/preview.js';
@@ -196,6 +197,25 @@ export async function startServer(
     if (process.env.ASHLR_PHANTOM_DISCOVERY === '1' && method === 'GET') {
       if (path === PHANTOM_DISCOVERY_PATH) { sendJson(res, 200, phantomManifest); return; }
       if (path === PHANTOM_PING_PATH) { sendJson(res, 200, { ok: true }); return; }
+    }
+
+    // Stable report links enter the hash router; report content still requires
+    // read authority at /api/pages, just like the other console views.
+    if (method === 'GET' && (path === '/pages' || path === '/pages/'
+      || (path.startsWith('/pages/') && PAGE_SLUG_RE.test(path.slice('/pages/'.length))))) {
+      res.writeHead(302, { Location: `/next/#${path === '/pages/' ? '/pages' : path}`, 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
+    // Published report pages (`phm pages publish`): read-only payloads under
+    // the same read authority the gate above just checked. Dispatched here
+    // rather than inside handleApi so the Tier-1 import closure of api.ts is
+    // untouched; non-GET traffic falls through to handleApi and 404s.
+    if (method === 'GET' && isPagesApiPath(path)) {
+      const out = pagesApiGetResponse(path);
+      sendJson(res, out.status, out.body);
+      return;
     }
 
     // ── 2. API routes ──────────────────────────────────────────────────────
