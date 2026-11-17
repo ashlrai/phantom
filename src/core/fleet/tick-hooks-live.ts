@@ -73,8 +73,9 @@ import { hasResetDeadline, opportunityPriority } from '../routing/reset-pressure
 import type { ResourceChoiceCandidate, AccountSchedulingView } from '../routing/scheduling-types.js';
 import type { WorkHistorySample } from '../routing/work-estimates.js';
 import { isAbsolute, join, resolve } from 'node:path';
+import { loadResourceLiveFeed } from '../usage/resource-live/feed.js';
 import { fleetPaceAdvice } from '../usage/sensor-pace.js';
-import { grokManualSensorReadings, parseUsageSensorSnapshot, presentUsageSensors } from '../usage/sensor-reading.js';
+import { parseUsageSensorSnapshot, presentUsageSensors } from '../usage/sensor-reading.js';
 
 import type { AshlrConfig, EngineId, EngineTier, WorkItem } from '../types.js';
 import type { DaemonActivationCapability } from '../daemon/activation-permit.js';
@@ -723,7 +724,9 @@ async function loadSchedulerPace(nowMs: number): Promise<{ nowMs: number; killed
       readings = parseUsageSensorSnapshot(JSON.parse(await readFile(path, 'utf8')));
     }
   } catch { readings = []; }
-  return { nowMs, killed, sensorPace: fleetPaceAdvice(presentUsageSensors([...grokManualSensorReadings(nowMs), ...readings], nowMs)) };
+  // Live readings from state/resource-live.json join the snapshot file. The newest reading per lane wins.
+  const live = (await loadResourceLiveFeed(nowMs)).readings;
+  return { nowMs, killed, sensorPace: fleetPaceAdvice(presentUsageSensors([...readings, ...live], nowMs)) };
 }
 
 export function defaultLiveHooksDeps(): LiveHooksDeps {

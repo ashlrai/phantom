@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdFleetSlackTrace } from '../src/cli/fleet-slack-trace.js';
 import { recordSlackObservation, slackJournalPath } from '../src/core/agents/slack-journal.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 
 const CHANNEL = 'C0FAKE0001';
 const OTHER = 'G0FAKE0002';
@@ -23,6 +24,9 @@ afterEach(() => {
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
+/** One Leader request id per (channel, message): the same ts in another channel is another request. */
+const rid = (channelId: string, messageTs: string) => fakeRequestId(`${channelId}:${THREAD}:${messageTs}`);
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'slack-exact-463s-'));
   roots.push(root);
@@ -32,11 +36,11 @@ function fixture() {
     [CHANNEL, SECOND, new Date(1731000020000).toISOString()],
     [OTHER, FIRST, new Date(1731000010000).toISOString()],
   ]) {
-    expect(recordSlackObservation({ at, decision: 'ingested', channelId, threadTs: THREAD, messageTs, authorId: AUTHOR, bus: 'posted' }, deps)).toBe('recorded');
+    expect(recordSlackObservation({ at, decision: 'ingested', channelId, threadTs: THREAD, messageTs, authorId: AUTHOR, bus: 'posted', requestId: rid(channelId, messageTs) }, deps)).toBe('recorded');
   }
   mkdirSync(deps.stateRoot, { recursive: true, mode: 0o700 });
   writeFileSync(join(deps.stateRoot, 'messages.json'), JSON.stringify({ version: 1, messages: {
-    ['0'.repeat(64)]: { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12, channel: CHANNEL, thread: THREAD, state: 'sent', ts: REPLY, text: BODY },
+    [replyKey(rid(CHANNEL, FIRST))]: { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12, channel: CHANNEL, thread: THREAD, state: 'sent', ts: REPLY, text: BODY },
   } }), { mode: 0o600 });
   return deps;
 }

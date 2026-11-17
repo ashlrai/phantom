@@ -15,6 +15,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { readSlackEvidenceBundle } from '../src/core/agents/slack-evidence-bundle.js';
 import type { SlackRequestTraceRead } from '../src/core/agents/slack-request-trace.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 const send = vi.hoisted(() => vi.fn());
 vi.mock('../src/core/web/api.js', () => ({ sendJson: send }));
 import { createFleetSlackTraceApi } from '../src/core/verse/fleet-slack-trace-api.js';
@@ -40,8 +41,9 @@ const call = (api: ReturnType<typeof createFleetSlackTraceApi>, query = '', meth
 const empty: SlackRequestTraceRead = { asOf: AS_OF, rows: [],
   counts: { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 }, sources: { journal: 'ok', sends: 'ok' } };
 
+const rid = (channelId: string, ts: string) => fakeRequestId(`457s:${channelId}:${ts}`);
 const entry = (channelId: string, at: string, messageTs: string, bus = 'posted') =>
-  ({ at, decision: 'ingested', bus, channelId, threadTs: THREAD, messageTs });
+  ({ at, decision: 'ingested', bus, channelId, threadTs: THREAD, messageTs, requestId: rid(channelId, messageTs) });
 const sent = (channel: string, ts: string) => ({ channel, thread: THREAD, state: 'sent', ts });
 
 /** Temp runs/state roots read through the real collector behind the real API factory. */
@@ -67,7 +69,7 @@ const sharedJournal = [
   entry(CHANNEL_B, '2024-11-07T17:59:40.000Z', TARGET_TS),
   entry(CHANNEL_A, '2024-11-07T17:59:50.000Z', SIBLING_TS),
 ].map((row) => JSON.stringify(row)).join('\n') + '\n';
-const sharedMessages = { a: sent(CHANNEL_A, '1731002390.000100') };
+const sharedMessages = { [replyKey(rid(CHANNEL_A, TARGET_TS))]: sent(CHANNEL_A, '1731002390.000100') };
 
 it('selects exactly one request: siblings never inflate counts or freshness', async () => {
   const f = fixture(sharedJournal, sharedMessages);

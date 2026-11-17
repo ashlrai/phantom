@@ -57,6 +57,9 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
+      # Admitted candidates dispatch dependency-audit.yml on the tag ref
+      # (vX.Y.Z) from this step, using the job GITHUB_TOKEN. That is the
+      # tag-ref audit the Mac autorun reads for the release SHA.
       - name: Plan and apply the release train
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,8 +1,8 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
-import { nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
+import { nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
-import { isHostStats, type HostStats } from './state.js';
+import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
 export { planRoutes } from './router.js';
 export type { RouteAssignment } from './router.js';
 export { LocalNodesStore } from './local-store.js';
@@ -27,6 +27,7 @@ export interface NodeProfile {
 
 /** Self-reported on each heartbeat. `auth` is the node's own local login status, never a token. */
 export interface NodeReport {
+  capacity?: NodeCapacitySample;
   hostStats?: HostStats;
   usage?: number;
   slots?: number;
@@ -53,6 +54,7 @@ export interface JobView {
 }
 
 export interface NodeView {
+  capacity?: NodeCapacitySample;
   nodeId: string;
   live: boolean;
   owners: string[];
@@ -147,6 +149,7 @@ export class DriveNodes implements QueueV1 {
    * this node after the old leader expires; a stale session must rejoin first.
    */
   heartbeat(session: NodeSession, report?: NodeReport): { leader: LeaderLease | null } | null {
+    if (report?.capacity !== undefined && !isNodeCapacity(report.capacity)) throw new Error('Invalid node capacity sample');
     if (report?.hostStats !== undefined && !isHostStats(report.hostStats)) throw new Error('Invalid host stats');
     if (report?.usage !== undefined && !(Number.isSafeInteger(report.usage) && report.usage >= 0 && report.usage <= 1000)) {
       throw new Error('Invalid drive usage (integer permille 0-1000)');
@@ -161,6 +164,7 @@ export class DriveNodes implements QueueV1 {
       node.expiresAt = now + this.nodeTtl;
       if (report?.usage !== undefined) node.usage = report.usage;
       if (report?.slots !== undefined) node.slots = report.slots;
+      if (report?.capacity !== undefined) { node.capacity = structuredClone(report.capacity); node.slots = report.capacity.slots; }
       if (report?.auth !== undefined) node.auth = report.auth;
       if (report?.hostStats !== undefined) node.hostStats = structuredClone(report.hostStats);
       if (!previous) {
@@ -225,6 +229,8 @@ export class DriveNodes implements QueueV1 {
       }
       const claim = { ...worker, jobId: job.id, token: nextToken(state), leaderToken: leader.token,
         expiresAt: now + this.claimTtl };
+      job.executionHostId = node.capacity?.hostId;
+      job.startedAt = now; delete job.completedAt;
       job.state = 'running';
       job.claim = claim;
       return { claim, job: this.jobView(job) };
@@ -249,6 +255,7 @@ export class DriveNodes implements QueueV1 {
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
           caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
           heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? 0, auth: n.auth ?? 'unknown',
+          ...(n.capacity ? { capacity: n.capacity } : {}),
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => this.jobView(j)),
@@ -274,10 +281,13 @@ export class DriveNodes implements QueueV1 {
       const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
         j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId).length;
       if (node.slots !== undefined && active >= node.slots) return null;
+      if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
+      job.executionHostId = node.capacity?.hostId;
+      job.startedAt = now; delete job.completedAt;
       job.state = 'running';
       job.claim = claim;
       return claim;
@@ -313,6 +323,7 @@ export class DriveNodes implements QueueV1 {
     return this.transaction((state, now) => {
       if (!this.currentClaim(state, claim, now)) return false;
       const job = state.jobs.find(j => j.id === claim.jobId)!;
+      job.completedAt = now;
       job.state = 'completed';
       job.result = result;
       return true;

@@ -125,6 +125,26 @@ class PickTests(unittest.TestCase):
 
 
 class PromptAndOutcomeTests(unittest.TestCase):
+    def test_details_keep_last_reason_and_preserve_missing_evidence(self):
+        notes = ("- [ ] RQ-A: failed: first attempt\n"
+                 "- [ ] RQ-A: skipped: already satisfied\n"
+                 "- [ ] RQ-B: blocked: needs dependency\n"
+                 "- [ ] RQ-C: failed\n"
+                 "- [x] RQ-D: done: " + "x" * 600 + "\n"
+                 "- [ ] RQ-E: done: unchecked\n")
+        details = b.parse_details(notes, ["RQ-A", "RQ-B", "RQ-C", "RQ-D", "RQ-E", "RQ-MISSING"])
+        self.assertEqual(details["RQ-A"], {"outcome": "skipped", "reason": "already satisfied"})
+        self.assertEqual(details["RQ-B"], {"outcome": "deferred", "reason": "needs dependency"})
+        self.assertEqual(details["RQ-C"], {"outcome": "failed", "reason": None})
+        self.assertEqual(details["RQ-MISSING"], {"outcome": "unreported", "reason": None})
+        self.assertEqual(details["RQ-E"]["outcome"], "unreported")
+        self.assertEqual(len(details["RQ-D"]["reason"]), 500)
+        self.assertEqual({job: row["outcome"] for job, row in details.items()}, b.parse_outcomes(notes, list(details)))
+
+    def test_details_ignore_lines_past_input_bound(self):
+        self.assertEqual(b.parse_details("x" * 262144 + "\n- [x] RQ-A: done: invisible", ["RQ-A"]),
+                         {"RQ-A": {"outcome": "unreported", "reason": None}})
+
     def test_parse_outcomes(self):
         notes = ("- [x] RQ-A — done: fixed\n"
                  "* [ ] RQ-B - failed: flaky upstream\n"

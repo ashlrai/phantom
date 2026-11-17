@@ -38,6 +38,8 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
+  { usage: 'phm fleet vitals [--runs-dir <directory>] [--json]', description: 'Read first-minute launch process and sampled CPU costs. Missing or incomplete evidence stays unknown or partial; no launches or writes.', safety: 'read', jsonShape: 'fleet.vitals.v1 {status,disk,launch,launchCost:{source,state,launches}}' },
   { usage: 'phm app restart --json', description: 'Report held restart: UI-owned sessions, PTYs and computer-use workers require runtime migration. Does not restart or replace the app. Exit 1 held, 2 usage.', safety: 'read', jsonShape: '{schema: phantom-app-restart/v1, state: held, restarted: false, reason, blockers}' },
   { usage: 'phm fleet feedback scan [--apply] [--days 1..30] [--runs-dir <absolute>] [--json]', description: 'Collect and triage feedback; preview by default. Apply stages at most five deduplicated jobs through existing drop admission. Never merges. Exit 1 for incomplete evidence or failure, 2 for usage.', safety: 'append', jsonShape: 'fleet.feedback.v1 {sources,candidates,queued,deferred,errors}' },
   { usage: 'phm fleet feedback digest [--json]', description: 'Read the trailing twelve hours of merged PRs, jobs needing review, failures and last recorded launches. No sends or writes.', safety: 'read', jsonShape: 'fleet.feedback.v1 {sources,digest}' },
@@ -228,6 +230,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'schemaVersion 1; unavailable scores are null',
   },
   {
+    usage: 'phm graph status --fleet <fleet.json> [--seats <seats.json>] [--json] | phm graph status --seats <seats.json> [--json]',
+    description: 'Read declared fleet relationships and passive seat catalogs. No provider probes or execution authority. Exit 0 complete projection, 1 incomplete, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'RegistryGraph (schema graph.v1): sources, nodes, edges, issues, complete',
+  },
+  {
     usage: 'phm companions [--json] [--root <install-root>] [--bin-dir <dir>]',
     description: 'Separate companion executable inventory using scrubbed version/help probes only; installed is not bundled or runtime-ready. Exit 0 reports inventory, including missing/incompatible tools; 2 bad usage.',
     safety: 'read',
@@ -310,6 +318,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     description: 'Unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Each probe times out in about 5s and degrades to unknown. Read-only; no secrets.',
     safety: 'read',
     jsonShape: 'agent-roster.v1 {schema, observedAt, latencyMs, sources[{source, ok, availability, sessions, error, observedAt, truncated}], sessions[], claims}',
+  },
+  {
+    usage: 'ashlr agents mesh status [--root <absolute>] [--json]',
+    description: 'Read the flat fleet mesh: every known identity, direct address, lane, last-seen and current task. No probes or writes.',
+    safety: 'read',
+    jsonShape: 'agent-mesh.v1 {status, asOf, agents[{agent, address, lane, lastSeen, currentTask, status, source}]}',
   },
   {
     usage: 'ashlr runtime status --store <absolute> --json',
@@ -697,6 +711,10 @@ export function agentDocsText(): string {
   lines.push('phantom_fleet_apps_follow, phantom_fleet_apps_recovery_wait,');
   lines.push('phantom_fleet_apps_recovery_check, phantom_fleet_apps_recovery_batch.');
   lines.push('These read retained local evidence only; they never query or launch apps.');
+  lines.push('Intent evidence tools (local owner-directive ledger; tracking does not authorize action):');
+  lines.push('intent_list and intent_get read. intent_stale is classified append: it previews stale directives by default, and');
+  lines.push('apply=true refreshes local tracking only. intent_add, intent_update, intent_import, intent_link and intent_ship append local records;');
+  lines.push('intent_link and intent_ship record caller-supplied merge or release evidence and never verify it.');
   lines.push('Website tools: ashlr_website_status reads publication mode, phase and holds;');
   lines.push('ashlr_website_publish requests the exact normally merged website revision with');
   lines.push('profile=phantom-public-web and expectedMerge=<40-hex SHA>. The commissioned host');
@@ -910,7 +928,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'select [--json] [--dry-run] [--top <n>]', desc: 'Rank candidates by value x leverage / (time + usage), fund the top 5 as READY lines, record picks with predicted value.', topic: 'autonomy' },
   { cmd: 'backlog refresh',              desc: 'Re-scan all enrolled repos and rebuild the backlog.', topic: 'autonomy' },
   { cmd: 'release-articles status|enable|disable|import|sync [--json]', desc: 'Configure release-backed article task handoffs; sync verifies public GitHub/npm evidence and never publishes directly.', topic: 'autonomy' },
-  { cmd: 'release status [--json] [--file <release-state.json>]', desc: 'Show release tags, assets, unreleased commits and updater status for Ashlr repositories. Use --file to read release train state.', topic: 'autonomy' },
+  { cmd: 'release status [--json] [--file <release-state.json>]', desc: 'Show local release tags, age and commits since each tag. Use --file to read release train state.', topic: 'autonomy' },
   { cmd: 'backlog --source <src>',       desc: `Filter backlog by source: ${BACKLOG_SOURCE_FILTER_HELP}.`, topic: 'autonomy' },
   { cmd: 'backlog --repo <path>',        desc: 'Filter backlog to a specific enrolled repo.', topic: 'autonomy' },
   { cmd: 'backlog --limit <n>',          desc: 'Show only the top N items.', topic: 'autonomy' },
@@ -944,6 +962,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'worklog [--since 24h] [--repo <repo>] [--lane <lane>] [--json]', desc: 'Show merged pull requests from the jobs ledger.', topic: 'observability' },
   { cmd: 'library list [--json]', desc: 'List leader files. Read-only.', topic: 'observability' },
   { cmd: 'fleet status [--json]',        desc: 'Read-only fleet snapshot: daemon, per-backend dispatches+quota, queue, proposals, merges, paused state.', topic: 'autonomy' },
+  { cmd: 'graph status --fleet <file> [--seats <file>] [--json]',        desc: 'Read the graph.v1 agent, engine/account, model and MCP registry; declarations only.', topic: 'autonomy' },
+  { cmd: 'fleet vitals [--runs-dir <directory>] [--json]', desc: 'Read first-minute launch process and sampled CPU costs; missing evidence stays unknown.', topic: 'autonomy' },
   { cmd: 'fleet evidence doctor <source>', desc: 'Bounded read-only diagnosis for one decisions, judge, action, dispatch, manifest, or candidate ledger.', topic: 'autonomy' },
   { cmd: 'fleet direction [--json]',     desc: 'Read-only autonomous direction report: mode, resource posture, guard blocks, and next actions.', topic: 'autonomy' },
   { cmd: 'fleet automerge-canary status|prepare-shadow|activate-shadow|halt', desc: 'Prepare or operate the bounded observation-only shadow canary; enforce mode remains unsupported.', topic: 'autonomy' },
@@ -991,6 +1011,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'agents bus dm|channel|handoff ... [--json]', desc: 'Unified agent bus: DMs, member-only channels and handoffs on the one local bus store, with priority wake.', topic: 'autonomy' },
   { cmd: 'agents bus inbox|wakes|adapters [<agent>] [--json]', desc: 'Read an identity inbox or wake hints, or list the claude/codex/devin/cursor/grok session adapters. Read-only.', topic: 'autonomy' },
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
+  { cmd: 'agents mesh status [--json]', desc: 'Flat agent mesh: direct addresses, lanes, last-seen and current tasks. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
   { cmd: 'bus send|inbox|ack [--json]', desc: 'Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.', topic: 'autonomy' },
   { cmd: 'metrics merges', desc: 'Show hourly merges and median open-to-merge time by lane for the last 24 hours.', topic: 'autonomy' },
@@ -1088,12 +1109,14 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'budget set --provider <id> --period day|week|month --usd <n> [--json]', desc: 'Owner-only spend budget change from an interactive terminal, with one audit line. An amount above 0 stays ineffective until a Security pin-chain or owner signature root exists. Agents and non-TTY calls are refused. The committed default stays 0.', topic: 'observability' },
   { cmd: 'usage',                        desc: 'Frontier usage table: per-engine calls/tokens/cost + window state.', topic: 'observability' },
   { cmd: 'usage live [--json] [--watch] [--browser [--headed]] [--interval <seconds>]', desc: 'Live usage, resets and alerts. Official readouts first; --browser reads each provider usage page in a dedicated profile. Alerts at 80 and 95 percent and for allowance projected to expire unspent.', topic: 'observability' },
+  { cmd: 'usage resource-live [--json] [--watch] [--force] [--show] [--browser]', desc: 'Read every allowance and write state/resource-live.json: readings with source and observed time, the burn-down spend order, and a reset decision draft for Mason. Unverified readings are null.', topic: 'observability' },
   { cmd: 'usage sensors [--json] [--refresh] [--file <snapshot>]', desc: 'Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.', topic: 'observability' },
   { cmd: 'route explain [--json]', desc: 'Read dispatcher pools and route-moves-per-hour.', topic: 'autonomy' },
   { cmd: 'route decide --input <file|-> [--root <directory>] --json', desc: 'Suggest a schema-validated route without changing launch behavior.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
+  { cmd: 'queue batches [--runs <directory>] [--json]', desc: 'Show each batch line’s PR, empty reason, failure or unknown result.', topic: 'observability' },
   { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
   { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },

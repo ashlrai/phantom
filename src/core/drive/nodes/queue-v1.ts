@@ -18,6 +18,10 @@ export interface QueueJobV1 {
    * a rejoined node has a new session and tries again. Bounded to the newest 16. */
   declined?: number[];
   result?: string;
+  /** Witness-clock execution boundaries; retries replace startedAt. */
+  startedAt?: number;
+  executionHostId?: string;
+  completedAt?: number;
 }
 
 export interface NodeSession {

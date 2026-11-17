@@ -6,7 +6,7 @@ import { useQuery, useRefetch } from '../../data/hooks.js';
 import type { QueryDef } from '../../data/queries.js';
 import { BurnDown } from '../../components/charts/BurnDown.js';
 import { Meter } from '../../components/primitives/Meter.js';
-import { ProviderMark } from './ProviderMark.js';
+import { BrandMark } from '../../components/primitives/BrandMark.js';
 import styles from './ProviderCards.module.css';
 
 export const resourceViewQuery: QueryDef<ResourceView> = {
@@ -50,7 +50,7 @@ function PoolRow({ pool, generatedAt }: { pool: PoolResourceView; generatedAt: s
 export function ProviderCardView({ card, generatedAt }: { card: ProviderCard; generatedAt: string }) {
   return <article className={styles.card} aria-label={`${card.label} capacity`}>
     <header className={styles.cardHeader}>
-      <ProviderMark provider={card.provider} label={card.label} />
+      <span className={styles.mark}><BrandMark brand={card.provider} size={18} title={`${card.label} mark`} /></span>
       <h3>{card.label}</h3>
       <span className={styles.badge} data-status={card.status}>{card.status}</span>
     </header>
@@ -65,7 +65,7 @@ export function ProviderCards({ view }: { view: ResourceView }) {
   return <div className={styles.grid} aria-label="Provider capacity pools">
     {cards.providers.map(card => <ProviderCardView key={card.provider} card={card} generatedAt={cards.generatedAt} />)}
     <article className={styles.card} aria-label="Local models capacity">
-      <header className={styles.cardHeader}><ProviderMark provider="local" label="Local" /><h3>Local</h3></header>
+      <header className={styles.cardHeader}><span className={styles.mark}><BrandMark brand="local" size={18} title="Local mark" /></span><h3>Local</h3></header>
       <p className={styles.caption}>Local models: {cards.localModels.count ?? 'unknown'}. No provider quota applies.</p>
     </article>
   </div>;

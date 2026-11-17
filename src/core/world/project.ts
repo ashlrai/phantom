@@ -16,7 +16,7 @@ import { stableFieldId, WORLD_CACHE_TTL_MS, WORLD_SCHEMA, type BlindSpot, type F
 export const MAX_STALE_INTENT_SPOTS = 20;
 const INTENT_SOURCE = 'ashlr.intent-ledger/v1';
 
-const PACE_NEED = 'RQ-SENSORS-PACE-1 adds pacePerHour, requiredPacePerHour, and runwayHours on usage.sensors.v1. Those keys are absent, so pace stays unknown.';
+const PACE_NEED = 'pacePerHour, requiredPacePerHour, and runwayHours (RQ-SENSORS-PACE-1) come from the burn-down plan in state/resource-live.json. They need a fresh plan, a known reset, and two readings in one window, so pace stays unknown until then.';
 
 export interface WorldProjectInput {
   nowMs: number;

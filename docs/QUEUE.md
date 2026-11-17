@@ -79,6 +79,22 @@ again for every candidate so several jobs cannot reserve the same final slot.
 The existing admission gate remains the authority for host load, processes,
 worktrees, disk, adaptive global concurrency and the per-tick claim limit.
 
+### Use spare subscription capacity for frontier work
+
+When fresh `use-it-all.v1` evidence reports `known:true`, `stale:false` and
+`behind:true`, a work job launches as frontier on its selected lane if that
+executor supports frontier and its cost class is `included`. Holds, quota,
+backoff and admission still apply. Eligible jobs run individually so batching
+cannot substitute a work-tier model. Existing waste-risk upgrades remain.
+
+`queue/status.json` exposes `tier_upgrades_this_tick`: typed records of `job`,
+`lane`, `from_tier`, `to_tier` and a plain-language `reason`. The reason also
+persists in `queue/route-state.json` as `waste_reason` and in `ROUTE_BOOST` events.
+Run `phm route explain --json` to read it as `lines[].wasteReason`.
+`use_it_all_behind` reports each lane's boolean reading or null for unknown,
+missing or stale evidence. This bounded policy responds to measured work-tier
+underperformance; it does not infer a causal yield gain or train a tier optimizer.
+
 Among eligible executors, preference comes first, followed by utilization,
 measured empty rate and yield, cost class, known remaining quota, measured model
 latency and stable executor order. Recent finish events supply empty-rate and
@@ -559,6 +575,8 @@ is executed by the planner. The planner does not install or change host scripts.
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
 
+Restock also checks semantic goal overlap before admitting READY rows. Within the same repo, a shared explicit file/module and normalized token Jaccard score of at least 0.5 marks `DUPLICATE-OF-<id>`; CLAIMED/RUNNING rows take precedence, then the first READY row. Different explicit PR targets stay separate. Paths, stop words and generic single-case scaffolding do not count as goal tokens; fewer than three tokens is unknown. `phm queue dedupe --json` exposes these matches as `reason: "semantic-goal-overlap"` with `jaccard`, and restock JSON includes `dedupe.repeats` and `dedupe.unknown`. This partial check uses router-queue text, not external running-process or PR inventories; other ingest paths are not covered. Live restock adoption still requires Security review and re-pinning.
+
 ### Suggest work for an idle lane
 
 Run `phm fleet supply --lane codex-personal --n 5 --json` from the Phantom
@@ -601,3 +619,55 @@ Run `phm jobs retry-empty --dry-run` to preview READY lines for empty jobs from
  permanently, including if the queue line is later removed. Keep that directory
  when moving the queue. A crash between recording a receipt and writing the
  queue can leave a job unqueued; inspect the queue before manual recovery.
+
+## Batch session results
+
+Run `phm queue batches` to see one plain summary of batch sessions, or
+`phm queue batches --json` for the typed `phantom.queue-batches.v1` report.
+`phm queue --json` also returns this report. Use `--runs <directory>` with
+`batches` to inspect a fixture or another local runs directory.
+This is read-only. The same report backs both forms.
+
+`emptyPrefixes` reports the top five job-ID prefixes by empty `finish` rows in
+the last 24 hours, with counts and a total. Retries count separately; filler
+counters and trailing incident hashes are removed while lane names remain.
+No-op outcomes before launch do not inflate this count. Missing, unreadable or
+oversized (over 16 MiB) metrics have `evidence: "unknown"` and `total: null`;
+malformed or unmeasured rows give partial counts and `malformedLines`.
+Restock records `DONE-NOOP` before admission for explicit merged/recently closed
+PR targets and exact filler requests with merge evidence. Unknown evidence
+keeps work eligible. Host-only generators still require their own prechecks.
+
+The dispatcher already groups related READY lines in one repository into bounded
+sessions. `batch-sessions.json` sets `max_lines` (up to 10); every line retains its
+own lease, worktree, subagent, tests and PR through the normal guarded publisher.
+Failed lines retry individually. See [batch operation](../contrib/mac/README.md#adaptive-concurrency-and-batching)
+for configuration and exclusions.
+
+Each report session has `id`, `repo`, `area` and one `outcomes` entry per member:
+`job`, `outcome` (`pr`, `empty`, `failed`, `unknown`), `pr`, `reason` and
+`autoMerge` (`armed`, `off`, `unknown`). Checklist reasons persist in the batch
+manifest and task outcome journal. A worker's `done` alone never proves a PR.
+PRs and empty results require the matching per-line publisher handoff and a
+receipt newer than the session; `AUTO_MERGE on|off` supplies auto-merge evidence.
+Reasons are scrubbed before display. The report never returns worker prompts.
+
+Gaps: local receipts do not verify current GitHub state. Missing, stale or
+unreadable receipts remain unknown. Unavailable manifests return `totals: null`;
+invalid manifests or more than 1000 files mark the report partial, with counts
+only for readable sessions. Old sessions whose handoff markers were superseded
+may have unknown publication results. These changes require Security review and
+re-pinning before dispatcher installation; no live cutover is part of this change.
+
+### Queue health
+
+Run `phm fleet parked --json` for the read-only `health` summary
+(`fleet.queue-health.v1`). It separates ready and parked counts and groups
+repeated precheck skips, including `RESTOCK`, by job, code and reason over the
+last 24 hours. A repeat means at least two matching records; it does not prove
+a job is still blocked. The plain-text command shows the same repeat counts.
+Counts cover the bounded readable queue and log snapshot, before display
+limits; check `sources` for missing or degraded evidence. Unavailable health
+counts are `null`; a readable empty source counts as zero. Lane filters omit
+unattributed repeat details; health counts remain global. Nothing is unparked,
+restocked or changed by reading the report.

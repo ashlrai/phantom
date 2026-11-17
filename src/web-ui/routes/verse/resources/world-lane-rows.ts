@@ -70,6 +70,10 @@ const EXTRA: Readonly<Record<string, { label: string; engine: LaneEngine }>> = {
   'codex-cmp': { label: 'Codex company', engine: 'codex' },
   'grok-bot': { label: 'Grok Bot', engine: 'grok' },
   terra: { label: 'Terra', engine: 'other' },
+  zai: { label: 'GLM Lite', engine: 'other' },
+  gemini: { label: 'Gemini', engine: 'other' },
+  agy: { label: 'Antigravity', engine: 'other' },
+  instinct: { label: 'Instinct', engine: 'other' },
   omlx: { label: 'oMLX', engine: 'local' },
   ollama: { label: 'Ollama', engine: 'local' },
 };

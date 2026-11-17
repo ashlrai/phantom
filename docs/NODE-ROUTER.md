@@ -75,6 +75,33 @@ so a primary on an older build still accepts the join). `phm node self-update
 restarts a node. A node showing `unreported` predates this or has not rejoined.
 Update primary and backup first, then workers.
 
+## Live pool awareness
+
+Configured multi-Mac pools consume the capacity slice of `fleet.awareness.v1`
+inside their existing fenced `plan` and `pull` transactions. Workers report capacity (`ramBytes`, `slots`,
+`held`), host identity and a sample timestamp on each three-second heartbeat.
+After two intervals, missing, future or stale samples are unknown and admit no
+new work. A heartbeat without a capacity sample cannot refresh old capacity.
+Upgrade the witness and workers together; older workers stay unknown in a pool.
+Standalone legacy queues retain their existing compatibility policy.
+
+Workers reporting the same host share the minimum fresh slot budget. Active
+claims and planned assignments consume it once; a fresh pressure hold blocks
+that host. Placement ranks remaining slots divided by the median accepted
+claim-to-completion duration over 24 hours. Missing latency uses the mean of
+measured host medians (equal weights when none exist). Unknown duration is never
+reported as zero. Owner, capability, local-auth and fencing checks still apply.
+
+`phm node status --json` exposes scoped capacity samples. `phm fleet status-api
+--json` and the existing Fleet compute API add lane occupancy, targets, floors
+and queued counts from dispatcher status. Four local reads run concurrently,
+each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
+Lane availability expires after two 30-second dispatcher intervals.
+
+This connects the existing node-pool dispatch path. The production
+`ready.tsv`/dispatchd-to-node claim bridge is still absent; this projection does
+not enqueue production jobs twice or install any fleet scripts.
+
 ## Measured capacity and (node, provider, model) routing
 
 Nodes have no per-node lane configuration. Each node measures itself and reports

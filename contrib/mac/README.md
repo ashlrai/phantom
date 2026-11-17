@@ -48,6 +48,20 @@ supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
 is installed; do not install into `bin/` from an agent.
 
+**Max job runtime (RQ-JOB-MAX-RUNTIME-1).** A launch wrapper that is alive but
+wedged (dead socket, hung model call) never writes `.rc`/`.fin`, so its lane
+slot would leak. Each tick `dispatchd.py` compares the job's launch receipt
+(`run/<job>.dispatched`, else `.line`) with its limit: `slots.json`
+`<lane>.max_runtime_s`, else top-level `max_runtime_s`, else
+`ASHLR_JOB_MAX_RUNTIME_S`, else 7200 s (`0` disables; other values clamp to at
+least 300 s). Past it the job gets `run/<job>.rc` = `124`, a
+`REAP TIMEOUT <job> lane=… age=… limit=…` event, and SIGTERM to the launch
+wrapper's own process group (only a real session leader's group, never pid 1 or
+the dispatcher); a survivor gets SIGKILL after 30 s (`REAP TIMEOUT <job>
+SIGKILL`). The next tick reaps it as a normal finish with `exit_code` 124 so the
+queue can recut it. The live `launch.sh` is not repo-owned, so enforcement lives
+in the dispatcher; installing it needs a Security pin.
+
 ## Self-supply: refill idle lanes between leader passes
 
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
@@ -181,6 +195,14 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+Status JSON lists observed publishers and startup markers in `reaping`;
+older markers appear in `reap_blocked` with `reason: "ownership-unknown"`.
+They remain protected and emit `REAP_SKIP ownership-unknown <job>` each tick.
+For terminal cleanup, `python3 contrib/mac/wt_closed_prune.py --json` previews
+eligible trees and per-job `skipped` reasons. `--apply --max 375` removes up to
+375 eligible trees, records `WT_REMOVED <job>` only after removal, and records
+`REAP_SKIP <reason> <job>` for retained trees. Missing evidence reports
+`known: false` and `unknown_reasons`; legacy markers still require fenced recovery.
 The reaper consults the job ledger before handoff: a merged outcome for the
 current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an
@@ -634,6 +656,13 @@ one-hour cap. Waiting jobs consume no precheck budget; due jobs wait if the
 budget is exhausted. One `precheck_parked` metric replaces repeated code 13
 skip events for unchanged inputs. A prompt or routing change resets the delay;
 a successful retry clears it. Other runnable jobs continue through the queue.
+Before claiming generated `RQ-FIXUP|REBASE|RECUT-<repo>-<pr>[-<sha7>]`
+repairs, dispatch reads the target PR through `locus exec -- gh pr view` with a
+three-second deadline. Closed or merged targets finish as `DONE-NOOP`; resolved
+conflicts or completed checks require the queued head, and FIXUP also requires
+the named failing check to remain present. Reasons are fixed codes in
+`metrics/jobs.jsonl` (`launched: false`); unknown evidence stays eligible and an
+exhausted precheck budget defers the repair. No model runs for retired repairs.
 Host installation still requires Security review and re-pinning. Preview without changing queue files:
 
 ```sh
@@ -936,16 +965,22 @@ This supplies jobs only; it does not recut, merge, install, or publish anything.
 
 ### Disk growth
 
-Run `python3 contrib/mac/disk-growth.py --json` periodically to sample free disk
-space and directory sizes. `--budget-seconds` bounds the total time spent in
+Run `phm fleet vitals [--json]` to read disk sizes and changes since the previous
+sample (null means unknown; samples older than 15 minutes are marked stale).
+`python3 contrib/mac/disk-growth.py --json` samples free disk and each direct
+directory under `~/.ashlr-runs` and `~/Projects/ashlrai/wt`, without following
+symlinks or reading file contents. `--budget-seconds` bounds the total time spent in
 `du` (default 10 seconds). The sampler retains 48 readings under
 `~/.ashlr-runs/queue`; it does not delete sampled files. The dispatcher copies
 its latest report to `autopilot.disk` in `status.json` on the next tick. Install
 and schedule the sampler through the normal reviewed host machinery; this source
-change does not install it. Rates compare against the oldest retained reading;
-missing or timed-out directory measurements are omitted, and a null projection
-means there is not yet evidence of a positive disk burn rate. Directory sizes
-overlap: worktree totals include their `node_modules` and `target` directories.
+change does not install it. The dispatcher starts the installed sampler and
+closed-worktree reaper every ten minutes, independent of disk pressure. The
+reaper preserves kept, active, dirty and unknown worktrees; Git removes eligible
+MERGED/CLOSED worktrees without force. Security review and re-pinning are required
+before live installation; stopped ticks or unavailable helpers cannot meet the
+15-minute target. Rates and signed directory deltas use the latest prior sample;
+missing or timed-out measurements are null, never zero.
 
 ### Read merge latency
 
@@ -1103,4 +1138,49 @@ with `file://` sources and never touch the network or the live queue:
 
 ```sh
 HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_grokbot_changelog_watch.py -v
+```
+
+## Arm gate (RQ-ARM-CI-GATE-1)
+
+`publish.sh` arms auto-merge only when `arm_gate.py` reports SAFE for the PR head: the six Merge Gate
+hard-required checks completed with success, and nothing relevant is red (failure, timed_out, cancelled,
+action_required, stale). Quick typecheck and authority drift are advisory in Merge Gate but must be present and not red to arm (skipped counts). Perf
+budget, CodeRabbit and Vercel are ignored. RED is left unarmed for leader review. PENDING or UNKNOWN waits up to
+`ARM_GATE_WAIT` seconds (default 180), then writes a record in `~/.ashlr-runs/arm-deferred` with an
+`ARM_GATE_DEFER_S` deadline (default 3600). It never arms on a guess.
+
+Deferred records need a consumer. `arm_gate.py sweep --dir ~/.ashlr-runs/arm-deferred [--apply]` re-checks each
+record. It arms with `gh pr merge --auto --match-head-commit <sha>` only on SAFE, only while the PR is still open on the
+same head and not already armed, and at most `--max-arms` (default 3) per run. It drops records on RED, expiry or a
+changed head. Without `--apply` it only prints `WOULD_ARM`. The host needs `gh` signed in for the fleet account.
+
+Rollout. `install.sh` copies `arm_gate.py` into `~/.ashlr-runs/bin` and is idempotent (an identical file reports
+`unchanged`). It does NOT install `publish.sh`: this checkout holds a reviewable mirror and the live
+`~/.ashlr-runs/bin/publish.sh` is a host-owned, Security-pinned file, deployed by its owner under the pin. Order does
+not matter and every partial state fails safe: a new `publish.sh` without `arm_gate.py` (or an old `publish.sh` with
+it) never arms through the new path. `/usr/bin/python3 --version` must report 3.8 or newer (stdlib only; verify on the
+host, it is not assumed).
+
+```sh
+contrib/mac/install.sh --dry-run          # review, then run without --dry-run
+mkdir -p ~/.ashlr-runs/arm-deferred ~/.ashlr-runs/logs
+sed -e "s|__PYTHON3__|/usr/bin/python3|" -e "s|__RUNS__|$HOME/.ashlr-runs|g" \
+    -e "s|__INTERVAL__|300|" -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    contrib/mac/com.ashlr.arm-gate-sweep.plist.in > ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+plutil -lint ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl bootout "gui/$UID/com.ashlr.arm-gate-sweep" 2>/dev/null || true   # re-runs: unload any loaded copy first
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl print "gui/$UID/com.ashlr.arm-gate-sweep" | head -5
+```
+
+Check with `python3 -I -B ~/.ashlr-runs/bin/arm_gate.py sweep --dir ~/.ashlr-runs/arm-deferred` (no `--apply`, prints
+`WOULD_ARM`/`KEEP`/`DROP` only). Rollback: `launchctl bootout "gui/$UID/com.ashlr.arm-gate-sweep"`, delete the plist,
+restore `~/.ashlr-runs/bin/arm_gate.py` from its `.bak-macdispatch-*` copy or delete it on a first install, and restore
+the previous `publish.sh` from the owner's backup. Leftover `arm-deferred/*.json` records are inert without the sweep.
+
+Without launchd, a dispatchd tick or any fleet work-order can run the same `arm_gate.py sweep` command. Live files are
+sha-pinned by Security: re-pin publish.sh and arm_gate.py after install. Fixture tests use a fake `gh`:
+
+```sh
+python3 -B -m unittest contrib/mac/tests/test_arm_gate.py -v
 ```

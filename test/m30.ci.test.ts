@@ -114,7 +114,8 @@ describe('M30 CI workflow', () => {
     const site = workflowJob('site');
     expect(classifier).toContain('run: node .github/scripts/ci-site-lane.mjs');
     expect(classifier).toContain('run: node .github/scripts/ci-source-binding.mjs');
-    expect(classifier).toContain('fetch-depth: 0');
+    expect(classifier).toContain('fetch-depth: 1');
+    expect(classifier).toContain('node .github/scripts/ci-fetch-range.mjs');
     expect(classifier).toContain('filter: blob:none');
     expect(site).toContain('run: node .github/scripts/ci-source-binding.mjs');
     expect(site).toContain('run: node --test .github/tests/ci-site-lane.test.mjs');
@@ -721,7 +722,7 @@ echo pending=true; exit 2
     expect(job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.['persist-credentials']).toBe(false);
     const drift = job.steps.find((step) => step.name === 'Check authority drift (hermetic)');
     expect(drift).toBeDefined();
-    expect(drift!.if).toBeUndefined();
+    expect(drift!.if).toBe("steps.drift_reuse.outputs.reuse != 'true'");
     expect(drift!['continue-on-error']).toBeUndefined();
     expect(drift!.env).toBeUndefined();
     expect(drift!.run).toBe(
@@ -751,7 +752,13 @@ echo pending=true; exit 2
     expect(checkout?.with?.['persist-credentials']).toBe(false);
     expect(checkout?.with?.ref).toContain('merge_group.head_sha');
     for (const step of job.steps.filter((entry) => entry.uses)) expect(step.uses, step.uses).toMatch(/@[0-9a-f]{40}\b/);
-    expect(job.steps.some((step) => step.uses?.startsWith('actions/cache/save@'))).toBe(false);
+    const saves = job.steps.filter((step) => step.uses?.startsWith('actions/cache/save@'));
+    expect(saves.length).toBeGreaterThan(0);
+    for (const step of saves) {
+      expect(step['continue-on-error']).toBe(true);
+      expect(step.with?.key ?? '').toMatch(/^phantom-ci-green-v1-/);
+      expect(step.with?.key ?? '').not.toContain('master-typecheck');
+    }
     const typecheck = job.steps.find((step) => step.name === 'Core no-emit type check');
     expect(typecheck?.run).toContain('npm run typecheck');
     expect(typecheck?.if).toBeUndefined();
@@ -769,7 +776,7 @@ echo pending=true; exit 2
       expect(needs).toContain(id);
     }
     expect(needs).not.toContain('authority-drift');
-    expect(JSON.stringify(job)).not.toMatch(/secrets\.|id-token|pull_request_target|actions\/cache\/save@/);
+    expect(JSON.stringify(job)).not.toMatch(/secrets\.|id-token|pull_request_target/);
   });
 
   it('executes the real history proof contract for equal and fallback outcomes', async () => {

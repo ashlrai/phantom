@@ -10,6 +10,47 @@ const reader = (...rows: unknown[]) => async () => rows.map(r => typeof r === 's
 const SHA = 'a'.repeat(40);
 afterEach(() => vi.restoreAllMocks());
 
+it('measures readiness before queue admission and identifies the dominant delay', async () => {
+  const report = await fleetMergeLatency(reader(
+    ev(1, 'eligible', 1000), ev(1, 'auto_merge_enabled', 1000), ev(1, 'queued', 100), ev(1, 'merged', 10),
+    ev(2, 'queued', 1000), ev(2, 'eligible', 100), ev(2, 'merged', 10),
+    ev(3, 'eligible', 190), ev(3, 'queued', 100), ev(3, 'merged', 10),
+  ), now);
+  expect(report.queue_timelines).toMatchObject([
+    { pr: 1, eligible_to_merge_s: 990, ready_to_queue_s: 900, ready_in_queue_s: 90, dominant_delay: 'queue_admission' },
+    { pr: 2, eligible_to_merge_s: 90, ready_to_queue_s: 0, ready_in_queue_s: 90, dominant_delay: 'queue_execution' },
+    { pr: 3, eligible_to_merge_s: 180, ready_to_queue_s: 90, ready_in_queue_s: 90, dominant_delay: null },
+  ]);
+  expect(report.queue_state_time?.eligible_to_merge).toMatchObject({ count: 3, missing: 0, p50_s: 180, max_s: 990 });
+  expect(formatMergeLatency(report)).toContain('dominant ready delay: queue admission');
+});
+
+it.each([
+  ['missing queue', [], 90],
+  ['repeated queue', [ev(1, 'queued', 80), ev(1, 'queued', 70)], 90],
+  ['queue after merge', [ev(1, 'queued', 5)], 90],
+  ['repeated readiness', [ev(1, 'eligible', 50)], null],
+  ['repeated merge', [ev(1, 'merged', 110)], null],
+  ['reblocked', [ev(1, 'blocked', 50, { reason: 'review' })], null],
+  ['new head', [ev(1, 'checks_passed', 50, { head_sha: 'b'.repeat(40) })], null],
+  ['conflict', [ev(1, 'conflict', 50)], null],
+  ['required failure', [ev(1, 'check_observed', 50, { required: true, conclusion: 'failure' })], null],
+  ['untimed closure', [ev(1, 'closed', 50, { at: null })], null],
+] as const)('keeps %s evidence from inventing a dominant delay', async (_name, rows, duration) => {
+  const report = await fleetMergeLatency(reader(ev(1, 'eligible', 100, { head_sha: SHA }), ev(1, 'merged', 10), ...rows), now);
+  expect(report.queue_timelines?.[0]).toMatchObject({ eligible_to_merge_s: duration,
+    ready_to_queue_s: null, ready_in_queue_s: null, dominant_delay: null });
+});
+
+it('rejects reversed readiness and head changes after a readiness observation without a SHA', async () => {
+  const report = await fleetMergeLatency(reader(
+    ev(1, 'opened', 200, { head_sha: SHA }), ev(1, 'eligible', 100),
+    ev(1, 'queued', 50, { head_sha: 'b'.repeat(40) }), ev(1, 'merged', 10),
+    ev(2, 'eligible', 10), ev(2, 'merged', 100),
+  ), now);
+  expect(report.queue_timelines?.map(t => t.eligible_to_merge_s)).toEqual([null, null]);
+});
+
 it('reports per-PR stages and makes missing, repeated, reversed and tied boundaries explicit', async () => {
   const report = await fleetMergeLatency(reader(
     ev(1, 'opened', 100), ev(1, 'queued', 90), ev(1, 'checks_passed', 40), ev(1, 'merged', 10),

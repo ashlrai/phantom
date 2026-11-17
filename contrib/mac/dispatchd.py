@@ -12,6 +12,7 @@
 # usage_source and a usage_missing reason when nothing was recorded.
 import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from typing import TypedDict
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 # A kernel-held claim serializes the complete tick, including liveness sampling and
@@ -42,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -764,6 +765,8 @@ pat_wt = re.compile(re.escape(WTROOT) + r"/([A-Za-z0-9._-]+)")
 pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
+pat_lj = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")   # session leaders spawned by the launch phase
+job_leaders = {}   # job -> pids of its launch wrapper (RQ-JOB-MAX-RUNTIME-1 watchdog)
 ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
@@ -776,6 +779,8 @@ for line in ps.splitlines():
     if "dispatchd.py" in line: continue
     m = pat_pb.search(line)
     if m: publishing.add(m.group(1)); continue
+    m = pat_lj.search(line); f_ = line.split(None, 1)[0] if line.strip() else ""
+    if m and f_.isdigit(): job_leaders.setdefault(m.group(1), set()).add(int(f_))
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
@@ -801,6 +806,51 @@ alive -= (reaping | publishing)   # publish.sh children run inside the worktree
 for p in glob.glob(RUN + "/*.dispatched"):   # launch grace (fetch/worktree add before agent starts)
     j = os.path.basename(p)[:-11]
     if NOW - os.path.getmtime(p) < GRACE: alive.add(j)
+
+# ---- RQ-JOB-MAX-RUNTIME-1: per-job max runtime. A live-but-wedged child (dead socket, hung model call) never writes
+# .rc/.fin and is never an orphan, so its lane slot would leak forever. Past the limit: write .rc=124, emit
+# `REAP TIMEOUT`, SIGTERM the launch wrapper's process group; if it survives 30 s, SIGKILL it on a later tick. The next
+# tick then reaps it through the normal finish path (exit_code 124), so the queue can recut the job.
+# Limit: slots.json <lane>.max_runtime_s, else top-level max_runtime_s, else ASHLR_JOB_MAX_RUNTIME_S, else 2 h.
+# 0 disables; a nonzero value is clamped to >= 300 s. Start time is the launch receipt (.dispatched), else .line.
+JOB_MAX_RUNTIME_S = 7200; JOB_MAX_RUNTIME_MIN_S = 300; JOB_KILL_GRACE_S = 30
+def _max_runtime(lane):
+    ls_ = slots.get(lane)
+    for v in (ls_.get("max_runtime_s") if isinstance(ls_, dict) else None,
+              slots.get("max_runtime_s"), os.environ.get("ASHLR_JOB_MAX_RUNTIME_S")):
+        try: v = float(v)
+        except (TypeError, ValueError): continue
+        if v != v or v < 0: continue
+        return 0 if v == 0 else max(JOB_MAX_RUNTIME_MIN_S, v)
+    return JOB_MAX_RUNTIME_S
+def _kill_leaders(pids, sig):
+    for pid in pids:   # only a real session leader's own group: never pid 1, ourselves, or a shared group
+        try:
+            if pid > 1 and pid != os.getpid() and os.getpgid(pid) == pid and pid != os.getpgrp(): os.killpg(pid, sig)
+        except OSError: pass
+def job_watchdog():
+    for j, pids in sorted(job_leaders.items()):
+        if not JID.match(j) or j in reaping or j in publishing: continue
+        try:
+            ln = rd(RUN + "/" + j + ".line").strip().split("\t")
+            lane = ln[2].strip() if len(ln) > 2 else ""
+            limit = _max_runtime(lane)
+            if not limit: continue
+            src = RUN + "/" + j + (".dispatched" if os.path.exists(RUN + "/" + j + ".dispatched") else ".line")
+            age = NOW - os.path.getmtime(src)
+            mk = RUN + "/" + j + ".maxruntime"
+            if os.path.exists(mk):   # already terminated once: escalate if the group is still there
+                if NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S and os.path.getsize(mk) == 0:
+                    _kill_leaders(pids, signal.SIGKILL); open(mk, "w").write("KILL\n"); ev("REAP TIMEOUT %s SIGKILL" % j)
+                continue
+            if age < limit: continue
+            open(mk, "w").close()
+            if not os.path.exists(RUN + "/" + j + ".rc"):
+                t = "%s/%s.rc.tmp.%d" % (RUN, j, os.getpid()); open(t, "w").write("124\n"); os.replace(t, RUN + "/" + j + ".rc")
+            ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
+            _kill_leaders(pids, signal.SIGTERM)
+        except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
+job_watchdog()
 
 keep = set(rd(Q + "/keep.txt").split())
 def result(j):
@@ -925,7 +975,8 @@ def reap_batch(j, wt, lane, wall_s):
     if not m or m.get("reaped"): return None
     members = _members(m); repo = m.get("repo", "")
     notes = rd(wt + "/BRIDGE_NOTES.md")
-    outcomes = batcher.parse_outcomes(notes, [x["job"] for x in members])
+    details = batcher.parse_details(notes, [x["job"] for x in members])
+    outcomes = {job: detail["outcome"] for job, detail in details.items()}
     done = m.get("handled") if isinstance(m.get("handled"), dict) else {}
     retry = 0
     for x in members:
@@ -934,10 +985,12 @@ def reap_batch(j, wt, lane, wall_s):
         o = outcomes[x["job"]]
         if o in ("done", "skipped") and not member_prepared(x["job"], j):
             o = outcomes[x["job"]] = "deferred"   # no worktree was prepared: nothing of its own to publish
+            details[x["job"]] = {"outcome": o, "reason": "Member worktree was not prepared for this session."}
         metric({"event": "task_outcome", "job": x["job"], "batch": j, "lane": lane, "repo": repo, "outcome": o,
-                "model": x.get("model")})
+                "model": x.get("model"), "reason": details[x["job"]]["reason"]})
         if o in batcher.RETRY: retry += requeue_member(x, j, repo)
         else: handoff_member(x, j)
+        m.setdefault("results", {})[x["job"]] = details[x["job"]]
         _handled(m, j, x["job"], o)
     old, new, why = batcher.tune(batch_tuning, lane, outcomes, wall_s, os.path.exists(RUN + "/" + j + ".timeout"), batch_stats(), NOW)
     batcher.save_json(BATCH_TUNING_PATH, batch_tuning)
@@ -1395,11 +1448,29 @@ def waste_risk(projection, lane):
     risk = projection.get("waste_risk")
     return risk if risk in ("medium", "high") else None
 
-def waste_boost(projection, lane, tier):
+class TierUpgrade(TypedDict):
+    job: str
+    lane: str
+    from_tier: str
+    to_tier: str
+    reason: str
+
+def pace_behind(projection):
+    if (not isinstance(projection, dict) or projection.get("known") is not True
+            or projection.get("stale") is not False or type(projection.get("behind")) is not bool): return None
+    return projection["behind"]
+
+def waste_boost(projection, lane, tier, executor):
+    # A tier change never grants paid usage or bypasses the selected executor's contract.
+    if (executor.get("cost_class") != "included" or executor.get("held")
+            or executor.get("auth_failed") or executor.get("backoff") or executor.get("quota") == 0): return None
+    boosted = {"mid": "work", "work": "frontier"}.get(tier)
+    if not boosted or boosted not in executor.get("tiers", []): return None
+    if tier == "work" and pace_behind(projection) is True:
+        return boosted, "use-it-all behind pace: work -> frontier (yield policy)"
     risk = waste_risk(projection, lane)
     if not risk: return None
-    boosted = {"mid": "work", "work": "frontier"}.get(tier)
-    return (boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)) if boosted else None
+    return boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)
 
 # The host-owned projection is advisory and expires after two minutes.
 UIA = {}
@@ -1670,6 +1741,7 @@ conc_adjusted(concurrency.decide(CONC, fc.concurrency_signals(BUS, GATE_LOAD_PER
 tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
+tier_upgrades: list[TierUpgrade] = []
 GCAP = global_cap()
 
 # Weekly quota pacing (RQ-PACE-TO-RESET): routine claims defer when a lane's
@@ -1733,9 +1805,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     # The key is global across pools; blocked jobs are retained below while
     # scanning continues, so a capped FIX-MAIN sibling cannot consume a claim.
     ready_ranks = _ready_repo_ranks()
-    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
+    yield_groups, pr_states = admission_history(JOBS, NOW)
+    admission = {f[0]: admission_rank(f[0], f[3], f[2], yield_groups) for f in cand}
+    cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
+    for f in cand:
+        reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
+        if reason:
+            admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
+            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason, launched=False))
+            ev("DONE-NOOP %s [%s]" % (f[0], reason))
+    jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
+    cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
     seen = set(); pc_n = 0; local_ok = None
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
@@ -1794,8 +1876,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                             "chars": len(text), "f": f, "prompt": text}
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
-        if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        def solo(c):
+            return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}))
+        if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
@@ -1889,6 +1973,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
+        if repair_target(j, repo):
+            # Repairs must cross the freshness boundary before claiming or batching.
+            if pc_n >= PC_MAX or over_budget():
+                rest.append(line); continue
+            pc_n += 1
+            reason = repair_freshness(j, repo, rd(pf), H, _run)
+            if reason:
+                metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                            reason=reason, launched=False))
+                ev("DONE-NOOP %s [%s]" % (j, reason)); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
         if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
@@ -1944,13 +2038,14 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             os.replace("%s/%s.publish" % (R, j), "%s/%s.publish.prev-%d" % (R, j, NOW))
         if j in keep:
             keep.discard(j); open(Q + "/keep.txt", "w").write("\n".join(sorted(keep)) + "\n")
-        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".bundled-in"):
+        for x in (".keptlogged", ".diskguard", ".phdrip", ".rc", ".timeout", ".maxruntime", ".bundled-in"):
             try: os.remove(RUN + "/" + j + x)
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
-        boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
+        boost = waste_boost(UIA.get(lane), lane, tier, view[lane]) if not batch else None
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
+        requested_tier = tier
         if boost: tier = boost[0]
         for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
             prior = route_state.get(route_job)
@@ -1987,6 +2082,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)
             ev("ROUTE_BOOST %s %s %s" % (j, lane, reason))
+        if boost:
+            tier_upgrades.append({"job": j, "lane": lane, "from_tier": requested_tier, "to_tier": tier, "reason": reason})
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         if target: drain_targets.add(target)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
@@ -2029,6 +2126,21 @@ concurrency.save(CONC_PATH, CONC)
 
 # Finished-worktree discovery/sorting runs at most every ten minutes. Drain the
 # cached priority list after launches each tick so cadence cannot throttle merges.
+# Terminal cleanup is independent of publishing, even when publish is held.
+# Helpers are installed only through reviewed host machinery; never run repo copies.
+_disk_stamp = Q + "/.disk-maintenance.stamp"
+if not os.path.exists(_disk_stamp) or NOW - os.path.getmtime(_disk_stamp) >= 600:
+    open(_disk_stamp, "w").close()
+    for _helper, _args in [("disk-growth.py", ["--json"])] + [
+            ("wt_closed_prune.py", ["--apply", "--json", "--wtroot", root])
+            for root in (WTROOT, R + "/wt") if os.path.isdir(root)]:
+        _script = R + "/bin/" + _helper
+        if os.path.isfile(_script) and not os.path.islink(_script):
+            try:
+                with os.fdopen(os.open(Q + "/disk-maintenance.log", os.O_CREAT | os.O_APPEND | os.O_WRONLY | os.O_NOFOLLOW, 0o600), "a") as _output:
+                    spawn([sys.executable, "-I", "-B", _script] + _args, stdin=subprocess.DEVNULL,
+                          stdout=_output, stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError: log("disk maintenance unavailable: " + _helper)
 # Stamp before
 # starting so a timeout does not cause a costly retry on every dispatcher tick.
 _reap_stamp = Q + "/.worktree-reap.stamp"
@@ -2326,6 +2438,12 @@ for p in glob.glob(R + "/*.publish"):
     m = re.search(r"RESULT PR (https://github.com/\S+/pull/\d+)", rd(p))
     if m: pubs.append((os.path.getmtime(p), os.path.basename(p)[:-8], m.group(1)))
 pubs.sort(reverse=True)
+# A legacy mkdir marker proves a claim, not an active reaper. Preserve it until
+# all writers support fenced recovery; make that unknown ownership visible.
+reap_markers = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
+active_reaping = publish_processes | {j for j in reap_markers if _reap_starting(j)}
+reap_blocked = [{"job": j, "reason": "ownership-unknown"} for j in sorted(reap_markers - active_reaping) if JID.fullmatch(j)]
+for item in reap_blocked: ev("REAP_SKIP %s %s" % (item["reason"], item["job"]))
 evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
@@ -2337,7 +2455,9 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                     "effective_target": tgt(l), "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
-      "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
+      "tier_upgrades_this_tick": tier_upgrades,
+      "use_it_all_behind": {l: pace_behind(UIA.get(l)) for l in LANES},
+      "reaping": sorted(active_reaping), "reap_blocked": reap_blocked, "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],
       "recent_events": evs,
       "concurrency": {"cap": CONC["cap"], "floor": CONC_FLOOR, "ceiling": CONC_CEILING, "zones": CONC.get("zones"),

@@ -37,6 +37,13 @@ describe('OperationsDeck', () => {
     expect(screen.getByText('3')).toHaveAttribute('title', expect.stringContaining('/api/fleet/lanes'));
     expect(screen.getAllByText(/admission.admit/).length).toBeGreaterThan(0);
   });
+  it('shows launch vitals from the shared compute projection', () => {
+    compute = { ...(compute as object), launchVitals: { reason: null, nextWindowSeconds: null, queued: 3, lanes: [{ lane: 'claude', running: 1, target: 8, queued: 3 }] } };
+    render(<OperationsDeck />);
+    const section = screen.getByRole('region', { name: "Why isn't it launching" });
+    expect(within(section).getByText(/Reason unknown.*Next launch window: unknown.*Queued: 3/)).toBeInTheDocument();
+    expect(within(section).getByText('claude: 1 running of 8 target; 3 queued')).toBeInTheDocument();
+  });
   it('caps needs-you at five, including stale ticks, warnings and held PR evidence', () => {
     compute = { dispatcherAt: '2020-01-01T00:00:00Z', operations: { admission: { admit: true, warnings: ['capacity warning'] } } };
     live = { ...(live as object), runs: Array.from({ length: 8 }, (_, i) => ({ id: `held-${i}`, repo: 'phantom', outcome: 'owner-lane', prNumber: i + 1 })) };

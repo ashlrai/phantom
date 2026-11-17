@@ -21,8 +21,8 @@ def release_assets():
  return [relasset(501,'latest.json',len(FEED_TEXT),sha(FEED_TEXT)),relasset(502,'manifest.json',len(MANIFEST_TEXT),sha(MANIFEST_TEXT)),
   relasset(503,'manifest.json.sig',len(MSIG),sha(MSIG)),relasset(504,APP_NAME+'.sig',len(APPSIG),sha(APPSIG)),
   relasset(505,APP_NAME,1234567,APP_SHA),relasset(506,CLI_NAME,7654321,CLI_SHA),relasset(507,CLI_NAME+'.sig',300,CLISIG_SHA)]
-def run(rid,attempt,sha,workflow,branch='master'):
- return {'id':rid,'run_attempt':attempt,'head_sha':sha,'head_branch':branch,'path':'.github/workflows/'+workflow+'.yml','status':'completed','conclusion':'success','repository':REPO,'head_repository':REPO}
+def run(rid,attempt,sha,workflow,branch='master',event='push'):
+ return {'id':rid,'run_attempt':attempt,'head_sha':sha,'head_branch':branch,'event':event,'path':'.github/workflows/'+workflow+'.yml','status':'completed','conclusion':'success','repository':REPO,'head_repository':REPO}
 def artifact(aid,name,rid,sha):
  return {'id':aid,'name':name,'expired':False,'digest':'sha256:'+'c'*64,'workflow_run':{'id':rid,'head_sha':sha,'repository_id':1263526319,'head_repository_id':1263526319}}
 def inventory(rows):return {'total_count':len(rows),'artifacts':rows}
@@ -91,6 +91,12 @@ class AutorunTest(unittest.TestCase):
  def state(self,name):return self.root/'release-sign/autorun'/name
  def promote_latest(self,tag=TAG):
   self.data['repos/ashlrai/phantom/releases/latest']={'tag_name':tag}
+ def test_tag_ref_audit_is_accepted(self):
+  self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']=TAG
+  self.execute(); self.assertEqual(len(self.calls()),1)
+ def test_foreign_branch_audit_is_held(self):
+  self.data['repos/ashlrai/phantom/actions/runs/33']['head_branch']='feature'
+  self.execute(); self.assertEqual(self.calls(),[])
  def test_original_stale_first_counterfactual_and_fixed_exact_binding(self):
   self.execute(original=True);self.assertEqual(self.calls(),[]);self.assertTrue(self.state('attest-22-2.seen').exists())
   self.state('attest-22-2.seen').unlink();self.execute();calls=self.calls();self.assertEqual(len(calls),1)

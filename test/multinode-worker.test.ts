@@ -2,13 +2,14 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn(), hostStats: vi.fn() }));
+const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn(), hostStats: vi.fn(), acquire: vi.fn(), release: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: ports.spawn, spawnSync: () => ({ status: 0 }) }));
 vi.mock('node:fs', async original => ({ ...await original<typeof import('node:fs')>(), lstatSync: ports.stat }));
 vi.mock('../src/core/drive/script-bridge.js', () => ({ checkDriveExecutable: ports.check }));
 vi.mock('../src/core/drive/nodes/pool-host.js', () => ({ callPool: ports.call }));
 vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.capacity,
-  sampleHostStats: ports.hostStats }));
+  nodeRamSlots: () => 4, sampleHostStats: ports.hostStats }));
+vi.mock('../src/core/drive/nodes/host-slots.js', () => ({ hostSlots: () => ({ acquire: ports.acquire }) }));
 import { runNodeWorker } from '../src/core/drive/nodes/worker.js';
 
 const config = { role: 'worker' as const, primary: 'main', backup: 'backup', owner: 'mason', node: 'worker' };
@@ -23,6 +24,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   ports.capacity.mockReturnValue({ slots: 1, ramBytes: 16 * 1024 ** 3, held: null });
+  ports.acquire.mockImplementation(() => ({ release: ports.release }));
   ports.hostStats.mockImplementation(() => ({ sampledAtMs: Date.now(), uptimeSeconds: 1, load: [0, 0, 0], ramTotal: 16, ramUsed: 8, diskFree: 4, cores: [] }));
   child = new Child();
   ports.stat.mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
@@ -46,6 +48,8 @@ describe('multi-Mac worker lifecycle', () => {
     const { result } = await start();
     const beatArgs = ports.call.mock.calls.find(c => c[1] === 'beat')![2] as string[];
     expect(beatArgs).not.toContain('--host-stats');
+    expect(JSON.parse(beatArgs[beatArgs.indexOf('--capacity') + 1]!)).toMatchObject({ slots: 1, held: null,
+      ramBytes: 16 * 1024 ** 3, hostId: expect.any(String), sampledAtMs: Date.now() });
     child.stdout.write('{"resultRef":"branch:job-j"}'); child.emit('close', 0);
     expect(await result).toEqual({ jobId: 'j', completed: true });
   });
@@ -111,7 +115,7 @@ describe('multi-Mac worker lifecycle', () => {
     const clear = { slots: 1, held: null };
     ports.capacity.mockReturnValueOnce(clear).mockReturnValueOnce(clear)
       .mockReturnValue({ slots: 0, held: 'memory-pressure' });
-    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'unsupported-job' });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'memory-pressure' });
     expect(ports.call.mock.calls.some(c => c[1] === 'pull')).toBe(true);
     expect(ports.spawn).not.toHaveBeenCalled();
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
@@ -146,6 +150,8 @@ describe('multi-Mac worker lifecycle', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(await result).toMatchObject({ completed: false });
     expect(child.kill).toHaveBeenCalled();
+    const args = ports.call.mock.calls.filter(c => c[1] === 'beat').at(-1)![2] as string[];
+    expect(JSON.parse(args[args.indexOf('--capacity') + 1]!)).toMatchObject({ slots: 0, held: 'disk-pressure' });
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
   });
   it('runs both Air slots under one session and leaves only after both finish', async () => {
@@ -207,5 +213,73 @@ describe('multi-Mac worker lifecycle', () => {
     child.stdout.write('x'.repeat(4097));
     expect(await result).toMatchObject({ completed: false });
     expect(ports.call.mock.calls.some(c => c[1] === 'complete')).toBe(false);
+  });
+  it('holds a losing host-slot contender before pulling or spawning', async () => {
+    ports.acquire.mockReturnValue(null);
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ slots: 0, held: 'host-slots-exhausted' });
+    expect(ports.call.mock.calls.some(c => c[1] === 'pull')).toBe(false);
+    expect(ports.spawn).not.toHaveBeenCalled();
+  });
+  it('preserves the full single-worker batch while free host slots decrease', async () => {
+    let used = 0, advertised = 0, sampled = 0, claims = 0;
+    ports.acquire.mockImplementation(() => { used++; return { release: () => { used--; } }; });
+    ports.capacity.mockImplementation((_light, options) => ({ slots: 4 - used + (options?.lease ? 1 : 0), held: null }));
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'beat') advertised = Number(args[2][args[2].indexOf('--slots') + 1]);
+      // The pool overwrites --slots with the capacity sample, so both must carry the same number.
+      if (args[1] === 'beat') sampled = JSON.parse(args[2][args[2].indexOf('--capacity') + 1]).slots;
+      if (args[1] === 'pull' && claims++ >= advertised) return { result: { pulled: false } };
+      return route(...args);
+    });
+    const children = Array.from({ length: 4 }, () => new Child());
+    children.forEach(c => ports.spawn.mockReturnValueOnce(c));
+    const { result } = await start();
+    expect(ports.spawn).toHaveBeenCalledTimes(4);
+    expect(used).toBe(4);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(advertised).toBe(4);
+    expect(sampled).toBe(4);
+    for (const c of children) { c.stdout.write('{"resultRef":"branch:done"}'); c.emit('close', 0); }
+    expect(await result).toMatchObject({ slots: 4, attempts: Array.from({ length: 4 }, () => ({ completed: true })) });
+    expect(used).toBe(0);
+  });
+  it('checks the claimed pack and releases its slot when CPU admission holds', async () => {
+    ports.capacity.mockImplementation((_light, options) => options?.pack
+      ? { slots: 0, held: 'cpu-pressure' } : { slots: 1, held: null });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'cpu-pressure' });
+    expect(ports.capacity).toHaveBeenCalledWith(false, expect.objectContaining({ pack: 'pack-1', lease: expect.any(Object) }));
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.release).toHaveBeenCalledOnce();
+  });
+  it('retains the host lease until the runner closes, including fencing', async () => {
+    const { result } = await start();
+    expect(ports.release).not.toHaveBeenCalled();
+    ports.capacity.mockReturnValue({ slots: 0, held: 'host-slots-unmeasured' });
+    child.kill.mockImplementation(() => true);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(child.kill).toHaveBeenCalled();
+    expect(ports.release).not.toHaveBeenCalled();
+    // The pool's sample parser rejects host-slot holds, so this beat sends zero slots without a sample.
+    const beat = ports.call.mock.calls.filter(c => c[1] === 'beat').at(-1)![2] as string[];
+    expect(beat).not.toContain('--capacity');
+    expect(beat[beat.indexOf('--slots') + 1]).toBe('0');
+    child.emit('close', 1);
+    await result;
+    expect(ports.release).toHaveBeenCalledOnce();
+  });
+  it('releases a host slot on an empty pull or failed runner spawn', async () => {
+    ports.spawn.mockImplementation(() => { throw new Error('spawn unavailable'); });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'attempt-unavailable' });
+    expect(ports.release).toHaveBeenCalledOnce();
+    ports.release.mockClear();
+    ports.call.mockImplementation((_config, verb) => ({ result: verb === 'join' ? { session: 2 } : {} }));
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ pulled: false });
+    expect(ports.release).toHaveBeenCalledOnce();
+  });
+  it('holds an uncertain host registry before contacting a runner', async () => {
+    ports.acquire.mockImplementation(() => { throw new Error('unsafe registry'); });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ slots: 0, held: 'host-slots-unmeasured' });
+    expect(ports.spawn).not.toHaveBeenCalled();
   });
 });

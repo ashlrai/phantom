@@ -1,6 +1,7 @@
 import { statfsSync } from 'node:fs';
-import { cpus, freemem, homedir, loadavg, platform, totalmem, uptime } from 'node:os';
+import { availableParallelism, cpus, freemem, homedir, loadavg, platform, totalmem, uptime } from 'node:os';
 import { assessHostHeadroom, readMacHostHeadroom, type HostHeadroom } from '../../run/host-headroom.js';
+import { hostSlots, type HostSlotLease, type HostSlots } from './host-slots.js';
 
 import type { HostStats } from './state.js';
 
@@ -8,8 +9,22 @@ const GIB = 1024 ** 3;
 export interface NodeCapacity {
   slots: number;
   ramBytes: number;
-  held: 'memory-unmeasured' | 'memory-pressure' | 'disk-unmeasured' | 'disk-pressure' | null;
+  held: 'memory-unmeasured' | 'memory-pressure' | 'disk-unmeasured' | 'disk-pressure' |
+    'cpu-unmeasured' | 'cpu-pressure' | 'host-slots-unmeasured' | 'host-slots-exhausted' | null;
 }
+
+export type PackResourceHint = 'memory-bound' | 'cpu-bound';
+export interface CapacityOptions {
+  pack?: string;
+  resourceHint?: PackResourceHint;
+  readCpu?: () => { parallelism: number; load: number[] } | null;
+  registry?: HostSlots;
+  lease?: HostSlotLease;
+}
+/** API/probe packs retain memory-only admission. Local inference also needs measured CPU headroom. */
+export const PACK_RESOURCE_HINTS: Readonly<Record<string, PackResourceHint>> = {
+  'codex-file': 'memory-bound', 'shell-check': 'memory-bound', 'omlx-ping': 'memory-bound', 'omlx-chat': 'cpu-bound',
+};
 
 const MIB = 1024 ** 2;
 
@@ -37,22 +52,44 @@ export function nodeRamSlots(bytes: number, pack: string = ADVERTISED_PACK): num
   return Math.max(0, Math.min(64, Math.floor((bytes - Math.max(4 * GIB, bytes * 0.3)) / packRamBytes(pack))));
 }
 
-export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null, freeDiskBytes: number | null, light = false): NodeCapacity {
+export function assessNodeCapacity(ramBytes: number, memory: HostHeadroom | null, freeDiskBytes: number | null, light = false, options: CapacityOptions = {}): NodeCapacity {
   let held: NodeCapacity['held'] = null;
   const headroom = assessHostHeadroom(memory);
   if (!headroom.reading) held = 'memory-unmeasured';
   else if (!nodeRamSlots(ramBytes) || !headroom.allowed) held = 'memory-pressure';
   else if (freeDiskBytes === null || !Number.isFinite(freeDiskBytes) || freeDiskBytes < 0) held = 'disk-unmeasured';
   else if (freeDiskBytes < 20_000_000_000) held = 'disk-pressure';
+  const pack = options.pack ?? ADVERTISED_PACK;
+  const hint = options.resourceHint ?? (Object.hasOwn(PACK_RESOURCE_HINTS, pack) ? PACK_RESOURCE_HINTS[pack] : 'memory-bound');
+  if (!held && hint === 'cpu-bound') {
+    let cpu = null;
+    try { cpu = options.readCpu?.() ?? null; } catch { /* unknown holds */ }
+    if (!cpu || !Number.isSafeInteger(cpu.parallelism) || cpu.parallelism < 1 || !Array.isArray(cpu.load) ||
+        cpu.load.length !== 3 || [0, 1, 2].some(i => !Number.isFinite(cpu.load[i]) || cpu.load[i]! < 0)) held = 'cpu-unmeasured';
+    else if (cpu.load[0]! + 1 > cpu.parallelism) held = 'cpu-pressure';
+  }
   // Only the fixed light recipe runner uses this profile; all pressure/disk floors still apply.
   return { ramBytes, slots: held ? 0 : light ? Math.min(2, nodeRamSlots(ramBytes) * 2) : nodeRamSlots(ramBytes), held };
 }
 
 /** Additive to DISKGUARD: never substitutes for the runner's existing disk checks. */
-export function readNodeCapacity(light = false): NodeCapacity {
+export function readNodeCapacity(light = false, options: CapacityOptions = {}): NodeCapacity {
   let freeDisk: number | null = null;
   try { const disk = statfsSync(homedir()); freeDisk = disk.bavail * disk.bsize; } catch { /* unknown holds */ }
-  return assessNodeCapacity(totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk, light);
+  const readCpu = () => platform() === 'win32' ? null : { parallelism: availableParallelism(), load: loadavg() };
+  return shareNodeCapacity(assessNodeCapacity(totalmem(), platform() === 'darwin' ? readMacHostHeadroom() : null, freeDisk,
+    light, { readCpu, ...options }), options);
+}
+
+/** Observation is advisory; every attempt must acquire an atomic lease before pulling. */
+export function shareNodeCapacity(capacity: NodeCapacity, options: CapacityOptions = {}): NodeCapacity {
+  if (capacity.held) return capacity;
+  try {
+    const registry = options.registry ?? hostSlots();
+    const available = registry.available(nodeRamSlots(capacity.ramBytes), options.lease);
+    const slots = Math.min(capacity.slots, available);
+    return { ...capacity, slots, held: slots ? null : 'host-slots-exhausted' };
+  } catch { return { ...capacity, slots: 0, held: 'host-slots-unmeasured' }; }
 }
 
 /** No shell, network, provider queries or writes. Deltas are calculated by the viewer. */

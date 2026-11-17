@@ -125,3 +125,18 @@ it('renders empty and malformed session telemetry without inventing agents', asy
   render(<ComputeMap visible />);
   expect(await screen.findByText('Sessions refresh failed. No data available.')).toBeInTheDocument();
 });
+it('renders node-pool hosts with oversubscription, caps and unknown slots', async () => {
+  const { payloads } = serve();
+  const host = { id: 'muse', nodeIds: ['muse', 'muse-w2'], inferred: true, ramTotal: 8 * 1024 ** 3, cores: 8, observedAt: NOW, caps: ['codex'], liveWorkers: 2, liveSlots: 2 + 4, heldWorkers: 0, claims: 1, ramSlots: 4, oversubscribed: true };
+  const unknown = { ...host, id: 'air-w1', nodeIds: ['air-w1'], inferred: false, liveSlots: null, oversubscribed: null, caps: [] };
+  payloads['/api/verse/fleet/control/compute'] = { ...compute, hosts: [unknown, host],
+    pool: { hosts: 2, liveWorkers: 4, liveSlots: null, ramSlots: 8, claims: 2, unplacedNodes: 1, oversubscribedHosts: 1 } };
+  render(<ComputeMap visible />);
+  const region = await screen.findByRole('region', { name: 'Node pool hosts' });
+  expect(within(region).getAllByText(/live slots unknown/).length).toBe(2);
+  expect(within(region).getByText(/1 nodes without host telemetry/)).toBeInTheDocument();
+  expect(within(region).getByText('OVERSUBSCRIBED · 6 advertised vs 4 RAM-budget')).toBeInTheDocument();
+  expect(within(region).getByText('Oversubscription unknown')).toBeInTheDocument();
+  expect(within(region).getByText('muse + muse-w2')).toBeInTheDocument();
+  expect(within(region).getByText(/Caps: none reported/)).toBeInTheDocument();
+});

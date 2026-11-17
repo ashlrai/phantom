@@ -199,7 +199,9 @@ read -r CART _ <<< "$CBINDING"
 AUD=$(G "repos/$REPO/actions/workflows/dependency-audit.yml/runs?head_sha=$HEAD&status=success&per_page=1") || { log "read audit failed"; exit 0; }
 read -r AU UA < <(echo "$AUD" | J workflow_runs.0.id workflow_runs.0.run_attempt | paste -sd' ' -)
 [[ "${AU:-}" =~ ^[1-9][0-9]*$ ]] && [[ "${UA:-}" =~ ^[1-9][0-9]*$ ]] || { log "audit absent; will look again"; continue; }
-G "repos/$REPO/actions/runs/$AU" | valid_run "$AU" "$UA" "$HEAD" dependency-audit 2>/dev/null || { log "audit changed or invalid; held"; exit 0; }
+# AUDIT-TAG-1: audit run on master, or on exactly $TAG (peeled tag sha == HEAD, ancestor of master, fail closed); event push|schedule|workflow_dispatch only.
+AUJ=$(G "repos/$REPO/actions/runs/$AU") && echo "$AUJ" | J event 2>/dev/null | /usr/bin/grep -qxE 'push|schedule|workflow_dispatch' || { log "audit changed or invalid; held"; exit 0; }
+{ echo "$AUJ" | valid_run "$AU" "$UA" "$HEAD" dependency-audit 2>/dev/null || { echo "$AUJ" | valid_run "$AU" "$UA" "$HEAD" dependency-audit "$TAG" 2>/dev/null && { [ "$HEAD" = "$M" ] || compare_ancestor "$HEAD" "$M"; }; }; } || { log "audit changed or invalid; held"; exit 0; }
 DONE=$D/sha-$HEAD
 TRIES=$DONE.tries
 if [ -f "$DONE.rc" ]; then

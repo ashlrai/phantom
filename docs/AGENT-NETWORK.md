@@ -248,6 +248,19 @@ phm channels slack map --topic leaders --json
 phm channels slack map --topic leaders --snapshot ./slack-audience.json --json
 ```
 
+Ask `Phantom status` in the mapped Slack conversation. Each threaded reply
+carries a plain state line: RECEIVED, ASSIGNED (owner and claim), RUNNING,
+BLOCKED (dependency), or VERIFIED (PR and head). Missing evidence says unknown.
+`phm channels slack status --json` exposes the same typed `work` projection:
+receipt IDs, states, owner/claim, dependency, PR/head and `asOf` from the live
+`queue/status.json` last tick. Missing or future fleet time is null, rendered
+as unknown; it is never replaced with the reply clock. Work states use the
+existing work-board rules (RUNNING means a live work lease). A sent reply proves
+delivery, not verified work. Replies without an exact receipt match say UNKNOWN.
+Owner ingress and same-thread delivery are joined in `replies`; duplicate owner
+delivery does not add another request. Reads are bounded; `work.truncated` marks
+a partial list. The status line is a plain-text Slack attachment below the reply.
+
 `status` reports the config parse, bridge and workspace ids, `phm_` reference
 names (never values), journal counts and the next step. `map` prints the
 topic/channel table, resolves one `--topic` to its channel, and evaluates a
