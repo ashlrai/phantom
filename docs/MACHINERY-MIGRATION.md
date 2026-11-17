@@ -100,3 +100,8 @@ file is treated as empty; unreadable or malformed files fail the command.
 Ops-only manifest entries without a source are excluded. Pins held elsewhere,
 including embedded pins in host wrappers, are not discovered automatically;
 Security must check those before installation.
+
+### Prepare a Security review bundle
+
+Run `phm fleet install --dry-run --json` from a Phantom checkout. It compares local `origin/master` with declared/discovered live modules and `sandbox-pins.tsv`, then writes `docs/proposals/fleet-install-<UTC-date>.md`. JSON goes to stdout; one plain summary goes to stderr. `--repo` and `--bin` select fixture directories.
+Unknown evidence stays unknown (exit 1); missing master or unsafe output exits 2. Diffs are scrubbed review text. No install mode exists. Security reviews the bundle, records tests, and owns pinning and rollback.
