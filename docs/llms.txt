@@ -490,6 +490,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Fleet strategy: the next 30 days](strategy/FLEET-30D.md): Date: 2026-11-14. Horizon: November 14 through December 13, 2026.
 - [Phantom module map](strategy/MODULE-MAP.md): Snapshot of the source tree at 00b72c2ea60de124051bb687a80f94663378d3b5 on 2026-11-13, with file-level dependencies, test references, history and host-script evidence.
 - [AshlrAI repository leverage map](strategy/ORG-REPO-MAP.md): Survey: 2026-11-14, public GitHub observations at approximately 09:42–09:44 UTC.
+- [Recursive self-improvement and the open Phantom fleet](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): Chasing open-source RSI (recursive self-improvement) is Phantom's mission.
 - [Fleet architecture research: spend capacity on durable outcomes](strategy/RESEARCH-FLEET.md): Research date: 2026-11-14. Job: RQ-RESEARCH-FLEET-1.
 - [Session economics: batching, sub-agents and swarm sizing](strategy/SESSION-ECON.md): RQ-SESSION-ECON-1 · checked 2026-11-14 · source baseline 96a5a9be22a.
 - [StackSync EOS fleet capacity plan](strategy/STACKSYNC.md): Status: inventory and proposal only, 2026-11-14; RQ-STACKSYNC-WIRE-1.
