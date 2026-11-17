@@ -966,11 +966,11 @@ node desktop/scripts/prepare-sidecar.mjs    # → desktop/src-tauri/binaries/ash
                                             #   desktop/src-tauri/resources/public/
 
 # 3. (Once, or after editing the Phantom icon source icons/icon.svg.)
-cd desktop && npm run icons                 # = cargo tauri icon src-tauri/icons/icon.svg
+(cd desktop && npm run icons)               # = cargo tauri icon src-tauri/icons/icon.svg
 
-# 4. Release build — the .app and the .dmg.
-#    beforeBundleCommand runs the bundle policy assertion, then dmg-preflight.
-cd desktop && cargo tauri build
+# 4. Local release build — requires the existing Ashlr Local identity.
+#    Builds the .app only, signs the completed bundle once, then verifies it.
+npm --prefix desktop run build
 ```
 
 The native app icon is generated from the tracked Phantom ghost SVG on the existing rounded-square canvas. The five bundle icon outputs are generated locally, not checked in; the monochrome `tray.png` remains a separate tracked template icon. See [icon generation and provenance](src-tauri/icons/PLACEHOLDER.md). This artwork change preserves the stable `ai.ashlr.desktop` bundle identifier and signing identity.
@@ -979,7 +979,7 @@ Timing on this Mac: about 6 minutes cold (the release profile is `lto = true`,
 `codegen-units = 1`, `panic = "abort"`), about 90 seconds when only the bundling
 needs to be redone. Nothing in step 4 needs the network.
 
-> **Step 4 alone re-bundles stale web assets.** `cargo tauri build` ships
+> **Step 4 alone re-bundles stale web assets.** The Tauri build ships
 > whatever is sitting in `src-tauri/binaries/` and `src-tauri/resources/public/`.
 > Those only change when steps 1–2 are re-run. After any change to `src/web-ui`
 > or `src/core`, run steps 1–2 again or the new build will contain the old
@@ -990,13 +990,28 @@ needs to be redone. Nothing in step 4 needs the network.
 
 Output under `desktop/src-tauri/target/release/bundle/`:
 
-- `macos/Phantom.app` — the installable app
-- `dmg/Phantom_<version>_aarch64.dmg` — the disk image; `<version>` matches the root package version
+- `macos/Phantom.app` — the locally signed, strictly verified app
+
+The local producer (`scripts/build-local.mjs`) resolves the existing valid
+`Ashlr Local` certificate with `security find-identity` before compiling. It runs
+Tauri with `--no-sign --bundles app`, then signs the completed bundle with the
+certificate hash and existing entitlements. It requires the resource seal and
+verifies `--deep --strict` against `ai.ashlr.desktop` and that exact certificate.
+No file is copied or changed in the bundle after signing. Missing/untrusted keys,
+signing failures and verification failures stop the build; there is no identity
+creation or ad-hoc fallback. Run `npm run ship:local -- --native` from the repo
+root after the supported Stop/drain and normal Quit procedure.
+
+This command also works from `desktop/src-tauri` as
+`node ../scripts/build-local.mjs`. It always builds for the native host into this
+checkout's `target`, ignoring inherited `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET`
+and `TAURI_CONFIG` overrides so the installer consumes the verified output.
+DMGs are distribution packaging and are not needed for local installation.
 
 A debug bundle (unoptimized, faster to build, under `target/debug/bundle/`):
 
 ```sh
-cd desktop && cargo tauri build --debug
+npm --prefix desktop run build:debug
 ```
 
 > `npm run build` at the **repo root** cannot pass on this machine: its
@@ -1071,19 +1086,29 @@ cd desktop && CI=1 cargo tauri build
 ```
 
 That produces a DMG with default icon positions and no custom window layout. The
-`Phantom.app` inside is identical either way. Prefer this over
-`cargo tauri build --bundles app`, which skips the DMG entirely.
+`Phantom.app` inside is identical either way. This raw distribution/development
+build does not add the local signing identity. For local installation, use
+`npm --prefix desktop run build` from the repo root; it skips the DMG entirely
+and signs and verifies the completed app.
 
 **The .app is the artifact that matters.** Even when the DMG step fails, the
-bundler has already written
-`target/release/bundle/macos/Phantom.app` — it is complete and installable, and
-the failure is only about the disk image wrapped around it.
+bundler may already have written `target/release/bundle/macos/Phantom.app`.
+Its presence does not prove a valid signature. Rebuild with the local producer
+before using it for a first local installation.
 
 ### First open on an unsigned build (Gatekeeper)
 
-The raw `cargo tauri build` artifact may be unsigned. The supported local
-install through `ship:local --native` signs `/Applications/Phantom.app` with
-"Ashlr Local", a stable identity trusted for code signing on this Mac. It is
+The raw Tauri config has `bundle.macOS.signingIdentity: null`. With no explicit
+identity, Tauri skips app signing after copying resources. On Apple Silicon the
+linker can leave an ad-hoc executable signature (with a generated identifier),
+which has no bundle resource seal. This is not evidence that resources were
+copied after app signing: the app was never signed as a bundle. `ship:local`
+correctly refuses such a prebuilt app; do not bypass its verification.
+
+The local producer signs the completed prebuilt app with "Ashlr Local". The
+supported `ship:local --native` installation signs its private staging copy
+exactly once after all resource copies and plist edits, then verifies it before
+replacing `/Applications/Phantom.app`. This stable local identity is
 **not** an Apple Developer ID signature or notarization. Gatekeeper can still
 block its first open with *"Ashlr" cannot be opened because the developer
 cannot be verified*; a quarantined DMG may show a different warning.
@@ -1344,7 +1369,8 @@ probing the port, so just launch Phantom again. To clear it by hand:
 `pkill -f "Contents/MacOS/ashlr verse"`.
 
 **`cargo tauri build` fails at `bundle_dmg.sh`**
-The `.app` is already built and installable; only the disk image failed. See
+For local installation run `npm --prefix desktop run build` from the repo root;
+it builds, signs and verifies the app without a DMG. For distribution see
 [Is the DMG step broken?](#is-the-dmg-step-broken). Run
 `node scripts/dmg-preflight.mjs` and build again, or `CI=1 cargo tauri build` to
 skip the Finder layout step.
