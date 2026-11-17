@@ -55,6 +55,11 @@ const COMPANION_GUIDANCE: readonly { name: string; tools: string; when: string }
     tools: '`stack_status`, `stack_doctor`',
     when: 'read-only, to see which services the project uses; never call `stack_add` or `stack_apply`',
   },
+  {
+    name: 'context7',
+    tools: '`resolve-library-id`, `query-docs`',
+    when: 'before using a library or framework API you are not certain of, to read current documentation; send only library names and generic questions, never code, secrets or task text',
+  },
 ];
 
 /** The prompt block for the companion servers among `servers` (declaredMcpServers), or '' when there are none. */
