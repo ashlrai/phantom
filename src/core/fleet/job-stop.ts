@@ -93,7 +93,7 @@ const esrch = (error: unknown): boolean => (error as NodeJS.ErrnoException).code
 const realTimers: JobStopTimers = { set: (fn, ms) => setTimeout(fn, ms) };
 
 /** Append one audit line the same guarded way lane-target-changes.log is written. */
-async function appendLine(path: string, line: string): Promise<void> {
+export async function appendLine(path: string, line: string): Promise<void> {
   const handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
   try {
     const stat = await handle.stat();

@@ -102,6 +102,13 @@ and [iMessage](IMESSAGE.md#fleet-teammate-tasks-and-evidence)):
 
 `dirty-landed --json` includes `diffAnomaly` for a complete PR diff of at least 1,000 files with zero added or deleted text lines in every file. Causes distinguish unchanged-content mode changes, generated-looking paths (a naming heuristic), and other zero-line changes. Binary, incomplete, and ordinary large text diffs are not classified as zero-line anomalies. The recut loop and recut sweep skip confirmed anomalies; inspect them before deciding what to do. The existing landed class remains independent of this diagnostic.
 
+Recut selection also recognizes changes already on the base branch when newer
+edits make whole files differ. A clean scratch merge proves which paths still
+need work; conflicts and unavailable previews retain the original comparison.
+`dirty-landed --json` reports `reason: "already-present-on-base"` for landed work,
+and `recut-sweep --json` uses that reason in `skipped`. Partly landed work keeps
+its missing paths; the recut loop reports its existing `landed` skip reason.
+
 For `fleet eval-report`, CI correlation uses required-check evidence only. A PR
 export must include `headRefOid`, a complete nonempty `requiredChecks` array of
 context names, and one rollup entry per required name with matching `headSha`.

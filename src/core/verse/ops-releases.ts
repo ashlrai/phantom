@@ -34,7 +34,7 @@ export type OpsRunner = (bin: string, args: readonly string[]) => Promise<string
  * The production runner: execFile, neutral cwd (the folder is always an
  * argument, never the spawn's cwd), update/prompt notifiers off.
  */
-const realRunner: OpsRunner = (bin, args) =>
+export const opsRunner: OpsRunner = (bin, args) =>
   new Promise((resolveOut) => {
     try {
       execFile(bin, [...args], {
@@ -154,7 +154,7 @@ async function ghRun(repo: string, workflow: string, run: OpsRunner): Promise<Gh
 
 /** Read one repo's release posture. Never throws; every field degrades to null on its own. */
 export async function probeRepoRelease(path: string, deps: OpsReleaseProbeDeps = {}): Promise<OpsRepoReleaseV1> {
-  const run = deps.run ?? realRunner;
+  const run = deps.run ?? opsRunner;
   const identity = deps.identity ?? repoIdentityOfPath;
   const notes: string[] = [];
   const nwo = (() => { try { return identity(path); } catch { return null; } })();

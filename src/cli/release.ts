@@ -3,7 +3,7 @@ import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '
 import { collectReleaseNotes, formatReleaseNotes, writeReleaseNotes } from '../core/release/notes.js';
 import { execFileSync } from 'node:child_process';
 
-export const RELEASE_USAGE = 'phm release status [--json] [--file <release-state.json>]\nphm release notes [--since <tag>] [--json] [--write]';
+export const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release notes [--since <tag>] [--json] [--write]';
 
 function notesCommand(args: string[]): number {
   const json = args.includes('--json');
@@ -43,16 +43,16 @@ export async function cmdRelease(args: string[]): Promise<number> {
     process.stdout.write(`${RELEASE_USAGE}\n`);
     return 0;
   }
-  const json = args.includes('--json');
   if (args[0] === 'notes') return notesCommand(args.slice(1));
-  const rest = args.filter((arg) => arg !== '--json');
+  const json = !args.includes('--text');
+  const rest = args.filter((arg) => arg !== '--json' && arg !== '--text');
   if (rest[0] !== 'status') {
     process.stderr.write(`${RELEASE_USAGE}\n`);
     return 2;
   }
   const fileFlag = rest.indexOf('--file');
   const file = fileFlag >= 0 ? rest[fileFlag + 1] : undefined;
-  if (rest.some((arg, index) => arg.startsWith('-') && arg !== '--file' && index !== fileFlag + 1) || (fileFlag >= 0 && !file)) {
+  if ((args.includes('--json') && args.includes('--text')) || (rest.length !== (fileFlag === 1 ? 3 : 1)) || (fileFlag >= 0 && !file)) {
     process.stderr.write(`${RELEASE_USAGE}\n`);
     return 2;
   }

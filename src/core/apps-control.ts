@@ -13,6 +13,7 @@ import { appendNeedsMasonLine } from './fleet/needs-mason-append.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { isPaused } from './comms/pause.js';
 import { computerAppPolicy } from './verse/computer-types.js';
+import { findKnownApp, protectedQuitReason, readMacApps, type KnownApp, type MacAppsProbe } from './apps-known.js';
 
 export const APP_ACTIONS = ['open', 'quit', 'focus', 'status'] as const;
 export type AppAction = (typeof APP_ACTIONS)[number];
@@ -88,6 +89,10 @@ export interface AppsControlDeps {
   needsYou?: (text: string) => boolean;
   writesBlocked?: () => boolean;
   out?: (line: string) => void;
+  /** Host app reads for the known apps (apps-known.ts). `undefined` uses the macOS probe; `null` means none. */
+  probe?: MacAppsProbe | null;
+  /** Home directory searched for `~/Applications`; tests pin it. */
+  home?: string;
 }
 
 const notConnected: ToolCall = async () => ({
@@ -169,7 +174,15 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
 
     const requested = target!;
     const label = oneLine(requested);
-    const allowed = allow.apps.find((a) => matches(a, requested));
+    const listed = allow.apps.find((a) => matches(a, requested));
+    // An explicit apps-allow.json entry is owner policy and wins. Without one, a known app
+    // (apps-known.ts) may be opened, focused and read; only Safari may be quit.
+    const known: KnownApp | undefined = findKnownApp(requested) ?? (listed ? findKnownApp(listed.name) ?? findKnownApp(listed.bundleId) : undefined);
+    const allowed: AllowedApp | undefined = listed ?? (known ? {
+      name: known.name, bundleId: known.bundleIds[0] ?? null,
+      // quit stays listed so a protected app refuses with the plain reason below, not a policy code.
+      actions: [...APP_ACTIONS],
+    } : undefined);
     const finish = (report: Omit<AppsActionReport, 'logged' | 'action' | 'app'>, resultLogged: boolean, human: string): void => {
       emit({ ...report, action: verb, app: label, logged: resultLogged }, human);
     };
@@ -185,6 +198,8 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
     if (!started) return result('refused', 'the feed could not record this action, so it was not run.', { code: 'feed-unavailable' });
     if (!allowed) return result('refused', `not in ${allowFile}.`, { code: 'not-allowlisted' });
     if (!(allowed.actions ?? APP_ACTIONS).includes(verb)) return result('refused', 'action is not allowed by this app policy.', { code: 'action-not-allowed' });
+    // The owner's GUI apps are never quit, whatever the allowlist says.
+    if (known && verb === 'quit' && known.quit === 'protected') return result('refused', protectedQuitReason(known), { code: 'protected' });
     if (verb !== 'status' && allowed.bundleId && !isSelf(allowed) && computerAppPolicy(allowed.bundleId).ceiling === null) return result('refused', 'that app is never available to agents.', { code: 'denied' });
     if (verb !== 'status' && (deps.writesBlocked ?? (() => killSwitchOn() || isPaused()))()) return result('refused', 'app writes are stopped by KILL or comms pause.', { code: 'writes-blocked' });
     const queue = async (reason: string, code: string): Promise<number> => {
@@ -193,6 +208,33 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
         : result('failed', 'needs-you could not record this request; no action was run.', { code: 'needs-you-unavailable' });
     };
     if (verb !== 'status' && (input.request === true || modeOf(allowed) === 'request')) return queue('App-level action requested for review.', 'action-requested');
+
+    // Known apps without an allowlist entry are read by the host probe and started or raised by
+    // the host launcher; quit (Safari only) still needs the desktop connection's unsaved-work check.
+    if (known && !listed && verb !== 'quit') {
+      const row = (await readMacApps({ probe: deps.probe, home: deps.home })).apps.find(a => a.id === known.id)!;
+      const unknown = row.reason ?? 'the app probe could not read it.';
+      if (verb === 'status') {
+        return row.installed === null ? result('failed', `${row.name} state is unknown: ${unknown}`, { code: 'unknown' })
+          : result('done', !row.installed ? 'not installed.' : row.running === null ? `installed; running state is unknown: ${unknown}`
+            : row.running ? `running${row.frontmost ? ', frontmost' : ''}.` : 'not running.',
+          { running: row.running ?? undefined, frontmost: row.frontmost ?? undefined });
+      }
+      if (row.installed === false) return result('failed', `${row.name} is not installed on this Mac.`, { code: 'not-installed' });
+      if (row.installed === null || !row.bundleId) return result('failed', `cannot find ${row.name}'s bundle id: ${unknown}`, { code: 'unknown' });
+      // The id read from the installed bundle is what launches, so the denylist checks that id too.
+      if (computerAppPolicy(row.bundleId).ceiling === null) return result('refused', 'that app is never available to agents.', { code: 'denied' });
+      if (verb === 'focus') {
+        // Focus never starts an app: `open -b` would, so an unknown running state refuses.
+        if (row.running === false) return result('failed', `${row.name} is not running. Open it first.`, { code: 'not-running' });
+        if (row.running === null) return result('failed', `cannot tell whether ${row.name} is running: ${unknown}`, { code: 'unknown' });
+        if (row.frontmost === true) return result('done', `${row.name} is already frontmost.`, { running: true, frontmost: true });
+      }
+      if (!launcher) return result('refused', 'no app launcher on this host: opening apps needs macOS.', { code: 'unsupported' });
+      const done = await (verb === 'open' ? launcher.open(row.bundleId) : launcher.activate(row.bundleId));
+      return done.ok ? result('done', verb === 'open' ? `asked macOS to open ${row.name}.` : `raised ${row.name}.`, { running: true, ...(verb === 'focus' ? { frontmost: true } : {}) })
+        : result('failed', done.error, { code: 'failed' });
+    }
 
     // Prefer the bundle id when the file has one; the adapter matches it exactly.
     // Opening may skip the app list only with no desktop connection at all and an explicit bundle id in the

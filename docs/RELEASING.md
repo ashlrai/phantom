@@ -340,6 +340,10 @@ only after its original-asset qualification and required Stop/drain and Quit.
 An npm version, GitHub release or downloaded archive does not establish installed
 startup acceptance. Use the [desktop install guide](../desktop/README.md#install)
 for supported paths and the locally signed, non-notarized app limitations.
+For an existing managed CLI, see [managed upgrades](../desktop/README.md#upgrade-an-existing-managed-install):
+`phm desktop install --upgrade` plans the switch; explicit `--apply` uses resident
+stop but never restarts it. Journaled `--rollback` is separate from release
+publication. Any Touch ID grant and resident restart remain owner actions.
 
 Website promotion, provider sign-ins, spending permissions and resident fleet
 activation are separate verified operations. Neither this guide nor a version
@@ -479,10 +483,19 @@ lanes retain their separate ownership.
 
 ### Check release status
 
-Run `phm release status` for local tag age and unreleased commit counts across
-the seven enrolled repositories, or add `--json` for `phantom.release-status.v2`.
-Local refs may be stale; unavailable observations are `null`.
-`phm release status --file <path>` inspects a local release-train state file.
+`phm release status` emits `phantom.release-status.v2` JSON by default; use
+`--text` for people. The existing `repos` rows remain; `release` contains the
+same Phantom fields as the Fleet goals Release card and its **See log** action.
+Only local refs, `release-sign/last-released-tag` and SHA-bound autorun receipts
+and logs are read. No network checks run. Tags alone do not prove publication;
+publication time needs a saved release record. Missing evidence is JSON `null`.
+Signed assets and updater HTTP are the last recorded check, dated `recordedAt`.
+Merged PRs count distinct merge/squash PR numbers on the default branch's first
+parent history; shallow or unavailable history is unknown. The planned candidate
+and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
+(the train's five-minute default); an overdue ETA stays overdue, not a promise
+to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
+`--file <path>` still inspects a saved release-train state file.
 
 ### Draft release notes
 
