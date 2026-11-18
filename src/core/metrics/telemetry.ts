@@ -20,6 +20,8 @@ export type TelemetryEvent =
   | ({ kind: 'session.ended'; outcome: 'success' | 'failure' | 'abandoned'; wallMs: number } & Base)
   | ({ kind: 'usage'; inputTokens: number; outputTokens: number; cachedTokens?: number; costUsd?: number; wallMs?: number } & Base)
   | ({ kind: 'tool.called'; tool: string; ok: boolean; ms?: number } & Base)
+  /** One `decide` call: the option picked (or "unknown"), never the question or context. */
+  | ({ kind: 'decision'; choice: string; options: number; confidence: number; ms: number; attempts: number } & Base)
   | ({ kind: 'pr.opened' | 'pr.merged' | 'pr.reverted'; pr: PrRef } & Base)
   | ({ kind: 'pr.rated'; pr: PrRef; rater: 'human' | 'llm-judge'; rating: number /* 1..5 */; rubric?: string } & Base);
 
@@ -40,6 +42,7 @@ const fields: Record<string, string[]> = {
   'session.started': [], 'session.ended': ['outcome', 'wallMs'],
   usage: ['inputTokens', 'outputTokens', 'cachedTokens', 'costUsd', 'wallMs'],
   'tool.called': ['tool', 'ok', 'ms'],
+  decision: ['choice', 'options', 'confidence', 'ms', 'attempts'],
   'pr.opened': ['pr'], 'pr.merged': ['pr'], 'pr.reverted': ['pr'],
   'pr.rated': ['pr', 'rater', 'rating', 'rubric'],
 };
@@ -58,6 +61,7 @@ function validInput(v: unknown): v is TelemetryInput {
   if (v.kind === 'usage' && (!nonnegative(v.inputTokens) || !nonnegative(v.outputTokens))) return false;
   if (v.kind === 'session.ended' && (!['success', 'failure', 'abandoned'].includes(String(v.outcome)) || !nonnegative(v.wallMs))) return false;
   if (v.kind === 'tool.called' && (!text(v.tool) || typeof v.ok !== 'boolean')) return false;
+  if (v.kind === 'decision' && (!text(v.choice) || ![v.options, v.confidence, v.ms, v.attempts].every(nonnegative) || (v.confidence as number) > 1)) return false;
   if (v.kind.startsWith('pr.')) {
     const p = v.pr;
     if (!object(p) || !text(p.repo) || !/^[a-z0-9-]+\/[a-z0-9._-]+$/i.test(p.repo) || !nonnegative(p.number) || !Number.isInteger(p.number) || p.number < 1) return false;
