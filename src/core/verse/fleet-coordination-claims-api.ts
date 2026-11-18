@@ -62,8 +62,8 @@ export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsAp
     } catch {
       board = null;
     }
-    const { asOf, ...view } = projectCoordinationClaims(board, at.getTime());
-    sendJson(res, 200, { ...view, generatedAt: asOf });
+    const { v, asOf, ...view } = projectCoordinationClaims(board, at.getTime());
+    sendJson(res, 200, { v, generatedAt: asOf, ...view });
     return true;
   };
 }
