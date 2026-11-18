@@ -87,6 +87,7 @@ Every command, grouped by topic.
     runtime run --store <absolute> -- universe <args>                                                              Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.
     orient [--repo <r>] [--json]                                                                                   Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).
     docs --agent [--json]                                                                                          Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).
+    docs cli [--check] [--json]                                                                                    Regenerate docs/CLI-REFERENCE.md from the command registry; --check lists missing, removed or stale commands without writing (exit 1 on drift).
     check [--base <ref>] [--json]                                                                                  Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.
     commands [--json]                                                                                              List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
