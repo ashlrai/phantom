@@ -709,6 +709,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm models [--json]</code> | List the model registry (verified, unverified, stale) and local models. | <code>--json</code> | <code>phm models --json</code> |
 | <code>phm models check [--json] [--diff &lt;file&gt;]</code> | Report every model the router can pick: confirmed, stale or unconfirmed (not routable). | <code>--diff</code>, <code>--json</code> | <code>phm models check --json [--diff &lt;file&gt;]</code> |
 | <code>phm models pull &lt;name&gt; [--yes]</code> | Explicitly pull an Ollama model (large download; confirm first). | <code>--yes</code> | - |
+| <code>phm models radar [--json] [--from &lt;folder&gt;] [--fetch]</code> | List new, retired and renamed model ids from saved provider release notes, with a proposed registry patch. | <code>--fetch</code>, <code>--from</code>, <code>--json</code> | <code>phm models radar --json [--from &lt;folder&gt;] [--fetch]</code> |
 | <code>phm models start</code> | Best-effort start a locally-installed Ollama (never downloads). | - | - |
 | <code>phm models verify &lt;id&gt; --source &lt;url&gt;</code> | Mark one model verified once its official doc page names the exact id. | <code>--source</code> | - |
 | <code>phm models verify [--text]</code> | Show model verification status and age (JSON by default). | <code>--text</code> | - |
