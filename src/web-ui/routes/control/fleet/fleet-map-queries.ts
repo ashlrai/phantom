@@ -1,6 +1,7 @@
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import type { FleetCompute } from '../../../../core/fleet/compute-view.js';
+import type { FleetMessageGraph } from '../../../../core/fleet/message-graph.js';
 import type { FleetSessionMap } from '../../../../core/fleet/sessions-view.js';
 import { isFleetCompute, isFleetSessionMap } from '../../verse/company/compute-model.js';
 
@@ -17,6 +18,22 @@ export const fleetSessionMapQuery: QueryDef<FleetSessionMap> = {
   fetch: async signal => {
     const value = await apiGet<unknown>('/api/verse/fleet/control/sessions', signal);
     if (!isFleetSessionMap(value)) throw new Error('Unsupported session observation');
+    return value;
+  },
+};
+
+const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const counted = (row: Record<string, unknown>) => ['id', 'from', 'to', 'lastAt'].every(key => typeof row[key] === 'string') && typeof row.count === 'number';
+/** A readable fleet.message-graph.v1: every group and edge has its names, count and last time. */
+export function isFleetMessageGraph(value: unknown): value is FleetMessageGraph & { groups: NonNullable<FleetMessageGraph['groups']> } {
+  return record(value) && value.schema === 'fleet.message-graph.v1' && value.version === 1 && typeof value.since === 'string' && Array.isArray(value.groups)
+    && value.groups.every(group => record(group) && counted(group) && Array.isArray(group.edges) && group.edges.every(edge => record(edge) && counted(edge)));
+}
+export const fleetMessageGraphQuery: QueryDef<FleetMessageGraph & { groups: NonNullable<FleetMessageGraph['groups']> }> = {
+  key: 'fleet-map-message-graph',
+  fetch: async signal => {
+    const value = await apiGet<unknown>('/api/fleet/message-graph', signal);
+    if (!isFleetMessageGraph(value)) throw new Error('Unsupported message graph');
     return value;
   },
 };

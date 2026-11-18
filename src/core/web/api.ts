@@ -1999,6 +1999,21 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/message-graph ─────────────────────────────────────
+    // Recent agent messages as edges grouped by organization
+    // (fleet.message-graph.v1), the read behind `phm fleet message-graph
+    // --json` and the Fleet map's Messages list. READ-ONLY bus read; names,
+    // counts and times only, never message text. Same no-auth read class as
+    // /api/fleet/lanes; an unreadable bus is 503 with the typed unknown graph.
+    if (path === '/api/fleet/message-graph' && method === 'GET') {
+      const { messageGraphResponse } = await import('../fleet/message-graph.js');
+      let response: ReturnType<typeof messageGraphResponse>;
+      try { response = messageGraphResponse(req.url ?? path); }
+      catch { response = { status: 503, body: { error: 'Message graph unavailable.' } }; }
+      sendJson(res, response.status, response.body);
+      return true;
+    }
+
     // ── GET /api/fleet/sessions ──────────────────────────────────────────
     // Unified agent-session list (fleet.sessions.v1): queued/parked/
     // launching/running/publishing/exited/stale sessions plus a bounded

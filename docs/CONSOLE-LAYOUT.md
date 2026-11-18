@@ -119,8 +119,13 @@ CPU percentages require two advancing samples. Machine readings older than
 90 seconds become unknown. Heat uses claimed slots divided by the fresh
 advertised slot ceiling; the RAM-derived ceiling is labeled separately and
 never substituted. Unknown capacity uses a dashed zone without a gauge.
-The current session projection has no callsigns, owned-file lists or peer
-interaction evidence: these remain unknown and no collaboration edges are drawn.
+The current session projection has no callsigns or owned-file lists: these
+remain unknown. Below the machines, **Messages** lists who messaged whom in the
+last 15 minutes as lines between organizations (the company behind each
+agent's lane), with the agents on each line, message counts and the last
+message time. It shows names and counts only, never message text, and reads
+`GET /api/fleet/message-graph`, the same read as
+`phm fleet message-graph --json`.
 The map uses the console's compact, regular and wide layouts.
 
 The Fleet screen includes a Resource & activity board. It refreshes lane and
