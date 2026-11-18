@@ -94,7 +94,7 @@ function parseResetPhrase(raw: string): string | null {
 }
 
 /** Newest successfully parsed "try again at …" in the retained log tail, or null. */
-function parseResetAt(text: string): string | null {
+export function parseResetAt(text: string): string | null {
   let found: string | null = null;
   for (const match of text.matchAll(TRY_AGAIN)) {
     const parsed = parseResetPhrase(match[1]!);

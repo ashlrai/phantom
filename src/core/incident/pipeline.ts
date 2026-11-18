@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { sendTelegramMessage, telegramEnabled } from '../integrations/telegram.js';
+import { classifyExit } from '../fleet/incident-exit.js';
 import { normalizeError } from '../queue/issues.js';
 import { isFailedJob } from '../queue/replay.js';
 import type { QueueJob } from '../queue/schema.js';
@@ -35,6 +36,8 @@ export interface IncidentSignal {
   count?: number;
   /** An explicit severity from the source wins over inference. */
   severity?: Severity;
+  /** Exit code of the failed run, when the source has one. */
+  exitCode?: number;
 }
 
 export interface IncidentEntry {
@@ -59,6 +62,7 @@ export type IngestResult =
   | { status: 'duplicate'; jobId: string; severity: Severity; fingerprint: string }
   | { status: 'observed'; severity: Severity; fingerprint: string }
   | { status: 'rate-limited'; severity: Severity; fingerprint: string; reason: string }
+  | { status: 'plan-limit'; resetAt: string | null; fingerprint: string; reason: string }
   | { status: 'invalid'; reason: string };
 
 export interface IncidentLimits {
@@ -122,6 +126,7 @@ function validate(signal: IncidentSignal): string | undefined {
   if (typeof signal.message !== 'string' || !clean(signal.message, 400)) return 'empty message';
   if (typeof signal.source !== 'string' || !clean(signal.source, 60)) return 'missing source';
   if (signal.severity !== undefined && !SEVERITIES.includes(signal.severity)) return 'unknown severity';
+  if (signal.exitCode !== undefined && !Number.isSafeInteger(signal.exitCode)) return 'invalid exit code';
   if (signal.count !== undefined && (!Number.isSafeInteger(signal.count) || signal.count < 1)) return 'invalid count';
   return undefined;
 }
@@ -183,6 +188,9 @@ export async function ingestSignal(signal: IncidentSignal, deps: IncidentDeps): 
   const now = (deps.now ?? Date.now)(), iso = new Date(now).toISOString();
   const limits = { ...DEFAULT_LIMITS, ...deps.limits };
   const fingerprint = fingerprintOf(signal), count = signal.count ?? 1;
+  // A plan-limit exit is quota, not a repo defect: report the reset time, queue nothing.
+  const exit = classifyExit({ exitCode: signal.exitCode, text: signal.message, nowMs: now });
+  if (exit.kind === 'plan-limit') return { status: 'plan-limit', resetAt: exit.resetAt, fingerprint, reason: exit.reason };
   let toNotify: string | undefined;
 
   const result = await withLedger(deps.dir ?? defaultDir(), deps.store.lockTimeoutMs, async ledger => {
