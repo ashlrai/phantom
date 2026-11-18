@@ -31,7 +31,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-export interface AgentMessagesQuery { since?: number; agent?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other. */
+export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -124,10 +125,11 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
 }
 
 export function filterAgentMessages(messages: readonly AgentMessage[], query: AgentMessagesQuery): AgentMessage[] {
-  const agent = query.agent ? agentName(query.agent).toLowerCase() : null;
+  const want = (value: string | undefined) => value ? agentName(value).toLowerCase() : null;
+  const agent = want(query.agent), peer = want(query.with);
+  const is = (ref: AgentRef, name: string) => ref.name.toLowerCase() === name || ref.lane === name;
   return messages.filter(m => (query.since === undefined || Date.parse(m.ts) >= query.since)
-    && (!agent || m.from.name.toLowerCase() === agent || m.to.name.toLowerCase() === agent
-      || m.from.lane === agent || m.to.lane === agent));
+    && (!agent || (peer ? (is(m.from, agent) && is(m.to, peer)) || (is(m.from, peer) && is(m.to, agent)) : is(m.from, agent) || is(m.to, agent))));
 }
 
 /** The one typed read behind the CLI, API and panes. */
@@ -148,7 +150,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; agent?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; agent?: string; with?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.since !== undefined) {
@@ -159,6 +161,10 @@ export function parseAgentMessagesQuery(input: { since?: string; agent?: string;
   if (input.agent !== undefined) {
     if (!/^[\x21-\x7e]{1,128}$/.test(input.agent)) return { ok: false, error: '--agent takes an agent name or lane.' };
     query.agent = input.agent;
+  }
+  if (input.with !== undefined) {
+    if (!query.agent || !/^[\x21-\x7e]{1,128}$/.test(input.with)) return { ok: false, error: '--with takes the other agent and needs --agent.' };
+    query.with = input.with;
   }
   if (input.limit !== undefined) {
     const limit = Number(input.limit);

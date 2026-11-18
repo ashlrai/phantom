@@ -25,6 +25,8 @@ import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 export const LIVE_MAP_WINDOW_MINUTES = 15;
 /** An edge whose newest message is this recent pulses. */
 export const LIVE_MAP_PULSE_MS = 60_000;
+/** Message line thickness by count, shared by the 2D and 3D maps: 1 message is thin, 10 or more is the cap. Unknown counts draw thin. */
+export const messageLineWidth = (count: number | null | undefined): number => Math.min(6, 1.25 + 0.5 * Math.max(1, count ?? 1));
 
 export type LiveMapNodeKind = 'leader' | 'lane' | 'job' | 'computer' | 'resource';
 export type LiveMapEdgeKind = 'reports-to' | 'runs-on' | 'uses-resource' | 'messaged-in-last-15-min';

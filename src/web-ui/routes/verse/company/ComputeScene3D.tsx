@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
+import { messageLineWidth } from '../../../../core/fleet/live-map.js';
 import type { FleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { providerFor, type Provider } from '../../../../core/fleet/provider.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
@@ -46,7 +47,7 @@ export function ComputeScene3D({ nodes, jobs, orgMap, now, heat, yaw, tilt, zoom
   const selectedOrg = selection === null ? undefined : orgJobs.get(selection);
   // Only job-to-job messages have two placed ends to join; the rest stay in the list below the scene.
   const links = useMemo(() => (orgMap?.edges ?? []).filter(edge => edge.kind === 'message').map(edge => ({
-    from: scene.agents.findIndex(a => a.job && `job:${a.job}` === edge.from), to: scene.agents.findIndex(a => a.job && `job:${a.job}` === edge.to), provider: providerFor(edge.provider),
+    from: scene.agents.findIndex(a => a.job && `job:${a.job}` === edge.from), to: scene.agents.findIndex(a => a.job && `job:${a.job}` === edge.to), provider: providerFor(edge.provider), width: messageLineWidth(edge.count),
   })).filter(link => link.from >= 0 && link.to >= 0), [orgMap, scene]);
   const drag = useRef<{ x: number; y: number; yaw: number; tilt: number; moved: boolean } | null>(null);
   const state = useRef({ yaw, tilt, zoom, selection });
@@ -90,7 +91,7 @@ export function ComputeScene3D({ nodes, jobs, orgMap, now, heat, yaw, tilt, zoom
       for (const link of links) {
         const from = scene.agents[link.from]!, to = scene.agents[link.to]!;
         const x1 = frame.sx[from.top]!, y1 = frame.sy[from.top]!, x2 = frame.sx[to.top]!, y2 = frame.sy[to.top]!;
-        ctx.strokeStyle = link.provider.color; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        ctx.strokeStyle = link.provider.color; ctx.lineWidth = link.width; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.lineWidth = 1;
         drawBadge(ctx, link.provider, (x1 + x2) / 2, (y1 + y2) / 2);
       }
     };
