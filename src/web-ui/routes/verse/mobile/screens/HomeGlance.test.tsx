@@ -20,8 +20,9 @@ const ANSWER = `POST ${APPROVALS_PATH}/answer`;
 const INBOX = { 'GET /api/verse/fleet/runs': { inbox: [] }, 'GET /api/verse/fleet/runs/inbox': { sourceState: 'healthy', entries: [] } };
 const shipped = (total: number | null): ShippedReport => ({
   schema: 'shipped.v1', version: 1, generatedAt: '2026-11-17T12:00:00.000Z', since: '2026-11-16T12:00:00.000Z', days: 1,
-  source: total === null ? 'unknown' : 'ok', note: total === null ? 'No git history could be read here.' : null, total, maintenance: total === null ? null : 0,
-  areas: total ? [{ id: 'desktop', label: 'Desktop app', count: total, lines: [{ text: 'Add a phone Home.', number: 12, mergedAt: '2026-11-17T10:00:00.000Z' }] }] : [],
+  source: total === null ? 'unknown' : 'ok', note: total === null ? 'No git history could be read here.' : null, total,
+  repo: null, headline: total ? `Today: ${total} user-facing changes across 1 repo; biggest: Add a phone Home.` : 'Nothing merged in the last 1 day.', repos: total === null ? null : 1, biggest: total ? 'Add a phone Home' : null, maintenance: total === null ? null : 0,
+  areas: total ? [{ id: 'desktop', label: 'Desktop app', count: total, lines: [{ text: 'Add a phone Home.', number: 12, mergedAt: '2026-11-17T10:00:00.000Z', repo: null, prs: [12] }] }] : [],
 });
 const mac = (kind: HomeFixture, more: Record<string, unknown> = {}) => stubFetch({
   [`GET ${HOME_PATH}`]: homeSummary(kind), [`GET ${PULSE_PATH}`]: pulse(kind), [`GET ${APPROVALS_PATH}`]: approvalsList(kind),
@@ -33,8 +34,8 @@ afterEach(() => { evictAll(); resetGuard(); clearMutationToken(); vi.unstubAllGl
 describe('phone Home', () => {
   it.each([
     ['empty', 'quiet', '0 merged in the last hour · 0 lanes running · main green', 'ok', 'Nothing merged in the last 24 hours.'],
-    ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', '3 changes in the last 24 hours.'],
-    ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', '3 changes in the last 24 hours.'],
+    ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
+    ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
   ] as const)('%s at 390 px: exactly five parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
     const viewport = mockViewport(390);
     const fetches = mac(kind);
