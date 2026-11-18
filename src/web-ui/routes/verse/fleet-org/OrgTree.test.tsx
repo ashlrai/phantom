@@ -9,6 +9,7 @@ import { listPanes } from '../panes/pane-registry.js';
 import { buildPaletteItems, paletteView } from '../shell/palette-model.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { OrgTreeView } from './OrgTree.js';
+import { buildLeaderSeat } from '../../../../core/fleet/leader-seat.js';
 import './fleet-org.pane.js';
 
 vi.mock('../fleet/JobDetailSheet.js', () => ({ JobDetailSheet: ({ job, repo, onClose }: { job: string; repo?: string | null; onClose: () => void }) =>
@@ -84,6 +85,21 @@ it('shows an empty fleet as idle and an unread fleet as unknown, never as zero',
   expect(screen.getByText('Leader (CEO)').parentElement).toHaveTextContent('Unknown');
   expect(head('grok')).toHaveTextContent('Unknown'); expect(head('grok')).toHaveTextContent('unknown of unknown running · pool use unknown');
   fireEvent.click(head('grok')); expect(head('grok').closest('li')).toHaveTextContent('Jobs unknown.');
+});
+
+it('shows the typed Leader seat report with fallback health, headroom and unknown evidence', () => {
+  const value = busy(); value.leaderSeat = buildLeaderSeat(null, null, null, NOW);
+  value.leaderSeat.current = { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT };
+  value.leaderSeat.fallbacks = [{ lane: 'codex-personal', model: 'fixture-b', confirmed: true, health: 'ok', headroomPct: 72,
+    resetAt: null, recentPassMs: null, eligible: true, reason: null }];
+  value.leaderSeat.pick = value.leaderSeat.fallbacks[0]!;
+  render(<OrgTreeView tree={value} now={NOW} />);
+  const row = screen.getByLabelText('Leader seat');
+  expect(row).toHaveTextContent('claude · fixture-model'); expect(row).toHaveTextContent('Last successful pass just now');
+  expect(row).toHaveTextContent('Next seat: codex-personal · fixture-b'); expect(row).toHaveTextContent('ok · 72% left');
+  cleanup(); render(<OrgTreeView tree={busy()} now={NOW} />);
+  expect(screen.getByLabelText('Leader seat')).toHaveTextContent('unknown · model unknown');
+  expect(screen.getByLabelText('Leader seat')).toHaveTextContent('No seat: lane health is unknown.');
 });
 
 it('is listed in the Cmd+K palette from the pane registry', () => {
