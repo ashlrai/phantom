@@ -731,6 +731,14 @@ receipts` messages the reporter once per incident whose job is DONE; a recurrenc
 only when proactive comms are on. State lives in `~/.ashlr-runs/incidents`; `--dir` picks
 the queue directory. Both verbs take `--json`.
 
+Pass `--target-revision <full-git-sha>` to scope recovery to an exact revision
+(40 or 64 hex characters). Concurrent repeats for the same repository, failure
+and revision share one active job. A changed revision permits a new job and keeps
+the old revision's deduplication history. Omitting the flag retains the existing
+revisionless scope. A finished failed attempt queues a retry one severity higher,
+up to sev1; holds and unfinished blockers remain duplicates. Hourly caps still
+apply. Agents use the same path through `ingestSignal({ targetRevision, ... }, deps)`.
+
 ## Repeated single-case work
 
 When the dispatcher's 24-hour `codex-personal` empty rate exceeds 25%, the
