@@ -57,6 +57,19 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); });
 
 describe('verse team api', () => {
+  it('adds directory drafts through the mutation gate without membership or outbound effects', async () => {
+    const path = `${BASE}/people`, body = { team: T, person: { displayName: 'River', email: 'river@example.test' } }, api = make();
+    expect((await call(api, { path, body, token: null })).status).toBe(401);
+    expect((await call(api, { path, body, allowDispatch: false })).status).toBe(404);
+    const added = await call(api, { path, body });
+    expect(added).toMatchObject({ status: 201, wire: { version: 1, person: { status: 'pending', identities: [{ state: 'pending' }] } } });
+    expect((await call(api, { path: `${path}?team=${T}`, method: 'GET' })).wire?.people).toEqual([added.wire?.person]);
+    expect((await call(api, { path: `${BASE}?team=${T}`, method: 'GET' })).wire?.members).toEqual([]);
+    const bad = await call(api, { path, body: { team: T, person: { displayName: 'Bad', token: 'harmless-placeholder' } } });
+    expect(bad.status).toBe(400); expect(bad.raw).not.toContain('harmless-placeholder');
+    expect((await call(api, { path: `${path}?team=../bad`, method: 'GET' })).status).toBe(400);
+    expect(classifyRemoteRoute('GET', path)).toEqual({ kind: 'deny' });
+  });
   it('is registered in the workbench family table', () => {
     expect(workbenchFamilyFor(BASE)?.id).toBe('team');
     expect(workbenchFamilyFor(INVITE)?.id).toBe('team');
