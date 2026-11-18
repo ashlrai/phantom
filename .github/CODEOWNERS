@@ -641,6 +641,7 @@
 /test/leader-run-310b.test.ts @masonwyatt23
 /test/leader-seat-310b.test.ts @masonwyatt23
 /test/leader-seat-transports-310b.test.ts @masonwyatt23
+/test/leader-seat.test.ts @masonwyatt23
 /test/leader-store-cas-310.test.ts @masonwyatt23
 /test/leader-thread-314.test.ts @masonwyatt23
 /test/leader-thread-input-retry-oct31.test.ts @masonwyatt23
@@ -1200,6 +1201,7 @@
 /test/resource-usage-readers.test.ts @masonwyatt23
 /test/resource-volume-polling.test.ts @masonwyatt23
 /test/resource-worker-kill.test.ts @masonwyatt23
+/test/return-pr-merge-evidence-556s.test.ts @masonwyatt23
 /test/returns-pr-check-396.test.ts @masonwyatt23
 /test/review-pick-api-live-ownership-recovery-375s.test.ts @masonwyatt23
 /test/review-take-head-recheck-377s.test.ts @masonwyatt23

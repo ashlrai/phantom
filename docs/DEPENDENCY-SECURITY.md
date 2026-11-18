@@ -35,9 +35,21 @@ findings in its production graph, through picomatch 4.0.4. The root production
 graph is clean. These counts include dependent packages affected by the same
 advisory, rather than separate underlying advisories.
 
-There is no npm audit allowlist in this repository. The audit remains failing
-until a patched release or a qualified replacement is available; this disclosure
-adds no exception. Each audit step runs after earlier failures unless the job
+The workflow has narrow, expiring exceptions in
+`.github/dependency-audit-exceptions.json` for `picomatch` and
+`GHSA-fc5q-39xc-vjpf`: one for full npm graphs and one for the Raycast
+production graph, where the advisory arrives only through the `@raycast/api`
+CLI toolchain (oclif, tinyglobby). Each entry applies to exactly one graph.
+Every `via` advisory URL in the npm report must match an active exception, and
+a package vulnerable only through other packages (a string `via` entry) is
+excepted only when everything it depends on is excepted, including cyclic
+references. The Raycast production entry is enabled only for `--omit=dev` when
+the lockfile's resolved path is `src/raycast/package-lock.json`; the audit
+label does not select it. Other production lockfiles, including root, never
+read the file, so they stay
+strict; malformed or expired exceptions fail closed on the graphs that read it,
+and unused exceptions warn in the step summary. Remove this exception when upstream ships a fix. It is not a
+general allowlist. Each audit step runs after earlier failures unless the job
 is cancelled, so the job summary reports both npm graphs and the Cargo result
 without masking failures.
 

@@ -29,6 +29,8 @@ export interface TeamActor {
 }
 
 export const TEAM_EVENT_TYPES = [
+  'person.added',
+  'person.removed',
   'member.joined',
   'member.invited',
   'member.removed',

@@ -379,6 +379,11 @@ const loadAppsCmd = lazyCmd(
   'apps command requires src/cli/apps-control.ts.',
 );
 
+const loadBrowserCmd = lazyCmd(
+  () => import('./browser.js'), (m) => m.cmdBrowser as Cmd,
+  'browser command requires src/cli/browser.ts.',
+);
+
 const loadDesktopctlCmd = lazyCmd(
   () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
   'desktopctl command requires src/cli/desktopctl.ts.',
@@ -2232,6 +2237,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'shipped': {
+        const { cmdShipped } = await import('./shipped.js');
+        process.exitCode = await cmdShipped(rest);
+        break;
+      }
+
       case 'subagent': {
         const { cmdSubagent } = await import('./subagent.js');
         process.exitCode = await cmdSubagent(rest);
@@ -2271,6 +2282,7 @@ async function main(): Promise<void> {
       case 'metrics': {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
+            ['phm metrics [--hours N] [--json]', 'How well the loop is running, in one glance'],
             ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
             ['phm metrics loop [--dry-run] [--json]', 'Self-awareness loop: throughput, loop times, cost, capacity per node'],
             ['phm metrics prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL] [--json]', 'Read bridge PR publication evidence'],
@@ -2520,6 +2532,10 @@ async function main(): Promise<void> {
       }
       case 'apps': {
         process.exitCode = await (await loadAppsCmd())(rest);
+        break;
+      }
+      case 'browser': {
+        process.exitCode = await (await loadBrowserCmd())(rest);
         break;
       }
       case 'desktopctl': {
@@ -2779,6 +2795,13 @@ async function main(): Promise<void> {
         }
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
+      case 'decide': {
+        // One typed decision: a question, a fixed option list, "unknown" instead of a guess (src/cli/decide.ts).
+        const { cmdDecide } = await import('./decide.js');
+        process.exitCode = await cmdDecide(rest);
         break;
       }
 

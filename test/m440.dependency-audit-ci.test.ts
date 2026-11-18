@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -46,6 +47,7 @@ const authorityPaths = [
   'src/raycast/npm-shrinkwrap.json',
   'src/raycast/.npmrc',
   'scripts/npm-audit-with-osv-fallback.sh',
+  '.github/dependency-audit-exceptions.json',
   'desktop/src-tauri/Cargo.toml',
   'desktop/src-tauri/Cargo.lock',
   'docs/DEPENDENCY-SECURITY.md',
@@ -332,6 +334,7 @@ describe('M440 dependency audit CI', () => {
       const markerFile = resolve(fixtureRoot, 'osv-called');
       const summaryFile = resolve(fixtureRoot, 'summary.md');
       const repositoryConfig = resolve(fixtureRoot, 'osv-scanner.toml');
+      const osvConfigCopy = resolve(fixtureRoot, 'osv-config-copy.toml');
       const script = resolve(repoRoot, 'scripts/npm-audit-with-osv-fallback.sh');
       writeFileSync(lockfile, '{}\n');
       writeFileSync(npmCli, '');
@@ -405,9 +408,10 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$config_path" ]]
 [[ "$config_path" != "$TEST_REPO_CONFIG" ]]
-[[ -f "$config_path" && ! -s "$config_path" ]]
+[[ -f "$config_path" ]]
 permissions=$(stat -f '%Lp' "$config_path" 2>/dev/null || stat -c '%a' "$config_path")
 [[ "$permissions" == '600' ]]
+cp "$config_path" "$TEST_OSV_CONFIG_COPY"
 printf '%s\n' "$config_path" > "$TEST_OSV_MARKER"
 exit "\${TEST_OSV_RC:-0}"
 `,
@@ -417,6 +421,7 @@ exit "\${TEST_OSV_RC:-0}"
         writeFileSync(countFile, '0\n');
         writeFileSync(summaryFile, '');
         rmSync(markerFile, { force: true });
+        rmSync(osvConfigCopy, { force: true });
         const result = spawnSync('bash', [script, 'fixture graph', lockfile], {
           cwd: fixtureRoot,
           encoding: 'utf8',
@@ -432,6 +437,7 @@ exit "\${TEST_OSV_RC:-0}"
             TEST_NPM_CLI: npmCli,
             TEST_COUNT_FILE: countFile,
             TEST_OSV_MARKER: markerFile,
+            TEST_OSV_CONFIG_COPY: osvConfigCopy,
             TEST_REPO_CONFIG: repositoryConfig,
             TEST_OSV_RC: osvRc,
             TEST_MODE: mode,
@@ -493,6 +499,389 @@ exit "\${TEST_OSV_RC:-0}"
       expect(unavailable.count).toBe(3);
       expect(unavailable.fallbackCalled).toBe(true);
       expect(unavailable.summary).toContain('no provider returned a clean result');
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('applies only exact, active full-graph npm audit exceptions', () => {
+    const fixtureRoot = mkdtempSync(resolve(tmpdir(), 'ashlr-m440-audit-exceptions-'));
+    try {
+      const binDir = resolve(fixtureRoot, 'bin');
+      const repositoryRoot = resolve(fixtureRoot, 'repo');
+      const scriptsDir = resolve(repositoryRoot, 'scripts');
+      const githubDir = resolve(repositoryRoot, '.github');
+      const script = resolve(scriptsDir, 'npm-audit-with-osv-fallback.sh');
+      const exceptionFile = resolve(githubDir, 'dependency-audit-exceptions.json');
+      const lockfile = resolve(repositoryRoot, 'package-lock.json');
+      const raycastLockfile = resolve(repositoryRoot, 'src/raycast/package-lock.json');
+      const raycastLockfileAlias = resolve(fixtureRoot, 'raycast-package-lock.json');
+      const reportFile = resolve(fixtureRoot, 'audit.json');
+      const countFile = resolve(fixtureRoot, 'npm-count');
+      const summaryFile = resolve(fixtureRoot, 'summary.md');
+      const osvMarker = resolve(fixtureRoot, 'osv-called');
+      const osvConfigCopy = resolve(fixtureRoot, 'osv-config-copy.toml');
+      const activeException = {
+        id: 'GHSA-fc5q-39xc-vjpf',
+        package: 'picomatch',
+        graph: 'full',
+        expires: '2026-12-17T00:00:00Z',
+        reason: 'No fixed release; dev-only build tooling.',
+      };
+      const advisory = (id: string) => ({
+        source: 1104258,
+        name: 'picomatch',
+        dependency: 'picomatch',
+        title: 'Regular expression denial of service',
+        url: `https://github.com/advisories/${id}`,
+        range: '<=4.0.7',
+      });
+      const report = (via: unknown[]) => ({
+        auditReportVersion: 2,
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 },
+        },
+        vulnerabilities: {
+          picomatch: {
+            name: 'picomatch',
+            severity: 'high',
+            isDirect: false,
+            via,
+            effects: [],
+            range: '<=4.0.7',
+            nodes: ['node_modules/picomatch'],
+            fixAvailable: false,
+          },
+        },
+      });
+      const cleanReport = {
+        auditReportVersion: 2,
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
+        },
+        vulnerabilities: {},
+      };
+
+      mkdirSync(binDir);
+      mkdirSync(scriptsDir, { recursive: true });
+      mkdirSync(githubDir, { recursive: true });
+      mkdirSync(dirname(raycastLockfile), { recursive: true });
+      writeFileSync(
+        script,
+        readFileSync(resolve(repoRoot, 'scripts/npm-audit-with-osv-fallback.sh'), 'utf8'),
+      );
+      writeFileSync(lockfile, '{}\n');
+      writeFileSync(raycastLockfile, '{}\n');
+      symlinkSync(raycastLockfile, raycastLockfileAlias);
+      writeFileSync(countFile, '0\n');
+
+      const writeExecutable = (name: string, content: string) => {
+        const file = resolve(binDir, name);
+        writeFileSync(file, content);
+        chmodSync(file, 0o755);
+      };
+      writeExecutable('timeout', '#!/usr/bin/env bash\nshift 3\nexec "$@"\n');
+      writeExecutable('sleep', '#!/usr/bin/env bash\nexit 0\n');
+      writeExecutable(
+        'npm',
+        `#!/usr/bin/env bash
+count=$(cat "$TEST_COUNT_FILE")
+count=$((count + 1))
+printf '%s\\n' "$count" > "$TEST_COUNT_FILE"
+if [[ "$TEST_NPM_MODE" == 'transport' ]]; then
+  printf '%s\\n' '{"message":"network timeout"}'
+  echo 'npm error audit endpoint returned an error: network timeout' >&2
+  exit 1
+fi
+cat "$TEST_REPORT_FILE"
+exit "\${TEST_NPM_RC:-1}"
+`,
+      );
+      writeExecutable(
+        'osv-scanner',
+        `#!/usr/bin/env bash
+config_path=''
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == '--config' ]]; then
+    shift
+    config_path="\${1:-}"
+    break
+  fi
+  shift
+done
+[[ -n "$config_path" && -f "$config_path" ]]
+cp "$config_path" "$TEST_OSV_CONFIG_COPY"
+printf '%s\\n' "$config_path" > "$TEST_OSV_MARKER"
+exit 0
+`,
+      );
+
+      const runScenario = (input: {
+        report: unknown;
+        exceptions: unknown;
+        mode?: 'report' | 'transport';
+        omitDev?: boolean;
+        npmExit?: number;
+        label?: string;
+        lockfile?: string;
+      }) => {
+        writeFileSync(
+          exceptionFile,
+          typeof input.exceptions === 'string'
+            ? input.exceptions
+            : `${JSON.stringify(input.exceptions) ?? ''}\n`,
+        );
+        writeFileSync(reportFile, `${JSON.stringify(input.report)}\n`);
+        writeFileSync(countFile, '0\n');
+        writeFileSync(summaryFile, '');
+        rmSync(osvMarker, { force: true });
+        rmSync(osvConfigCopy, { force: true });
+        const args = [input.label ?? 'fixture graph', input.lockfile ?? lockfile];
+        if (input.omitDev) args.push('--omit=dev');
+        const result = spawnSync('bash', [script, ...args], {
+          cwd: fixtureRoot,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${binDir}:${process.env.PATH ?? ''}`,
+            AUDIT_NPM_BIN: 'npm',
+            AUDIT_OSV_BIN: 'osv-scanner',
+            AUDIT_TIMEOUT_BIN: 'timeout',
+            RUNNER_TEMP: fixtureRoot,
+            TEST_COUNT_FILE: countFile,
+            TEST_NPM_MODE: input.mode ?? 'report',
+            TEST_NPM_RC: String(input.npmExit ?? 1),
+            TEST_REPORT_FILE: reportFile,
+            TEST_OSV_CONFIG_COPY: osvConfigCopy,
+            TEST_OSV_MARKER: osvMarker,
+            GITHUB_STEP_SUMMARY: summaryFile,
+          },
+        });
+        return {
+          ...result,
+          count: Number(readFileSync(countFile, 'utf8').trim()),
+          summary: readFileSync(summaryFile, 'utf8'),
+          fallbackConfig: existsSync(osvConfigCopy) ? readFileSync(osvConfigCopy, 'utf8') : null,
+        };
+      };
+
+      const allowed = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException],
+      });
+      expect(allowed.status).toBe(0);
+      expect(allowed.count).toBe(1);
+      expect(allowed.summary).toContain(
+        'applied dependency audit exception GHSA-fc5q-39xc-vjpf for picomatch',
+      );
+      expect(allowed.summary).not.toContain('was unused');
+
+      const secondAdvisory = runScenario({
+        report: report([advisory(activeException.id), advisory('GHSA-2222-3333-4444')]),
+        exceptions: [activeException],
+      });
+      expect(secondAdvisory.status).toBe(1);
+      expect(secondAdvisory.count).toBe(1);
+      expect(secondAdvisory.summary).toContain('primary npm audit reported vulnerabilities');
+
+      const expired = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [{ ...activeException, expires: '2020-01-01T00:00:00Z' }],
+      });
+      expect(expired.status).toBe(70);
+      expect(expired.count).toBe(0);
+      expect(expired.stderr).toContain('GHSA-fc5q-39xc-vjpf for picomatch expired at');
+
+      const production = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException],
+        omitDev: true,
+      });
+      expect(production.status).toBe(1);
+      expect(production.count).toBe(1);
+      expect(production.summary).toContain('primary npm audit reported vulnerabilities');
+      expect(production.summary).not.toContain('applied dependency audit exception');
+
+      const dependent = (name: string, via: unknown[]) => ({
+        name,
+        severity: 'high',
+        isDirect: false,
+        via,
+        effects: [],
+        range: '*',
+        nodes: [`node_modules/${name}`],
+        fixAvailable: false,
+      });
+      const dependentReport = (extra: Record<string, unknown>) => {
+        const base = report([advisory(activeException.id)]);
+        return {
+          ...base,
+          metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 4, critical: 0, total: 4 } },
+          vulnerabilities: {
+            ...base.vulnerabilities,
+            tinyglobby: dependent('tinyglobby', ['picomatch']),
+            // Mutually referencing dependents, like vitest and @vitest/coverage-v8.
+            vitest: dependent('vitest', ['tinyglobby', 'coverage']),
+            coverage: dependent('coverage', ['vitest']),
+            ...extra,
+          },
+        };
+      };
+      const withDependents = runScenario({
+        report: dependentReport({}),
+        exceptions: [activeException],
+      });
+      expect(withDependents.status).toBe(0);
+      expect(withDependents.summary).toContain('applied dependency audit exception');
+
+      const unrelatedDependent = runScenario({
+        report: dependentReport({ other: dependent('other', ['picomatch', 'unlisted']) }),
+        exceptions: [activeException],
+      });
+      expect(unrelatedDependent.status).toBe(1);
+      expect(unrelatedDependent.summary).toContain('failed closed');
+
+      const otherAdvisoryDependent = runScenario({
+        report: dependentReport({ other: dependent('other', [advisory('GHSA-aaaa-bbbb-cccc')]) }),
+        exceptions: [activeException],
+      });
+      expect(otherAdvisoryDependent.status).toBe(1);
+
+      const raycastProduction = {
+        ...activeException,
+        graph: 'raycast-production',
+      };
+      const raycastProductionRun = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException, raycastProduction],
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(raycastProductionRun.status).toBe(0);
+      expect(raycastProductionRun.summary).toContain('applied dependency audit exception');
+
+      const raycastProductionSecondAdvisory = runScenario({
+        report: report([advisory(activeException.id), advisory('GHSA-2222-3333-4444')]),
+        exceptions: [activeException, raycastProduction],
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(raycastProductionSecondAdvisory.status).toBe(1);
+
+      const expiredRaycastProduction = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException, { ...raycastProduction, expires: '2020-01-01T00:00:00Z' }],
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(expiredRaycastProduction.status).toBe(70);
+      expect(expiredRaycastProduction.count).toBe(0);
+      expect(expiredRaycastProduction.stderr).toContain(
+        'GHSA-fc5q-39xc-vjpf for picomatch expired at',
+      );
+
+      const raycastProductionNeedsOwnEntry = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException],
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(raycastProductionNeedsOwnEntry.status).toBe(1);
+
+      const rootProductionStaysStrict = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException, raycastProduction],
+        omitDev: true,
+        label: 'Raycast production graph',
+        lockfile,
+      });
+      expect(rootProductionStaysStrict.status).toBe(1);
+      expect(rootProductionStaysStrict.summary).not.toContain('applied dependency audit exception');
+
+      const fullGraphIgnoresRaycastEntry = runScenario({
+        report: dependentReport({}),
+        exceptions: [raycastProduction],
+      });
+      expect(fullGraphIgnoresRaycastEntry.status).toBe(1);
+
+      const malformed = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: '{ malformed',
+      });
+      expect(malformed.status).toBe(70);
+      expect(malformed.count).toBe(0);
+      expect(malformed.stderr).toContain('is missing or malformed');
+
+      const unknownGraph = runScenario({
+        report: cleanReport,
+        exceptions: [{ ...activeException, graph: 'production' }],
+        npmExit: 0,
+      });
+      expect(unknownGraph.status).toBe(70);
+      expect(unknownGraph.count).toBe(0);
+      expect(unknownGraph.stderr).toContain(
+        'must target the full or raycast-production graph',
+      );
+
+      const productionIgnoresMalformedFile = runScenario({
+        report: cleanReport,
+        exceptions: '{ malformed',
+        omitDev: true,
+        npmExit: 0,
+      });
+      expect(productionIgnoresMalformedFile.status).toBe(0);
+      expect(productionIgnoresMalformedFile.count).toBe(1);
+      expect(productionIgnoresMalformedFile.summary).not.toContain('exception file');
+
+      const unused = runScenario({
+        report: cleanReport,
+        exceptions: [activeException],
+        npmExit: 0,
+      });
+      expect(unused.status).toBe(0);
+      expect(unused.summary).toContain(
+        'WARNING: fixture graph: dependency audit exception GHSA-fc5q-39xc-vjpf for picomatch was unused',
+      );
+
+      const fullFallback = runScenario({
+        report: cleanReport,
+        exceptions: [activeException],
+        mode: 'transport',
+      });
+      expect(fullFallback.status).toBe(0);
+      expect(fullFallback.count).toBe(3);
+      expect(fullFallback.fallbackConfig).toContain('[[IgnoredVulns]]');
+      expect(fullFallback.fallbackConfig).toContain('id = "GHSA-fc5q-39xc-vjpf"');
+      expect(fullFallback.fallbackConfig).toContain('ignoreUntil = 2026-12-17T00:00:00Z');
+
+      const productionFallback = runScenario({
+        report: cleanReport,
+        exceptions: [activeException, raycastProduction],
+        mode: 'transport',
+        omitDev: true,
+        label: 'Raycast production graph',
+      });
+      expect(productionFallback.status).toBe(0);
+      expect(productionFallback.count).toBe(3);
+      expect(productionFallback.fallbackConfig).toBe('');
+
+      const raycastProductionFallback = runScenario({
+        report: cleanReport,
+        exceptions: [activeException, raycastProduction],
+        mode: 'transport',
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(raycastProductionFallback.status).toBe(0);
+      expect(raycastProductionFallback.count).toBe(3);
+      expect(raycastProductionFallback.fallbackConfig).toContain(
+        'ignoreUntil = 2026-12-17T00:00:00Z',
+      );
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
     }

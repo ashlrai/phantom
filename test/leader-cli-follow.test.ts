@@ -10,11 +10,27 @@ vi.mock('../src/core/vision/leader-thread.js', () => ({
   LeaderThreadError: class extends Error {},
 }));
 import { runLeaderCli } from '../src/cli/leader.js';
+import * as seat from '../src/core/fleet/leader-seat.js';
 
 const message = (id: string): LeaderThreadMessage => ({ id, at: '2026-01-01T00:00:00Z', from: 'mason', channel: 'verse', kind: 'message', text: id });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); state.messages = []; state.readChat.mockReset(); });
 
 describe('leader thread CLI', () => {
+  it('prints the same versioned seat report for inspection and pick; rejects writes', async () => {
+    const report = seat.buildLeaderSeat(null, null, null, 0);
+    const read = vi.spyOn(seat, 'readLeaderSeat').mockResolvedValue(report);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const args of [['seat', '--json'], ['seat', 'pick', '--json']]) {
+      expect(await runLeaderCli(args)).toBe(0);
+      expect(JSON.parse(String(log.mock.calls.at(-1)![0]))).toEqual(report);
+    }
+    expect(await runLeaderCli(['seat', 'pick'])).toBe(0);
+    expect(log.mock.calls.at(-1)![0]).toBe('No seat: lane health is unknown.');
+    expect(await runLeaderCli(['seat', 'pick', '--apply'])).toBe(2);
+    expect(await runLeaderCli(['seat', 'bogus'])).toBe(2);
+    expect(read).toHaveBeenCalledTimes(3);
+  });
   it('streams NDJSON and exits on signal', async () => {
     vi.useFakeTimers();
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});

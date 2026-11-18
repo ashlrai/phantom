@@ -1,17 +1,20 @@
 import { APP_ACTIONS, runAppsControl, type AppsControlDeps, type AppsRequest } from '../core/apps-control.js';
-import { formatMacApps, readMacApps } from '../core/apps-known.js';
+import { MEMORY_PRESSURES, formatAppsSuggest, formatMacApps, readMacApps, suggestApps, type MemoryPressureInput } from '../core/apps-known.js';
 export { parseAllowlist, readAllowlist } from '../core/apps-control.js';
 export type { AllowedApp, AllowlistRead, AppsControlDeps, AppsFeedEntry, AppsOutcome } from '../core/apps-control.js';
 
-const usage = `Usage: phm apps [--json]
+const usage = `Usage: phm apps [status] [--json]
        phm apps open|focus|status <app> [--json]
        phm apps quit <app> [--json]
+       phm apps suggest [--pressure normal|warning|critical] [--need-mb <n>] [--json]
        phm apps list [--json]
        phm apps request open|quit|focus <app> [--json]
-  phm apps shows Phantom, Claude, Codex, ChatGPT, Cursor, Grok and Safari: installed,
-  running, frontmost and memory. Anything it cannot read says unknown, with the reason.
+  phm apps shows Phantom, Claude, Codex, ChatGPT, Cursor, Grok, Devin and Safari: installed,
+  running, frontmost, pid and memory. Anything it cannot read says unknown, with the reason.
   open starts or raises a known app; focus raises a running one. Phantom never quits
-  your apps: only Safari, its own browser, can be quit.
+  your apps or Chrome: only Safari, its own browser, can be quit. If quitting needs a
+  macOS permission, the answer is needs_permission with the System Settings path.
+  suggest lists the idle apps that would free the most memory. It never quits anything.
   list and other app names use ~/.ashlr/apps-allow.json (empty by default); an entry
   there narrows a known app's actions. Requests go to needs-you without acting.
   Every action is logged to the feed. Unsaved work blocks quitting.
@@ -22,7 +25,19 @@ export async function cmdApps(args: string[], deps: AppsControlDeps = {}): Promi
   if (args.includes('--help') || args.includes('-h')) { out(usage); return 0; }
   const json = args.includes('--json');
   const rest = args.filter((a, i) => !(a === '--json' && args.indexOf('--json') === i));
-  if (rest.length === 0) {
+  if (rest[0] === 'suggest') {
+    const input: { pressure?: MemoryPressureInput; needMb?: number } = {};
+    for (let i = 1; i < rest.length; i += 2) {
+      const value = rest[i + 1];
+      if (rest[i] === '--pressure' && input.pressure === undefined && MEMORY_PRESSURES.some(p => p === value)) input.pressure = value as MemoryPressureInput;
+      else if (rest[i] === '--need-mb' && input.needMb === undefined && /^[1-9]\d{0,6}$/.test(value ?? '')) input.needMb = Number(value);
+      else { process.stderr.write(`${usage}\n`); return 2; }
+    }
+    const report = suggestApps(await readMacApps({ probe: deps.probe, home: deps.home }), input);
+    out(json ? JSON.stringify(report) : formatAppsSuggest(report));
+    return 0;
+  }
+  if (rest.length === 0 || (rest.length === 1 && rest[0] === 'status')) {
     const report = await readMacApps({ probe: deps.probe, home: deps.home });
     out(json ? JSON.stringify(report) : formatMacApps(report));
     return 0;

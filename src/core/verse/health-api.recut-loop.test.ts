@@ -92,6 +92,7 @@ describe('health-api recut loop mount', () => {
       lastTickAt: null,
       lastOutcome: null,
       written: [],
+      skipped: [],
       hourCount: 0,
       off: false,
     });

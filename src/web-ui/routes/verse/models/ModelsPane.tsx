@@ -1,5 +1,6 @@
 /**
- * routes/verse/models/ModelsPane.tsx: the model registry as one table, built only on
+ * routes/verse/models/ModelsPane.tsx: the Models card (counts, ModelsCard.tsx) above the
+ * model registry as one table, built on
  * `GET /api/verse/fleet/control/models` (same rows as `phm models --json`) with one
  * action per row: "Verify" (`POST …/models/verify`, same as
  * `phm models verify <id> --source <url>`). The server re-reads the official doc page
@@ -13,6 +14,7 @@ import { ApiError, apiGet, apiPost } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { Card, CardNote } from '../command/Surface.js';
+import { ModelsCard } from './ModelsCard.js';
 import styles from './models.module.css';
 
 const PATH = '/api/verse/fleet/control/models';
@@ -55,7 +57,7 @@ export function ModelsPane({ visible = true }: { visible?: boolean }) {
   };
 
   const rows = result.data?.entries;
-  return <div className={styles.root}><Card title="Models" caption="The router only launches models whose name official docs confirm.">
+  return <div className={styles.root}><ModelsCard visible={visible} /><Card title="Models" caption="The router only launches models whose name official docs confirm.">
     {rows === undefined ? <CardNote tone={result.status === 'error' ? 'unknown' : 'muted'}>
       {result.status === 'error' ? 'Could not read the model registry, so its state is unknown.' : 'Checking models…'}
     </CardNote> : rows.length === 0 ? <CardNote>No models are registered yet. Add one with: phm models verify &lt;id&gt; --provider &lt;name&gt; --source &lt;official doc URL&gt;</CardNote>

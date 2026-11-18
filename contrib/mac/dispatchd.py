@@ -43,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -860,6 +860,15 @@ def result(j):
 def base(j):
     b = rd("%s/%s.base" % (R, j)).split()
     return b if len(b) >= 4 else None
+def published_current_attempt(j):
+    """Only a valid completion receipt for this launch releases its slot."""
+    if not re.match(r"RESULT (PR https://[^\s/]+/\S+|EMPTY)(\s|$)", result(j) or ""): return False
+    try:
+        boundary = os.path.getmtime(R + "/" + j + ".base")
+        dispatched = RUN + "/" + j + ".dispatched"
+        if os.path.exists(dispatched): boundary = max(boundary, os.path.getmtime(dispatched))
+        return os.path.getmtime(R + "/" + j + ".publish") >= boundary
+    except OSError: return False   # an unreadable receipt is not terminal evidence
 
 # ---- batching (RQ-QUEUE-BATCH-1, per-line since RQ-BATCH-SESSIONS-2): up to 10 related ready lines share one session,
 # each with its own lease (<job>.batched, O_EXCL), worktree (batch-launch.sh) and PR (the normal per-job reap).
@@ -1163,6 +1172,9 @@ for bp in glob.glob(R + "/*.base"):
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
     if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
+    # Completion wins over launch grace, lingering processes and fresh artifacts.
+    # Keep the worktree/receipts for the existing publisher and reconciliation.
+    if published_current_attempt(j): continue
     if j in alive:
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
@@ -1172,9 +1184,7 @@ for bp in glob.glob(R + "/*.base"):
     if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
-    # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
-    published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
-    if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
+    if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # no completion evidence: retain cloud jobs without a local log
         if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
         if _rc(j) is None and not result(j):
             target = drain_target(j, _job_repo(j))
@@ -1218,7 +1228,7 @@ def reap_worktrees():
         try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
         except Exception: recent = NOW
         # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
-        published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
+        published = published_current_attempt(j)
         if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
             if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
             if _rc(j) is None and not result(j):
@@ -1817,8 +1827,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
+    completed = merged_jobs(JOBS)
     for f in cand:
-        reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
+        reason = ("already-merged" if (f[1], f[0]) in completed or (None, f[0]) in completed
+                  else terminal_target(f[0], f[1], rd(f[4]), pr_states))
         if reason:
             admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
             metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason, launched=False))
@@ -1826,6 +1838,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
     seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
+    claimed_requests = {}
+    active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
+                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in alive}
+    for owner, row in active_claims.items():
+        hashes = row.get('request_hashes', [])
+        if isinstance(hashes, list):
+            claimed_requests.update((h, owner) for h in hashes if isinstance(h, str))
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -1892,6 +1911,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}), market_specs[c[0]].get("max_tier"))
         if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
         pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
+        unique = []; hashes = {request_hash(f[0], f[1], rd(f[4]))}
+        for c in pool:
+            digest = request_hash(c['job'], c['repo'], c['prompt'])
+            if digest and (digest in hashes or digest in claimed_requests): continue
+            hashes.add(digest); unique.append(c)
+        pool = unique
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
@@ -1924,6 +1949,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
+        digest = request_hash(j, repo, rd(pf))
+        owner = claimed_requests.get(digest)
+        if owner and owner != j:
+            metric(dict(event="dispatch_deferred", job=j, repo=repo, reason="duplicate-request", repeatOf=owner))
+            rest.append(line); seen.add(j); continue
         if res and res.startswith("RESULT PR"):
             ev("SKIP_DONE %s already has a PR" % j); seen.add(j); continue
         target = drain_target(j, repo)
@@ -2099,9 +2129,11 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
+        hashes = [request_hash(c['job'], repo, c['prompt']) for c in batch[0]] if batch else [digest]
+        hashes = [h for h in hashes if h]
         # The job ledger says why a claim left its hinted lane; the full ranking stays in work-market.jsonl.
         override = decision["override"] if not batch and decision["override"] and decision["override"]["to"] == lane else None
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier,
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes,
                     **({"lane_hint": override["from"], "lane_override": override["reason"],
                         "lane_hint_blocked_by": override["preferred_lane_blocked_by"]} if override else {})))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
@@ -2118,6 +2150,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             CONC["fork_failures"].append(NOW); ev("FORK_FAILED %s %s (concurrency backoff)" % (j, type(e).__name__))
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
+        claimed_requests.update((h, j) for h in hashes)
         if reason and "waste_reason" not in route_state[j]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)

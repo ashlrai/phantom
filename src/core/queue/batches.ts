@@ -22,7 +22,7 @@ type Manifest = z.infer<typeof manifestSchema>;
 const rankingSchema = z.object({ at: z.number().finite().positive(), decisions: z.array(z.object({
   job: id, mergeRate: z.number().min(0).max(1).nullable(), sampledLaunches: z.number().int().nonnegative(),
   unknownLaunches: z.number().int().nonnegative(), score: z.number().min(0.1).max(1),
-  reason: z.enum(['observed_merge_rate_24h', 'unknown_sample', 'unknown_outcomes', 'target_pr_merged', 'target_pr_closed']),
+  reason: z.enum(['observed_merge_rate_24h', 'unknown_sample', 'unknown_outcomes', 'target_pr_merged', 'target_pr_closed', 'already-merged']),
   outcome: z.enum(['ready', 'DONE-NOOP']),
 })).max(10000) });
 export interface BatchLineOutcome {
