@@ -15,7 +15,7 @@ const tempRoot = (): string => { const d = mkdtempSync(join(tmpdir(), 'rr-')); d
 afterEach(() => { vi.restoreAllMocks(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const NOW_MS = Date.UTC(2026, 10, 13, 12);
 const ISO = new Date(NOW_MS).toISOString();
-const REASON = 'task: no coordination-claim field associates a claim with board item T-328; owner match is not task identity';
+const REASON = 'task: no live claim by fake-agent carries [board:T-328]; owner match is not task identity';
 const spy = () => vi.spyOn(console, 'log').mockImplementation(() => {});
 
 // Injected readers for one real readFleetRecheck: all sections verify but task — UNKNOWN per #5497,

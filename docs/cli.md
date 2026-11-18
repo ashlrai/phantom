@@ -149,7 +149,7 @@ Every command, grouped by topic.
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
-    bots list|show|create --dry-run|explain [--json]                                                                                                              Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.
+    bots list|show|create --dry-run|explain|seats|handoff --seat <id> [--apply] [--json]                                                                          Provider-neutral bot metadata, seat quota and draining handoffs. Handoff is dry-run unless --apply.
     subagent spawn|list|result [opts]                                                                                                                             Plan bounded cross-provider children; apply stores held records only, never dispatches.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
@@ -319,6 +319,8 @@ Every command, grouped by topic.
     route fit --input <file|-> [--worktree <directory>] --json                                                                                                    Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
     admission explain [--json]                                                                                                                                    Read existing admission inputs, the adaptive launch interval and its reason. Advisory; launches nothing.
+    queue [--json]                                                                                                                                                List queued jobs in launch order: position, id, repo, lane, tier, age and any newer cycle that replaces them.
+    queue top|lane|drop <id> [<lane>] [--dry-run] [--json]                                                                                                        Steer one queued job: move it to the front, to another lane, or out of the queue (kept in queue/dropped.tsv).
     queue supersede [--json] [--apply]                                                                                                                            List queued jobs that a newer cycle of the same job replaces; --apply archives them.
     queue dedupe [--file <router-queue.md>] [--apply] [--json]                                                                                                    Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.
     trail claim|beat|release <claim-key> [--json]                                                                                                                 Stigmergic work-item markers: claim a key, heartbeat progress, release. File-based coordination; no execution authority. See docs/STIGMERGY.md.
@@ -381,6 +383,7 @@ Every command, grouped by topic.
     repos rank [proposals] [--json] [--recompute]                                               Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
     job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]                        Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.
     job cost <id> [--json]                                                                      Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
+    job tail <id> [--lines N] [--follow] [--json]                                               What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.
     telemetry [status]                                                                          M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                              Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]          Tail the append-only audit trail; --team lists workspace actions (read-only).
