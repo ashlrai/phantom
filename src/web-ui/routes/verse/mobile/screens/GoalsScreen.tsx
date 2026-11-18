@@ -1,6 +1,7 @@
 /**
  * routes/verse/mobile/screens/GoalsScreen.tsx — the Goals pane on the phone:
- * the same reads (goalsQuery, visionMissionQuery, useGoalMetrics) and model
+ * the fleet's goal cards first (FleetGoalCards, the same `phm goals --json`
+ * scorecard the desktop shows), then the same reads (goalsQuery, visionMissionQuery, useGoalMetrics) and model
  * functions (openGoals, goalLine, goalsHeadline) the desktop pane uses.
  * Nothing is re-derived; the metric column keeps the pane's live / stale /
  * unknown wording. Remote mode: none of these routes is on the gateway's
@@ -14,6 +15,7 @@ import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
 import { goalsQuery, visionMissionQuery, type QueryDef } from '../../../../data/queries.js';
 import { fleetMergesQuery } from '../../fleet-merges/fleet-merges-queries.js';
 import { mergeBacklogQuery } from '../../fleet-merges/merge-backlog-queries.js';
+import { FleetGoalCards, goalScorecardQuery } from '../../goals-pane/FleetGoalCards.js';
 import { deltaText, metricValueText, useGoalMetrics } from '../../goals-pane/GoalMetric.js';
 import { goalLine, goalsHeadline, openGoals } from '../../goals-pane/goals-pane-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
@@ -29,7 +31,7 @@ const METRIC_TONE: Record<string, Tone> = { live: 'success', stale: 'warning', u
 
 /** Pull-to-refresh: the screen's own reads, forced fresh. */
 export function refreshGoalsScreen(): Promise<unknown> {
-  const queries: QueryDef<unknown>[] = [goalsQuery, visionMissionQuery, fleetMergesQuery, mergeBacklogQuery];
+  const queries: QueryDef<unknown>[] = [goalScorecardQuery, goalsQuery, visionMissionQuery, fleetMergesQuery, mergeBacklogQuery];
   return Promise.allSettled(queries.map((q) => refetchQuery(q.key, () => q.fetch(), true)));
 }
 
@@ -43,7 +45,8 @@ export function GoalsScreen() {
   const refetchMission = useRefetch(visionMissionQuery);
   const refetchMerges = useRefetch(fleetMergesQuery);
   const refetchBacklog = useRefetch(mergeBacklogQuery);
-  const retry = () => { refetchGoals(); refetchMission(); refetchMerges(); refetchBacklog(); };
+  const refetchScorecard = useRefetch(goalScorecardQuery);
+  const retry = () => { refetchScorecard(); refetchGoals(); refetchMission(); refetchMerges(); refetchBacklog(); };
   usePollWhileVisible(retry, POLL_MS, { enabled: !remote });
 
   const goalsFailed = Boolean(goals.error) && goals.data === undefined;
@@ -61,6 +64,7 @@ export function GoalsScreen() {
   } else {
     body = (
       <>
+        <FleetGoalCards />
         {goals.data ? <p className={styles.headline}>{goalsHeadline(goals.data)}</p> : null}
         <p className={styles.mission}>
           {missionFailed

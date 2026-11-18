@@ -44,10 +44,10 @@ describe('fleet runs api', () => {
     const api = createFleetRunsApi(deps({ runsDir }));
     const { status, wire } = await request(api, { path: '/api/verse/fleet/runs/goal-scorecard' });
     expect(status).toBe(200);
-    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v2', version: 2, generatedAt: new Date(NOW).toISOString() });
-    const goals = (wire as unknown as { goals: { status: string; value: unknown }[] }).goals;
+    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: new Date(NOW).toISOString() });
+    const goals = (wire as unknown as { goals: { status: string; current: unknown }[] }).goals;
     expect(goals.length).toBe(5);
-    expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
+    expect(goals.every(g => g.status === 'unknown' && g.current === null)).toBe(true);
     expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
   });
   it('serves the Tools matrix read-only, one lane with ?lane=, 404 for an unknown lane', async () => {
