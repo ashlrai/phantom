@@ -174,7 +174,7 @@ describe('ingestIMessages patch tallies', () => {
       row(11, `PATCH-BEGIN fix-9 2 ${SHA}`),
       row(12, 'ordinary teammate text'),
     ]));
-    expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 2, accepted: 0 });
+    expect(result).toMatchObject({ ok: true, state: 'ingested', teammate: 1, accepted: 0 });
     expect(result.patches).toMatchObject({ frames: 1, completed: 0, expired: 0 });
     // accepted 0: a non-Mason sender is never receipted as operator input, so
     // no ack or outbox send ever runs for it — records stay local drafts.

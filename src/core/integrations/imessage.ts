@@ -48,6 +48,7 @@ const APPLE_EPOCH_OFFSET_MS = 978_307_200_000; // ms between Unix epoch and Appl
 export interface InboundMsg {
   text: string;
   ts: number;   // unix ms
+  identity?: { sourceNamespace: string; physicalMessageId: string };
   handle: string;
 }
 
@@ -273,10 +274,18 @@ export function imessageAllowlist(cfg: AshlrConfig): string[] {
   return clean([cfg.comms?.imessageHandle]);
 }
 
+/** Optional native provenance; null/malformed metadata never falls back to ROWID. */
+export function nativeIMessageIdentity(row: { guid?: unknown; account_guid?: unknown }): { sourceNamespace: string; physicalMessageId: string } | undefined {
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+  if (typeof row.guid !== 'string' || typeof row.account_guid !== 'string' || !uuid.test(row.guid) || !uuid.test(row.account_guid)) return undefined;
+  return { sourceNamespace: `imessage:${row.account_guid.toLowerCase()}`, physicalMessageId: row.guid.toLowerCase() };
+}
+
 export interface IntakeMsg {
   rowid: number;
   text: string;
   ts: number;   // unix ms
+  identity?: { sourceNamespace: string; physicalMessageId: string };
   handle: string;
 }
 
@@ -289,15 +298,19 @@ function isPermissionText(text: string): boolean {
   return /unable to open|authorization denied|EPERM|EACCES|Operation not permitted/i.test(text);
 }
 
-function sqlite(args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; permission: boolean }> {
+function sqlite(args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; permission: boolean; missingColumn: boolean }> {
   return new Promise((resolve) => {
     try {
       execFile('sqlite3', args, { timeout: SQLITE_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, permission: isPermissionText(`${stderr ?? ''}${err.message ?? ''}`) });
+        if (err) {
+          const diagnostic = `${stderr ?? ''}${err.message ?? ''}`;
+          return resolve({ ok: false, permission: isPermissionText(diagnostic), missingColumn: /no such column/i.test(diagnostic) });
+        }
         resolve({ ok: true, stdout });
       });
-    } catch {
-      resolve({ ok: false, permission: false });
+    } catch (error) {
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      resolve({ ok: false, permission: isPermissionText(diagnostic), missingColumn: /no such column/i.test(diagnostic) });
     }
   });
 }
@@ -326,12 +339,16 @@ export async function pollInboundSince(afterRowId: number, cfg: AshlrConfig): Pr
 
   const list = allow.map((h) => `'${h.replace(/'/g, "''")}'`).join(',');
   const sql =
-    `SELECT m.ROWID AS rowid, m.date AS date, h.id AS handle, m.text AS text FROM message m ` +
+    `SELECT m.ROWID AS rowid, m.date AS date, h.id AS handle, m.text AS text, m.guid AS guid, m.account_guid AS account_guid FROM message m ` +
     `JOIN handle h ON m.handle_id = h.ROWID ` +
     `WHERE m.is_from_me = 0 AND m.associated_message_type = 0 ` +
     `AND m.ROWID > ${afterRowId} AND m.text IS NOT NULL AND lower(h.id) IN (${list}) ` +
     `ORDER BY m.ROWID ASC LIMIT ${INTAKE_BATCH_LIMIT};`;
-  const out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()), sql]);
+  let out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()), sql]);
+  // Older schemas may lack provenance columns. Keep ordinary private intake
+  // available but attach no identity, so explicit sharing fails closed.
+  if (!out.ok && !out.permission && out.missingColumn) out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()),
+    sql.replace(', m.guid AS guid, m.account_guid AS account_guid', '')]);
   if (!out.ok) return { ok: false, state: out.permission ? 'blocked_full_disk_access' : 'error' };
 
   let rows: unknown;
@@ -343,7 +360,7 @@ export async function pollInboundSince(afterRowId: number, cfg: AshlrConfig): Pr
     if (typeof rowid !== 'number' || !Number.isSafeInteger(rowid) || rowid <= afterRowId) continue;
     if (typeof handle !== 'string' || !allow.includes(handle.toLowerCase())) continue;
     if (typeof text !== 'string' || typeof date !== 'number' || !isFinite(date)) continue;
-    messages.push({ rowid, text, ts: appleNsToUnixMs(date), handle });
+    messages.push({ rowid, text, ts: appleNsToUnixMs(date), handle, identity: nativeIMessageIdentity(row) });
   }
   return { ok: true, messages };
 }

@@ -92,14 +92,15 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       return 0;
     }
     if (verb === 'worker') {
-      const f = flags(args, ['--runner']);
+      const f = flags(args, ['--runner'], ['--light']);
       const runner = f.get('--runner');
       if (!runner) throw new Error('Worker requires --runner /absolute/host-owned-runner');
-      emit({ schemaVersion: 1, ...await runNodeWorker(config, runner) });
+      emit({ schemaVersion: 1, ...await runNodeWorker(config, runner, f.has('--light')) });
       return 0;
     }
     const result = callPool(config, verb, args);
-    emit({ schemaVersion: 1, command: verb, active: result.active, epoch: result.epoch, demoted: result.demoted, ...result.result });
+    emit({ schemaVersion: 1, command: verb, active: result.active, epoch: result.epoch, demoted: result.demoted, ...result.result,
+      ...(verb === 'status' ? { capacity: readNodeCapacity() } : {}) });
     return result.demoted ? 1 : 0;
   } catch {
     emit({ schemaVersion: 1, error: 'Node pool operation refused or unavailable. First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.' });

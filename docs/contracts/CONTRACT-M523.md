@@ -77,8 +77,10 @@ empty draft public, and never hand-upload assets outside the sanctioned
 publisher.
 
 The protected effect job uses the existing
-`github-stable-release-finalization` environment. Its protected-branch,
-reviewer and no-administrator-bypass policy remains enforced. Only that job has
+`github-stable-release-finalization` environment. The gate requires protected
+branches, `can_admins_bypass` false, zero required reviewers, and no protection
+rule type other than `branch_policy`. The environment settings themselves are
+not changed by the workflow. Only that job has
 `contents: write`, for one request to the admitted release ID:
 
 ```http

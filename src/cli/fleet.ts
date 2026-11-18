@@ -48,7 +48,9 @@ import type { AshlrConfig } from '../core/types.js';
 import type { AuditEntry } from '../core/types.js';
 import type { FleetLaneSnapshot, FleetLaneView } from '../core/fleet/lane-console.js';
 import type { UsageMotionAuditView, UsageMotionClassification, UsageMotionLaneView } from '../core/fleet/usage-motion-audit.js';
+import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 import type { FleetStatus } from '../core/fleet/status.js';
+import { formatFleetDiskAttribution } from '../core/fleet/disk-attribution.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -113,6 +115,8 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.disk) lines.push(...formatFleetDiskAttribution(s.disk));
+  if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
     lines.push(`Memory: PAUSE ${memory.pause.state}${memory.pause.reason ? ` (${memory.pause.reason})` : ''}`);
@@ -1697,6 +1701,8 @@ async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
   try {
     const { buildFleetStatus } = await import('../core/fleet/status.js');
     status = await buildFleetStatus(cfg);
+    const { readFleetDiskAttribution } = await import('../core/fleet/disk-attribution.js');
+    status.disk = await readFleetDiskAttribution();
   } catch (err) {
     process.stderr.write(
       red('error: ') + 'failed to build fleet status: ' +
@@ -2724,6 +2730,7 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
+  console.log(`    phm fleet spend [--json]   ${cyan('# spend-down per pool: on pace, behind or unknown before reset')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);
@@ -2744,6 +2751,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet deploy-plan --since <sha> [--json]  ${cyan('# find fleet scripts awaiting deployment; read-only')}`);
   console.log(`    phm fleet supply --lane <lane> --n <N> [--json]  ${cyan('# suggest queue work from open sources')}`);
+  console.log(`    phm fleet board --leader [--json]      ${cyan('# last Leader tick board: lanes, tier depth, merges, conflicts, needs-Mason')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
@@ -2751,9 +2759,9 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
-  console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
+  console.log(`    ashlr fleet queue merged|conflicted|ask|read|stats|complete <job-id> [--json]`);
+  console.log(`                          ${cyan('# merged-PR follow-ups + conflicted-PR recuts; stdin metadata in, model prompts out')}`);
   console.log(`    phm fleet outcomes [--events <file>] [--json] ${cyan('# learned merge, usage, breakage, and the next assignment')}`);
-  console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
   console.log(`    phm fleet canary-ladder [--json] ${cyan('# per-repo auto-merge rung report (read-only)')}`);

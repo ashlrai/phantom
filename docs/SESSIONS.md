@@ -15,11 +15,20 @@ dispatches or finishes a job. Workers and dispatchd handle jobs exactly as they
 do today. The session watches its jobs' queue statuses and records each change
 in its log.
 
+## Running fleet sessions
+
+`phm sessions` with no verb lists every agent session running in the fleet,
+grouped by lane, with its model, repo, tier, age, last output, PR and the
+computer it runs on. A session with no output for 10 minutes is marked quiet.
+Narrow it with `--lane <lane>` or `--repo <repo>`, and add `--json` for the
+`fleet.live-sessions.v1` list. The desktop Sessions pane shows the same list.
+See [live sessions](FLEET-API.md#live-sessions).
+
 ## Commands
 
 ```sh
 # 1. Add the first job to the queue as usual.
-phm queue add J1 --priority P1 --pool claude --tier T2 --repo phantom \
+phm queue add J1 --priority P1 --pool claude --tier work --repo phantom \
   --scope "Write the session doc" --acceptance "Doc exists" --json
 
 # 2. Wrap that job in a session. It becomes turn 1.

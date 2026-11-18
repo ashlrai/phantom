@@ -162,7 +162,7 @@ They do not install an unreleased source feature or activate the dormant daemon.
 
 ### Install from source
 
-The npm install is [in the README](../README.md#the-cli). To run from a checkout instead:
+The npm install is [in the README](../README.md#quickstart). To run from a checkout instead:
 
 ```sh
 git clone https://github.com/ashlrai/phantom
@@ -262,10 +262,11 @@ Static assets and the minimal `{ "ok": true }` liveness response remain public
 on loopback; every proprietary API read requires the read token or the ticket
 plus its matching client proof.
 
-Headless clients send the read token as a header:
+Headless clients send the read token as a header. In this example, READ_TOKEN
+is a shell variable holding the read token issued by the server:
 
 ```sh
-curl -H "X-Ashlr-Token: $ASHLR_DASHBOARD_READ_TOKEN" \
+curl -H "X-Ashlr-Token: $READ_TOKEN" \
   http://127.0.0.1:7777/api/snapshot
 ```
 
@@ -731,3 +732,7 @@ Resolution: env → `locus.enforce` → `locus.firm === true` → off. See
 warn): [`docs/LOCUS-FIRM-FLEET.md`](https://github.com/ashlrai/phantom/blob/master/docs/LOCUS-FIRM-FLEET.md). When repos are
 enrolled, Locus is on PATH, and `locus.firm` is still false, `ashlr doctor` /
 preflight soft-warns *consider locus.firm for production* (non-blocking).
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

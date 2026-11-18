@@ -229,6 +229,142 @@ class DispatchClaimTests(unittest.TestCase):
                 self.assertFalse(any(x.get('event') == 'launch' and x.get('job') == 'RQ-LIVE' for x in rows))
 
 
+class MaxRuntimeTests(unittest.TestCase):
+    """RQ-JOB-MAX-RUNTIME-1: a live-but-wedged launch.sh group is killed past its limit, with .rc=124 and REAP TIMEOUT."""
+
+    def hung(self, age, lane='codex-cmp', slots=None, env_extra=None):
+        tmp = build(slots=slots); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        child = subprocess.Popen(['sleep', '300'], start_new_session=True)   # its own group, like launch.sh
+        self.addCleanup(child.wait); self.addCleanup(lambda: (child.poll() is None) and child.kill())   # LIFO: kill, then reap
+        (home / 'stubbin/ps').write_text(f'#!/bin/bash\necho "{child.pid} /bin/bash {r}/bin/launch.sh RQ-HUNG phantom {lane} work"\n')
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\t{lane}\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - age; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        result = tick(home, env_extra)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return home, run, child
+
+    def test_overdue_job_is_terminated_with_rc_124(self):
+        home, run, child = self.hung(7300)
+        self.assertEqual(child.wait(timeout=10), -15)
+        self.assertEqual((run / 'RQ-HUNG.rc').read_text().strip(), '124')
+        self.assertTrue((run / 'RQ-HUNG.maxruntime').exists())
+        self.assertIn('REAP TIMEOUT RQ-HUNG lane=codex-cmp', events(home))
+
+    def test_job_inside_limit_is_left_alone(self):
+        home, run, child = self.hung(3600)
+        self.assertIsNone(child.poll())
+        self.assertFalse((run / 'RQ-HUNG.rc').exists())
+        self.assertNotIn('REAP TIMEOUT', events(home))
+
+    def test_lane_override_in_slots_json(self):
+        slots = {'codex-cmp': {'target': 2, 'floor': 0, 'ceiling': 4, 'hard_cap': 4, 'last_change': 0, 'max_runtime_s': 600}}
+        home, run, child = self.hung(900, slots=slots)
+        self.assertEqual(child.wait(timeout=10), -15)
+        self.assertIn('limit=600s', events(home))
+
+    def test_zero_disables_and_small_values_clamp(self):
+        home, run, child = self.hung(90000, env_extra={'ASHLR_JOB_MAX_RUNTIME_S': '0'})
+        self.assertIsNone(child.poll()); self.assertNotIn('REAP TIMEOUT', events(home))
+        home, run, child = self.hung(100, env_extra={'ASHLR_JOB_MAX_RUNTIME_S': '5'})
+        self.assertIsNone(child.poll())   # clamped to the 300 s floor, so 100 s is still fine
+
+    def test_sigterm_survivor_is_killed_on_a_later_tick(self):
+        home, run, child = self.hung(7300)
+        child.wait(timeout=10)   # the fixture dies on TERM; replay the escalation on a stubborn group instead
+        stubborn = subprocess.Popen(['/bin/bash', '-c', 'trap "" TERM; while :; do sleep 1; done'], start_new_session=True)
+        self.addCleanup(stubborn.wait); self.addCleanup(lambda: (stubborn.poll() is None) and stubborn.kill())
+        r = home / '.ashlr-runs'
+        (home / 'stubbin/ps').write_text(f'#!/bin/bash\necho "{stubborn.pid} /bin/bash {r}/bin/launch.sh RQ-HUNG phantom codex-cmp work"\n')
+        mk = run / 'RQ-HUNG.maxruntime'; t = time.time() - 60; os.utime(mk, (t, t))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(stubborn.wait(timeout=10), -9)
+        self.assertIn('REAP TIMEOUT RQ-HUNG SIGKILL', events(home))
+
+
+class DiskMaintenanceTests(unittest.TestCase):
+    def test_terminal_cleanup_and_sampling_run_every_ten_minutes_even_when_held(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name)
+        root = home / '.ashlr-runs'; (root / 'wt').mkdir()
+        for name in ('disk-growth.py', 'wt_closed_prune.py'):
+            (root / 'bin' / name).write_text('import pathlib, sys\n'
+                'p=pathlib.Path(__file__).parents[1]/"calls"\n'
+                'with p.open("a") as f: f.write(pathlib.Path(__file__).name+" "+" ".join(sys.argv[1:])+"\\n")\n')
+        for expected in (3, 3, 6):
+            if expected == 6:
+                old = time.time() - 601
+                os.utime(root / 'queue/.disk-maintenance.stamp', (old, old))
+            result = tick(home)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                lines = (root / 'calls').read_text().splitlines() if (root / 'calls').exists() else []
+                if len(lines) >= expected: break
+                time.sleep(.02)
+            self.assertEqual(len(lines), expected)
+        self.assertEqual(sum('--apply --json --wtroot' in line for line in lines), 4)
+
+
+class CloudCompletionCountTests(unittest.TestCase):
+    def fixture(self, result=None, grace=False):
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'
+        job = 'RQ-CLOUD-DONE'
+        wt = home / 'Projects/ashlrai/wt' / job
+        wt.mkdir()
+        (r / f'{job}.base').write_text(f'deadbeef phantom {wt} devin\n')
+        if grace:
+            (r / f'queue/run/{job}.dispatched').write_text(str(time.time()))
+        if result is not None:
+            (r / f'{job}.publish').write_text(result + '\n')
+        (r / 'PUBLISH_HOLD').write_text('fixture hold')
+        (r / 'PUBLISH_HOLD.checked').touch()
+        return home, r, job
+
+    def count(self, home):
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads((home / '.ashlr-runs/queue/status.json').read_text())['lanes']['devin']['running']
+
+    def test_terminal_cloud_result_releases_fresh_slot_idempotently(self):
+        for result in ('RESULT PR https://github.com/ashlrai/phantom/pull/1', 'RESULT EMPTY'):
+            for grace in (False, True):
+                with self.subTest(result=result, grace=grace):
+                    home, r, job = self.fixture(result, grace)
+                    ledger = (r / 'metrics/jobs.jsonl').read_text()
+                    for _ in range(2):
+                        self.assertEqual(self.count(home), 0)
+                    self.assertEqual((r / 'metrics/jobs.jsonl').read_text(), ledger)
+                    self.assertTrue((r / f'{job}.base').exists())
+
+    def test_missing_completion_after_api_failure_keeps_cloud_slot(self):
+        for result in (None, 'ERROR provider unavailable', 'RESULT PR'):
+            with self.subTest(result=result):
+                home, r, job = self.fixture(result)
+                old = time.time() - 3600
+                os.utime(r / f'{job}.base', (old, old))
+                for _ in range(2):
+                    self.assertEqual(self.count(home), 1)
+
+    def test_previous_attempt_result_does_not_release_new_launch(self):
+        home, r, job = self.fixture('RESULT EMPTY', grace=True)
+        old = time.time() - 3600
+        os.utime(r / f'{job}.publish', (old, old))
+        self.assertEqual(self.count(home), 1)
+
+    def test_terminal_receipt_admits_waiting_job_on_the_same_tick(self):
+        home, r, _ = self.fixture('RESULT EMPTY', grace=True)
+        slots = held_lanes()
+        slots['devin'] = lane_slot(target=1, floor=1, ceiling=1, last_change=int(time.time()))
+        (r / 'queue/slots.json').write_text(json.dumps(slots))
+        launch_stubs(home)
+        queue_job(home, 'RQ-NEXT', 'devin')
+        self.assertEqual(self.count(home), 1)
+        self.assertTrue(dispatched(home, 'RQ-NEXT'))
+
+
 class SlotDefaultTests(unittest.TestCase):
     def test_missing_devin_slot_seeds_leverage_defaults(self):
         # No devin entry in slots.json: the DEFAULT row seeds target 6, floor 3, ceiling 10, hard_cap 10.
@@ -1070,6 +1206,9 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertNotIn('REAP ', result.stdout)
         self.assertFalse((home / '.ashlr-runs/publish-order').exists())
 
+        status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+        self.assertIn('RQ-EXISTING', status['reaping'])
+
     def test_merged_job_is_not_republished_when_base_survives(self):
         home, env = self.fixture(())
         self.publish_stubs(home)
@@ -1178,6 +1317,10 @@ class DispatchPriorityTests(unittest.TestCase):
         self.assertIn('REAP RQ-DESK-A ', result.stdout)
         self.assertEqual(self.published(home, 1), ['RQ-DESK-A'])
         self.assertTrue(marker.exists())
+        status = json.loads((home / '.ashlr-runs/queue/status.json').read_text())
+        self.assertNotIn('RQ-ORPHAN', status['reaping'])
+        self.assertEqual(status['reap_blocked'], [{'job': 'RQ-ORPHAN', 'reason': 'ownership-unknown'}])
+        self.assertIn('REAP_SKIP ownership-unknown RQ-ORPHAN', events(home))
 
     def test_publisher_without_base_holds_next_publish_handoff(self):
         home, env = self.fixture(())

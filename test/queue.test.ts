@@ -15,6 +15,12 @@ async function store(): Promise<QueueStore> {
 const job = (id = 'RQ-TEST'): QueueJob => ({ id, status: 'READY', priority: 'P0', pool: 'codex-personal', tier: 'frontier', repo: 'phantom', deps: [], scope: 'Own the queue', acceptance: 'Tests pass', claims: [] });
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 describe('queue.v1', () => {
+  it('retires stale PR repairs before shared queue dispatch without claiming work', async () => {
+    const s = await store();
+    execFileSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'contrib/mac/tests', '-p', 'test_dispatchd_repo_rank.py'], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)), env: { ...process.env, HOME: s.directory }, timeout: 45_000,
+    });
+  });
   it('routes shared jobs through real dispatcher ticks with capability, quota and hysteresis fences', async () => {
     const s = await store();
     const output = execFileSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'contrib/mac/tests', '-p', 'test_work_market.py'], {
@@ -39,6 +45,23 @@ describe('queue.v1', () => {
     await withoutLane.add(laneFree);
     expect((await withoutLane.read()).jobs[0].pool).toBeUndefined();
     expect(exportMarkdown(await withoutLane.read())).toContain('pool=any');
+  });
+  it('carries a tier ceiling, data class and work class through JSON and Markdown, and refuses bad ones', async () => {
+    const s = await store();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const args = ['add', 'RQ-CLASSED', '--dir', s.directory, '--json', '--priority', 'P1', '--tier', 'mid', '--repo', 'phantom', '--scope', 'Bulk sweep', '--acceptance', 'Pass'];
+    for (const flags of [['--max-tier', 'standard'], ['--max-tier', 'fast'], ['--min-tier', 'frontier', '--max-tier', 'work'], ['--data-class', 'secret'], ['--work-class', 'huge']]) {
+      expect(await cmdQueue([...args, ...flags])).toBe(1);
+      expect((await s.read()).jobs).toEqual([]);
+    }
+    expect(await cmdQueue([...args, '--max-tier', 'work', '--data-class', 'internal', '--work-class', 'bulk'])).toBe(0);
+    const expected = { max_tier: 'work', data_class: 'internal', work_class: 'bulk' };
+    const doc = await s.read();
+    expect(doc.jobs[0]).toMatchObject(expected);
+    const markdown = exportMarkdown(doc);
+    expect(markdown).toContain('max_tier=work');
+    expect(markdown).toContain('data_class=internal, work_class=bulk');
+    expect(importMarkdown(markdown).jobs[0]).toMatchObject(expected);
   });
   it('keeps a preferred lane as a hint and refuses malformed capability requirements before mutation', async () => {
     const s = await store();

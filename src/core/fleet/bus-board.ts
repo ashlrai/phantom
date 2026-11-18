@@ -439,7 +439,7 @@ export class BusBoard {
         !current || current.machineId !== actor ||
         !this.options.fleet.releaseClaims([current]).includes(task.itemId)
       ) throw new Error('Fleet release refused');
-      if (clearBoardLease(task.itemId).status === 'unavailable') throw new Error('Claim store unavailable.');
+      if (clearBoardLease(task.itemId, actor).status === 'unavailable') throw new Error('Claim store unavailable.');
       delete task.claim;
       return this.taskView(task);
     });

@@ -35,6 +35,7 @@ Check actual imports for a change rather than assuming an acyclic architecture.
 | Session recording/replay and risk | `src/fleet/` (distinct from `src/core/fleet/`) | [Replay boundary](../src/fleet/README.md) |
 | Diff classification | `src/planning/triviality.ts` | Callers and tests found via `rg classifyDiff` |
 | Agent coordination and message contracts | `src/core/agents/`, `comms/` | [Agent Bus v2](AGENT-BUS.md#v2), [channels contract](contracts/CONTRACT-CHANNELS.md) |
+| External bot seats and advisory adapters | `src/core/bots/seats.ts`, `src/core/bots/devin-bot-adapter.ts`, `src/cli/bots.ts`, `src/api/bot-templates.ts`, `src/web-ui/routes/bots/` | [Bot seats](BOT-SEATS.md): quota evidence, lifecycle, write-ahead handoffs and read-only console roster |
 | Authority, policy, security | `src/core/authority/`, `policy/`, `security/` | [Standing authority](STANDING-AUTHORITY.md), [runtime activation authority](RUNTIME_ACTIVATION_AUTHORITY.md) |
 | Console backend | `src/core/web/`, `verse/` | [Verse](VERSE.md), [architecture runtime map](ARCHITECTURE.md#current-runtime-map) |
 | Console frontend | `src/web-ui/main.tsx`, `app/`, `routes/`, `components/`, `hooks/`, `data/` | [Console layout](CONSOLE-LAYOUT.md); component tests are colocated |
@@ -69,22 +70,31 @@ imports, individual files, semantics or contract coverage.
 - `src/mcp/`
 - `src/planning/`
 - `src/raycast/`
+- `src/shared/`
 - `src/tui/`
 - `src/web-ui/`
 <!-- codemap:src:end -->
 
 <!-- codemap:core:start -->
+- `src/core/agentnet/`
 - `src/core/agents/`
+- `src/core/amplify/`
+- `src/core/approvals/`
 - `src/core/ask/`
 - `src/core/ask-flow/`
 - `src/core/authority/`
+- `src/core/autofix/`
 - `src/core/automations/`
 - `src/core/autonomy/`
 - `src/core/autopilot/`
+- `src/core/bots/`
+- `src/core/brand/`
 - `src/core/bridge/`
 - `src/core/caps/`
+- `src/core/ci/`
 - `src/core/classify/`
 - `src/core/cloud/`
+- `src/core/commands/`
 - `src/core/comms/`
 - `src/core/comms-agent/`
 - `src/core/connectors/`
@@ -106,6 +116,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/fabric/`
 - `src/core/fleet/`
 - `src/core/foundry/`
+- `src/core/ft/`
 - `src/core/generative/`
 - `src/core/genome/`
 - `src/core/github/`
@@ -129,17 +140,21 @@ imports, individual files, semantics or contract coverage.
 - `src/core/mcp/`
 - `src/core/memory/`
 - `src/core/metrics/`
+- `src/core/mobile/`
 - `src/core/nodes/`
 - `src/core/observability/`
 - `src/core/observe/`
 - `src/core/onboard/`
+- `src/core/one-ask/`
 - `src/core/openai-agents/`
 - `src/core/org/`
+- `src/core/owner-assist/`
 - `src/core/playbooks/`
 - `src/core/plugins/`
 - `src/core/policy/`
 - `src/core/portfolio/`
 - `src/core/proactive/`
+- `src/core/prs/`
 - `src/core/quality/`
 - `src/core/queue/`
 - `src/core/radar/`
@@ -148,7 +163,11 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router/`
+- `src/core/router-gateway/`
+- `src/core/routines/`
 - `src/core/routing/`
+- `src/core/routing-eval/`
 - `src/core/run/`
 - `src/core/sandbox/`
 - `src/core/seams/`
@@ -157,6 +176,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
+- `src/core/subagent/`
 - `src/core/swarm/`
 - `src/core/teams/`
 - `src/core/toolgraph/`

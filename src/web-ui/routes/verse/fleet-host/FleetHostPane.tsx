@@ -11,9 +11,17 @@ import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
 import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
+import { TailnetPeersCard } from './TailnetPeersCard.js';
+import { PoolReachCard } from './PoolReachCard.js';
+import { ClaimExecutionCard } from './ClaimExecutionCard.js';
+import { ClaimDriftCard } from './ClaimDriftCard.js';
+import { BridgeCheckCard } from './BridgeCheckCard.js';
+import { SurfaceOwnerCard } from './SurfaceOwnerCard.js';
 import { AppsCard } from './AppsCard.js';
 import { DiskForecastCard } from './DiskForecastCard.js';
 import { AllowedAppsCard } from './AllowedAppsCard.js';
+import { MacAppsCard } from './MacAppsCard.js';
+import { BrowserCard } from './BrowserCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
 import { DiskRunwayCard } from './DiskRunwayCard.js';
 import { hostView } from './fleet-host-model.js';
@@ -61,7 +69,9 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
       <p className={styles.headline}>Fleet Mac health</p>
       <button type="button" className={styles.refresh} onClick={refresh}>Refresh</button>
     </header>
+    <MacAppsCard visible={visible} />
     <AllowedAppsCard visible={visible} />
+    <BrowserCard visible={visible} />
     {data === null ? <p className={styles.muted}>The fleet runs API has not landed in this build yet.</p>
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>
       : <>
@@ -109,6 +119,12 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
         <RuntimeIdentityCard visible={visible} />
+        <TailnetPeersCard visible={visible} />
+        <PoolReachCard visible={visible} />
+        <BridgeCheckCard visible={visible} />
+        <ClaimExecutionCard visible={visible} />
+        <ClaimDriftCard visible={visible} />
+        <SurfaceOwnerCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}
   </div>;

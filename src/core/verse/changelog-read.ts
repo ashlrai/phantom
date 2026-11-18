@@ -13,13 +13,18 @@ const MAX_BULLET_CHARS = 280;
 
 export const WHATS_NEW_VERSION = /^\d+\.\d+\.\d+$/;
 
-/** "[text](url)" → "text"; trailing "(#123)" and "([abc1234](url))" references dropped. */
+/**
+ * "[text](url)" → "text"; trailing "(#123)" and "([abc1234](url))" references
+ * dropped; "**scope:**" emphasis unwrapped, since the card renders plain text
+ * and would otherwise show literal asterisks.
+ */
 function cleanBullet(raw: string): string {
   return raw
     .replace(/\s*\(\[[0-9a-f]{7,40}\]\([^)]*\)\)/gi, '')
     .replace(/\s*\(\[#\d+\]\([^)]*\)\)/g, '')
     .replace(/\s*\(#\d+\)/g, '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_BULLET_CHARS);
@@ -47,7 +52,7 @@ export function changelogSection(markdown: string, version: string): string[] | 
 }
 
 /** Nearest ancestor of this module holding a package.json (dist/ or src/ layouts both resolve). */
-function packageRoot(): string | null {
+export function packageRoot(): string | null {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (;;) {
     if (existsSync(join(dir, 'package.json'))) return dir;

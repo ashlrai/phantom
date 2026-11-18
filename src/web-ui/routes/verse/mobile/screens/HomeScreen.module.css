@@ -1,4 +1,4 @@
-/* routes/verse/mobile/screens/HomeScreen.module.css — Home's fleet card and stat tiles. */
+/* routes/verse/mobile/screens/HomeScreen.module.css — Home's health line and the unknown-home card. */
 
 .fleet {
   display: grid;
@@ -15,21 +15,6 @@
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.92em;
-}
-
-.lines {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.line {
-  margin: 0;
-  font-size: 1.05rem;
-  line-height: 1.35;
-}
-
-.line[data-tone="attention"] {
-  color: var(--status-danger, var(--text-primary));
 }
 
 .badgeSkeleton {
@@ -91,13 +76,34 @@ button.stat:active {
   gap: var(--space-4);
 }
 
-.shortcuts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  gap: var(--space-2);
-  margin-bottom: var(--space-4);
+/* Home (HomeGlance.tsx): the one-line fleet health. It wraps on a narrow phone rather than clipping. */
+.health {
+  margin: 0 0 var(--space-3);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
 }
 
-.shortcuts button {
-  min-height: 44px;
+.health[data-tone='red'] {
+  color: var(--status-danger-fg);
+}
+
+.health[data-tone='unknown'] {
+  color: var(--text-secondary);
+}
+
+.needs {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0 0 var(--space-3);
+}
+
+.askText,
+.statHint {
+  overflow-wrap: anywhere;
+}
+
+.askText,
+p.statHint {
+  margin: 0;
 }

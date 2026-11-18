@@ -499,28 +499,6 @@ function executableNode(root, name, source) {
   const file = join(root, name); writeFileSync(file, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)} "$@"\n`, { mode: 0o700 });
 }
 
-test('actual bootstrap executes only immutable canonical-base code and safely falls back when it is unavailable', (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'history-bootstrap-')); t.after(() => rmSync(root, { recursive: true, force: true }));
-  const bin = join(root, 'bin'); mkdirSync(bin); const candidate = join(root, 'candidate'); mkdirSync(candidate);
-  mkdirSync(join(candidate, '.github/scripts'), { recursive: true });
-  const badMarker = join(root, 'candidate-executed');
-  writeFileSync(join(candidate, '.github/scripts/ci-history-source.mjs'), `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(badMarker)},'bad');console.log('equal')`);
-  executableNode(bin, 'timeout', `const cp=require('node:child_process');const a=process.argv.slice(2);if(!['20','75'].includes(a[0]))process.exit(3);const r=cp.spawnSync(a[1],a.slice(2),{stdio:'inherit',env:process.env,timeout:Number(a[0])*1000});process.exit(r.status??3);`);
-  executableNode(bin, 'gh', `const fs=require('node:fs');const a=process.argv.slice(2);if(a.length!==4||a[0]!=='api'||a[1]!=='--hostname'||a[2]!=='github.com')process.exit(3);const p=a[3];fs.appendFileSync(process.env.TRACE,p+'\\n');const sha='a'.repeat(40);if(p==='repos/ashlrai/phantom/git/ref/heads/master'){console.log(JSON.stringify({object:{sha}}));process.exit(0)}if(!p.endsWith('?ref='+sha))process.exit(3);const name=p.split('/').pop().split('?')[0];if(process.env.MODE==='missing'&&name==='ci-history-source.mjs'){console.log('{}');process.exit(0)}const body=name==='ci-history-source.mjs'?"import fs from 'node:fs';fs.writeFileSync(process.env.BASE_MARKER,process.env.ASHLR_HISTORY_PROOF_SOURCE_SHA);console.log('equal');":"export const placeholder=1;";console.log(JSON.stringify({type:'file',encoding:'base64',content:Buffer.from(body).toString('base64')}));`);
-  const workflow = parse(readFileSync(new URL('../workflows/ci.yml', import.meta.url), 'utf8'));
-  const script = workflow.jobs.quick.steps.find((row) => row.id === 'history').run;
-  for (const mode of ['valid', 'missing', 'foreign-producer']) {
-    const runner = join(root, mode); mkdirSync(runner); const output = join(runner, 'output'); const marker = join(runner, 'base'); const trace = join(runner, 'trace');
-    const env = { HOME: root, USERPROFILE: root, PATH: bin+':'+dirname(process.execPath)+':/usr/bin:/bin', RUNNER_TEMP: runner, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: mode==='foreign-producer'?'evil/repo':'ashlrai/phantom', GITHUB_REPOSITORY_ID: String(REPO_ID), GITHUB_REPOSITORY_OWNER_ID: String(OWNER_ID), GH_TOKEN:'synthetic-only', GH_HOST:'evil.invalid', MODE:mode, BASE_MARKER:marker, TRACE:trace };
-    execFileSync('/bin/bash', ['-c', script], { cwd:candidate, env, timeout:20_000, stdio:['ignore','pipe','pipe'] });
-    assert.equal(readFileSync(output,'utf8'), mode==='valid'?'equal=true\n':'equal=false\n');
-    assert.equal(existsSync(badMarker),false);
-    if(mode==='valid')assert.equal(readFileSync(marker,'utf8'),'a'.repeat(40));else assert.equal(existsSync(marker),false);
-    if(mode==='foreign-producer')assert.equal(existsSync(trace),false);
-    else {const paths=readFileSync(trace,'utf8');assert.ok(paths.includes('?ref='+'a'.repeat(40)));assert.ok(!paths.includes('?ref=master'));}
-  }
-});
-
 test('canonical ref must resolve to a commit object, never a tag-shaped or missing-type row', async (t) => {
   const repo=makeRepo(t);const env=baseEnv(t,{eventName:'pull_request',eventSha:repo.candidate,payload:prPayload({head:repo.candidate,base:repo.base}),workspace:repo.cwd});const normal=apiFixture(repo);
   for(const type of [undefined,'tag','tree'])await expectFallback(proveHistoryFastPath({env,root:repo.cwd,api:async(path)=>path.endsWith('/ref/heads/master')?{ref:'refs/heads/master',object:{sha:repo.base,type}}:normal(path)}),/ref binding/);

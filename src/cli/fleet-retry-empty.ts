@@ -13,7 +13,8 @@ export function planEmptyRetries(queue: string, jobs: EmptyJobResult[], receipts
   const lines = queue.split(/\r?\n/);
   const output: string[] = [];
   for (const job of jobs) {
-    if (!['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id))) continue;
+    // A class a model picked is advisory; only a rule's class may queue a retry.
+    if (job.source === 'decide' || !['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id))) continue;
     const id = job.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const entries = lines.filter(line => new RegExp(`^\\s*-\\s+(?:\\S+\\s+)*${id}\\s*\\(`).test(line));
     if (entries.length !== 1 || /\bretry-empty-source=/.test(entries[0]!)) continue;

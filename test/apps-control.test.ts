@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdApps, parseAllowlist, type AppsFeedEntry } from '../src/cli/apps-control.js';
+import { runAppsControl } from '../src/core/apps-control.js';
 import {
   createAppControl, detectUnsavedState, parseAxTree, parseRunningApps, type ToolCall,
 } from '../src/core/verse/desktop-adapters.js';
@@ -174,7 +175,8 @@ describe('phm apps', () => {
 
   it('rejects unknown verbs, missing targets and control characters with exit 2', async () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    for (const args of [[], ['dance'], ['quit'], ['list', 'x'], ['quit', 'No\nPe'], ['quit', '--json']]) expect(await cmdApps(args, base())).toBe(2);
+    // Bare `phm apps` is the known-app report (test/apps-known.test.ts), not a usage error.
+    for (const args of [['dance'], ['quit'], ['list', 'x'], ['quit', 'No\nPe'], ['quit', '--json']]) expect(await cmdApps(args, base())).toBe(2);
     stderr.mockRestore();
   });
 
@@ -210,6 +212,71 @@ describe('phm apps', () => {
     expect(JSON.parse(lines[0]!)).toMatchObject({ ok: true, action: 'quit', outcome: 'done', logged: true });
     expect(feed.map((e) => [e.phase, e.action, e.outcome])).toEqual([['start', 'quit', undefined], ['result', 'quit', 'done']]);
     expect(d.names()).toContain('computer_ax_press');
+  });
+
+  it('refuses Devin by name and bundle id, while an unprotected app still quits', async () => {
+    allow(['ai.cognition.devin', 'Notes']);
+    const devinApps = APPS.replace(
+      '- Phantom (ai.ashlr.desktop): never available',
+      '- Devin (ai.cognition.devin): up to full control; this chat holds full control\n- Phantom (ai.ashlr.desktop): never available',
+    );
+    for (const target of ['Devin', 'ai.cognition.devin']) {
+      const desktop = fakeDesktop(CLEAN, devinApps);
+      const result = await runAppsControl({ action: 'quit', app: target }, { ...base(), call: desktop.call });
+      expect(result).toMatchObject({ exit: 1, report: { ok: false, outcome: 'refused', code: 'protected' } });
+      expect(desktop.names()).not.toContain('computer_ax_press');
+    }
+
+    const desktop = fakeDesktop();
+    const result = await runAppsControl({ action: 'quit', app: 'Notes' }, { ...base(), call: desktop.call });
+    expect(result).toMatchObject({ exit: 0, report: { ok: true, outcome: 'done' } });
+    expect(desktop.names()).toContain('computer_ax_press');
+  });
+
+  it('checks the resolved live app name when allowlist metadata does not identify it', async () => {
+    allow([{ name: 'Notebook', bundleId: 'com.apple.Notes' }]);
+    const apps = APPS.replace(
+      '- Notes (com.apple.Notes): up to full control; this chat holds full control',
+      '- Devin (com.apple.Notes): up to full control; this chat holds full control',
+    );
+    const desktop = fakeDesktop(CLEAN, apps);
+    const result = await runAppsControl({ action: 'quit', app: 'Notebook' }, { ...base(), call: desktop.call });
+    expect(result).toMatchObject({ exit: 1, report: { ok: false, outcome: 'refused', code: 'protected' } });
+    expect(desktop.names()).not.toContain('computer_ax_press');
+  });
+
+  it('refuses a resolved Chrome identity through an unannotated Browser alias', async () => {
+    allow(['Browser']);
+    const apps = APPS.replace(
+      '- Notes (com.apple.Notes): up to full control; this chat holds full control',
+      '- Browser (com.google.Chrome): up to full control; this chat holds full control',
+    );
+    const desktop = fakeDesktop(CLEAN, apps);
+    const result = await runAppsControl({ action: 'quit', app: 'Browser' }, { ...base(), call: desktop.call });
+    expect(result).toMatchObject({ exit: 1, report: { ok: false, outcome: 'refused', code: 'protected' } });
+    expect(desktop.names()).not.toContain('computer_ax_press');
+    expect(desktop.names()).not.toContain('computer_ax_tree');
+  });
+
+  it('does not re-resolve an app after an empty preflight list', async () => {
+    allow([{ name: 'Notebook', bundleId: 'com.openai.codex' }]);
+    let listCalls = 0;
+    const names: string[] = [];
+    const empty = ['0 running apps:', '<untrusted id="a" source="s">', '</untrusted id="a">'].join('\n');
+    const codex = ['1 running app:', '<untrusted id="a" source="s">',
+      '- Codex (com.openai.codex): up to full control; this chat holds full control', '</untrusted id="a">'].join('\n');
+    const call: ToolCall = async name => {
+      names.push(name);
+      if (name === 'computer_list_apps') return ok(++listCalls === 1 ? empty : codex);
+      if (name === 'computer_ax_tree') return ok(treeText(CLEAN));
+      if (name === 'computer_ax_press') return ok('Pressed');
+      return err(`unexpected tool ${name}`);
+    };
+    const result = await runAppsControl({ action: 'quit', app: 'Notebook' }, { ...base(), call });
+    expect(result).toMatchObject({ exit: 0, report: { ok: true, outcome: 'done', detail: 'not running; nothing to quit.' } });
+    expect(listCalls).toBe(1);
+    expect(names).not.toContain('computer_ax_tree');
+    expect(names).not.toContain('computer_ax_press');
   });
 
   it('routes a quit with unsaved state to needs-you (exit 3) and does not press Quit', async () => {
@@ -266,7 +333,8 @@ describe('phm apps', () => {
   });
 
   it.each([
-    ['request', 'quit', 'Notes'], ['quit', 'Phantom'], ['open', 'Phantom'], ['focus', 'Phantom'], ['open', 'Messages'],
+    // quit Phantom is refused as protected (test/apps-known.test.ts), so it is not queued.
+    ['request', 'quit', 'Notes'], ['request', 'open', 'Phantom'], ['open', 'Phantom'], ['focus', 'Phantom'], ['open', 'Messages'],
   ])('queues %j without touching the desktop or launcher', async (...args) => {
     allow(['Notes', { name: 'Phantom', bundleId: 'ai.ashlr.desktop' }, { name: 'Messages', mode: 'request' }]);
     const d = fakeDesktop();

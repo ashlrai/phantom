@@ -4,10 +4,13 @@ A ready.tsv pool change is a route proposal. In the shared work market, an
 enqueue-time lane is only a hint (`assigned:false`); first runnable assignment
 starts residency. Existing receipts without `assigned` remain binding. See
 [the work market](QUEUE.md). The dispatcher keeps the first observed
-pool for 60 minutes after each accepted decision. Only explicit `auth_failed: true`
-(including the dispatcher's repeated-auth-failure hold) or numeric `quota: 0` in the
-current lane's slots.json entry permits an early move. Congestion, rate limits,
-missing telemetry and manual holds do not. A launch receipt locks the pool forever,
+pool for 60 minutes after each accepted decision. Only hard-down evidence in the
+current lane's slots.json entry permits an early move: explicit `auth_failed: true`
+(including the dispatcher's repeated-auth-failure hold), numeric `quota: 0`, or a
+provider backoff hold (`held_by: autobackoff`, or a `credits exhausted` hold). The
+backoff holds match the fleet controller's reroute sources (RQ-CONSTRAINT-AUDIT-1).
+Congestion, rate limits without a hold, missing telemetry, manual holds and lanes on
+the operator HOLD list do not. A launch receipt locks the pool forever,
 even after completion. Reuse a new job ID for a new line of work.
 
 Each job may change pools twice in a rolling six hours. Initial assignment is not
@@ -54,3 +57,45 @@ live routing writer uses this reconciliation boundary; raw live history is still
 needed for production replay. No live file, sandbox, wrapper or pin is changed.
 
 A dry-run preview after review is `contrib/mac/install.sh --dry-run --json`.
+
+## Post-merge quality feedback
+
+The candidate dispatcher probes `phm fleet eval-report --jobs <runs>/metrics/jobs.jsonl
+--days 30 --json` in parallel with its other readings, with an eight-second process-group
+deadline. The controller waits at most 250 ms for an unfinished probe. A host-supplied
+`<runs>/metrics/eval-prs.json` export is included with `--prs` only when its modification
+time is at most 15 minutes old. Use the existing eval-report export format:
+
+```sh
+gh pr list --repo ashlrai/phantom --state merged --limit 1000 --json url,number,title,mergedAt,mergeCommit,files,statusCheckRollup,commits,body
+```
+
+The host observation job must refresh that export atomically. No export producer or
+timer is installed by this change. Ledger-only merges retain the eval report's
+`unobserved` classification; lack of adverse observations never proves stability.
+The report itself must be fresh within 15 minutes and its evidence sources must
+not be degraded. Missing evidence, duplicate PRs and fewer than 20 resolved merges
+per lane produce a null score and no target influence. Pending and unobserved
+merges never count toward that minimum.
+
+The score is stable/resolved, minus 0.1 times the positive difference between
+failed-check and clean-check adverse rates. That CI term is measured only with
+at least five resolved PRs in each cohort; otherwise it stays null. A score at
+or below 0.80 selects a 0.75 preference weight; recovery requires at least 0.90.
+Between those thresholds the prior decision holds, and transitions require one
+hour since the last accepted decision. Repeated decisions do not reset the clock.
+State persists in `queue/fleet-controller.json` across dispatcher restarts.
+
+Quality multiplies the existing effective-target factor even on a healthy host.
+The bounded floor, desired target, ceiling, hard cap and Security pin still win;
+freeze remains floor-only. Existing holds, KILL, admission and tier checks stay
+on their original paths. The existing controller mode controls activation:
+shadow computes receipts; enforce with phase B applies effective targets.
+Job-level routing residency and move caps remain independent.
+
+Each lane emits a `route.quality.v1` receipt with epoch-second timestamps, resolved
+sample count, nullable score/CI delta, old/new weight, reason, baseline/proposed
+targets and shadow/enforce mode. The controller ledger retains these receipts;
+`phm route explain --json` also exposes the latest as `laneQuality`, independently
+of per-job route-state availability. Missing receipts are null. Source dispatcher
+and controller changes require Security review and re-pinning before live install.

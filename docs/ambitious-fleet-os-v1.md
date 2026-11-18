@@ -77,3 +77,7 @@ This work does **not** expand merge, deployment, publication, provider-token, or
 - Browser: 1440x900 and 390x844; no console errors or warnings; mobile settings containment and focus restoration verified.
 
 Status: source-ready in draft PR #225 for protected review. Resident activation remains intentionally separate and is not claimed by this branch.
+
+## Historical product context
+
+The [original four-pillar vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) is preserved as a dated artifact. Current product direction remains the [North Star](NORTH-STAR.md).

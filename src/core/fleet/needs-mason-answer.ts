@@ -27,6 +27,8 @@ export interface NeedsMasonAnswer {
   /** Scrubbed surface label recorded at resolution time. */
   source: string;
   resolvedAt: string;
+  /** Verified id that answered, present only when the writer recorded one (approvals). */
+  answeredBy?: string;
 }
 
 export type NeedsMasonAnswerResult =
@@ -39,7 +41,7 @@ export interface NeedsMasonAnswerDeps { list?: typeof listBusInboxAfter }
 function answerFields(body: unknown, itemId: string): Omit<NeedsMasonAnswer, 'itemId'> | null {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
   const record = body as Record<string, unknown>;
-  const { kind, item, reply, source, resolvedAt } = record;
+  const { kind, item, reply, source, resolvedAt, answeredBy } = record;
   if (kind !== NEEDS_MASON_RESOLVED_KIND || record.itemId !== itemId ||
       typeof item !== 'string' || !item.length || item.length > ITEM_TEXT_MAX ||
       (reply !== undefined && (typeof reply !== 'string' || !reply.length || reply.length > NEEDS_MASON_REPLY_MAX)) ||
@@ -51,12 +53,14 @@ function answerFields(body: unknown, itemId: string): Omit<NeedsMasonAnswer, 'it
     reply: typeof reply === 'string' ? scrubSecrets(reply) : null,
     source: scrubSecrets(source),
     resolvedAt: scrubSecrets(resolvedAt),
+    ...(typeof answeredBy === 'string' && /^[A-Za-z0-9._:@-]{1,64}$/.test(answeredBy) ? { answeredBy } : {}),
   };
 }
 
 /**
  * Scan every retained live receipt (bounded by the store's own 1024-message
- * window) for the envelope `needs-mason-resolved-<id>` routed mason -> leaders.
+ * window) for the envelope `needs-mason-resolved-<id>` routed to leaders.
+ * The sender is 'mason' for Mason's own surfaces and 'leader' for agent relays.
  * The deterministic id is claimed by resolveNeedsMason, so a malformed body
  * under it — or a well-formed body under any other id — is ignored rather
  * than reported; no retained live match is always 'unknown', never a guess.
@@ -83,7 +87,7 @@ export function readNeedsMasonAnswer(itemId: unknown, options: BusInboxOptions =
     }
     for (const receipt of result.messages) {
       const { envelope } = receipt;
-      if (envelope.id !== wanted || envelope.from !== 'mason' || envelope.to !== 'leaders') continue;
+      if (envelope.id !== wanted || (envelope.from !== 'mason' && envelope.from !== 'leader') || envelope.to !== 'leaders') continue;
       const answer = answerFields(envelope.body, itemId);
       if (answer) return { status: 'found', id: envelope.id, cursor: receipt.cursor, receivedAt: receipt.receivedAt, answer: { itemId, ...answer } };
     }

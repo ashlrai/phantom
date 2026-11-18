@@ -135,6 +135,17 @@ def parse_outcomes(notes, members):
     return {j: seen.get(j, "unreported") for j in members}
 
 
+def parse_details(notes, members):
+    """Keep the last checklist reason alongside the legacy outcome, bounded to one plain line."""
+    text = notes[:262144]
+    reasons = {}
+    for m in CHECK.finditer(text):
+        tail = text[m.end():].split("\n", 1)[0].lstrip(" \t:—–-")
+        reasons[m.group("job")] = " ".join(tail.split())[:500] or None
+    return {job: {"outcome": outcome, "reason": reasons.get(job)}
+            for job, outcome in parse_outcomes(text, members).items()}
+
+
 # ---- self-improvement metrics -------------------------------------------------------------------
 def _epoch(ts):
     try:

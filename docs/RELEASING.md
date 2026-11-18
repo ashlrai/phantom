@@ -11,8 +11,8 @@
 > Both qualification profiles require exact-source hosted CI, independent Audit and trusted attestation
 > remain prerequisites. Native desktop finalization, signed asset publication,
 > installation and resident activation are separate steps. The frozen
-> `release.yml` and `promote.yml` procedures in the archive describe the historical
-> 3.3.2 lane; they are not the current publisher. Publication does not activate
+> `release.yml` procedure in the archive describes the historical
+> 3.3.2 lane; it is not the current publisher. Publication does not activate
 > provider credentials, spending permissions or resident autonomy.
 
 <a id="current-canonical-source-candidate"></a>
@@ -34,7 +34,7 @@ preserved only as immutable historical evidence.
 The artifact installer remains a separate maintenance operation. Existing legacy
 local-production policy receipts do not admit the canonical profile. Public
 registry acceptance and installed startup acceptance remain separate. The [historical release archive](RELEASING-HISTORICAL.md) preserves earlier
-receipts and procedures unchanged; its instructions are not the current lane.
+receipts and procedures; its instructions are not the current lane.
 
 ## Keep candidate metadata consistent
 
@@ -57,7 +57,23 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   the exhaustive platform suites and the existing seven-day Mac rotation.
   Failed jobs stay red and emit scrubbed `tier=work` repair lines in the
   `phantom-fixup-queue` artifact. Router ingestion is a separate operation.
-- At `0,30 * * * *`, or manual dispatch with `release_gate=true`: reuse a
+  Forty minutes before each of those full runs (`37 5,11,17,23 * * *`),
+  [Preflight fixer](../.github/workflows/preflight-fixer.yml) runs the affected
+  tests since the last green full run plus test paths named by open
+  `p0-fix-forward` issues. Auto-tag starts that same workflow with
+  `workflow_dispatch` on master. The fixer has no `workflow_run` trigger. A
+  dispatch skips unless master still owes a published release, and a second
+  dispatch for the same SHA inside six hours does not run the suite again.
+  It uploads `preflight-reds.json`
+  and updates one `p0-fix-forward` issue. Each failing test also gets its own
+  issue with a stable `RQ-PREFLIGHT-<test>` line in the RQ-FIXUP shape, so a
+  lane can pick it up before the scheduled run. The weekly
+  [Release flow metrics](../.github/workflows/release-flow-metrics.yml) job
+  records the scheduled full-run pass rate and the time from the tagged
+  commit to `published_at` in
+  [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
+  The committed file is the baseline; each weekly run uploads a fresh copy.
+- On manual dispatch with `release_gate=true` (release-prep.yml once per master SHA, and Auto-tag on a tag): reuse a
   completed successful **push** CI run for the exact master SHA. The unsigned
   combined `Desktop release smoke` job reuses an immutable artifact for that
   source when available, otherwise builds once with cached compiler inputs.
@@ -143,10 +159,10 @@ reproducible evidence and a linked issue in the existing ledger.
 
 ### Patch cadence and notes
 
-The existing Release PR workflow evaluates new green master commits every
-30 minutes. `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
-1440 minutes. The continuous release train raises any value below 60 to 60,
-so a release is cut at most hourly. It requests a patch bump, then synchronizes
+The Release PR workflow and the release train both wake every 5 minutes.
+`RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
+1440 minutes, and defaults to 5. The train does not raise that value.
+It requests a patch bump, then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
 release PR. Auto-tag creates the tag and draft only after the exact commit's
 required checks succeed. Signed publication then makes the complete updater
@@ -165,10 +181,12 @@ or trusted publishing. It resumes the sanctioned jobs and records
 
 What runs without a per-release approval:
 
-- A green `release-please` pull request is merged at most hourly, and only
+- A green `release-please` pull request is merged when the cadence is due
+  (default 5 minutes), and only
   when its version is the next patch, its head is `release-please--*`, and
-  GitHub Actions checks on that head are success. The merge uses the existing
-  release app token and has no admin flag.
+  GitHub Actions checks on that head have no pending or failing results
+  (`skipped` path-filtered jobs do not count as failures). The merge uses the
+  existing release app token and has no admin flag.
 - A release-please tag whose commit is an ancestor of master (compare
   `tag...master` status `ahead`, or `identical` when it is master HEAD) is
   the candidate when required CI on that exact SHA is green. Diverged and
@@ -176,13 +194,43 @@ What runs without a per-release approval:
   tags. A green open release PR for the next patch is still enqueued only
   after its own checks are green. The Release PR workflow independently
   checks green master, cadence and version carriers.
+- Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
+  release gate is green. The train treats that tagged SHA as the candidate
+  when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
+  release-gate receipt is green. The commit subject is not required. Receipt,
+  digest, and attestation checks stay bound to that SHA. `v3.30.34` is never
+  patched, published, deleted, or moved, including when a newer candidate is
+  selected.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
+- Only the release-please PR changes the release version. The `Quick
+  typecheck` job refuses a pull request that changes the `package.json`
+  version or `.release-please-manifest.json` unless its head is a
+  `release-please--*` branch of `ashlrai/phantom`
+  (`.github/scripts/release-version-provenance.mjs`). A hand bump that lands
+  anyway still gets a tag and draft from auto-tag. The train skips it as
+  `release_message_mismatch`, keeps admitting the last release-please tag and
+  merging the next release PR. That release then supersedes the orphan draft,
+  which stays unpublished. This happened with `v3.30.25` (#4098) and `v3.30.32`
+  (#4735). Recover with the next release-please patch. Do not retag, and do not
+  widen the release-subject match.
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
   candidate. The ref is the tag when the tag is behind master, and `master`
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
-  the candidate rather than a newer master HEAD. The half-hour schedule on
-  master is unchanged.
+  the candidate rather than a newer master HEAD. There is no half-hour
+  schedule; release-prep and Auto-tag dispatch `release_gate=true`.
+- A candidate whose master push CI run concluded red can never build:
+  release-build reuses only a green exact-source push run. When that
+  candidate has no build, master is strictly past it and still carries its
+  version, and the required checks (the fast Merge Gate) on master HEAD are
+  green, the train fixes forward. The plan lists the candidate in
+  `skippedTags` and `superseded`, sets `advance` to the next patch at master
+  HEAD with reason `candidate-push-ci-red`, and its next step is
+  `release-pr`. It then enqueues a green release PR for exactly that patch,
+  or dispatches the Release PR workflow, which re-checks green master and
+  cadence itself. That run writes nothing to the skipped tag or its draft.
+  The new tag then proceeds through build, attest, npm, feed, docs and
+  finalize as usual.
 - When that build artifact exists, the train dispatches
   `attest-ci-build.yml` and then `publish-canonical-npm.yml` with the exact
   run, attempt, and artifact ids. The publisher's own admission still runs.
@@ -303,6 +351,10 @@ only after its original-asset qualification and required Stop/drain and Quit.
 An npm version, GitHub release or downloaded archive does not establish installed
 startup acceptance. Use the [desktop install guide](../desktop/README.md#install)
 for supported paths and the locally signed, non-notarized app limitations.
+For an existing managed CLI, see [managed upgrades](../desktop/README.md#upgrade-an-existing-managed-install):
+`phm desktop install --upgrade` plans the switch; explicit `--apply` uses resident
+stop but never restarts it. Journaled `--rollback` is separate from release
+publication. Any Touch ID grant and resident restart remain owner actions.
 
 Website promotion, provider sign-ins, spending permissions and resident fleet
 activation are separate verified operations. Neither this guide nor a version
@@ -442,13 +494,32 @@ lanes retain their separate ownership.
 
 ### Check release status
 
-Run `phm release status` for a read-only table across the seven enrolled Ashlr
-repositories, or add `--json` for the `phantom.release-status.v1` report. The
-latest tag is GitHub's most recently listed tag; assets belong to the release
-for that tag, and unreleased commits count commits on the default branch ahead
-of it. The Phantom row also shows the HTTP status of the public updater feed.
-`Unknown` (JSON `null`) means the observation could not be made, including when
-a tag has no GitHub release. Other repositories have no updater feed check.
-GitHub access uses the existing `gh` authentication. The command changes no
-release settings. `phm release status --file <path>` continues to inspect a
-local release-train state file.
+`phm release status` emits `phantom.release-status.v2` JSON by default; use
+`--text` for people. The existing `repos` rows remain; `release` contains the
+same Phantom fields as the Fleet goals Release card and its **See log** action.
+Only local refs, `release-sign/last-released-tag` and SHA-bound autorun receipts
+and logs are read. No network checks run. Tags alone do not prove publication;
+publication time needs a saved release record. Missing evidence is JSON `null`.
+Signed assets and updater HTTP are the last recorded check, dated `recordedAt`.
+Merged PRs count distinct merge/squash PR numbers on the default branch's first
+parent history; shallow or unavailable history is unknown. The planned candidate
+and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
+(the train's five-minute default); an overdue ETA stays overdue, not a promise
+to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
+`--file <path>` still inspects a saved release-train state file.
+
+### Draft release notes
+
+Run `phm release notes` inside a repository for Markdown since its latest
+reachable stable version tag, or choose `--since v3.30.35`. It reads the current
+branch's mainline, including squash and ordinary GitHub PR merges. Fetch history
+and tags first when the requested range is unavailable. No network calls occur.
+`--json` returns `phantom.release-notes.v1` with `since`, `head`, `summary` and
+ordered `groups` (New, Improved, Fixed, Internal); entries carry text, PRs and
+commit SHAs. Direct commits without a PR retain their short SHA in Markdown.
+Opaque subjects use touched files as context, without inferring user benefits.
+Add `--write` to prepend notes inside `CHANGELOG.md`'s existing `Unreleased`
+section. Repeated writes replace only the generated block, preserving manual
+entries and release history. New/Improved become Added/Changed in the changelog.
+No version, tag, release or workflow is changed. Invalid flags exit 2; unreadable
+history or an unsupported changelog exits 1 (JSON errors have `ok: false`).

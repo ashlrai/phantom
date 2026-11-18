@@ -800,6 +800,16 @@
   }
 }
 
+/* Phone width: an 11px micro label is too small to read on a phone, so the
+ * smallest type step becomes the 12px one (`phm mobile check` holds text at
+ * 12px or more at 390px). It still multiplies by the operator's text scale. */
+@media (max-width: 479.98px) {
+  :root {
+    --text-2xs-size: calc(12px * var(--ui-text-scale));
+    --text-2xs-line: calc(16px * var(--ui-text-scale));
+  }
+}
+
 /* ===========================================================================
  * Radius scale — data-radius scales the whole ramp at once so a component
  * never has to know which setting is active. --radius-full is unaffected

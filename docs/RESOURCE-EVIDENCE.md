@@ -1,5 +1,28 @@
 # Resource readings and credit balances
 
+## Lane allowance cards
+
+The Resources drawer reads `GET /api/usage/lanes` to show each lane's recorded
+allowance, remaining amount, reset countdown and observation age alongside the
+router's burn, balanced or preserve posture. Missing readings remain unknown;
+stale readings keep their last values with a stale label, not fresh headroom.
+History sparklines use recorded samples. Devin cards separate weekly ACUs and
+in-flight reservations from the Lightning/Flash preview expiry; absent preview
+pricing evidence is unknown, never assumed free. API USD credit pools are
+tagged `api-credit`; local or unrecognized router cost classes stay unknown.
+
+## Lane history
+
+`phm usage history --lane devin --json` reads full-resolution measured points;
+`--lane` accepts an allowance id, dispatch lane or sensor lane. `--runs-dir <abs>`
+selects another runs directory. Missing history is an empty successful result.
+The private `state/resource-live-history.json` keeps seven days, up to 2016 points
+per allowance, skipping observations less than five minutes apart. Unverified
+polls add nothing. Devin weekly readings feed the `devin` allowance automatically.
+The Resources rail selects the last real point per hour and leaves gaps unconnected.
+Burn requires at least fifteen minutes of contiguous measurements within six hours
+in one reset window; a decrease or gap over thirty minutes breaks the window.
+
 Phantom keeps each account's subscription windows, native credit units, captured dollar balances, and operator estimates separate. The resource sidebar uses the same live capacity model as the resource drawer. Refreshing a reading does not renew its original observation or expiration.
 
 Summary counts describe accounts **with current usage** and accounts whose usage is
@@ -194,6 +217,101 @@ not guarantee a seat qualifies. Resident daemons start the publisher at startup
 and check every minute outside tick dispatch, sampling at most every five minutes.
 `ASHLR_DAEMON_CAPACITY_PUBLISHER=0` disables automatic daemon publication.
 
+The Resources rail reads `<runs>/state/resource-live.json`, not `capacity.json`.
+Each resident publisher cycle also refreshes that sidecar with bounded sources.
+Evidence order is official API reports where supported, official native CLI
+readings (including the capacity snapshot), own-call metadata, then opted-in
+visible-page fallback. A fresh direct CLI reading wins over the snapshot.
+Original `observed_at` timestamps survive publication; `publishedAt` is never
+usage evidence. Readings expire after 15 minutes or an earlier native deadline.
+Unknown usage and resets stay null. Sidecar confidence is `high` for official,
+`medium` for own-call, `low` for visible-window/operator-entry, and null for
+unverified readings; confidence is not spending authority.
+
+Configure `usage.liveSources` in `~/.ashlr/config.json`:
+
+```json
+{
+  "usage": { "liveSources": {
+    "codexPersonalHome": "/absolute/pool-personal",
+    "codexCmpHome": "/absolute/pool-company",
+    "accountsRoot": "/absolute/accounts",
+    "codexSeatMap": { "personal-seat-id": "codex-personal", "company-seat-id": "codex-cmp" },
+    "anthropicCost": { "adminKeyHandle": "ANTHROPIC_ADMIN_KEY", "creditUsd": 50, "windowStart": "2026-11-01T00:00:00Z" },
+    "operatorPageFallback": false
+  } }
+}
+```
+
+Seat IDs come from configured native accounts; labels never infer billing
+identity. Multiple matching seats are ambiguous and stay unknown. Claude uses
+the single Claude seat's `seven_day` window; Codex uses the most-used native
+account window. Pool homes must pass the existing isolated-home checks.
+`PHANTOM_SENSOR_CODEX_PERSONAL_HOME`, `PHANTOM_SENSOR_CODEX_CMP_HOME` and
+`PHANTOM_RESOURCE_LIVE_ACCOUNTS_ROOT` override the corresponding config paths.
+
+Anthropic's [cost report](https://platform.claude.com/docs/en/api/beta/organization/cost_report/retrieve)
+is an admin-key, organization-wide USD cost report, not a credit-balance API.
+The configured handle is an environment-variable name served by Phantom Secrets;
+only the isolated `phantom exec` worker accesses it. Configure the binding in
+Secrets, never a key value in Phantom config. Amounts are reported in decimal
+cents and converted to USD; all pages must validate. Daily granularity requires
+a UTC-midnight window start; the request includes today's bucket through the
+next midnight. The observation clock is captured before launching custody,
+so worker startup never advances the tick's freshness clock. Costs are compared with the owner-entered included
+credit; missing/invalid credit config stays unverified. Provider reporting can
+lag, and Priority Tier costs are excluded by this endpoint. The legacy endpoint
+is retained as requested; Anthropic recommends its analytics API for new clients.
+This is advisory cost evidence, not promotion attribution or permission to spend.
+
+Codex personal/CMP are ChatGPT plans: OpenAI organization costs do not measure
+their subscription allowance, so their official source is `codex-app-server`.
+Claude native evidence is `claude-usage`; admin costs are `anthropic-admin-cost`.
+Cursor has no supported resource-live source. Grok already has a native account
+probe and separate runway/app/manual evidence; no new Cursor/Grok CLI reader is
+introduced here, and missing evidence is never filled from another product.
+
+`operatorPageFallback` is absent/false by default. Enabling it adds only the
+desktop-operator reader interface and a null-returning stub; it does not launch
+a browser, read credentials, or invent usage. The existing explicit usage-browser
+CLI opt-in remains separate. No desktop-operator session adapter is shipped here.
+
 ```sh
 phm capacity publish --json
 ```
+
+### Devin weekly allowance
+
+Devin Max meters a weekly ACU allowance (no daily allowance). `phm capacity
+publish` also measures it: the sum of `acus_consumed` over the sessions
+`GET /v3/organizations/{org_id}/sessions` lists as created since the last
+weekly reset, against `devin.weeklyAcuAllowance` (fallback: the local Devin
+budget total). The JSON gains a `devin` object with `used`, `remaining`,
+`limit`, `reset_at`, `burn_rate_per_hour` and `state` (`live`, `stale` or
+`unmeasured`). Set `devin.weeklyResetAt` to any known reset instant; without it
+the window, the use and the reset stay `null`. An incomplete listing, a session
+without `created_at` or `acus_consumed`, or a failed request is `null`, never
+zero. A failed read shows the last published reading as `stale` until its reset.
+The same reading feeds the `devin` allowance in `state/resource-live.json`.
+
+The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
+`devin-flash` allowance: zero cost, class `expiring`, ending
+`2026-12-01T05:00Z`. Its reading counts the free preview models in the cached
+`devin models list` catalog, so the burn-down orders it first until it expires.
+
+### Account and model scope by reader
+
+- Claude weekly (`claude-usage`; budget row `claude-usage-reading`) emits
+  `account_id` as `claude:<16 hex>`: truncated SHA-256 of the validated opaque
+  `orgId` from the existing `claude auth status` output, never email. It omits
+  `model` because `seven_day` covers all models. Posture and `costClass` stay
+  unknown until a model-scoped allowance is read.
+- Claude's rate-limit-event fallback has no account scope: the event carries none.
+- Codex (`codex-app-server`; budget row `codex-app-server-rate-limits`) emits
+  neither field. The app-server rate-limit read exposes no opaque account ID;
+  account IDs live only in auth files, which these readers never read, and
+  `account/read` gives only email. The `codex` bucket is shared across models.
+- Devin `devin-cli-models-list` emits model only. The CLI listing has no account;
+  it never borrows the API weekly reading's org, so free previews stay unproven.
+- The Devin budget row has no account scope: `readDevinUsage` returns usage
+  fields only. Its ACU pool covers all models, so it also omits model.

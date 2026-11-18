@@ -64,7 +64,7 @@ function slotCount(n: number): string {
 export type BackendAvailability =
   | 'open'        // within limits, no recent errors
   | 'near'        // >= warningThreshold% of configured cap
-  | 'throttled'   // deliberately held back (protect headroom for human)
+  | 'throttled'   // operator-configured reserve or provider backoff only
   | 'exhausted'   // >= 100% of cap OR recent 429 with no reset time
   | 'unreachable' // health check failed (local only)
   | 'unknown';    // no signal available
@@ -538,7 +538,7 @@ interface ClaudeRateLimitClassification {
 
 function classifyClaudeRateLimitEvent(
   event: ClaudeRateLimitEvent,
-  protectPct: number,
+  protectPct: number | null,
 ): ClaudeRateLimitClassification | null {
   const usedPct = usedPctFromClaudeRateLimitEvent(event);
   if (event.utilization < 1 && usedPct < 75) return null;
@@ -551,7 +551,7 @@ function classifyClaudeRateLimitEvent(
       severity: 3,
     };
   }
-  if (usedPct >= protectPct) {
+  if (protectPct !== null && usedPct >= protectPct) {
     return {
       availability: 'throttled',
       stateLabel: `at protectPct=${protectPct}%`,
@@ -568,7 +568,7 @@ function classifyClaudeRateLimitEvent(
 }
 
 function claudeStateFromRateLimitEvent(rcfg: ResourceCfgShape, nowIso: string): BackendResourceState | null {
-  const protectPct = rcfg.protectPct ?? 85;
+  const protectPct = rcfg.protectPct ?? null;
   const candidates = [
     readLatestClaudeRateLimitEvent({ rateLimitType: 'seven_day' }),
     readLatestClaudeRateLimitEvent({ rateLimitType: 'five_hour' }),
@@ -591,10 +591,6 @@ function claudeStateFromRateLimitEvent(rcfg: ResourceCfgShape, nowIso: string): 
     stateLabel,
     usedPct,
   } = classification;
-
-  if (availability === 'open') {
-    return null;
-  }
 
   const resetIso = new Date(event.resetsAt * 1000).toISOString();
   const capWindow = capWindowFromClaudeRateLimitType(event.rateLimitType);
@@ -637,7 +633,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
     };
   }
 
-  const protectPct = rcfg.protectPct ?? 85;
+  const protectPct = rcfg.protectPct ?? null;
   const windowLabel = rcfg.claude?.window ?? '7d';
   const windowMs = 7 * 24 * 60 * 60 * 1000; // always 7d for now
 
@@ -687,7 +683,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
       if (clampedPct >= 100) {
         availability = 'exhausted';
         reason = `claude limit reached: ${clampedPct}% ${sourceNote}`;
-      } else if (clampedPct >= protectPct) {
+      } else if (protectPct !== null && clampedPct >= protectPct) {
         availability = 'throttled';
         reason = `claude at ${clampedPct}% (protectPct=${protectPct}%) — preserving headroom ${sourceNote}`;
       } else if (clampedPct >= 75) {
@@ -787,7 +783,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
       if (usedPct >= 100) {
         availability = 'exhausted';
         reason = `claude 5h limit reached: ${usedPct}% ${source5h}`;
-      } else if (usedPct >= protectPct) {
+      } else if (protectPct !== null && usedPct >= protectPct) {
         availability = 'throttled';
         reason = `claude at ${usedPct}% of 5h cap (protectPct=${protectPct}%) — preserving headroom ${source5h}`;
       } else if (usedPct >= 75) {
@@ -851,7 +847,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
     if (usedPct >= 100) {
       availability = 'exhausted';
       reason = `fleet claude budget exhausted: ${usedLabel}/${capLabel} ${windowLabel} ${honestSuffix}`;
-    } else if (usedPct >= protectPct) {
+    } else if (protectPct !== null && usedPct >= protectPct) {
       availability = 'throttled';
       reason = `fleet claude at ${usedPct}% of ${windowLabel} budget (protectPct=${protectPct}%) — preserving headroom ${honestSuffix}`;
     } else if (usedPct >= 75) {
@@ -912,7 +908,7 @@ async function senseClaudeState(rcfg: ResourceCfgShape): Promise<BackendResource
     if (usedPct >= 100) {
       availability = 'exhausted';
       reason = `claude weekly message cap reached: ${used}/${weeklyMessageCap} messages (7d) [stats-cache fallback — includes interactive usage]`;
-    } else if (usedPct >= protectPct) {
+    } else if (protectPct !== null && usedPct >= protectPct) {
       availability = 'throttled';
       reason = `claude at ${usedPct}% of weekly cap (protectPct=${protectPct}%) — preserving headroom [stats-cache fallback]`;
     } else if (usedPct >= 75) {
@@ -1003,7 +999,7 @@ function senseCodexState(): BackendResourceState {
       : mins % 1440 === 0 ? `${mins / 1440}d`
       : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`;
     const availability: BackendAvailability = denied || usedPct >= 100 ? 'exhausted'
-      : usedPct >= 90 ? 'throttled' : usedPct >= 75 ? 'near' : 'open';
+      : usedPct >= 75 ? 'near' : 'open';
     return {
       backend: 'codex', availability, usedPct, cap: 100, capUnit: 'requests',
       capWindow, resetsAt: best.resetsAt, costPerMTokenOut: 0,

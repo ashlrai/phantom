@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { QUEUE_TIERS, QUEUE_TIER_SCOPE } from '../src/core/drive/queue-tier.js';
 import type { JobOutcome } from '../src/core/queue/job-outcomes.js';
+import { coveredPrNumbers, rebaseWorkState, type RebasePlanExistingJob } from '../src/core/fleet/rebase-plan.js';
 import {
   runQueuegenCycle, firstErrorLine, errorFile, acceptanceCommand,
   securityPinnedPath, normalizeState, fixupLine, rebaseLine,
@@ -83,6 +84,7 @@ function makeIo(options: {
       return options.conflicts?.get(`${repo}#${p.number}`) ?? [];
     },
     readQueueIds: () => new Set(options.queueIds ?? []),
+    readRebaseWork: () => ({ active: new Set(), failed: new Set() }),
     appendQueueLine: (line) => { lines.push(line); },
     readHoldList: () => {
       if (options.holdThrows) throw new Error('unreadable');
@@ -272,6 +274,40 @@ describe('queuegen DIRTY -> REBASE', () => {
 });
 
 describe('queuegen dedupe', () => {
+  it.each(['FAILED', 'CANCELLED'])('keeps one active rebase per repository/PR and retries after %s', (terminal) => {
+    const numbers = [1234, 3231, 3193];
+    const repos = ['ashlrai/phantom', 'ashlrai/locus'];
+    const jobs: RebasePlanExistingJob[] = [];
+    const prs = new Map(repos.map(repo => [repo, numbers.map(number => pr({ number, mergeState: 'DIRTY' }))]));
+    const fake = makeIo({ prs, conflicts: new Map(repos.flatMap(repo => numbers.map(n => [`${repo}#${n}`, ['a.ts']]))) });
+    fake.io.readQueueIds = () => new Set(jobs.map(job => job.id!));
+    fake.io.readRebaseWork = () => rebaseWorkState(jobs, repos);
+    fake.io.appendQueueLine = line => jobs.push({ id: line.split(' ')[2]!, status: 'QUEUED', repo: /repo=([^, ]+)/.exec(line)![1], text: line });
+    expect(runQueuegenCycle(fake.io, { repos }).emitted).toBe(6);
+    // New heads, changed lanes/statuses and an expired cooldown cannot duplicate live work.
+    for (const status of ['CLAIMED', 'RUNNING', 'WAITING', 'PUBLISHING', 'PR-OPEN']) {
+      jobs.forEach(job => { job.status = status; });
+      prs.forEach(rows => rows.forEach(row => { row.headSha = sha('c'); }));
+      fake.setNow(NOW + QUEUEGEN_PR_WINDOW_MS + 1);
+      expect(runQueuegenCycle(fake.io, { repos })).toMatchObject({ emitted: 0, deduped: 6 });
+    }
+    prs.forEach(rows => rows.forEach(row => { row.headSha = sha('a'); }));
+    for (let retry = 1; retry <= 2; retry++) {
+      jobs.forEach(job => { job.status = terminal; });
+      expect(runQueuegenCycle(fake.io, { repos }).emitted).toBe(6);
+      expect(jobs.slice(-6).every(job => job.id!.endsWith(`-retry${retry}`))).toBe(true);
+      expect(runQueuegenCycle(fake.io, { repos }).emitted).toBe(0);
+      for (const repo of repos) for (const n of numbers) {
+        expect(jobs.filter(job => coveredPrNumbers([job], repo).has(n))).toHaveLength(1);
+      }
+    }
+  });
+
+  it('deduplicates repeated PR snapshots within one cycle even when their heads differ', () => {
+    const fake = makeIo({ prs: new Map([['ashlrai/phantom', ['a', 'b'].map(head => pr({ mergeState: 'DIRTY', headSha: sha(head) }))]]), conflicts: new Map([['ashlrai/phantom#1', ['a.ts']]]) });
+    expect(runQueuegenCycle(fake.io)).toMatchObject({ emitted: 1, deduped: 1 });
+  });
+
   it('at most one line per PR per 24h, then emits again', () => {
     const fake = makeIo(oneOptions({ checks: failChecks(), logs: errLog('ERROR src/x.ts:1: bad') }));
     const { io, lines } = fake;

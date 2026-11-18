@@ -15,9 +15,6 @@ import { readGuardianGlance } from './guardian-glance.js';
 import { readOperatorSecret, secretsMatch } from './operator-proof.js';
 import { summarizeFleetSlowPrs } from '../../cli/fleet-slow-prs.js';
 import { buildOperatorGlance, type OperatorGlance } from './operator-glance.js';
-
-import { readAppsRecoveryInvocations } from './apps-recovery-invocations.js';
-import { appsRecoveryIncident } from './apps-recovery-glance.js';
 import { hideResolvedNeedsMason } from './needs-mason-resolve.js';
 
 const MAX_BYTES = 32 * 1024;
@@ -114,7 +111,13 @@ function codexUsage(nowMs: number): { usedPct: number | null; resetsAt: string |
   }
 }
 
-export async function readOperatorGlance(opts: { runsDir?: string; busRoot?: string; now?: () => Date } = {}): Promise<OperatorGlance> {
+export async function readOperatorGlance(opts: {
+  runsDir?: string;
+  busRoot?: string;
+  now?: () => Date;
+  /** Apps recovery stays outside the Tier-1 import closure. Callers that are allowed to read it pass this. */
+  loadRecovery?: (busRoot: string, nowMs: number) => string | null;
+} = {}): Promise<OperatorGlance> {
   const now = opts.now ?? (() => new Date());
   const at = now();
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
@@ -122,10 +125,12 @@ export async function readOperatorGlance(opts: { runsDir?: string; busRoot?: str
   const usage = codexUsage(at.getTime());
   const guardian = await readGuardianGlance(runsDir, at.getTime());
   let recoveryIncident: string | null = null;
-  try {
-    const busRoot = opts.busRoot ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-    recoveryIncident = appsRecoveryIncident(readAppsRecoveryInvocations(busRoot), at.getTime());
-  } catch { /* unavailable recovery evidence stays quiet */ }
+  if (opts.loadRecovery) {
+    try {
+      const busRoot = opts.busRoot ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+      recoveryIncident = opts.loadRecovery(busRoot, at.getTime());
+    } catch { /* unavailable recovery evidence stays quiet */ }
+  }
   const glance = buildOperatorGlance({
     now: at,
     lanes: state?.lanes ?? [],

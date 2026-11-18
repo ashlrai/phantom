@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -36,6 +39,49 @@ async function request(api: ReturnType<typeof createFleetRunsApi>, options: { pa
 }
 
 describe('fleet runs api', () => {
+  it('serves the goal scorecard read-only, unknown when the runs dir is empty', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'goal-scorecard-'));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const { status, wire } = await request(api, { path: '/api/verse/fleet/runs/goal-scorecard' });
+    expect(status).toBe(200);
+    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v2', version: 2, generatedAt: new Date(NOW).toISOString() });
+    const goals = (wire as unknown as { goals: { status: string; value: unknown }[] }).goals;
+    expect(goals.length).toBe(5);
+    expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
+    expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
+  });
+  it('serves the Tools matrix read-only, one lane with ?lane=, 404 for an unknown lane', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'tools-matrix-'));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const all = await request(api, { path: '/api/verse/fleet/runs/tools' });
+    expect(all.status).toBe(200);
+    // No slots or lane-tools.json: only the router's built-in claude declaration is known.
+    expect(all.wire).toMatchObject({ schema: 'tools.matrix.v1', parity: 'gaps', lanes: ['claude'] });
+    expect((all.wire as unknown as { topGaps: { need: string }[] }).topGaps[0]!.need).toBe('github-read');
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=claude' })).wire).toMatchObject({ lanes: ['claude'] });
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=nope' })).status).toBe(404);
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools', method: 'POST' })).status).toBe(405);
+  });
+  it('serves tool parity read-only: every org lane by tool family, one lane with ?lane=, 404 for an unknown lane', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'tools-parity-'));
+    mkdirSync(join(runsDir, 'queue'));
+    writeFileSync(join(runsDir, 'queue', 'lane-tools.json'), JSON.stringify({ v: 1, lanes: { claude: { mcp: ['docs'], browser: true }, 'codex-local': { mcp: [] } } }));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const all = await request(api, { path: '/api/verse/fleet/runs/tools/parity' });
+    expect(all.status).toBe(200);
+    const wire = all.wire as unknown as import('../src/core/fleet/tool-parity.js').LaneParityMatrix;
+    expect(wire).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'gaps', counts: { present: 2, missing: 2, unknown: 84 } });
+    expect(wire.families.map(f => f.id)).toEqual(['mcp', 'cli', 'skills', 'plugins', 'web-search', 'browser', 'computer-use', 'gh']);
+    expect(wire.lanes.map(l => l.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor']);
+    const one = (await request(api, { path: '/api/verse/fleet/runs/tools/parity?lane=codex-local' })).wire as unknown as typeof wire;
+    expect(one.lanes.map(l => l.lane)).toEqual(['codex-local']);
+    expect(one.lanes[0]!.cells.mcp).toEqual({
+      state: 'missing', source: 'lane-tools.json', has: [], lacks: ['docs'],
+      fix: 'Give codex-local MCP server docs, then add "mcp": ["docs"] under "codex-local" in <runs>/queue/lane-tools.json.',
+    });
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools/parity?lane=nope' })).status).toBe(404);
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools/parity', method: 'POST' })).status).toBe(405);
+  });
   it('mounts runs and live as separate families', () => {
     expect(workbenchFamilyFor(PATH)?.id).toBe('fleet-runs');
     expect(workbenchFamilyFor(INBOX)?.id).toBe('fleet-runs');
@@ -118,5 +164,29 @@ describe('fleet runs api', () => {
       expect(result.status).toBe(status);
       expect(result.wire!.code).toBe(status === 422 ? 'INBOX_REFUSED' : 'INBOX_UNAVAILABLE');
     }
+  });
+});
+
+describe('worktrees route (Home Disk card)', () => {
+  const WORKTREES = '/api/verse/fleet/runs/worktrees';
+  const report = { schema: 'worktrees.v1', counts: { total: 3, safe: 1 }, rows: [] };
+  it('serves the phm worktrees report, reads at most once a minute and is GET only', async () => {
+    let tick = NOW;
+    const read = vi.fn(async () => report as never);
+    const api = createFleetRunsApi(deps({ now: () => tick, readWorktrees: read }));
+    expect(await request(api, { path: WORKTREES })).toMatchObject({ handled: true, status: 200, wire: report });
+    tick += 30_000;
+    await request(api, { path: WORKTREES });
+    expect(read).toHaveBeenCalledTimes(1);
+    tick += 61_000;
+    await request(api, { path: WORKTREES });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect((await request(api, { path: WORKTREES, method: 'POST', body: {} })).status).toBe(405);
+  });
+  it('answers 503 with a fixed code when the read fails, then retries on the next call', async () => {
+    const read = vi.fn().mockRejectedValueOnce(new Error('/private/path')).mockResolvedValue(report);
+    const api = createFleetRunsApi(deps({ readWorktrees: read }));
+    expect(await request(api, { path: WORKTREES })).toMatchObject({ status: 503, wire: { code: 'WORKTREES_UNAVAILABLE' } });
+    expect((await request(api, { path: WORKTREES })).status).toBe(200);
   });
 });

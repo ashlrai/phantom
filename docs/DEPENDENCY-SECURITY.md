@@ -20,6 +20,39 @@ from the runner's private temporary directory, so repository-controlled
 `osv-scanner.toml` ignore rules cannot weaken the required check. Each lane
 records its provider result in the job summary.
 
+## Unpatched npm advisory
+
+On November 17, 2026, strict `npm ci` followed by the workflow's pinned npm
+11.6.0 reproduced 14 high and 0 critical findings in the root full graph.
+They all trace to [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf):
+picomatch's repeated-extglob regular expression denial of service. The root
+lockfile already resolves picomatch 4.0.7, the latest published release; the
+advisory affects `<=4.0.7` and lists no patched version. No dependency bump or
+override to a published picomatch release resolves it.
+
+The same audit reports 14 high findings in Raycast's full graph and 6 high
+findings in its production graph, through picomatch 4.0.4. The root production
+graph is clean. These counts include dependent packages affected by the same
+advisory, rather than separate underlying advisories.
+
+The workflow has narrow, expiring exceptions in
+`.github/dependency-audit-exceptions.json` for `picomatch` and
+`GHSA-fc5q-39xc-vjpf`: one for full npm graphs and one for the Raycast
+production graph, where the advisory arrives only through the `@raycast/api`
+CLI toolchain (oclif, tinyglobby). Each entry applies to exactly one graph.
+Every `via` advisory URL in the npm report must match an active exception, and
+a package vulnerable only through other packages (a string `via` entry) is
+excepted only when everything it depends on is excepted, including cyclic
+references. The Raycast production entry is enabled only for `--omit=dev` when
+the lockfile's resolved path is `src/raycast/package-lock.json`; the audit
+label does not select it. Other production lockfiles, including root, never
+read the file, so they stay
+strict; malformed or expired exceptions fail closed on the graphs that read it,
+and unused exceptions warn in the step summary. Remove this exception when upstream ships a fix. It is not a
+general allowlist. Each audit step runs after earlier failures unless the job
+is cancelled, so the job summary reports both npm graphs and the Cargo result
+without masking failures.
+
 ## Universe example coverage gap
 
 At that source revision, `examples/universe-site/package-lock.json` resolves

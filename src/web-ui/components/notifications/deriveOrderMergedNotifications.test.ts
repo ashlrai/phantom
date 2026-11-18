@@ -19,7 +19,7 @@ describe('deriveOrderMergedNotifications', () => {
   it('reports partial and full merges', () => {
     const [partial] = deriveOrderMergedNotifications(trace([job('a', 'merged', pr(7)), job('b', 'launched'), job('c', 'queued')]), NOW);
     expect(partial).toMatchObject({ id: 'order-merged:11-01 00:08', category: 'fleet', severity: 'info',
-      title: 'Your 11-01 00:08 order: 1 of 3 merged', detail: 'merged #7, running, queued',
+      title: 'Your 11-01 00:08 order: 1 of 3 merged', detail: 'merged #7, launched, queued',
       ts: '2026-11-01T05:08:00Z', actionLabel: 'Open inbox', actionHref: expect.stringContaining('fleet-inbox') });
     const [all] = deriveOrderMergedNotifications(trace([job('a', 'merged'), job('b', 'merged'), job('c', 'merged')]), NOW);
     expect(all!.title).toBe('Your 11-01 00:08 order: All 3 merged');

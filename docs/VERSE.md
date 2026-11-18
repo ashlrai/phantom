@@ -41,6 +41,45 @@ Leave the change uncommitted.” Review the actual diff and verification results
 a completion message alone does not establish delivery. Fleet activation is
 optional and separate from this interactive session.
 
+## Work log
+
+Open **Work → Work log** for one feed of what the fleet did in the last six
+hours, newest first and grouped by hour: merges, launches, finishes, jobs that
+ended with no change, leader replies and incidents, one plain line each. Tap a
+chip to show one kind, and tap a job to see its state, branch and last log
+lines. The page reads well on a phone, updates every five seconds while
+visible, keeps your filters, and offers Retry after a read failure. A source
+that cannot be read is listed as unknown with the reason. When nothing is
+recorded it says so and offers the last 24 hours.
+
+Agents can read the same feed with
+`phm worklog --json --hours 6 --kind merged`, or
+`GET /api/worklog?hours=6&kind=merged`. Filters are optional: `kind` is one of
+merged, launched, finished, empty, leader or incident, `repo` and `lane` match
+exactly, and `hours` defaults to 6 (the older `since=6h` form still works).
+The typed `worklog.v3` report has `rows`, `sources`, `entries` and
+`malformedLines`. Each row has `at`, `kind`, job, lane, repo, one plain-words
+`text`, an optional PR `url` and `count`: consecutive same-kind events from one
+job collapse into one row. Rows come from the existing `metrics/jobs.jsonl`
+reader, the dispatch events reader (incidents, lane holds, parked jobs) and
+the leader plan log reply reader. `sources` reports each of the three as `ok`
+or `unknown` with a reason; rows from an unknown source are absent, not zero.
+`entries` keeps the per-event ledger records with model and merge timing.
+PR opened requires recorded PR evidence; a finish alone stays Finished.
+
+**Log** (`#/work/jobs`) is the same ledger folded to one row per job: when,
+lane, model, repo, goal, the result in plain words and time to merge, under a
+one-line summary. Lane and repo are chips, and jobs that made no change fold
+into one group. Agents read it with `phm log --json --since 6h` or
+`GET /api/log?since=6h&lane=<lane>&repo=<repo>`. The `joblog.v1` report has
+`version`, `hours`, `headline`, `summary` (jobs, merged, noChange,
+noChangeRate, medianMergeSeconds, and the same counts per lane), `jobs`,
+`sources` and `malformedLines`. Each job has `job`, `at`, `lane`, `model`,
+`repo`, `goal`, `result` (merged, closed, open, no-change, failed, finished or
+running), `text`, `pr`, `url` and `mergeSeconds`. A field that was not recorded
+is null and shown as unknown. Each entry of `worklog.v3` also carries `goal`
+and `detail`, and a PR closed without merging is a `closed` entry.
+
 ## Workspaces and resources
 
 The two primary workspaces are **Work with me** and **Work for me**.
@@ -969,7 +1008,7 @@ types, reads or stores a credential.
 ### The Leader
 
 The Leader is the fleet's planning agent, and since 3.14 you talk to it: one
-conversation across Mind (⌘4), Telegram and `ashlr leader say`, with standing
+conversation across Mind (⌘4) and Telegram, with standing
 directives, answers to its questions and early approvals. The full guide is
 [`docs/LEADER.md`](LEADER.md).
 

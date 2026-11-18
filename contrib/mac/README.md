@@ -8,8 +8,14 @@ its exact input hash before adoption. Current-host changes under
 permission to overwrite the whole controller with an older copy. Changes land
 by PR review and the adoption owner verifies immutable source hashes before any
 live install. The queue scripts are deterministic and do not create tokens.
-The candidate launcher denies Devin model IDs ending in `-lightning`, logs
-`PAID_MODEL_BLOCKED`, and uses `swe-2-max` instead; host adoption needs a Security pin.
+The candidate model selector denies Devin model IDs ending in `-lightning`, logs
+`PAID_MODEL_BLOCKED`, and falls back to `swe-2-max` for `devin` or
+`swe-2-flash-max` for `devin-flash`. All flash jobs select `swe-2-flash-max`
+regardless of tier or model hints: it is the plan-free upgrade from flash-medium.
+Devin retains tier-specific hints and defaults to `swe-2-max` at every tier.
+Adopt this selector surgically into the current host launcher, preserving its
+flash lane dispatch and paid/overage guards; this older candidate has no flash
+dispatch branch. Host adoption needs a Security pin.
 
 `restock.py` claims eligible `READY` lines from `router-queue.md` into lane
 prompts (`ready.tsv`/`claimed.tsv`) for the fleet allowlist repos only, keeping
@@ -42,12 +48,28 @@ supervisor: it reaps finished jobs, adapts per-lane slot targets inside
 runs shallow. Restock changes need a Security re-pin before the live `bin/` copy
 is installed; do not install into `bin/` from an agent.
 
+**Max job runtime (RQ-JOB-MAX-RUNTIME-1).** A launch wrapper that is alive but
+wedged (dead socket, hung model call) never writes `.rc`/`.fin`, so its lane
+slot would leak. Each tick `dispatchd.py` compares the job's launch receipt
+(`run/<job>.dispatched`, else `.line`) with its limit: `slots.json`
+`<lane>.max_runtime_s`, else top-level `max_runtime_s`, else
+`ASHLR_JOB_MAX_RUNTIME_S`, else 7200 s (`0` disables; other values clamp to at
+least 300 s). Past it the job gets `run/<job>.rc` = `124`, a
+`REAP TIMEOUT <job> lane=… age=… limit=…` event, and SIGTERM to the launch
+wrapper's own process group (only a real session leader's group, never pid 1 or
+the dispatcher); a survivor gets SIGKILL after 30 s (`REAP TIMEOUT <job>
+SIGKILL`). The next tick reaps it as a normal finish with `exit_code` 124 so the
+queue can recut it. The live `launch.sh` is not repo-owned, so enforcement lives
+in the dispatcher; installing it needs a Security pin.
+
 ## Self-supply: refill idle lanes between leader passes
 
 `self-supply.py` watches `queue/status.json`. When a lane is unheld and has
 free slots (`target - running - queued` above zero) it asks the feed scripts
 beside it — `recut-feed.py`, and `salvage-feed.py` when present — for up to
-that many `READY` lines with `pool=<lane>`. Ids already in the router queue or
+that many `READY` lines. A line that declares no lane gets `pool=<lane>` as its
+hint; a lane the line declares for itself stays, because the dispatcher's shared
+market treats `pool=` as a preference and runs the line wherever capacity is. Ids already in the router queue or
 claimed rows are dropped, the run caps at 12 lines, and `--apply` appends the
 lines to `router-queue.md` under `ready.lock`, logging
 `SELF_SUPPLY <lane> free=<n> added=<m>` to `dispatch-events.log`. The next
@@ -79,8 +101,18 @@ down by 2, never below the floor 6, and at most once per new completion
 (`step_seen` in `slots.json`). A held devin lane never adjusts. The devin lane
 sits in dispatchd's restock trigger loop beside the codex lanes.
 
-Starvation admission (RQ-LOADGATE-RETUNE; real load gate restored by RQ-BATCH-SESSIONS-2).
-Claims stop on load1 above 2 x ncpu, on macOS
+Starvation admission (RQ-LOADGATE-RETUNE; real load gate restored by RQ-BATCH-SESSIONS-2; per-lane CPU placement by RQ-LOADGATE-PLACEMENT-1).
+Node saturation stops every claim when the measured CPU of the tick's one `ps` snapshot reaches 2 x ncpu,
+in cores. Measured CPU is the `%CPU` column of `ps -axo pid=,ppid=,pcpu=,comm=` summed over every listed process
+except dispatchd itself, so processes outside dispatchd (an operator's agent shell, a model server, a build) count
+toward the node. A snapshot without `%CPU` falls back to load1 against 2 x ncpu. Load1 is no longer a per-lane block.
+Each lane places its next job only while the node has CPU room for that lane: room = `GATE_PLACE_PER_CPU` x ncpu minus
+measured busy cores minus the cores already claimed this tick. A lane's cost is its `cores_per_job` from
+`state/resource-pool.json` when that file is fresh (`measured_at` within 900 seconds) and well formed for the lane,
+else `GATE_JOB_CORES` (1.0). A lane out of room waits; the other lanes still place. The room, costs and cost sources
+are recorded as `placement` in `admission.json`. Only the global signals below trip the whole gate.
+Known limit: on macOS `ps %cpu` is each process's lifetime average, so a new burst shows in the room a tick or
+more late. Per-tick launch limits (`MAX_LAUNCH_PER_TICK`, lane targets, the adaptive cap) still bound one tick.
 `kern.memorystatus_vm_pressure_level >= 2` (warn: pressure has risen), swap growth greater than 2 GiB
 within the last 300 seconds, or free disk below `DISK_HARD_STOP_GB` (30 GB).
 Swap samples persist across ticks in `admission.json`; startup needs a prior
@@ -100,14 +132,19 @@ admission --json` reports the same verdict read-only. `ashlr fleet admission --j
 reads the embedded block and says, per lane, whether work is held, at target,
 blocked by the global cap, or ok. `queue/LOADGATE_OFF` no longer waives the gate:
 it is reported as `off_switch_ignored` with a warning. The `codex-local` mid-tier cap is 4 while the gate is clear
-and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped.
+and load is below `ncpu`, 2 at or above `ncpu`, and 1 while the gate is tripped. "Load" here is the same node
+signal: measured busy cores when the snapshot has `%CPU`, load1 otherwise.
 `LOCAL_MID_CAP` overrides this cap with a nonnegative integer; the effective value
 is recorded as `local_mid_cap` in `admission.json`.
 
 Threshold environment overrides: `GATE_PRESSURE_MIN=2`, `GATE_SWAP_GROWTH_GB=2`,
 `GATE_SWAP_WINDOW_S=300`, `GATE_LOAD_PER_CPU=2`, `GATE_PROCS_MAX=2500`,
-`GATE_WORKTREES_MAX=40`, `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
+`GATE_PLACE_PER_CPU` (defaults to `GATE_LOAD_PER_CPU`), `GATE_JOB_CORES=1`,
+`GATE_WORKTREES_MAX=40` (floor), `GATE_WORKTREES_PER_CPU=4` (the live-worktree
+warning fires above max(floor, per-cpu × ncpu)), `GATE_TICK_MAX_S=900`, `GATE_STATUS_TIMEOUT=30`,
 and `DISK_HARD_STOP_GB=30`. Gate limits accept positive finite numbers.
+`GATE_PLACE_PER_CPU` below `GATE_LOAD_PER_CPU` tightens per-lane placement without tripping the node;
+the node-wide trip stays at `GATE_LOAD_PER_CPU`. `lane_placement.py` holds the pure room arithmetic.
 `dispatchd.admission.v2` records all signals, thresholds, warnings, claim limit,
 swap samples and the `admit` or `stop` decision. Signal fixtures
 `LOADGATE_LOADAVG`, `LOADGATE_NCPU`, `LOADGATE_PRESSURE`, `LOADGATE_SWAP_GB`
@@ -175,6 +212,14 @@ it has already removed its `.base` file. A new `.reaping` marker covers process
 startup for 120 seconds; with a successful process snapshot, an older orphan
 marker holds its own job but does not stop unrelated publishing. This changes
 throughput to one handoff per tick.
+Status JSON lists observed publishers and startup markers in `reaping`;
+older markers appear in `reap_blocked` with `reason: "ownership-unknown"`.
+They remain protected and emit `REAP_SKIP ownership-unknown <job>` each tick.
+For terminal cleanup, `python3 contrib/mac/wt_closed_prune.py --json` previews
+eligible trees and per-job `skipped` reasons. `--apply --max 375` removes up to
+375 eligible trees, records `WT_REMOVED <job>` only after removal, and records
+`REAP_SKIP <reason> <job>` for retained trees. Missing evidence reports
+`known: false` and `unknown_reasons`; legacy markers still require fenced recovery.
 The reaper consults the job ledger before handoff: a merged outcome for the
 current launch, including one linked through its published PR URL, prevents a
 leftover `.base` from triggering another publication. Repeated handoffs for an
@@ -293,7 +338,10 @@ Model mix (`batch-sessions.json`, subscriptions only): Claude lines get Sonnet
 subagents, and Opus for `tier=frontier` or hard markers (architecture, migration,
 concurrency, security and similar). The Claude bundle session itself runs at `work`
 tier. Fable is never assigned here; the broker's `fable-share` keeps its benchmarked
-share. Codex lanes run `gpt-6.1-terra`; Devin runs the free `swe-2-flash`. With the
+share. Codex lanes run `gpt-6.2-astra` for `frontier` and `gpt-6.2-sol` for all
+lower tiers. The `models.codex.frontier` override falls back to `models.codex.default`
+when absent; older configs with only `default` still apply it to every tier.
+Devin runs the free `swe-2-flash`. With the
 file installed, Devin keeps only lines from `eligible_repos` declaring `size<=100`
 or less; the rest log `DEVIN_ROUTE <job> repo-not-eligible|size-not-sm -> <lane>`
 and move to the first unheld fallback lane.
@@ -641,6 +689,13 @@ one-hour cap. Waiting jobs consume no precheck budget; due jobs wait if the
 budget is exhausted. One `precheck_parked` metric replaces repeated code 13
 skip events for unchanged inputs. A prompt or routing change resets the delay;
 a successful retry clears it. Other runnable jobs continue through the queue.
+Before claiming generated `RQ-FIXUP|REBASE|RECUT-<repo>-<pr>[-<sha7>]`
+repairs, dispatch reads the target PR through `locus exec -- gh pr view` with a
+three-second deadline. Closed or merged targets finish as `DONE-NOOP`; resolved
+conflicts or completed checks require the queued head, and FIXUP also requires
+the named failing check to remain present. Reasons are fixed codes in
+`metrics/jobs.jsonl` (`launched: false`); unknown evidence stays eligible and an
+exhausted precheck budget defers the repair. No model runs for retired repairs.
 Host installation still requires Security review and re-pinning. Preview without changing queue files:
 
 ```sh
@@ -943,16 +998,22 @@ This supplies jobs only; it does not recut, merge, install, or publish anything.
 
 ### Disk growth
 
-Run `python3 contrib/mac/disk-growth.py --json` periodically to sample free disk
-space and directory sizes. `--budget-seconds` bounds the total time spent in
+Run `phm fleet vitals [--json]` to read disk sizes and changes since the previous
+sample (null means unknown; samples older than 15 minutes are marked stale).
+`python3 contrib/mac/disk-growth.py --json` samples free disk and each direct
+directory under `~/.ashlr-runs` and `~/Projects/ashlrai/wt`, without following
+symlinks or reading file contents. `--budget-seconds` bounds the total time spent in
 `du` (default 10 seconds). The sampler retains 48 readings under
 `~/.ashlr-runs/queue`; it does not delete sampled files. The dispatcher copies
 its latest report to `autopilot.disk` in `status.json` on the next tick. Install
 and schedule the sampler through the normal reviewed host machinery; this source
-change does not install it. Rates compare against the oldest retained reading;
-missing or timed-out directory measurements are omitted, and a null projection
-means there is not yet evidence of a positive disk burn rate. Directory sizes
-overlap: worktree totals include their `node_modules` and `target` directories.
+change does not install it. The dispatcher starts the installed sampler and
+closed-worktree reaper every ten minutes, independent of disk pressure. The
+reaper preserves kept, active, dirty and unknown worktrees; Git removes eligible
+MERGED/CLOSED worktrees without force. Security review and re-pinning are required
+before live installation; stopped ticks or unavailable helpers cannot meet the
+15-minute target. Rates and signed directory deltas use the latest prior sample;
+missing or timed-out measurements are null, never zero.
 
 ### Read merge latency
 
@@ -1039,3 +1100,120 @@ per worker, capped at six; unknown memory disables admission. Stored slot
 settings cannot exceed this memory cap. Claims use the bounded local supervisor
 and completions use the shared reaper. Security must review the combined RETUNE
 and omlx dispatcher pin before installation; never edit the live dispatcher.
+
+# Remote branch hygiene
+
+See [Branch gardener](../../docs/BRANCH-GARDENER.md) for org/fork classification,
+protected and active branch guards, dry-run configuration and the six-hour launchd
+template. This is independent of worktree/disk pruning and does not install itself.
+
+## Orphaned MCP server trees
+
+Worktree `.mcp.json` files launch MCP servers through `npm exec`. When a job's
+engine exits first, the npm/sh/node trees are re-parented to launchd and keep
+running. `mcp_reaper.py` measures and removes them:
+
+```
+python3 mcp_reaper.py census --json            # count, npm-exec count, RSS, oldest orphan age
+python3 mcp_reaper.py reap --grace 60 --dry-run
+python3 mcp_reaper.py reap --grace 60          # SIGTERM then SIGKILL, whole group when safe
+```
+
+Only trees whose root has ppid 1 and age above the grace window are signalled,
+so a live job's servers (engine still the ancestor) are never touched. A group
+is signalled only when every member is in the kill set. If `ps` cannot be read
+the tool reports `known=False` and exits 3 without killing anything. It is not
+in `install.sh` `FILES`; wiring it into the dispatcher tick or `launch.sh`
+(pinned files) goes through a Security package.
+
+## Grok Bot changelog watch (RQ-GROKBOT-CHANGELOG-WATCH-1)
+
+`grokbot_changelog_watch.py` is one deterministic daily tick: no LLM turn, no
+credentials, no cookies, public GETs only. It reads the Grok Bot changelog RSS
+feed (`https://x.ai/changelog/bot/rss.xml`, falling back to the changelog HTML
+page when the feed is unreachable) and the public docs pages under
+`https://docs.x.ai/grok-bot` (the Mintlify `.md` variant of each page linked
+from the section index). Each new `(url, heading)` pair is filed as a draft
+queue prompt `RQ-GROKBOT-IDEA-<hash>.md` under
+`~/.ashlr-runs/staged/changelog-ideas/` plus a line in `index.jsonl`; drafts are
+staged for review and are never appended to `queue/ready.tsv`.
+
+Dedupe is by URL + heading (sha256 of `url + "\n" + normalized heading`),
+persisted in `seen.json`. The first run against an empty state seeds the
+seen-set and files nothing, so the backlog is not flooded with the existing
+docs surface; later runs file only genuinely new changelog releases and docs
+headings. A heading whose body changes under the same URL+heading is treated
+as already seen. Mintlify boilerplate headings (`Related pages`, `On this
+page`, `Previous`, `Next`) are skipped. `--max N` caps filings per run
+(default 20); overflow stays unseen for the next tick. `--dry-run` reports the
+plan without writing state or prompts; `--json` prints a summary object.
+Fetch failures are per-source fail-closed: a source that cannot be read
+contributes no candidates, and the run exits nonzero only when every source
+fails. All URLs are overridable via `GROKBOT_WATCH_CHANGELOG_RSS`,
+`GROKBOT_WATCH_CHANGELOG_PAGE`, `GROKBOT_WATCH_DOCS_INDEX` and
+`GROKBOT_WATCH_STATE_DIR` so tests never touch the network.
+
+launchd install sketch (substitute the deployed paths; staged, not loaded):
+
+```sh
+sed -e "s|__PYTHON3__|/usr/bin/python3|" \
+    -e "s|__SCRIPT__|/path/to/mac-bridge/grokbot_changelog_watch.py|" \
+    -e "s|__LOG_DIR__|$HOME/.ashlr-runs/logs|" \
+    -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    contrib/mac/com.ashlr.grokbot-changelog-watch.plist.in \
+    > ~/Library/LaunchAgents/com.ashlr.grokbot-changelog-watch.plist
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.grokbot-changelog-watch.plist
+```
+
+Repo copy for the Mac host; installing it next to the pinned `bin/` scripts
+requires Security review and re-pin. Fixture tests run under a temporary HOME
+with `file://` sources and never touch the network or the live queue:
+
+```sh
+HOME=$(mktemp -d) python3 -B -m unittest contrib/mac/tests/test_grokbot_changelog_watch.py -v
+```
+
+## Arm gate (RQ-ARM-CI-GATE-1)
+
+`publish.sh` arms auto-merge only when `arm_gate.py` reports SAFE for the PR head: the six Merge Gate
+hard-required checks completed with success, and nothing relevant is red (failure, timed_out, cancelled,
+action_required, stale). Quick typecheck and authority drift are advisory in Merge Gate but must be present and not red to arm (skipped counts). Perf
+budget, CodeRabbit and Vercel are ignored. RED is left unarmed for leader review. PENDING or UNKNOWN waits up to
+`ARM_GATE_WAIT` seconds (default 180), then writes a record in `~/.ashlr-runs/arm-deferred` with an
+`ARM_GATE_DEFER_S` deadline (default 3600). It never arms on a guess.
+
+Deferred records need a consumer. `arm_gate.py sweep --dir ~/.ashlr-runs/arm-deferred [--apply]` re-checks each
+record. It arms with `gh pr merge --auto --match-head-commit <sha>` only on SAFE, only while the PR is still open on the
+same head and not already armed, and at most `--max-arms` (default 3) per run. It drops records on RED, expiry or a
+changed head. Without `--apply` it only prints `WOULD_ARM`. The host needs `gh` signed in for the fleet account.
+
+Rollout. `install.sh` copies `arm_gate.py` into `~/.ashlr-runs/bin` and is idempotent (an identical file reports
+`unchanged`). It does NOT install `publish.sh`: this checkout holds a reviewable mirror and the live
+`~/.ashlr-runs/bin/publish.sh` is a host-owned, Security-pinned file, deployed by its owner under the pin. Order does
+not matter and every partial state fails safe: a new `publish.sh` without `arm_gate.py` (or an old `publish.sh` with
+it) never arms through the new path. `/usr/bin/python3 --version` must report 3.8 or newer (stdlib only; verify on the
+host, it is not assumed).
+
+```sh
+contrib/mac/install.sh --dry-run          # review, then run without --dry-run
+mkdir -p ~/.ashlr-runs/arm-deferred ~/.ashlr-runs/logs
+sed -e "s|__PYTHON3__|/usr/bin/python3|" -e "s|__RUNS__|$HOME/.ashlr-runs|g" \
+    -e "s|__INTERVAL__|300|" -e "s|__HOME__|$HOME|" -e "s|__PATH__|$PATH|" \
+    contrib/mac/com.ashlr.arm-gate-sweep.plist.in > ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+plutil -lint ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl bootout "gui/$UID/com.ashlr.arm-gate-sweep" 2>/dev/null || true   # re-runs: unload any loaded copy first
+launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/com.ashlr.arm-gate-sweep.plist
+launchctl print "gui/$UID/com.ashlr.arm-gate-sweep" | head -5
+```
+
+Check with `python3 -I -B ~/.ashlr-runs/bin/arm_gate.py sweep --dir ~/.ashlr-runs/arm-deferred` (no `--apply`, prints
+`WOULD_ARM`/`KEEP`/`DROP` only). Rollback: `launchctl bootout "gui/$UID/com.ashlr.arm-gate-sweep"`, delete the plist,
+restore `~/.ashlr-runs/bin/arm_gate.py` from its `.bak-macdispatch-*` copy or delete it on a first install, and restore
+the previous `publish.sh` from the owner's backup. Leftover `arm-deferred/*.json` records are inert without the sweep.
+
+Without launchd, a dispatchd tick or any fleet work-order can run the same `arm_gate.py sweep` command. Live files are
+sha-pinned by Security: re-pin publish.sh and arm_gate.py after install. Fixture tests use a fake `gh`:
+
+```sh
+python3 -B -m unittest contrib/mac/tests/test_arm_gate.py -v
+```

@@ -202,30 +202,23 @@ function slackReplyBinding(runsDir: string | undefined, now: Date): ReplyBinding
   if (sends.state === 'degraded') return { store: 'unreadable', ...empty };
   const requests = slackInboundRequests(journal.entries);
   const binding = bindSlackReplies({ requests, receipts: sends.receipts, now });
-  const atByKey = new Map<string, string[]>();
-  for (const r of requests) {
-    const key = `${r.channelId}:${r.threadTs}:${r.messageTs}`;
-    atByKey.set(key, [...(atByKey.get(key) ?? []), r.at]);
-  }
-  // The binder visits duplicate keys in ascending `at` order.
-  for (const ats of atByKey.values()) ats.sort();
+  // A row is answered only when its own Leader request id has a consistent
+  // exact-key `sent` receipt. Rows without a reply identity, or whose send is
+  // only attempted or inconsistent, stay in `unansweredAt`: pending evidence
+  // that can never certify coverage.
   const answeredAt: string[] = [];
-  for (const a of binding.answered) {
-    const at = atByKey.get(`${a.channelId}:${a.threadTs}:${a.messageTs}`)?.shift();
-    if (at !== undefined) answeredAt.push(at);
-  }
-  const remaining = [...answeredAt];
   const unansweredAt: string[] = [];
   for (const e of journal.entries) {
     if (e.decision !== 'ingested') continue;
-    const i = remaining.indexOf(e.at);
-    if (i >= 0) remaining.splice(i, 1);
+    const verdict = e.requestId === undefined ? undefined : binding.byRequestId.get(e.requestId);
+    // Like the trace, answered needs durable ingress (posted|duplicate): failed or unknown ingress never certifies.
+    if (verdict?.verdict === 'answered' && (e.bus === 'posted' || e.bus === 'duplicate')) answeredAt.push(e.at);
     else unansweredAt.push(e.at);
   }
   return { store: 'ok', answeredAt, unansweredAt, futureDated: binding.futureDated };
 }
 
-function defaultSources(runsDir?: string): Record<ChannelName, ChannelSource> {
+export function defaultChannelSources(runsDir?: string): Record<ChannelName, ChannelSource> {
   return {
     slack: {
       configMissing: () => {
@@ -384,7 +377,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
 export async function readChannelHealth(deps: ChannelHealthDeps = {}): Promise<ChannelHealthReport> {
   const now = (deps.now ?? (() => new Date()))();
   const host = deps.host ?? hostname();
-  const defaults = deps.sources && deps.sources.slack && deps.sources.imessage ? null : defaultSources(deps.runsDir);
+  const defaults = deps.sources && deps.sources.slack && deps.sources.imessage ? null : defaultChannelSources(deps.runsDir);
   const channels: ChannelHealth[] = [];
   for (const channel of ['slack', 'imessage'] as const) {
     const src = deps.sources?.[channel] ?? defaults![channel];

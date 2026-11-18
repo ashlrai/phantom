@@ -27,11 +27,13 @@ export interface DockPaneCatalogEntry {
 
 /** Groups for panes registered outside the built-in catalog. */
 export const REGISTERED_DOCK_PANE_GROUPS: Readonly<Record<string, DockPaneGroup>> = {
-  'fleet-hub': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
-  'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet',
-  'worker-log': 'fleet',
+  company: 'fleet',
+  'fleet-compute': 'fleet',
+  'fleet-hub': 'fleet', 'fleet-map': 'fleet', 'fleet-sessions': 'fleet', 'fleet-org': 'fleet', 'fleet-team': 'fleet', 'fleet-direct': 'fleet', 'fleet-lanes': 'fleet', 'fleet-queue': 'fleet',
+  'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet', 'fleet-pools': 'fleet',
+  'worker-log': 'fleet', models: 'fleet',
   'fleet-merges': 'shipping', 'fleet-outcomes': 'shipping', 'fleet-releases': 'shipping', 'fleet-timeline': 'shipping',
-  'fleet-bus': 'talk', 'fleet-inbox': 'talk', 'fleet-channels': 'talk', 'fleet-steering': 'talk',
+  'fleet-bus': 'talk', 'fleet-messages': 'talk', 'fleet-inbox': 'talk', 'fleet-channels': 'talk', 'fleet-steering': 'talk', channels: 'talk',
   'leader-journal': 'talk', 'leader-thread': 'talk',
 };
 

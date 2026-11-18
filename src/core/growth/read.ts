@@ -108,7 +108,7 @@ export async function readGrowthJsonl(path: string, maxBytes = GROWTH_METRICS_MA
   return lines;
 }
 
-async function readMetricsJson(path: string): Promise<unknown | null> {
+export async function readMetricsJson(path: string): Promise<unknown | null> {
   const text = await readBounded(path, GROWTH_METRICS_MAX_BYTES);
   if (text === null || text === '') return null;
   try {

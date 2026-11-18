@@ -1,0 +1,59 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.headline { margin: 0; font-family: var(--font-display); font-size: var(--text-sm-size); font-weight: 600; font-variant-numeric: tabular-nums; }
+.notice, .quiet { margin: 0; color: var(--text-secondary); }
+.tier { min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0 0 var(--space-2); color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.card { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 2px; }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role { color: var(--text-secondary); }
+.facts { display: flex; flex-direction: column; gap: 1px; margin: var(--space-1) 0 0; color: var(--text-tertiary); }
+.facts div { display: flex; gap: var(--space-1); min-width: 0; }
+.facts dt { flex: none; }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
+
+.status { display: inline-flex; flex-direction: column; align-items: flex-end; flex: none; max-width: 8rem; color: var(--text-secondary); text-align: right; }
+.status small { color: var(--text-tertiary); overflow-wrap: anywhere; }
+.status[data-status='working'] { color: var(--status-success-solid); }
+.status[data-status='blocked'] { color: var(--status-danger-solid); }
+.dot { display: inline-block; width: 8px; height: 8px; margin-right: var(--space-1); border-radius: var(--radius-full); background: currentColor; }
+
+/* The tree is one column at every width, so it reads the same at 390 px as on a desktop: rows wrap, nothing scrolls sideways. */
+.tree { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.leader { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); padding: var(--space-2); border: 1px solid var(--accent-500); border-radius: var(--radius-md); }
+.leader small, .job small { flex-basis: 100%; color: var(--text-tertiary); }
+.all { align-self: flex-start; min-height: 28px; padding: 0 var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.lanes, .jobs { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.lanes { margin-left: var(--space-2); padding-left: var(--space-2); border-left: 1px solid var(--border-subtle); }
+.lane { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.lane[data-state='held'] { border-color: var(--status-warning-solid); }
+.lane[data-state='idle'], .lane[data-state='unknown'] { border-style: dashed; }
+.lane[data-state='idle'] .laneHead strong, .lane[data-state='unknown'] .laneHead strong { color: var(--text-secondary); }
+.laneHead, .job { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); width: 100%; min-height: 44px; padding: var(--space-1) var(--space-2); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.laneHead:hover, .job:hover, .all:hover { background: var(--bg-hover); }
+.laneHead:focus-visible, .job:focus-visible, .all:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.twist { flex: none; width: 1em; color: var(--text-tertiary); }
+.counts { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.laneBody { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + 1em + var(--space-2)); }
+.jobs li { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.state { display: inline-flex; align-items: center; flex: none; color: var(--text-secondary); }
+.state[data-state='running'] { color: var(--status-success-solid); }
+.state[data-state='held'] { color: var(--status-warning-solid); font-weight: 600; }
+.state[data-state='unknown'] .dot, .state[data-state='idle'] .dot { background: transparent; border: 1px solid currentColor; }
+.state[data-state='unknown'] .dot { border-style: dashed; }
+
+.avatar { --avatar: var(--text-tertiary); display: inline-flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px; overflow: hidden; background: color-mix(in srgb, var(--avatar) 22%, transparent); color: var(--avatar); font-family: var(--font-display); font-size: var(--text-xs-size); font-weight: 600; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar[data-shape='circle'] { border-radius: var(--radius-full); }
+.avatar[data-shape='square'] { border-radius: var(--radius-sm); }
+.avatar[data-shape='hexagon'] { clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%); }
+.avatar[data-shape='diamond'] { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.avatar[data-color='blue'] { --avatar: var(--status-info-solid); }
+.avatar[data-color='green'] { --avatar: var(--status-success-solid); }
+.avatar[data-color='amber'] { --avatar: var(--status-warning-solid); }
+.avatar[data-color='red'] { --avatar: var(--status-danger-solid); }
+.avatar[data-color='violet'] { --avatar: var(--accent-500); }
+.avatar[data-color='teal'] { --avatar: color-mix(in srgb, var(--status-success-solid) 55%, var(--status-info-solid)); }
+.avatar[data-color='pink'] { --avatar: color-mix(in srgb, var(--status-danger-solid) 50%, var(--accent-500)); }
+.avatar[data-color='slate'] { --avatar: var(--text-secondary); }

@@ -215,6 +215,7 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'release-stages': 'handleReleaseStagesApi',
   'comms-inbox': 'handleCommsInboxApi',
   'comms-teammate-reply': 'handleCommsTeammateReplyApi',
+  'fleet-merge-latency': 'handleMergeLatencyApi',
   // The desktop command center's library files and run handoffs.
   'fleet-library-files': 'handleFleetLibraryFilesApi',
   'fleet-handoffs': 'handleFleetHandoffsApi',
@@ -223,6 +224,8 @@ const EXPECTED_HANDLERS: Record<WorkbenchRouteFamilyId, string> = {
   'fleet-recheck': 'handleFleetRecheckApi',
   'fleet-coordination-claims': 'handleFleetCoordinationClaimsApi',
   'fleet-work-board': 'handleFleetWorkBoardApi',
+  // Merges pane: where PRs wait (read-only merge-latency report).
+  'fleet-merge-latency': 'handleMergeLatencyApi',
 };
 
 const allPrefixes = WORKBENCH_ROUTE_FAMILIES.flatMap((family) => family.prefixes.map((prefix) => ({ family: family.id, prefix })));
@@ -533,11 +536,18 @@ describe('workbench mount through the real server', () => {
       for (const prefix of family.prefixes) {
         calls = [];
         loads = [];
-        const res = await request(port, 'GET', `${prefix}/probe?x=1`, read);
+        const exactRoute = family.id === 'fleet-merge-latency';
+        const url = exactRoute ? `${prefix}?hours=24` : `${prefix}/probe?x=1`;
+        const res = await request(port, 'GET', url, read);
         expect(res.status, prefix).toBe(200);
-        // The module sees the path WITHOUT the query string, like every V1 route.
-        expect(res.json).toEqual({ family: family.id, path: `${prefix}/probe`, method: 'GET' });
-        expect(calls.map((c) => c.id)).toEqual([family.id]);
+        if (exactRoute) {
+          expect(res.json).toMatchObject({ schema: 'verse.merge-latency.v1' });
+          expect(calls).toEqual([]);
+        } else {
+          // The module sees the path WITHOUT the query string, like every V1 route.
+          expect(res.json).toEqual({ family: family.id, path: `${prefix}/probe`, method: 'GET' });
+          expect(calls.map((c) => c.id)).toEqual([family.id]);
+        }
         expect(loads.filter((l) => l.startsWith('a10:'))).toEqual([]);
       }
     }
