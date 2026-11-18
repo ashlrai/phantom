@@ -179,6 +179,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'thread', 'send-owner', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand', 'inbox', 'bus', 'email-drop', 'email-cycle', 'setup-email', 'pair-telegram', 'diagnose', 'health'],
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
+  library: ['show', 'list', '--kind', '--since', '--q', '--json', '--text', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   tools: ['parity', 'requires', '--needs', '--text', '--help'],
   messages: ['--since', '--agent', '--limit', '--text', '--help'],
