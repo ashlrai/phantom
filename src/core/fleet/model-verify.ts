@@ -92,7 +92,8 @@ function parseEntry(row: unknown, now: number): VerifiedModelRegistryEntry {
   return row as unknown as VerifiedModelRegistryEntry;
 }
 const byId = (a: { id: string }, b: { id: string }) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-function homeFile(name: string, set: string | null | undefined, opts: ModelVerifyOptions): string | null {
+/** A path under $ASHLR_HOME. Null when a test registry is injected and no path was set, so tests never read the real home. */
+export function homeFile(name: string, set: string | null | undefined, opts: ModelVerifyOptions): string | null {
   if (set !== undefined) return set;
   if (opts.registryPath) return null;
   const home = process.env.ASHLR_HOME;

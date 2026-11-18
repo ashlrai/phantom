@@ -69,7 +69,8 @@ const DOCS_REASON: Partial<Record<DocsVerdict, (use: string | null) => string>> 
 };
 const sorted = (ids: Iterable<string>) => [...new Set(ids)].sort();
 const family = (id: string) => /^[a-z]+/.exec(id)?.[0] ?? '';
-const canonical = (id: string) => id.toLowerCase().replace(/[.:]/g, '-').replace(/-(?:\d{8}|latest)$/, '');
+/** One spelling for ids that differ only by dots, colons or a date suffix. */
+export const canonical = (id: string) => id.toLowerCase().replace(/[.:]/g, '-').replace(/-(?:\d{8}|latest)$/, '');
 
 /** Model ids in saved page text: lower-case tokens with a digit that start with a family the registry knows (claude, gpt, ...). */
 export function parseReleaseNoteIds(text: string, families: Iterable<string>): string[] {

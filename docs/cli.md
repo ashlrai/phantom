@@ -107,6 +107,7 @@ Every command, grouped by topic.
     runs [--json]                                                         List past runs (newest first).
     models [--json]                                                       List the model registry (verified, unverified, stale) and local models.
     models check [--json] [--diff <file>]                                 Report every model the router can pick: confirmed, stale or unconfirmed (not routable).
+    models radar [--json] [--from <folder>] [--fetch]                     List new, retired and renamed model ids from saved provider release notes, with a proposed registry patch.
     models verify <id> --source <url>                                     Mark one model verified once its official doc page names the exact id.
     models verify [--text]                                                Show model verification status and age (JSON by default).
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).
@@ -392,6 +393,7 @@ Every command, grouped by topic.
     usage history --lane <id> [--json] [--runs-dir <abs>]                                       Read seven days of measured per-lane allowance history.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                      Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
     pools [--text]                                                                              What would go unused at reset, per resource: used percent, hours left, burn and waste risk. JSON by default.
+    queue wait [--events <file>] [--json]                                                       Show the oldest recorded queued PR and why it is waiting; required checks stay enforced.
     queue stats [--json] [--window <seconds>]                                                   Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     queue batches [--runs <directory>] [--json]                                                 Show each batch line’s PR, empty reason, failure or unknown result.
     repos rank [proposals] [--json] [--recompute]                                               Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
