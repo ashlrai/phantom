@@ -182,12 +182,23 @@ export interface NotifyRoutePlan {
   verifiedSenderCheck: 'src/core/comms/owner-channel.ts#ownerAllowed';
 }
 
-/** Supplied availability is a scenario, not live health or send/identity authority. */
+/**
+ * The one update router. Supplied availability is a scenario, not live health
+ * or send/identity authority. `ruleChannel` is the owner's rule for this update
+ * type (notify-rules.ts); omitted, the built-in route applies.
+ */
 export function planNotifyRoute(
   updateType: NotifyUpdateType,
   availability: Partial<Record<NotifyChannel, NotifyAvailability>> = {},
+  ruleChannel?: NotifyChannel,
 ): NotifyRoutePlan {
-  const rule = NOTIFY_ROUTES[updateType];
+  const base: NotifyRule = NOTIFY_ROUTES[updateType];
+  const fallbackChannel: NotifyChannel = ruleChannel === 'desktop' ? 'email' : 'desktop';
+  const rule: NotifyRule = !ruleChannel || ruleChannel === base.channel ? base : {
+    ...base, channel: ruleChannel, fallback: fallbackChannel,
+    fallbackDelivery: fallbackChannel === 'email' ? 'next-digest' : base.delivery,
+    reason: `The rule sends this to ${ruleChannel}.`,
+  };
   const fallback = availability[rule.channel] === 'unavailable';
   const candidate = fallback ? rule.fallback : rule.channel;
   const state = availability[candidate] ?? 'unknown';

@@ -52,7 +52,7 @@ export function changelogSection(markdown: string, version: string): string[] | 
 }
 
 /** Nearest ancestor of this module holding a package.json (dist/ or src/ layouts both resolve). */
-function packageRoot(): string | null {
+export function packageRoot(): string | null {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (;;) {
     if (existsSync(join(dir, 'package.json'))) return dir;

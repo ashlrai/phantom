@@ -2232,6 +2232,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'shipped': {
+        const { cmdShipped } = await import('./shipped.js');
+        process.exitCode = await cmdShipped(rest);
+        break;
+      }
+
       case 'subagent': {
         const { cmdSubagent } = await import('./subagent.js');
         process.exitCode = await cmdSubagent(rest);

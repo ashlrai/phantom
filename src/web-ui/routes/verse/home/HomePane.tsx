@@ -13,6 +13,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
 import { DiskCard } from './DiskCard.js';
+import { ShippedCard } from './ShippedCard.js';
 import styles from './home.module.css';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
@@ -59,6 +60,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>
+    <ShippedCard visible={visible} />
     <DiskCard visible={visible} />
   </section>;
 }
