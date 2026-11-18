@@ -5,7 +5,7 @@
  "lanes": ["claude", "codex-personal", "codex-cmp", "devin"],
  "models": {
   "claude": {"workhorse": "sonnet", "hard": "opus"},
-  "codex": {"default": "gpt-6.1-terra"},
+  "codex": {"default": "gpt-6.2-sol", "frontier": "gpt-6.2-astra"},
   "devin": {"default": "swe-2-flash"}
  },
  "hard_markers": ["architecture", "architectural", "redesign", "migration", "concurrency", "race condition",
