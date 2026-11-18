@@ -33,7 +33,7 @@ export const REGISTERED_DOCK_PANE_GROUPS: Readonly<Record<string, DockPaneGroup>
   'fleet-dispatch': 'fleet', 'fleet-capacity': 'fleet', 'fleet-supply': 'fleet', 'fleet-pools': 'fleet',
   'worker-log': 'fleet', models: 'fleet',
   'fleet-merges': 'shipping', 'fleet-outcomes': 'shipping', 'fleet-releases': 'shipping', 'fleet-timeline': 'shipping',
-  'fleet-bus': 'talk', 'fleet-messages': 'talk', 'fleet-inbox': 'talk', 'fleet-channels': 'talk', 'fleet-steering': 'talk',
+  'fleet-bus': 'talk', 'fleet-messages': 'talk', 'fleet-inbox': 'talk', 'fleet-channels': 'talk', 'fleet-steering': 'talk', channels: 'talk',
   'leader-journal': 'talk', 'leader-thread': 'talk',
 };
 

@@ -546,6 +546,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{id, appended}',
   },
   {
+    usage: 'phm channels [--json]',
+    description: 'One row per messaging channel (email, telegram, imessage, mobile, desktop, page, cli, slack): connected, not set up, failing or unknown: <reason>; last inbound/outbound, messages in 24 h, verified senders, masked address and the one next step. Failing first. Same JSON as GET /api/channels and the desktop Channels pane. Exit 0 success/help, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ChannelsOverview {schema:"phantom.channels.v1", version:1, at, counts, channels[]}',
+  },
+  {
     usage: 'phm channels status [--json]',
     description: 'Per-channel rollup: configured, credential custody, pairing, received, pendingOutbound, lastSeenAt. Counts are measured or "unknown", never fabricated. Exit 0 success/help, 2 bad usage.',
     safety: 'read',
