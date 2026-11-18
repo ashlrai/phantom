@@ -98,8 +98,8 @@ it('shows an empty fleet as idle and an unread fleet as unknown, never as zero',
 it('shows the typed Leader seat report with fallback health, headroom and unknown evidence', () => {
   const value = busy(); value.leaderSeat = buildLeaderSeat(null, null, null, NOW);
   value.leaderSeat.current = { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT };
-  value.leaderSeat.fallbacks = [{ lane: 'codex-personal', model: 'fixture-b', confirmed: true, health: 'ok', headroomPct: 72,
-    resetAt: null, recentPassMs: null, eligible: true, reason: null }];
+  value.leaderSeat.fallbacks = [{ lane: 'codex-personal', model: 'fixture-b', confirmed: true, cli: 'codex', health: 'ok', headroomPct: 72,
+    resetAt: null, recentPassMs: null, rateLimitedAt: null, eligible: true, reason: null }];
   value.leaderSeat.pick = value.leaderSeat.fallbacks[0]!;
   render(<OrgTreeView tree={value} now={NOW} />);
   const row = screen.getByLabelText('Leader seat');

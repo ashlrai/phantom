@@ -25,11 +25,12 @@
  *
  * `run` spends at most one Leader call on a seat the router allows (with no
  * standing grant: a free local model or nothing). `veto` only lowers what
- * autonomy is doing. Exit codes: 0 success, 1 error / refused, 2 bad usage.
+ * autonomy is doing. Exit codes: 0 success, 1 error / refused, 2 bad usage,
+ * 3 no leader seat available (`seat`, `run --seat auto`).
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { leaderAsk, leaderAssign, leaderOrg, leaderStatus } from '../core/agents/leader-office.js';
 import { loadConfig } from '../core/config.js';
@@ -47,10 +48,11 @@ Usage:
   phm leader ask "<text>" [--json]
   phm leader org [--json]
   phm leader assign --rq <RQ-KEY> --owner <role> --summary "<text>" [--due YYYY-MM-DD] [--status assigned|in_progress|blocked|done|proposed] [--outcome "<text>"] [--json]
-  phm leader seat [pick] [--json]  inspect leader placement or recommend the next seat (read-only)
+  phm leader seat [pick] [--json]  where the leader runs now and where it moves next (read-only; exit 3: no seat)
   phm leader seat --tier elite|workhorse|fast|local [--json]  inspect legacy task-tier admission
   phm leader inbox [--json] [--limit n] [--text "message"]
   phm leader run [--force]
+  phm leader run --seat auto --prompt-file <file> --dry-run [--json]  print the exact leader command for the chosen seat (exit 3: no seat)
   phm leader tick [--wait]
   phm leader veto <actionId> [--note "why"]
   phm leader veto --memo <memoId> [--note "why"]
@@ -631,7 +633,7 @@ async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number>
     const { sanitizePublicJson } = await import('../core/util/public-json.js');
     const result = await readLeaderSeat();
     console.log(json ? JSON.stringify(sanitizePublicJson(result), null, 2) : sanitizePublicJson(leaderSeatText(result, args[0] === 'pick')));
-    return 0;
+    return result.pick ? 0 : 3;
   }
   const limit = option(args, '--limit');
   const text = option(args, '--text');
@@ -669,6 +671,31 @@ async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number>
     console.error(json ? JSON.stringify({ error: 'leader-unavailable' }) : 'Leader state is unavailable.');
     return 1;
   }
+}
+
+/**
+ * `leader run --seat auto --prompt-file F --dry-run`: print the one command the
+ * pinned leader loop should run for the chosen seat. Never runs it, and the
+ * command carries no environment values: the prompt is redirected from F.
+ */
+async function runSeatDryRun(args: string[]): Promise<number> {
+  const json = flag(args, '--json');
+  const dryRun = flag(args, '--dry-run');
+  const seat = option(args, '--seat');
+  const promptFile = option(args, '--prompt-file');
+  if (args.length || seat !== 'auto' || !promptFile) { console.error(USAGE); return 2; }
+  if (!dryRun) { console.error('Only --dry-run is supported: it prints the command, and the leader loop runs it.'); return 2; }
+  const path = resolve(promptFile);
+  if (!existsSync(path) || !statSync(path).isFile()) { console.error('Prompt file not found.'); return 2; }
+  const { readLeaderSeat, pickSeat, leaderSeatCommand } = await import('../core/fleet/leader-seat.js');
+  const choice = pickSeat(await readLeaderSeat());
+  if (!choice.ok) {
+    console.log(json ? JSON.stringify({ schema: 'leader.run.dry-run.v1', seat: choice, command: null }) : choice.reason);
+    return 3;
+  }
+  const command = leaderSeatCommand(choice, path);
+  console.log(json ? JSON.stringify({ schema: 'leader.run.dry-run.v1', seat: choice, command }) : command.text);
+  return 0;
 }
 
 export async function runLeaderCli(argv: string[]): Promise<number> {
@@ -714,6 +741,7 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
   if (sub === 'status' || sub === 'ask' || sub === 'org' || sub === 'assign') return runOfficeCli(sub, args);
   if (sub === 'seat' || sub === 'inbox') return runCeoCli(sub, args);
   if (sub === 'say' || sub === 'thread' || sub === 'answer' || sub === 'approve' || sub === 'directives') return runThreadCli(sub, args);
+  if (sub === 'run' && args.includes('--seat')) return runSeatDryRun(args);
   const leader = await import('../core/vision/leader.js');
 
   if (sub === 'show') {

@@ -21,11 +21,12 @@ describe('leader thread CLI', () => {
     const read = vi.spyOn(seat, 'readLeaderSeat').mockResolvedValue(report);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    // No seat qualifies in an empty report: the report still prints, and the exit code is 3.
     for (const args of [['seat', '--json'], ['seat', 'pick', '--json']]) {
-      expect(await runLeaderCli(args)).toBe(0);
+      expect(await runLeaderCli(args)).toBe(3);
       expect(JSON.parse(String(log.mock.calls.at(-1)![0]))).toEqual(report);
     }
-    expect(await runLeaderCli(['seat', 'pick'])).toBe(0);
+    expect(await runLeaderCli(['seat', 'pick'])).toBe(3);
     expect(log.mock.calls.at(-1)![0]).toBe('No seat: lane health is unknown.');
     expect(await runLeaderCli(['seat', 'pick', '--apply'])).toBe(2);
     expect(await runLeaderCli(['seat', 'bogus'])).toBe(2);
