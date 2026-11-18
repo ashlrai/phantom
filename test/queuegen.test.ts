@@ -232,6 +232,17 @@ describe('queuegen DIRTY -> REBASE', () => {
 });
 
 describe('queuegen dedupe', () => {
+  it('reconciles closed/merged PR history only after a successful open-PR read', () => {
+    const emitted = Object.fromEntries(['ashlrai/phantom#1', 'ashlrai/phantom#2', 'ashlrai/locus#1']
+      .map(key => [key, [{ id: 'old', at: NOW }]]));
+    const fake = makeIo({ state: { v: 1, emitted }, prs: ONE });
+    runQueuegenCycle(fake.io, { repos: ['ashlrai/phantom'] });
+    expect(Object.keys(fake.state()!.emitted)).toEqual(['ashlrai/phantom#1', 'ashlrai/locus#1']);
+    const failed = makeIo({ state: { v: 1, emitted }, listThrow: new Set(['ashlrai/phantom']) });
+    expect(() => runQueuegenCycle(failed.io)).toThrow('gh failed');
+    expect(Object.keys(failed.state()!.emitted)).toHaveLength(3);
+  });
+
   it.each(['FAILED', 'CANCELLED'])('keeps one active rebase per repository/PR and retries after %s', (terminal) => {
     const numbers = [1234, 3231, 3193];
     const repos = ['ashlrai/phantom', 'ashlrai/locus'];

@@ -439,6 +439,15 @@ async function run(args: string[], opts: { stdinText?: string | null; files?: Re
 }
 
 describe('phm fleet rebase-plan', () => {
+  it.each(['FAILED', 'CANCELLED', 'MERGED', 'DONE'])('reconciles stale router READY evidence with %s in ready.tsv', async status => {
+    const id = 'RQ-REBASE-phantom-1-abcdef0';
+    const coverage = await readRebaseCoverage('/queue', async path => path.endsWith('.md')
+      ? `- READY ${id} (repo=phantom): rebase #1`
+      : `${status}\t${id}\tdevin\twork\tphantom`);
+    expect(coverage.jobs).toHaveLength(1);
+    expect(rebaseWorkState(coverage.jobs, ['ashlrai/phantom']).active.size).toBe(0);
+  });
+
   it('reads active and failed legacy JSON queue rows for the scheduler', async () => {
     const jobs = [existing('RQ-REBASE-phantom-1234', 'RUNNING'), existing('RQ-REBASE-phantom-3231', 'FAILED')];
     const coverage = await readRebaseCoverage('/queue', async path => path.endsWith('.md') ? jobs.map(job => JSON.stringify(job)).join('\n') : '');
