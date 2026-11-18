@@ -676,6 +676,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'FrictionReport (phm.friction.v1) | {ok, appended}',
   },
   {
+    usage: 'phm pulse merge-latency [--jobs <jobs.jsonl>] [--json]',
+    description: 'Observed time waiting for checks, running checks and waiting to merge. Read-only; missing, reversed or ambiguous boundaries stay unknown.',
+    safety: 'read',
+    jsonShape: 'pulse.merge-latency.v1 {known,jobs,ignored_events,phases,top_wastes}; durations are total_seconds, unknown is null',
+  },
+  {
     usage: 'ashlr pulse [--window 1d|7d|30d] --json',
     description: 'Token/cost/activity roll-up (sessions, tokens, est. cost, commits).',
     safety: 'read',
