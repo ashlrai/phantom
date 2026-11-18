@@ -18,16 +18,26 @@ def completed(text='', code=0):
 
 class ProcessSnapshotTests(unittest.TestCase):
     def test_reads_arguments_only_for_potential_owners(self):
-        names = '1 /System/Chrome\n42 /usr/bin/codex\n43 /bin/bash\n'
+        start = 'Tue Nov 17 07:03:20 2026'
+        names = f'1 {start} /System/Chrome\n42 {start} /usr/bin/codex\n43 {start} /bin/bash\n'
         commands = '42 codex exec -C /fleet/wt/RQ-A\n43 bash publish.sh RQ-B\n'
         with patch.object(snapshot, '_bounded', side_effect=[completed(names), completed(commands)]) as run:
             result = snapshot.capture()
         self.assertEqual(result.returncode, 0)
         self.assertIn('/fleet/wt/RQ-A', result.stdout)
         self.assertIn('publish.sh RQ-B', result.stdout)
-        self.assertEqual(run.call_args_list[0].args[0], ['ps', '-axo', 'pid=,comm='])
+        self.assertEqual(result.start_times[42], start)
+        self.assertEqual(run.call_args_list[0].args[0], ['ps', '-axo', 'pid=,lstart=,comm='])
         self.assertEqual(run.call_args_list[1].args[0][3], '42,43')
         self.assertNotIn('1', run.call_args_list[1].args[0][3].split(','))
+
+    def test_start_time_reader_returns_one_identity_or_unknown(self):
+        start = 'Tue Nov 17 07:03:20 2026'
+        with patch.object(snapshot, '_bounded', return_value=completed(start + '\n')) as run:
+            self.assertEqual(snapshot.read_start_time(42), start)
+        self.assertEqual(run.call_args.args[0], ['ps', '-p', '42', '-o', 'lstart='])
+        with patch.object(snapshot, '_bounded', return_value=completed(code=1)):
+            self.assertIsNone(snapshot.read_start_time(42))
 
     def test_timeout_cleanup_does_not_join_an_uninterruptible_process(self):
         child = Mock(pid=12345, stdout=io.StringIO(), stderr=io.StringIO())

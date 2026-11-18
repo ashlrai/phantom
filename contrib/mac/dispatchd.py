@@ -654,7 +654,7 @@ def _eval_report():
         result = _run(cmd, timeout=8)
         return json.loads(result.stdout) if result.returncode == 0 else None
     except Exception: return None
-from process_snapshot import capture as capture_process_snapshot
+from process_snapshot import capture as capture_process_snapshot, read_start_time as read_process_start_time
 # RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
 # sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
 # each result at its original decision point. Probe behavior is unchanged.
@@ -769,7 +769,7 @@ pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
 pat_lj = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")   # session leaders spawned by the launch phase
-job_leaders = {}   # job -> pids of its launch wrapper (RQ-JOB-MAX-RUNTIME-1 watchdog)
+job_leaders = {}   # job -> (pid, start time) identities of its launch wrapper
 ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
@@ -778,12 +778,15 @@ if ps_result.returncode:
     log("PROCESS_SNAPSHOT unknown; preserving every worker and queue claim")
     raise SystemExit(0)  # Unknown ownership is never permission to reap or launch.
 ps = ps_result.stdout
+process_start_times = ps_result.start_times
 for line in ps.splitlines():
     if "dispatchd.py" in line: continue
     m = pat_pb.search(line)
     if m: publishing.add(m.group(1)); continue
     m = pat_lj.search(line); f_ = line.split(None, 1)[0] if line.strip() else ""
-    if m and f_.isdigit(): job_leaders.setdefault(m.group(1), set()).add(int(f_))
+    if m and f_.isdigit():
+        pid = int(f_)
+        job_leaders.setdefault(m.group(1), set()).add((pid, process_start_times.get(pid)))
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
@@ -826,13 +829,51 @@ def _max_runtime(lane):
         if v != v or v < 0: continue
         return 0 if v == 0 else max(JOB_MAX_RUNTIME_MIN_S, v)
     return JOB_MAX_RUNTIME_S
-def _kill_leaders(pids, sig):
-    for pid in pids:   # only a real session leader's own group: never pid 1, ourselves, or a shared group
+def _kill_leaders(leaders, sig, job, expected=None):
+    signalled = []
+    for pid, start_time in sorted(leaders, key=lambda identity: identity[0]):
+        if not isinstance(start_time, str) or not start_time:
+            ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+            continue
+        if expected is not None and (pid, start_time) not in expected:
+            ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+            continue
         try:
-            if pid > 1 and pid != os.getpid() and os.getpgid(pid) == pid and pid != os.getpgrp(): os.killpg(pid, sig)
+            if pid <= 1 or pid == os.getpid() or os.getpgid(pid) != pid or pid == os.getpgrp(): continue
+            try: current_start = read_process_start_time(pid)
+            except Exception: current_start = None
+            if not current_start or current_start != start_time:
+                ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+                continue
+            # PID reuse can still occur in the sub-millisecond gap before killpg.
+            os.killpg(pid, sig)
+            signalled.append((pid, start_time))
         except OSError: pass
+    return signalled
+def _maxruntime_identities(marker):
+    identities = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return identities
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            identities.add((pid, start_time))
+    return identities
+def _maxruntime_escalated(marker):
+    try:
+        with open(marker) as f: return "KILL" in {line.strip() for line in f}
+    except OSError: return True
+def _write_maxruntime_identities(marker, identities):
+    with open(marker, "w") as f:
+        for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
 def job_watchdog():
-    for j, pids in sorted(job_leaders.items()):
+    for j, leaders in sorted(job_leaders.items()):
         if not JID.match(j) or j in reaping or j in publishing: continue
         try:
             ln = rd(RUN + "/" + j + ".line").strip().split("\t")
@@ -842,16 +883,18 @@ def job_watchdog():
             src = RUN + "/" + j + (".dispatched" if os.path.exists(RUN + "/" + j + ".dispatched") else ".line")
             age = NOW - os.path.getmtime(src)
             mk = RUN + "/" + j + ".maxruntime"
-            if os.path.exists(mk):   # already terminated once: escalate if the group is still there
-                if NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S and os.path.getsize(mk) == 0:
-                    _kill_leaders(pids, signal.SIGKILL); open(mk, "w").write("KILL\n"); ev("REAP TIMEOUT %s SIGKILL" % j)
+            if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
+                if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
+                    _kill_leaders(leaders, signal.SIGKILL, j, expected=_maxruntime_identities(mk))
+                    with open(mk, "a") as f: f.write("KILL\n")
+                    ev("REAP TIMEOUT %s SIGKILL" % j)
                 continue
             if age < limit: continue
-            open(mk, "w").close()
             if not os.path.exists(RUN + "/" + j + ".rc"):
                 t = "%s/%s.rc.tmp.%d" % (RUN, j, os.getpid()); open(t, "w").write("124\n"); os.replace(t, RUN + "/" + j + ".rc")
             ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
-            _kill_leaders(pids, signal.SIGTERM)
+            term_identities = _kill_leaders(leaders, signal.SIGTERM, j)
+            _write_maxruntime_identities(mk, term_identities)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
 job_watchdog()
 
