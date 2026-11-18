@@ -2,10 +2,11 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PulseV1 } from '../../../../core/fleet/pulse.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
+import { driftLine, type SelfDriftV1 } from '../../../../core/release/drift-shape.js';
 import { PulseCard } from './PulseCard.js';
 
-const state = vi.hoisted(() => ({ read: { status: 'success', data: undefined as unknown } }));
-vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state.read, useRefetch: () => vi.fn() }));
+const state = vi.hoisted(() => ({ read: { status: 'success', data: undefined as unknown }, drift: { status: 'success', data: undefined as unknown } }));
+vi.mock('../../../data/hooks.js', () => ({ useQuery: (def: { key: string }) => def.key === 'self-drift' ? state.drift : state.read, useRefetch: () => vi.fn() }));
 
 const none = (line: string) => ({ value: null, trend: 'unknown' as const, better: null, line });
 /** The `phm fleet pulse --json` bodies for an empty fleet and a normal one; fake repos and pools only. */
@@ -29,7 +30,7 @@ const TITLES = ['PRs merged per hour', 'Median publish to merge', 'Main branches
 let viewport: ViewportMock | null = null;
 const show = (data: unknown, width: number, status = 'success') => { viewport = mockViewport(width); state.read = { status, data }; return render(<PulseCard />); };
 const row = (name: string) => within(screen.getByRole('listitem', { name }));
-afterEach(() => { cleanup(); viewport?.restore(); viewport = null; });
+afterEach(() => { cleanup(); viewport?.restore(); viewport = null; state.drift = { status: 'success', data: undefined }; });
 
 describe.each([['390 px', 390], ['desktop width', 1440]])('Pulse card at %s', (_name, width) => {
   it('normal: the headline, then five numbers with an arrow and a plain line each', () => {
@@ -68,4 +69,44 @@ it('says unknown when the read fails, and stays hidden before the read or for an
     expect(show(data, 390).container.innerHTML).toBe('');
     cleanup();
   }
+});
+
+describe('Running build row', () => {
+  const drift = (behind: number | 'unknown', fleetFixes: SelfDriftV1['fleetFixes']): SelfDriftV1 => {
+    const facts = { latestRelease: { tag: 'v3.3.0', behind: 'unknown' as const }, master: { revision: 'unknown', behind }, fleetFixes, unknownReason: behind === 'unknown' ? 'this build has no recorded commit' : null };
+    return { schema: 'phantom.self-drift.v1', version: 1, checkedAt: '2026-11-18T12:00:00.000Z', running: { version: '3.1.0', revision: 'unknown' }, ...facts,
+      mergedPrs: 'unknown', status: behind === 'unknown' ? 'unknown' : behind ? 'behind' : 'up to date', updateCommand: 'phm update', line: driftLine(facts) };
+  };
+
+  it('up to date: one plain line, nothing to open', () => {
+    state.drift = { status: 'success', data: drift(0, []) };
+    show(NORMAL, 390);
+    expect(row('Running build').getByText('up to date')).toBeTruthy();
+    expect(row('Running build').getByText('Running build is up to date with master.')).toBeTruthy();
+    expect(screen.queryByRole('group')).toBeNull();
+  });
+
+  it('behind: the count, the update command, and the not-live fleet fixes one tap away', () => {
+    state.drift = { status: 'success', data: drift(41, [{ pr: 12, title: 'fix: queue order' }, { pr: 9, title: 'fix: recut skip' }]) };
+    show(NORMAL, 1440);
+    expect(row('Running build').getByText('41 behind')).toBeTruthy();
+    const summary = row('Running build').getByText('Running build is 41 commits behind master; 2 fleet fixes are merged but not live yet. Run phm update to apply.');
+    expect(summary.tagName.toLowerCase()).toBe('summary');
+    expect(row('Running build').getAllByRole('listitem').map(item => item.textContent)).toEqual(['#12 fix: queue order', '#9 fix: recut skip']);
+  });
+
+  it('unknown stays unknown; a failed read is unknown; an older server hides the row', () => {
+    state.drift = { status: 'success', data: drift('unknown', 'unknown') };
+    show(NORMAL, 390);
+    expect(row('Running build').getByText('unknown')).toBeTruthy();
+    expect(row('Running build').getByText('Running build: unknown how far behind master (this build has no recorded commit).')).toBeTruthy();
+    cleanup();
+    state.drift = { status: 'error', data: undefined };
+    show(NORMAL, 390);
+    expect(row('Running build').getByText('Unknown: the running build could not be read.')).toBeTruthy();
+    cleanup();
+    state.drift = { status: 'success', data: { schema: 'other' } };
+    show(NORMAL, 390);
+    expect(screen.queryByRole('listitem', { name: 'Running build' })).toBeNull();
+  });
 });
