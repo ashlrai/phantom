@@ -12,12 +12,22 @@ export const routeIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}
 export const effortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
 export const speedTierSchema = z.enum(['everyday', 'workhorse', 'premium']);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const routeFailureKindSchema = z.enum(['quota', '5xx', 'timeout', 'near_reset']);
+export const routeCostClassSchema = z.enum(['local', 'included', 'metered']);
+export const routeDataClassSchema = z.enum(['public', 'internal', 'confidential', 'restricted']);
 
 export const routeRequestSchema = z.object({
   task_class: z.enum(TASK_CLASSES),
   repo: routeIdSchema,
   tier_hint: routeTierSchema,
   mode: modeTierSchema.optional(),
+  job: routeIdSchema.optional(),
+  needs: z.array(z.string().regex(/^[a-z0-9][a-z0-9:_.-]{0,63}$/)).max(32).optional(),
+  min_tier: routeTierSchema.optional(),
+  max_cost_class: routeCostClassSchema.optional(),
+  data_class: routeDataClassSchema.optional(),
+  fallback: z.array(z.object({ lane: routeIdSchema, on: z.array(routeFailureKindSchema).min(1).max(4) }).strict()).max(3)
+    .refine(rows => new Set(rows.map(row => row.lane)).size === rows.length, 'Duplicate fallback lane').optional(),
   lane_candidates: z.array(routeIdSchema).max(64),
   quota_state: z.record(routeIdSchema, z.enum(['available', 'exhausted', 'unknown'])),
   machine_state: z.object({
@@ -61,6 +71,7 @@ export interface RouteCandidate {
   latency_rank: number;
 }
 export interface RouteReport extends RouteDecision {
+  local_models_refused: import('../resources/local-memory-fit.js').MemoryFit[];
   requested_mode: ModeTier | null;
   capacity: ResetCalendarPool | null;
   schema: 'route.decision.v1';

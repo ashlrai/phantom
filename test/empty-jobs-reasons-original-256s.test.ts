@@ -176,7 +176,7 @@ describe('CLI surface after extraction', () => {
   });
 
   it('keeps classifyEmpty note/log classification unchanged', () => {
-    expect(classifyEmpty('duplicate of an earlier job', null)).toEqual({ class: 'duplicate', reason: 'The job duplicated an earlier job.' });
-    expect(classifyEmpty(null, null)).toEqual({ class: 'other', reason: 'Notes and log were unavailable.' });
+    expect(classifyEmpty('duplicate of an earlier job', null)).toEqual({ class: 'duplicate', reason: 'The job duplicated an earlier job.', outcome: 'duplicate' });
+    expect(classifyEmpty(null, null)).toEqual({ class: 'other', reason: 'Notes and log were unavailable.', outcome: 'unknown' });
   });
 });

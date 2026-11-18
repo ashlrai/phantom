@@ -11,6 +11,18 @@ This is the source candidate in `contrib/mac/dispatchd.py`, supported by
 then the sanctioned `contrib/mac/install.sh` path. Agents never install over
 `~/.ashlr-runs/bin`. Publication remains fork-only through `publish.sh`.
 
+## Recover a pushed job without a PR
+
+Run `phm fleet republish --dry-run --json` (omit `--json` for one plain line per job).
+It reads `~/.ashlr-runs/<job>.publish`, or `--runs-dir <dir>`, and checks public GitHub evidence.
+Only an abort after the push marker, an exact surviving fork branch, and no open or merged PR
+produce a READY proposal to cherry-pick the observed SHA onto fresh `master`. Nothing is queued or written.
+JSON uses `fleet.republish.v1`; each job has `status`, `reason`, `head`, `sha`, `readyLine`, and `pr_state`
+(`none`, `open`, `merged`, `closed`, or `unknown` when the PR lookup is unavailable).
+Exit codes: 0 complete, 1 unknown evidence, 2 bad usage. Missing push links, unreadable/oversized
+logs, private repositories, API failures and incomplete PR pages stay unknown. Logs are capped at 2 MiB.
+This preview cannot establish cherry-pick compatibility or find recovery PRs under another head.
+
 ## Job requirements
 
 The live producer input is `queue/router-queue.md`. For example:
@@ -113,6 +125,15 @@ missing or stale evidence. This bounded policy responds to measured work-tier
 underperformance; it does not infer a causal yield gain or train a tier optimizer.
 
 ### Resource posture: the lane is a hint
+
+Measured `work-market.v1` posture entries carry `lane`, `account_id`, `model`,
+`window_start` and `reset_at`, with the journal row's `ts` proving freshness.
+Only usage-derived posture carries reading provenance; host declarations, free
+windows, previews and use-it-all overrides do not. Devin uses the weekly API
+measurement's scope verbatim and drops a model that differs from the dispatcher
+selection. Other lanes normalize budget-reading instants to UTC milliseconds.
+Unknown scope is omitted, never invented; incomplete or mismatched receipts do
+not establish allowance posture.
 
 Each executor has a posture: `burn` (spend the window on volume), `preserve`
 (keep the window for judgment work), or `balanced`. The defaults are `burn` for
@@ -231,6 +252,10 @@ hint, and a member that joins a combined session on another lane records
 `FLEET_REBALANCE <job> <from>-><lane> (shared market: <reason>)`; the reason is
 `placement_moved` when the row declared no lane and only its provisional
 lane column changed.
+
+Advisory [failover receipts](ROUTING.md#failover-chains) use `lane_override`
+codes `failover_quota`, `failover_5xx`, `failover_timeout` and
+`failover_near_reset` on `failover` rows. These do not wire the live dispatcher.
 
 Other reason codes include `missing_capability`, `tier_unavailable`,
 `tier_ceiling_exceeded`, `repo_unserved`, `data_class_exceeded`,
@@ -484,8 +509,8 @@ code 14.
 `merge-queue-loop` ([`merge-queue-loop.ts`](../src/core/drive/merge-queue-loop.ts),
 run by `node scripts/merge-queue-loop.mjs cycle [--dry-run]`) makes one pass
 over the fleet PRs of the seven approved repos. A green, mergeable PR is
-added to the default branch's GitHub merge queue (`enqueuePullRequest` with
-`expectedHeadOid`, so a moved head is refused); the queue still runs every
+added to the default branch's GitHub merge queue (`gh pr merge --auto` with
+`--match-head-commit`, so a moved head is refused); the queue still runs every
 required check on the merge group. A BEHIND PR gets `updatePullRequestBranch`
 with the MERGE method (a base merge commit, never a rewrite or force-push) only
 where it helps: in a repo without a merge queue, or when its head reports no
@@ -496,6 +521,15 @@ queue are never auto-enqueued, and PRs touching Security-pinned paths (or with
 a truncated file list) are reported as `pinned`, not enqueued. Each action is
 written ahead, spaced 15 minutes apart, capped at 3 per PR per 24 h and 20
 per cycle.
+
+The same cycle recovers eligible PRs stranded outside the queue, including
+those with auto-merge already armed. Live PR or repository claims in the
+coordination ledger report `owned`; unreadable ownership stops that repo.
+JSON `repos[].latency` reports each PR's head, state, state entry time (`since`),
+observation time (`observedAt`, both epoch milliseconds) and cumulative `stateMs`. Times are sampled
+at successful reads: intervals belong to the preceding observed state, not
+exact GitHub transition times. New heads, failed reads and backward clocks
+reset the timing window; closed PRs are removed. Dry runs report without saving.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
@@ -729,6 +763,8 @@ is executed by the planner. The planner does not install or change host scripts.
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
 
+Run `phm queue supersede` to list queued jobs that a newer cycle of the same job replaces, for example `RQ-PHX-RECUTCOREC541` once `RQ-PHX-RECUTCOREC544` is queued. Jobs match when they share a repo and an id that differs only in its cycle: `C<number>`, `<number>S` or `<number>C` at the end, with two or more digits. Only the newest cycle stays; ids without a cycle, parked rows and running jobs are left alone, and a claimed or running newer cycle still replaces an older queued one. It reads `ready.tsv` and `router-queue.md` and changes nothing by default. Add `--apply` to copy the older `ready.tsv` rows to `superseded.tsv` beside it, mark their router lines `SUPERSEDED-BY-<newer id>` so restock does not add them again, remove the rows, and append one `SUPERSEDED <id> by <newer id>` line per job to `dispatch-events.log`. Nothing is deleted: to restore a job, paste its row back from `superseded.tsv`. A second run finds nothing to do. `--json` prints the typed `queue.supersede.v1` report (`applied`, `queued`, `count`, `superseded[]` with `id`, `repo`, `family`, `cycle`, `supersededBy`), and `phm queue batches` shows the count as `superseded`.
+
 Restock also checks semantic goal overlap before admitting READY rows. Within the same repo, a shared explicit file/module and normalized token Jaccard score of at least 0.5 marks `DUPLICATE-OF-<id>`; CLAIMED/RUNNING rows take precedence, then the first READY row. Different explicit PR targets stay separate. Paths, stop words and generic single-case scaffolding do not count as goal tokens; fewer than three tokens is unknown. `phm queue dedupe --json` exposes these matches as `reason: "semantic-goal-overlap"` with `jaccard`, and restock JSON includes `dedupe.repeats` and `dedupe.unknown`. This partial check uses router-queue text, not external running-process or PR inventories; other ingest paths are not covered. Live restock adoption still requires Security review and re-pinning.
 
 ### Suggest work for an idle lane
@@ -795,6 +831,26 @@ The default is a dry run: one plain line per batch, or `--json` for the
 `router-queue.original.md`, then writes `router-queue.md` and
 `prompts/<batch id>.md` there. It never replaces existing files and never
 edits the input queue.
+
+## Steer the queue
+
+Run `phm queue` to list the queued jobs in the order they launch: position, id,
+repo, lane, tier, age and, when a newer cycle of the same job is queued, the id
+that replaces it. `phm queue --json` returns the same list as the `launch` field
+(schema `queue.order.v1`, `version` 1) beside the batch report.
+
+Three actions change one queued job. Each takes `--dry-run`, which prints the
+change and writes nothing, and `--json` (schema `queue.action.v1`):
+
+- `phm queue top <id>` moves the job to the front.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
+
+Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
+keeps the earlier text in `queue/ready.tsv.bak`. If the dispatcher was in the
+middle of a run and wrote the old queue back, the command says so and exits 1;
+run it again. The Queue pane in the desktop app uses the same calls through
+`GET` and `POST /api/verse/fleet/queue/order`.
 
 ## Batch session results
 

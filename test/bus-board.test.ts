@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
+import { clearBoardLease, listCoordination, upsertBoardLease } from '../src/core/agents/claim-store.js';
 import { cmdFleetBus } from '../src/cli/fleet-bus.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { SharedStore, type QueueClaimRef } from '../src/core/fleet/shared-store.js';
@@ -24,6 +25,30 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('board coordination lease release', () => {
+  it('releases a capped board lease by owner', () => {
+    const root = join(dir, 'coordination');
+    const now = 10_000;
+    const sourceId = 'board-cap';
+    const leaseUntil = now + 48 * 60 * 60 * 1000;
+    expect(upsertBoardLease({ root, sourceId, owner: 'peer-a', leaseUntil, now }).status).toBe('acquired');
+    expect(listCoordination(root, now).claims[0]?.leaseUntil).toBeLessThan(leaseUntil);
+
+    expect(clearBoardLease(sourceId, 'peer-a', root, now).status).toBe('released');
+    expect(listCoordination(root, now).claims).toEqual([]);
+  });
+
+  it('keeps a board lease when a different owner tries to release it', () => {
+    const root = join(dir, 'coordination');
+    const now = 10_000;
+    const sourceId = 'board-owner';
+    expect(upsertBoardLease({ root, sourceId, owner: 'peer-a', leaseUntil: now + 60_000, now }).status).toBe('acquired');
+
+    expect(clearBoardLease(sourceId, 'peer-b', root, now).status).toBe('stale');
+    expect(listCoordination(root, now).claims).toContainEqual(expect.objectContaining({ sourceId, owner: 'peer-a' }));
+  });
 });
 
 const board = (options: { cfg?: AshlrConfig; peers?: readonly { id: string }[] | null; fleet?: SharedStore } = {}) =>

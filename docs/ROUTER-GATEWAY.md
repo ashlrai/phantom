@@ -1,5 +1,9 @@
 # Router gateway
 
+Provider-neutral [failover chains](ROUTING.md#failover-chains) are advisory and dispatcher-unwired.
+
+See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
+
 The router gateway lets any agent ask for a model completion and have Phantom
 pick the seat. It runs the same seat router (`routeSeat`) the fleet uses, so a
 call gets the same checks as fleet work: the standing grant, the budget mode,
@@ -149,3 +153,46 @@ every seat failed, 2 bad request.
 
 Each routing decision is appended to the shadow decision log with source
 `gateway`, next to the daemon's and the Leader's.
+
+## Model verification
+
+`phm models verify` reports registry status, evidence age and the configured
+choices in `$ASHLR_RUNS_DIR/models.json` (default `~/.ashlr-runs/models.json`).
+JSON is the default; use `--text` for plain words. Unverified, retired or unknown
+choices exit 1, as do unreadable sources. Evidence older than 14 days is flagged
+for review; stale verified entries remain eligible. Output is sorted by ID/key.
+
+The gateway uses only exact verified IDs from [the registry](model-registry.json).
+Auto and offered pins skip unverified/retired models and try the next verified
+model offered by the same seat, retaining admission checks and logging the reason.
+No verified alternative means no call. A missing or invalid registry fails closed.
+`phm models [--json]` lists every registry entry: provider, model ID, lanes
+(empty means unknown), `verified`, source URL, verified-on date, and the
+`unverified` and `stale` (verified over 30 days ago) flags. The desktop Models
+panel shows the same rows from `GET /api/verse/fleet/control/models`.
+
+`phm models check [--json] [--diff <file>]` is the one read-only answer to "can
+the router use this name?". For every model in the registry or chosen in
+`models.json` it reports provider, ID, lanes, source URL, the date it was last
+confirmed and a state: `confirmed`, `stale` (confirmed more than 14 days ago,
+still routable) or `unconfirmed` (no source; `routable` is `false`, the same
+answer the gateway gives). The JSON is `models.check.v1` with `version: 1`; a
+registry that cannot be read gives `registry: "unknown"` and no models. Exit 0
+means nothing needs doing. `--diff` takes a provider release-notes page saved to
+disk (the command never fetches) and lists `new`, `renamed` and `retired` IDs
+for that provider as leads to confirm; it changes nothing. The Models card shows
+the same report from `GET /api/verse/fleet/control/models/check`.
+
+To qualify a new model on release day, confirm its exact ID in official docs, then
+run `phm models verify <id> --source <url>` (add `--provider <name>` for an ID that
+is not listed yet, and `--lane <lane>` for each lane that can run it). The command
+reads the page itself and refuses unless it is https on the provider's own doc
+site and names the exact ID. It records the result for this machine in
+`$ASHLR_HOME/model-registry.json`; the router reads that together with the shipped
+list. A local record never revives a `retired` model or replaces newer shipped
+evidence. To ship evidence to everyone, edit `docs/model-registry.json` in a PR:
+`verified_source`, the UTC date as `verified_at`, `status` `verified`, and
+optional `lanes`. Unresolved IDs stay `unverified` with null evidence. Mark
+documented retirements `retired`. Discovery alone never promotes status.
+This gate covers the gateway; legacy task routing and the advisory queue router
+are separate paths and are not yet protected by it.

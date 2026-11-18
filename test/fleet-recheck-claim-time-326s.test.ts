@@ -2,8 +2,9 @@
  * coordination claims live at the captured verdict timestamp: a claim must
  * have finite, ordered timestamps with claimedAt <= now < expiresAt. Future,
  * expired and malformed rows never verify ownership, never count toward
- * `active` and never appear in `top`; the claims section and the task↔ledger
- * join share one captured now and one settled ledger read. Every reader is
+ * `active` and never appear in `top`; the claims section and task verdict
+ * share one captured now and one settled ledger read. Owner equality never
+ * proves task identity: without a claim-store binding the task stays UNKNOWN. Every reader is
  * faked here: nothing touches the real home, ledger, bus or network. Fixtures
  * are plainly fake; no message bodies, leases or env values appear. */
 import { describe, expect, it, vi } from 'vitest';
@@ -77,7 +78,7 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
   };
 }
 
-const ASSOCIATION_MISSING = 'task: no coordination-claim field associates a claim with board item fake-request-1; owner match is not task identity';
+const ASSOCIATION_MISSING = 'task: no live claim by agent-alpha carries [board:fake-request-1]; owner match is not task identity';
 
 describe('fleet recheck claim verdict-time filtering', () => {
   it('never verifies a task from a claim that starts after the verdict now', async () => {
@@ -105,6 +106,7 @@ describe('fleet recheck claim verdict-time filtering', () => {
     expect(recheck.sections.claims).toMatchObject({ state: 'VERIFIED', active: 1 });
     expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
+    expect(recheck.sections.task.task).not.toHaveProperty('coordinationClaim');
     expect(recheck.overall.state).toBe('UNKNOWN');
   });
 
@@ -136,7 +138,7 @@ describe('fleet recheck claim verdict-time filtering', () => {
     expect(JSON.stringify(recheck.sections.claims.top)).not.toContain('fake-claim-expired');
   });
 
-  it('selects the genuinely live owner claim among expired, future and live rows', async () => {
+  it('counts live ledger claims without treating owner equality as task identity', async () => {
     const board: FleetBoard = {
       ...healthyBoard,
       claims: [
@@ -150,6 +152,8 @@ describe('fleet recheck claim verdict-time filtering', () => {
     expect(recheck.sections.claims.active).toBe(2);
     expect(recheck.sections.task.state).toBe('UNKNOWN');
     expect(recheck.sections.task.task?.ledgerClaim).toBeNull();
+    expect(recheck.sections.task.task).not.toHaveProperty('coordinationClaim');
+    expect(recheck.sections.claims.top.map(claim => claim.agent)).toEqual(['agent-beta', 'agent-alpha']);
     expect(recheck.overall.state).toBe('UNKNOWN');
   });
 

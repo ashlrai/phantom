@@ -129,8 +129,14 @@ export function buildForecast(window: '7d' | '30d', cfg: AshlrConfig): CostForec
 export async function cmdModels(args: string[]): Promise<number>;
 ```
 
-- `ashlr models` (no args): list local models via `listLocalModels`, marking
+- `ashlr models` (no args): list the model registry (`listModelRegistry`, the
+  `registry` key in `--json`), then local models via `listLocalModels`, marking
   active/default. Reuse `cli/ui.ts`.
+- `ashlr models check [--json] [--diff <file>]`: `checkModels` in
+  `src/core/fleet/model-check.ts`, returning `ModelCheckReport` (`models.check.v1`,
+  `version: 1`). Read-only; exit 0 only when `ok`.
+- `ashlr models verify <id> --source <url>`: `markModelVerified`; see
+  [the router gateway guide](../ROUTER-GATEWAY.md#model-verification).
 - `ashlr models pull <name>`: EXPLICIT management. Confirm (large download),
   then `pullModel`. Honor `--yes` to skip the prompt.
 - `ashlr models start`: `startOllama` (best-effort, local installed only).

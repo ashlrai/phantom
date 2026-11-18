@@ -81,6 +81,24 @@ test('dist-bound tests are deferred, not run without a build', (t) => {
   assert.ok(!selectFallback({ cwd: dir }).tests.includes('test/gamma-dist.test.ts'));
 });
 
+test('the native gateway declares its build requirement and stays in the full lane', (t) => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const gateway = 'test/m31.gateway-native.test.ts';
+  const { dir: cwd, commit } = repo(t, {
+    [gateway]: readFileSync(join(root, gateway), 'utf8'),
+    'test/source-only.test.ts': 'export {};\n',
+  });
+  commit('native gateway suite');
+  const selected = selectRelated({ cwd, paths: [gateway] });
+  assert.deepEqual(selected.tests, []);
+  assert.deepEqual(selected.deferred, [gateway]);
+  assert.ok(!selectFallback({ cwd }).tests.includes(gateway));
+  const config = readFileSync(join(root, 'vitest.config.ts'), 'utf8');
+  assert.match(config, /include: \['test\/\*\*\/\*\.test\.ts'\]/);
+  const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(workflow, /run: npm run build[\s\S]*run: npm run test:ci -- \$\{\{ matrix\.test_args \}\}/);
+});
+
 test('a code change that maps to no test never skips: it falls back', (t) => {
   const { dir, commit } = repo(t, { 'src/core/lonely.ts': 'export {};\n', 'test/one.test.ts': 'export {};\n' });
   commit('seed');
@@ -137,6 +155,13 @@ test('failed test files parse from vitest and node output', () => {
   const log = ' FAIL  |unit| test/a.test.ts > suite > case\nAssertionError\n × test/b.test.ts 12ms\n✗ .github/tests/c.test.mjs\n FAIL  |real-io| test/a.test.ts > other\n';
   assert.deepEqual(failedTestFiles(log), ['.github/tests/c.test.mjs', 'test/a.test.ts', 'test/b.test.ts']);
   assert.deepEqual(failedTestFiles('all passed'), []);
+});
+
+test('failed test files parse colored Vitest project badges without matching passing lines', () => {
+  const log = '\x1b[41m\x1b[1m FAIL \x1b[22m\x1b[49m \x1b[30m\x1b[42m unit \x1b[49m\x1b[39m test/authority-tier1-closure-310b.test.ts\x1b[2m > \x1b[22mTier-1 authority import closure (SPEC-310B §2)\n';
+  assert.deepEqual(failedTestFiles(log), ['test/authority-tier1-closure-310b.test.ts']);
+  assert.deepEqual(failedTestFiles(' FAIL  real-io test/a.test.ts > case\n × unit test/b.test.ts\n'), ['test/a.test.ts', 'test/b.test.ts']);
+  assert.deepEqual(failedTestFiles('\x1b[32m✓\x1b[39m \x1b[30m\x1b[42m unit \x1b[49m\x1b[39m test/passed.test.ts\n ✓ |unit| test/also-passed.test.ts\n'), []);
 });
 
 test('an explicit cap can keep more than the fast-gate maximum', (t) => {

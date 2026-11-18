@@ -1,5 +1,16 @@
 # Resource readings and credit balances
 
+## Lane allowance cards
+
+The Resources drawer reads `GET /api/usage/lanes` to show each lane's recorded
+allowance, remaining amount, reset countdown and observation age alongside the
+router's burn, balanced or preserve posture. Missing readings remain unknown;
+stale readings keep their last values with a stale label, not fresh headroom.
+History sparklines use recorded samples. Devin cards separate weekly ACUs and
+in-flight reservations from the Lightning/Flash preview expiry; absent preview
+pricing evidence is unknown, never assumed free. API USD credit pools are
+tagged `api-credit`; local or unrecognized router cost classes stay unknown.
+
 ## Lane history
 
 `phm usage history --lane devin --json` reads full-resolution measured points;
@@ -287,3 +298,20 @@ The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
 `devin-flash` allowance: zero cost, class `expiring`, ending
 `2026-12-01T05:00Z`. Its reading counts the free preview models in the cached
 `devin models list` catalog, so the burn-down orders it first until it expires.
+
+### Account and model scope by reader
+
+- Claude weekly (`claude-usage`; budget row `claude-usage-reading`) emits
+  `account_id` as `claude:<16 hex>`: truncated SHA-256 of the validated opaque
+  `orgId` from the existing `claude auth status` output, never email. It omits
+  `model` because `seven_day` covers all models. Posture and `costClass` stay
+  unknown until a model-scoped allowance is read.
+- Claude's rate-limit-event fallback has no account scope: the event carries none.
+- Codex (`codex-app-server`; budget row `codex-app-server-rate-limits`) emits
+  neither field. The app-server rate-limit read exposes no opaque account ID;
+  account IDs live only in auth files, which these readers never read, and
+  `account/read` gives only email. The `codex` bucket is shared across models.
+- Devin `devin-cli-models-list` emits model only. The CLI listing has no account;
+  it never borrows the API weekly reading's org, so free previews stay unproven.
+- The Devin budget row has no account scope: `readDevinUsage` returns usage
+  fields only. Its ACU pool covers all models, so it also omits model.

@@ -147,3 +147,47 @@ probes and returns nonzero for unhealthy required servers. This job's host
 reported an unwired Claude gateway and unreadable Codex/Cursor/Gemini client
 configs. Those observations do not prove that the separate lane configs lack
 servers. Required lane tools remain unknown until checked in that lane.
+
+## Check lane tool parity
+
+`phm tools` answers "which lane has what" in one view: every MCP server, CLI,
+skill and plugin a source names, plus GitHub, web search, browser and computer
+use, by lane. Each cell is yes, no or unknown with the source it was read from.
+It adds a parity score per lane (the share of tools that are yes) and the top 3
+gaps, each with one plain fix. Declared gaps come first, then the tools most
+lanes leave undeclared. It is read-only and never installs, enables or changes a
+tool or credential. The desktop Tools pane shows the same matrix from
+`GET /api/verse/fleet/runs/tools`, with gaps highlighted; on a phone it shows one
+lane at a time as a list.
+
+```sh
+phm tools                      # scores and top gaps
+phm tools --lane codex-local   # one lane's list, each tool with its source
+phm tools --json               # the full matrix, schema tools.matrix.v1
+```
+
+`phm tools parity` prints a lane-by-tool matrix as JSON (`--text` for a short
+table): GitHub read, GitHub write through the publish path, web search,
+browser, computer use, shell, package install, and MCP servers, CLIs, skills
+and plugins by name. It reads declarations only, never a live probe: the
+router's declared lane capabilities, MCP, CLI and plugin connectors in the
+connector profile that name a lane, and the host's own
+`<runs>/queue/lane-tools.json`. Lanes come from `slots.json`. A tool no source
+declares is shown as unknown (`?`), never as missing.
+
+```sh
+phm tools parity --text
+phm tools requires --needs github-read,browser
+```
+
+`requires` lists the lanes that declare every need (`can`), lanes that declare
+none of them missing (`unproven`), and lanes declared to lack one (`cannot`).
+Send a job only to `can` or `unproven`. Needs are `github-read`,
+`github-write`, `web-search`, `browser`, `computer-use`, `shell`,
+`package-install`, `mcp:<server>`, `cli:<name>`, `skill:<name>` and
+`plugin:<name>`. Declare a lane's tools in `lane-tools.json`, which wins over
+the router's built-in declarations:
+
+```json
+{ "v": 1, "lanes": { "claude": { "github-read": false, "browser": true, "computer-use": false, "mcp": ["context7", "fetch"], "skill": ["review"] } } }
+```

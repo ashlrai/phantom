@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpendRow, SpendSnapshot } from '../../../../core/usage/spend.js';
 import { apiGet } from '../../../data/client.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -7,6 +7,10 @@ import bar from './SpendDown.module.css';
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n)}%`;
 const width = (n: number | null): string => `${Math.min(100, Math.max(0, n ?? 0))}%`;
+const amount = (n: number | null, unit: string): string => n === null ? 'unknown' : `${Number(n.toFixed(2))} ${unit}`;
+const status: Record<SpendRow['verdict'], string> = {
+  'on-pace': 'on pace', behind: 'behind', 'used-up': 'exhausted', expired: 'exhausted', unknown: 'unknown',
+};
 
 /** Used now over projected at reset; an unknown share draws no fill and says "unknown". */
 function SpendBar({ row }: { row: SpendRow }) {
@@ -17,28 +21,49 @@ function SpendBar({ row }: { row: SpendRow }) {
   </div>;
 }
 
-function detail(row: SpendRow): string {
-  const left = row.resetsIn === null ? 'unknown' : `in ${row.resetsIn}`;
-  if (row.unit === 'usd') return `${row.remainingUsd === null ? 'balance unknown' : `${row.remainingUsd} USD left`} · expires ${left}`;
-  return `${pct(row.usedPercent)} used · ${pct(row.projectedUsedPercent)} by reset · resets ${left}`;
+function UsageDetails({ row }: { row: SpendRow }) {
+  const gift = row.unit === 'usd';
+  const reset = row.resetAt === null ? NaN : Date.parse(row.resetAt);
+  return <dl className={bar.facts}>
+    <dt>Used</dt><dd>{pct(row.usedPercent)}</dd>
+    <dt>Burn per hour</dt><dd>{amount(row.burnPerHour, gift ? 'USD/h' : '%/h')}</dd>
+    <dt>{gift ? 'Unused at expiry' : 'Unused at reset'}</dt>
+    <dd>{gift ? amount(row.projectedUnusedUsd, 'USD') : pct(row.projectedUnusedPercent)}</dd>
+    <dt>{gift ? 'Expires' : 'Resets'}</dt>
+    <dd>{Number.isFinite(reset) ? <time dateTime={row.resetAt!} title={row.resetAt!}>
+      {new Date(reset).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+    </time> : 'unknown'}{row.resetsIn !== null ? <span className={bar.countdown}>in {row.resetsIn}</span> : null}</dd>
+    {gift ? <><dt>Balance</dt><dd>{amount(row.remainingUsd, 'USD')}</dd></> : null}
+  </dl>;
 }
 
-/** Spend down: one row per pool from `phm fleet spend --json`, behind first. Reads on mount, then polls while visible. */
+/** Same snapshot as `phm usage --json`'s spend field, behind first. */
 export function SpendDown() {
   const [data, setData] = useState<SpendSnapshot | null>(null);
   const [failed, setFailed] = useState(false);
+  const pending = useRef<AbortController | null>(null);
   const refresh = useCallback(() => {
-    void apiGet<SpendSnapshot>('/api/usage/spend').then(value => { setData(value); setFailed(false); }).catch(() => { setData(null); setFailed(true); });
+    pending.current?.abort();
+    const request = new AbortController();
+    pending.current = request;
+    // Do not keep an old forecast on screen while its replacement is unavailable.
+    setData(null);
+    setFailed(false);
+    void apiGet<SpendSnapshot>('/api/usage/spend', request.signal).then(value => {
+      if (!request.signal.aborted) setData(value);
+    }).catch(() => { if (!request.signal.aborted) setFailed(true); });
   }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { refresh(); return () => pending.current?.abort(); }, [refresh]);
   usePollWhileVisible(refresh, 60_000);
   return <section aria-label="Spend down"><h2 className={styles.heading}>Spend down</h2>
-    {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p> : <ul className={bar.list}>
+    {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
+      : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <ul className={bar.list}>
       {data.pools.map(row => <li className={styles.dotRow} key={row.pool} aria-label={row.pool}>
-        <span className={bar.head}><span className={styles.dotLabel}>{row.pool}</span>
-          <span className={bar.verdict} data-verdict={row.verdict}>{row.summary}</span></span>
+        <span className={bar.head}><span className={styles.dotLabel}>{row.pool === 'claude-api' ? 'claude-api gift' : row.pool}</span>
+          <span className={bar.verdict} data-verdict={row.verdict}>{status[row.verdict]}</span></span>
         <SpendBar row={row} />
-        <span className={styles.note}>{detail(row)}</span>
+        <UsageDetails row={row} />
+        {row.reason !== null ? <span className={styles.note}>{row.reason}</span> : null}
       </li>)}
     </ul>}
   </section>;

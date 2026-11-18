@@ -59,7 +59,7 @@ it('reports a missing API and a missing log', async () => {
   view.unmount(); evictAll();
   spy.mockImplementation(async (path: string) => path === '/api/verse/fleet/runs' ? fixture : { schema: 'fleet.job.v1', log: { source: 'missing' } });
   render(<WorkerLogPane visible />);
-  expect(await screen.findByText('No log yet.')).toBeInTheDocument();
+  expect(await screen.findByText('Job RQ-OLD is unknown here: no launch, log or result is recorded on this machine.')).toBeInTheDocument();
 });
 it('follows new output only when Follow is enabled', async () => {
   serve(); render(<WorkerLogPane visible />);

@@ -1,0 +1,17 @@
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.headline { margin: 0; font-size: var(--text-sm-size); }
+.message { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.list { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.row { display: grid; gap: var(--space-1); min-width: 0; font-size: var(--text-xs-size); }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); }
+.head strong { overflow-wrap: anywhere; }
+.summary { color: var(--text-secondary); }
+.row[data-risk='high'] .summary { color: var(--status-danger-solid); }
+.row[data-risk='medium'] .summary { color: var(--status-warning-solid); }
+.track { position: relative; height: 8px; border-radius: 4px; background: var(--border-subtle); overflow: hidden; }
+.track[data-unknown] { background: repeating-linear-gradient(135deg, var(--border-subtle) 0 6px, transparent 6px 12px); }
+.fill { display: block; height: 100%; background: var(--accent-500); }
+.row[data-risk='high'] .fill { background: var(--status-danger-solid); }
+.row[data-risk='medium'] .fill { background: var(--status-warning-solid); }
+.marker { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text-primary); }
+.facts { margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
