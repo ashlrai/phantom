@@ -6,14 +6,45 @@
  * file; the default path is checked to be the job detail's scrubJobLogLine.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendFile, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { cmdJobTail } from '../src/cli/job.js';
 import { followFleetJobTail, getFleetJobTail, type FleetJobTailEvent } from '../src/core/fleet/runs-job-tail.js';
 import { scrubJobLogLine } from '../src/core/fleet/runs-job-detail.js';
+import { describeJob } from '../src/core/fleet/job-tail-words.js';
+
+const hooks = vi.hoisted(() => ({
+  beforeOpen: undefined as undefined | ((path: string) => Promise<void>),
+  beforeStat: undefined as undefined | ((path: string) => Promise<void>),
+  afterStat: undefined as undefined | ((path: string) => Promise<void>),
+  afterFileStat: undefined as undefined | ((path: string) => Promise<void>),
+}));
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    lstat: async (...args: Parameters<typeof fs.lstat>) => {
+      await hooks.beforeStat?.(String(args[0]));
+      const stat = await fs.lstat(...args);
+      await hooks.afterStat?.(String(args[0]));
+      return stat;
+    },
+    open: async (...args: Parameters<typeof fs.open>) => {
+      await hooks.beforeOpen?.(String(args[0]));
+      const file = await fs.open(...args);
+      const stat = file.stat.bind(file);
+      file.stat = (async () => {
+        const info = await stat();
+        await hooks.afterFileStat?.(String(args[0]));
+        return info;
+      }) as typeof file.stat;
+      return file;
+    },
+  };
+});
 
 let runs: string;
 const JOB = 'RQ-TAILTEST';
@@ -21,7 +52,11 @@ const T0 = new Date('2026-11-17T10:00:00Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
 
 beforeEach(async () => { runs = await mkdtemp(join(tmpdir(), 'job-tail-')); });
-afterEach(async () => { await rm(runs, { recursive: true, force: true }); });
+afterEach(async () => {
+  hooks.beforeOpen = hooks.beforeStat = hooks.afterStat = undefined;
+  hooks.afterFileStat = undefined;
+  await rm(runs, { recursive: true, force: true });
+});
 
 async function put(name: string, text: string, mtime: Date): Promise<void> {
   await writeFile(join(runs, name), text);
@@ -38,6 +73,82 @@ function capture() {
 }
 
 describe('getFleetJobTail', () => {
+  it('resumes an incomplete ledger row without losing it at the snapshot cursor', async () => {
+    await mkdir(join(runs, 'metrics'));
+    const path = join(runs, 'metrics', 'jobs.jsonl');
+    const line = JSON.stringify({ job: JOB, event: 'launch', ts: T0.toISOString() });
+    await writeFile(path, line.slice(0, 20));
+    const snapshot = await getFleetJobTail(JOB, { runsDir: runs });
+    expect(snapshot.cursor.ledger).toBe(0);
+    await appendFile(path, line.slice(20) + '\n');
+    const controller = new AbortController();
+    const events: FleetJobTailEvent[] = [];
+    await followFleetJobTail(JOB, snapshot.cursor, {
+      runsDir: runs, signal: controller.signal, onEvent: e => { events.push(e); },
+      wait: async () => { controller.abort(); },
+    });
+    expect(events).toEqual([expect.objectContaining({ source: 'event', text: 'launch' })]);
+  });
+
+  it('reports an unreadable live snapshot without a resume cursor', async () => {
+    await runningJob('unreadable fixture\n');
+    hooks.beforeOpen = async path => {
+      if (path === join(runs, `${JOB}.log`)) throw Object.assign(new Error('fixture refusal'), { code: 'EACCES' });
+    };
+    const snapshot = await getFleetJobTail(JOB, { runsDir: runs });
+    expect(snapshot).toMatchObject({ status: 'no-log', cursor: { log: null } });
+    expect(snapshot.events.filter(e => e.source === 'log')).toEqual([]);
+  });
+
+  it('keeps the ledger cursor tied to its read window during append', async () => {
+    await mkdir(join(runs, 'metrics'));
+    const path = join(runs, 'metrics', 'jobs.jsonl');
+    const line = JSON.stringify({ job: JOB, event: 'launch', ts: T0.toISOString() }) + '\n';
+    await writeFile(path, line);
+    let changed!: () => void;
+    const appended = new Promise<void>(done => { changed = done; });
+    let probes = 0;
+    hooks.beforeStat = async p => {
+      if (p === path && ++probes === 2) await appended;
+    };
+    hooks.afterFileStat = async p => {
+      if (p !== path) return;
+      hooks.afterFileStat = undefined;
+      await appendFile(path, line);
+      changed();
+    };
+    const snapshot = await getFleetJobTail(JOB, { runsDir: runs });
+    expect(snapshot.cursor.ledger).toBe(snapshot.events.filter(e => e.source === 'event').length * Buffer.byteLength(line));
+  });
+
+  it('keeps the snapshot log cursor tied to the returned lines during append', async () => {
+    await runningJob('before\n');
+    const path = join(runs, `${JOB}.log`);
+    let probes = 0;
+    let changed!: () => void;
+    const appended = new Promise<void>(done => { changed = done; });
+    hooks.beforeStat = async p => {
+      if (p === path && ++probes === 2) await appended;
+    };
+    let first = true;
+    hooks.afterStat = async p => {
+      if (p !== path || !first) return;
+      first = false;
+      await appendFile(path, 'during\n');
+      changed();
+    };
+    const snapshot = await getFleetJobTail(JOB, { runsDir: runs });
+    const shown = snapshot.events.filter(e => e.source === 'log').map(e => e.text);
+    expect(snapshot.cursor.log).toBe(Buffer.byteLength(shown.join('\n') + '\n'));
+  });
+
+  it('does not classify a degraded nonempty log without readable lines as live', () => {
+    const words = describeJob({ state: 'running', sources: { log: 'degraded' },
+      log: { source: 'live', bytes: 100, tail: [] } }, T0.getTime());
+    expect(words).toMatchObject({ status: 'no-log', showLog: false });
+    expect(words.text).toMatch(/unavailable|read|degraded/i);
+  });
+
   it('says plainly when the job is unknown and exits 1', async () => {
     const tail = await getFleetJobTail(JOB, { runsDir: runs });
     expect(tail.status).toBe('unknown');
@@ -106,6 +217,91 @@ describe('getFleetJobTail', () => {
 });
 
 describe('follow mode', () => {
+  it('drains output appended while terminal status is being observed', async () => {
+    await runningJob('');
+    await put(`${JOB}.publish`, 'RESULT PR https://github.com/example/repo/pull/44\n', new Date(Date.now() + 60_000));
+    hooks.beforeStat = async path => {
+      if (path !== join(runs, `${JOB}.publish`)) return;
+      hooks.beforeStat = undefined;
+      await appendFile(join(runs, `${JOB}.log`), 'last write before status\n');
+    };
+    const events: FleetJobTailEvent[] = [];
+    await followFleetJobTail(JOB, { log: 0, ledger: 0 }, {
+      runsDir: runs, onEvent: e => { events.push(e); }, wait: async () => {},
+    });
+    expect(events.map(e => e.source)).toEqual(['log', 'status']);
+    expect(events[0]?.text).toBe('last write before status');
+  });
+
+  it('preserves a UTF-8 line split across chunks and flushes a final unterminated line', async () => {
+    const line = 'x'.repeat(256 * 1024 - 2) + 'é';
+    await runningJob('prefix\n' + line + '\nlast without newline');
+    await put(`${JOB}.publish`, 'RESULT PR https://github.com/example/repo/pull/44\n', new Date(Date.now() + 60_000));
+    const events: FleetJobTailEvent[] = [];
+    await followFleetJobTail(JOB, { log: 0, ledger: 0 }, {
+      runsDir: runs, redact: line => line, onEvent: e => { events.push(e); }, wait: async () => {},
+    });
+    const output = events.filter(e => e.source === 'log').map(e => e.text);
+    expect(output.length).toBe(3);
+    expect(output[0]).toBe('prefix');
+    expect(output[1] === line).toBe(true);
+    expect(output[2]).toBe('last without newline');
+    expect(events.at(-1)?.source).toBe('status');
+  });
+
+  it('refuses a log swapped to a symlink between probe and open', async () => {
+    await runningJob('safe'.repeat(20) + '\n');
+    const path = join(runs, `${JOB}.log`);
+    const target = join(runs, 'outside');
+    await writeFile(target, 'private fixture\n');
+    hooks.beforeOpen = async p => {
+      if (p !== path) return;
+      hooks.beforeOpen = undefined;
+      await rm(path);
+      await symlink(target, path);
+    };
+    const controller = new AbortController();
+    const events: FleetJobTailEvent[] = [];
+    await followFleetJobTail(JOB, { log: 0, ledger: 0 }, {
+      runsDir: runs, signal: controller.signal, onEvent: e => { events.push(e); },
+      wait: async () => { controller.abort(); },
+    });
+    expect(events.filter(e => e.source === 'log')).toEqual([]);
+  });
+
+  it('advances beyond a line larger than a follow chunk without leaking fragments', async () => {
+    await runningJob('STUBMARK'.repeat(40_000) + '\nafter oversized\n');
+    const controller = new AbortController();
+    const events: FleetJobTailEvent[] = [];
+    let ticks = 0;
+    await followFleetJobTail(JOB, { log: 0, ledger: 0 }, {
+      runsDir: runs, signal: controller.signal,
+      redact: line => line.replaceAll('STUBMARK', '[redacted]'),
+      onEvent: e => { events.push(e); },
+      wait: async () => { if (++ticks === 5) controller.abort(); },
+    });
+    expect(events.map(e => e.text)).toContain('after oversized');
+    expect(JSON.stringify(events)).not.toContain('STUBMARK');
+  });
+
+  it.each(['log', 'ledger'])('drains pending %s chunks before final status', async source => {
+    await runningJob('');
+    const count = 10_000;
+    if (source === 'log') await writeFile(join(runs, `${JOB}.log`), ('x'.repeat(60) + '\n').repeat(count));
+    else {
+      await mkdir(join(runs, 'metrics'));
+      await writeFile(join(runs, 'metrics', 'jobs.jsonl'),
+        (JSON.stringify({ job: JOB, event: 'launch', ts: T0.toISOString() }) + '\n').repeat(count));
+    }
+    await put(`${JOB}.publish`, 'RESULT PR https://github.com/example/repo/pull/44\n', new Date(Date.now() + 60_000));
+    const events: FleetJobTailEvent[] = [];
+    expect(await followFleetJobTail(JOB, { log: 0, ledger: 0 }, {
+      runsDir: runs, onEvent: e => { events.push(e); }, wait: async () => {},
+    })).toBe('finished');
+    expect(events.filter(e => e.source === (source === 'log' ? 'log' : 'event'))).toHaveLength(count);
+    expect(events.at(-1)?.source).toBe('status');
+  });
+
   it('picks up an appended line, then stops when the job finishes', async () => {
     await runningJob('first\n');
     const snapshot = await getFleetJobTail(JOB, { runsDir: runs });

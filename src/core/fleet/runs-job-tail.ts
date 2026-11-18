@@ -8,16 +8,16 @@
  * Every line that leaves this module — log, ledger event or status — passes
  * through `redact`, which defaults to scrubJobLogLine, the redaction the job
  * detail API already applies. Follow mode reads only bytes appended after the
- * snapshot cursor, lstat-first (symlinks are never followed), bounded per tick.
+ * snapshot cursor, through no-follow regular-file descriptors, bounded per tick.
  */
 
-import { lstat, open } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { describeJob, type JobTailStatus } from './job-tail-words.js';
 import { parseJobLedgerEvents } from './runs-job-activity.js';
 import { getFleetJobDetail, isFleetJobId, scrubJobLogLine, type FleetJobDetailV1 } from './runs-job-detail.js';
-import { readSource } from './runs-parked-queue.js';
 
 export interface FleetJobTailEvent {
   /** ISO time: the ledger row's own time, or when follow first saw a log line; null for history log lines (the log has no per-line clock). */
@@ -60,6 +60,7 @@ export interface FollowOptions extends Omit<FleetJobTailOptions, 'lines'> {
 const MAX_LINES = 120;
 const LEDGER_BYTES = 512 * 1024;
 const FOLLOW_CHUNK = 256 * 1024;
+const LOG_BYTES = 32 * 1024;
 
 const ledgerPath = (runsDir: string) => join(runsDir, 'metrics', 'jobs.jsonl');
 const resolveRunsDir = (runsDir?: string): string => {
@@ -68,26 +69,55 @@ const resolveRunsDir = (runsDir?: string): string => {
   return dir;
 };
 
-async function regularSize(path: string): Promise<number | null> {
-  try { const st = await lstat(path); return st.isFile() ? st.size : null; } catch { return null; }
+/** One descriptor supplies both the size and the bytes. Null offset selects a tail window. */
+async function readWindow(path: string, offset: number | null, max: number) {
+  const fh = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) throw new Error('invalid tail source');
+    const reset = offset !== null && st.size < offset;
+    const from = offset === null ? Math.max(0, st.size - max) : reset ? 0 : offset;
+    const length = Math.min(st.size - from, max);
+    const buf = Buffer.alloc(length);
+    let bytes = 0;
+    while (bytes < length) {
+      const { bytesRead } = await fh.read(buf, bytes, length - bytes, from + bytes);
+      if (!bytesRead) break;
+      bytes += bytesRead;
+    }
+    return { data: buf.subarray(0, bytes), from, next: from + bytes, reset, drained: from + bytes >= st.size || bytes < length };
+  } finally { await fh.close(); }
 }
 
-/** Bytes appended to a regular file since `offset`, capped per call. A shrunk file restarts at 0. */
-async function readAppended(path: string, offset: number): Promise<{ text: string; next: number; reset: boolean } | null> {
-  const size = await regularSize(path);
-  if (size === null) return null;
-  const reset = size < offset;
-  const from = reset ? 0 : offset;
-  const length = Math.min(size - from, FOLLOW_CHUNK);
-  if (length <= 0) return { text: '', next: from, reset };
-  const fh = await open(path);
-  try {
-    const buf = Buffer.alloc(length);
-    const { bytesRead } = await fh.read(buf, 0, length, from);
-    // Stop at the last newline so a multi-byte character or a half-written line is never split.
-    const end = buf.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
-    return { text: buf.toString('utf8', 0, end), next: from + end, reset };
-  } finally { await fh.close(); }
+function snapshotText(window: Awaited<ReturnType<typeof readWindow>>): string {
+  const start = window.from > 0 ? window.data.indexOf(0x0a) + 1 : 0;
+  return window.from > 0 && start === 0 ? '' : window.data.toString('utf8', start);
+}
+
+/** Retain partial UTF-8 lines across ticks, but never retain an unbounded line. */
+function lineBuffer() {
+  let pending: Buffer = Buffer.alloc(0);
+  let oversized = false;
+  return (data: Buffer, reset = false, final = false): (string | null)[] => {
+    if (reset) { pending = Buffer.alloc(0); oversized = false; }
+    const buffer = Buffer.concat([pending, data]);
+    const lines: (string | null)[] = [];
+    let start = 0;
+    let end: number;
+    while ((end = buffer.indexOf(0x0a, start)) !== -1) {
+      lines.push(oversized || end - start > FOLLOW_CHUNK ? null : buffer.toString('utf8', start, end));
+      oversized = false;
+      start = end + 1;
+    }
+    pending = buffer.subarray(start);
+    if (pending.length > FOLLOW_CHUNK) { oversized = true; pending = Buffer.alloc(0); }
+    if (oversized) pending = Buffer.alloc(0);
+    if (final && (pending.length || oversized)) {
+      lines.push(oversized ? null : pending.toString('utf8'));
+      pending = Buffer.alloc(0); oversized = false;
+    }
+    return lines;
+  };
 }
 
 function headline(d: FleetJobDetailV1): string {
@@ -106,13 +136,25 @@ export async function getFleetJobTail(job: string, options: FleetJobTailOptions 
   const now = options.now?.() ?? new Date();
   const lines = Math.max(1, Math.min(MAX_LINES, Math.floor(options.lines ?? 40)));
   const redact = options.redact ?? scrubJobLogLine;
-  const [detail, ledger, logSize, ledgerSize] = await Promise.all([
-    getFleetJobDetail(job, { runsDir, now: () => now, maxTailLines: lines }),
-    readSource(ledgerPath(runsDir), LEDGER_BYTES, true),
-    regularSize(join(runsDir, `${job}.log`)),
-    regularSize(ledgerPath(runsDir)),
+  const [detail, ledger, log] = await Promise.all([
+    getFleetJobDetail(job, { runsDir, now: () => now, maxTailLines: lines, maxTailBytes: 0 }),
+    readWindow(ledgerPath(runsDir), null, LEDGER_BYTES).catch(() => null),
+    readWindow(join(runsDir, `${job}.log`), null, LOG_BYTES).catch(() => null),
   ]);
-  const { events: ledgerRows, clipped } = parseJobLedgerEvents(ledger.text, job, lines);
+  if (log) {
+    const text = snapshotText(log);
+    const tail = text.split('\n');
+    if (tail.at(-1) === '') tail.pop();
+    detail.log = { source: 'live', bytes: log.next, tail: tail.slice(-lines).map(scrubJobLogLine),
+      truncated: log.from > 0 || tail.length > lines };
+    detail.sources.log = 'healthy';
+  } else if (detail.log.source === 'live') {
+    detail.log.tail = [];
+    detail.sources.log = 'degraded';
+  }
+  const ledgerEnd = ledger ? ledger.data.lastIndexOf(0x0a) + 1 : 0;
+  const ledgerText = ledger ? snapshotText({ ...ledger, data: ledger.data.subarray(0, ledgerEnd) }) : '';
+  const { events: ledgerRows, clipped } = parseJobLedgerEvents(ledgerText, job, lines);
   const words = describeJob({ ...detail, sources: { ...detail.sources } }, now.getTime());
   // Ledger rows alone make a job known even when its run files are gone.
   const status: JobTailStatus = words.status === 'unknown' && ledgerRows.length > 0 ? 'no-log' : words.status;
@@ -130,7 +172,7 @@ export async function getFleetJobTail(job: string, options: FleetJobTailOptions 
       ...detail.log.tail.map((text): FleetJobTailEvent => ({ ts: null, source: 'log', text: redact(text) })),
     ],
     truncated: detail.log.truncated || clipped,
-    cursor: { log: detail.log.source === 'live' ? logSize : null, ledger: ledgerSize },
+    cursor: { log: log?.next ?? null, ledger: ledger ? ledger.from + ledgerEnd : null },
   };
 }
 
@@ -154,23 +196,39 @@ export async function followFleetJobTail(job: string, cursor: FleetJobTailV1['cu
   const intervalMs = options.intervalMs ?? 2000;
   let log = cursor.log ?? 0;
   let ledger = cursor.ledger ?? 0;
+  let terminalSeen = false;
+  const logLines = lineBuffer();
+  const ledgerLines = lineBuffer();
+  const emitLog = (lines: (string | null)[], ts: string) => {
+    for (const line of lines) options.onEvent({ ts, source: 'log', text: redact(line ?? 'Log line omitted: exceeds follow byte limit.') });
+  };
+  const emitLedger = (lines: (string | null)[]) => {
+    const text = lines.filter((line): line is string => line !== null).join('\n');
+    for (const e of parseJobLedgerEvents(text, job, Number.MAX_SAFE_INTEGER).events) options.onEvent(ledgerEvent(e, redact));
+  };
   while (!options.signal?.aborted) {
     const ts = clock().toISOString();
-    const appended = await readAppended(join(runsDir, `${job}.log`), log).catch(() => null);
+    const appended = await readWindow(join(runsDir, `${job}.log`), log, FOLLOW_CHUNK).catch(() => null);
     if (appended) {
       log = appended.next;
-      for (const text of appended.text.split('\n').slice(0, -1)) options.onEvent({ ts, source: 'log', text: redact(text) });
+      emitLog(logLines(appended.data, appended.reset), ts);
     }
-    const rows = await readAppended(ledgerPath(runsDir), ledger).catch(() => null);
+    const rows = await readWindow(ledgerPath(runsDir), ledger, FOLLOW_CHUNK).catch(() => null);
     if (rows) {
       ledger = rows.next;
-      for (const e of parseJobLedgerEvents(rows.text, job, Number.MAX_SAFE_INTEGER).events) options.onEvent(ledgerEvent(e, redact));
+      emitLedger(ledgerLines(rows.data, rows.reset));
     }
     const detail = await getFleetJobDetail(job, { runsDir, now: clock, maxTailLines: 1 }).catch(() => null);
     if (detail && (detail.state === 'published' || detail.state === 'archived')) {
+      const confirmed = terminalSeen;
+      terminalSeen = true;
+      if (!confirmed || appended?.data.length || rows?.data.length || appended?.drained === false || rows?.drained === false) continue;
+      emitLog(logLines(Buffer.alloc(0), false, true), ts);
+      emitLedger(ledgerLines(Buffer.alloc(0), false, true));
       options.onEvent({ ts, source: 'status', text: redact(describeJob(detail, Date.parse(ts)).text ?? `Job ${job} finished.`) });
       return 'finished';
     }
+    terminalSeen = false;
     if (options.signal?.aborted) break;
     await wait(intervalMs, options.signal);
   }

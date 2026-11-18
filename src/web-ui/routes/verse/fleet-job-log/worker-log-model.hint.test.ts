@@ -33,7 +33,7 @@ describe('describeJob (shared with phm job tail)', () => {
     expect(done).toEqual({ status: 'finished', showLog: true, text: 'Job RQ-DONE finished. Result: published https://github.com/example/repo/pull/7.' });
   });
   it('calls a job with no evidence at all unknown', () => {
-    expect(describeJob({ schema: 'fleet.job.v1', job: 'RQ-NOPE', state: 'unknown', log: { source: 'missing' }, sources: { launch: 'missing', log: 'missing' } }, now))
+    expect(describeJob({ job: 'RQ-NOPE', state: 'unknown', log: { source: 'missing' }, sources: { launch: 'missing', log: 'missing' } }, now))
       .toEqual({ status: 'unknown', showLog: false, text: 'Job RQ-NOPE is unknown here: no launch, log or result is recorded on this machine.' });
   });
   it('leaves populated logs to the log pane', () => {

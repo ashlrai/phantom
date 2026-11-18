@@ -7,10 +7,11 @@ import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
 import { STRAY_ID_PATTERN } from '../core/fleet/stray-slots.js';
 
 const controlUsage = 'phm job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>]';
-const usage = `Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]\n       ${controlUsage}\n       phm job tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] [--help]`;
+const usage = `Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]\n       phm job tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       ${controlUsage}`;
 const controlHelp = 'Steer one fleet job. move needs --lane and refuses a lane that is held or full. ' +
   'Repeating a request changes nothing and returns the first receipt. --json emits fleet.job.control.v1 ' +
   'with status requested, applied, refused or unknown. Exit 0 requested or applied, 1 refused, unknown or unavailable, 2 bad usage.';
+const tailHelp = 'Tail one fleet job: status, lane, model, start time and PR, then its newest ledger events and last N log lines (1..120, default 40), every line redacted. --follow streams new lines until the job finishes or Ctrl-C. --json prints one {ts, source, text} object per line (source log, event or status). Exit 1 when the job is unknown on this machine.';
 
 /**
  * `phm job pause|resume|stop|move <id>`: one control request for one job
@@ -52,7 +53,6 @@ async function cmdJobControl(action: JobControlAction, rest: string[]): Promise<
     return 1;
   }
 }
-const tailHelp = 'Tail one fleet job: status, lane, model, start time and PR, then its newest ledger events and last N log lines (1..120, default 40), every line redacted. --follow streams new lines until the job finishes or Ctrl-C. --json prints one {ts, source, text} object per line (source log, event or status). Exit 1 when the job is unknown on this machine.';
 const text = (v: number | string | null): string => v === null ? 'unknown' : String(v);
 const money = (v: number | null): string => v === null ? 'unknown' : `$${v.toFixed(4)}`;
 
@@ -97,7 +97,7 @@ export async function cmdJob(args: string[]): Promise<number> {
   };
   const [verb, ...rest] = args;
   if (verb === undefined || verb === '--help' || verb === '-h' || verb === 'help') {
-    console.log(`${usage}\nPer-model-call cost for a fleet job: tokens in/out, model and cost (or 'unknown'), from the runs metrics ledgers. --json emits fleet.job.cost.v1.\n${controlHelp}\n${tailHelp}`);
+    console.log(`${usage}\nPer-model-call cost for a fleet job: tokens in/out, model and cost (or 'unknown'), from the runs metrics ledgers. --json emits fleet.job.cost.v1.\n${tailHelp}\n${controlHelp}`);
     return 0;
   }
   if (verb === 'tail') return cmdJobTail(rest);
