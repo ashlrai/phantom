@@ -464,13 +464,26 @@ the system setting) stops the pulse; lines keep their thickness.
 
 ### Live sessions
 
-`phm sessions [--lane <lane>] [--repo <repo>] [--json]` lists every running
-agent session, grouped by lane. `--json` prints `fleet.live-sessions.v1`, and
-`GET /api/verse/fleet/control/live-sessions[?lane=<lane>][&repo=<repo>]`
-serves the same list to the desktop Sessions pane with a current read session.
-It adds no source of its own: it projects the session map behind
+`phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live]` shows every
+agent session as one tree: the leader, then workers, then their subagents.
+`--json` prints `fleet.live-sessions.v1`, and
+`GET /api/verse/fleet/control/live-sessions[?lane=<lane>][&repo=<repo>][&live=1]`
+serves the same document to the desktop Sessions pane with a current read
+session. It projects the session map behind
 `/api/verse/fleet/control/sessions` (the dispatch inventory joined with the
-computers in `fleet.compute.v1`).
+computers in `fleet.compute.v1`) and adds the `subagent.v1` records under
+`~/.ashlr/subagents`.
+
+- `tree`: a `fleet.session-tree.v1` document with `version`, `generatedAt`,
+  `line` (for example "9 sessions running: leader, 6 workers, 2 subagents; 1
+  failed in the last hour"), `counts` and `roots[]`. Each node has `id`,
+  `parentId`, `agent`, `lane`, `model`, `repo`, `jobId`, `state` (`running`,
+  `idle`, `done`, `failed` or `unknown`), `startedAt`, `lastMessageAt`,
+  `lastMessage`, `kind` (`leader`, `worker`, `subagent` or `unknown-parent`),
+  `lastMessageAgeSeconds`, `counts` (`below`, `running`, `failed`) and
+  `children[]`. Siblings sort running first, then most recent. A session whose
+  parent is not in the list sits under the `unknown parent` row. Finished
+  sessions stay for an hour; `--live` (`live=1`) leaves them out.
 
 - `sessions[]`: `job`, `lane`, `model`, `repo`, `tier`, `status` (`launching`,
   `running`, `publishing`, or `unknown` for a job only another computer's claim
@@ -478,8 +491,8 @@ computers in `fleet.compute.v1`).
   write), `lastOutputAgeSeconds`, `quiet` (no output for more than 10 minutes;
   null when unknown), `prUrl`, `computer` (node id or `unknown`),
   `thisComputer` and `unknown`, which maps each unknown field to the reason.
-- `counts` (`sessions`, `quiet`, `lanes`, `otherComputers`), `filter` and
-  `gaps`.
+- `counts` (`sessions`, `quiet`, `lanes`, `otherComputers`), `filter`, `live`
+  and `gaps`.
 
 Rows sort by lane order, then start time, then job id, with the same keys in
 the same order. The server reads the session map at most once every 5 seconds.

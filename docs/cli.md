@@ -405,7 +405,7 @@ Every command, grouped by topic.
     telemetry test                                                                              Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]          Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                         Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
-    sessions [--lane <lane>] [--repo <repo>] [--json]                                           Every running agent session in one list: lane, model, repo, age, last output (quiet after 10 min), PR and computer.
+    sessions [--lane <lane>] [--repo <repo>] [--json] [--live]                                  Every agent session as one tree (leader, workers, subagents): model, repo, state, when it last spoke (quiet after 10 min) and its last message. --live shows only running ones.
     sessions reconcile [--json]                                                                 Check local runs against worker processes and job metrics: live, finished or unknown. Read only.
     lanes fit --lane <lane> [--json]                                                            Show job kinds to send or avoid from measured PR rates.
     lanes --json                                                                                Read dispatcher pools, slot caps and local endpoint health.

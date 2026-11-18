@@ -1,5 +1,5 @@
 /**
- * `phm sessions`: every running fleet agent session (no verb), MCP gateway
+ * `phm sessions`: the tree of every fleet agent session (no verb), MCP gateway
  * sessions (list, revoke) and resumable agent sessions (create, show, resume,
  * terminate; list shows both kinds). Thin handler: logic lives in
  * src/core/fleet/live-sessions.ts, src/core/gateway-sessions.ts and
@@ -17,10 +17,12 @@ import { getFleetSessions } from '../core/fleet/runs-sessions.js';
 import { reconcileSessions, renderSessionReconciliation } from '../core/fleet/session-reconciliation.js';
 
 const USAGE = `Usage:
-  phm sessions [--lane <lane>] [--repo <repo>] [--json]
-                                      Every running agent session in the fleet: job, lane,
-                                      model, repo, tier, age, last output (quiet after
-                                      10 min), PR and computer. Read only.
+  phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live]
+                                      Every agent session as one tree: leader, workers,
+                                      subagents. Each row: model, repo, state, when it last
+                                      spoke (quiet after 10 min) and its last message.
+                                      Finished ones stay an hour; --live shows only running
+                                      ones. Read only.
   phm sessions list [--json]          Show gateway sessions and agent sessions
   phm sessions reconcile [--json]     Check local runs: live, finished or unknown. Read only.
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
@@ -107,13 +109,13 @@ async function runAgentVerb(verb: string, args: string[], json: boolean): Promis
   }
 }
 
-/** `phm sessions [--lane L] [--repo R] [--json]`: the live list. The reader is injectable for tests. */
+/** `phm sessions [--lane L] [--repo R] [--json] [--live]`: the session tree. The reader is injectable for tests. */
 export async function cmdLiveSessions(args: string[], read: typeof readLiveSessions = readLiveSessions): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { process.stdout.write(USAGE); return 0; }
-  let values: { json?: boolean; lane?: string; repo?: string };
+  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string };
   try {
     ({ values } = parseArgs({ args, strict: true, allowPositionals: false,
-      options: { json: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${USAGE}`);
     return 2;
@@ -124,7 +126,7 @@ export async function cmdLiveSessions(args: string[], read: typeof readLiveSessi
       return 2;
     }
   }
-  const list = await read({ lane: values.lane ?? null, repo: values.repo ?? null });
+  const list = await read({ lane: values.lane ?? null, repo: values.repo ?? null, ...(values.live ? { live: true } : {}) });
   console.log(values.json ? JSON.stringify(list, null, 2) : renderLiveSessionsText(list));
   return 0;
 }

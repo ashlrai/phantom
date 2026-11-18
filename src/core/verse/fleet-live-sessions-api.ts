@@ -1,5 +1,5 @@
 /**
- * GET /api/verse/fleet/control/live-sessions[?lane=L][&repo=R]: the
+ * GET /api/verse/fleet/control/live-sessions[?lane=L][&repo=R][&live=1]: the
  * fleet.live-sessions.v1 list behind `phm sessions` and the desktop Sessions
  * pane. Reads only the session map the Compute map already reads
  * (core/fleet/live-sessions.ts projects it).
@@ -17,7 +17,7 @@ import { throttledLiveMap } from './fleet-live-map-api.js';
 
 export const LIVE_SESSIONS_PATH = '/api/verse/fleet/control/live-sessions';
 
-export type LiveSessionsRead = (filter: { lane: string | null; repo: string | null }) => Promise<LiveSessionsV1>;
+export type LiveSessionsRead = (filter: { lane: string | null; repo: string | null; live?: boolean }) => Promise<LiveSessionsV1>;
 
 /** The default read: one throttled session map, filtered per request. */
 export function defaultLiveSessionsRead(): LiveSessionsRead {
@@ -34,12 +34,12 @@ export function createFleetLiveSessionsApi(read: LiveSessionsRead = defaultLiveS
     }
     const params = new URL(req.url ?? path, 'http://localhost').searchParams;
     const one = (key: string) => (params.getAll(key).length > 1 ? undefined : params.get(key));
-    const lane = one('lane'), repo = one('repo');
-    if ([...params.keys()].some(key => key !== 'lane' && key !== 'repo') || lane === undefined || repo === undefined
-      || (lane !== null && !SESSION_FILTER_RE.test(lane)) || (repo !== null && !SESSION_FILTER_RE.test(repo))) {
-      sendJson(res, 400, { error: 'Use lane=<lane> and repo=<repo> only, once each.' }); return true;
+    const lane = one('lane'), repo = one('repo'), live = one('live');
+    if ([...params.keys()].some(key => key !== 'lane' && key !== 'repo' && key !== 'live') || lane === undefined || repo === undefined
+      || (lane !== null && !SESSION_FILTER_RE.test(lane)) || (repo !== null && !SESSION_FILTER_RE.test(repo)) || (live !== null && live !== '1')) {
+      sendJson(res, 400, { error: 'Use lane=<lane>, repo=<repo> and live=1 only, once each.' }); return true;
     }
-    try { sendJson(res, 200, await read({ lane, repo })); }
+    try { sendJson(res, 200, await read({ lane, repo, ...(live ? { live: true } : {}) })); }
     catch { sendJson(res, 503, { error: 'Sessions unavailable.' }); }
     return true;
   };
