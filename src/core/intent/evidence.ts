@@ -113,19 +113,28 @@ function knownKeys(ledger: EvidenceLedger): string[] {
   return [...new Set(ledger.items.flatMap((item) => item.rq))];
 }
 
-function pushEvidence(item: EvidenceItem, row: EvidenceRow): void {
+function pushEvidence(item: EvidenceItem, row: EvidenceRow): boolean {
+  if (item.evidence.some((existing) => existing.kind === row.kind && existing.ref === row.ref)) return false;
   item.evidence = [...item.evidence, row].slice(-MAX_EVIDENCE);
+  return true;
 }
 
-function associatePull(item: EvidenceItem, pull: EvidencePull): void {
+function associatePull(item: EvidenceItem, pull: EvidencePull): boolean {
   const key = pullKey(pull);
   const existing = item.prs.find((row) => pullKey(row) === key);
   if (existing) {
+    let changed = false;
+    if (existing.state !== 'merged') changed = true;
     existing.state = 'merged';
-    if (pull.url && !existing.url) existing.url = pull.url;
-    return;
+    if (pull.url && !existing.url) {
+      existing.url = pull.url;
+      changed = true;
+    }
+    return changed;
   }
-  if (item.prs.length < MAX_PRS) item.prs.push({ ...pull });
+  if (item.prs.length >= MAX_PRS) return false;
+  item.prs.push({ ...pull });
+  return true;
 }
 
 /**
@@ -146,11 +155,16 @@ export function linkMergedPull<T extends EvidenceItem>(ledger: EvidenceLedger<T>
     ...(pull.url ? { url: pull.url } : {}),
   };
   for (const item of matched) {
-    associatePull(item, linked);
-    if (OPEN_FOR_MERGE.has(item.status)) item.status = 'merged';
-    pushEvidence(item, { at: when, kind: 'pr', ref: `${pull.repo}#${pull.number}` });
-    item.lastTouchedAt = when;
-    item.updatedAt = when;
+    let changed = associatePull(item, linked);
+    if (OPEN_FOR_MERGE.has(item.status)) {
+      item.status = 'merged';
+      changed = true;
+    }
+    changed = pushEvidence(item, { at: when, kind: 'pr', ref: `${pull.repo}#${pull.number}` }) || changed;
+    if (changed) {
+      item.lastTouchedAt = when;
+      item.updatedAt = when;
+    }
   }
   return matched;
 }
@@ -174,10 +188,16 @@ export function markShipped<T extends EvidenceItem>(ledger: EvidenceLedger<T>, r
   ])];
   const matched = findByKeys(ledger, keys);
   for (const item of matched) {
-    if (OPEN_FOR_SHIP.has(item.status)) item.status = 'shipped';
-    pushEvidence(item, { at: when, kind: 'release', ref: releaseId });
-    item.lastTouchedAt = when;
-    item.updatedAt = when;
+    let changed = false;
+    if (OPEN_FOR_SHIP.has(item.status) && item.status !== 'shipped') {
+      item.status = 'shipped';
+      changed = true;
+    }
+    changed = pushEvidence(item, { at: when, kind: 'release', ref: releaseId }) || changed;
+    if (changed) {
+      item.lastTouchedAt = when;
+      item.updatedAt = when;
+    }
   }
   return matched;
 }
