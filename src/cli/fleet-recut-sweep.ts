@@ -4,6 +4,7 @@ import type { CloudGh } from '../core/cloud/pr-actions.js';
 import type { DirtyLandedReport } from './fleet-dirty-landed.js';
 import { cmdFleetDirtyLanded } from './fleet-dirty-landed.js';
 import { recutDropJob } from '../core/fleet/recut-drop-body.js';
+import { readRecutGateFacts, runGit, shouldEmitRecut, type RecutGateDecision } from '../core/fleet/recut-gate.js';
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, DropJobExistsError, dropJobExists,
   resolveDropJobRoot, validateDropJob, writeDropJob } from '../core/fleet/drop-job-writer.js';
 
@@ -15,6 +16,8 @@ export interface FleetRecutSweepDeps {
   output?: (text: string) => void;
   error?: (text: string) => void;
   dropRoot?: string;
+  /** Recut gate decision for a job id; defaults to shouldEmitRecut over local yield and git facts. */
+  gate?: (jobId: string) => Promise<RecutGateDecision>;
 }
 
 export async function cmdFleetRecutSweep(args: string[], deps: FleetRecutSweepDeps = {}): Promise<number> {
@@ -60,6 +63,12 @@ export async function cmdFleetRecutSweep(args: string[], deps: FleetRecutSweepDe
       return `${row.pr}:${row.headSha}`;
     }));
     const now = (deps.now ?? Date.now)();
+    // Every sweep job shares one kind (RQ-PHX-RECUT), so the gate runs once, before the first plan.
+    const gate = deps.gate ?? (async (jobId: string) => {
+      const facts = await readRecutGateFacts(jobId, { metrics: join(root, 'metrics', 'jobs.jsonl'), git: runGit(process.cwd()), now });
+      return facts ? shouldEmitRecut(facts) : { emit: true, code: 'yield-unknown', reason: 'yield unknown' } as const;
+    });
+    let decision: RecutGateDecision | null = null;
     for (const pr of [...report.prs].sort((a, b) => a.number - b.number)) {
       const job = recutDropJob(pr, now);
       const skip = (reason: string) => result.skipped.push({ pr: pr.number, reason });
@@ -67,6 +76,11 @@ export async function cmdFleetRecutSweep(args: string[], deps: FleetRecutSweepDe
       result.candidates++;
       if (recut.has(`${pr.number}:${pr.head}`)) { skip('already-recut'); continue; }
       if (result.planned.length >= limit) continue;
+      if (!decision) {
+        decision = await gate(`RQ-PHX-${job.id}`);
+        if (!decision.emit) error(`recut skipped: ${decision.reason}`);
+      }
+      if (!decision.emit) { skip(`gate: ${decision.code}`); continue; }
       result.planned.push({ pr: pr.number, id: job.id, remainingPaths: pr.remainingPaths });
       if (!apply) continue;
       if (!validateDropJob(job).ok) { skip('invalid'); continue; }

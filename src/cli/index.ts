@@ -2279,6 +2279,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'recut': {
+        const { cmdRecut } = await import('./recut-check.js');
+        process.exitCode = await cmdRecut(rest);
+        break;
+      }
+
       case 'land': {
         const { cmdLand } = await import('./land.js');
         process.exitCode = await cmdLand(rest);
