@@ -22,24 +22,24 @@ const row = (pool: string, raw?: unknown) => rows(raw).find(r => r.pool === pool
 
 describe('fleet spend projection', () => {
   it('on pace: a pool that reaches 100% by reset', () => {
-    expect(row('codex-personal')).toMatchObject({ verdict: 'on-pace', summary: 'on pace', usedPercent: 65,
+    expect(row('codex-personal')).toMatchObject({ verdict: 'on-pace', status: 'on-pace', summary: 'on pace', usedPercent: 65,
       projectedUsedPercent: 100, projectedUnusedPercent: 0, resetsIn: '4d 4h', unit: 'percent', reason: null });
   });
 
   it('behind: a pool that would reset with a share unspent', () => {
     const claude = row('claude');
-    expect(claude).toMatchObject({ verdict: 'behind', summary: 'behind: 10% would go unused', usedPercent: 41, resetsIn: '3d 8h' });
+    expect(claude).toMatchObject({ verdict: 'behind', status: 'behind', summary: 'behind: 10% would go unused', usedPercent: 41, resetsIn: '3d 8h' });
     expect(claude.projectedUsedPercent).toBeCloseTo(90);
     expect(claude.projectedUnusedPercent).toBeCloseTo(10);
   });
 
   it('used up: an overage reading above 100% is measured, not rejected', () => {
-    expect(row('zai')).toMatchObject({ verdict: 'used-up', summary: 'used up', usedPercent: 103, projectedUsedPercent: 100 });
+    expect(row('zai')).toMatchObject({ verdict: 'used-up', status: 'exhausted', summary: 'used up', usedPercent: 103, projectedUsedPercent: 100 });
   });
 
   it('unknown: missing, stale and absent readings render unknown, never zero', () => {
     const gemini = row('gemini');
-    expect(gemini).toMatchObject({ verdict: 'unknown', summary: 'unknown: reading missing', usedPercent: null,
+    expect(gemini).toMatchObject({ verdict: 'unknown', status: 'unknown', summary: 'unknown: reading missing', usedPercent: null,
       projectedUsedPercent: null, resetsIn: null });
     expect(rows(FIXTURE, NOW + 121_000).every(r => r.verdict === 'unknown' && r.summary === 'unknown: status missing or stale')).toBe(true);
     expect(rows(null).every(r => r.usedPercent === null && r.projectedUsedPercent === null && r.remainingUsd === null)).toBe(true);
@@ -69,12 +69,43 @@ describe('fleet spend projection', () => {
   });
 
   it('expired: a gift past its expiry says expired and drops the balance', () => {
-    expect(row('devin')).toMatchObject({ verdict: 'expired', summary: 'expired', remainingUsd: null, resetsIn: null });
+    expect(row('devin')).toMatchObject({ verdict: 'expired', status: 'exhausted', summary: 'expired', remainingUsd: null, resetsIn: null });
   });
 
   it('sorts behind first, then unknown, expired, on pace, used up', () => {
     expect(rows().map(r => `${r.verdict}:${r.pool}`)).toEqual([
       'behind:claude', 'unknown:claude-api', 'unknown:codex-cmp', 'unknown:gemini', 'unknown:local', 'expired:devin', 'on-pace:codex-personal', 'used-up:zai']);
+  });
+
+  it('puts the pool that will waste the most first among the behind pools', () => {
+    const gift = { gift: { usd_remaining: 60, as_of: iso(NOW), expires_at: iso(NOW + 300 * HOUR), usd_burn_per_hour: 0.1 } };
+    const order = rows(status({ claude: measured(41, 80, 0.6125), zai: measured(10, 20, 1), 'codex-cmp': measured(50, 5, 0), 'claude-api': gift }))
+      .filter(r => r.status === 'behind').map(r => `${r.pool}:${Math.round(r.projectedUnusedPercent ?? r.projectedUnusedUsd! / r.remainingUsd! * 100)}`);
+    // zai resets soonest after codex-cmp but wastes the most, so it leads; the ungranted gift ranks by its balance share.
+    expect(order).toEqual(['zai:70', 'codex-cmp:50', 'claude-api:50', 'claude:10']);
+  });
+
+  it('carries a schema, a version and one plain sentence about the worst pool', () => {
+    const snapshot = projectUsageSpend(FIXTURE, NOW);
+    expect(snapshot).toMatchObject({ schema: 'usage.spend.v1', v: 1, asOf: iso(NOW) });
+    expect(Object.keys(snapshot)).toEqual(['schema', 'v', 'asOf', 'headline', 'pools']);
+    expect(snapshot.headline).toBe('claude: 59% left, resets in 3d 8h, 10% would go unused.');
+  });
+
+  it('headline: an expiring gift with zero spend says nothing is using it', () => {
+    const idle = status({ claude: measured(41, 80, 0.6125), 'claude-api': { gift: { usd_remaining: 112, usd_granted: 112, as_of: iso(NOW),
+      expires_at: iso(NOW + 150 * HOUR), usd_burn_per_hour: 0 } } });
+    const snapshot = projectUsageSpend(idle, NOW);
+    expect(snapshot.pools[0]).toMatchObject({ pool: 'claude-api', status: 'behind', usedPercent: 0, burnPerHour: 0,
+      projectedUnusedUsd: 112, projectedUnusedPercent: 100, hoursLeft: 150 });
+    expect(snapshot.headline).toBe('claude-api gift: 112 USD left, expires in 6d 6h, nothing is using it; 1 more behind.');
+  });
+
+  it('headline: says unknown when nothing is measured and never names a number', () => {
+    expect(projectUsageSpend(null, NOW).headline).toBe('Unknown: the dispatcher status is missing or stale.');
+    expect(projectUsageSpend(status({}), NOW).headline).toBe('Unknown: no pool has a complete reading.');
+    expect(projectUsageSpend(status({ 'codex-personal': measured(65, 100, 0.35), zai: measured(103, 50, 1) }), NOW).headline)
+      .toBe('Nothing measured will go unused; 6 unknown.');
   });
 
   it('counts down in days and hours, then hours and minutes', () => {
@@ -86,7 +117,7 @@ describe('fleet spend projection', () => {
   });
 });
 
-describe('phm fleet spend', () => {
+describe('phm spend', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   const snapshot: SpendSnapshot = projectUsageSpend(FIXTURE, NOW);
   const run = async (args: string[]) => {
@@ -97,14 +128,16 @@ describe('phm fleet spend', () => {
     return { code, out, err };
   };
 
-  it('prints one plain line per pool, behind first', async () => {
+  it('prints the sentence, then one plain line per pool, behind first', async () => {
     const { code, out } = await run([]);
     expect(code).toBe(0);
-    expect(out).toHaveLength(snapshot.pools.length);
-    expect(out[0]).toBe('claude: behind: 10% would go unused · 41% used, 90% by reset · resets in 3d 8h');
-    expect(out).toContain('gemini: unknown: reading missing · unknown used, unknown by reset · resets unknown');
-    expect(out).toContain('claude-api: unknown: no spend rate · 112 USD left (0% used) · expires in 8d 0h');
-    expect(out).toContain('devin: expired · balance unknown · expires unknown');
+    expect(out).toHaveLength(snapshot.pools.length + 1);
+    expect(out[0]).toBe(snapshot.headline);
+    expect(out[1]).toBe('claude: behind (will waste) · 41% used · burn 0.61%/h · 10% unused at reset · resets in 3d 8h (2026-11-19T20:00:00.000Z)');
+    expect(out).toContain('codex-personal: on-pace · 65% used · burn 0.35%/h · 0% unused at reset · resets in 4d 4h (2026-11-20T16:00:00.000Z)');
+    expect(out).toContain('gemini: unknown (reading missing)');
+    expect(out).toContain('claude-api gift: unknown (no spend rate) · 112 USD left (0% used) · burn unknown · unknown unused at expiry · expires in 8d 0h (2026-11-24T12:00:00.000Z)');
+    expect(out).toContain('devin gift: exhausted (expired)');
   });
 
   it('prints the typed snapshot as JSON', async () => {
@@ -118,10 +151,11 @@ describe('phm fleet spend', () => {
     expect((await run(['--json', 'extra'])).code).toBe(2);
     const help = await run(['--help']);
     expect(help.code).toBe(0);
-    expect(help.out[0]).toMatch(/^Usage: phm fleet spend \[--json\]/);
+    expect(help.out[0]).toMatch(/^Usage: phm spend \[--json\]\n/);
+    expect(help.out[0]).toContain('usage.spend.v1');
   });
 
   it('shares the line format with the snapshot rows', () => {
-    expect(spendLine(snapshot.pools.find(r => r.pool === 'zai')!)).toBe('zai: used up · 103% used, 100% by reset · resets in 2d 2h');
+    expect(spendLine(snapshot.pools.find(r => r.pool === 'zai')!)).toBe('zai: exhausted · 103% used · burn 1%/h · 0% unused at reset · resets in 2d 2h (2026-11-18T14:00:00.000Z)');
   });
 });

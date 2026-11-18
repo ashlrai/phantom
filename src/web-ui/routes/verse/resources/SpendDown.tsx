@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SpendRow, SpendSnapshot } from '../../../../core/usage/spend.js';
+import type { SpendRow, SpendSnapshot, SpendStatus } from '../../../../core/usage/spend.js';
 import { apiGet } from '../../../data/client.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import styles from '../SidebarResources.module.css';
@@ -8,9 +8,7 @@ import bar from './SpendDown.module.css';
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n)}%`;
 const width = (n: number | null): string => `${Math.min(100, Math.max(0, n ?? 0))}%`;
 const amount = (n: number | null, unit: string): string => n === null ? 'unknown' : `${Number(n.toFixed(2))} ${unit}`;
-const status: Record<SpendRow['verdict'], string> = {
-  'on-pace': 'on pace', behind: 'behind', 'used-up': 'exhausted', expired: 'exhausted', unknown: 'unknown',
-};
+const status: Record<SpendStatus, string> = { 'on-pace': 'on pace', behind: 'behind', exhausted: 'exhausted', unknown: 'unknown' };
 
 /** Used now over projected at reset; an unknown share draws no fill and says "unknown". */
 function SpendBar({ row }: { row: SpendRow }) {
@@ -37,7 +35,7 @@ function UsageDetails({ row }: { row: SpendRow }) {
   </dl>;
 }
 
-/** Same snapshot as `phm usage --json`'s spend field, behind first. */
+/** Same snapshot as `phm spend --json`: one sentence on top, then the pool that will waste the most first. */
 export function SpendDown() {
   const [data, setData] = useState<SpendSnapshot | null>(null);
   const [failed, setFailed] = useState(false);
@@ -57,14 +55,14 @@ export function SpendDown() {
   usePollWhileVisible(refresh, 60_000);
   return <section aria-label="Spend down"><h2 className={styles.heading}>Spend down</h2>
     {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
-      : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <ul className={bar.list}>
+      : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <><p className={bar.headline} role="status">{data.headline}</p><ul className={bar.list}>
       {data.pools.map(row => <li className={styles.dotRow} key={row.pool} aria-label={row.pool}>
-        <span className={bar.head}><span className={styles.dotLabel}>{row.pool === 'claude-api' ? 'claude-api gift' : row.pool}</span>
-          <span className={bar.verdict} data-verdict={row.verdict}>{status[row.verdict]}</span></span>
+        <span className={bar.head}><span className={styles.dotLabel}>{row.unit === 'usd' ? `${row.pool} gift` : row.pool}</span>
+          <span className={bar.verdict} data-verdict={row.verdict}>{status[row.status]}</span></span>
         <SpendBar row={row} />
         <UsageDetails row={row} />
         {row.reason !== null ? <span className={styles.note}>{row.reason}</span> : null}
       </li>)}
-    </ul>}
+    </ul></>}
   </section>;
 }

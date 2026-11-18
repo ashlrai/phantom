@@ -2811,6 +2811,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'spend': {
+        // Same printer as `phm usage spend` and `phm fleet spend` (src/core/usage/spend.ts).
+        const { cmdFleetSpend } = await import('./fleet-spend.js');
+        process.exitCode = await cmdFleetSpend(rest);
+        break;
+      }
+
       case 'worklog': {
         const { cmdWorklog } = await import('./worklog.js');
         process.exitCode = await cmdWorklog(rest);
@@ -3431,7 +3438,7 @@ async function main(): Promise<void> {
       case 'usage': {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
-            ['phm usage spend [--json]', 'See measured usage and projected unused capacity'],
+            ['phm usage spend [--json]', 'Same as phm spend: is every pool spent before it resets'],
             ['phm usage validate', 'Validate a usage reading'],
             ['phm usage resource-live [--json] [--watch] [--show]', 'Read every allowance and write state/resource-live.json'],
           ]);
