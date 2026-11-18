@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn(), hostStats: vi.fn(), acquire: vi.fn(), release: vi.fn() }));
@@ -45,6 +46,22 @@ async function start() {
   return { result };
 }
 describe('multi-Mac worker lifecycle', () => {
+  it.each(['oversize', 'sha-mismatch', 'invalid-utf8'])('releases a corrupt embedded task without spawning: %s', async mode => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'release') return { demoted: false, result: { released: true } };
+      const reply = route(...args);
+      if (args[1] === 'pull') {
+        reply.result.job.pack = 'codex-file';
+        reply.result.job.task = { text: mode === 'oversize' ? 'x'.repeat(16385) : mode === 'invalid-utf8' ? '\ud800' : 'review', sha256: '0'.repeat(64) };
+        if (mode === 'oversize') reply.result.job.task.sha256 = createHash('sha256').update(reply.result.job.task.text).digest('hex');
+      }
+      return reply;
+    });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'invalid-task', released: true });
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.call.mock.calls.some(c => c[1] === 'release')).toBe(true);
+  });
   it('continues fenced work when optional host telemetry cannot be collected', async () => {
     ports.hostStats.mockImplementation(() => { throw new Error('unavailable'); });
     const { result } = await start();

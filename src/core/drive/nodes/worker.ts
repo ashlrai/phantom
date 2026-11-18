@@ -1,3 +1,4 @@
+import { validNodeTask } from './task.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -131,6 +132,7 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       try { released = callPool(config, 'release', decline ? [...lease, '--decline'] : lease).result['released'] === true; } catch { /* expiry fences it */ }
       return { held, ...extra, released };
     };
+    if (job?.task !== undefined && (job.pack !== 'codex-file' || !validNodeTask(job.task))) return refuse('invalid-task', true);
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
         job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
     // A stopping node cannot run anything right now, but another session or a restart can: retryable.

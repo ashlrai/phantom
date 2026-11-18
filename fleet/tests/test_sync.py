@@ -57,6 +57,14 @@ class SyncTestBase(unittest.TestCase):
 
 
 class ManifestTests(SyncTestBase):
+    def test_node_runner_is_managed_executable(self):
+        entries = json.loads(MANIFEST.read_text())['files']
+        entry = next(e for e in entries if e.get('name') == 'node-runner')
+        self.assertEqual(entry['src'], 'contrib/mac/node-runner.mjs')
+        self.assertEqual(entry['class'], 'managed')
+        self.assertEqual(entry['root'], 'runs-bin')
+        self.assertEqual(stat.S_IMODE((ROOT / entry['src']).stat().st_mode), 0o755)
+
     def test_real_manifest_is_valid_and_sources_exist(self):
         m = json.loads(MANIFEST.read_text())
         self.assertEqual(m['schema'], 'fleet.machinery.v1')

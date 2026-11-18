@@ -1,5 +1,13 @@
 # Mac queue lane scripts (repo copies)
 
+`node-runner.mjs` is the standalone, dependency-free Node reference worker,
+managed by `fleet/manifest.json` as `~/.ashlr-runs/bin/node-runner` (0755).
+Preview with `python3 fleet/sync.py --json` or `--bin <scratch>`; operators may
+run `python3 fleet/sync.py --apply` after review. Agents never apply live.
+Its `packs` and `run` verbs support `shell-check`, `codex-file`, and loopback-only
+`omlx-ping`. See [node router](../../docs/NODE-ROUTER.md#which-ready-rows-map-onto-remote-packs)
+for bridge setup and node-local task provisioning.
+
 `restock.py` and `dispatchd.py` are reviewable repository copies of the
 deterministic Mac queue scripts that run under `~/.ashlr-runs` on the dispatch
 host. A repository snapshot can be older than the installed controller: compare
