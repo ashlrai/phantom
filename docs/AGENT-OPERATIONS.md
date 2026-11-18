@@ -1042,7 +1042,8 @@ It reads `~/.ashlr-runs/metrics/jobs.jsonl` and the main-guardian status, and
 changes nothing. Each PR counts once. A value that was not measured is `null`
 (or "unknown"), never zero; lines that are not JSON are skipped and counted in
 `malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
-Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`).
+Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`)
+for 6 hours, 24 hours or 7 days, with launched, published and merged drawn as one flow.
 
 `phm metrics` shows how well the self-improving loop is running, in one glance:
 PRs merged per hour over the last 1, 6 and 24 hours, the median time from publish

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ThroughputCounts, ThroughputReport } from '../../../../core/fleet/throughput.js';
 import { ThroughputPane } from './ThroughputPane.js';
@@ -21,18 +21,24 @@ function report(kind: 'busy' | 'quiet' | 'unreadable'): ThroughputReport {
     ],
   };
 }
-const state = vi.hoisted(() => ({ status: 'success', data: undefined as unknown }));
-vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state, useRefetch: () => vi.fn() }));
+const state = vi.hoisted(() => ({ status: 'success', data: undefined as unknown, key: '', fetch: null as null | ((signal: AbortSignal) => unknown) }));
+vi.mock('../../../data/hooks.js', () => ({ useQuery: (def: { key: string; fetch: (signal: AbortSignal) => unknown }) => { state.key = def.key; state.fetch = def.fetch; return state; }, useRefetch: () => vi.fn() }));
+const get = vi.hoisted(() => vi.fn());
+vi.mock('../../../data/client.js', () => ({ apiGet: get }));
 const show = (data: unknown, status = 'success') => {
   state.data = data; state.status = status;
   return render(<ThroughputPane {...({ visible: true } as Parameters<typeof ThroughputPane>[0])} />);
 };
 beforeEach(() => { state.data = undefined; state.status = 'success'; });
 
-it('shows the headline, totals, both hourly lines and the empty rate bar by lane', () => {
+it('shows the headline, the delivery flow, both hourly lines and the empty rate bar by lane', () => {
   show(report('busy'));
   expect(screen.getByText('38 merged in the last 6 hours, median 2m 50s.')).toBeTruthy();
-  expect(screen.getByText(/Launched 50 · published 40 · merged 38 · empty 6 of 48 finished \(13%\)\.\s+Main is green\./)).toBeTruthy();
+  // The three totals are drawn as one flow: exact counts, and step-to-step shares in words.
+  expect(screen.getByRole('img', { name: 'Delivery flow: Launched 50, Published 40 (80% of previous), Merged 38 (95% of previous).' })).toBeTruthy();
+  expect(screen.getByText(/not one batch followed through/)).toBeTruthy();
+  expect(screen.getByText(/Empty 6 of 48 finished \(13%\)\./)).toBeTruthy();
+  expect(screen.getByText('Main is green.').getAttribute('data-main')).toBe('green');
   expect(screen.getByText('Metrics lines skipped because they could not be read: 3.')).toBeTruthy();
   expect(screen.getByText('Merged PRs with no publish time, left out of the median: 2.')).toBeTruthy();
   expect(screen.getByRole('img', { name: 'PRs merged per hour' })).toBeTruthy();
@@ -48,7 +54,11 @@ it('shows the headline, totals, both hourly lines and the empty rate bar by lane
 it('shows a readable but quiet window as an empty state, not as missing data', () => {
   show(report('quiet'));
   expect(screen.getByText('0 merged in the last 6 hours, median unknown.')).toBeTruthy();
-  expect(screen.getByText(/No jobs or PRs were recorded in the last 6 hours\.\s+Main is unknown\./)).toBeTruthy();
+  expect(screen.getByText(/No jobs or PRs were recorded in the last 6 hours\./)).toBeTruthy();
+  expect(screen.getByText('Main is unknown.').getAttribute('data-main')).toBe('unknown');
+  // Zero launched is an empty flow in words, never three full or three missing bars.
+  expect(screen.getByText('Nothing was launched, published or merged in this window.')).toBeTruthy();
+  expect(screen.queryByRole('img', { name: /Delivery flow/ })).toBeNull();
   expect(screen.getByRole('img', { name: 'PRs merged per hour' })).toBeTruthy();
   expect(screen.getByText('No merged PR with a known publish time in this window.')).toBeTruthy();
   expect(screen.getByText('No lane activity in this window.')).toBeTruthy();
@@ -58,7 +68,9 @@ it('shows a readable but quiet window as an empty state, not as missing data', (
 it('keeps an unreadable metrics file unknown and draws nothing', () => {
   show(report('unreadable'));
   expect(screen.getByText('Merged in the last 6 hours: unknown (cannot read the job metrics file).')).toBeTruthy();
-  expect(screen.getByText(/Launched unknown · published unknown · merged unknown · empty unknown of unknown finished \(unknown\)\./)).toBeTruthy();
+  expect(screen.getByText(/Empty unknown of unknown finished \(unknown\)\./)).toBeTruthy();
+  expect(screen.getByText('Main is unknown.').getAttribute('data-main')).toBe('unknown');
+  expect(screen.getByRole('note').textContent).toBe('Unknown — the job metrics file could not be read. Nothing is shown rather than a guess.');
   expect(screen.getAllByText('Unknown: the job metrics file could not be read.')).toHaveLength(3);
   expect(screen.queryByRole('img')).toBeNull();
 });
@@ -70,4 +82,32 @@ it('says so while reading, and when the answer is not a throughput report', () =
   expect(screen.getByText('Reading throughput…')).toBeTruthy();
   show({ v: 1 });
   expect(screen.getByText('Throughput: unknown (the report could not be read).')).toBeTruthy();
+});
+
+it('draws merges in a window with no launches as a flow, with no invented share', () => {
+  const merged: ThroughputCounts = { ...ZERO, merged: 4 };
+  show({ ...report('quiet'), totals: merged, buckets: hours(merged, ZERO) });
+  expect(screen.getByRole('img', { name: 'Delivery flow: Launched 0, Published 0 (— of previous), Merged 4 (— of previous).' })).toBeTruthy();
+});
+
+it('reads 24 hours first and asks the same route for the window picked', () => {
+  show(report('busy'));
+  expect(screen.getByRole('radio', { name: '24 hours' }).getAttribute('aria-checked')).toBe('true');
+  state.fetch!(new AbortController().signal);
+  expect(get.mock.lastCall![0]).toBe('/api/verse/fleet/runs/throughput?hours=24&by=lane');
+  fireEvent.click(screen.getByRole('radio', { name: '7 days' }));
+  expect(screen.getByRole('radio', { name: '7 days' }).getAttribute('aria-checked')).toBe('true');
+  expect(state.key).toBe('fleet-throughput-168');
+  state.fetch!(new AbortController().signal);
+  expect(get.mock.lastCall![0]).toBe('/api/verse/fleet/runs/throughput?hours=168&by=lane');
+});
+
+it('keeps the window switch while reading and marks a failed refresh as an old reading', () => {
+  const reading = show(undefined, 'loading');
+  expect(screen.getByRole('radiogroup', { name: 'Window' })).toBeTruthy();
+  expect(screen.queryByText('Could not refresh. Showing the last reading.')).toBeNull();
+  reading.unmount();
+  show(report('busy'), 'error');
+  expect(screen.getByText('Could not refresh. Showing the last reading.')).toBeTruthy();
+  expect(screen.getByText('38 merged in the last 6 hours, median 2m 50s.')).toBeTruthy();
 });
