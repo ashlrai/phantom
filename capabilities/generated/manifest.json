@@ -71,17 +71,17 @@
       "surface": "cursor-desktop"
     },
     {
-      "bytes": 4136,
+      "bytes": 4184,
       "format": "devin",
       "path": "devin/devin-cli.json",
-      "sha256": "173ee8849161e165c699d00b69e7a63d7e2e6c43413c77363eb10bd6961248b2",
+      "sha256": "0c239e944763d6cff15988b6b17117509990f4aafc652641dc0143959f08b215",
       "surface": "devin-cli"
     },
     {
-      "bytes": 4164,
+      "bytes": 4212,
       "format": "devin",
       "path": "devin/devin-desktop.json",
-      "sha256": "e4795ddbf38c76b26acaf51bd420a7c09a891f0d750b85afa7c7af0023416c4c",
+      "sha256": "b9a867a7a916212bec17315d85b8576fca7a7d68a26d034fcffd5cfe05bca42c",
       "surface": "devin-desktop"
     },
     {
@@ -123,11 +123,11 @@
       "bytes": 1642,
       "format": "checksums",
       "path": "SHA256SUMS",
-      "sha256": "0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+      "sha256": "9616fb573917f4dec16d63fc02a37f1d2c38d69ed9f4b232e26be527d132fdfc",
       "surface": null
     }
   ],
-  "bundleSha256": "0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+  "bundleSha256": "9616fb573917f4dec16d63fc02a37f1d2c38d69ed9f4b232e26be527d132fdfc",
   "gated": [
     {
       "capability": "devin-acu-topup",
@@ -197,12 +197,12 @@
   "pinStage": {
     "lib": "pin_stage_lib",
     "libRev": "fe77a6a8",
-    "stagedDir": "~/.ashlr-runs/staged/caps/0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+    "stagedDir": "~/.ashlr-runs/staged/caps/9616fb573917f4dec16d63fc02a37f1d2c38d69ed9f4b232e26be527d132fdfc",
     "stagedRoot": "~/.ashlr-runs/staged/caps",
     "tool": "SEC-PIN-STAGE-TOOL-2"
   },
   "registrySchema": "caps.registry.v1",
-  "registrySha256": "5405f88df6b4cb2535f45ddc678beb5c3af074f71414e38c2eb89fb37fcfcfd0",
+  "registrySha256": "4be52f8ca459606a46fd555a2c649a2d2e16181756ac0f991d3276cfac1ecaf0",
   "schema": "caps.adapters.v1",
   "surfaces": {
     "claude-code": {
