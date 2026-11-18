@@ -80,20 +80,25 @@ function poolRow(lane: ResourceLaneRow, now: number): PoolRow {
   if (asOfMs > now) return unknown(`reading is dated in the future (${asOf})`);
   if (now - asOfMs > POOLS_STALE_AFTER_MINUTES * 60_000) return unknown(`no reading since ${asOf}`);
 
-  row.usedPct = round1(clampPct(lane.usedPct));
+  const usedPct = clampPct(lane.usedPct);
+  row.usedPct = round1(usedPct);
   if (!Number.isFinite(resetMs)) return unknown('reset time not reported');
   const hoursLeft = (resetMs - now) / HOUR_MS;
   const elapsedHours = Math.max(0, WEEK_HOURS - hoursLeft);
+  const observationHoursLeft = (resetMs - asOfMs) / HOUR_MS;
+  const observedElapsedHours = Math.max(0, WEEK_HOURS - observationHoursLeft);
   row.hoursLeft = round1(hoursLeft);
   row.elapsedPct = round1(clampPct(elapsedHours / WEEK_HOURS * 100));
   // A held lane spends nothing, so everything left is at risk.
-  const burn = lane.held === true ? 0 : lane.burnPctPerHour ?? (elapsedHours > 0 ? row.usedPct / elapsedHours : null);
+  const burn = lane.held === true ? 0 : lane.burnPctPerHour ?? (observedElapsedHours > 0 ? usedPct / observedElapsedHours : null);
   if (burn === null) return unknown('burn rate not known yet');
   row.burnPctPerHour = Math.round(burn * 100) / 100;
   row.burnBasis = lane.held === true ? 'held' : lane.burnPctPerHour !== null ? 'reported' : 'window-average';
-  row.projectedUnusedPct = round1(clampPct(100 - row.usedPct - burn * hoursLeft));
-  row.wasteRisk = wasteLevel(row.projectedUnusedPct);
-  row.summary = row.usedPct >= 100 ? 'fully used'
+  const projectionHours = lane.burnPctPerHour === null ? observationHoursLeft : hoursLeft;
+  const unusedPct = clampPct(100 - usedPct - burn * projectionHours);
+  row.projectedUnusedPct = round1(unusedPct);
+  row.wasteRisk = wasteLevel(unusedPct);
+  row.summary = usedPct >= 100 ? 'fully used'
     : row.wasteRisk === 'low' ? 'on pace'
       : `behind: ${Math.round(row.projectedUnusedPct)}% would go unused${lane.held === true ? ' (lane is held)' : ''}`;
   return row;

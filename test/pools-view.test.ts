@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdPools } from '../src/cli/pools.js';
 import { handleApi } from '../src/core/web/api.js';
 import { buildPoolsView, formatPoolsText, POOLS_PATH, POOLS_STALE_AFTER_MINUTES, wasteLevel } from '../src/core/fleet/pools-view.js';
@@ -33,6 +33,33 @@ const FIXTURE = [
 ];
 
 describe('buildPoolsView', () => {
+  it('calculates the window average from unrounded usage', () => {
+    expect(one(lane('small', { usedPct: 0.04, resetAt: at(167.9) }, 0))).toMatchObject({
+      usedPct: 0, burnPctPerHour: 0.4, projectedUnusedPct: 32.8, wasteRisk: 'medium',
+    });
+  });
+
+  it('uses unrounded reported burn and usage for the projection and risk', () => {
+    expect(one(lane('reported', { usedPct: 20.049, resetAt: at(24), burnPctPerHour: 0.5005 }))).toMatchObject({
+      usedPct: 20, burnPctPerHour: 0.5, projectedUnusedPct: 67.9,
+    });
+    expect(one(lane('threshold', { usedPct: 85.04, held: true }))).toMatchObject({
+      projectedUnusedPct: 15, wasteRisk: 'low', summary: 'on pace',
+    });
+    expect(one(lane('almost-used', { usedPct: 99.96, held: true })).summary).toBe('on pace');
+  });
+
+  it('anchors the fallback burn and projection to the captured observation, not the request', () => {
+    const data = ledger(lane('average', { usedPct: 40, resetAt: at(84) }, 0));
+    const first = buildPoolsView(data, NOW).pools[0]!;
+    const later = buildPoolsView(data, NOW + 30 * 60_000).pools[0]!;
+    expect(first).toMatchObject({ burnPctPerHour: 0.48, projectedUnusedPct: 20 });
+    expect(later.burnPctPerHour).toBe(first.burnPctPerHour);
+    expect(later.projectedUnusedPct).toBe(first.projectedUnusedPct);
+    expect(later.hoursLeft).toBe(83.5);
+    expect(buildPoolsView(data, NOW + 61 * 60_000).pools[0]!.wasteRisk).toBe('unknown');
+  });
+
   it('reports an on-pace pool with every field measured', () => {
     expect(one(FIXTURE[1]!)).toEqual({
       id: 'on-pace', kind: 'subscription', usedPct: 60, resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
@@ -45,7 +72,7 @@ describe('buildPoolsView', () => {
   });
 
   it('falls back to the window average when the ledger reports no burn, and says so', () => {
-    expect(one(FIXTURE[6]!)).toMatchObject({ burnPctPerHour: 0.48, burnBasis: 'window-average', projectedUnusedPct: 20, wasteRisk: 'medium', summary: 'behind: 20% would go unused' });
+    expect(one(FIXTURE[6]!)).toMatchObject({ burnPctPerHour: 0.48, burnBasis: 'window-average', projectedUnusedPct: 19.9, wasteRisk: 'medium', summary: 'behind: 20% would go unused' });
   });
 
   it('treats a held lane as spending nothing', () => {
@@ -119,7 +146,18 @@ describe('buildPoolsView', () => {
 
 describe('pools over a runs directory', () => {
   const dirs: string[] = [];
-  afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  beforeEach(() => {
+    const home = mkdtempSync(join(tmpdir(), 'pools-home-')); dirs.push(home);
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('ASHLR_HOME', join(home, '.ashlr'));
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const queue = join(home, '.ashlr-runs', 'queue');
+    mkdirSync(queue, { recursive: true });
+    writeFileSync(join(queue, 'status.json'), JSON.stringify({ last_tick: at(0),
+      lanes: { 'codex-cmp': { running: 1, target: 2, held: false } },
+      budget: { 'codex-cmp': { weekly_used_pct: 20, reset_at: at(24), burn_pct_per_hour: 0.5, observed_at: at(0) } } }));
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
   it('derives rows from the dispatcher status the ledger already reads', async () => {
     const root = mkdtempSync(join(tmpdir(), 'pools-view-')); dirs.push(root);
@@ -136,10 +174,11 @@ describe('pools over a runs directory', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdPools([])).toBe(0);
     const json = JSON.parse(String(out.mock.calls[0]![0]));
-    expect(json).toMatchObject({ schema: 'pools.v1', pools: [] });
-    expect(json.gaps[0]).toContain('dispatcher status is missing');
+    expect(json.generatedAt).toBe(at(0));
+    expect(json).toMatchObject({ schema: 'pools.v1', pools: [{ id: 'codex-cmp', wasteRisk: 'high', projectedUnusedPct: 68, asOf: at(0) }] });
+    expect(json.gaps).toHaveLength(1);
     expect(await cmdPools(['--text'])).toBe(0);
-    expect(String(out.mock.calls[1]![0])).toMatch(/^Pools as of .*\nNo resources reported\./);
+    expect(String(out.mock.calls[1]![0])).toMatch(/^Pools as of 2026-11-17T12:00:00.000Z .*\ncodex-cmp: behind: 68% would go unused/);
     expect(await cmdPools(['--help'])).toBe(0);
     expect(String(out.mock.calls[2]![0])).toContain('Usage: phm pools [--text]');
     expect(await cmdPools(['--watch'])).toBe(2);
@@ -155,7 +194,8 @@ describe('pools over a runs directory', () => {
       return { handled, status: writeHead.mock.calls[0]?.[0] as number, body: body ? JSON.parse(body) as Record<string, unknown> : null };
     };
     const read = await call('GET');
-    expect(read).toMatchObject({ handled: true, status: 200, body: { schema: 'pools.v1', pools: [], staleAfterMinutes: 60 } });
+    expect(read).toMatchObject({ handled: true, status: 200, body: { schema: 'pools.v1', generatedAt: at(0),
+      pools: [{ id: 'codex-cmp', wasteRisk: 'high', projectedUnusedPct: 68, asOf: at(0) }], staleAfterMinutes: 60 } });
     expect(await call('POST')).toMatchObject({ handled: true, status: 405 });
   });
 });

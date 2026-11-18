@@ -150,6 +150,11 @@ returns the identical object. Rows are sorted by `wasteRisk` (`high`, `medium`,
 because the lane is `held`. `gaps` lists what the view cannot see. Exit 0 with
 JSON on stdout, 2 on an unknown flag.
 
+The `window-average` burn and unused-at-reset projection are anchored to the
+reading's capture time, not the request time: a request cannot create a new usage
+observation. They use unrounded values; rounding is for output only. The hours-left
+countdown, time marker, and freshness checks still use the request time.
+
 ```sh
 phm pools
 phm pools --text
