@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { ShippedReport } from '../../../../core/release/shipped.js';
 import { evictAll, getQuerySnapshot, invalidate } from '../../../data/cache.js';
-import { ShippedCard } from './ShippedCard.js';
+import { ShippedCard, shippedQuery } from './ShippedCard.js';
 
-const report: ShippedReport = {
+// The card caches one read per window, so the key carries the days.
+const KEY = shippedQuery(7).key;
+
+// A payload from a server older than the top line: the card falls back to the plain count.
+const report = {
   schema: 'shipped.v1',
   version: 1,
   generatedAt: '2026-11-17T00:00:00.000Z',
@@ -15,7 +19,7 @@ const report: ShippedReport = {
   total: 5,
   maintenance: 0,
   areas: [{ id: 'cli', label: 'CLI', count: 5, lines: [] }],
-};
+} as unknown as ShippedReport;
 let responses: Response[] = [];
 const fetched: string[] = [];
 
@@ -39,9 +43,9 @@ describe('ShippedCard query refresh', () => {
     expect(await screen.findByText('5 changes in the last 7 days.')).toBeTruthy();
     expect(screen.queryByRole('status')).toBeNull();
 
-    const lastSuccess = getQuerySnapshot<ShippedReport>('shipped').updatedAt;
+    const lastSuccess = getQuerySnapshot<ShippedReport>(KEY).updatedAt;
     expect(lastSuccess).not.toBeNull();
-    invalidate('shipped');
+    invalidate(KEY);
 
     const warning = await screen.findByRole('status');
     expect(warning.textContent).toContain('Refresh failed; showing the last shipped report, which may be stale.');
@@ -49,7 +53,7 @@ describe('ShippedCard query refresh', () => {
     expect(screen.getByText('5 changes in the last 7 days.')).toBeTruthy();
     expect(fetched).toHaveLength(2);
     expect(fetched.every(url => url.includes('/api/verse/shipped'))).toBe(true);
-    const cached = getQuerySnapshot<ShippedReport>('shipped');
+    const cached = getQuerySnapshot<ShippedReport>(KEY);
     expect(cached.data).toEqual(report);
     expect(cached.updatedAt).toBe(lastSuccess);
   });
@@ -59,6 +63,6 @@ describe('ShippedCard query refresh', () => {
     render(<ShippedCard />);
     expect((await screen.findByRole('status')).textContent).toBe('What shipped is unavailable right now. Try again.');
     expect(screen.queryByText('5 changes in the last 7 days.')).toBeNull();
-    expect(getQuerySnapshot<ShippedReport>('shipped').data).toBeUndefined();
+    expect(getQuerySnapshot<ShippedReport>(KEY).data).toBeUndefined();
   });
 });

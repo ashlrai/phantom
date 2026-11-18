@@ -39,7 +39,8 @@ export function ShippedCard({ visible = true, days = 7 }: { visible?: boolean; d
   else {
     const maintenance = report.maintenance ?? 0;
     body = <>
-      <p>{plural(report.total - maintenance, 'change')} in {window}.</p>
+      {/* The report's own top line; a server from before it existed still gets the plain count. */}
+      <p>{report.headline ?? `${plural(report.total - maintenance, 'change')} in ${window}.`}</p>
       {report.areas.map(area => <ul key={area.id} aria-label={area.label}>
         <li><strong>{area.label}: {area.count}</strong></li>
         {area.lines.slice(0, LINES_PER_AREA).map(line => <li key={`${line.mergedAt} ${line.number} ${line.text}`}>{line.text}</li>)}

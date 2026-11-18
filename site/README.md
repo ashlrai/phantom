@@ -21,6 +21,21 @@ open site/index.html
 open site/ecosystem.html
 ```
 
+## What shipped page
+
+`shipped.html` and `shipped.json` are generated together and never edited by
+hand. The page is plain HTML with no script: it is the newest 30 changes of
+the JSON report, rendered at generation time, so it makes no runtime calls.
+
+```sh
+phm shipped --site                      # this repository, from local git history
+phm shipped --from merged.json --site   # several repositories, from merged pull request records
+```
+
+`merged.json` is a JSON list of `{repo, number, title, merged_at, labels, files}`.
+`test/shipped.test.ts` fails when the checked-in page is not exactly the
+checked-in JSON rendered. Regenerate the sitemap afterwards (below).
+
 ## Use-case and comparison pages
 
 The pages under `use-cases/` and `compare/` answer one search intent each with

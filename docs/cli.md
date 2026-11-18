@@ -336,7 +336,7 @@ Every command, grouped by topic.
 
   Observability - cost, telemetry, audit
     mobile check [--json]                                                                       Check every desktop view at 390 px: content wider than the screen, tap targets under 44 px, text under 12 px.
-    shipped [--since 7d] [--json|--md]                                                          What shipped, in plain words: merged changes grouped by product area. --md writes docs/SHIPPED.md.
+    shipped [--since 7d] [--repo <name>] [--from <file>] [--json|--md|--site]                   What shipped, in plain words: one top line, then merged changes by product area. --md writes docs/SHIPPED.md; --site writes the website page.
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
     asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
