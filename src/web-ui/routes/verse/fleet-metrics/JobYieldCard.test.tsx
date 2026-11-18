@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { jobYield, unknownJobYield } from '../../../../core/fleet/slot-yield.js';
-import { JOB_YIELD_ROWS, JobYieldCard } from './JobYieldCard.js';
+import { expiresIn, JOB_YIELD_ROWS, JobYieldCard } from './JobYieldCard.js';
 
 const now = Date.parse('2026-11-18T00:00:00Z');
 const row = (fields: Record<string, unknown>) => JSON.stringify({ ts: new Date(now - 3_600_000).toISOString(), ...fields });
@@ -47,4 +47,21 @@ it('sums up the kinds past the row limit instead of dropping them', () => {
   render(<JobYieldCard report={jobYield(lines, now, 24)} />);
   expect(screen.getAllByRole('rowheader')).toHaveLength(JOB_YIELD_ROWS);
   expect(screen.getByText('2 more job kinds with 2 launches not shown.')).toBeTruthy();
+});
+
+it('lists stopped families with why and time left, and says unknown or none in words', () => {
+  const stopped = [{ family: 'RQ-PHX-RECUTCORE', why: '0 merged from 6 launches', until: 2, expires_in_s: 5 * 3600 + 60, auto: true },
+    { family: '^RQ-HAND', why: 'by_hand', until: 1, expires_in_s: 20, auto: false }];
+  const { rerender } = render(<JobYieldCard report={jobYield([], now, 24)} stopped={stopped} />);
+  expect(screen.getByRole('heading', { name: 'Stopped families' })).toBeTruthy();
+  expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual([
+    'RQ-PHX-RECUTCORE 0 merged from 6 launches · expires in 5 hours', '^RQ-HAND by_hand · expires in 1 minute']);
+  rerender(<JobYieldCard report={jobYield([], now, 24)} stopped={[]} />);
+  expect(screen.getByText('No family is stopped.')).toBeTruthy();
+  for (const unknown of [null, undefined]) {
+    rerender(<JobYieldCard report={jobYield([], now, 24)} stopped={unknown} />);
+    expect(screen.getByText('Stopped families: unknown')).toBeTruthy();
+    expect(screen.queryByRole('list')).toBeNull();
+  }
+  expect([59, 3600, 7199, 172_800].map(expiresIn)).toEqual(['1 minute', '1 hour', '1 hour', '2 days']);
 });

@@ -121,7 +121,7 @@ Hermetic regression coverage: `test/fleet-outcome-metrics.test.ts`.
 
 ## Job yield (`jobs.yield.v1`)
 
-RQ-FAMILYYIELDN18RQ8. `phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list] [--json]`
+RQ-FAMILYYIELDN18RQ8. `phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json]`
 says which kinds of jobs are worth a launch slot. The Metrics pane shows the
 same report as the "Job yield" card, from `jobYield` on
 `GET /api/verse/fleet/runs/metrics`. Read-only; exit 0, or 2 for bad arguments.
@@ -133,8 +133,45 @@ or interrupted read prints the unknown reason to stderr and exits 1, so a failed
 read cannot look like an empty list. With `--json`, the full `jobs.yield.v1`
 report stays unchanged, even when `--stop-list` is present.
 
+### Job stop file (`jobs.stop-file.v1`)
+
+RQ-STOPFILEN18XQ8. `phm jobs yield --stop-file [--ttl-hours N] [--out PATH] [--dry-run] [--json]`
+writes every `stop` kind to the job stop file, which the fleet's precheck reads
+before any model call. Rows are `<ERE on job id>\t<until unix epoch>\t<reason>`;
+`#` lines are comments and rows past their epoch are ignored. Each tool row is
+followed by a `# auto:phm-yield` line. The path is `--out`, else the
+`ASHLR_JOBS_STOP_FILE` environment variable (absolute). There is no default:
+with neither, the path is unknown and only `--dry-run` runs.
+
+- Pattern: anchored and escaped, built from the job kind (`familyPattern`). A
+  kind with no safe pattern, or whose pattern would match another kind's job in
+  the window, is not written and is listed in `unsafe` with the reason.
+- `until` is now plus `--ttl-hours` (default 24, at most 72). Reason is
+  `<kind>_<merged>of<launches>`, spaces as dashes.
+- A kind is `stop` only with 6 or more ended launches, merged per launch under
+  0.1 and no merge in its last 3 launches. `--stop-list` uses the same verdict.
+- The write is a temp file plus rename. Hand-written rows and comments stay as
+  they are. Expired tool rows are removed; live tool rows stay until they
+  expire, or are replaced by a new row for the same pattern.
+- Exit 0; 1 when the yield, the path or the file is unknown (nothing written);
+  2 for bad arguments. JSON: `{schema,version,path,dry_run,written,ttl_hours,
+  yield_known,error,rows:[{family,pattern,until,reason}],unsafe:[{family,why}],
+  kept_hand,kept_auto,dropped_expired}`.
+
+`src/core/fleet/stop-file.ts` exports `stopFilePath(env?)`, `familyPattern(family, ids?)`,
+`stopRows(parts, now, ttlHours?)`, `parseStopFile(text)`, `planStopFile(text, rows, now)`,
+`readStopFileText(path)`, `writeStopFile(path, text)`, `readLiveStops(path, now)`,
+`stoppedBy(rows, ids)` and `stoppedFamilies(rows, now)`. `readJobYieldParts(...)` in
+`metrics-series.ts` and `yieldTally(...).jobYieldParts()` return `{ report, ids }`.
+`shouldEmitRecut` skips with code `stop-file` when `stopRow` is set;
+`readRecutGateFacts` sets it from a live row matching the job id or kind
+(`stopFile` option, default `stopFilePath()`), and `recut.check.v1` facts carry
+`stop_file_row`. `readMetricsPanel(runsDir?, now?, stopFile?)` adds
+`stopped: [{family,why,until,expires_in_s,auto}] | null` (null is unknown), shown
+as "Stopped families" on the Job yield card.
+
 `src/core/fleet/slot-yield.ts` exports the pure `jobYield(lines, now, hours)`,
-`jobKind(id, repo?)`, `jobVerdict({ launches, running, merged })` and
+`jobKind(id, repo?)`, `jobVerdict({ launches, running, merged, recentMerge? })` and
 `unknownJobYield(hours)`; `yieldTally(...).jobYield()` streams the same report.
 `readJobYield(path, hours?, now?, read?)` in `metrics-series.ts` owns the read.
 Rows used: `launch`, `finish` (`empty`), `precheck_skip`, `publish` and

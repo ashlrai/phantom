@@ -11,6 +11,8 @@
 .table th:first-child { text-align: left; overflow-wrap: anywhere; }
 .table thead th { color: var(--text-secondary); }
 .table tr[data-empty-high='true'], .table tr[data-verdict='stop'], .table tr[data-due='true'] { background: var(--status-warning-bg); }
+/* One family per line; a long name or reason wraps inside a 390 px column instead of scrolling. */
+.stopped { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .pools { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 /* Name and bar share a line; the facts wrap underneath, so nothing is cut off at 390 px. */
 .pool { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-2); min-width: 0; }

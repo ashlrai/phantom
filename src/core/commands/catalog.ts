@@ -30,7 +30,7 @@ export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'budget get', 'chain verify', 'ci reruns', 'commands', 'companions', 'config effective', 'config path', 'constitution check',
   'daemon activation-preflight', 'daemon service-status', 'disk', 'doctor merge-path', 'ecosystem doctor', 'empties', 'enroll list',
   'estates', 'feed', 'fleet direction', 'fleet evidence doctor', 'fleet status', 'fleet vitals', 'gh', 'goals', 'goals status',
-  'graph', 'graph status', 'growth', 'help', 'home', 'host load', 'inbox show', 'jobs empty', 'jobs yield', 'knowledge graph', 'knowledge impact', 'lanes',
+  'graph', 'graph status', 'growth', 'help', 'home', 'host load', 'inbox show', 'jobs empty', 'knowledge graph', 'knowledge impact', 'lanes',
   'lanes fit', 'library', 'log', 'ls', 'map', 'mcp list', 'metrics idle', 'metrics levers', 'metrics merges', 'models', 'models check', 'nodes',
 
   'observe', 'observe session', 'orient', 'pages list', 'pool admission', 'preflight', 'prs triage', 'pulse-test', 'queue batches', 'recut check',
@@ -50,7 +50,9 @@ export function buildCommandCatalog(rows: readonly CommandRow[]): CatalogCommand
     if (!lead) continue;
     const name = lead.replace(/\s+/g, ' ');
     const form = row.cmd.slice(lead.length).trim();
-    const bare = form.replace(/\[[^\]]*\]/g, '').trim() === '';
+    // A help row can include another command form after a pipe.
+    // An optional-only alternative still allows this command to run bare.
+    const bare = form.replace(/\[[^\]]*\]/g, '').split('|').some(part => part.trim() === '');
     const known = byName.get(name);
     if (known) {
       if (!known.arguments.includes(form)) known.arguments.push(form);

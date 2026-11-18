@@ -1,6 +1,6 @@
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { unknownJobYield, yieldTally, type JobYieldReport } from './slot-yield.js';
+import { unknownJobYield, yieldTally, type JobYieldParts, type JobYieldReport } from './slot-yield.js';
 
 const HOUR = 3_600_000;
 export interface MetricsHour {
@@ -78,7 +78,12 @@ export async function readMetricsSeries(path: string, now = Date.now(), read: Yi
 
 /** The `phm jobs yield` report from the same ledger. A failed or interrupted read is unknown, never zero. */
 export async function readJobYield(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines): Promise<JobYieldReport> {
+  return (await readJobYieldParts(path, hours, now, read)).report;
+}
+
+/** The same read, plus the job ids seen per kind. Unknown reads carry no ids. */
+export async function readJobYieldParts(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines): Promise<JobYieldParts> {
   const tally = yieldTally(now, hours);
-  try { return await read(path, line => tally.add(line)) ? tally.jobYield() : unknownJobYield(hours); }
-  catch { return unknownJobYield(hours); }
+  try { if (await read(path, line => tally.add(line))) return tally.jobYieldParts(); } catch { /* unknown below */ }
+  return { report: unknownJobYield(hours), ids: new Map() };
 }
