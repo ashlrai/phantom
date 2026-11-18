@@ -5,6 +5,47 @@ import re
 import signal
 import subprocess
 from datetime import datetime
+from typing import Literal
+
+CapabilityFailure = Literal["empty_capability_gh_unavailable"]
+
+
+def capability_failure(tail: str) -> CapabilityFailure | None:
+    # Require a concrete CLI failure, not a task merely mentioning gh or a sandbox.
+    if re.search(r"(?im)^.*(?:(?:error reading|failed to read) configuration:.*[/\\]gh[/\\]|gh:).*"
+                 r"(?:operation not permitted|permission denied|command not found).*$", tail):
+        return "empty_capability_gh_unavailable"
+    return None
+
+
+def latest_attempts(rows):
+    claims, latest = {}, {}
+    for row in rows:
+        if not isinstance(row, dict): continue
+        key = row.get('job')
+        if row.get('event') == 'claim':
+            claims[key] = row
+            latest.pop(key, None)  # a newer unfinished claim invalidates old log evidence
+        if row.get('event') == 'finish': latest[key] = dict(claims.get(key, {}), **row)
+    return latest
+
+
+def empty_retry_blocks(identity, rows, now) -> dict[str, CapabilityFailure]:
+    """One confirmed capability failure is enough; re-cuts do not reset the bound.
+
+    Unknown failures stay unknown. Evidence expires after 24h, or a productive
+    attempt supersedes it. Base movement alone does not repair a lane's tools.
+    """
+    blocked = {}
+    for row in latest_attempts(rows).values():
+        if (not identity or row.get('repo') != identity.get('repo') or row.get('empty') is not True
+                or row.get('capability_failure') != 'empty_capability_gh_unavailable'): continue
+        same = any(identity.get(k) and row.get(k) == identity[k] for k in ('task_hash', 'prompt_hash'))
+        try: age = now - datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
+        except (KeyError, ValueError, TypeError): continue
+        if same and 0 <= age < 86400 and isinstance(row.get('lane'), str):
+            blocked[row['lane']] = row['capability_failure']
+    return blocked
 
 
 def merged_jobs(rows):
@@ -365,20 +406,12 @@ def empty_reason(job, identity, rows, now):
     Claims bind each finish to its own attempt, so an older empty cannot mask
     a newer nonempty run. MERGED outcomes remain independently measurable.
     """
-    from datetime import datetime
     if not identity: return None
-    claims = {}; latest = {}
-    for row in rows:
-        if not isinstance(row, dict): continue
-        key = row.get('job')
-        if row.get('event') == 'claim': claims[key] = row
-        if row.get('event') != 'finish': continue
-        evidence = dict(claims.get(key, {}), **row)
-        if evidence.get('repo') != identity['repo']: continue
-        latest[key] = evidence
+    latest = latest_attempts(rows)
     task = identity.get('task_hash'); task_repeats = 0
     for key, row in latest.items():
-        if row.get('empty') is not True or row.get('exit_code') != 0: continue
+        if (row.get('repo') != identity['repo'] or row.get('empty') is not True
+                or row.get('exit_code') != 0 or row.get('pool_error') or row.get('capability_failure')): continue
         try: age = now - datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
         except (KeyError, ValueError, TypeError): age = None
         recent = age is not None and 0 <= age < 86400
@@ -400,4 +433,22 @@ def read_attempts(runs):
                 try: rows.append(json.loads(line))
                 except ValueError: pass
     except OSError: pass
+    # C499 predates the typed field. Read only the latest attempt's bounded log
+    # when its mtime agrees with the finish; never borrow a later attempt's log.
+    for job, row in latest_attempts(rows).items():
+        if row.get('empty') is not True or 'capability_failure' in row: continue
+        if not isinstance(job, str) or not re.fullmatch(r'[A-Za-z0-9._-]+', job): continue
+        try:
+            at = datetime.fromisoformat(str(row['ts']).replace('Z', '+00:00')).timestamp()
+            if not 0 <= datetime.now().timestamp() - at < 86400: continue
+            path = runs + '/' + job + '.log'
+            if abs(os.path.getmtime(path) - at) > 120: continue
+            with open(path, 'rb') as stream:
+                stream.seek(0, 2); stream.seek(max(0, stream.tell() - 20000))
+                reason = capability_failure(stream.read().decode('utf-8', 'replace'))
+            if reason:
+                for original in reversed(rows):
+                    if isinstance(original, dict) and original.get('job') == job and original.get('event') == 'finish':
+                        original['capability_failure'] = reason; break
+        except (OSError, KeyError, ValueError, TypeError): pass
     return rows
