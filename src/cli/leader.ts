@@ -56,7 +56,7 @@ Usage:
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
   phm leader say "<text>" [--text]   send to the leader; prints its id (JSON, or one line with --text)
-  phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first
+  phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
   phm leader thread [--limit n] [--text]  your messages and the leader's replies, oldest first, with received/answered (JSON, --text for people)
   phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
@@ -694,15 +694,15 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
     const file = option(args, '--file');
     if (args.length || file === undefined || (sync && file !== null) || limit === undefined || (sync && limit !== null) || (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
     try {
+      const planLog = (await import('../core/config.js')).loadConfigReadOnly().comms?.leaderPlanLogPath;
       if (!sync) {
-        const { readPlanLogReplies, replyLine } = await import('../core/fleet/mason-outbox.js');
-        const result = await readPlanLogReplies({ limit: limit === null ? 10 : Number(limit), file: file ?? undefined });
-        result.entries.reverse();
+        const { readLeaderReplies, replyLine } = await import('../core/fleet/mason-outbox.js');
+        const result = await readLeaderReplies({ limit: limit === null ? 10 : Number(limit), file: file ?? undefined, planLog });
         console.log(json ? JSON.stringify(result) : result.entries.map(replyLine).join('\n') || result.reason || 'No replies yet.');
         return result.sourceState === 'unknown' ? 1 : 0;
       }
       const { syncLeaderReplies } = await import('../core/vision/leader-thread.js');
-      const result = await syncLeaderReplies();
+      const result = await syncLeaderReplies(planLog);
       console.log(json ? JSON.stringify(result) : `${result.posted.length} replies posted; ${result.skipped.length} skipped. Source: ${result.sourceState}. Uncertain: ${result.unknown.length}.`);
       return result.sourceState === 'unknown' || result.unknown.length ? 1 : 0;
     } catch {

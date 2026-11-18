@@ -1,11 +1,12 @@
 /**
- * The phone opens here, on exactly five things, top to bottom:
+ * The phone opens here, on exactly six things, top to bottom:
  *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
  *   1. one line of fleet health: merges in the last hour, lanes running, main
  *      green or red (one read of `phm home --json`, home.v1);
  *   2. decisions, one tap each (the desktop Home Decisions card, built on `phm approvals`);
- *   3. a box that posts to the fleet inbox, the same API as the desktop inbox box;
- *   4. what shipped today (the desktop Shipped card, `phm shipped --since 1d`).
+ *   3. the leader's newest reply (the desktop Home From your leader card, `phm leader replies`);
+ *   4. a box that posts to the fleet inbox, the same API as the desktop inbox box;
+ *   5. what shipped today (the desktop Shipped card, `phm shipped --since 1d`).
  * A fact the Mac could not read says unknown, never 0.
  */
 import type { HomeField, HomeSummary } from '../../../../../core/fleet/home.js';
@@ -14,6 +15,7 @@ import { apiGet, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
+import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
 import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
@@ -38,6 +40,7 @@ export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
   refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(leaderRepliesQuery(1).key, () => leaderRepliesQuery(1).fetch(), true).catch(() => undefined),
   refetchQuery(shippedQuery(1).key, () => shippedQuery(1).fetch(), true).catch(() => undefined),
 ]);
 
@@ -75,6 +78,7 @@ export function HomeGlance() {
       )}
       {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
       <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
+      <LeaderRepliesCard limit={1} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
       <ShippedCard days={1} />
     </>

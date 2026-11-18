@@ -7,6 +7,7 @@ import { evictAll } from '../../../../data/cache.js';
 import { resetGuard } from '../../shell/guard-store.js';
 import { mockViewport } from '../../shell/viewport.test-support.js';
 import { APPROVALS_PATH } from '../../home/ApprovalsCard.js';
+import { LEADER_REPLIES_PATH } from '../../home/LeaderRepliesCard.js';
 import { PULSE_PATH } from '../../home/PulseCard.js';
 import { SHIPPED_PATH } from '../../home/ShippedCard.js';
 import { INTERJECT_POST_PATH } from '../../fleet/interject-request.js';
@@ -54,6 +55,20 @@ describe('phone Home', () => {
     expect(checkView('home', 'Home', container).findings).toEqual([]);
     // One read each for pulse, health, approvals and shipped (one day); the only other reads are the message box's own inbox.
     expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, `${SHIPPED_PATH}?days=1`].sort());
+    viewport.restore();
+  });
+
+  it('shows the leader\'s newest reply between the decisions and the message box', async () => {
+    const viewport = mockViewport(390);
+    const fetches = mac('busy', { [`GET ${LEADER_REPLIES_PATH}`]: { schema: 'leader.replies.v1', version: 1, sourceState: 'healthy', entries: [],
+      replies: [{ at: '2026-11-17 10:00', text: 'Main is green.', source: 'plan-log' }] } });
+    const { container } = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
+    const card = await screen.findByRole('region', { name: 'From your leader' });
+    expect(within(card).getAllByRole('listitem').map(item => item.textContent)).toEqual(['2026-11-17 10:00 ETMain is green.']);
+    const parts = [screen.getByRole('region', { name: 'Decisions' }), card, screen.getByLabelText('Message to the leaders')];
+    for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(fetches.calls.map(call => call.url)).toContain(`${LEADER_REPLIES_PATH}?limit=1`);
+    expect(checkView('home', 'Home', container).findings).toEqual([]);
     viewport.restore();
   });
 
