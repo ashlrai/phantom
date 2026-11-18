@@ -1901,6 +1901,17 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/empties' && method === 'GET') {
+      // Why each empty run ended empty (fleet.empties.why.v1), the `why` block of `phm fleet empties --json`.
+      const { readEmptiesWhy } = await import('../fleet/empties-why.js');
+      const raw = getQueryParam(req.url ?? '', 'hours') ?? '24';
+      const hours = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+      if (!(hours > 0 && hours <= 2160)) { sendJson(res, 400, { error: 'Use a number of hours up to 2160, for example 24.' }); return true; }
+      const report = await readEmptiesWhy({ hours });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
     if (path === '/api/log' && method === 'GET') {
       // One row per job (joblog.v1), the report `phm log --json` prints.
       const { readJobLog } = await import('../fleet/job-log.js');
