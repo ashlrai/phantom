@@ -9,6 +9,8 @@
 # Secret-scan configuration: owner-reviewed, kept above the generated block so regeneration preserves it.
 /.gitleaks.toml @masonwyatt23
 /.gitleaksignore @masonwyatt23
+/test/intent-merge-receipt-recovery-151.test.ts @masonwyatt23
+/test/merge-plan-preservation-167.test.ts @masonwyatt23
 # Generated from src/core/authority/protected-paths.ts — the fleet's owner lane (SPEC-310B §2 G1).
 # The ashlr-fleet App is never a code owner, so every path below needs the owner's review on GitHub too.
 # ci-config: CI configuration decides which checks guard the default branch; only Mason changes it
