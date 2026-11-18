@@ -379,6 +379,11 @@ const loadAppsCmd = lazyCmd(
   'apps command requires src/cli/apps-control.ts.',
 );
 
+const loadBrowserCmd = lazyCmd(
+  () => import('./browser.js'), (m) => m.cmdBrowser as Cmd,
+  'browser command requires src/cli/browser.ts.',
+);
+
 const loadDesktopctlCmd = lazyCmd(
   () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
   'desktopctl command requires src/cli/desktopctl.ts.',
@@ -2533,6 +2538,10 @@ async function main(): Promise<void> {
       }
       case 'apps': {
         process.exitCode = await (await loadAppsCmd())(rest);
+        break;
+      }
+      case 'browser': {
+        process.exitCode = await (await loadBrowserCmd())(rest);
         break;
       }
       case 'desktopctl': {

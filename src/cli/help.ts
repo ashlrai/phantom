@@ -800,6 +800,7 @@ function printDocsHelp(): void {
   console.log('');
   console.log(c.bold('  ashlr docs') + c.dim(' — generated documentation surfaces'));
   console.log('');
+  console.log(`    ${c.cyan('phm docs cli [--check] [--json]')} ${c.dim('regenerate or check the CLI reference from the command registry')}`);
   console.log(`    ${c.cyan('ashlr docs --agent')}          ${c.dim('agent cheat sheet (llms.txt-style, plain text)')}`);
   console.log(`    ${c.cyan('ashlr docs --agent --json')}   ${c.dim('the same registry as JSON')}`);
   console.log(`    ${c.cyan('ashlr wire --claude-md')}      ${c.dim('CLAUDE.md snippet for agent configs')}`);
@@ -807,6 +808,10 @@ function printDocsHelp(): void {
 }
 
 export async function cmdDocs(args: string[]): Promise<number> {
+  if (args[0] === 'cli') {
+    const { cmdDocsCli, cliReferenceRows } = await import('./docs-cli.js');
+    return cmdDocsCli(args.slice(1), cliReferenceRows(HELP_ENTRIES));
+  }
   const json = args.includes('--json');
   const agent = args.includes('--agent');
 
@@ -820,8 +825,9 @@ export async function cmdDocs(args: string[]): Promise<number> {
       // --json never prints the human help: one JSON object, same exit code.
       process.stdout.write(JSON.stringify({
         ok: false,
-        error: 'ashlr docs needs a surface; pass --agent --json',
+        error: 'phm docs needs a surface; pass cli or --agent --json',
         surfaces: [
+          { command: 'phm docs cli [--check] [--json]', description: 'generate or check the CLI reference from the command registry' },
           { command: 'ashlr docs --agent', description: 'agent cheat sheet (llms.txt-style, plain text)' },
           { command: 'ashlr docs --agent --json', description: 'the same registry as JSON' },
           { command: 'ashlr wire --claude-md', description: 'CLAUDE.md snippet for agent configs' },
@@ -926,6 +932,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]', desc: 'Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.', topic: 'core' },
   { cmd: 'desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]', desc: 'Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.', topic: 'core' },
   { cmd: 'apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
+  { cmd: 'browser [tabs|doctor|open <url>|shot [<path.png>]|close] [--json]', desc: 'Drive Safari, Phantom\'s own agent browser: list agent tabs, open a web address, save a screenshot, close its windows. doctor says whether remote automation is on and the one step to enable it. Chrome is always refused.', topic: 'core' },
   { cmd: 'desktopctl capabilities|status|run <resource> [--json]', desc: 'Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },
   { cmd: 'app update status [--json]', desc: 'Inspect local desktop update status without downloading or installing. Read-only: reports current stage, available version, deferred reason, running job counts. Exit 0 success, 2 bad usage.', topic: 'core' },
@@ -937,6 +944,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
+  { cmd: 'docs cli [--check] [--json]', desc: 'Regenerate docs/CLI-REFERENCE.md from the command registry; --check lists missing, removed or stale commands without writing (exit 1 on drift).', topic: 'core' },
   { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
   { cmd: 'commands [--json]',            desc: 'List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },

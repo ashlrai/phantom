@@ -26,9 +26,12 @@ export function ShippedCard({ visible = true, days = 7 }: { visible?: boolean; d
   const read = useQuery(shippedQuery(days), { enabled: visible });
   const report = reportOf(read.data);
   const today = (report?.days ?? days) === 1;
+  const failed = Boolean(read.error) || read.status === 'error';
+  const stale = failed && report !== null;
+  const lastSuccess = typeof read.updatedAt === 'number' ? new Date(read.updatedAt).toISOString() : null;
   const window = today ? 'the last 24 hours' : `the last ${plural(report?.days ?? days, 'day')}`;
   let body;
-  if (read.status === 'error' && !report) body = <p data-unknown>Unknown: what shipped could not be read.</p>;
+  if (failed && !report) body = <p role="status">What shipped is unavailable right now. Try again.</p>;
   // Before the first read, or any other payload (an older server), the card stays hidden.
   else if (!report) return null;
   else if (report.total === null) body = <p data-unknown>Unknown: {report.note ?? 'what shipped could not be read.'}</p>;
@@ -47,5 +50,10 @@ export function ShippedCard({ visible = true, days = 7 }: { visible?: boolean; d
       <p>For the full list, run <code className={styles.command}>phm shipped{today ? ' --since 1d' : ''}</code></p>
     </>;
   }
-  return <section className={styles.card} aria-label={today ? 'Shipped today' : 'Shipped'}><h3>{today ? 'Shipped today' : 'Shipped'}</h3>{body}</section>;
+  return <section className={styles.card} aria-label={today ? 'Shipped today' : 'Shipped'}>
+    <h3>{today ? 'Shipped today' : 'Shipped'}</h3>
+    {stale ? <p role="status">Refresh failed; showing the last shipped report, which may be stale. Last successful update:{' '}
+      {lastSuccess === null ? 'time unavailable' : <time dateTime={lastSuccess}>{lastSuccess}</time>}.</p> : null}
+    {body}
+  </section>;
 }
