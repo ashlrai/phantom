@@ -43,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state, RecutAdmission
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1832,6 +1832,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     completed = merged_jobs(JOBS)
+    recuts = RecutAdmission(batcher.parse_rows(Q + '/recut-loop.jsonl'), completed, alive)
+    for recut_job in recuts.identities:
+        if bundle_member_of(recut_job) in alive: recuts.launched(recut_job, 'phantom')
     for f in cand:
         reason = ("already-merged" if (f[1], f[0]) in completed or (None, f[0]) in completed
                   else terminal_target(f[0], f[1], rd(f[4]), pr_states))
@@ -1890,7 +1893,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if m and re.search(r"(?i)\b(?:P0|critical)\b", r): urgent_jobs.add(m.group(1))
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
+        return (m not in recuts.identities and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
@@ -1956,6 +1959,15 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
+        recut = recuts.decide(j, repo)
+        if recut:
+            metric(dict(event="recut_admission", job=j, repo=repo, **recut))
+            if recut['action'] != 'ready':
+                if recut['action'] == 'defer': rest.append(line)
+                else:
+                    metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                                reason=recut['reason'], repeatOf=recut['repeatOf'], launched=False))
+                seen.add(j); continue
         digest = request_hash(j, repo, rd(pf))
         owner = claimed_requests.get(digest)
         if owner and owner != j:
@@ -2164,6 +2176,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
         claimed_requests.update((h, j) for h in hashes)
+        recuts.launched(j, repo)
         if reason and "waste_reason" not in route_state[j]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)
