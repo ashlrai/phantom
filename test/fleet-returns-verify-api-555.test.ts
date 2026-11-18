@@ -114,7 +114,7 @@ describe('coordination returns verify route', () => {
     expect(a.body.complete).toBe(true);
   });
 
-  it('reuses the last result for 60 s, then asks GitHub again', async () => {
+  it('reuses GitHub observations for 60 s with a fresh ledger asOf', async () => {
     const gh = fakeGh();
     const clock = { ms: T };
     const route = api(gh, clock);
@@ -122,7 +122,7 @@ describe('coordination returns verify route', () => {
     clock.ms = T + 59_000;
     const second = await call(route);
     expect(gh).toHaveBeenCalledTimes(2);
-    expect(second.body).toEqual(first.body);
+    expect(second.body).toEqual({ ...first.body, asOf: new Date(clock.ms).toISOString() });
     clock.ms = T + 60_000;
     expect((await call(route)).body.generatedAt).toBe(new Date(T + 60_000).toISOString());
     expect(gh).toHaveBeenCalledTimes(4);
