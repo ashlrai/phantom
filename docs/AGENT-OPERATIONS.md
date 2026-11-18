@@ -474,10 +474,14 @@ Check each command's root options before comparing evidence from different proce
 
 Resources → Spend down shows used share, reset time, burn per hour and projected
 unused capacity for each pool, with `on pace`, `behind`, `exhausted` or `unknown`.
-`phm usage --json` returns these same numbers in `spend` (`v: 1`, `asOf`, `pools`),
-also available directly from `phm usage spend --json` and `GET /api/usage/spend`.
-Each row keeps `pool`, `unit`, `usedPercent`, `resetAt`, `burnPerHour`,
-`projectedUnusedPercent`, `projectedUnusedUsd` and the existing `verdict` keys.
+`phm spend` prints the same answer in a terminal: one sentence naming the pool
+that will waste the most, then one line per pool. `phm spend --json` and
+`GET /api/usage/spend` return the snapshot (`schema: "usage.spend.v1"`, `v: 1`,
+`asOf`, `headline`, `pools`); `phm usage --json` carries it in `spend`.
+Each row keeps `pool`, `unit`, `usedPercent`, `resetAt`, `hoursLeft`, `burnPerHour`,
+`projectedUnusedPercent`, `projectedUnusedUsd` and the existing `verdict` keys, and
+adds `status`: `on-pace`, `behind`, `exhausted` or `unknown`. Behind pools come
+first, largest projected waste on top. An unknown value is `null`, never zero.
 Percent burn means percentage points per hour; gifts use USD per hour and expiry.
 Missing, stale or malformed status reads produce nulls, displayed as unknown.
 The seven core pools remain visible, including the Claude API gift and local;
