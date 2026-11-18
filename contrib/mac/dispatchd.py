@@ -43,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state, RecutAdmission
+from launch_precheck import classify_empty, admission_history, admission_rank, queue_freshness, lookup_pr_state, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state, RecutAdmission
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -1835,15 +1835,25 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     recuts = RecutAdmission(batcher.parse_rows(Q + '/recut-loop.jsonl'), completed, alive)
     for recut_job in recuts.identities:
         if bundle_member_of(recut_job) in alive: recuts.launched(recut_job, 'phantom')
+    freshness_cache = {}
+    def freshness_lookup(url):
+        if url not in freshness_cache:
+            if len(freshness_cache) >= PC_MAX or over_budget(): return None
+            freshness_cache[url] = lookup_pr_state(url, _run)
+        return freshness_cache[url]
     for f in cand:
-        reason = ("already-merged" if (f[1], f[0]) in completed or (None, f[0]) in completed
-                  else terminal_target(f[0], f[1], rd(f[4]), pr_states))
-        if reason:
-            admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
+        if (f[1], f[0]) in completed or (None, f[0]) in completed:
+            outcome, reason = "DONE-NOOP", "already-merged"
+        else:
+            outcome, reason = queue_freshness(f[0], f[1], rd(f[4]), pr_states, freshness_lookup)
+        if reason: admission[f[0]].update(reason=reason, outcome=outcome)
+        if outcome == "deferred":
+            rest.append("\t".join(f))
+        elif outcome == "DONE-NOOP":
             metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason, launched=False))
             ev("DONE-NOOP %s [%s]" % (f[0], reason))
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
-    cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
+    cand = [f for f in cand if admission[f[0]]["outcome"] == "ready"]
     seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
     claimed_requests = {}
     active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
