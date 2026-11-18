@@ -40,7 +40,7 @@ export interface HostVitals extends FleetVitals {
   local_models: ReturnType<typeof localModelsVitals>;
   launch: LaunchVitals;
   launchCost: Awaited<ReturnType<typeof readLaunchCosts>>;
-  /** Top three causes of empty jobs in the last 24 hours (`phm fleet empties` has the detail); total null = ledger unreadable. */
+  /** Top three causes of empty jobs in the last 24 hours (legacy log-tail diagnostic); total null = ledger unreadable. */
   emptyCauses: { window_hours: 24; total: number | null; top: Array<{ cause: EmptyCause; count: number }> };
   /** Jobs that keep being refused or failing and never launch (`phm fleet stuck` has the detail); count null = event log unreadable. */
   stuck: { count: number | null; oldestAgeSeconds: number | null };
