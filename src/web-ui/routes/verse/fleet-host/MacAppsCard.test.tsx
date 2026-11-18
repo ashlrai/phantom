@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
-import { MacAppsCard } from './MacAppsCard.js';
+import { MacAppsCard, macAppLastAction } from './MacAppsCard.js';
 
 const row = (id: string, name: string, extra: Record<string, unknown>) => ({
   id, name, role: 'Assistant', installed: true, running: true, frontmost: false, pid: 4321, memoryMb: 150, path: `/Applications/${name}.app`,
@@ -115,4 +115,14 @@ it('fits a 390 px column: rows wrap, state text shrinks, nothing has a fixed wid
   expect(rules).toMatch(/\.appRow \{[^}]*flex-wrap: wrap/);
   expect(rules).toMatch(/\.appState \{[^}]*min-width: 0[^}]*overflow-wrap: anywhere/);
   expect(rules).not.toMatch(/(?:^|[^-])width:\s*\d+px|min-width:\s*\d{3,}px/);
+});
+
+it('says the last thing Phantom did to an app in plain words, and nothing when there is no record', () => {
+  const at = '2026-11-18T10:00:00.000Z';
+  const say = (lastAction: unknown) => macAppLastAction(row('claude', 'Claude', { lastAction }) as never);
+  expect(say({ action: 'open', outcome: 'done', at })).toMatch(/^Opened at \d/);
+  expect(say({ action: 'restart', outcome: 'done', at })).toMatch(/^Restarted at \d/);
+  expect(say({ action: 'focus', outcome: 'failed', at })).toMatch(/^Bring to front did not finish at \d/);
+  expect(say(null)).toBe('');
+  expect(say(undefined)).toBe('');
 });
