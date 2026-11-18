@@ -2138,6 +2138,10 @@ export async function handleVerseApi(
       if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
       return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
     }
+    if (path === `${VERSE_API_PREFIX}/shipped`) {
+      // Read-only weekly summary of merged work; the same report as `phm shipped --json`.
+      return (await import('./whats-new-api.js')).handleShippedApi(req, res, method);
+    }
     if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
       return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);
     }
