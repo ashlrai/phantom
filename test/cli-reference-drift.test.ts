@@ -53,6 +53,17 @@ describe('generated CLI reference', () => {
       !rows.some(row => row.cmd === `fleet ${verb}` || row.cmd.startsWith(`fleet ${verb} `)))).toEqual([]);
   });
 
+  it('documents the recent command surfaces with JSON examples', () => {
+    const rows = cliReferenceRows(HELP_ENTRIES);
+    const page = read('docs/CLI-REFERENCE.md');
+    for (const command of ['host top', 'jobs yield', 'recut check', 'recut plan', 'leader replies', 'models radar', 'team', 'apps', 'sessions tail']) {
+      const row = rows.find(entry => entry.cmd === command || entry.cmd.startsWith(`${command} `));
+      expect(row, `Missing registry entry for ${command}`).toBeDefined();
+      expect(row!.cmd).toContain('--json');
+      expect(page).toContain(renderCliReference([row!]).split('\n').find(line => line.startsWith('| <code>phm ')));
+    }
+  });
+
   it('normalizes terminal formatting without dropping command options', () => {
     const rendered = renderCliReference([{ cmd: '  run --json  \r\n', desc: '\u001b[1mPhantom\u001b[0m \u2014 help  \r\n' }]);
     expect(rendered).toContain('Phantom - help |');
