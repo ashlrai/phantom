@@ -1,4 +1,6 @@
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
+import { dirname } from 'node:path';
+import { readJobsEmptyWhy } from './jobs-empty-why.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { unknownJobYield, yieldTally, type JobYieldParts, type JobYieldReport } from './slot-yield.js';
 
@@ -77,13 +79,21 @@ export async function readMetricsSeries(path: string, now = Date.now(), read: Yi
 }
 
 /** The `phm jobs yield` report from the same ledger. A failed or interrupted read is unknown, never zero. */
-export async function readJobYield(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines): Promise<JobYieldReport> {
-  return (await readJobYieldParts(path, hours, now, read)).report;
+export async function readJobYield(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines, explain = false): Promise<JobYieldReport> {
+  return (await readJobYieldParts(path, hours, now, read, explain)).report;
 }
 
-/** The same read, plus the job ids seen per kind. Unknown reads carry no ids. */
-export async function readJobYieldParts(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines): Promise<JobYieldParts> {
+/** The same read plus job identities; optional explanation shares that ledger read. */
+export async function readJobYieldParts(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines, explain = false): Promise<JobYieldParts> {
   const tally = yieldTally(now, hours);
-  try { if (await read(path, line => tally.add(line))) return tally.jobYieldParts(); } catch { /* unknown below */ }
+  const lines: string[] = [];
+  try {
+    if (await read(path, line => { tally.add(line); if (explain) lines.push(line); })) {
+      const parts = tally.jobYieldParts();
+      if (explain) parts.report.empty_why = await readJobsEmptyWhy(lines.join('\n'), dirname(dirname(path)), hours, now);
+      return parts;
+    }
+  } catch { /* unknown below */ }
   return { report: unknownJobYield(hours), ids: new Map() };
+
 }

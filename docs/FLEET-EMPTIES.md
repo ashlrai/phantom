@@ -1,5 +1,16 @@
 # Empty job reasons
 
+`phm jobs empty-why --since 24h --json` returns `jobs.empty-why.v1` (version 1),
+also available as `empty_why` in `jobs yield --json` and the Metrics yield view.
+It ranks families by recorded wasted tokens, then name; unknown totals sort last
+and partial totals include `tokens_unknown_jobs`. Counts use each job's newest
+finish in the window, excluding actual precheck skips. Reasons are `no-diff`,
+`already-on-main`, `precheck-catchable` (duplicate, already done or no target),
+`tool-error` (tool/provider/run failure), and `unknown`. Evidence is inferred
+from bounded log and publish tails, never returned as text. `--metrics` selects
+the ledger; log/publish files live in its parent runs directory (`<runs>/metrics/jobs.jsonl`).
+Unreadable metrics exit 1 with null totals; invalid arguments exit 2.
+
 ## Why jobs end empty: `phm jobs empty`
 
 `phm jobs empty --since 24h --family 'RQ-PHX-RECUT*' --json` explains each

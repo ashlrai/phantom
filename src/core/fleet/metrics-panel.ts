@@ -11,7 +11,7 @@ import { readLiveStops, stopFilePath, stoppedFamilies } from './stop-file.js';
 export async function readMetricsPanel(runsDir = runsRoot(), now = Date.now(), stopFile = stopFilePath()) {
   const jobs = join(runsDir, 'metrics', 'jobs.jsonl');
   const [goals, status, generatorYield, series, glance, jobYield, stops] = await Promise.all([readGoals(runsDir), readFleetRunsDirState({ runsDir }), readGeneratorYield(runsDir), readMetricsSeries(jobs, now),
-    readMetrics({ now, reader: metricsReader(runsDir) }), readJobYield(jobs, 24, now), readLiveStops(stopFile, now)]);
+    readMetrics({ now, reader: metricsReader(runsDir) }), readJobYield(jobs, 24, now, undefined, true), readLiveStops(stopFile, now)]);
   const names = new Set([...goals.lanes.map(row => row.lane), ...status.lanes.map(row => row.lane)]);
   return {
     schema: 'fleet.metrics-panel.v1' as const,

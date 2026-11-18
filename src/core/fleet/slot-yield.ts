@@ -13,6 +13,7 @@
  * job kinds, precheck skips, and a keep / watch / stop verdict per kind.
  */
 
+import type { JobsEmptyWhy } from './jobs-empty-why.js';
 export const YIELD_MIN_LAUNCHES = 5;
 
 /**
@@ -91,6 +92,7 @@ export interface JobYieldStop { family: string; slots: number; merged: number; r
 
 /** `known: false` means the ledger could not be read: totals are null and the lists are empty. */
 export interface JobYieldReport {
+  empty_why?: JobsEmptyWhy;
   schema: 'jobs.yield.v1';
   version: 1;
   window_hours: number;
