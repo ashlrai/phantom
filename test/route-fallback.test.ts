@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
 import { routeRequestSchema, type RouteRequest } from '../src/core/routing/decision-schema.js';
 import { routeCandidateRejections } from '../src/core/routing/decision-candidates.js';
 import { planFallbackChain, nextFailover, recordFailover, readFallbackUsed } from '../src/core/router/fallback.js';
