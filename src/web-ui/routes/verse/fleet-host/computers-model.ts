@@ -14,6 +14,9 @@ export interface ComputerCard {
   cpuHeadroomPercent: number | Unknown;
   lanes: string[] | Unknown;
   jobsRunning: number | Unknown;
+  /** IDs of the jobs that computer holds a running claim on, as the server lists them. */
+  jobs: string[] | Unknown;
+  freeSlots: number | Unknown;
 }
 export interface ComputersView { computers: ComputerCard[]; reasons: string[] }
 
@@ -31,6 +34,7 @@ export function narrowComputers(raw: unknown): ComputersView | null {
   const computers: ComputerCard[] = [];
   for (const row of raw.nodes.slice(0, MAX_CARDS)) {
     if (!object(row) || typeof row.name !== 'string' || row.name === '') continue;
+    const jobs = strings(row.jobsRunning);
     const known = typeof row.stateCode === 'string' && STATE_CODES.includes(row.stateCode) && typeof row.state === 'string' && row.state !== '';
     computers.push({
       name: row.name.slice(0, MAX_TEXT),
@@ -40,7 +44,9 @@ export function narrowComputers(raw: unknown): ComputersView | null {
       freeMemoryBytes: count(row.freeMemoryBytes),
       cpuHeadroomPercent: count(row.cpuHeadroomPercent),
       lanes: strings(row.lanes) ?? 'unknown',
-      jobsRunning: strings(row.jobsRunning)?.length ?? 'unknown',
+      jobsRunning: jobs?.length ?? 'unknown',
+      jobs: jobs ?? 'unknown',
+      freeSlots: count(row.freeSlots),
     });
   }
   return { computers, reasons: strings(raw.reasons) ?? [] };

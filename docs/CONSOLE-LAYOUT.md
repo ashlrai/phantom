@@ -105,6 +105,25 @@ merge list together. These links open the existing screens and preserve their
 permissions and confirmation flows. The merge list uses the live fleet runs
 read and shows unknown or unavailable data as such.
 
+The **Computers** pane answers "what is each machine doing?". Under the count
+of computers ready for work it says how many jobs are running and on how many
+computers. Each card keeps its state, memory, CPU and lanes, and adds the jobs
+that computer holds a running claim on: job id, repo, when it last spoke and
+its last message, with quiet jobs marked in words. Select a job to open its
+messages in the Worker log, where pause and stop live. A card shows up to six
+jobs and a button that opens Sessions for the rest. When running jobs and free
+slots are both recorded, a thin bar draws running against running plus free.
+The job ids come from the nodes list and the details are joined by job id from
+the sessions list, which is only read while some computer has a job. A job the
+sessions list does not hold says so, an unread sessions list reads unknown, and
+a computer whose claims are unknown gets no list and no bar and is counted as
+unknown in the top line. The same two lists for agents:
+
+```sh
+phm nodes --json
+phm sessions --json
+```
+
 ## Fleet telemetry and Show Mode
 
 The Fleet screen's read-only **Fleet map** places agent sessions inside their
