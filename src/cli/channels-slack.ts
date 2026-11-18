@@ -196,8 +196,14 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
   // Run mode only: proactive ASSIGNED / RELEASED / BLOCKED / VERIFIED notices.
   // The pass appends bus notes that the drain below delivers under its gates.
   const noticeHealth = createSlackNoticeHealth();
-  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0, health: noticeHealth.health };
-  const totals = (): Record<string, unknown> => (run ? { ...counts, claimNotices } : counts);
+  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0,
+    stage: 'durable-bus-enqueue', receiptKind: 'bus-note',
+    sentMeaning: 'enqueued', skippedMeaning: 'enqueue-ledger-deduped',
+    slackDelivery: 'unverified', health: noticeHealth.health };
+  // Tick results expose no envelope correlation. Session transport successes
+  // (including owner replies) cannot establish delivery of proactive notices.
+  const totals = (): Record<string, unknown> => (run ? { ...counts, claimNotices,
+    transport: { scope: 'all-session-slack-messages', ...counts } } : counts);
   try {
     await verifySlackIdentity(call, config);
     if (run) {
