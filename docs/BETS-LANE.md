@@ -17,6 +17,34 @@ All files live under `$ASHLR_RUNS_DIR` or `~/.ashlr-runs`.
 | `phm bets launch --id RQ-BET-<slug> --hypothesis <text> --metric <key> --max-lane-hours <n> --max-cycles <n>` | Append a launch. Baseline defaults to the metric's value in today's loop file, or unknown. |
 | `phm bets score [--dry-run] [--json]` | One kill-fast cycle over every launched bet; appends each decision with its numbers and refreshes `bets-share.json`. |
 | `phm bets kill <id> --reason <text>` | Operator kill, appended to the ledger. |
+| `phm bets suggest [--json] [--limit N]` | Rank the next jobs worth queuing (default 10, at most 50). Read-only: it never queues anything. |
+| `phm bets explain <id> [--json]` | One suggestion's inputs and each term of its score. Exit 1 when the id is not on the current list. |
+
+## Suggested next jobs
+
+`phm bets suggest` does the leader's hourly pick as one typed, read-only step (`fleet.next-bets.v1`,
+`src/core/fleet/next-bets.ts`). It reads lane status (`phm lanes --json`), usage pace (`use_it_all`),
+launch yield (`phm fleet yield`), main health, the Ops releases probe (local git only) and
+`phm autonomy`; a source that cannot be read is `unknown` under `signals` and adds no suggestion.
+Each suggestion has a goal, lane, tier, repo, the signal with its numbers, a score and a `queueLine`
+to paste into the router queue. The Ideas view shows the top 5 with "Copy queue line"
+(`GET /api/verse/fleet/control/ideas/bets`).
+
+Score is the sum of `min(value, cap) x weight` over these terms; ties sort by id.
+
+| Term | Value | Weight | Cap |
+| --- | --- | --- | --- |
+| `redMain` | 1 for a red main branch (always ranks first) | 1000 | 1 |
+| `fixAttempt` | guardian fix attempts that did not clear it | 10 | 10 |
+| `idleSlot` | free slots on a lane with nothing queued and no hold | 40 | 5 |
+| `poolWastePct` | percent of usage projected to expire unused (from 20 up) | 2 | 100 |
+| `releaseAgeDay` | days since the last tag, when commits follow it | 4 | 30 |
+| `unreleasedCommit` | commits since the last tag | 1 | 40 |
+| `noRecentRelease` | 1 when the autonomy report counted no release | 20 | 1 |
+| `familyEmptyRate` | empty share of the job family (5+ launches in 24 h); a penalty | -100 | 1 |
+
+Lane and pool suggestions join the `leader` job family; a red main joins the family of its
+guardian fix jobs. Lane suggestions take the tier with the best merged-per-launch yield.
 
 ## Files
 

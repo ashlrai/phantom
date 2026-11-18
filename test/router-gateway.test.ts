@@ -1,7 +1,9 @@
 /** Router gateway: one config, one routed-completion path, a loopback-only
  * OpenAI-compatible endpoint. Nothing here spawns a lane CLI or contacts a
  * model: transports are fakes, routing is the real routeSeat. */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
+import { localModelFit, memoryFit } from '../src/core/resources/local-memory-fit.js';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { request } from 'node:http';
@@ -117,6 +119,17 @@ function harness(opts: {
   };
   return h;
 }
+
+it('withholds an unsafe local gateway model and preserves the cloud grant boundary', async () => {
+  vi.mocked(localModelFit).mockReturnValue(memoryFit('qwen3:8b', null, 8192, null));
+  const h = harness({ candidates: [LOCAL, GROK], snapshot: [paid('grok', 'grok', 10)], standing: makePolicy(), native: true });
+  const plan = await planRoutedCompletion(h.deps, { model: 'auto', system: '', prompt: 'hi' });
+  expect(plan.steps).toEqual([{ seatId: 'grok', engine: 'grok', model: 'grok-4.6' }]);
+  expect(plan.ruledOut).toEqual(expect.arrayContaining([expect.objectContaining({ reason: expect.stringContaining('memory fit is unknown') })]));
+  const local = harness({ candidates: [LOCAL] });
+  expect(await routedComplete(local.deps, { model: 'auto', system: '', prompt: 'hi' })).toMatchObject({ ok: false, status: 'no-route' });
+  expect(local.calls).toEqual([]);
+});
 
 describe('router config', () => {
   it('fills defaults and refuses unknown keys, a host, bad versions and bad aliases', () => {

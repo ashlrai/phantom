@@ -2,6 +2,8 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
+import { localModelFit, memoryFit } from '../src/core/resources/local-memory-fit.js';
 import { cmdRoute } from '../src/cli/route.js';
 import { decide } from '../src/core/decide/decide.js';
 import { buildOpenAICompatibleClient } from '../src/core/run/provider-client.js';
@@ -120,6 +122,14 @@ const sources = () => ({
   admission: { admit: true },
 });
 const selected = () => candidateDecision(enumerateRouteCandidates(request, sources())[0]!);
+it('records why a local advisory candidate cannot fit before considering model output', async () => {
+  vi.mocked(localModelFit).mockReturnValue(memoryFit('qwen-27b', null, 65536, null));
+  const s = sources(); Object.assign(s.models, { omlx: 'qwen-27b' }); Object.assign(s.slots, { omlx: { target: 1, hard_cap: 1 } });
+  const result = await decideRoute({ ...request, lane_candidates: ['omlx'], quota_state: { omlx: 'available' },
+    machine_state: { admit: true, running_by_lane: { omlx: 0 } } }, s);
+  expect(result).toMatchObject({ lane: null, attempts: 0, local_models_refused: [{ model: 'qwen-27b', verdict: 'unknown' }] });
+  await expect(defaultRouteBackends()[0]!.ask({ request, candidates: [], retry: false, signal: new AbortController().signal, timeoutMs: 100 })).rejects.toThrow('memory fit is unknown');
+});
 function backend(name: RouteBackend['name'], answer: unknown): RouteBackend {
   return { name, ask: vi.fn().mockResolvedValue(answer) };
 }

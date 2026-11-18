@@ -128,6 +128,59 @@ const autoMergeOf = (value: unknown): boolean | null => {
   return req !== null;
 };
 
+export type OpenPrRecoveryAction = 'update-branch' | 'arm-auto-merge' | 'needs-recut' | 'needs-fix' | 'leave';
+export interface OpenPrRecoveryDecision { action: OpenPrRecoveryAction; reason: string }
+
+/**
+ * Classify an already-selected open PR from the four requested gh pr view
+ * fields, optionally carrying isDraft from gh pr list. This is a proposal,
+ * never execution authority. Callers enforce age, branch and hold filters.
+ * BLOCKED does not identify its cause: even green checks plus a missing arm
+ * cannot rule out required reviews. Required-check membership is also absent,
+ * so any red check stops recovery without claiming that it is required.
+ */
+export function classifyOpenPrRecovery(raw: unknown): OpenPrRecoveryDecision {
+  const decision = (action: OpenPrRecoveryAction, reason: string): OpenPrRecoveryDecision => ({ action, reason });
+  if (!isRecord(raw)) return decision('leave', 'unknown-pr');
+  if (raw.state !== undefined && raw.state !== 'OPEN') return decision('leave', 'not-known-open');
+  if (raw.isDraft === true || raw.mergeStateStatus === 'DRAFT') return decision('leave', 'draft');
+  if (raw.isDraft !== undefined && raw.isDraft !== false) return decision('leave', 'unknown-draft-state');
+  if (raw.mergeStateStatus === 'DIRTY' || raw.mergeable === 'CONFLICTING') {
+    return decision('needs-recut', 'conflict');
+  }
+  const checks = raw.statusCheckRollup;
+  if (!Array.isArray(checks)) return decision('leave', 'unknown-checks');
+  let green = checks.length > 0;
+  let unknown = checks.length === 0;
+  for (const check of checks) {
+    if (!isRecord(check)) { unknown = true; continue; }
+    const context = check.__typename === 'StatusContext' || typeof check.state === 'string';
+    if ((context && ('status' in check || 'conclusion' in check || check.__typename === 'CheckRun')) ||
+        (check.__typename !== undefined && check.__typename !== 'CheckRun' && check.__typename !== 'StatusContext')) {
+      unknown = true; continue;
+    }
+    const result = context ? check.state : check.status === 'COMPLETED' ? check.conclusion : undefined;
+    if (typeof result === 'string' && CHECK_FAILURE.has(result) && result !== 'CANCELLED') {
+      return decision('needs-fix', 'failed-check-requiredness-unknown');
+    }
+    if (typeof result === 'string' && (context ? result === 'SUCCESS' : ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(result))) continue;
+    green = false;
+    const pending = context ? typeof result === 'string' && ['PENDING', 'EXPECTED'].includes(result)
+      : check.status === 'COMPLETED' ? typeof result === 'string' && ['CANCELLED', 'STALE'].includes(result)
+      : typeof check.status === 'string' && ['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED'].includes(check.status);
+    if (!pending) unknown = true;
+  }
+  if (unknown) return decision('leave', 'unknown-checks');
+  if (raw.mergeable !== 'MERGEABLE') return decision('leave', 'unknown-mergeability');
+  // Pending checks on a behind head will be superseded by the branch update.
+  if (raw.mergeStateStatus === 'BEHIND') return decision('update-branch', 'behind');
+  if (raw.mergeStateStatus === 'BLOCKED') return decision('leave', 'unknown-blocker');
+  if (raw.mergeStateStatus !== 'CLEAN') return decision('leave', 'unsupported-merge-state');
+  if (!green) return decision('leave', checks.length ? 'checks-pending-or-unknown' : 'unknown-checks');
+  if (autoMergeOf(raw) === false) return decision('arm-auto-merge', 'clean-unarmed');
+  return decision('leave', isRecord(raw.autoMergeRequest) ? 'already-armed' : 'unknown-auto-merge');
+}
+
 /** File list from either wire form — `[{path}]` gh rows or `["a/b.ts"]` report items. */
 function fileList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];

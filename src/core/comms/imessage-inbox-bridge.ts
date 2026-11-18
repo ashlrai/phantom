@@ -141,14 +141,20 @@ export interface PatchIngestReport extends PatchSweepReport {
 export { senderIdFor };
 
 // The status composer's digest readers must not join the Tier-1 import
-// closure, so the default seam is resolved at ack time through a lazy,
-// non-literal import; a load failure degrades to the generic ack rather than
-// failing a durable receipt.
-type OwnerStatusReplyModule = typeof import('../agents/owner-status-reply.js');
-const STATUS_REPLY_SPEC = '../agents/owner-status-reply.js';
+// closure, so this module never imports them, and a computed import() is not an
+// option: the compiled sidecar resolves a computed specifier against its
+// virtual FS and always misses (test/sidecar-literal-imports-315.test.ts).
+// The CLI entry (src/cli/index.ts, outside the closure and the entry of every
+// host: CLI, daemon tick, Leader tick, teammate worker, sidecar) publishes a
+// loader built from a literal import under this well-known key. The loader runs
+// on the first ack, so it costs nothing at startup. With no loader the ack
+// degrades to the generic receipt.
+export const IMESSAGE_STATUS_REPLY_LOADER = Symbol.for('ashlr.imessage.statusReplyLoader');
 const loadStatusReply = async (): Promise<IMessageStatusReply | null> => {
-  try { return (await import(STATUS_REPLY_SPEC) as OwnerStatusReplyModule).ownerStatusReply(); }
-  catch { return null; }
+  try {
+    const loader = (globalThis as Record<symbol, unknown>)[IMESSAGE_STATUS_REPLY_LOADER];
+    return typeof loader === 'function' ? await (loader as () => Promise<IMessageStatusReply | null>)() : null;
+  } catch { return null; }
 };
 
 /** Map one allowlisted chat.db row to a canonical channel message. */

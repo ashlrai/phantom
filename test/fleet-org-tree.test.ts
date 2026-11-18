@@ -33,27 +33,30 @@ describe('fleetOrgTree', () => {
       usage: usage([{ lane: 'claude', usedPct: 41.6, resetAt: null, observation: { source: 'claude-native-usage', asOf: '2026-11-17T11:59:00Z' } }]),
     });
     expect(tree.schema).toBe('fleet.org.v1');
-    expect(tree.leader).toEqual({ label: 'Leader (CEO)', status: 'unknown', dispatcher: { lastTick: AT, paused: false } });
-    expect(find(tree, 'claude')).toMatchObject({ provider: 'Anthropic', running: 2, target: 8, queued: 3, held: false,
+    expect(tree.version).toBe(1);
+    expect(tree.leader).toEqual({ label: 'Leader (CEO)', status: 'unknown', provider: 'unknown', model: null, state: 'running',
+      doing: 'Directing 2 running jobs across 1 lane', dispatcher: { lastTick: AT, paused: false } });
+    // One job names no model, so the lane does not claim one.
+    expect(find(tree, 'claude')).toMatchObject({ provider: 'Anthropic', model: null, state: 'running', doing: '2 jobs running', heldReason: null, running: 2, target: 8, queued: 3, held: false,
       usage: { usedPct: 41.6, asOf: '2026-11-17T11:59:00Z', resetAt: null } });
     expect(find(tree, 'claude').jobs).toEqual([
-      { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', startedAt: '2026-11-17T11:50:00Z',
-        lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
+      { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', state: 'running', doing: 'Working in phantom',
+        startedAt: '2026-11-17T11:50:00Z', lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
       // RQ-A's events never attach to RQ-AB, and its missing facts stay null.
-      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', startedAt: null, lastEvent: null, lastActivityAt: null },
+      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', state: 'running', doing: 'Working', startedAt: null, lastEvent: null, lastActivityAt: null },
     ]);
     expect(orgLive(AT, NOW)).toBe(true); expect(orgLive('2026-11-17T11:54:59Z', NOW)).toBe(false); expect(orgLive(null, NOW)).toBeNull();
     const text = renderOrgTreeText(tree, NOW);
-    expect(text).toContain('claude (Anthropic): 2 running of 8, 3 queued, usage 42% (measured 1m ago)');
-    expect(text).toContain('* RQ-A | phantom | claude-fable-5-2 | running | started 10m ago | last event PUBLISH_START 2m ago');
-    expect(text).toContain('- RQ-AB | repo unknown | model unknown | running | started unknown | last event unknown');
+    expect(text).toContain('claude (Anthropic, model unknown): running. 2 running of 8, 3 queued, usage 42% (measured 1m ago)');
+    expect(text).toContain('* RQ-A | running | Working in phantom | claude-fable-5-2 | started 10m ago | last event PUBLISH_START 2m ago');
+    expect(text).toContain('- RQ-AB | running | Working | model unknown | started unknown | last event unknown');
   });
 
   it('says idle for an empty lane, and unknown when no job source answered', () => {
     const tree = fleetOrgTree(map([]), { runs: runs([lane('gemini', 0, 1, 0)]) });
     expect(find(tree, 'gemini')).toMatchObject({ running: 0, target: 1, queued: 0, jobs: [] });
     expect(tree.jobsKnown).toBe(true);
-    expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google\): 0 running of 1, 0 queued, usage unknown\n {4}idle/);
+    expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google, model unknown\): idle\. 0 running of 1, 0 queued, usage unknown\n {4}idle/);
     const dark = fleetOrgTree(fleetOrgMap(null));
     expect(dark.jobsKnown).toBe(false); expect(dark.messages).toBeNull();
     expect(renderOrgTreeText(dark, NOW)).toContain('jobs unknown'); expect(renderOrgTreeText(dark, NOW)).not.toMatch(/\bidle\b/);
@@ -64,7 +67,7 @@ describe('fleetOrgTree', () => {
     expect(find(tree, 'devin')).toMatchObject({ running: null, target: null, queued: null, held: null, usage: { usedPct: null, asOf: '2026-11-17T11:00:00Z' } });
     expect(find(tree, 'grok').usage).toEqual({ usedPct: null, asOf: null, resetAt: null });
     const text = renderOrgTreeText(tree, NOW);
-    expect(text).toContain('devin (Cognition): unknown running of unknown, unknown queued, usage unknown');
+    expect(text).toContain('devin (Cognition, claude-fable-5-2): running. unknown running of unknown, unknown queued, usage unknown');
     expect(text).not.toMatch(/\b0 running|usage 0%/);
     expect(JSON.stringify(tree.lanes.map(row => [row.running, row.target, row.queued, row.usage.usedPct]))).not.toContain('0');
   });
@@ -93,7 +96,7 @@ describe('fleetOrgTree', () => {
       { runs: runs(flip ? [...laneRows].reverse() : laneRows) }));
     expect(build(true)).toBe(build(false));
     const tree = JSON.parse(build(false)) as FleetOrgTree;
-    expect(Object.keys(tree)).toEqual(['schema', 'generatedAt', 'leader', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
+    expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
     expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
     expect(find(tree, 'claude').jobs.map(job => job.id)).toEqual(['RQ-C', 'RQ-A']);
     expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3 }, { from: 'Leader (CEO)', to: 'devin', count: 1 }]);
@@ -111,7 +114,7 @@ describe('phm org', () => {
       expect(JSON.parse(out.pop()!)).toEqual(JSON.parse(JSON.stringify(tree)));
       expect(mocks.read).toHaveBeenLastCalledWith(60);
       expect(await cmdOrg(['--text', '--minutes', '15'])).toBe(0);
-      expect(out.pop()).toContain('claude (Anthropic): 1 running of 8, 0 queued, usage unknown');
+      expect(out.pop()).toContain('claude (Anthropic, claude-fable-5-2): running. 1 running of 8, 0 queued, usage unknown');
       expect(mocks.read).toHaveBeenLastCalledWith(15);
       mocks.read.mockClear();
       for (const args of [['--apply'], ['--minutes'], ['--file', 'org.toml']]) expect(await cmdOrg(args)).toBe(2);

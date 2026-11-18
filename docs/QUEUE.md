@@ -11,6 +11,18 @@ This is the source candidate in `contrib/mac/dispatchd.py`, supported by
 then the sanctioned `contrib/mac/install.sh` path. Agents never install over
 `~/.ashlr-runs/bin`. Publication remains fork-only through `publish.sh`.
 
+## Recover a pushed job without a PR
+
+Run `phm fleet republish --dry-run --json` (omit `--json` for one plain line per job).
+It reads `~/.ashlr-runs/<job>.publish`, or `--runs-dir <dir>`, and checks public GitHub evidence.
+Only an abort after the push marker, an exact surviving fork branch, and no open or merged PR
+produce a READY proposal to cherry-pick the observed SHA onto fresh `master`. Nothing is queued or written.
+JSON uses `fleet.republish.v1`; each job has `status`, `reason`, `head`, `sha`, `readyLine`, and `pr_state`
+(`none`, `open`, `merged`, `closed`, or `unknown` when the PR lookup is unavailable).
+Exit codes: 0 complete, 1 unknown evidence, 2 bad usage. Missing push links, unreadable/oversized
+logs, private repositories, API failures and incomplete PR pages stay unknown. Logs are capped at 2 MiB.
+This preview cannot establish cherry-pick compatibility or find recovery PRs under another head.
+
 ## Job requirements
 
 The live producer input is `queue/router-queue.md`. For example:
@@ -240,6 +252,10 @@ hint, and a member that joins a combined session on another lane records
 `FLEET_REBALANCE <job> <from>-><lane> (shared market: <reason>)`; the reason is
 `placement_moved` when the row declared no lane and only its provisional
 lane column changed.
+
+Advisory [failover receipts](ROUTING.md#failover-chains) use `lane_override`
+codes `failover_quota`, `failover_5xx`, `failover_timeout` and
+`failover_near_reset` on `failover` rows. These do not wire the live dispatcher.
 
 Other reason codes include `missing_capability`, `tier_unavailable`,
 `tier_ceiling_exceeded`, `repo_unserved`, `data_class_exceeded`,
@@ -747,6 +763,8 @@ is executed by the planner. The planner does not install or change host scripts.
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
 
+Run `phm queue supersede` to list queued jobs that a newer cycle of the same job replaces, for example `RQ-PHX-RECUTCOREC541` once `RQ-PHX-RECUTCOREC544` is queued. Jobs match when they share a repo and an id that differs only in its cycle: `C<number>`, `<number>S` or `<number>C` at the end, with two or more digits. Only the newest cycle stays; ids without a cycle, parked rows and running jobs are left alone, and a claimed or running newer cycle still replaces an older queued one. It reads `ready.tsv` and `router-queue.md` and changes nothing by default. Add `--apply` to copy the older `ready.tsv` rows to `superseded.tsv` beside it, mark their router lines `SUPERSEDED-BY-<newer id>` so restock does not add them again, remove the rows, and append one `SUPERSEDED <id> by <newer id>` line per job to `dispatch-events.log`. Nothing is deleted: to restore a job, paste its row back from `superseded.tsv`. A second run finds nothing to do. `--json` prints the typed `queue.supersede.v1` report (`applied`, `queued`, `count`, `superseded[]` with `id`, `repo`, `family`, `cycle`, `supersededBy`), and `phm queue batches` shows the count as `superseded`.
+
 Restock also checks semantic goal overlap before admitting READY rows. Within the same repo, a shared explicit file/module and normalized token Jaccard score of at least 0.5 marks `DUPLICATE-OF-<id>`; CLAIMED/RUNNING rows take precedence, then the first READY row. Different explicit PR targets stay separate. Paths, stop words and generic single-case scaffolding do not count as goal tokens; fewer than three tokens is unknown. `phm queue dedupe --json` exposes these matches as `reason: "semantic-goal-overlap"` with `jaccard`, and restock JSON includes `dedupe.repeats` and `dedupe.unknown`. This partial check uses router-queue text, not external running-process or PR inventories; other ingest paths are not covered. Live restock adoption still requires Security review and re-pinning.
 
 ### Suggest work for an idle lane
@@ -813,6 +831,26 @@ The default is a dry run: one plain line per batch, or `--json` for the
 `router-queue.original.md`, then writes `router-queue.md` and
 `prompts/<batch id>.md` there. It never replaces existing files and never
 edits the input queue.
+
+## Steer the queue
+
+Run `phm queue` to list the queued jobs in the order they launch: position, id,
+repo, lane, tier, age and, when a newer cycle of the same job is queued, the id
+that replaces it. `phm queue --json` returns the same list as the `launch` field
+(schema `queue.order.v1`, `version` 1) beside the batch report.
+
+Three actions change one queued job. Each takes `--dry-run`, which prints the
+change and writes nothing, and `--json` (schema `queue.action.v1`):
+
+- `phm queue top <id>` moves the job to the front.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
+
+Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
+keeps the earlier text in `queue/ready.tsv.bak`. If the dispatcher was in the
+middle of a run and wrote the old queue back, the command says so and exits 1;
+run it again. The Queue pane in the desktop app uses the same calls through
+`GET` and `POST /api/verse/fleet/queue/order`.
 
 ## Batch session results
 

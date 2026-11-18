@@ -2,18 +2,25 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { BotTemplateError, createBotFromTemplate, listBots, listBotTemplates } from '../core/agents/bot-templates.js';
 import { passesMutationGate, readBody, sendJson } from '../core/web/api.js';
+import { listSeats } from '../core/bots/seats.js';
 
 /**
  * GET  /api/bots/templates  the starter templates (read-only, no token)
  * GET  /api/bots            bots created from templates
+ * GET  /api/bots/seats      external bot seat roster and quota evidence
  * POST /api/bots            { templateId, id, name? } create a bot (mutation token, --allow-dispatch)
  */
 export async function handleBotTemplates(req: IncomingMessage, res: ServerResponse, ctx: { token: string; allowDispatch: boolean }): Promise<boolean> {
   const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-  if (path !== '/api/bots' && path !== '/api/bots/templates') return false;
+  if (!['/api/bots', '/api/bots/templates', '/api/bots/seats'].includes(path)) return false;
   res.setHeader('Cache-Control', 'no-store');
   const method = (req.method ?? 'GET').toUpperCase();
   if (method === 'GET') {
+    if (path === '/api/bots/seats') {
+      try { sendJson(res, 200, await listSeats()); }
+      catch { sendJson(res, 503, { error: 'Bot seats unavailable.' }); }
+      return true;
+    }
     if (path === '/api/bots/templates') sendJson(res, 200, { templates: listBotTemplates() });
     else sendJson(res, 200, { bots: await listBots() });
     return true;

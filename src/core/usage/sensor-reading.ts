@@ -151,7 +151,9 @@ export function readingIsFresh(input: {
   return Number.isFinite(deadline) && input.nowMs < deadline;
 }
 
-const PAY_PER_USE = new Set<UsageSensorLane>(['claude-api']);
+const PAY_PER_USE = new Set<string>(['claude-api']);
+/** Included usage: a subscription pool that resets, not a pay-per-use or local lane. */
+export const isIncludedLane = (lane: string): boolean => !PAY_PER_USE.has(lane) && lane !== 'local';
 
 function burnFrom(samples: readonly UsageSensorReading[], latest: UsageSensorReading): number | null {
   const resetAt = latest.resetAt;
@@ -192,7 +194,7 @@ function viewLane(samples: readonly UsageSensorReading[], nowMs: number): UsageS
   let forecastExhaustAt: string | null = null;
   let forecastVsReset: ForecastVsReset = 'unknown';
   let idleIncludedWastedPerWeek: number | null = null;
-  const included = !PAY_PER_USE.has(latest.lane) && latest.lane !== 'local';
+  const included = isIncludedLane(latest.lane);
   if (measured && remaining !== null && burn !== null && hoursLeft > 0 && included) {
     if (burn > 0) forecastExhaustAt = new Date(nowMs + (remaining / burn) * 3_600_000).toISOString();
     const marginMs = Math.max(30 * 60_000, (resetMs - nowMs) * FORECAST_ON_PACE_FRACTION);

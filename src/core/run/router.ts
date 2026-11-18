@@ -35,6 +35,7 @@
 
 import type { AshlrConfig, EscalationReason, RouteDecision, WorkItem } from '../types.js';
 import { getProviderRegistry } from '../providers.js';
+import { isLocalModel, localModelFit } from '../resources/local-memory-fit.js';
 import { estCostUsd } from './budget.js';
 import {
   KNOWN_MODELS,
@@ -451,12 +452,8 @@ function learnedEntryForEngine(
 ): ModelEntry | null {
   if (!scores || scores.size === 0) return null;
   const candidates = KNOWN_MODELS.filter((entry) =>
-    !entry.historical && entry.engine === engine &&
-    // Work promotion needs a complete TERRA-AB-1 comparison, which legacy
-    // producer scores cannot attest. Preserve work/frontier until that proof
-    // can pass the existing operational learning authority gate.
-    (engine !== 'codex' || (modelTier !== 'work' && modelTier !== 'frontier') ||
-      entry.apiModelId === codexModelForTier(modelTier)) &&
+    !entry.historical && !entry.explicitOnly && entry.engine === engine &&
+    (engine !== 'codex' || entry.apiModelId === codexModelForTier(modelTier)) &&
     (!capability || entry.capabilities.includes(capability)) &&
     entry.minEffort <= effortCap && !excludes.has(entry.id));
   return selectCostAwareModel(candidates, scores, { minShipRate });
@@ -748,10 +745,19 @@ export function routeTask(
   ctx: RoutingContext,
 ): TaskRouteDecision {
   const narrowed = permittedRoutingContext(ctx, cfg);
-  const decision = enforceLocalOnlyTaskDecision(
+  let decision = enforceLocalOnlyTaskDecision(
     routeTaskBandit(item, cfg, narrowed.ctx) ?? routeTaskUnenforced(item, cfg, narrowed.ctx),
     cfg,
   );
+  if (isLocalModel(decision.engine)) {
+    const fit = localModelFit(cfg.foundry?.models?.[decision.engine] ?? decision.model, 65536);
+    if (fit.verdict !== 'fits') {
+      const availableEngines = (narrowed.ctx.availableEngines ?? BANDIT_CANDIDATE_ENGINES).filter(e => !isLocalModel(e));
+      decision = enforceLocalOnlyTaskDecision(routeTaskUnenforced(item, cfg, { ...narrowed.ctx, availableEngines }), cfg);
+      if (isLocalModel(decision.engine)) decision = { engine: 'builtin', model: null, catalogEntry: null, reason: 'No fitting route.' };
+      decision.reason = `${fit.reason}; ${decision.engine === 'builtin' ? 'no eligible cloud resource' : 'routing to cloud'}. ${decision.reason}`;
+    }
+  }
   if (narrowed.removed.length === 0 || decision.reason.includes('local-only')) return decision;
   // The narrowing is why the stronger engines were not considered. Say so.
   return {

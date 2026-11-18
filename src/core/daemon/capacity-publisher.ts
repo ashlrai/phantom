@@ -344,7 +344,7 @@ export function defaultDaemonCapacityPublisherDeps(): DaemonCapacityPublisherDep
       });
     },
     publish: async (cfg, collector) => {
-      const { publishCapacitySnapshotFrom } = await import('../routing/budget-api.js');
+      const { publishCapacitySnapshotFrom } = await import('../routing/budget-capacity-source.js');
       return publishCapacitySnapshotFrom(cfg, collector as unknown as import('../verse/accounts.js').VerseAccountCollector);
     },
     log: (message) => { console.warn(`[ashlr] ${message}`); },

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { FEED_SCHEMA, FEED_VERSION, FEED_SOURCES } from '../../../../core/feed-schema.js';
 import { CompactNavStrip } from './CompactNavStrip.js';
 
 const feed = vi.hoisted(() => ({ count: 0 }));
 vi.mock('../../../data/hooks.js', () => ({ useQuery: ({ key }: { key: string }) => ({
-  data: key === 'shared-feed' ? { schema: 'phantom.feed.v1', sources: { merges: 'unknown', releases: 'unknown', incidents: 'unknown', leaderReplies: 'available' }, items: Array.from({ length: feed.count }, (_, i) => ({
-    kind: 'leader-reply', at: '2026-11-11T12:00:00Z', text: `Leader reply ${i}`,
+  data: key === 'shared-feed' ? { schema: FEED_SCHEMA, version: FEED_VERSION, sources: Object.fromEntries(FEED_SOURCES.map(key => [key, 'available'])), items: Array.from({ length: feed.count }, (_, i) => ({
+    kind: 'leader', at: '2026-11-11T12:00:00Z', text: `Leader reply ${i}`,
   })) } : undefined,
 }) }));
 vi.mock('../../../app/desktop-updates.js', () => ({ useDesktopUpdates: () => null }));

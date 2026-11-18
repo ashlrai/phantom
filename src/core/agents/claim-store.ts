@@ -79,7 +79,7 @@ export interface CoordinationHolder { owner: string; key: string; leaseUntil: nu
 export type CoordinationResult =
   | { status: 'acquired' | 'renewed' | 'released' | 'completed'; token?: string; leaseUntil?: number }
   | { status: 'conflict'; holder: CoordinationHolder }
-  | { status: 'mismatched-token' | 'expired' | 'lost' | 'invalid' | 'unavailable' | 'full' };
+  | { status: 'mismatched-token' | 'stale' | 'expired' | 'lost' | 'invalid' | 'unavailable' | 'full' };
 
 export interface CoordinationAcquire {
   root?: string;
@@ -407,14 +407,21 @@ export function settleCoordination(input: {
 }
 
 export function releaseCoordinationBySource(input: {
-  root?: string; origin: CoordinationOrigin; sourceId: string; now?: number;
+  root?: string; origin: CoordinationOrigin; sourceId: string; owner: string; leaseUntil?: number; now?: number;
 }): CoordinationResult {
   const now = input.now ?? Date.now();
-  if (!LABEL.test(input.sourceId)) return { status: 'invalid' };
+  if (!LABEL.test(input.sourceId) || !LABEL.test(input.owner) ||
+    (input.leaseUntil !== undefined && !integer(input.leaseUntil))) return { status: 'invalid' };
   const outcome = withStore(input.root, now, data => {
-    const before = data.claims.length;
-    data.claims = data.claims.filter(row => !(row.origin === input.origin && row.sourceId === input.sourceId));
-    return before === data.claims.length ? { status: 'lost' as const } : { status: 'released' as const };
+    const index = data.claims.findIndex(row => row.origin === input.origin && row.sourceId === input.sourceId);
+    const row = index >= 0 ? data.claims[index] : undefined;
+    if (!row) return { status: 'lost' as const };
+    if (row.owner !== input.owner || (input.leaseUntil !== undefined && row.leaseUntil !== input.leaseUntil)) {
+      return { status: 'stale' as const };
+    }
+    if (!live(row, now)) return { status: 'expired' as const };
+    data.claims.splice(index, 1);
+    return { status: 'released' as const };
   });
   return outcome as CoordinationResult;
 }
@@ -438,8 +445,8 @@ export function upsertBoardLease(input: {
   });
 }
 
-export function clearBoardLease(sourceId: string, root?: string, now = Date.now()): CoordinationResult {
-  const result = releaseCoordinationBySource({ root, origin: 'board', sourceId, now });
+export function clearBoardLease(sourceId: string, owner: string, root?: string, now = Date.now()): CoordinationResult {
+  const result = releaseCoordinationBySource({ root, origin: 'board', sourceId, owner, now });
   return result.status === 'lost' ? { status: 'released' } : result;
 }
 

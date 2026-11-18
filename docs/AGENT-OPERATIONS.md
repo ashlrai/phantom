@@ -143,6 +143,42 @@ An accepted PR creates one deterministic follow-up asking for the next bounded,
 evidence-supported improvement. Replay is idempotent, even after completion;
 conflicting SHA/time metadata for the same PR is refused.
 
+After independently verifying a PR is conflicted on its base branch, the
+bridge pipes a JSON object to `phm fleet queue conflicted --json` on stdin,
+with exactly these fields:
+
+```json
+{
+  "v": 1,
+  "state": "CONFLICTING",
+  "prUrl": "https://github.com/ashlrai/phantom/pull/42",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseRef": "master",
+  "observedAt": "2026-01-02T00:00:00.000Z"
+}
+```
+
+An accepted observation creates one deterministic recut job keyed by
+`(prUrl, headSha)`: re-read the source PR, preserve the intended change,
+rebuild it on the current base branch, run the required checks and affected
+tests, and open exactly one replacement PR through the protected merge path —
+the recut task forbids force pushes, admin bypass and protection/rule edits.
+Replay is idempotent per head: a repeated observation duplicates, a moved
+head supersedes the queued recut for the old one, a stale observation is
+obsolete, and a head that moves back revives its receipt only when the
+observation postdates every other one on record. A recorded merge for the PR
+supersedes every queued recut and blocks new ones. As with merges, this is an
+envelope for verified bridge metadata, not evidence by itself.
+
+`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
+`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
+as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
+2, frontier 3) over the first N listed repos. Every repo must be one of the
+seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
+whole. The projection is deterministic, so replayed asks dedupe by job id at
+the queue store, and it mutates nothing: no receipts, queue file or audit log
+are written. `task` stays untrusted prompt data on each emitted job.
+
 ### Outcome learning
 
 `phm fleet outcomes --events <log> --json` reads a dispatch event log and
@@ -164,23 +200,18 @@ predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
 twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
 hourly launchd agent on the Mac. See
 [the selector contract](contracts/CONTRACT-SELECTOR.md).
-
-`phm fleet queue ask --json` reads one `ask.v1` record on stdin —
-`{schema:"ask.v1",id,tier,pool,priority,repos,task}` — and prints its fanout
-as a `queue.v1` document: N READY jobs, one repo each, N by tier (work 1, mid
-2, frontier 3) over the first N listed repos. Every repo must be one of the
-seven configured `ashlrai/<repo>` names; a malformed or out-of-scope ask fails
-whole. The projection is deterministic, so replayed asks dedupe by job id at
-the queue store, and it mutates nothing: no receipts, queue file or audit log
-are written. `task` stays untrusted prompt data on each emitted job.
-
 `phm fleet queue read --json` returns `{v:1,jobs:[{jobId,repo,prompt}]}`.
 The bridge passes `prompt` only as untrusted model input, never as shell,
 command arguments, configuration, an execution path, or authority. It must
 not copy prompts into `fleet.json` or logs. This command is a snapshot, not a
 worker lease: the existing supervisor must serialize assignment/claim work
 before dispatch. When work finishes, the trusted supervisor acknowledges it
-with `phm fleet queue complete <job-id> --json`.
+with `phm fleet queue complete <job-id> --json`. `phm fleet queue stats --json`
+returns a `{v:1,...}` document measuring queue health over the receipt log:
+outstanding/done/superseded totals and per-kind breakdown (merge follow-ups
+vs conflict recuts), oldest and mean outstanding queue age, mean/max
+event-to-completion latency, mean/max queue residence, and a `latencyUnknown`
+count for receipts written before timing metadata existed.
 
 `router-queue.md` holds JSON data in Markdown job sections. Operators can edit
 task strings; identities, repositories and SHAs must still match durable
@@ -800,7 +831,7 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
-| Is the fleet on track (merges, publish-to-merge, empty finishes, mains, releases, pools)? | `phm goals` (JSON: target, value, as-of, source, 24 h trend, status; unknown when a signal is missing) or `phm goals --text`; the desktop Goals view shows the same cards |
+| Is the fleet on track (merges, publish-to-merge, empty finishes, mains, releases, pools)? | `phm goals` (plain words, behind first) or `phm goals --json` (`fleet.goal-scorecard.v2` with `version`: target, value, as-of, source, 24 h and 7 d trend, status text such as `unknown: <reason>`); the desktop Goals view shows the same rows |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
 | Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
@@ -928,6 +959,26 @@ The doctor storage line estimates logical GB in clean, inactive inbox worktrees,
 excluding pinned checkouts and symlink targets. It does not delete files or
 measure shared repository objects. A bounded or failed scan reports an unknown
 total; reported logical bytes are not a promise of physical disk space freed.
+
+`phm home` answers one question: is the fleet healthy and moving? It prints a
+headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
+merged PRs, median time to merge, main per repo, running jobs per lane, the
+resource most at risk of going unused, the last 5 work-log items and unread
+Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
+with the one-word answers each takes. `phm home --json` prints schema `home.v1`
+(the `schema` field is the version): each field is `{state:"ok",value}` or
+`{state:"unknown",reason}`. It is read-only. The desktop app and the phone's
+first screen show this summary and nothing else.
+
+`phm asks` lists what only Mason can do: a password, a 2FA code, a device
+approval or a payment. Each row has a short id, the kind, its age and one plain
+line. `phm asks answer <id> yes|no|done` records the answer once, with its
+source and time, on the existing needs-you ledger and bus; a repeat changes
+nothing. Agents raise one with `phm asks add <kind> "<request>"` and never put
+the secret itself in the request. Any other kind is refused: the fleet decides
+this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
+own private chat; the desktop Home view shows the same asks with Yes, No and
+Done buttons. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
 
 `phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
 published, PRs merged, empty jobs and the median time from publish to merge. It

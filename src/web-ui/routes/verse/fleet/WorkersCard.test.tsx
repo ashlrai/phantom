@@ -42,12 +42,16 @@ it('renders workers and safe PR links, opens read-only facts and log tail', asyn
 });
 it('polls only while visible and stops detail polling on close', async () => {
   vi.useFakeTimers(); const fetcher = stub(); const view = render(card());
+  const runReads = () => fetcher.mock.calls.filter(([url]) => url === '/api/verse/fleet/runs').length;
   await act(async () => {});
+  const initialRunReads = runReads();
   fireEvent.click(screen.getByRole('button', { name: 'Job job-one' })); await act(async () => {});
   await act(() => vi.advanceTimersByTimeAsync(5_000));
+  const visibleRunReads = runReads();
+  expect(visibleRunReads).toBeGreaterThan(initialRunReads);
   expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job?'))).toHaveLength(2);
   view.rerender(card(false)); await act(() => vi.advanceTimersByTimeAsync(10_000));
-  expect(fetcher.mock.calls.filter(([url]) => url === '/api/verse/fleet/runs')).toHaveLength(2);
+  expect(runReads()).toBe(visibleRunReads);
   view.rerender(card()); await act(async () => {});
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   const count = fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/fleet/job?')).length;

@@ -4,10 +4,13 @@ A ready.tsv pool change is a route proposal. In the shared work market, an
 enqueue-time lane is only a hint (`assigned:false`); first runnable assignment
 starts residency. Existing receipts without `assigned` remain binding. See
 [the work market](QUEUE.md). The dispatcher keeps the first observed
-pool for 60 minutes after each accepted decision. Only explicit `auth_failed: true`
-(including the dispatcher's repeated-auth-failure hold) or numeric `quota: 0` in the
-current lane's slots.json entry permits an early move. Congestion, rate limits,
-missing telemetry and manual holds do not. A launch receipt locks the pool forever,
+pool for 60 minutes after each accepted decision. Only hard-down evidence in the
+current lane's slots.json entry permits an early move: explicit `auth_failed: true`
+(including the dispatcher's repeated-auth-failure hold), numeric `quota: 0`, or a
+provider backoff hold (`held_by: autobackoff`, or a `credits exhausted` hold). The
+backoff holds match the fleet controller's reroute sources (RQ-CONSTRAINT-AUDIT-1).
+Congestion, rate limits without a hold, missing telemetry, manual holds and lanes on
+the operator HOLD list do not. A launch receipt locks the pool forever,
 even after completion. Reuse a new job ID for a new line of work.
 
 Each job may change pools twice in a rolling six hours. Initial assignment is not
