@@ -1888,6 +1888,19 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/log' && method === 'GET') {
+      // One row per job (joblog.v1), the report `phm log --json` prints.
+      const { readJobLog } = await import('../fleet/job-log.js');
+      const { worklogHours } = await import('../fleet/worklog.js');
+      const param = (name: string) => getQueryParam(req.url ?? '', name) || undefined;
+      let hours: number;
+      try { hours = worklogHours(param('since') ?? param('hours')); }
+      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 6h.' }); return true; }
+      try { sendJson(res, 200, await readJobLog(hours, { repo: param('repo'), lane: param('lane') })); }
+      catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }
+      return true;
+    }
+
     if (path === '/api/worklog' && method === 'GET') {
       const { readWorklog, filterWorklog, worklogHours, WORKLOG_KINDS } = await import('../fleet/worklog.js');
       const param = (name: string) => getQueryParam(req.url ?? '', name);
