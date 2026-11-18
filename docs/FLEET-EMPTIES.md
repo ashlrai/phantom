@@ -21,6 +21,16 @@ older readers and retry policy; use `diagnosis` for the complete new explanation
 Jobs sort by id; groups sort by count descending then name. Tied reasons follow
 the fixed reason list in `empty-why-classify.ts`. Suggestions never change queues.
 
+Each top-level `jobs` entry also carries a typed `outcome`: `already-implemented`,
+`duplicate`, `failed`, `empty`, or `unknown`. This separates reported completed work
+and duplicate requests from failures and runs that produced no change. Nonzero exits
+and provider errors override claimed completion; missing evidence stays unknown.
+Notes take priority over the last 60 log lines. Outcomes are classifications, not
+remote verification. Existing cause classes remain compatible with older readers.
+Use `phm jobs retry-empty --dry-run --json` to preview eligible scope or test-timeout
+retries, then `--apply` to enqueue. Repeated records, existing source markers (even
+on renamed retries), and durable receipts suppress duplicate recuts automatically.
+
 Rules below apply in order across the last 60 lines of the worker log and
 publish record (each read is capped at 64 KiB, symlinks refused). No raw evidence
 is returned. A bare `RESULT EMPTY`, missing evidence or an unmatched message
