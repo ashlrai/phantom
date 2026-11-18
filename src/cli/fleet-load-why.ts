@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
 import { availableParallelism, loadavg } from 'node:os';
 import { basename } from 'node:path';
+import { runPs } from '../core/fleet/host-top.js';
 
 const usage = `Usage: ashlr fleet load-why [--json]
 Shows which kinds of processes are loading this machine. Exits 1 when over 100 are orphans.`;
@@ -38,9 +38,8 @@ export const LOAD_WHY_ORPHAN_LIMIT = 100;
 const TOP_KINDS = 10;
 export const LOAD_WHY_PS_ARGS = ['-axo', 'pid,ppid,stat,pcpu,rss,etime,command'];
 
-const defaultRunner = (): Promise<string> => new Promise((resolve, reject) => {
-  execFile('ps', LOAD_WHY_PS_ARGS, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => err ? reject(err) : resolve(stdout));
-});
+/** The one bounded ps runner `phm host` uses too. */
+const defaultRunner = (): Promise<string> => runPs(LOAD_WHY_PS_ARGS);
 
 /** Sorts one command line into a kind. The program name decides first; node scripts are then judged by script path. */
 export function classifyCommand(command: string): LoadWhyKind {

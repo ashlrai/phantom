@@ -6,11 +6,14 @@ import { memoryView, type FleetMemoryView } from '../fleet/memory-view.js';
 import { readEngineAdmission, type EngineAdmissionView } from '../fleet/engine-admission-view.js';
 import { diskForecast } from '../fleet/disk-forecast.js';
 import { readSource } from '../fleet/runs-parked-queue.js';
+import { readHostTop, type HostReportV1 } from '../fleet/host-top.js';
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
 export const VERSE_FLEET_DISK_FORECAST_PATH = '/api/verse/fleet/memory/disk-forecast';
 export const VERSE_FLEET_MEMORY_PATH = '/api/verse/fleet/memory';
+/** `phm host --json` for the desktop Host card: same report, top 5 groups. */
+export const VERSE_FLEET_HOST_PATH = '/api/verse/fleet/host';
 export interface FleetMemoryResponseV1 {
   v: 1;
   generatedAt: string;
@@ -25,6 +28,7 @@ export interface FleetMemoryApiDeps {
   runsDir?: string;
   readDiskSources?: (root: string) => Promise<[string | null, string | null]>;
   now?: () => number;
+  readHost?: () => Promise<HostReportV1>;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention fleet-runs-api uses. */
@@ -50,6 +54,11 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
       let sources: [string | null, string | null] = [null, null];
       try { sources = await (deps.readDiskSources ?? readDiskSources)(deps.runsDir ?? defaultRunsDir()); } catch { /* Unknown evidence. */ }
       sendJson(res, 200, { v: 1, forecast: diskForecast(...sources, now()) });
+      return true;
+    }
+    if (path === VERSE_FLEET_HOST_PATH && method === 'GET') {
+      try { sendJson(res, 200, await (deps.readHost ?? readHostTop)()); }
+      catch { sendJson(res, 503, { v: 1, error: 'host report unavailable' }); }
       return true;
     }
     if (path !== VERSE_FLEET_MEMORY_PATH || method !== 'GET') return false;

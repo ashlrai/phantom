@@ -152,6 +152,7 @@ Every command, grouped by topic.
     bots list|show|create --dry-run|explain|seats|handoff --seat <id> [--apply] [--json]                                                                          Provider-neutral bot metadata, seat quota and draining handoffs. Handoff is dry-run unless --apply.
     subagent spawn|list|result [opts]                                                                                                                             Plan bounded cross-provider children; apply stores held records only, never dispatches.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
+    metrics impact [--json] [--jobs path] [--queue path] [--overrides path]                                                                                       Versioned offline impact rewards, template ranking and advisory bandit recommendations from local PR and job evidence.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
     enroll add <repo> [--locus-firm]                                                                                                                              Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).
     enroll remove <repo>                                                                                                                                          Remove a repo from the enrollment registry.
@@ -347,7 +348,7 @@ Every command, grouped by topic.
     router serve|models|pick|config [--json]                                                    Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                     Compare recorded router predictions with outcomes and usage.
     worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]                One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.
-    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
+    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context, newest first, with owner and size. Read-only; show <id> prints one item; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                       Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
     autonomy [--hours 24] [--json]                                                              Measure merges, human involvement, fleet improvements, releases and main health from local evidence.
     signals [--json]                                                                            Read real repository adoption signals.
@@ -393,6 +394,7 @@ Every command, grouped by topic.
     lanes fit --lane <lane> [--json]                                                            Show job kinds to send or avoid from measured PR rates.
     lanes --json                                                                                Read dispatcher pools, slot caps and local endpoint health.
     lanes health [--json]                                                                       Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
+    ideas [--json]                                                                              Read recorded fleet ideas.
     goals [--json]                                                                              Show dispatcher throughput, empty rates and resource resets.
 
   Integrations - MCP, GitHub, Vercel, editors
@@ -430,6 +432,7 @@ Every command, grouped by topic.
     worktrees [--json] [--reap [--dry-run | --apply]]                                     List job worktrees by state and remove the ones safe to remove.
     worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean, inactive worktrees for finished jobs.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
+    host [--top N] [--json]                                                               What is using this machine: load, memory free and swap, the busiest program groups marked fleet or not, and orphaned job processes. Read-only; unknown stays unknown.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     autofix [--apply] [--dry-run] [--json] [--only <fixer>]                               Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.
