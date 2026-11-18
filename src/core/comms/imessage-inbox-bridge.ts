@@ -236,7 +236,10 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
-        if (ack.status !== 'duplicate') await sendIMessageOutbox(await ackText(ack), cfg, currentHandle);
+        // A same-channel repeat stays quiet. A duplicate that joined another
+        // channel's entry (entryId) is this channel's first word on the order,
+        // so it gets its own ack quoting the shared receipt.
+        if (ack.status !== 'duplicate' || ack.entryId !== undefined) await sendIMessageOutbox(await ackText(ack), cfg, currentHandle);
       },
     });
     for (const msg of polled.messages) {
