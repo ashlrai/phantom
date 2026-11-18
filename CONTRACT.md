@@ -422,6 +422,12 @@ values, and `phm queue add` takes `--max-tier`, `--data-class` and
 `--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
 nowMs, windowHours)` and `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
+`MASON_ASKS` in `src/core/fleet/mason-asks.ts` lists Mason's nine app asks
+(A1-A9) as pieces (`need`, optional `path` and `exportName`). Pure
+`checkMasonAsks(asks, index)` and `exportNames(source)`, plus
+`readSourceIndex(root, asks)` (null outside a source checkout) and the text and
+Markdown renderers in `src/core/fleet/mason-asks-check.ts`, back
+`phm fleet asks status [--json | --markdown]` (`fleet.asks.v1`).
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
