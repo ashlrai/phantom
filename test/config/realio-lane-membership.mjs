@@ -54,6 +54,7 @@ export const REAL_IO_TEST_FILES = [
   'test/recut-n1r4200s92.test.ts', // Runs real recut child processes.
   'test/recut-top-a59.test.ts', // Binds a real loopback API server.
   'test/recut-check.test.ts', // Builds a real git repo to prove refContained sees applied hunks.
+  'test/self-drift.test.ts', // Builds small real git clones (tags, shallow) to count commits behind.
   'test/repo-tracked-artifacts.test.ts', // Inspects tracked artifacts through real Git subprocesses.
   'test/ui-settings-recut-c196.test.ts', // Binds a real settings API server.
   'test/ui-settings-recut-c206.test.ts', // Binds a real settings API server.

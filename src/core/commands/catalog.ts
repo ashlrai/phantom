@@ -35,7 +35,7 @@ export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
 
   'observe', 'observe session', 'orient', 'pages list', 'pool admission', 'preflight', 'prs triage', 'pulse-test', 'queue batches', 'recut check',
   'reflect', 'release status', 'resources', 'route explain', 'router rank', 'router-calibration', 'run show', 'runs',
-  'sandbox diff', 'sandbox list', 'seams', 'signals', 'skills audit', 'skills list', 'spec list', 'spec show', 'spend', 'status',
+  'sandbox diff', 'sandbox list', 'seams', 'self drift', 'signals', 'skills audit', 'skills list', 'spec list', 'spec show', 'spend', 'status',
   'swarm show', 'swarms', 'throughput', 'tools requires', 'top', 'universe compare', 'universe graph', 'usage history', 'vercel',
   'verify-safety', 'version', 'wire status', 'world get', 'worklog', 'worktrees report',
 ]);
