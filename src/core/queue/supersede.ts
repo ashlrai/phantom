@@ -50,7 +50,7 @@ export function cycleOf(id: string): { family: string; cycle: number } | null {
   const match = CYCLE.exec(id);
   return match ? { family: match[1]!.replace(/-$/, ''), cycle: Number(match[2] ?? match[3]) } : null;
 }
-const repoKey = (repo: string): string => repo.trim().toLowerCase().replace(/^ashlrai\//, '');
+export const repoKey = (repo: string): string => repo.trim().toLowerCase().replace(/^ashlrai\//, '');
 
 /** Pure: the queued jobs that a newer cycle of the same family and repo replaces. Sorted, so the output is stable. */
 export function planSupersede(jobs: readonly QueueJob[]): SupersededJob[] {
@@ -74,18 +74,18 @@ export function planSupersede(jobs: readonly QueueJob[]): SupersededJob[] {
 }
 
 // The same line shape the restocker reads: "- READY <id> (repo=..)" or "- CLAIMED <time> <who> <id> (repo=..)".
-const ROUTER_LINE = /^(\s*-\s+)(READY|CLAIMED|RUNNING)\b((?:\s+\S+)*?)\s+([A-Za-z0-9][\w.-]*)(?: r\d+)?\s+\(([^)]*)\)/i;
+export const ROUTER_LINE = /^(\s*-\s+)(READY|CLAIMED|RUNNING)\b((?:\s+\S+)*?)\s+([A-Za-z0-9][\w.-]*)(?: r\d+)?\s+\(([^)]*)\)/i;
 function routerJobs(text: string): Array<QueueJob & { line: number }> {
   return text.split('\n').flatMap((line, index) => {
     const match = ROUTER_LINE.exec(line), repo = /\brepo\s*=\s*([\w./-]+)/i.exec(match?.[5] ?? '')?.[1];
     return match && repo ? [{ id: match[4]!, repo, queued: match[2]!.toUpperCase() === 'READY', line: index }] : [];
   });
 }
-const parked = (row: { id: string; lane: string }): boolean => row.id.startsWith('PARKED-') || row.lane.startsWith('PARKED-');
+export const parked = (row: { id: string; lane: string }): boolean => row.id.startsWith('PARKED-') || row.lane.startsWith('PARKED-');
 const jobKey = (job: { id: string; repo: string }): string => `${repoKey(job.repo)}\n${job.id}`;
 
 /** Append to a regular file in the queue directory without following links. */
-async function appendGuarded(path: string, text: string): Promise<void> {
+export async function appendGuarded(path: string, text: string): Promise<void> {
   const handle = await open(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
   try {
     const stat = await handle.stat();
@@ -96,7 +96,7 @@ async function appendGuarded(path: string, text: string): Promise<void> {
 }
 const pad = (n: number): string => String(n).padStart(2, '0');
 /** The dispatch-events.log clock: local wall time. */
-const eventClock = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+export const eventClock = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
 export interface SupersedeOptions extends RewriteReadyRowsOptions { runsDir?: string; apply?: boolean }
 

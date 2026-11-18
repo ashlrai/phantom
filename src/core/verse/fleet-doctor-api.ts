@@ -1,9 +1,10 @@
 /** GET /api/verse/fleet/doctor: read-only report from the fleet doctor. */
-import { runFleetDoctor, type FleetDoctorReport } from '../../cli/fleet-doctor.js';
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
+import type { FleetDoctorReport } from '../../cli/fleet-doctor.js';
 
-export function createFleetDoctorApi(run: () => Promise<FleetDoctorReport> = () => runFleetDoctor()): ApiModule {
+export function createFleetDoctorApi(run?: () => Promise<FleetDoctorReport>): ApiModule {
+  const doctor = run ?? (async () => (await import('../../cli/fleet-doctor.js')).runFleetDoctor());
   return async (_ctx, _req, res, path, method) => {
     if (path !== '/api/verse/fleet/doctor') return false;
     if (method !== 'GET') {
@@ -12,7 +13,7 @@ export function createFleetDoctorApi(run: () => Promise<FleetDoctorReport> = () 
     }
     let report: FleetDoctorReport;
     try {
-      report = await run();
+      report = await doctor();
     } catch {
       report = { v: 1, generatedAt: new Date().toISOString(), level: 'warn',
         checks: [{ name: 'doctor', level: 'warn', reason: 'could not run' }] };
