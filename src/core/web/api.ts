@@ -26,6 +26,7 @@ import { passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
  *   GET /api/bots/templates    -> starter bot templates; GET /api/bots -> bots created from them
+ *   GET /api/bots/seats        -> external bot seats, quota evidence, claims and recent handoffs (no dispatch)
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -2042,6 +2043,21 @@ export async function handleApi(
         return true;
       }
       sendJson(res, 200, await getFleetJobActivity(id));
+      return true;
+    }
+
+    // fleet.job.tail.v1 — the `phm job tail` snapshot (status words, header,
+    // ledger events, redacted last N log lines). Same read class as above.
+    if (path === '/api/fleet/job/tail' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobTail } = await import('../fleet/runs-job-tail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 120) {
+        sendJson(res, 400, { error: 'valid job id and lines (1..120) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobTail(id, { lines }));
       return true;
     }
 

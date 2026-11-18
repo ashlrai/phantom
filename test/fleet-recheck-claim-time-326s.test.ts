@@ -78,7 +78,7 @@ function deps(over: Partial<FleetRecheckDeps> = {}): FleetRecheckDeps {
   };
 }
 
-const ASSOCIATION_MISSING = 'task: no coordination-claim field associates a claim with board item fake-request-1; owner match is not task identity';
+const ASSOCIATION_MISSING = 'task: no live claim by agent-alpha carries [board:fake-request-1]; owner match is not task identity';
 
 describe('fleet recheck claim verdict-time filtering', () => {
   it('never verifies a task from a claim that starts after the verdict now', async () => {
