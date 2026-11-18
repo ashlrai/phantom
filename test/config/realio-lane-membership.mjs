@@ -43,6 +43,22 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
+  'test/comms-confirm-http-original-264s.test.ts', // Runs confirmation transport child processes.
+  'test/email-outbox-crash-batch-103.test.ts', // Restarts real outbox processes after crashes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real channel health proof processes.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Exercises concurrent archive planner subprocesses.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local handoff API server.
+  'test/imessage-teammate-dispatch.test.ts', // Runs real teammate dispatch child processes.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real loopback API server.
+  'test/recut-n1r4200s92.test.ts', // Runs real recut child processes.
+  'test/recut-top-a59.test.ts', // Binds a real loopback API server.
+  'test/repo-tracked-artifacts.test.ts', // Inspects tracked artifacts through real Git subprocesses.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real settings API server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real settings API server.
+  'test/ui-settings.test.ts', // Binds a real settings API server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real web API server.
+  'test/work-trace-restart-proof-319s.test.ts', // Restarts real work trace child processes.
   'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
   'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
   'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
