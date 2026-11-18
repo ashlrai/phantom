@@ -22,7 +22,15 @@ export function UsagePace() {
   const named = given.filter((v): v is Record<string, unknown> & { pool: string } => object(v) && typeof v.pool === 'string');
   // Rows come from the API in the order given; core pools it omitted still show as unknown.
   const rows = [...named, ...pools.filter(p => !named.some(r => r.pool === p)).map(pool => ({ pool }))];
-  return <section aria-label="Usage pace"><h3>Usage pace</h3><ul className={styles.subtle}>
+  // `shares` lines are built server-side (planPoolShares); an older host without them reads as unknown.
+  const shares = object(pace.shares) && Array.isArray(pace.shares.pools) ? pace.shares.pools : null;
+  const lines = fresh && shares ? shares.filter((v): v is { pool: string; line: string } => object(v)
+    && typeof v.pool === 'string' && typeof v.line === 'string') : [];
+  return <section aria-label="Usage pace"><h3>Usage pace</h3>
+    <ul aria-label="Where to send work">
+      {lines.length > 0 ? lines.map(row => <li key={row.pool}>{row.line}</li>) : <li>Where to send work: unknown</li>}
+    </ul>
+    <ul className={styles.subtle} aria-label="Pace by pool">
     {rows.map(row => {
       const slots = (row as Record<string, unknown>).recommendedSlots;
       const slotText = fresh && typeof slots === 'number' && Number.isInteger(slots) && slots >= 0 ? String(slots) : 'unknown';

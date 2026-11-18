@@ -327,6 +327,13 @@ in `RouteSources.familyYield` is at least `JOB_KEEP_RATE`. It ranks `spend` lane
 first for non-frontier work. `routeCandidateRejections` adds `runway_starve`.
 `readPoolRunway()` (`runway-read.ts`) returns `pool.runway.v1` for
 `phm pool runway --json` and `GET /api/usage/runway`.
+`planPoolShares(inputs)` (same file, pure) maps each pool's used percent, burn
+percent per hour and hours to reset to `{pool, runway_hours, hours_to_reset,
+used_percent, projected_percent_at_reset, state, suggested_share, rank, reason,
+line}`; `state` is `starving` (runway under 80% of hours to reset), `wasting`
+(projected use at reset under 90%), `on_pace`, or `unknown` (any input missing
+or reset passed). `PaceSnapshot.shares` (`src/core/usage/pace.ts`) carries it as
+`fleet.pools.v1` in `GET /api/verse/usage-resources` and `phm fleet pools --json`.
 
 `decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
 is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and
