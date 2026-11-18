@@ -201,6 +201,7 @@ it('a message line opens the Messages pane on that pair, read from the typed mes
   expect(screen.queryByText('leader ↔ claude · last 20 messages')).toBeNull();
 });
 
+
 /** `phm agents messages` (test/agents-messages.test.ts) as the map reads it: per-line counts and the last 5 summaries. */
 function pairsOf(said: Said[]) {
   const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
@@ -253,4 +254,97 @@ describe('message cards, the Messages switch and reduced motion', () => {
     expect(screen.queryByText('message in the last minute')).toBeNull();
     expect(lines(container).map(path => path.style.strokeWidth)).toEqual(['1.75', '2.25']);
   });
+});
+
+
+describe('the 2D/3D toggle', () => {
+  afterEach(() => { localStorage.clear(); });
+  const map = () => narrowLiveMap(JSON.parse(JSON.stringify(fleet())))!;
+  const stage = () => screen.queryByTestId('map-3d');
+
+  it('desktop, normal fixture: one control switches to 3D with the same nodes, remembers it, and a node opens its detail pane', () => {
+    viewport = mockViewport(1440);
+    const onOpen = vi.fn(), onOpenMessages = vi.fn();
+    const first = render(<MapView map={map()} now={NOW} onOpen={onOpen} onOpenMessages={onOpenMessages} />);
+    const toggle = screen.getByRole('radiogroup', { name: 'Map view' });
+    expect(within(toggle).getByRole('radio', { name: '2D' }).getAttribute('aria-checked')).toBe('true');
+    const flat = screen.getAllByRole('button', { name: /^Open / }).map(b => b.getAttribute('aria-label')).sort();
+    expect(stage()).toBeNull();
+    fireEvent.click(within(toggle).getByRole('radio', { name: '3D' }));
+    expect(stage()).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /^Open / }).map(b => b.getAttribute('aria-label')).sort()).toEqual(flat);
+    // Every node has been placed, and the leader sits above its lanes and jobs.
+    const y = (name: RegExp) => Number(/translate\([\d.-]+px, ([\d.-]+)px\)/.exec(screen.getByRole('button', { name }).style.transform)![1]);
+    expect(y(/^Open leader/)).toBeLessThan(y(/^Open lane claude:/));
+    expect(y(/^Open lane claude:/)).toBeLessThan(y(/^Open job RQ-A/));
+    // Message lines keep their pulse and the sender's provider logo, and open the messages for that pair.
+    expect(stage()!.querySelectorAll('line[data-kind="messaged-in-last-15-min"]')).toHaveLength(2);
+    expect(stage()!.querySelectorAll('line[data-pulse="true"]')).toHaveLength(1);
+    expect(stage()!.querySelector('[data-edge-badge] [data-provider-badge="Anthropic"]')).toBeTruthy();
+    fireEvent.click(stage()!.querySelector('[data-open-messages]')!);
+    expect(onOpenMessages).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: /^Open job RQ-A/ }));
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'job:RQ-A' }));
+    // Remembered: a fresh map opens in 3D.
+    first.unmount();
+    render(<MapView map={map()} now={NOW} onOpen={() => {}} />);
+    expect(stage()).toBeTruthy();
+    expect(screen.getByRole('radio', { name: '3D' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('desktop, empty fixture: 3D shows the empty note and only the leader', () => {
+    viewport = mockViewport(1440);
+    localStorage.setItem('phantom.fleet-map.view', '3d');
+    render(<MapView map={narrowLiveMap(JSON.parse(JSON.stringify(buildFleetLiveMap({ now: NOW }))))!} now={NOW} onOpen={() => {}} />);
+    expect(stage()).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Nothing to map yet: no lanes, jobs or computers reported.');
+    expect(within(stage()!).getAllByRole('button').map(b => b.getAttribute('aria-label'))).toEqual([expect.stringMatching(/^Open leader/)]);
+  });
+
+  it('turns slowly, stops while hovered or focused, and never turns under reduced motion', () => {
+    viewport = mockViewport(1440);
+    localStorage.setItem('phantom.fleet-map.view', '3d');
+    const view = render(<MapView map={map()} now={NOW} onOpen={() => {}} />);
+    expect(stage()!.getAttribute('data-rotate')).toBe('on');
+    fireEvent.pointerEnter(stage()!);
+    expect(stage()!.getAttribute('data-rotate')).toBe('paused');
+    fireEvent.pointerLeave(stage()!);
+    expect(stage()!.getAttribute('data-rotate')).toBe('on');
+    fireEvent.focus(screen.getByRole('button', { name: /^Open leader/ }));
+    expect(stage()!.getAttribute('data-rotate')).toBe('paused');
+    view.unmount();
+    viewport.restore();
+    viewport = mockViewport(1440, { reducedMotion: true });
+    render(<MapView map={map()} now={NOW} onOpen={() => {}} />);
+    expect(stage()!.getAttribute('data-rotate')).toBe('off');
+    fireEvent.pointerLeave(stage()!);
+    expect(stage()!.getAttribute('data-rotate')).toBe('off');
+  });
+
+  it('at 390 px: no toggle, and the 2D rows even when 3D was chosen', () => {
+    viewport = mockViewport(390);
+    localStorage.setItem('phantom.fleet-map.view', '3d');
+    render(<MapView map={map()} now={NOW} onOpen={() => {}} />);
+    expect(screen.queryByRole('radiogroup', { name: 'Map view' })).toBeNull();
+    expect(stage()).toBeNull();
+    expect(screen.getByRole('button', { name: /^Open lane claude:/ }).style.top).not.toBe('');
+
+  });
+});
+
+
+it('3D preserves message cards, the Messages switch and reduced-motion pulse suppression', () => {
+  viewport = mockViewport(1440);
+  localStorage.setItem('phantom.fleet-map.view', '3d');
+  const { container } = render(<MapView {...scene(CHAT)} pairs={pairsOf(CHAT)} now={NOW} onOpen={() => {}} reducedMotion />);
+  const stage = screen.getByTestId('map-3d');
+  expect(stage.getAttribute('data-rotate')).toBe('off');
+  expect(container.querySelectorAll('[data-pulse="true"]')).toHaveLength(0);
+  fireEvent.mouseEnter(stage.querySelector('[data-open-messages="messaged-in-last-15-min:leader->lane:claude"]')!);
+  expect(screen.getByRole('tooltip').textContent).toContain('thanks, next the docs');
+  fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
+  expect(container.querySelectorAll('[data-open-messages]')).toHaveLength(0);
+  expect(screen.queryByRole('tooltip')).toBeNull();
+  expect(stage.querySelectorAll('line[data-kind="reports-to"]').length).toBeGreaterThan(0);
+  localStorage.clear();
 });

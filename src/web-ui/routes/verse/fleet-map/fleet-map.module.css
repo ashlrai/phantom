@@ -40,4 +40,17 @@
 .talk button:hover, .talk button:focus-visible { color: var(--accent-500); }
 .talk [data-pulse='true'] { font-weight: 600; }
 .gaps { color: var(--text-secondary); }
+/* 3D view: buttons sit at the stage origin and are moved by a transform each frame (MapStage3D). */
+.stage { position: relative; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.node3d, .edgeBadge { position: absolute; left: 0; top: 0; transform-origin: center; will-change: transform; }
+.node3d { display: flex; align-items: center; gap: var(--space-1); max-width: 132px; padding: 2px var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  background: var(--surface-raised, var(--surface-1, Canvas)); color: inherit; font: inherit; white-space: nowrap; cursor: pointer; }
+.node3d strong { overflow: hidden; text-overflow: ellipsis; }
+.node3d:hover, .node3d:focus-visible { border-color: var(--accent-500); }
+.node3d[data-kind='leader'] { border-width: 2px; }
+.node3d[data-status='held'], .node3d[data-status='offline'], .node3d[data-status='exhausted'] { border-color: var(--status-danger-solid); }
+.node3d[data-status='unknown'] { border-style: dashed; }
+.edgeBadge { display: flex; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .edge[data-pulse='true'] { animation: none; } }
+
+.edgeCard { position: absolute; left: 0; top: 0; pointer-events: none; }

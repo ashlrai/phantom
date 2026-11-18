@@ -8,7 +8,8 @@
  * messages (`phm agents messages`). The Messages switch hides every message
  * line; reduced motion keeps the lines but stops the pulse.
  *
- * 2D only: no 3D library is a dependency, so there is no 3D toggle.
+ * One 2D/3D toggle switches to the same graph stacked as rings by org level (MapStage3D); the choice is
+ * remembered. Phones always get the 2D rows.
  */
 import { messageLineWidth, type FleetLiveMap, type LiveMapEdge, type LiveMapEdgeKind, type LiveMapNode, type LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge } from '../../../../core/fleet/map-edges.js';
@@ -16,6 +17,7 @@ import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.j
 import { useState } from 'react';
 import { prefersReducedMotion } from '../../../components/charts/motion.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
+import { Segmented } from '../../../components/primitives/Segmented.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { relativeAt } from '../fleet/bus-feed-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
@@ -23,6 +25,9 @@ import { showMessagePair, type MessagePair } from '../fleet-messages/messages-pa
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing } from './map-model.js';
+import { useViewport } from '../shell/viewport.js';
+import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
+import { MapStage3D } from './MapStage3D.js';
 import styles from './fleet-map.module.css';
 
 /** The existing pane that shows each kind's details. */
@@ -30,6 +35,8 @@ export const DETAIL_PANE: Readonly<Record<LiveMapNodeKind, string>> = {
   leader: 'leader-thread', lane: 'fleet-lanes', job: 'worker-log', computer: 'fleet-computers', resource: 'fleet-usage',
 };
 const KIND_WORD: Readonly<Record<LiveMapNodeKind, string>> = { leader: 'leader', lane: 'lane', job: 'job', computer: 'computer', resource: 'pool' };
+const nameOf = (node: LiveMapNode) => `Open ${KIND_WORD[node.kind]} ${node.label}: ${node.detail}`;
+const VIEW_OPTIONS = [{ value: '2d', label: '2D' }, { value: '3d', label: '3D' }] as const;
 const LEGEND: readonly [LiveMapEdgeKind, string][] = [
   ['reports-to', 'reports to'], ['runs-on', 'runs on'], ['uses-resource', 'uses pool'], ['messaged-in-last-15-min', 'messaged'],
 ];
@@ -47,6 +54,10 @@ interface MapViewProps {
 export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pairs, reducedMotion = false }: MapViewProps) {
   const [showMessages, setShowMessages] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<MapViewMode>(readMapViewMode);
+  const { compact } = useViewport();
+  const mode: MapViewMode = compact ? '2d' : chosen;
+  const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
   const layout = layoutLiveMap(map);
   const pulse = (edge: LiveMapEdge) => pulsing(edge, map, now, reducedMotion) ? 'true' : undefined;
   const talk = showMessages ? map.edges.filter(edge => edge.kind === 'messaged-in-last-15-min') : [];
@@ -67,10 +78,14 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
   return <section className={styles.root} aria-label="Fleet map">
     <div className={styles.toolbar} role="toolbar" aria-label="Map">
       <p className={styles.headline}>{mapHeadline(map)}</p>
+      {!compact && <Segmented<MapViewMode> options={VIEW_OPTIONS} value={mode} onChange={choose} size="sm" aria-label="Map view" />}
       <button type="button" aria-pressed={showMessages} onClick={() => { setShowMessages(on => !on); setHovered(null); }}>Messages</button>
     </div>
     {emptyMap(map) && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
-    <div className={styles.scroll}>
+    {mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={edge => onOpenMessages(pairOf(edge))} nameOf={nameOf}
+      showMessages={showMessages} reducedMotion={reducedMotion} onHover={setHovered} cardEdge={card}
+      card={card ? <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} anchored /> : null} />
+      : <div className={styles.scroll}>
       <div className={styles.canvas} style={{ width: layout.width, height: layout.height }}>
         <svg className={styles.edges} width={layout.width} height={layout.height} aria-hidden="true">
           {map.edges.map(edge => {
@@ -90,7 +105,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
         {card && <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} />}
         {layout.nodes.map(node => <button key={node.id} type="button" className={styles.node} data-kind={node.kind} data-status={node.status}
           style={{ left: node.x - NODE_W / 2, top: node.y - NODE_H / 2, width: NODE_W, height: NODE_H }}
-          aria-label={`Open ${KIND_WORD[node.kind]} ${node.label}: ${node.detail}`} title={node.detail} onClick={() => onOpen(node)}>
+          aria-label={nameOf(node)} title={node.detail} onClick={() => onOpen(node)}>
           <span className={styles.name}>
             {(node.kind === 'lane' || node.kind === 'job') && <ProviderBadge of={node.provider} iconOnly size={node.kind === 'lane' ? 16 : 12} />}
             {node.live && <span className={styles.live} role="img" aria-label="Active in the last 5 minutes" />}
@@ -99,7 +114,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
           <small>{node.detail}</small>
         </button>)}
       </div>
-    </div>
+    </div>}
     <ul className={styles.legend} aria-label="Line key">
       {LEGEND.filter(([kind]) => showMessages || kind !== 'messaged-in-last-15-min').map(([kind, word]) => <li key={kind}><span className={styles.swatch} data-kind={kind} />{word}</li>)}
       {showMessages && !reducedMotion && <li><span className={styles.swatch} data-kind="messaged-in-last-15-min" data-pulse="true" />message in the last minute</li>}
@@ -121,11 +136,11 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
 }
 
 /** A message line's last 5 messages, beside the middle of the line. */
-function MessageCard({ edge, pair, layout, now, title }: { edge: LiveMapEdge; pair: AgentsMessagePair | undefined;
-  layout: ReturnType<typeof layoutLiveMap>; now: number; title: string }) {
+function MessageCard({ edge, pair, layout, now, title, anchored = false }: { edge: LiveMapEdge; pair: AgentsMessagePair | undefined;
+  layout: ReturnType<typeof layoutLiveMap>; now: number; title: string; anchored?: boolean }) {
   const a = layout.at.get(edge.from), b = layout.at.get(edge.to);
   const left = a && b ? Math.min((a.x + b.x) / 2, layout.width - 240) : 0, top = a && b ? (a.y + b.y) / 2 : 0;
-  return <div className={styles.card} role="tooltip" aria-label={`Last messages ${title}`} style={{ left: Math.max(0, left), top }}>
+  return <div className={styles.card} role="tooltip" aria-label={`Last messages ${title}`} style={{ left: anchored ? 0 : Math.max(0, left), top: anchored ? 0 : top }}>
     <strong>{title}: {pair ? pair.count : edge.messages ?? 'unknown'} message{(pair ? pair.count : edge.messages) === 1 ? '' : 's'}</strong>
     {pair?.recent.length ? <ol>{pair.recent.map((item, i) => <li key={i}>{relativeAt(item.at, now)} · {item.kind}: {item.summary}</li>)}</ol>
       : <p>Last messages unknown.</p>}

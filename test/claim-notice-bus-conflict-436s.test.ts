@@ -31,7 +31,9 @@ const OTHER_THREAD = `${TEAM}/${CHANNEL}/1700000000.000002`;
 const claim = { id: 'claim-fake-436', repo: 'ashlrai/phantom', task: 'fake task', agent: 'fake-owner',
   claimedAt: now - 1000, expiresAt: now + 3_600_000 };
 const binding = { claimId: claim.id, repo: claim.repo, threadKey: THREAD, pr: 123, head: 'abcdef1234567890' };
-const dedupeKey = JSON.stringify(['ASSIGNED', claim.id, binding.head]);
+// A known-absent snapshot before claimedAt makes this a fresh acquisition.
+// Preseed the exact current identity so the conflict proof exercises a collision.
+const dedupeKey = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]);
 const board: FleetBoard = { schema: 'fleet.coordination.v1', state: 'known', claims: [claim],
   messages: [], proposals: [], expiredClaims: 0 };
 const config: AgentNetworkConfig = {

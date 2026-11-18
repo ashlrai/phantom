@@ -410,8 +410,9 @@ channel, are counted in `unmappedMessages` and never assigned to a node by
 guessing. The server builds the graph at most once every 5 seconds, and the
 pane polls no faster than that while it is visible. Selecting a node opens the
 pane that already shows its details: the worker log for a job, Lanes, Computers,
-Usage for a pool, or Leader. The map is 2D only, because no 3D library is a
-dependency.
+Usage for a pool, or Leader. One 2D/3D toggle (remembered) shows the same graph
+as rings stacked by org level, turning slowly until hovered and still under
+reduced motion; phones always get the 2D rows. No 3D library is used.
 
 #### Map edges
 
