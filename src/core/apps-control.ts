@@ -13,7 +13,8 @@ import { appendNeedsMasonLine } from './fleet/needs-mason-append.js';
 import { killSwitchOn } from './sandbox/policy.js';
 import { isPaused } from './comms/pause.js';
 import { computerAppPolicy } from './verse/computer-types.js';
-import { findKnownApp, protectedQuitReason, readMacApps, type KnownApp, type MacAppsProbe } from './apps-known.js';
+import { ACCESSIBILITY_PANE } from './desktop/operator-policy.js';
+import { findKnownApp, ownerBrowserQuitReason, protectedQuitReason, readMacApps, type KnownApp, type MacAppsProbe } from './apps-known.js';
 
 export const APP_ACTIONS = ['open', 'quit', 'focus', 'status'] as const;
 export type AppAction = (typeof APP_ACTIONS)[number];
@@ -72,7 +73,7 @@ const matches = (app: AllowedApp, target: string): boolean => {
 /** App names are untrusted text headed for a one-line ledger entry. */
 const oneLine = (text: string): string => scrubSecrets(text.replace(/\p{Cc}/gu, ' ')).slice(0, 160);
 
-export type AppsOutcome = 'done' | 'refused' | 'failed' | 'needs-you';
+export type AppsOutcome = 'done' | 'refused' | 'failed' | 'needs-you' | 'needs_permission';
 export interface AppsFeedEntry { phase: 'start' | 'result'; action: Verb; app: string; outcome?: AppsOutcome; detail?: string }
 
 export interface AppsControlDeps {
@@ -114,7 +115,22 @@ function defaultNeedsYou(text: string): boolean {
   catch { return false; }
 }
 
+/**
+ * True only when the desktop's read-only permission preflight says Accessibility is missing.
+ * Reads the stable `desktop-permissions:` line (formatComputerPermissionReport); anything else is not a no.
+ */
+async function accessibilityMissing(call: ToolCall): Promise<boolean> {
+  try {
+    const res = await call('computer_permissions', {});
+    if (res.isError) return false;
+    const line = res.content.flatMap(c => c.type === 'text' ? c.text.split('\n') : []).find(l => l.startsWith('desktop-permissions:'));
+    return /\baccessibility=missing\b/.test(line ?? '');
+  } catch { return false; }
+}
+
 export interface AppsActionReport {
+  /** Bumps only on a breaking change; new fields are additive. */
+  version: 1;
   ok: boolean;
   action: Verb;
   app?: string;
@@ -123,11 +139,15 @@ export interface AppsActionReport {
   detail: string;
   running?: boolean;
   frontmost?: boolean;
+  pid?: number;
+  memoryMb?: number;
+  /** Set with outcome `needs_permission`: the one macOS permission to grant, and where. */
+  permission?: { name: 'Accessibility'; settingsPath: string };
   logged: boolean;
 }
 
 export interface AppsListReport {
-  ok: true; action: 'list'; allowFile: string;
+  version: 1; ok: true; action: 'list'; allowFile: string;
   apps: Array<AllowedApp & { actions: AppAction[]; mode: 'direct' | 'request'; running: boolean | null; frontmost: boolean | null }>;
   connected: boolean; logged: boolean;
 }
@@ -140,7 +160,7 @@ const modeOf = (app: AllowedApp): 'direct' | 'request' => isSelf(app) ? 'request
 export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps = {}): Promise<{ exit: number; report: AppsReport; text: string }> {
   const { action: verb, app: target } = input;
   if ((verb !== 'list' && !APP_ACTIONS.includes(verb)) || (verb === 'list' ? target !== undefined || input.request === true : !target || target.startsWith('-') || /\p{Cc}/u.test(target) || target.length > 200) || (input.request === true && verb === 'status')) {
-    return { exit: 2, report: { ok: false, action: verb, outcome: 'refused', code: 'invalid-request', detail: 'invalid app control request.', logged: false }, text: 'invalid app control request.' };
+    return { exit: 2, report: { version: 1, ok: false, action: verb, outcome: 'refused', code: 'invalid-request', detail: 'invalid app control request.', logged: false }, text: 'invalid app control request.' };
   }
   let emitted!: AppsReport;
   let humanText = '';
@@ -153,7 +173,7 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
     const emit = (report: AppsReport, human: string): void => { emitted = report; humanText = human; };
 
     if (!allow.ok) {
-      emit({ ok: false, action: verb, outcome: 'failed', detail: allow.error, logged: false }, allow.error);
+      emit({ version: 1, ok: false, action: verb, outcome: 'failed', detail: allow.error, logged: false }, allow.error);
       return 1;
     }
 
@@ -166,7 +186,7 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
         return { name: a.name, bundleId: a.bundleId, actions: a.actions ?? [...APP_ACTIONS], mode: modeOf(a), running: live.ok ? hit !== undefined : null, frontmost: live.ok ? hit?.frontmost ?? false : null };
       });
       const logged = feed({ phase: 'result', action: 'list', app: '*', outcome: 'done', detail: `${rows.length} allowed` }) && started;
-      emit({ ok: true, action: 'list', allowFile, apps: rows, connected: live.ok, logged },
+      emit({ version: 1, ok: true, action: 'list', allowFile, apps: rows, connected: live.ok, logged },
         rows.length === 0 ? `No apps allowed. Add some to ${allowFile}.`
           : rows.map((r) => `${r.name}${r.bundleId ? ` (${r.bundleId})` : ''}: ${r.running === null ? 'unknown' : r.running ? `running${r.frontmost ? ', frontmost' : ''}` : 'not running'}`).join('\n'));
       return 0;
@@ -183,8 +203,8 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
       // quit stays listed so a protected app refuses with the plain reason below, not a policy code.
       actions: [...APP_ACTIONS],
     } : undefined);
-    const finish = (report: Omit<AppsActionReport, 'logged' | 'action' | 'app'>, resultLogged: boolean, human: string): void => {
-      emit({ ...report, action: verb, app: label, logged: resultLogged }, human);
+    const finish = (report: Omit<AppsActionReport, 'logged' | 'action' | 'app' | 'version'>, resultLogged: boolean, human: string): void => {
+      emit({ version: 1, ...report, action: verb, app: label, logged: resultLogged }, human);
     };
 
     const started = feed({ phase: 'start', action: verb, app: label });
@@ -196,10 +216,13 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
     };
 
     if (!started) return result('refused', 'the feed could not record this action, so it was not run.', { code: 'feed-unavailable' });
-    if (!allowed) return result('refused', `not in ${allowFile}.`, { code: 'not-allowlisted' });
+    // Chrome is the owner's own browser: never quit, listed or not.
+    const ownerBrowser = verb === 'quit' ? ownerBrowserQuitReason(requested, listed?.name, listed?.bundleId) : null;
+    if (!allowed) return ownerBrowser ? result('refused', ownerBrowser, { code: 'protected' }) : result('refused', `not in ${allowFile}.`, { code: 'not-allowlisted' });
     if (!(allowed.actions ?? APP_ACTIONS).includes(verb)) return result('refused', 'action is not allowed by this app policy.', { code: 'action-not-allowed' });
     // The owner's GUI apps are never quit, whatever the allowlist says.
     if (known && verb === 'quit' && known.quit === 'protected') return result('refused', protectedQuitReason(known), { code: 'protected' });
+    if (ownerBrowser) return result('refused', ownerBrowser, { code: 'protected' });
     if (verb !== 'status' && allowed.bundleId && !isSelf(allowed) && computerAppPolicy(allowed.bundleId).ceiling === null) return result('refused', 'that app is never available to agents.', { code: 'denied' });
     if (verb !== 'status' && (deps.writesBlocked ?? (() => killSwitchOn() || isPaused()))()) return result('refused', 'app writes are stopped by KILL or comms pause.', { code: 'writes-blocked' });
     const queue = async (reason: string, code: string): Promise<number> => {
@@ -218,7 +241,7 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
         return row.installed === null ? result('failed', `${row.name} state is unknown: ${unknown}`, { code: 'unknown' })
           : result('done', !row.installed ? 'not installed.' : row.running === null ? `installed; running state is unknown: ${unknown}`
             : row.running ? `running${row.frontmost ? ', frontmost' : ''}.` : 'not running.',
-          { running: row.running ?? undefined, frontmost: row.frontmost ?? undefined });
+          { running: row.running ?? undefined, frontmost: row.frontmost ?? undefined, pid: row.pid ?? undefined, memoryMb: row.memoryMb ?? undefined });
       }
       if (row.installed === false) return result('failed', `${row.name} is not installed on this Mac.`, { code: 'not-installed' });
       if (row.installed === null || !row.bundleId) return result('failed', `cannot find ${row.name}'s bundle id: ${unknown}`, { code: 'unknown' });
@@ -242,6 +265,12 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
     const control = makeControl(verb === 'open' && deps.call === undefined && allowed.bundleId !== null);
     const res: AppControlResult = await control[verb](allowed.bundleId ?? allowed.name);
     if (res.ok) return result('done', res.detail, { running: res.running, frontmost: res.frontmost });
+    // Quit reads the app through Accessibility. When the desktop says that grant is missing, say so
+    // with the one place to turn it on, rather than reporting possible unsaved work.
+    if (verb === 'quit' && deps.call && (res.code === 'unreadable' || res.code === 'failed') && await accessibilityMissing(deps.call)) {
+      return result('needs_permission', `Phantom needs Accessibility permission to quit ${allowed.name} safely. Turn Phantom on in ${ACCESSIBILITY_PANE}, then try again.`,
+        { code: 'needs-permission', permission: { name: 'Accessibility', settingsPath: ACCESSIBILITY_PANE } });
+    }
     if (verb === 'quit' && (res.code === 'unsaved-state' || res.code === 'unreadable')) {
       return queue('The app may have unsaved work. Save or discard in the app first.', res.code);
     }
