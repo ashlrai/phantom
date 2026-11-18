@@ -53,6 +53,7 @@ import { setFeedMutedKinds } from '../verse-ui-store.js';
 import { isFeedItemVisible } from './feed-mute.js';
 import { SharedFeed } from './SharedFeed.js';
 import styles from './feed.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
 const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: signal => apiGet('/api/verse/comms/gmail-triage/archive-plan', signal) };
@@ -184,7 +185,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // The API answered: the Feed is exactly what `phm feed` returns. The rest below is the fallback for an older hub.
   if (sharedReady) return <SharedFeed visible={visible} now={now} openPane={openPane} openJob={openJob} />;
 
-  return <div className={styles.root}>
+  return <div className={`${styles.root} ${compact.view}`}>
     {awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
     <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
