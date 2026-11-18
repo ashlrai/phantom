@@ -5,6 +5,7 @@
  * prints, so the pane decides nothing an agent cannot read.
  */
 import { POOLS_PATH, POOLS_SCHEMA, type PoolRow, type PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+import type { PoolReadingView } from '../../../../core/usage/pool-reading.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -20,6 +21,10 @@ export const fleetPoolsQuery: QueryDef<PoolsViewV1> = {
     if (data?.schema !== POOLS_SCHEMA || !Array.isArray(data.pools)) throw new Error(`Expected ${POOLS_SCHEMA}`);
     return data;
   },
+};
+
+const readingsQuery: QueryDef<{ readings: PoolReadingView[] }> = {
+  key: 'pool-readings', fetch: signal => apiGet('/api/verse/resources/pool/reading', signal),
 };
 
 const localTime = (iso: string | null): string => {
@@ -50,6 +55,9 @@ function PoolItem({ row }: { row: PoolRow }) {
 }
 
 export function FleetPoolsPane({ visible }: PaneProps) {
+  const measured = useQuery(readingsQuery, { enabled: visible, freshMs: 0 });
+  const refreshReadings = useRefetch(readingsQuery);
+  usePollWhileVisible(refreshReadings, 30_000, { enabled: visible });
   const read = useQuery(fleetPoolsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(fleetPoolsQuery);
   usePollWhileVisible(refetch, 30_000, { enabled: visible });
@@ -62,6 +70,11 @@ export function FleetPoolsPane({ visible }: PaneProps) {
       : `${behind === 0 ? 'Nothing is behind' : `${behind} behind`}${unknown ? `, ${unknown} unknown` : ''}.`;
   return <section className={styles.root} aria-label="Pools">
     <p className={styles.headline}>{headline}</p>
+    {measured.status === 'error' ? <p role="status">Measured readings are unavailable.</p> : null}
+    {measured.data?.readings.map(row => <p key={row.pool} className={styles.facts}>
+      {row.pool}: {row.reading ? `${row.reading.pct}% used · age ${row.ageSeconds}s · ${row.reading.src}` : row.error}
+      {` · ${row.stale ? 'stale' : 'fresh'} (stale after 8h)`}
+    </p>)}
     {read.status === 'error' ? <p className={styles.message} role="alert">Could not refresh. Showing the reading from {localTime(view.generatedAt)}.</p> : null}
     <ul className={styles.list}>{view.pools.map(row => <PoolItem key={row.id} row={row} />)}</ul>
     <p className={styles.message}>Bar: used so far. Marker: time elapsed in the window. A bar short of the marker is behind. Same data: <code>phm pools</code>.</p>

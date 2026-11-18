@@ -2119,6 +2119,9 @@ export async function handleVerseApi(
       }
       return (await import('./adoption-api.js')).handleAdoptionApi(ctx, req, res, path, method);
     }
+    if (path === `${VERSE_API_PREFIX}/resources/pool/reading`) {
+      return (await import('./pool-reading-api.js')).handlePoolReadingApi(req, res, ctx);
+    }
     if (path === `${VERSE_API_PREFIX}/resources/credit-pools` || path.startsWith(`${VERSE_API_PREFIX}/resources/credit-pools/`)) {
       // Unknown children of this read-only namespace must not evaluate the
       // legacy mounted modules (including the active cloud scheduler).

@@ -190,6 +190,21 @@ let plannerRunStartedAt: string | null = null;
 
 const TOOLS: NativeToolImpl[] = [
   {
+    name: 'phm_pool_reading_set', description: 'Record measured pool usage. Capture time is automatic; stale after 8h. No launch or spending authority.', safety: 'append',
+    inputSchema: { type: 'object', properties: { pool: { type: 'string' }, pct: { type: 'number', minimum: 0, maximum: 100 },
+      reset_at: { anyOf: [{ type: 'string' }, { type: 'number' }], description: 'Future ISO time or Unix seconds' }, source: { type: 'string', minLength: 1 } },
+      required: ['pool', 'pct', 'reset_at', 'source'], additionalProperties: false },
+    handler: async args => (await import('./usage/pool-reading.js')).setPoolReading(args),
+  },
+  {
+    name: 'phm_pool_reading_show', description: 'Show measured pool readings, age in seconds, and stale after 8h flag.', safety: 'read',
+    inputSchema: { type: 'object', properties: { pool: { type: 'string' } }, additionalProperties: false },
+    handler: async args => {
+      if (Object.keys(args).some(key => key !== 'pool') || (args.pool !== undefined && typeof args.pool !== 'string')) throw new Error('Use only an optional pool');
+      return (await import('./usage/pool-reading.js')).showPoolReadings(args.pool as string | undefined);
+    },
+  },
+  {
     name: 'intent_add',
     description: 'Record a local directive. Tracking does not authorize action.',
     inputSchema: { type: 'object', properties: {

@@ -1202,6 +1202,7 @@
     "src/core/usage/frontier-usage.ts",
     "src/core/usage/live/browser.ts",
     "src/core/usage/live/sites.ts",
+    "src/core/usage/pool-reading.ts",
     "src/core/usage/resource-live/burn-down.ts",
     "src/core/usage/resource-live/cadence.ts",
     "src/core/usage/resource-live/capacity-source.ts",

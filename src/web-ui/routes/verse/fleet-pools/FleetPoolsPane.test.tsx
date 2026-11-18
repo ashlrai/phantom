@@ -74,3 +74,11 @@ it('registers as a fleet pane', () => {
   expect(listPanes().find(pane => pane.id === 'fleet-pools')).toMatchObject({ title: 'Pools', needsSession: false });
   expect(REGISTERED_DOCK_PANE_GROUPS['fleet-pools']).toBe('fleet');
 });
+
+it('shows recorded reading age and the eight-hour stale flag from the typed API', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes(POOLS_PATH) ? view() : {
+    readings: [{ pool: 'ultra', reading: { pct: 25, ts: NOW / 1000 - 28800, reset_at: NOW / 1000 + 86400, src: 'Provider usage page' }, ageSeconds: 28800, stale: true }],
+  })));
+  render(<FleetPoolsPane {...props} />);
+  expect(await screen.findByText('ultra: 25% used · age 28800s · Provider usage page · stale (stale after 8h)')).toBeInTheDocument();
+});
