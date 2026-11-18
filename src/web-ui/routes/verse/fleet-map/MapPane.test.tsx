@@ -1,15 +1,19 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { buildFleetLiveMap, type FleetLiveMap } from '../../../../core/fleet/live-map.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { buildFleetLiveMap, messageLineWidth, type FleetLiveMap } from '../../../../core/fleet/live-map.js';
 import type { NodeRow } from '../../../../core/fleet/nodes-view.js';
 import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { fleetOrgTree } from '../../../../core/fleet/org-tree.js';
 import { projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
+import { buildMapEdges } from '../../../../core/fleet/map-edges.js';
 import type { FleetSessionsV1 } from '../../../../core/fleet/runs-sessions.js';
 import { evictAll } from '../../../data/cache.js';
-import { getPane } from '../panes/pane-registry.js';
+import { MessagesPane } from '../fleet-messages/MessagesPane.js';
+import { showMessagePair } from '../fleet-messages/messages-pair.js';
+import { getPane, type PaneProps } from '../panes/pane-registry.js';
+import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { DETAIL_PANE, MapPane, MapView } from './MapPane.js';
-import { layoutLiveMap, narrowLiveMap } from './map-model.js';
+import { layoutLiveMap, narrowLiveMap, narrowMapEdges, NODE_W } from './map-model.js';
 import './fleet-map.pane.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = new Date(NOW).toISOString();
@@ -28,8 +32,9 @@ function fleet(): FleetLiveMap {
     computers: { schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', reasons: [], nodes: [computer('node-a', [], true), computer('node-b', [])] } });
 }
 
-beforeEach(() => { evictAll(); });
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
+let viewport: ViewportMock | null = null;
+beforeEach(() => { evictAll(); showMessagePair(null); });
+afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it('registers a session-independent Map pane', () => {
   expect(getPane('fleet-map')).toMatchObject({ id: 'fleet-map', title: 'Map', needsSession: false });
@@ -81,9 +86,9 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   fireEvent.click(screen.getByRole('button', { name: /^Open leader/ }));
   expect(openPane).toHaveBeenLastCalledWith('leader-thread');
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
-  expect(String((fetch.mock.calls[0] as unknown[])[0])).toContain('/api/verse/fleet/control/live-map');
+  // One read of the graph and one of its message edges; neither repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect(fetch).toHaveBeenCalledTimes(1);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['live-map', 'map-edges']);
 });
 
 it('reads an unexpected payload as unavailable, and drops edges to nodes it does not have', async () => {
@@ -96,4 +101,100 @@ it('reads an unexpected payload as unavailable, and drops edges to nodes it does
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ schema: 'other' }), { status: 200, headers: { 'content-type': 'application/json' } })));
   render(<MapPane visible host={{ openPane: vi.fn() } as never} />);
   await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Map unavailable'));
+});
+
+/** The `phm map edges` fixtures (test/fleet-map-edges.test.ts), as the pane reads them: the graph and its edges from the same bus rows. */
+type Said = [from: string, to: string, secondsAgo: number, text: string];
+const CHAT: Said[] = [['leader', 'claude', 400, 'please look at the build'], ['claude', 'leader', 300, 'on it'], ['leader', 'claude', 20, 'thanks, next the docs']];
+const JOBS = ['RQ-ONE', 'RQ-TWO', 'RQ-THREE', 'RQ-FOUR', 'RQ-FIVE'];
+const FAN: Said[] = [...JOBS.map((job, i): Said => ['claude', job, 200 + i, `start ${job}`]), ['claude', 'claude-7', 90, 'spare hands']];
+function scene(said: Said[], jobs: string[] = []) {
+  const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
+    envelope: { id: `m${i}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text } } }));
+  const org = fleetOrgMap(null, { now: NOW, minutes: 15, messages: { schema: 'fleet.edges.v1', source: 'available', edges: projectFleetEdges(rows as never, NOW, 15) },
+    sessions: { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: jobs.map(job => (
+      { job, lane: 'claude', repo: 'phantom', model: 'fixture-model', status: 'running', elapsedSeconds: 60, startedAt: '2026-11-17T11:59:00Z', live: 'yes' })) } as unknown as FleetSessionsV1 });
+  return { map: narrowLiveMap(JSON.parse(JSON.stringify(buildFleetLiveMap({ now: NOW, org: { ...org, tree: fleetOrgTree(org) } }))))!,
+    edges: narrowMapEdges(JSON.parse(JSON.stringify(buildMapEdges({ source: 'available', rows: rows as never }, NOW - 15 * 60_000, NOW)))) };
+}
+const lines = (container: HTMLElement) => [...container.querySelectorAll<SVGPathElement>('path[data-kind="messaged-in-last-15-min"]')];
+
+describe.each([['desktop width', 1440], ['390 px', 390]])('message edges on the map at %s', (_name, width) => {
+  function show(said: Said[], jobs?: string[]) {
+    viewport = mockViewport(width);
+    const onOpenMessages = vi.fn();
+    const view = render(<MapView {...scene(said, jobs)} now={NOW} onOpen={() => {}} onOpenMessages={onOpenMessages} />);
+    return { ...view, onOpenMessages, talk: screen.getByRole('region', { name: 'Messages on the map' }) };
+  }
+
+  it('no messages: no message lines and a plain empty note', () => {
+    const { container, talk } = show([]);
+    expect(lines(container)).toHaveLength(0);
+    expect(container.querySelectorAll('[data-open-messages]')).toHaveLength(0);
+    expect(talk.textContent).toBe('No messages between agents in the last 15 minutes.');
+  });
+
+  it('two agents chatting: a line each way, thicker with more messages, pulsing when new, opening the last 20 messages', () => {
+    const { container, talk, onOpenMessages } = show(CHAT);
+    expect(lines(container).map(path => [path.style.strokeWidth, path.getAttribute('data-pulse')])).toEqual([['1.75', null], ['2.25', 'true']]);
+    const rows = within(talk).getAllByRole('button');
+    expect(rows.map(row => row.textContent)).toEqual([
+      'claude → Leader (CEO): 1 in 15 min · last 5 m ago: “on it”', 'Leader (CEO) → claude: 2 in 15 min · last 20 s ago: “thanks, next the docs”']);
+    expect(rows.map(row => row.getAttribute('data-pulse'))).toEqual([null, 'true']);
+    fireEvent.click(rows[1]!);
+    fireEvent.click(container.querySelector('[data-open-messages="messaged-in-last-15-min:lane:claude->leader"]')!);
+    expect(onOpenMessages.mock.calls).toEqual([[['leader', 'claude']], [['claude', 'leader']]]);
+    expect(within(talk).getByText('Select a line to open its last 20 messages.')).toBeTruthy();
+  });
+
+  it('one agent fanning out to five: five lines from the lane to its jobs, grouped in org rows, with off-map agents listed', () => {
+    const { container, talk, onOpenMessages } = show(FAN, JOBS);
+    expect(lines(container)).toHaveLength(5);
+    expect(container.querySelectorAll('[data-open-messages^="messaged-in-last-15-min:lane:claude->job:RQ-"]')).toHaveLength(5);
+    const top = (name: RegExp) => parseFloat(screen.getByRole('button', { name }).style.top);
+    expect(top(/^Open leader/)).toBeLessThan(top(/^Open lane claude:/));
+    for (const job of JOBS) {
+      expect(top(/^Open lane claude:/)).toBeLessThan(top(new RegExp(`^Open job ${job}:`)));
+      expect(within(talk).getByRole('button', { name: new RegExp(`^claude → ${job}: 1 in 15 min · last .* ago: “start ${job}”$`) })).toBeTruthy();
+    }
+    const offMap = within(within(talk).getByRole('list', { name: 'Messages not drawn on the map' })).getByRole('button');
+    expect(offMap.textContent).toBe('claude (lane) → claude-7 (worker): 1, not drawn · last 1 m ago: “spare hands”');
+    fireEvent.click(offMap);
+    expect(onOpenMessages).toHaveBeenLastCalledWith(['claude', 'claude-7']);
+    // Narrow screens scroll the drawing sideways inside its frame; no node is cut off, and the list above needs no scrolling.
+    const canvas = parseFloat(screen.getByRole('button', { name: /^Open leader/ }).parentElement!.style.width);
+    for (const node of container.querySelectorAll<HTMLElement>('button[data-kind]')) expect(parseFloat(node.style.left) + NODE_W).toBeLessThanOrEqual(canvas);
+  });
+});
+
+it('draws lines without last words when the edges read is unknown, and caps thickness', () => {
+  expect([1, 5, 40, null].map(messageLineWidth)).toEqual([1.75, 3.75, 6, 1.75]);
+  expect(narrowMapEdges({ schema: 'fleet.map-edges.v1', version: 1, source: 'unavailable', edges: null })).toBeNull();
+  expect(narrowMapEdges({ schema: 'fleet.map-edges.v1', version: 1, edges: [{ from: { name: 'a' }, to: { name: 'b', role: 'pilot' }, count: 1, lastAt: AT }, { from: {} }] }))
+    .toEqual([{ id: 'a->b', from: { name: 'a', role: 'unknown', lane: null, node: null }, to: { name: 'b', role: 'unknown', lane: null, node: null }, count: 1, lastAt: AT, lastSummary: 'unknown' }]);
+  const onOpenMessages = vi.fn();
+  const { container } = render(<MapView map={scene(CHAT).map} edges={null} now={NOW} onOpen={() => {}} onOpenMessages={onOpenMessages} />);
+  expect(lines(container)).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Leader (CEO) → claude: 2 in 15 min' }));
+  expect(onOpenMessages).toHaveBeenCalledWith(['leader', 'claude']);
+});
+
+it('a message line opens the Messages pane on that pair, read from the typed messages API', async () => {
+  const { map, edges } = scene(CHAT);
+  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, from: { name: 'leader', lane: 'leader' },
+    to: { name: 'claude', lane: 'claude' }, kind: 'status', summary: 'thanks, next the docs', conversation: 'pair:claude|leader', job: null, pr: null }] };
+  const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/map-edges') ? { schema: 'fleet.map-edges.v1', version: 1, edges }
+    : String(input).includes('/agent-bus/messages') ? pairRead : map));
+  vi.stubGlobal('fetch', fetch);
+  const openPane = vi.fn();
+  render(<MapPane visible host={{ openPane } as never} />);
+  fireEvent.click(await screen.findByRole('button', { name: /^Leader \(CEO\) → claude: 2 in 15 min · last/ }));
+  expect(openPane).toHaveBeenLastCalledWith('fleet-messages');
+  render(<MessagesPane {...({ visible: true, host: { openPane } } as unknown as PaneProps)} />);
+  expect(await screen.findByText('leader ↔ claude · last 20 messages')).toBeTruthy();
+  expect(await screen.findByText('thanks, next the docs')).toBeTruthy();
+  expect(fetch.mock.calls.map(call => String(call[0])).find(url => url.includes('/agent-bus/messages'))).toContain('/api/verse/agent-bus/messages?agent=leader&with=claude&limit=20');
+  fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+  await waitFor(() => expect(fetch.mock.calls.map(call => String(call[0])).some(url => url.endsWith('/api/verse/agent-bus/messages?limit=200'))).toBe(true));
+  expect(screen.queryByText('leader ↔ claude · last 20 messages')).toBeNull();
 });

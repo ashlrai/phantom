@@ -70,6 +70,7 @@ imports, individual files, semantics or contract coverage.
 - `src/mcp/`
 - `src/planning/`
 - `src/raycast/`
+- `src/shared/`
 - `src/tui/`
 - `src/web-ui/`
 <!-- codemap:src:end -->

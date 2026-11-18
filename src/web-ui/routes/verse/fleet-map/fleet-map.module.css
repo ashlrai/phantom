@@ -8,6 +8,7 @@
 .edge[data-kind='runs-on'] { stroke-dasharray: 4 3; }
 .edge[data-kind='uses-resource'] { stroke-dasharray: 1 3; stroke-linecap: round; }
 .edge[data-kind='messaged-in-last-15-min'] { stroke: var(--accent-500); stroke-width: 1.75; }
+.hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
 .edge[data-pulse='true'] { stroke-width: 2.5; stroke-dasharray: 6 6; animation: pulse 1s linear infinite; }
 @keyframes pulse { to { stroke-dashoffset: -12; } }
 .node { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: var(--space-1) var(--space-2); overflow: hidden;
@@ -28,6 +29,8 @@
 .swatch[data-kind='messaged-in-last-15-min'] { border-top-color: var(--accent-500); }
 .swatch[data-pulse='true'] { border-top-width: 3px; }
 .talk, .gaps { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.talk li[data-pulse='true'] { font-weight: 600; }
+.talk button { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.talk button:hover, .talk button:focus-visible { color: var(--accent-500); }
+.talk [data-pulse='true'] { font-weight: 600; }
 .gaps { color: var(--text-secondary); }
 @media (prefers-reduced-motion: reduce) { .edge[data-pulse='true'] { animation: none; } }

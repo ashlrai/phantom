@@ -4,6 +4,10 @@ export interface FleetEdgeEndpoint { address: string; provider: string | null }
 export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
 export interface FleetEdges { schema: 'fleet.edges.v1'; source: 'available' | 'missing' | 'unavailable'; edges: FleetEdge[] | null }
 
+/** One agent wrote to another: not a note to self, a broadcast to `leaders`, a person or an outside channel. */
+export const agentToAgent = (envelope: BusInboxReceipt['envelope']): boolean =>
+  !(envelope.from === envelope.to || envelope.to === 'leaders' || envelope.sender?.human || envelope.external);
+
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
 export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number): FleetEdge[] {
   if (windowMinutes !== undefined) {
@@ -19,7 +23,7 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), win
   }
   const providerFor = (address: string) => { const names = providers.get(address); return names?.size === 1 ? [...names][0]! : null; };
   for (const { envelope, receivedAt } of rows) {
-    if (envelope.from === envelope.to || envelope.to === 'leaders' || envelope.sender?.human || envelope.external) continue;
+    if (!agentToAgent(envelope)) continue;
     const provider = providerFor(envelope.from);
     const key = JSON.stringify([envelope.from, envelope.to, provider]);
     const edge = edges.get(key);

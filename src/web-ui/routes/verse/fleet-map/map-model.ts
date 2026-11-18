@@ -1,8 +1,10 @@
 /**
  * The Map pane's read and 2D layout. The read is GET /api/verse/fleet/control/live-map,
  * the same fleet.live-map.v1 graph `phm map --json` prints; the layout is pure.
+ * The message lines' last words come from GET /api/verse/fleet/control/map-edges (`phm map edges --json`).
  */
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
+import type { MapEdge, MapEdgeAgent, MapEdgeRole } from '../../../../core/fleet/map-edges.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
@@ -56,6 +58,25 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
 export const liveMapQuery: QueryDef<FleetLiveMap | null> = {
   key: 'verse-fleet-live-map',
   fetch: async signal => narrowLiveMap(await apiGet<unknown>(LIVE_MAP_API, signal)),
+};
+
+const ROLES: readonly MapEdgeRole[] = ['leader', 'lane', 'worker'];
+/** The edges of a fleet.map-edges.v1 read, malformed rows dropped. Null when the read is something else or the bus is unknown. */
+export function narrowMapEdges(raw: unknown): MapEdge[] | null {
+  if (!object(raw) || raw.schema !== 'fleet.map-edges.v1' || raw.version !== 1 || !Array.isArray(raw.edges)) return null;
+  const agent = (v: unknown): MapEdgeAgent | null => object(v) && text(v.name)
+    ? { name: text(v.name)!, role: ROLES.find(role => role === v.role) ?? 'unknown', lane: text(v.lane), node: text(v.node) } : null;
+  return raw.edges.slice(0, MAX_EDGES).flatMap(row => {
+    const from = object(row) ? agent(row.from) : null, to = object(row) ? agent(row.to) : null;
+    const lastAt = object(row) ? text(row.lastAt) : null, n = object(row) ? count(row.count) : null;
+    if (!object(row) || !from || !to || !lastAt || !Number.isFinite(Date.parse(lastAt)) || n === null) return [];
+    return [{ id: `${from.name}->${to.name}`, from, to, count: n, lastAt, lastSummary: (text(row.lastSummary) ?? 'unknown').slice(0, 80) }];
+  });
+}
+export const MAP_EDGES_API = '/api/verse/fleet/control/map-edges';
+export const mapEdgesQuery: QueryDef<MapEdge[] | null> = {
+  key: 'verse-fleet-map-edges',
+  fetch: async signal => narrowMapEdges(await apiGet<unknown>(MAP_EDGES_API, signal)),
 };
 
 export const NODE_W = 140, NODE_H = 52;
