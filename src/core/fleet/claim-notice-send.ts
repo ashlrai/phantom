@@ -256,7 +256,8 @@ export function readClaimNoticeSent(sentPath: string): Set<string> | null {
 }
 
 /** claimId+repo → thread bindings, last row wins per pair so a corrected
- * binding supersedes rather than colliding. Invalid rows are skipped.
+ * binding supersedes rather than colliding. Any invalid nonblank row makes the
+ * entire file unavailable; a partial set could lose a pending transition.
  * `null` = the durable file exists but cannot be trusted (over the byte or
  * distinct-row budget, or present yet unopenable: a directory, symlink or
  * unreadable file). A genuinely ABSENT or empty file is a known-empty set
@@ -275,11 +276,11 @@ export function readClaimThreadBindingsState(bindingsPath: string): ClaimThreadB
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as Record<string, unknown>;
-      if (row.v !== 1 || !bounded(row.claimId, 128) || !bounded(row.repo, 256)
+      const row: unknown = JSON.parse(line);
+      if (!record(row) || row.v !== 1 || !bounded(row.claimId, 128) || !bounded(row.repo, 256)
         || !bounded(row.threadKey, 256)
         || (row.pr !== undefined && !(Number.isSafeInteger(row.pr) && (row.pr as number) >= 0))
-        || (row.head !== undefined && !bounded(row.head, 128))) continue;
+        || (row.head !== undefined && !bounded(row.head, 128))) return null;
       const binding: ClaimThreadBinding = {
         claimId: row.claimId, repo: row.repo, threadKey: row.threadKey,
         ...(row.pr !== undefined ? { pr: row.pr as number } : {}),
@@ -287,7 +288,7 @@ export function readClaimThreadBindingsState(bindingsPath: string): ClaimThreadB
       };
       bindings.set(JSON.stringify([binding.claimId, binding.repo]), binding);
       if (bindings.size > SNAPSHOT_MAX_ROWS) return null;
-    } catch { /* skip a torn line */ }
+    } catch { return null; }
   }
   return [...bindings.values()];
 }

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { appendClaimNoticeSent, readClaimNoticeSent, readClaimThreadBindings,
+import { appendClaimNoticeSent, readClaimNoticeSent, readClaimThreadBindings, readClaimThreadBindingsState,
   runClaimNoticePass, CLAIM_NOTICE_SENT_MAX_KEYS,
   type ClaimNoticeSendDeps } from '../src/core/fleet/claim-notice-send.js';
 import type { ClaimThreadBinding, ClaimThreadSnapshot } from '../src/core/fleet/claim-thread-notice.js';
@@ -16,6 +16,7 @@ const binding: ClaimThreadBinding = { claimId: claim.id, repo: claim.repo,
 const board = (over: Partial<FleetBoard> = {}): FleetBoard =>
   ({ schema: 'fleet.coordination.v1', state: 'known', claims: [], messages: [], proposals: [], expiredClaims: 0, ...over });
 const emptyPrev = (): ClaimThreadSnapshot => ({ state: 'known', claims: [], messages: [], asOf: now - 60_000 });
+const assignmentKey = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]);
 
 function fakeDeps(over: Partial<ClaimNoticeSendDeps> = {}) {
   const sent = new Set<string>();
@@ -59,7 +60,7 @@ describe('claim notice send pass', () => {
     expect(first.sent).toBe(1);
     expect(calls.sends).toHaveLength(1);
     expect(calls.sends[0]).toMatchObject({ threadKey: binding.threadKey,
-      dedupeKey: JSON.stringify(['ASSIGNED', claim.id, binding.head]) });
+      dedupeKey: assignmentKey });
     expect(calls.sends[0]!.text).toContain('ASSIGNED');
     expect(calls.sends[0]!.text).toContain(claim.id);
     expect(calls.appends).toEqual([calls.sends[0]!.dedupeKey]);
@@ -99,7 +100,7 @@ describe('claim notice send pass', () => {
     // deterministic id makes this retry a duplicate rather than a second post.
     const retried = await runClaimNoticePass(deps);
     expect(retried.deliveries.map(d => [d.result, d.dedupeKey])).toEqual(
-      [['sent', JSON.stringify(['ASSIGNED', claim.id, binding.head])]]);
+      [['sent', assignmentKey]]);
     const again = await runClaimNoticePass(deps);
     expect(again.planned).toBe(0);
     expect(calls.appends).toHaveLength(1);
@@ -107,9 +108,20 @@ describe('claim notice send pass', () => {
 
   it('fences an already-delivered notice without sending again', async () => {
     const { deps, calls, sent } = fakeDeps();
-    sent.add(JSON.stringify(['ASSIGNED', claim.id, binding.head]));
+    sent.add(assignmentKey);
     const result = await runClaimNoticePass(deps);
     expect(result).toMatchObject({ status: 'completed', sent: 0, skipped: 1 });
+    expect(calls.sends).toHaveLength(0);
+    expect(calls.writes).toHaveLength(1);
+  });
+
+  it('keeps historical assignment keys fenced without fresh acquisition evidence', async () => {
+    const { deps, calls, sent } = fakeDeps({
+      readPrevSnapshot: () => ({ ...emptyPrev(), asOf: claim.claimedAt }),
+    });
+    sent.add(JSON.stringify(['ASSIGNED', claim.id, binding.head]));
+    const result = await runClaimNoticePass(deps);
+    expect(result).toMatchObject({ status: 'completed', planned: 1, sent: 0, skipped: 1 });
     expect(calls.sends).toHaveLength(0);
     expect(calls.writes).toHaveLength(1);
   });
@@ -177,14 +189,18 @@ describe('claim notice file state', () => {
     expect(sent.has(`key-${CLAIM_NOTICE_SENT_MAX_KEYS + 4}`)).toBe(true);
   });
 
-  it('reads thread bindings last-wins and skips torn rows', () => {
+  it('reads thread bindings last-wins only after damaged rows are repaired', () => {
     mkdir();
-    writeFileSync(paths.bindings, [
-      '{not json',
+    const validRows = [
       JSON.stringify({ v: 1, claimId: claim.id, repo: claim.repo, threadKey: binding.threadKey }),
       JSON.stringify({ v: 1, claimId: claim.id, repo: claim.repo, threadKey: 'T000FAKE/C000FAKE/1700000000.000009' }),
-      JSON.stringify({ v: 1, claimId: '', repo: claim.repo, threadKey: binding.threadKey }),
-    ].join('\n') + '\n', { mode: 0o600 });
+    ].join('\n') + '\n';
+    for (const damaged of ['{not json', JSON.stringify({ v: 1, claimId: '', repo: claim.repo, threadKey: binding.threadKey })]) {
+      writeFileSync(paths.bindings, `${validRows}${damaged}\n`, { mode: 0o600 });
+      expect(readClaimThreadBindingsState(paths.bindings)).toBeNull();
+      expect(readClaimThreadBindings(paths.bindings)).toEqual([]);
+    }
+    writeFileSync(paths.bindings, validRows, { mode: 0o600 });
     expect(readClaimThreadBindings(paths.bindings)).toEqual([
       { claimId: claim.id, repo: claim.repo, threadKey: 'T000FAKE/C000FAKE/1700000000.000009' },
     ]);

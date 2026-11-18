@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetClaimBind } from '../src/cli/fleet-claim-bind.js';
 import { claimNoticePassDeps } from '../src/cli/fleet-claim-notices.js';
-import { claimNoticePaths, readClaimThreadBindings, runClaimNoticePass } from '../src/core/fleet/claim-notice-send.js';
+import { claimNoticePaths, readClaimThreadBindings, readClaimThreadBindingsState,
+  runClaimNoticePass } from '../src/core/fleet/claim-notice-send.js';
 import { appendClaimThreadBinding, validateClaimThreadKey,
   CLAIM_THREAD_BINDINGS_MAX_PAIRS } from '../src/core/fleet/claim-thread-binding-write.js';
 import type { FleetBoard } from '../src/core/fleet/coordination.js';
@@ -96,11 +97,19 @@ describe('fleet claim-bind (443c)', () => {
       .toEqual({ ok: false, kind: 'refused', reason: 'bindings-over-budget' });
   });
 
-  it('starts a fresh line after a torn trailing row', () => {
+  it('starts a fresh line after a torn trailing row and requires repair before reading bindings', () => {
     appendClaimThreadBinding(bindings(), { claimId: 'seed', repo: 'acme/app', threadKey: colonThread }, now);
-    writeFileSync(bindings(), '{"v":1,"claimId":"torn', { mode: 0o600 });
+    const torn = '{"v":1,"claimId":"torn';
+    writeFileSync(bindings(), torn, { mode: 0o600 });
     expect(appendClaimThreadBinding(bindings(), { claimId: 'c1', repo: 'acme/app', threadKey: colonThread }, now))
       .toMatchObject({ ok: true, status: 'bound' });
+    const raw = readFileSync(bindings(), 'utf8');
+    expect(raw.startsWith(`${torn}\n`)).toBe(true);
+    const recovered = raw.slice(torn.length + 1);
+    expect(JSON.parse(recovered)).toEqual({ v: 1, claimId: 'c1', repo: 'acme/app', threadKey: colonThread, at: now });
+    expect(readClaimThreadBindingsState(bindings())).toBeNull();
+    expect(readClaimThreadBindings(bindings())).toEqual([]);
+    writeFileSync(bindings(), recovered, { mode: 0o600 });
     expect(readClaimThreadBindings(bindings())).toEqual([{ claimId: 'c1', repo: 'acme/app', threadKey: colonThread }]);
   });
 
