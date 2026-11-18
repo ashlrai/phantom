@@ -530,6 +530,14 @@ observation time (`observedAt`, both epoch milliseconds) and cumulative `stateMs
 at successful reads: intervals belong to the preceding observed state, not
 exact GitHub transition times. New heads, failed reads and backward clocks
 reset the timing window; closed PRs are removed. Dry runs report without saving.
+The same typed report includes `blockers` (`conflict`, `stale`, `checks`,
+`review`) and sampled `blockerMs`, even for `queued` or `owned` PRs. These
+durations overlap: pending checks and a stale branch can occupy the same
+interval, so never add them to obtain total wait. Blockers start at zero in
+each timing window; old state files start measuring on their next successful read.
+`checks` reflects the reported head check rollup, not merge-group check results.
+`stale` means GitHub reports BEHIND, not that a queued PR needs rebasing.
+These observations do not alter recut, retry, ownership or required-check gates.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
