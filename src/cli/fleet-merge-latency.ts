@@ -162,6 +162,7 @@ function prStages(events: MergeEvent[]): PrStages {
 
 /** Recorded transitions are observations, not permission to merge. */
 export interface QueueTimeline {
+  queue_observed: boolean;
   status: MergeQueueStatus;
   /** Readiness to observation time for open PRs; null after merge or lost readiness. */
   ready_wait_s: number | null;
@@ -299,6 +300,7 @@ function timeline(events: MergeEvent[], now: number): QueueTimeline {
     unrelated_failures: failures.filter(e => e.required === false).length,
     unknown_failures: failures.filter(e => e.required === undefined).length } : null;
   return { repo: events[0]!.repo, pr: events[0]!.pr, enqueued_at, eligible_at, merged_at, blocked,
+    queue_observed: events.some(e => e.type === 'queued'),
     status: mergeQueueStatus(events, now), ready_wait_s: readyValid && !terminal ? gap(Date.parse(eligible_at!), now) : null,
     wait_by_reason_s: measurable ? wait : null, checks,
     current_dwell_s: enqueued_at && !events.some(e => e.type === 'merged' || e.type === 'closed')
