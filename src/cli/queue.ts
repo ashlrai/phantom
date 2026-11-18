@@ -6,6 +6,7 @@ import { estimateQueueStats } from '../core/queue/stats.js';
 const HELP = `Usage: phm queue [--json]
        phm queue top <id> | lane <id> <lane> | drop <id> [--dry-run] [--json]
        phm queue stuck [--json]
+       phm queue wait [--events <file>] [--json]
        phm queue batches [--runs <directory>] [--json]
        phm queue stats [--json] [--window <seconds>]
        phm queue yield [--since 24h] [--json]
@@ -110,6 +111,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   }
   if (command === 'top' || command === 'lane' || command === 'drop') return (await import('./queue-order.js')).cmdQueueOrder([command, ...args.filter((_, i) => i !== commandIndex)]);
   if (command === 'yield') return (await import('./queue-yield.js')).cmdQueueYield(args.slice(args.indexOf('yield') + 1));
+  if (command === 'wait') return (await import('./queue-wait.js')).cmdQueueWait(args.filter((_, i) => i !== commandIndex));
   if (command === 'batches') return (await import('./queue-batches.js')).cmdQueueBatches(args.filter((_, i) => i !== commandIndex));
   if (command === 'coalesce') return (await import('./queue-coalesce.js')).cmdQueueCoalesce(args.slice(args.indexOf('coalesce') + 1));
   if (command === 'supersede') return (await import('./queue-supersede.js')).cmdQueueSupersede(args.slice(args.indexOf('supersede') + 1));

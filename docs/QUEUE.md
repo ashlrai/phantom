@@ -910,3 +910,16 @@ limits; check `sources` for missing or degraded evidence. Unavailable health
 counts are `null`; a readable empty source counts as zero. Lane filters omit
 unattributed repeat details; health counts remain global. Nothing is unparked,
 restocked or changed by reading the report.
+
+## Why a PR is waiting
+
+Run `phm queue wait --json` for the oldest recorded queued PR and its current wait
+reason. Omit `--json` for plain words. It reads the local merge-event ledger;
+`--events <file>` selects another [merge-event ledger](FLEET-MERGE-LATENCY.md).
+The typed `queue.wait.v1` report contains `state` (`queued`, `empty`, `unknown`)
+and `oldestQueued` (repo, PR number, enqueue time, seconds waiting, reason and
+reason start time), or null. Merged and closed PRs have no current wait. Missing,
+invalid or repeated enqueue evidence leaves the oldest unknown; conflicting
+blocker observations leave the reason unknown. Exit codes: 0 known, 1 unknown,
+2 invalid arguments. This reads recorded evidence, not live GitHub state, and
+does not populate the ledger. Required checks and merge-queue rules stay enforced.
