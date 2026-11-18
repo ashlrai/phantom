@@ -75,6 +75,15 @@ describe('per-line batch session evidence', () => {
     }
   });
 
+  it('accepts the already-merged admission reason without degrading ranking to unknown', async () => {
+    const root = await fixture(), runs = join(root, '.ashlr-runs'), path = join(runs, 'queue', 'ranking.json');
+    await mkdir(join(runs, 'queue'), { recursive: true });
+    const ranking = { at: Date.now() / 1000, decisions: [{ job: 'RQ-A', mergeRate: null, sampledLaunches: 0,
+      unknownLaunches: 1, score: 1, reason: 'already-merged', outcome: 'DONE-NOOP' }] };
+    await writeFile(path, JSON.stringify(ranking));
+    expect((await readQueueBatches(runs)).ranking).toEqual(ranking);
+  });
+
   it('reports 12 outcomes in 3 sessions, isolates failure and preserves empty reasons and auto-merge evidence', async () => {
     const root = await fixture();
     for (const area of ['queue', 'agents', 'fleet']) {
