@@ -167,6 +167,25 @@ describe('fleet runs api', () => {
   });
 });
 
+describe('drift route (Home Running build line)', () => {
+  const DRIFT = '/api/verse/fleet/runs/drift';
+  const report = { schema: 'phantom.self-drift.v1', version: 1, behindReleases: 2, line: '2 releases behind, 0 fleet features not live yet' };
+  it('serves the phm self drift report, reads at most once per 10 minutes, retries after a failure and is GET only', async () => {
+    let tick = NOW;
+    const read = vi.fn().mockRejectedValueOnce(new Error('/private/path')).mockResolvedValue(report);
+    const api = createFleetRunsApi(deps({ now: () => tick, readDrift: read }));
+    expect(await request(api, { path: DRIFT })).toMatchObject({ status: 503, wire: { code: 'DRIFT_UNAVAILABLE' } });
+    expect(await request(api, { path: DRIFT })).toMatchObject({ handled: true, status: 200, wire: report });
+    tick += 300_000;
+    await request(api, { path: DRIFT });
+    expect(read).toHaveBeenCalledTimes(2);
+    tick += 301_000;
+    await request(api, { path: DRIFT });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect((await request(api, { path: DRIFT, method: 'POST', body: {} })).status).toBe(405);
+  });
+});
+
 describe('worktrees route (Home Disk card)', () => {
   const WORKTREES = '/api/verse/fleet/runs/worktrees';
   const report = { schema: 'worktrees.v1', counts: { total: 3, safe: 1 }, rows: [] };
