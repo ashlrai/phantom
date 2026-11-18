@@ -129,6 +129,21 @@ describe('managed consumer upgrade',()=> {
     if(kind==='current'){fs.unlinkSync(f.current);fs.symlinkSync(f.home,f.current);}
     expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:kind==='missing'?'not-installed':kind==='links'?'unmanaged-links':'unmanaged-current'});
   });
+  it('preserves shared install guard reasons during inspection',async()=> {
+    const f=fixture();fs.chmodSync(join(f.home,'.local/share'),0o755);
+    expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'unsafe-local-path'});
+    expect(f.deps.residentStop).not.toHaveBeenCalled();
+  });
+  it('preserves shared install guard reasons during apply',async()=> {
+    const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);
+    fs.chmodSync(join(f.home,'.local/share'),0o755);
+    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'unsafe-local-path'});
+    expect(f.deps.residentStop).not.toHaveBeenCalled();
+  });
+  it('keeps unexpected inspection errors generic',async()=> {
+    const f=fixture();vi.mocked(f.deps.transaction).mockRejectedValue(new Error('unexpected transaction error'));
+    expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'inspection-unavailable'});
+  });
   it('removes only its newly created release when pre-switch smoke fails',async()=> {
     const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);vi.mocked(f.deps.smokeVersion).mockResolvedValue(null);
     expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'smoke-failed'});

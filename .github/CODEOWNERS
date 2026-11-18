@@ -1261,6 +1261,7 @@
 /test/send-policy-recut2.test.ts @masonwyatt23
 /test/send-policy.test.ts @masonwyatt23
 /test/skill-library-wire-31.test.ts @masonwyatt23
+/test/slack-notice-policy-recovery-574s.test.ts @masonwyatt23
 /test/spend-budget.test.ts @masonwyatt23
 /test/stale-git-locks.test.ts @masonwyatt23
 /test/standing-merge-pass-310b.test.ts @masonwyatt23

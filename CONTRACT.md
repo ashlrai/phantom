@@ -105,8 +105,9 @@ for explicit rollback. Neither mode replaces the native app, grants authority,
 or restarts the resident. `cmdDesktop` accepts optional upgrade dependencies as
 its fifth parameter; `parseDesktopInstallArgs` preserves `{apply}` for plain
 install and adds `mode`, `requireApp` and optional `to` for upgrade/rollback.
-The install module also exports its existing `directory`, `parents`, `owned`,
-`regular`, `write`, `sha`, `ioRead` and `packageReady` guards for shared use.
+The install module also exports `ConsumerInstallHeld` for shared error
+classification and the `directory`, `parents`, `owned`, `regular`, `write`,
+`sha`, `ioRead` and `packageReady` guards.
 
 # Lane allowance evidence
 
