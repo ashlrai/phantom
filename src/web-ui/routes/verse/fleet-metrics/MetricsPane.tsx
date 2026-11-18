@@ -6,6 +6,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { MetricsGlance } from './MetricsGlance.js';
 
 const query: QueryDef<MetricsPanel> = { key: 'fleet-metrics-panel', fetch: signal => apiGet('/api/verse/fleet/runs/metrics', signal) };
 export function MetricsPane({ visible }: PaneProps) {
@@ -20,7 +21,10 @@ export function MetricsPane({ visible }: PaneProps) {
     points: hours.map(hour => ({ x: Date.parse(hour.start), y: hour.merged === null ? null : hour.byRepo[repo] ?? 0 })) })) :
     [{ id: 'all', label: 'All repos', points: hours.map(hour => ({ x: Date.parse(hour.start), y: hour.merged })) }];
   const hourLabel = (stamp: string) => new Date(stamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const capacity = Object.fromEntries((data?.lanes ?? []).map(row => [row.lane, `${row.running ?? 'unknown'} / ${row.target ?? 'unknown'}`]));
   return <section aria-label="Metrics"><h2>Metrics</h2>
+    {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : null}
+    <MetricsGlance report={data?.glance} capacity={capacity} />
     <p>Merged PRs: {history?.mergesLastHour ?? 'unknown'} in the last hour · {history?.mergesLast24h ?? 'unknown'} in the last 24 hours.</p>
     <p>Updated: {history?.observedAt ? hourLabel(history.observedAt) : 'unknown'}.</p>
     {history?.known && history.malformedLines > 0 ? <p>Merge history skipped {history.malformedLines} malformed lines.</p> : null}
@@ -38,11 +42,6 @@ export function MetricsPane({ visible }: PaneProps) {
       <LineChart series={[{ id: 'yield', label: 'PRs per launch', points: hours.map(hour => ({ x: Date.parse(hour.start), y: hour.mergesPerLaunch })) }]}
         height={160} formatY={value => value.toFixed(2)} ariaLabel="Merged PRs per launch by hour" />
     </ChartContainer>
-    <h3>By lane</h3>
-    <p>Jobs launched in the last 24 hours. Updated: {data?.observedAt ?? 'unknown'}.</p>
-    {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : data.lanes.length === 0 ? <p>Lane measurements: unknown</p> :
-      <table><thead><tr><th>Lane</th><th>PRs merged per hour</th><th>Median open to merge (seconds)</th><th>Empty rate</th><th>Running / target</th></tr></thead>
-        <tbody>{data.lanes.map(row => <tr key={row.lane}><td>{row.lane}</td><td>{row.mergesPerHour === null ? 'unknown' : row.mergesPerHour.toFixed(2)}</td><td>{row.medianOpenToMergeSeconds ?? 'unknown'}</td><td>{row.emptyRate === null ? 'unknown' : `${(row.emptyRate * 100).toFixed(1)}%`}</td><td>{row.running ?? 'unknown'} / {row.target ?? 'unknown'}</td></tr>)}</tbody></table>}
     <h3>Jobs by generator</h3>
     <p>Last 24 hours. Empty rate uses jobs with a recorded empty result. Tokens per merged PR includes all jobs in the group.</p>
     {!data?.generatorYield?.known ? <p>Generator measurements: unknown</p> : <>
