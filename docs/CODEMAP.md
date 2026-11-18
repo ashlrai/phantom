@@ -140,6 +140,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/mcp/`
 - `src/core/memory/`
 - `src/core/metrics/`
+- `src/core/mobile/`
 - `src/core/nodes/`
 - `src/core/observability/`
 - `src/core/observe/`

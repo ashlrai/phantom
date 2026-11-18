@@ -8,7 +8,7 @@
  * ~220 KB of that. The glance (HomeGlance.tsx) is a preloaded chunk: its download starts when this module
  * evaluates, in parallel with the session probe, and it renders synchronously
  * once in. On a warm launch (service worker cache) that is the same frame.
- * Everything below the title is `phm home --json`: what needs you, four numbers and a message box.
+ * Everything below the title is HomeGlance's four parts: fleet health, approvals, a message box and what shipped today.
  */
 import { PRODUCT_NAME } from '../../../../app/product-brand.js';
 import { Suspense } from 'react';
@@ -16,21 +16,13 @@ import { preloadedLazy } from '../../shell/preloaded.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { PlusGlyph } from '../mobile-icons.js';
 import { Button, Screen, SkeletonList } from '../ui.js';
-import styles from './HomeScreen.module.css';
 
 const loadBody = () => import('./HomeGlance.js');
 const Body = preloadedLazy<object>(() => loadBody().then((m) => m.HomeGlance));
 
-/** The cards' shape, drawn until they arrive. */
+/** Drawn until the four parts arrive. */
 export function HomeSkeleton() {
-  return (
-    <div aria-busy="true" aria-label="Loading Home">
-      <div className={styles.tiles} aria-hidden="true">
-        {[0, 1, 2, 3].map((i) => <div key={i} className={`${styles.stat} ${styles.tile} skeleton`} />)}
-      </div>
-      <SkeletonList rows={2} label="Loading Home" />
-    </div>
-  );
+  return <SkeletonList rows={4} label="Loading Home" />;
 }
 
 export function HomeScreen() {

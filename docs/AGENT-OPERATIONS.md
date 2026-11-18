@@ -967,8 +967,20 @@ resource most at risk of going unused, the last 5 work-log items and unread
 Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
 with the one-word answers each takes. `phm home --json` prints schema `home.v1`
 (the `schema` field is the version): each field is `{state:"ok",value}` or
-`{state:"unknown",reason}`. It is read-only. The desktop app and the phone's
-first screen show this summary and nothing else.
+`{state:"unknown",reason}`. It is read-only. The desktop app's Home shows this
+summary. The phone's first screen shows exactly four things, top to bottom: one
+line of fleet health from this summary (merges in the last hour, lanes running,
+main green or red), approvals as one-tap buttons (`phm approvals`), a message
+box that posts to the fleet inbox, and what shipped in the last 24 hours
+(`phm shipped --since 1d`).
+
+`phm mobile check` renders every registered desktop view 390 px wide in the web
+UI's test renderer and reports, per view, content wider than the screen, tap
+targets under 44 px and text under 12 px, worst view first.
+`phm mobile check --json` prints schema `mobile.check.v1` with a `version`
+field. It needs a source checkout; anywhere else, and for any size no stylesheet
+rule states, it says unknown. It exits 1 on measured failures and 3 when a size
+is unknown or the views could not be rendered.
 
 `phm asks` lists what only Mason can do: a password, a 2FA code, a device
 approval or a payment. Each row has a short id, the kind, its age and one plain

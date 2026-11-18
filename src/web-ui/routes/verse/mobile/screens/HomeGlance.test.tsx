@@ -1,52 +1,65 @@
-/** The phone's Home on fixture `phm home` and `phm approvals` payloads: quiet, busy, red main, approvals, unknown; 390 px and 768 px. */
+/** The phone's Home on fixture `phm home`, `phm approvals` and `phm shipped` payloads: empty, normal, red main, approvals, unknown; measured at 390 px. */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ShippedReport } from '../../../../../core/release/shipped.js';
 import { clearMutationToken, setMutationToken } from '../../../../data/auth-store.js';
 import { evictAll } from '../../../../data/cache.js';
 import { resetGuard } from '../../shell/guard-store.js';
+import { mockViewport } from '../../shell/viewport.test-support.js';
 import { APPROVALS_PATH } from '../../home/ApprovalsCard.js';
+import { SHIPPED_PATH } from '../../home/ShippedCard.js';
+import { INTERJECT_POST_PATH } from '../../fleet/interject-request.js';
 import { approvalsList, homeSummary, type HomeFixture } from '../home.test-support.js';
+import { checkView } from '../mobile-check.test-support.js';
 import { json, permissionsFor, renderMobile, stubFetch, TOKEN } from '../mobile.test-support.js';
-import { APPROVALS_SHOWN, HomeGlance, HOME_PATH, mainTile, runningTile } from './HomeGlance.js';
+import { ui } from '../ui.js';
+import { APPROVALS_SHOWN, healthLine, HomeGlance, HOME_PATH } from './HomeGlance.js';
 
 const ANSWER = `POST ${APPROVALS_PATH}/answer`;
 const INBOX = { 'GET /api/verse/fleet/runs': { inbox: [] }, 'GET /api/verse/fleet/runs/inbox': { sourceState: 'healthy', entries: [] } };
-const mac = (kind: HomeFixture, more: Record<string, unknown> = {}) => stubFetch({ [`GET ${HOME_PATH}`]: homeSummary(kind), [`GET ${APPROVALS_PATH}`]: approvalsList(kind), ...INBOX, ...more });
-const tile = (label: string) => screen.getByRole('button', { name: new RegExp(label) });
+const shipped = (total: number | null): ShippedReport => ({
+  schema: 'shipped.v1', version: 1, generatedAt: '2026-11-17T12:00:00.000Z', since: '2026-11-16T12:00:00.000Z', days: 1,
+  source: total === null ? 'unknown' : 'ok', note: total === null ? 'No git history could be read here.' : null, total, maintenance: total === null ? null : 0,
+  areas: total ? [{ id: 'desktop', label: 'Desktop app', count: total, lines: [{ text: 'Add a phone Home.', number: 12, mergedAt: '2026-11-17T10:00:00.000Z' }] }] : [],
+});
+const mac = (kind: HomeFixture, more: Record<string, unknown> = {}) => stubFetch({
+  [`GET ${HOME_PATH}`]: homeSummary(kind), [`GET ${APPROVALS_PATH}`]: approvalsList(kind),
+  [`GET ${SHIPPED_PATH}`]: shipped(kind === 'unknown' ? null : kind === 'quiet' ? 0 : 3), ...INBOX, ...more });
+const health = () => screen.findByRole('status', { name: 'Fleet health' });
 
 afterEach(() => { evictAll(); resetGuard(); clearMutationToken(); vi.unstubAllGlobals(); });
 
 describe('phone Home', () => {
-  it('quiet fleet: plain zeros, every main green, nothing needs you, and a box for the leader', async () => {
-    const fetches = mac('quiet');
-    renderMobile(<HomeGlance />);
-    expect(await screen.findByText('Nothing needs you.')).toBeInTheDocument();
-    expect(tile('Running now')).toHaveTextContent('0Running nowof 8 wanted');
-    expect(tile('Merged, last hour')).toHaveTextContent(/^0Merged/);
-    expect(tile('Merged, 24 hours')).toHaveTextContent(/^0Merged/);
-    expect(tile('Mains green')).toHaveTextContent('2 of 2Mains greenEvery main is green');
-    expect(screen.queryByRole('region', { name: 'Approvals' })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Message to the leaders')).toBeInTheDocument();
-    // One read feeds the numbers and one the approvals; the only other read is the message box's own inbox.
-    expect([...new Set(fetches.calls.map((call) => call.url.split('?')[0]))].filter((url) => !url!.includes('/inbox') && url !== '/api/verse/fleet/runs').sort()).toEqual([APPROVALS_PATH, HOME_PATH].sort());
+  it.each([
+    ['empty', 'quiet', '0 merged in the last hour · 0 lanes running · main green', 'ok', 'Nothing merged in the last 24 hours.'],
+    ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', '3 changes in the last 24 hours.'],
+    ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', '3 changes in the last 24 hours.'],
+  ] as const)('%s at 390 px: exactly four parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
+    const viewport = mockViewport(390);
+    const fetches = mac(kind);
+    const { container } = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
+    expect(await health()).toHaveTextContent(line);
+    expect(await health()).toHaveAttribute('data-tone', tone);
+    const today = within(await screen.findByRole('region', { name: 'Shipped today' }));
+    expect(today.getByText(shippedLine)).toBeInTheDocument();
+    // Top to bottom: health, approvals (or their empty note), the message box, what shipped today.
+    const parts = [await health(), screen.getByText('Nothing needs you.'), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
+    for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect([...container.firstElementChild!.children]).toHaveLength(4);
+    expect(checkView('home', 'Home', container).findings).toEqual([]);
+    // One read each for health, approvals and shipped (one day); the only other reads are the message box's own inbox.
+    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, `${SHIPPED_PATH}?days=1`].sort());
+    viewport.restore();
   });
 
-  it('busy fleet: big numbers that open the existing Sessions, Goals and PR views', async () => {
-    mac('busy');
-    const { context } = renderMobile(<HomeGlance />);
-    expect(await screen.findByText('27')).toBeInTheDocument();
-    expect(tile('Running now')).toHaveTextContent('of 28 wanted');
-    expect(tile('Merged, last hour')).toHaveTextContent(/^7/);
-    expect(tile('Merged, 24 hours')).toHaveTextContent(/^143/);
-    for (const name of [/Running now/, /Mains green/, /Merged, last hour/, 'Sessions', 'Goals', 'PRs']) fireEvent.click(screen.getByRole('button', { name }));
-    expect(vi.mocked(context.navigate).mock.calls.map(([route]) => route.screen)).toEqual(['runs', 'fleet', 'feed', 'agents', 'goals', 'feed']);
-  });
-
-  it('red main: says how many are green and names the red one', async () => {
-    mac('red');
+  it('the message box posts to the same inbox API as the desktop inbox box', async () => {
+    setMutationToken(TOKEN);
+    const fetches = mac('busy', { [`POST ${INTERJECT_POST_PATH}`]: { ok: true, at: '2026-11-17T12:00:01.000Z' } });
     renderMobile(<HomeGlance />);
-    expect(await screen.findByText('Red: phantom')).toBeInTheDocument();
-    expect(within(tile('Mains green')).getByText('1 of 2')).toHaveAttribute('data-tone', 'alert');
+    fireEvent.change(await screen.findByLabelText('Message to the leaders'), { target: { value: 'Ship the phone Home.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fetches.posts()).toHaveLength(1));
+    expect(fetches.posts()[0]).toMatchObject({ url: INTERJECT_POST_PATH, body: { text: 'Ship the phone Home.' } });
   });
 
   it('approvals: listed first with one big button per option, and Yes posts through the approvals path as the phone', async () => {
@@ -55,7 +68,7 @@ describe('phone Home', () => {
     const { container } = renderMobile(<HomeGlance />);
     const needs = await screen.findByRole('region', { name: 'Approvals' });
     expect(within(needs).getByLabelText('3 waiting')).toHaveTextContent('3');
-    expect(needs.compareDocumentPosition(tile('Running now')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((await health()).compareDocumentPosition(needs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(needs).getAllByRole('group')).toHaveLength(APPROVALS_SHOWN);
     expect(within(needs).getByText(/^asked 4 min ago · by unknown/)).toBeInTheDocument();
     expect(within(needs).getByText(/^asked at an unknown time/)).toBeInTheDocument();
@@ -85,22 +98,23 @@ describe('phone Home', () => {
     expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
   });
 
-  it('unknown is shown as unknown with the reason, never as zero', async () => {
+  it('unknown is shown as unknown, never as zero or green', async () => {
     mac('unknown');
     renderMobile(<HomeGlance />);
+    expect(await health()).toHaveTextContent('merges unknown · lanes unknown · main unknown');
+    expect(await health()).toHaveAttribute('data-tone', 'unknown');
     expect(await screen.findByText('Unknown: the needs-you ledger could not be read.')).toBeInTheDocument();
-    expect(tile('Running now')).toHaveTextContent('UnknownRunning nowNo fleet status has been written yet.');
-    expect(tile('Mains green')).toHaveTextContent('The main guardian status could not be read.');
-    expect(screen.getAllByText('Unknown')).toHaveLength(4);
-    expect(screen.queryByText('0')).not.toBeInTheDocument();
-    expect(runningTile({ state: 'ok', value: [{ lane: 'grok', running: 2, target: null }] })).toEqual({ value: '2', hint: undefined });
-    expect(mainTile({ state: 'ok', value: [{ repo: 'locus', state: 'unknown' }] })).toEqual({ value: '0 of 1', hint: 'Not known: locus', tone: 'unknown' });
+    expect(await screen.findByText('Unknown: No git history could be read here.')).toBeInTheDocument();
+    expect(screen.queryByText(/\b0\b/)).not.toBeInTheDocument();
+    // A main nobody could read is not green, and a lane with no target still counts as running.
+    const partly = { ...homeSummary('busy'), main: { state: 'ok' as const, value: [{ repo: 'locus', state: 'unknown' as const }] }, running: { state: 'ok' as const, value: [{ lane: 'grok', running: 2, target: null }] } };
+    expect(healthLine(partly)).toEqual({ text: '7 merged in the last hour · 1 lane running · main unknown', tone: 'unknown' });
   });
 
   it('a Mac that cannot serve Home says so and offers a retry', async () => {
     stubFetch({ [`GET ${HOME_PATH}`]: json({ error: 'not found' }, 404), [`GET ${APPROVALS_PATH}`]: approvalsList('quiet'), ...INBOX });
     renderMobile(<HomeGlance />);
-    expect(await screen.findByRole('alert')).toHaveTextContent(/^Home is unknown\./);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Fleet health is unknown\./);
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     evictAll();
     // An older Mac build answers home.v1 without needsYou: say to update rather than draw half a screen.
@@ -110,20 +124,4 @@ describe('phone Home', () => {
     expect(await screen.findByText(/Update Phantom on your Mac\./)).toBeInTheDocument();
   });
 
-  it.each([390, 768])('renders at %i px with nothing that can scroll sideways', async (width) => {
-    vi.stubGlobal('innerWidth', width);
-    mac('needs');
-    const { container } = renderMobile(<div style={{ width }}><HomeGlance /></div>);
-    await screen.findByRole('region', { name: 'Approvals' });
-    // jsdom has no layout, so check what causes sideways scroll: fixed widths, forced single lines, scroll containers.
-    // (mobile-overflow.test.ts holds the stylesheet to the same rules.)
-    for (const el of container.querySelectorAll<HTMLElement>('*')) {
-      for (const size of [el.style.width, el.style.minWidth]) if (size.endsWith('px')) expect(Number.parseFloat(size)).toBeLessThanOrEqual(width);
-      expect(el.style.whiteSpace).not.toBe('nowrap');
-      expect(['auto', 'scroll']).not.toContain(el.style.overflowX);
-      expect(el.tagName).not.toMatch(/^(TABLE|PRE)$/);
-    }
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
-    expect(screen.getAllByRole('button').length).toBeGreaterThanOrEqual(4 + APPROVALS_SHOWN * 3 + 3);
-  });
 });

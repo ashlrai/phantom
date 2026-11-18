@@ -700,6 +700,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm metrics loop [--dry-run] [--json]</code> | Self-awareness loop: merges and opens per hour, idea-to-merged-to-installed minutes, cost per merged PR, capacity per node; writes loop, selection-hint and bets-share files. | <code>--dry-run</code>, <code>--json</code> | <code>phm metrics loop [--dry-run] --json</code> |
 | <code>phm metrics merges</code> | Show hourly merges and median open-to-merge time by lane for the last 24 hours. | - | - |
 | <code>phm mirror list&#124;add&#124;sync&#124;path&#124;remove&#124;reconcile</code> | The fleet's own mirror clones under ~/.ashlr/fleet/mirrors (your checkouts are never touched); reconcile plans enrollment from the grant (--apply). | - | - |
+| <code>phm mobile check [--json]</code> | Check every desktop view at 390 px: content wider than the screen, tap targets under 44 px, text under 12 px. | <code>--json</code> | <code>phm mobile check --json</code> |
 | <code>phm models [--json]</code> | List the model registry (verified, unverified, stale) and local models. | <code>--json</code> | <code>phm models --json</code> |
 | <code>phm models check [--json] [--diff &lt;file&gt;]</code> | Report every model the router can pick: confirmed, stale or unconfirmed (not routable). | <code>--diff</code>, <code>--json</code> | <code>phm models check --json [--diff &lt;file&gt;]</code> |
 | <code>phm models pull &lt;name&gt; [--yes]</code> | Explicitly pull an Ollama model (large download; confirm first). | <code>--yes</code> | - |
