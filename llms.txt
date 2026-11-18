@@ -1,3 +1,45 @@
+# Phantom
+
+> Phantom (`@ashlr/phantom`) is the open-source engineering agent workbench: a CLI (`phm`, alias `ashlr`), an MCP gateway, an agent bus and a web console for running coding agents, coordinating a fleet and reviewing their work. This file is an index for agents, not an execution API or authorization.
+
+## Mission
+
+Phantom is chasing open-source RSI (recursive self-improvement): an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute. Agents run the factory; the human owner acts as a passive board member, needed only for passwords, 2FA, device approvals and payments.
+
+- [Strategy for recursive self-improvement and an open fleet](docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials
+- [How agents work on Phantom](README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims
+- [AGENTS.md](AGENTS.md): the agent constitution and its "Working in this repository" section
+
+## Start
+
+Node.js 22.15.0 or newer is required.
+
+```sh
+npm install -g @ashlr/phantom
+phm --version
+phm docs --agent --json
+```
+
+- [README](README.md): quickstart and overview
+- [Documentation index](docs/README.md): canonical guides by task
+- [Agent page index](docs/llms.txt): every docs page with a one-line summary
+- [Claude, Cursor and Codex setup](docs/AGENT-MCP-CLI.md): connect an agent to the MCP gateway
+- [Agent operations](docs/AGENT-OPERATIONS.md): build and operate Phantom from source
+- [Contributing](CONTRIBUTING.md): conventions, tests and contracts
+
+## Ecosystem
+
+Companions install separately; each has its own capabilities and authorization boundaries. Registration does not prove readiness.
+
+- [Companion tools](docs/COMPANIONS.md): `phm companions` inventory and MCP wiring
+- [Phantom Secrets](https://github.com/ashlrai/phantom-secrets): local vault, placeholders and a proxy for supported API credential use
+- [Locus](https://github.com/ashlrai/locus): account and tenant bindings for agent tools
+- [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin): compact tool results and a local usage ledger
+- [Lexicon](https://github.com/ashlrai/lexicon): correct recurring speech-to-text errors before agents read them
+- [Ashlr MD](https://github.com/ashlrai/ashlr-md): Markdown editing with CLI and MCP interfaces
+- [Ashlr Stack](https://github.com/ashlrai/ashlr-stack): configure supported development services through CLI and MCP
+
+## Fleet, routing and network
 
 - [Router gateway](docs/ROUTER-GATEWAY.md): `phm run --model auto "<prompt>" --json`, `phm router serve|models|pick|config --json`; loopback-only OpenAI-compatible endpoint and one CLI call over `routeSeat`. Preview with `phm router pick`.
 - [Node router](docs/NODE-ROUTER.md): `phm node join|pull|plan|status --json`; computers join as nodes, jobs carry an owner scope, per-job leases with fencing tokens so no job runs twice.
