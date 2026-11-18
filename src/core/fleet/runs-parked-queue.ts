@@ -31,10 +31,10 @@ export interface FleetQueueV1 {
   groups: ParkedGroup[];
   /** Parked dependency rows still waiting on MERGED outcomes (RQ-QUEUE-AUTOUNPARK-1). */
   unmetDeps?: ParkedUnmetDep[];
-  /** Opt-in via `depDetail`: parked dependency rows whose gate ids are all MERGED but were never unparked — a stale-park signal. */
-  metDeps?: ParkedMetDep[];
   /** READY router jobs without a recorded LAUNCH; null when unreadable (RQ-QUEUEAGE2N9JQ8). */
   stuck?: import('../queue/stuck.js').StuckQueue | null;
+  /** Opt-in via `depDetail`: parked dependency rows whose gate ids are all MERGED but were never unparked — a stale-park signal. */
+  metDeps?: ParkedMetDep[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
   health?: QueueHealthReport;
@@ -339,8 +339,8 @@ async function readUnmetDeps(
       if (text !== null) ids = parseDependencyGateIds(text);
     }
     const unmet = ids.filter((id) => !merged.has(id));
-    if (unmet.length > 0) rows.push({ job, lane: meta.lane, unmet });
-    else if (includeMet && ids.length > 0) met.push({ job, lane: meta.lane, gates: ids });
+    if (unmet.length > 0 && rows.length < 50) rows.push({ job, lane: meta.lane, unmet });
+    else if (includeMet && unmet.length === 0 && ids.length > 0 && met.length < 50) met.push({ job, lane: meta.lane, gates: ids });
     if (rows.length >= 50 && (!includeMet || met.length >= 50)) break;
   }
   return { unmetDeps: rows, metDeps: includeMet ? met : undefined };

@@ -288,7 +288,7 @@ node -e '
   const workPool = (state.pools || []).find((row) => row.poolId === "codex-work");
   if (!workPool || workPool.dead === true) process.exit(2);
   const bad = (state.models && state.models.codex && state.models.codex.probed_bad) || [];
-  if (bad.indexOf("gpt-6-sol") === -1) process.exit(3);
+  if (bad.indexOf("gpt-6.2-sol") === -1) process.exit(3);
   const lines = fs.readFileSync(process.argv[2], "utf8").trim().split("\n").map((line) => JSON.parse(line));
   const jobs = lines.filter((row) => row.event === "job" && row.issue === 8);
   const work = jobs.find((row) => row.account === "work");
@@ -312,7 +312,7 @@ node -e '
   const workPool = (state.pools || []).find((row) => row.poolId === "codex-work");
   if (!workPool || workPool.dead === true) process.exit(2);
   const bad = (state.models && state.models.codex && state.models.codex.probed_bad) || [];
-  for (const model of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+  for (const model of ["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-luna"]) {
     if (bad.indexOf(model) === -1) process.exit(3);
   }
 ' "$ASHLR_ROUTER_HOME/state.json" || fail 'codex probe marked the pool down on unknown models'

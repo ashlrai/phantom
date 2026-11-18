@@ -21,6 +21,7 @@ import { GoalMetric, useGoalMetrics } from './GoalMetric.js';
 import { goalLine, goalsHeadline, openGoals } from './goals-pane-model.js';
 import { prBacklogGoal, prBacklogTotal } from './pr-backlog-goal-model.js';
 import styles from './goals-pane.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 // First known backlog total this session: the "since you opened Phantom" baseline.
 let sessionBacklogBaseline: number | null = null;
@@ -47,7 +48,7 @@ export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'vi
   const loading = goals.data === undefined && !goalsFailed;
 
   return (
-    <div className={styles.root}>
+    <div className={`${styles.root} ${compact.view}`}>
       {!malformedGoals && goals.data ? <h2 className={styles.headline}>{goalsHeadline(goals.data)}</h2> : null}
       <p className={styles.mission}>
         {missionFailed
