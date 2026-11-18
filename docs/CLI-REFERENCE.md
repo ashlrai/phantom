@@ -134,6 +134,7 @@ Phantom - every command (phm or ashlr)
     wiki build [repo] [--all]          Private architecture wiki per repo (local models; cited, verified file:line). Only stale pages rebuild.
     wiki ask "<question>"              Answer from the wiki + index + genome with verified file:line citations, or say "not found".
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
+    wiki brief [repo] [--json]          Local cached page paths and freshness. Cloud jobs instead receive bounded page excerpts matched by GitHub origin, with citations and stale-page warnings.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
     bots list|show|create --dry-run|explain|seats|handoff --seat <id> [--apply] [--json]                                                                          Provider-neutral bot metadata, seat quota and draining handoffs. Handoff is dry-run unless --apply.

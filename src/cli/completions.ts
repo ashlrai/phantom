@@ -166,7 +166,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   recovery: ['list', 'inspect', 'attest', 'abandon'],
   knowledge: ['build', 'impact', 'graph'],
   ask: ['status', '--help', '--json', '--repo', '--allow-cloud', '--jobs'],
-  wiki: ['build', 'status', 'show', 'ask'],
+  wiki: ['build', 'status', 'show', 'ask', 'brief'],
   reflect: ['playbooks', 'propose'],
   health: ['propose'],
   goals: [

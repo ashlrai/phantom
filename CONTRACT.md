@@ -384,6 +384,15 @@ Cache, fallback, aliases and lightning do not qualify.
 
 ## Bounded peer work dispatch (RQ-AGENTNET-DISPATCH-1)
 
+Wiki context: `knowledge/wiki/brief.ts` exports async `wikiBrief(repo)` (exists,
+key, generatedCommit/currentCommit, stalePages, pages with id/title/kind/stale/path),
+`renderWikiBriefBlock(brief, maxBytes = 8192)` for local pointers, and async
+`wikiPromptBlock(ownerName, maxBytes = 8192)` for origin-matched page excerpts.
+Missing wikis produce empty blocks; cloud lookup failures are nonfatal. Blocks
+are byte-bounded, untrusted reference data. `cloud/delivery-contract.ts`
+`buildCloudPrompt(task, knowledge = '', playbook = '', companions = '', wiki = '')`
+accepts optional wiki content before its contract; empty preserves existing output.
+
 `agents/bus-v2-schema.ts` retains `agent-bus.v2` and adds optional
 `work.post.dispatch: {tier: fast|mid|work|frontier, scope, acceptance}` (4000/2000
 character caps), and `work.result: {jobId, claimKey, queueId, receiptId, outcome,

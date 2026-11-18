@@ -27,6 +27,7 @@ import { cloudBudgetView } from './budget.js';
 import { declaredMcpServers, ensureCloudCheckout, isSafeBranchName, KeyedMutex, type CloudCheckoutDeps } from './checkout.js';
 import { buildCloudPrompt, companionToolsBlock } from './delivery-contract.js';
 import { knowledgeBlockFor } from '../learn/retro/inject.js';
+import { wikiPromptBlock } from '../knowledge/wiki/brief.js';
 import { recordKnowledgeHits } from '../learn/retro/store.js';
 import { lessonArm, type LessonArm } from '../improve/lesson-trial.js';
 import { revertedPrKeys } from '../improve/reverted.js';
@@ -36,6 +37,7 @@ import { CLOUD_REPO_PATTERN, listCloudTasks, newCloudTaskId, readCloudBudget, wr
 import { defaultCloudGh, type CloudTrackerDeps } from './tracker.js';
 
 export interface CloudServiceDeps {
+  wikiBlock?: (repo: string) => Promise<string>;
   checkout?: CloudCheckoutDeps;
   launcher?: CloudLaunchDeps;
   tracker?: CloudTrackerDeps;
@@ -203,7 +205,8 @@ async function launchWithGate(req: CloudLaunchRequest | CloudInternalLaunch, gat
       if (block.noteIds.length > 0) task.lessons = { arm, noteIds: [...block.noteIds].slice(0, 64) };
       if (arm === 'served' && block.noteIds.length > 0) void recordKnowledgeHits(block.noteIds);
       const lessons = arm === 'served' ? block.text : '';
-      const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlock(declaredMcpServers(checkout.path))) }, deps.launcher);
+      const wiki = await Promise.resolve().then(() => (deps.wikiBlock ?? wikiPromptBlock)(task.repo)).catch(() => '');
+      const launched = await launchCloudSession({ cwd: checkout.path, prompt: buildCloudPrompt(task, lessons, playbook.block, companionToolsBlock(declaredMcpServers(checkout.path)), wiki) }, deps.launcher);
       if (!launched.ok) return fail(launched.failure, launched.message);
       Object.assign(task, {
         state: 'running',

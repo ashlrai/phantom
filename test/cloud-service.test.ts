@@ -135,6 +135,14 @@ describe('launchCloudTask — success', () => {
     expect(h.prompts[0]).toContain(`Create branch \`${task.branch}\` from \`v3110-cloud\``);
   });
 
+  it('injects wiki reference content and tolerates lookup failures', async () => {
+    const h = harness();
+    expect((await launchCloudTask(REQ, { ...h.deps, wikiBlock: async repo => `WIKI ${repo}` })).ok).toBe(true);
+    expect(h.prompts[0]).toContain(`WIKI ${REQ.repo}`);
+    const offline = harness();
+    expect((await launchCloudTask(REQ, { ...offline.deps, wikiBlock: () => { throw new Error('unavailable'); } })).ok).toBe(true);
+  });
+
   it('uses the repo\'s default branch from GitHub when none is given, falling back to main', async () => {
     const h = harness({ defaultBranch: 'master' });
     expect((await launchCloudTask(REQ, h.deps)).task!.baseBranch).toBe('master');
