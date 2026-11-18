@@ -137,7 +137,7 @@ function metadataReaderFixture(responses) {
   return { read, calls, waits, reports };
 }
 
-test('anonymous GET retries gateway failures within one bounded read budget', async () => {
+test('anonymous GET retries gateway and 500 failures within one bounded read budget', async () => {
   const f = metadataReaderFixture([{ status: 503 }, { status: 504 }, { status: 200, data: repo }]);
   assert.deepEqual(await f.read('repos/ashlrai/phantom'), repo);
   assert.deepEqual(f.waits, [250, 500]);
@@ -150,6 +150,16 @@ test('anonymous GET retries gateway failures within one bounded read budget', as
     assert.deepEqual(call.options.headers, { Accept: 'application/vnd.github+json' });
     assert.equal(call.options.signal.aborted, false);
   }
+});
+
+test('a transient 500 from the GitHub API is retried like a gateway failure', async () => {
+  const f = metadataReaderFixture([{ status: 500 }, { status: 200, data: repo }]);
+  assert.deepEqual(await f.read('repos/ashlrai/phantom'), repo);
+  assert.deepEqual(f.waits, [250]);
+  assert.deepEqual(f.reports, ['release metadata transient read failure: 500 at repos/ashlrai/phantom']);
+  const persistent = metadataReaderFixture([{ status: 500 }, { status: 500 }, { status: 500 }]);
+  await assert.rejects(persistent.read('repos/ashlrai/phantom'), /unavailable \(500\) after 3 read attempts/);
+  assert.equal(persistent.calls.length, 3);
 });
 
 test('persistent transient failure stops after three reads and retains the original failure', async () => {
@@ -221,7 +231,7 @@ test('malformed, oversized, permission and transport failures never become retry
   for (const response of [
     { status: 200, text: '{' },
     { status: 200, text: ' '.repeat(4 * 1024 * 1024 + 1) },
-    ...[400, 401, 403, 404, 429, 500].map(status => ({ status })),
+    ...[400, 401, 403, 404, 429].map(status => ({ status })),
     { error: new TypeError('transport refused') },
   ]) {
     const f = metadataReaderFixture([response]);
