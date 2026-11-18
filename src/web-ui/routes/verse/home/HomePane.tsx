@@ -1,4 +1,4 @@
-/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, and the Disk card (`phm worktrees`) closes the column.
+/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, the Shipped today card (`phm shipped --since 24h`) draws the day's merges, and the Disk card (`phm worktrees`) closes the column.
  * The headline carries a state mark and the time the summary was read; lanes with a target and repos draw their reading (a bar, a mark) beside the same words. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
@@ -90,7 +90,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>
-    <FleetShippedCard visible={visible} />
+    <FleetShippedCard visible={visible} onOpenJob={openPoolJob} />
     <DiskCard visible={visible} />
   </section>;
 }

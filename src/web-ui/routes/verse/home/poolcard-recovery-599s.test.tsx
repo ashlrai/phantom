@@ -30,7 +30,8 @@ function show(reading: () => Response, jobs: () => Response = () => json(runs)) 
     if (path === '/api/usage/runway') return reading();
     if (path === FLEET_RUNS_PATH) return jobs();
     if (path === '/api/verse/shipped?since=24h') return json({ schema: 'fleet.shipped.v1', complete: true,
-      totals: { merged: 5, mergedPerHour: 1, medianOpenToMergeSeconds: 120 }, items: [] });
+      totals: { merged: 5, mergedPerHour: 1, medianOpenToMergeSeconds: 120 }, generatedAt: home.asOf,
+      items: [{ repo: 'ashlrai/demo', number: 4, title: 'Fixture change', url: '', mergedAt: '2026-11-18T11:30:00.000Z', jobId: 'fixture-shipped', lane: 'claude', openToMergeSeconds: 120 }] });
     return json({});
   });
   render(<HomePane {...({ visible: true } as Parameters<typeof HomePane>[0])} />);
@@ -47,6 +48,10 @@ it('recovers measured pools alongside current Home content and lazily opens the 
   expect(screen.getByRole('region', { name: 'Merged PRs' })).toHaveTextContent('Last 24 hours: 5');
   expect(await screen.findByRole('region', { name: 'Shipped today' })).toHaveTextContent('5 merged');
   expect(requests.calls.filter(call => call.path === FLEET_RUNS_PATH)).toHaveLength(0);
+  // A shipped PR's job id is the way into the session that shipped it.
+  fireEvent.click(screen.getByRole('button', { name: 'Open messages for fixture-shipped' }));
+  expect(takeRequestedWorkerLogJob()).toBe('fixture-shipped');
+  expect(dock.open).toHaveBeenLastCalledWith('worker-log');
   fireEvent.click(pool);
   const jobs = within(await screen.findByRole('region', { name: 'Claude running jobs' }));
   fireEvent.click(await jobs.findByRole('button', { name: 'fixture-build' }));

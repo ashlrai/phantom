@@ -84,6 +84,22 @@ asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
 
+Home's **Shipped today** card answers "what shipped?" for the last 24 hours. It
+leads with the number merged, the rate per hour and the median time a PR stayed
+open, then draws one bar per hour (oldest on the left) and, when more than one
+repository merged, a count per repository. Under that are the newest six PRs,
+each with its merge time, lane and time open; **Show all** expands to the whole
+day. A PR's job id opens that session's messages in the Worker log, and the
+title opens the PR. If some repositories could not be read the card gives no
+total and no per-repository split, and says the chart holds only the PRs
+listed; a PR with no recorded lane, job or open time says so. The card reads
+once when Home opens rather than polling, because the report asks GitHub. The
+same report for agents:
+
+```sh
+phm shipped --since 24h --json
+```
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), incidents (dispatch incidents, lane holds,
