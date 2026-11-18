@@ -14,6 +14,10 @@ and groups generated recuts by kind: RECUTCOREC541 and RECUTCOREC544 are RECUT*.
 No second ledger is created. Counts cover distinct job ids, not individual retries.
 Only a newest empty finish is included; a later productive finish removes that id.
 
+To see which kinds of jobs are worth launching at all, run `phm jobs yield --json`.
+It gives each job kind a keep, watch or stop verdict and names the five to stop
+first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).
+
 `jobs.empty.v1` adds `diagnosis`: `jobs` (id, lane, family, reason), `families`
 and `lanes` (name, total, topReason, suggestion). Existing top-level `jobs`,
 `counts`, `topCauses` and sampled `reasons` remain compatibility fields for

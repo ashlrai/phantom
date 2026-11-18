@@ -5,8 +5,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 const usage = 'Usage: ashlr fleet filler-yield [--hours 6] [--json]';
 const SKIP_CODE = 13;
 const RED_MIN_ROWS = 10;
-/** Author filler: RQ-, capital letters, digits, A, digits, Q8. */
-export const FILLER_ID = /^RQ-[A-Z]+[0-9]+A[0-9]+Q8$/;
+import { FILLER_ID } from '../core/fleet/slot-yield.js';
+export { FILLER_ID };
 
 export interface FillerYieldRow {
   repo: string;

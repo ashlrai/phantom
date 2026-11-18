@@ -1,8 +1,9 @@
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
+const usage = 'Usage: phm jobs yield [--since 24h] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
 export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
+  if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
   if (args[0] === 'state') return cmdJobsState(args.slice(1));
   if (args[0] === 'retry-empty') return (await import('./jobs-retry-empty.js')).cmdJobsRetryEmpty(args.slice(1));
   if (args[0] !== 'empty') { console.error(usage); return 2; }
