@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -512,7 +513,9 @@ exit "\${TEST_OSV_RC:-0}"
       const githubDir = resolve(repositoryRoot, '.github');
       const script = resolve(scriptsDir, 'npm-audit-with-osv-fallback.sh');
       const exceptionFile = resolve(githubDir, 'dependency-audit-exceptions.json');
-      const lockfile = resolve(fixtureRoot, 'package-lock.json');
+      const lockfile = resolve(repositoryRoot, 'package-lock.json');
+      const raycastLockfile = resolve(repositoryRoot, 'src/raycast/package-lock.json');
+      const raycastLockfileAlias = resolve(fixtureRoot, 'raycast-package-lock.json');
       const reportFile = resolve(fixtureRoot, 'audit.json');
       const countFile = resolve(fixtureRoot, 'npm-count');
       const summaryFile = resolve(fixtureRoot, 'summary.md');
@@ -562,11 +565,14 @@ exit "\${TEST_OSV_RC:-0}"
       mkdirSync(binDir);
       mkdirSync(scriptsDir, { recursive: true });
       mkdirSync(githubDir, { recursive: true });
+      mkdirSync(dirname(raycastLockfile), { recursive: true });
       writeFileSync(
         script,
         readFileSync(resolve(repoRoot, 'scripts/npm-audit-with-osv-fallback.sh'), 'utf8'),
       );
       writeFileSync(lockfile, '{}\n');
+      writeFileSync(raycastLockfile, '{}\n');
+      symlinkSync(raycastLockfile, raycastLockfileAlias);
       writeFileSync(countFile, '0\n');
 
       const writeExecutable = (name: string, content: string) => {
@@ -617,6 +623,7 @@ exit 0
         omitDev?: boolean;
         npmExit?: number;
         label?: string;
+        lockfile?: string;
       }) => {
         writeFileSync(
           exceptionFile,
@@ -629,7 +636,7 @@ exit 0
         writeFileSync(summaryFile, '');
         rmSync(osvMarker, { force: true });
         rmSync(osvConfigCopy, { force: true });
-        const args = [input.label ?? 'fixture graph', lockfile];
+        const args = [input.label ?? 'fixture graph', input.lockfile ?? lockfile];
         if (input.omitDev) args.push('--omit=dev');
         const result = spawnSync('bash', [script, ...args], {
           cwd: fixtureRoot,
@@ -745,27 +752,52 @@ exit 0
         graph: 'raycast-production',
       };
       const raycastProductionRun = runScenario({
-        report: dependentReport({}),
+        report: report([advisory(activeException.id)]),
         exceptions: [activeException, raycastProduction],
         omitDev: true,
-        label: 'Raycast production graph',
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
       });
       expect(raycastProductionRun.status).toBe(0);
       expect(raycastProductionRun.summary).toContain('applied dependency audit exception');
 
+      const raycastProductionSecondAdvisory = runScenario({
+        report: report([advisory(activeException.id), advisory('GHSA-2222-3333-4444')]),
+        exceptions: [activeException, raycastProduction],
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(raycastProductionSecondAdvisory.status).toBe(1);
+
+      const expiredRaycastProduction = runScenario({
+        report: report([advisory(activeException.id)]),
+        exceptions: [activeException, { ...raycastProduction, expires: '2020-01-01T00:00:00Z' }],
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(expiredRaycastProduction.status).toBe(70);
+      expect(expiredRaycastProduction.count).toBe(0);
+      expect(expiredRaycastProduction.stderr).toContain(
+        'GHSA-fc5q-39xc-vjpf for picomatch expired at',
+      );
+
       const raycastProductionNeedsOwnEntry = runScenario({
-        report: dependentReport({}),
+        report: report([advisory(activeException.id)]),
         exceptions: [activeException],
         omitDev: true,
-        label: 'Raycast production graph',
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
       });
       expect(raycastProductionNeedsOwnEntry.status).toBe(1);
 
       const rootProductionStaysStrict = runScenario({
-        report: dependentReport({}),
+        report: report([advisory(activeException.id)]),
         exceptions: [activeException, raycastProduction],
         omitDev: true,
-        label: 'root production graph',
+        label: 'Raycast production graph',
+        lockfile,
       });
       expect(rootProductionStaysStrict.status).toBe(1);
       expect(rootProductionStaysStrict.summary).not.toContain('applied dependency audit exception');
@@ -783,6 +815,17 @@ exit 0
       expect(malformed.status).toBe(70);
       expect(malformed.count).toBe(0);
       expect(malformed.stderr).toContain('is missing or malformed');
+
+      const unknownGraph = runScenario({
+        report: cleanReport,
+        exceptions: [{ ...activeException, graph: 'production' }],
+        npmExit: 0,
+      });
+      expect(unknownGraph.status).toBe(70);
+      expect(unknownGraph.count).toBe(0);
+      expect(unknownGraph.stderr).toContain(
+        'must target the full or raycast-production graph',
+      );
 
       const productionIgnoresMalformedFile = runScenario({
         report: cleanReport,
@@ -817,13 +860,28 @@ exit 0
 
       const productionFallback = runScenario({
         report: cleanReport,
-        exceptions: [activeException],
+        exceptions: [activeException, raycastProduction],
         mode: 'transport',
         omitDev: true,
+        label: 'Raycast production graph',
       });
       expect(productionFallback.status).toBe(0);
       expect(productionFallback.count).toBe(3);
       expect(productionFallback.fallbackConfig).toBe('');
+
+      const raycastProductionFallback = runScenario({
+        report: cleanReport,
+        exceptions: [activeException, raycastProduction],
+        mode: 'transport',
+        omitDev: true,
+        label: 'root production graph',
+        lockfile: raycastLockfileAlias,
+      });
+      expect(raycastProductionFallback.status).toBe(0);
+      expect(raycastProductionFallback.count).toBe(3);
+      expect(raycastProductionFallback.fallbackConfig).toContain(
+        'ignoreUntil = 2026-12-17T00:00:00Z',
+      );
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
