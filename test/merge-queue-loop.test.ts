@@ -237,7 +237,7 @@ describe('runMergeQueueCycle', () => {
       pr({ number: 4, checks: 'FAILURE' }),
     ]) });
     const summary = runMergeQueueCycle(fake.io, { repos: [REPO] });
-    expect(fake.calls).toEqual([`read ${REPO}`, `enqueue ${REPO}#3@aaaaaaa`, `update ${REPO}#1@bbbbbbb`]);
+    expect(fake.calls).toEqual([`read ${REPO}`, `enqueue ${REPO}#3@aaaaaaa`, `update ${REPO}#1@bbbbbbb`, `read ${REPO}`]);
     expect(summary).toMatchObject({ enqueued: 1, rebased: 1, drained: 1, failed: 0, repoErrors: 0, capped: false });
     expect(summary.repos[0]!.totals).toEqual({ enqueue: 1, rebase: 1, conflict: 1, red: 1 });
     expect(fake.lines).toHaveLength(1);
@@ -361,6 +361,102 @@ describe('runMergeQueueCycle', () => {
     const fake = makeIo({ snapshots: only([pr({ number: 9, mergeState: 'DIRTY', headSha: sha('d') })]) });
     fake.io.resolveConflict = () => { throw new Error('must not run'); };
     expect(runMergeQueueCycle(fake.io, { repos: [REPO], dryRun: true }).resolved).toBe(0);
+  });
+
+  it('requeues the recovered head through auto-merge, bounds retries and stops after merge', () => {
+    let at = NOW;
+    const snapshots = only([pr({ mergeState: 'DIRTY' })]);
+    const failures = new Set([1]), calls: string[][] = [];
+    const fake = makeIo({ snapshots, now: () => at });
+    fake.io.resolveConflict = () => {
+      expect(Object.values(fake.state()!.attempts)).toContainEqual({ pr: 'phantom#1', action: 'resolve', at: NOW });
+      snapshots.set(REPO, snap([pr({ headSha: sha('b'), autoMerge: false })]));
+      return 'resolved';
+    };
+    fake.io.enqueue = (repo, head) => enqueueMergeQueuePr((args: string[]) => {
+      calls.push(args); if (failures.has(1)) throw new Error('provider secret');
+    }, repo, head);
+    const cycle = () => runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(cycle()).toMatchObject({ resolved: 1, enqueued: 0, failed: 1, drained: 0 });
+    failures.clear(); at += MIN;
+    expect(cycle().enqueued).toBe(0);
+    at = NOW + 15 * MIN;
+    expect(cycle().enqueued).toBe(1);
+    expect(calls).toEqual(Array(2).fill(['pr', 'merge', '1', '--repo', REPO,
+      '--auto', '--match-head-commit', sha('b')]));
+    snapshots.set(REPO, snap([])); at += 20 * MIN;
+    expect(cycle()).toMatchObject({ enqueued: 0, resolved: 0, drained: 0 });
+    expect(calls).toHaveLength(2);
+    expect(fake.logs.join('\n')).not.toContain('secret');
+  });
+
+  it.each([
+    [{ checks: 'PENDING' }, {}], [{ checks: 'NONE' }, {}], [{ checks: 'FAILURE' }, {}],
+    [{ reviewDecision: 'REVIEW_REQUIRED' }, {}], [{ filesTruncated: true }, {}],
+    [{ files: ['.github/workflows/ci.yml'] }, {}], [{ activeOwner: true }, {}],
+    [{ inMergeQueue: true }, {}], [{}, { mergeQueue: false }],
+  ] as [Partial<MergeQueuePr>, Partial<MergeQueueRepoSnapshot>][])(
+    'rechecks every gate after mechanical recovery: %j %j', (over, repo) => {
+      const snapshots = only([pr({ mergeState: 'DIRTY' })]), fake = makeIo({ snapshots });
+      fake.io.resolveConflict = () => {
+        snapshots.set(REPO, snap([pr({ headSha: sha('b'), ...over })], repo)); return 'resolved';
+      };
+      expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).toMatchObject({ resolved: 1, enqueued: 0, drained: 0 });
+      expect(fake.calls.filter(c => c.startsWith('enqueue'))).toEqual([]);
+    });
+
+  it.each([false, true])('waits for recovered checks or stops if merged during recovery (merged=%s)', merged => {
+    const snapshots = only([pr({ mergeState: 'DIRTY' })]), fake = makeIo({ snapshots });
+    fake.io.resolveConflict = () => {
+      snapshots.set(REPO, snap(merged ? [] : [pr({ headSha: sha('b'), checks: 'PENDING' })])); return 'resolved';
+    };
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] })).toMatchObject({ resolved: 1, enqueued: 0, drained: 0 });
+    if (!merged) snapshots.set(REPO, snap([pr({ headSha: sha('b') })]));
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).enqueued).toBe(Number(!merged));
+    expect(fake.lines).toEqual([]);
+  });
+
+  it('caps recovery reads and repairs per cycle', () => {
+    const fake = makeIo({ snapshots: only([pr({ mergeState: 'DIRTY' }), pr({ number: 2, mergeState: 'DIRTY' })]) });
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO], cycleCap: 1 })).toMatchObject({ drained: 1, capped: true });
+    expect(fake.calls).toEqual([`read ${REPO}`, `read ${REPO}`]);
+    expect(Object.values(fake.state()!.attempts)).toHaveLength(1);
+  });
+
+  it.each(['merged', 'held', 'ready', 'moved'])(
+    're-observes a stale conflict before repair: %s', (state) => {
+      const fake = makeIo(), conflict = pr({ mergeState: 'DIRTY' });
+      let reads = 0, resolves = 0;
+      fake.io.readSnapshot = () => ++reads === 1 ? snap([conflict]) : snap(state === 'merged' ? [] : [
+        pr({ headSha: sha('b'), ...(state === 'moved' ? { mergeState: 'DIRTY' } : {}) }),
+      ]);
+      fake.io.readHoldList = () => new Set(reads > 0 && state === 'held' ? ['phantom#1'] : []);
+      fake.io.resolveConflict = (_repo, head) => { resolves++; expect(head.headSha).toBe(sha('b')); return 'real'; };
+      const report = runMergeQueueCycle(fake.io, { repos: [REPO] });
+      expect(resolves).toBe(Number(state === 'moved'));
+      expect(report.enqueued).toBe(Number(state === 'ready'));
+      expect(report.drained).toBe(Number(state === 'moved'));
+      if (state === 'moved') expect(JSON.parse(fake.lines[0]!).id).toBe(drainKey(REPO, 1, sha('b')));
+    });
+
+  it('bounds unsettled recovery and failed refreshes across cycles and restarts', () => {
+    let at = NOW, resolves = 0, reads = 0;
+    const fake = makeIo({ now: () => at });
+    fake.io.readSnapshot = () => {
+      if (++reads === 2) throw new Error('provider secret');
+      return snap([pr({ mergeState: 'DIRTY' })]);
+    };
+    fake.io.resolveConflict = () => { resolves++; return 'resolved'; };
+    const cycle = () => runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(cycle()).toMatchObject({ failed: 1, drained: 0 });
+    at += MIN; cycle(); expect(resolves).toBe(0);
+    for (let n = 0; n < 4; n++) { at += 16 * MIN; cycle(); }
+    expect(resolves).toBe(2); expect(fake.lines).toEqual([]);
+    const restart = makeIo({ state: fake.state(), snapshots: only([pr({ mergeState: 'DIRTY' })]), now: () => at });
+    restart.io.resolveConflict = () => { throw new Error('budget must survive restart'); };
+    expect(runMergeQueueCycle(restart.io, { repos: [REPO] })).toMatchObject({ resolved: 0, drained: 0, failed: 0 });
+    at = NOW + 24 * 60 * MIN + MIN; cycle(); expect(resolves).toBe(3);
+    expect(fake.logs.join('\n')).not.toContain('secret');
   });
 
   it('a new head after a conflict drain gets its own line, the same head never twice', () => {
