@@ -15,8 +15,9 @@ export function JobYieldCard({ report }: { report: JobYieldReport | undefined })
   return <div className={styles.root}>
     <h3 className={styles.heading}>Job yield</h3>
     <p className={styles.note}>{usable ? usable.summary : 'Job yield: unknown'}</p>
-    {shown.length ? <div className={styles.scroll}>
-      <table className={styles.table}><caption>Job kinds launched in the {hoursWords(usable!.window_hours)}. Stop means 6 or more launches with almost nothing merged.</caption>
+    {shown.length ? <p className={styles.note}>Job kinds launched in the {hoursWords(usable!.window_hours)}. Stop means 6 or more launches with almost nothing merged. Scroll the table sideways to see every column.</p> : null}
+    {shown.length ? <div className={styles.scroll} tabIndex={0} role="region" aria-label="Job yield table, scroll for all columns">
+      <table className={`${styles.table} ${styles.jobYieldTable}`}><caption className={styles.visuallyHidden}>Job yield by job kind</caption>
         <thead><tr><th scope="col">Job kind</th><th scope="col">Verdict</th><th scope="col">Launches</th><th scope="col">Empty</th><th scope="col">Skipped</th><th scope="col">Merged</th><th scope="col">Merged per launch</th></tr></thead>
         <tbody>{shown.map(row => <tr key={row.family} data-verdict={row.verdict}>
           <th scope="row">{row.family}</th><td>{row.verdict}</td><td>{row.launches}</td><td>{row.empty}</td><td>{row.skipped}</td><td>{row.merged}</td>

@@ -48,3 +48,9 @@ it('sums up the kinds past the row limit instead of dropping them', () => {
   expect(screen.getAllByRole('rowheader')).toHaveLength(JOB_YIELD_ROWS);
   expect(screen.getByText('2 more job kinds with 2 launches not shown.')).toBeTruthy();
 });
+
+it('keeps every column in a named keyboard-scrollable region', () => {
+  render(<JobYieldCard report={jobYield(job('RQ-WORK-1', true), now, 24)} />);
+  expect(screen.getByRole('region', { name: 'Job yield table, scroll for all columns' }).getAttribute('tabindex')).toBe('0');
+  expect(screen.getByText(/Scroll the table sideways to see every column/)).toBeTruthy();
+});
