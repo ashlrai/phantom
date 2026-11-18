@@ -5,7 +5,7 @@ import type { PulseV1 } from '../../../../core/fleet/pulse.js';
 
 const ok = <T,>(value: T) => ({ state: 'ok' as const, value });
 const unknown = (reason: string) => ({ state: 'unknown' as const, reason });
-const ask = (n: number, request: string, ageSeconds: number | null) => ({ id: `nm-${String(n).repeat(12)}`, shortId: String(n).repeat(4), kind: '2fa' as const, request, ageSeconds, answers: ['yes', 'no', 'done'] as const });
+const ask = (n: number, request: string, ageSeconds: number | null) => ({ id: `nm-${String(n).repeat(12)}`, shortId: String(n).repeat(4), kind: '2fa' as const, request, ageSeconds, answers: ['yes', 'no', 'done', 'later'] as const });
 
 export type HomeFixture = 'quiet' | 'busy' | 'red' | 'needs' | 'unknown';
 
@@ -34,7 +34,7 @@ export function homeSummary(kind: HomeFixture): HomeSummary {
 }
 
 const approval = (n: number, question: string, ageSeconds: number | null) => ({ id: `nm-${String(n).repeat(12)}`, ref: String(n).repeat(4), number: null,
-  kind: '2fa' as const, question, options: ['yes', 'no', 'done'], askedBy: null, created: null, ageSeconds, expires: null });
+  kind: '2fa' as const, question, options: ['yes', 'no', 'later'], askedBy: null, created: null, ageSeconds, expires: null });
 
 /** The approvals card's read for the same fixture: what needs Mason, or unknown. */
 export function approvalsList(kind: HomeFixture): ApprovalsList {

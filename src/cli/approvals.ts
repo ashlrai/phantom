@@ -9,7 +9,7 @@
 import { DEFAULT_TEAM, localHumanActor } from '../core/teams/index.js';
 import { buildApprovalsProjection, type ApprovalsProjection } from '../core/approvals/surface.js';
 import {
-  answerApproval, approvalAnswerText, approvalsText, raiseApproval,
+  answerApproval, approvalAnswerText, approvalsText, decisionsText, parseDecisionReply, raiseApproval, readDecisions,
   type ApprovalAnswerResult, type ApprovalsOptions, type RaiseApprovalResult,
 } from '../core/fleet/approvals.js';
 import { OPERATOR_SENDER_ID } from '../core/fleet/channel-envelope.js';
@@ -65,6 +65,7 @@ export interface ApprovalsCliDeps {
   localHuman?: typeof localHumanActor;
   raise?: typeof raiseApproval;
   answer?: typeof answerApproval;
+  decisions?: typeof readDecisions;
 }
 
 function flag(args: string[], name: string): string | undefined {
@@ -92,6 +93,30 @@ async function cmdAnswer(rest: string[], json: boolean, deps: ApprovalsCliDeps):
   const outcome: ApprovalAnswerResult = await (deps.answer ?? answerApproval)(rest[1], rest.slice(2).join(' '), { channel: 'cli', senderId }, deps.options);
   console.log(json ? JSON.stringify(outcome) : approvalAnswerText(outcome));
   return outcome.status === 'answered' || outcome.status === 'already-answered' ? 0 : outcome.status === 'invalid' ? 2 : 1;
+}
+
+const DECISIONS_USAGE = `Usage: phm decisions [--json]
+       phm decisions answer <code> yes|no|later [--json]
+  What only Mason can do: a password, a 2FA code, a device approval, a payment,
+  or a message to someone outside the team. Each takes one word.
+  decisions   waiting questions, oldest first (--json: decisions.v1 with schema and version)
+  answer      for Mason only (agent processes are refused): records yes, no or later
+              once (y and n work too); a repeat changes nothing. Nothing is paid or sent.
+  From a phone, reply "yes 3f2a", or just "yes" when only one decision is waiting.`;
+
+/** \`phm decisions\`: the asks only Mason can answer, one word each; the same ledger and answer path as \`phm approvals\`. */
+export async function cmdDecisions(argv: string[], deps: ApprovalsCliDeps = {}): Promise<number> {
+  if (argv.includes('--help') || argv.includes('-h')) { console.log(DECISIONS_USAGE); return 0; }
+  const json = argv.includes('--json');
+  const rest = argv.filter((arg) => arg !== '--json');
+  if (rest.length === 0) {
+    const report = (deps.decisions ?? readDecisions)(deps.options);
+    console.log(json ? JSON.stringify(report, null, 2) : decisionsText(report).join('\n'));
+    return report.ledger === 'unavailable' ? 1 : 0;
+  }
+  const reply = rest[0] === 'answer' && rest.length === 3 ? parseDecisionReply(rest[2]!) : null;
+  if (!reply || reply.code !== null) { console.error(DECISIONS_USAGE); return 2; }
+  return cmdAnswer(['answer', rest[1]!, reply.answer], json, deps);
 }
 
 export async function cmdApprovals(argv: string[], deps: ApprovalsCliDeps = {}): Promise<number> {

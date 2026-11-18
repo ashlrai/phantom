@@ -5,13 +5,14 @@ import {
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm asks [--json]
-       phm asks answer <id> yes|no|done [--json]
-       phm asks add password|2fa|device|payment "<one-line request>" [--json]
-Things only Mason can do (a password, a 2FA code, a device approval, a payment), each answered with one word.
+       phm asks answer <id> yes|no|done|later [--json]
+       phm asks add password|2fa|device|payment|outreach "<one-line request>" [--json]
+Things only Mason can do (a password, a 2FA code, a device approval, a payment, a message to someone outside the team),
+each answered with one word.
   phm asks              list open asks: short id, kind, age and the request (--json: schema asks.v1)
-  answer <id> <word>    record yes, no or done once, with source cli and the time; a repeat changes nothing
+  answer <id> <word>    record yes, no, done or later once, with source cli and the time; a repeat changes nothing
   add <kind> <request>  raise an ask; never put the secret itself in the request
-Anything that is not one of the four kinds is refused: the fleet decides this itself.
+Anything that is not one of the five kinds is refused: the fleet decides this itself.
 From Telegram, Mason can reply "yes <id>", "no <id>" or "done <id>".`;
 
 export interface AsksCliDeps { options?: AsksOptions; list?: typeof listAsks; answer?: typeof answerAsk; raise?: typeof raiseAsk }
