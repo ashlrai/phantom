@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.36 |
-| Latest dated changelog release (2026-11-17) | 3.30.36 |
+| Source package | 3.30.37 |
+| Latest dated changelog release (2026-11-18) | 3.30.37 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,26 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.37](https://github.com/ashlrai/phantom/compare/v3.30.36...v3.30.37) (2026-11-18)
-
-
-### Changes
-
-* **RQ-CHANNELSN18BQ8:** RQ-CHANNELSN18BQ8: `phm channels` overview + desktop Channel ([#6810](https://github.com/ashlrai/phantom/issues/6810)) ([b726de2](https://github.com/ashlrai/phantom/commit/b726de21d38b2ce3272bc4670ae4f397cda04118))
-* RQ-CLAUDEROUTEQ8 ([#6634](https://github.com/ashlrai/phantom/issues/6634)) ([bfa6cc7](https://github.com/ashlrai/phantom/commit/bfa6cc78884fbd21e3b7e5ac4eab245cdc9bfb41))
-* RQ-CONSTRAINT-AUDIT-1 ([#6485](https://github.com/ashlrai/phantom/issues/6485)) ([a9e2a9e](https://github.com/ashlrai/phantom/commit/a9e2a9e7b1e3767b982618699c02dec703d766a7))
-* **RQ-DEVINCLOUD-PR6800R-N17:** ([#6804](https://github.com/ashlrai/phantom/issues/6804)) ([5d36545](https://github.com/ashlrai/phantom/commit/5d36545c8e52cc048216e5dc6c475c78b73175bd))
-* **RQ-DEVINCLOUD-REDTEST5038-N17:** ([#6808](https://github.com/ashlrai/phantom/issues/6808)) ([fe1b416](https://github.com/ashlrai/phantom/commit/fe1b4165a82c3d0399dc76ee8863448bc2ed07ca))
-* **RQ-DEVINCLOUD-SEATRACE-N17:** ([#6813](https://github.com/ashlrai/phantom/issues/6813)) ([1adfa6e](https://github.com/ashlrai/phantom/commit/1adfa6ec72076f4fdeb2e2bd41f57f4d9ed61f92))
-* **RQ-LIBRARYN18DQ8:** RQ-LIBRARYN18DQ8: Library (owner, size, show, detail pane) ([#6809](https://github.com/ashlrai/phantom/issues/6809)) ([36da0bd](https://github.com/ashlrai/phantom/commit/36da0bd0bb5789df6b5aebcbb87e444ad7b60b7d))
-* RQ-OMLXFITN16IQ8 ([#6480](https://github.com/ashlrai/phantom/issues/6480)) ([5e56af4](https://github.com/ashlrai/phantom/commit/5e56af4e1c72917a52015b4af075a54a6587d2f1))
-* RQ-ORGVIEWN18BQ8 ([#6795](https://github.com/ashlrai/phantom/issues/6795)) ([f412018](https://github.com/ashlrai/phantom/commit/f412018662132007872ff5dbfd502438ed2a94d7))
-* RQ-REBASE-PHANTOM-1048 ([#5812](https://github.com/ashlrai/phantom/issues/5812)) ([a61814d](https://github.com/ashlrai/phantom/commit/a61814d9874d1aad785e788dc6dc5061392551ac))
-* RQ-REBASE-PHANTOM-3294 ([#5831](https://github.com/ashlrai/phantom/issues/5831)) ([94ac56e](https://github.com/ashlrai/phantom/commit/94ac56e62ffe704c3b9b0fc7d1d4a5b006937a6e))
-* RQ-REBASE-PHANTOM-3896 ([#5843](https://github.com/ashlrai/phantom/issues/5843)) ([88720c3](https://github.com/ashlrai/phantom/commit/88720c3ddaf70e7609e348ba6f8d13640ce3d606))
-* RQ-REBASE-PHANTOM-4036 ([#5855](https://github.com/ashlrai/phantom/issues/5855)) ([1159ae3](https://github.com/ashlrai/phantom/commit/1159ae3fc41ba08bade2f7cc27113e99876b3bed))
-* **RQ-RELEASE-TRAIN-UNBLOCK-1:** RQ-RELEASE-TRAIN-UNBLOCK-1 ([#5162](https://github.com/ashlrai/phantom/issues/5162)) ([3c9586f](https://github.com/ashlrai/phantom/commit/3c9586f6a7a16395cfbbd860028638b3146f1500))
 
 ## [Unreleased]
 
@@ -85,6 +65,26 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.37] - 2026-11-18
+
+
+### Changes
+
+* **RQ-CHANNELSN18BQ8:** RQ-CHANNELSN18BQ8: `phm channels` overview + desktop Channel ([#6810](https://github.com/ashlrai/phantom/issues/6810)) ([b726de2](https://github.com/ashlrai/phantom/commit/b726de21d38b2ce3272bc4670ae4f397cda04118))
+* RQ-CLAUDEROUTEQ8 ([#6634](https://github.com/ashlrai/phantom/issues/6634)) ([bfa6cc7](https://github.com/ashlrai/phantom/commit/bfa6cc78884fbd21e3b7e5ac4eab245cdc9bfb41))
+* RQ-CONSTRAINT-AUDIT-1 ([#6485](https://github.com/ashlrai/phantom/issues/6485)) ([a9e2a9e](https://github.com/ashlrai/phantom/commit/a9e2a9e7b1e3767b982618699c02dec703d766a7))
+* **RQ-DEVINCLOUD-PR6800R-N17:** ([#6804](https://github.com/ashlrai/phantom/issues/6804)) ([5d36545](https://github.com/ashlrai/phantom/commit/5d36545c8e52cc048216e5dc6c475c78b73175bd))
+* **RQ-DEVINCLOUD-REDTEST5038-N17:** ([#6808](https://github.com/ashlrai/phantom/issues/6808)) ([fe1b416](https://github.com/ashlrai/phantom/commit/fe1b4165a82c3d0399dc76ee8863448bc2ed07ca))
+* **RQ-DEVINCLOUD-SEATRACE-N17:** ([#6813](https://github.com/ashlrai/phantom/issues/6813)) ([1adfa6e](https://github.com/ashlrai/phantom/commit/1adfa6ec72076f4fdeb2e2bd41f57f4d9ed61f92))
+* **RQ-LIBRARYN18DQ8:** RQ-LIBRARYN18DQ8: Library (owner, size, show, detail pane) ([#6809](https://github.com/ashlrai/phantom/issues/6809)) ([36da0bd](https://github.com/ashlrai/phantom/commit/36da0bd0bb5789df6b5aebcbb87e444ad7b60b7d))
+* RQ-OMLXFITN16IQ8 ([#6480](https://github.com/ashlrai/phantom/issues/6480)) ([5e56af4](https://github.com/ashlrai/phantom/commit/5e56af4e1c72917a52015b4af075a54a6587d2f1))
+* RQ-ORGVIEWN18BQ8 ([#6795](https://github.com/ashlrai/phantom/issues/6795)) ([f412018](https://github.com/ashlrai/phantom/commit/f412018662132007872ff5dbfd502438ed2a94d7))
+* RQ-REBASE-PHANTOM-1048 ([#5812](https://github.com/ashlrai/phantom/issues/5812)) ([a61814d](https://github.com/ashlrai/phantom/commit/a61814d9874d1aad785e788dc6dc5061392551ac))
+* RQ-REBASE-PHANTOM-3294 ([#5831](https://github.com/ashlrai/phantom/issues/5831)) ([94ac56e](https://github.com/ashlrai/phantom/commit/94ac56e62ffe704c3b9b0fc7d1d4a5b006937a6e))
+* RQ-REBASE-PHANTOM-3896 ([#5843](https://github.com/ashlrai/phantom/issues/5843)) ([88720c3](https://github.com/ashlrai/phantom/commit/88720c3ddaf70e7609e348ba6f8d13640ce3d606))
+* RQ-REBASE-PHANTOM-4036 ([#5855](https://github.com/ashlrai/phantom/issues/5855)) ([1159ae3](https://github.com/ashlrai/phantom/commit/1159ae3fc41ba08bade2f7cc27113e99876b3bed))
+* **RQ-RELEASE-TRAIN-UNBLOCK-1:** RQ-RELEASE-TRAIN-UNBLOCK-1 ([#5162](https://github.com/ashlrai/phantom/issues/5162)) ([3c9586f](https://github.com/ashlrai/phantom/commit/3c9586f6a7a16395cfbbd860028638b3146f1500))
 
 ## [3.30.36] - 2026-11-17
 
