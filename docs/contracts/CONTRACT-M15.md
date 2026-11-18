@@ -135,6 +135,10 @@ export async function cmdModels(args: string[]): Promise<number>;
 - `ashlr models check [--json] [--diff <file>]`: `checkModels` in
   `src/core/fleet/model-check.ts`, returning `ModelCheckReport` (`models.check.v1`,
   `version: 1`). Read-only; exit 0 only when `ok`.
+  `checkModelsAgainstDocs(registry, docs)` in `src/core/fleet/model-verify.ts`
+  is the pure comparison with provider docs; `readDocsRecords` reads the
+  `models.docs.v1` list, and `selectVerifiedModel(models, registry, docs?)`
+  skips a model the docs call retired or do not name.
 - `ashlr models verify <id> --source <url>`: `markModelVerified`; see
   [the router gateway guide](../ROUTER-GATEWAY.md#model-verification).
 - `ashlr models pull <name>`: EXPLICIT management. Confirm (large download),

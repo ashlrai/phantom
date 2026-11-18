@@ -21,7 +21,7 @@ import { enginePermitted } from '../policy/local-only.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
 import { seatTier } from '../routing/tiers.js';
 import { isLoopbackHost } from '../local-runtime/llama/config.js';
-import { loadVerifiedRegistry, selectVerifiedModel, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
+import { loadVerifiedRegistry, readDocsRecords, selectVerifiedModel, type DocsModelRecord, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
 import {
   parseRouterModelSpec,
   ROUTER_GATEWAY_ENGINES,
@@ -57,6 +57,8 @@ export interface RouterGatewayTransports {
 
 export interface RouterGatewayDeps {
   modelRegistry?: readonly VerifiedModelRegistryEntry[];
+  /** The confirmed list from provider docs; null means unknown. Default: read from disk, or none when modelRegistry is set. */
+  modelDocs?: readonly DocsModelRecord[] | null;
   cfg: AshlrConfig;
   gateway: RouterGatewayConfig;
   now(): number;
@@ -159,8 +161,11 @@ function runnableModels(seat: VerseSeat): string[] {
   return seat.models.filter((m) => !(m as { unavailableReason?: unknown }).unavailableReason).map((m) => m.id);
 }
 
-async function verifiedRegistry(deps: Pick<RouterGatewayDeps, 'modelRegistry'>): Promise<readonly VerifiedModelRegistryEntry[]> {
-  return deps.modelRegistry ?? await loadVerifiedRegistry().catch(() => []);
+/** The one model gate: verified in the registry and, when a docs list exists, not retired or absent there. */
+async function modelGate(deps: Pick<RouterGatewayDeps, 'modelRegistry' | 'modelDocs'>): Promise<(models: readonly string[]) => ReturnType<typeof selectVerifiedModel>> {
+  const registry = deps.modelRegistry ?? await loadVerifiedRegistry().catch(() => []);
+  const docs = deps.modelDocs !== undefined ? deps.modelDocs : deps.modelRegistry ? null : await readDocsRecords();
+  return models => selectVerifiedModel(models, registry, docs);
 }
 
 function isGatewayEngine(engine: string): engine is RouterGatewayEngine {
@@ -243,7 +248,7 @@ async function routeRequest(deps: RouterGatewayDeps, req: Omit<RoutedCompletionR
   const snapshot = deps.capacitySnapshot();
   const snapshotById = new Map((snapshot?.seats ?? []).map((row) => [row.seatId, row]));
   const ruleOut = (seat: VerseSeat, reason: string): void => { plan.ruledOut.push({ seatId: seat.id, engine: seat.engine, reason }); };
-  const registry = await verifiedRegistry(deps), modelReasons: string[] = [];
+  const pickModel = await modelGate(deps), modelReasons: string[] = [];
 
   // A pin whose model no matching seat offers is a bad request, not a capacity hold.
   let pinOffered = false;
@@ -256,7 +261,7 @@ async function routeRequest(deps: RouterGatewayDeps, req: Omit<RoutedCompletionR
     if (!laneAllowed(deps.gateway, seat)) { ruleOut(seat, 'Not listed in the router config lanes.'); continue; }
     const models = runnableModels(seat);
     if (pinned && !models.includes(spec.model)) { ruleOut(seat, `Model ${spec.model} is not runnable on this seat.`); continue; }
-    const { model, reason } = selectVerifiedModel(pinned ? [spec.model, ...models.filter(id => id !== spec.model)] : models, registry);
+    const { model, reason } = pickModel(pinned ? [spec.model, ...models.filter(id => id !== spec.model)] : models);
     if (reason) modelReasons.push(`${seat.id}: ${reason}`);
     if (!model) { ruleOut(seat, reason ?? 'No verified runnable model.'); continue; }
     let base: SeatCapacity;
@@ -437,12 +442,12 @@ export interface RouterModelEntry {
   engine: string | null;
 }
 
-export async function listRouterModels(deps: Pick<RouterGatewayDeps, 'gateway' | 'candidates' | 'modelRegistry'>): Promise<RouterModelEntry[]> {
-  const registry = await verifiedRegistry(deps);
+export async function listRouterModels(deps: Pick<RouterGatewayDeps, 'gateway' | 'candidates' | 'modelRegistry' | 'modelDocs'>): Promise<RouterModelEntry[]> {
+  const pickModel = await modelGate(deps);
   const rows: RouterModelEntry[] = [{ id: 'auto', kind: 'auto', target: 'auto', engine: null }];
   for (const [name, alias] of Object.entries(deps.gateway.models)) {
     const spec = parseRouterModelSpec(alias.route);
-    if (spec?.kind === 'auto' || spec?.kind === 'pin' && selectVerifiedModel([spec.model], registry).model)
+    if (spec?.kind === 'auto' || spec?.kind === 'pin' && pickModel([spec.model]).model)
       rows.push({ id: name, kind: 'alias', target: alias.route, engine: null });
   }
   let candidates: LeaderSeatCandidate[] = [];
@@ -453,7 +458,7 @@ export async function listRouterModels(deps: Pick<RouterGatewayDeps, 'gateway' |
     // Local seat ids already read `local:<tag>`; native seats are `<seat>:<model>`.
     const lane = seat.engine === 'local' ? 'local' : seat.id;
     for (const model of runnableModels(seat)) {
-      if (!selectVerifiedModel([model], registry).model) continue;
+      if (!pickModel([model]).model) continue;
       const id = `${lane}:${model}`;
       if (seen.has(id)) continue;
       seen.add(id);

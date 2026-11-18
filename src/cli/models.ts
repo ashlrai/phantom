@@ -242,14 +242,15 @@ export function formatModelRegistry(rows: readonly ModelRegistryRow[] | null): s
   ];
 }
 
-/** `phm models check` in plain words: the three counts, the list, then the one next step. */
+/** `phm models check` in plain words: the top line, the three counts, the list, then the one next step. */
 export function formatModelCheck(report: ModelCheckReport): string[] {
   if (report.registry === 'unknown') return [`Models: unknown. ${report.error}`];
   const { counts, diff } = report;
-  const lines = [`Models: ${counts.confirmed} confirmed, ${counts.stale} stale, ${counts.unconfirmed} unconfirmed`];
+  const lines = [report.summary, `Models: ${counts.confirmed} confirmed, ${counts.stale} stale, ${counts.unconfirmed} unconfirmed`];
   for (const row of report.models) lines.push(`  ${row.id}: ${row.state}${row.routable ? '' : ', not routable'}; ${row.provider ?? 'unknown provider'}; lanes ${row.lanes.join(', ') || 'unknown'}; `
-    + `confirmed ${row.confirmed_on ?? 'never'}; source ${row.source_url ?? 'none'}`);
+    + `confirmed ${row.confirmed_on ?? 'never'}; source ${row.source_url ?? 'none'}; docs ${row.docs}${row.replacement ? `, use ${row.replacement}` : ''}`);
   if (counts.stale || counts.unconfirmed) lines.push('Confirm one: phm models verify <id> --source <official doc URL>');
+  for (const model of report.missing) lines.push(`  missing: ${model.id} (${model.provider}), seen ${model.seen_at}. Add it: phm models verify ${model.id} --source ${model.source_url} --provider ${model.provider}`);
   if (diff?.error) lines.push(`${diff.file}: ${diff.error}`);
   else if (diff) lines.push(`${diff.file} (${diff.provider}): ${diff.new.length} new, ${diff.renamed.length} renamed, ${diff.retired.length} retired`,
     ...diff.new.map(id => `  new: ${id}`), ...diff.renamed.map(pair => `  renamed: ${pair.from} is now ${pair.to}`), ...diff.retired.map(id => `  retired: ${id}`));
@@ -590,7 +591,7 @@ function printModelsHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
-    ['check [--diff <file>]', 'Report every model the router can pick: confirmed, stale (over 14 days) or unconfirmed (not routable).'],
+    ['check [--diff <file>]', 'Report every model the router can pick: confirmed, stale (over 14 days) or unconfirmed (not routable), and what provider docs say.'],
     ['verify', 'Show model status, evidence age and configured choices (JSON by default; --text for people).'],
     ['verify <id> --source <url>', 'Mark one model verified once its official doc page names the exact id (--provider adds a new model).'],
     ['routing', 'Inspect recorded task fit, latency availability and execution feedback (read-only).'],

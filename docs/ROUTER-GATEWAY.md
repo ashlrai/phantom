@@ -183,6 +183,21 @@ disk (the command never fetches) and lists `new`, `renamed` and `retired` IDs
 for that provider as leads to confirm; it changes nothing. The Models card shows
 the same report from `GET /api/verse/fleet/control/models/check`.
 
+The check also compares the registry with what provider docs confirm, when a
+docs-watch job has written `$ASHLR_HOME/model-docs.json` as
+`{"schema": "models.docs.v1", "version": 1, "records": [...]}`. Each record
+has `provider`, `id`, `status` (`current`, `deprecated` or `retired`),
+`source_url` (https on the provider's own doc site, or the row is dropped),
+`seen_at` and an optional `replacement`. Nothing here fetches the list. Each
+model then carries `docs`: `confirmed`, `deprecated` (with `replacement` when the
+docs name one), `retired`, `unconfirmed` (the provider has records, this ID has
+none) or `unknown` (no list, or none for that provider). `missing` lists current
+docs models the registry lacks, and `summary` is the top line in plain words.
+The gateway uses the same function: a verified model that the docs call
+`retired` or do not name is skipped, and the next verified model on the lane is
+used. A docs list can only take a model away. With no list, `docs` is `unknown`
+and routing follows the registry alone.
+
 To qualify a new model on release day, confirm its exact ID in official docs, then
 run `phm models verify <id> --source <url>` (add `--provider <name>` for an ID that
 is not listed yet, and `--lane <lane>` for each lane that can run it). The command

@@ -187,6 +187,21 @@ describe('routedComplete', () => {
     }
   });
 
+  it('skips a model provider docs retired, still picks the confirmed one, and routes as before without a docs list', async () => {
+    const seen = { provider: 'fixture', source_url: 'https://example.com/models', seen_at: '2026-09-24' };
+    const docs = [{ ...seen, id: 'grok-4.6', status: 'retired' as const, replacement: 'grok-4.6-mini' }, { ...seen, id: 'grok-4.6-mini', status: 'current' as const }];
+    for (const [modelDocs, model] of [[docs, 'grok-4.6-mini'], [null, 'grok-4.6'], [undefined, 'grok-4.6']] as const) {
+      const h = harness({ candidates: [GROK], snapshot: [paid('grok', 'grok', 20)] });
+      h.deps.modelDocs = modelDocs;
+      const logged: string[] = [];
+      h.deps.recordDecision = (_req, decision) => logged.push(decision.why);
+      expect(await routedComplete(h.deps, { model: 'auto', system: '', prompt: 'hi' })).toMatchObject({ ok: true, seatId: 'grok', model });
+      expect(h.calls).toEqual([`grok grok ${model}`]);
+      expect(logged[0]?.includes('Skipped grok-4.6: retired in provider docs.')).toBe(modelDocs === docs);
+      expect((await listRouterModels(h.deps)).map(row => row.id)).toEqual(modelDocs === docs ? ['auto', 'grok:grok-4.6-mini'] : ['auto', 'grok:grok-4.6', 'grok:grok-4.6-mini']);
+    }
+  });
+
   it('refuses every unregistered model without transports and records why', async () => {
     const h = harness({ candidates: [GROK, LOCAL], snapshot: [paid('grok', 'grok', 20)] });
     h.deps.modelRegistry = [];
