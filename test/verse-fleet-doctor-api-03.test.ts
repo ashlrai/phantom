@@ -18,6 +18,33 @@ const path = '/api/verse/fleet/doctor';
 it('returns the injected report on GET', async () => {
   expect(await call(async () => report, path, 'GET')).toMatchObject({ handled: true, status: 200, json: report });
 });
+it('loads the default doctor only when its GET route is requested', async () => {
+  const run = vi.fn(async () => report);
+  const load = vi.fn(() => ({ runFleetDoctor: run }));
+  const send = vi.fn();
+  vi.resetModules();
+  vi.doMock('../src/cli/fleet-doctor.js', load);
+  // Keep module-reset coverage independent of the full dashboard import graph.
+  vi.doMock('../src/core/web/api.js', () => ({ sendJson: send }));
+  try {
+    const { createFleetDoctorApi: create } = await import('../src/core/verse/fleet-doctor-api.js');
+    const handler = create();
+    const res = { writeHead: vi.fn(), end: vi.fn(), setHeader: vi.fn() } as unknown as ServerResponse;
+    const ctx = {} as VerseApiContext;
+    const req = {} as IncomingMessage;
+    expect(await handler(ctx, req, res, '/api/verse/fleet/other', 'GET')).toBe(false);
+    expect(await handler(ctx, req, res, path, 'POST')).toBe(true);
+    expect(load).not.toHaveBeenCalled();
+    expect(await handler(ctx, req, res, path, 'GET')).toBe(true);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenLastCalledWith(res, 200, report);
+  } finally {
+    vi.doUnmock('../src/cli/fleet-doctor.js');
+    vi.doUnmock('../src/core/web/api.js');
+    vi.resetModules();
+  }
+});
 it('rejects POST without running the doctor', async () => {
   const run = vi.fn(async () => report);
   expect(await call(run, path, 'POST')).toMatchObject({ handled: true, status: 405 });
