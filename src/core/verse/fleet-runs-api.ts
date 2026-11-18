@@ -110,6 +110,7 @@ const VERSE_FLEET_SUPERSEDED_PATH: typeof import('../fleet/superseded-read.js').
   '/api/verse/fleet/runs/superseded';
 
 export interface FleetRunsApiDeps {
+  readReleases?: typeof import('../release/releases.js').readReleases;
   laneModels?: () => Promise<LaneModelSnapshot>;
   /** Home's Disk card; default is readWorktrees('list') from core/fleet/worktrees. */
   readWorktrees?: () => Promise<WorktreesReport>;
@@ -442,6 +443,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // jobs.jsonl tail /api/fleet/activity serves). A missing or malformed
   // ledger yields an empty map — workers then carry no overrun field and the
   // composite read still succeeds.
+  const releaseReads = new Map<string, Promise<import('../release/releases-shape.js').ReleasesV1>>();
   let worktreesRead: { at: number; read: Promise<WorktreesReport> } | null = null;
   let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
   let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
@@ -534,6 +536,24 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       const seen = new URL(req.url ?? '/', 'http://localhost').searchParams.get('leaderSeen');
       const { readHome } = await import('../fleet/home.js');
       sendJson(res, 200, await readHome({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), leaderSeenMs: seen ? Number(seen) : null }));
+      return true;
+    }
+    if (path === '/api/verse/fleet/runs/releases') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readReleases, releaseRepo } = await import('../release/releases.js');
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const repo = params.get('repo');
+      if (params.getAll('repo').length > 1 || (repo !== null && !releaseRepo(repo))) { sendJson(res, 400, { error: 'Unknown enrolled repository' }); return true; }
+      const key = repo === null ? '' : releaseRepo(repo)!;
+      // Coalesce overlapping refreshes; completed reads are never reused as fresh evidence.
+      try {
+        if (!releaseReads.has(key)) {
+          const pending = (deps.readReleases ?? readReleases)({ ...(repo === null ? {} : { repo: key }), now: now() });
+          releaseReads.set(key, pending); void pending.finally(() => releaseReads.delete(key)).catch(() => {});
+        }
+        sendJson(res, 200, await releaseReads.get(key));
+      }
+      catch { sendJson(res, 503, { error: 'Release report unavailable' }); }
       return true;
     }
     // Home's Disk card reads the same report as `phm worktrees --json`; read-only (removal stays in the CLI).

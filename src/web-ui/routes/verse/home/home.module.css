@@ -10,3 +10,4 @@
 .action { align-self: flex-start; min-height: 2.75rem; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
 .card [data-warn] { color: var(--warning-500, var(--text-primary)); }
 .command { font-family: var(--font-mono, monospace); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.releaseList { display: flex; flex-direction: column; gap: var(--space-3); }
