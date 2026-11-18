@@ -59,6 +59,8 @@ export function projectCoordinationReturns(board: FleetBoard | null, nowMs: numb
   const base = { v: 1 as const, source: 'coordination-ledger' as const, asOf: iso(nowMs) };
   if (board === null || board.state === 'unknown') {
     return { ...base, state: 'unknown' as const, returns: [] as Row[], unparsed: 0,
+      // Legacy unparsed stays compatible; coverage counters are unknown, not zero.
+      coverage: { parsedTotal: null, omitted: null, unparsed: null },
       reason: 'coordination ledger: reader failed' };
   }
   const rows: { row: Row; at: number }[] = [];
@@ -90,5 +92,6 @@ export function projectCoordinationReturns(board: FleetBoard | null, nowMs: numb
     rows.push({ at: message.at, row });
   }
   return { ...base, state: 'known' as const,
+    coverage: { parsedTotal: rows.length, omitted: Math.max(0, rows.length - 50), unparsed },
     returns: rows.sort((a, b) => b.at - a.at).slice(0, 50).map(entry => entry.row), unparsed };
 }

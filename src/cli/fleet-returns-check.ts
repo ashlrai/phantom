@@ -17,7 +17,8 @@ whether each PR merged at the claimed head. One line per checked row:
 <verdict>  <repo>#<pr>  claimed <head7> observed <head7|-> (<claimId>).
 Receipt lines label temporal currency at as-of; GitHub verifies only the PR.
 Exit 0 when all PR receipts are current and checked rows merged-at-head; 1 otherwise; 2 on bad
-arguments. Limit-truncated checks have incomplete coverage and cannot succeed.
+arguments. Projection omissions, unparsed returns and limit-truncated checks
+have incomplete coverage and cannot succeed.
 Read-only; the verdict grants no authority.`;
 
 const head7 = (head: string | null): string => head === null ? '-' : head.slice(0, 7);
@@ -46,9 +47,14 @@ export async function cmdFleetReturnsCheck(args: string[], deps: { gh?: Gh; now?
   const check = await checkReturnPrs(view.returns, { gh: deps.gh, now, limit });
   if (json) {
     console.log(JSON.stringify({ ...check, asOf: view.asOf, receipts, returnsState: view.state,
+      projectionCoverage: view.coverage,
       ...(view.state === 'unknown' ? { returnsReason: view.reason } : {}) }));
   } else {
     if (view.state === 'unknown') console.log(`returns: unknown (${view.reason})`);
+    const coverage = view.coverage;
+    console.log(`projection coverage: parsed-total=${coverage.parsedTotal ?? 'unknown'} omitted=${coverage.omitted ?? 'unknown'} unparsed=${coverage.unparsed ?? 'unknown'}`);
+    if (coverage.omitted) console.log('incomplete coverage: the returns projection omitted parsed return evidence');
+    if (coverage.unparsed) console.log('incomplete coverage: return-prefixed messages could not be parsed');
     if (view.state === 'known' && check.checked.length === 0) console.log('no VERIFIED pr returns to check');
     for (const row of check.checked) {
       console.log(`${row.verdict}  ${row.repo}#${row.pr}  claimed ${head7(row.head)} observed ${head7(row.observedHead)} (${row.claimId})`);
@@ -58,6 +64,7 @@ export async function cmdFleetReturnsCheck(args: string[], deps: { gh?: Gh; now?
     if (check.truncated) console.log('incomplete coverage: the limit prevented checking all eligible PR returns');
   }
   if (view.state === 'unknown') return 1;
-  return !check.truncated && receipts.every(row => row.temporal === 'current')
+  return view.coverage.omitted === 0 && view.coverage.unparsed === 0
+    && !check.truncated && receipts.every(row => row.temporal === 'current')
     && check.checked.every(row => row.verdict === 'merged-at-head') ? 0 : 1;
 }
