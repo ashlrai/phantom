@@ -31,6 +31,7 @@ import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPol
 import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
 import { defaultRuntimeLine } from '../core/agents/owner-status-runtime-line.js';
 import { createClaimNoticeTick } from './channels-slack-claim-tick.js';
+import { createSlackNoticeHealth } from './slack-notice-health.js';
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -194,7 +195,8 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
   const counts = { sent: 0, duplicate: 0, uncertain: 0, refused: 0 };
   // Run mode only: proactive ASSIGNED / RELEASED / BLOCKED / VERIFIED notices.
   // The pass appends bus notes that the drain below delivers under its gates.
-  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0 };
+  const noticeHealth = createSlackNoticeHealth();
+  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0, health: noticeHealth.health };
   const totals = (): Record<string, unknown> => (run ? { ...counts, claimNotices } : counts);
   try {
     await verifySlackIdentity(call, config);
@@ -216,7 +218,9 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
         const owners = await flushSlackLeaderReplies({ call, signal: controller.signal });
         if (owners.state !== 'completed') throw new Error('leader-slack-unavailable');
         counts.sent += owners.sent;
+        const attemptedAt = new Date().toISOString();
         const tick = await claimTick.maybeRun(controller.signal);
+        noticeHealth.observe(tick, attemptedAt);
         if (tick.ran) {
           claimNotices.passes++; claimNotices.sent += tick.sent;
           claimNotices.failed += tick.failed; claimNotices.skipped += tick.deduped;
