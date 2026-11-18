@@ -17,7 +17,7 @@ export const VERSE_FLEET_COORDINATION_RETURNS_VERIFY_PATH = `${VERSE_FLEET_COORD
 export const RETURNS_VERIFY_CACHE_MS = 60_000;
 
 export interface FleetCoordinationReturnsVerifyApiDeps {
-  /** Reader seam for tests. Default: readFleetBoard({ now: 0, reap: false }), as the CLI reads. */
+  /** Reader seam for tests. Default: retained return history at the observation clock, without reaping. */
   read?: () => FleetBoard;
   /** GitHub seam for tests. Default: the gh CLI. */
   gh?: Gh;
@@ -44,9 +44,6 @@ export interface ReturnsVerifyBody {
 }
 
 export function createFleetCoordinationReturnsVerifyApi(deps: FleetCoordinationReturnsVerifyApiDeps = {}): ApiModule {
-  // Epoch-zero read retains history without reaping; the projection alone
-  // qualifies currency at the observation clock.
-  const read = deps.read ?? (() => readFleetBoard({ now: 0, reap: false }));
   const now = deps.now ?? (() => new Date());
   type Observation = { at: number; check: ReturnPrCheckReport };
   let cached: (Observation & { key: string }) | null = null;
@@ -56,7 +53,9 @@ export function createFleetCoordinationReturnsVerifyApi(deps: FleetCoordinationR
   async function observe(): Promise<ReturnsVerifyBody> {
     const at = now();
     let board: FleetBoard | null;
-    try { board = read(); } catch { board = null; }
+    // Match the CLI: retain durable returns, excluding expired ordinary posts,
+    // at the same clock that qualifies receipt currency in the projection.
+    try { board = deps.read ? deps.read() : readFleetBoard({ now: at.getTime(), reap: false, includeExpiredReturns: true }); } catch { board = null; }
     const view = projectCoordinationReturns(board, at.getTime());
     const ms = at.getTime();
     if (ms < lastAt) { cached = null; inflight = null; }
