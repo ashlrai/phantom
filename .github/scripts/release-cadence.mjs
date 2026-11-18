@@ -108,7 +108,7 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), report = message => console.warn(message),
   timeoutSignal = ms => AbortSignal.timeout(ms) } = {}) {
   // One small budget covers the whole plan, not a renewed budget per endpoint.
-  // Only timeouts and gateway/service failures retry; JSON, identity and permission failures
+  // Only timeouts and 500/gateway/service failures retry; JSON, identity and permission failures
   // still refuse. This reader never receives credentials or performs writes.
   const deadline = now() + 30_000;
   let firstTransient;
@@ -126,7 +126,7 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
         response = await fetchImpl(`https://api.github.com/${endpoint}`, {
           method: 'GET', headers: { Accept: 'application/vnd.github+json' }, redirect: 'error', signal,
         });
-        if ([502, 503, 504].includes(response.status)) {
+        if ([500, 502, 503, 504].includes(response.status)) {
           void response.body?.cancel().catch(() => {});
           transient = String(response.status);
         } else if (response.status === 200) {
