@@ -71,6 +71,17 @@ async function checkOne(gh: Gh, row: { claimId: string; repo: string; pr: number
   } catch {
     return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'read-failed' };
   }
+  // Identity fields are optional for older injected readers, but a supplied
+  // identity must bind this response to the requested pull and base repo.
+  const responseBase = raw['base'];
+  const baseRepo = obj(responseBase)['repo'];
+  const fullName = obj(baseRepo)['full_name'];
+  if (('number' in raw && raw['number'] !== row.pr)
+    || ('base' in raw && (responseBase === null || typeof responseBase !== 'object' || Array.isArray(responseBase)))
+    || ('repo' in obj(responseBase) && (baseRepo === null || typeof baseRepo !== 'object' || Array.isArray(baseRepo)))
+    || ('full_name' in obj(baseRepo) && (typeof fullName !== 'string' || fullName.toLowerCase() !== repo.toLowerCase()))) {
+    return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'invalid-response-identity' };
+  }
   const observedHead = str(obj(raw['head'])['sha']);
   const mergedAt = str(raw['merged_at']);
   const merged = raw['merged'] === true || mergedAt !== null;
