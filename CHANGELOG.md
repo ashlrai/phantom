@@ -16,6 +16,15 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.39](https://github.com/ashlrai/phantom/compare/v3.30.38...v3.30.39) (2026-11-18)
+
+
+### Changes
+
+* **RQ-MERGEWAIT18Q8:** RQ-MERGEWAIT18Q8 ([#6926](https://github.com/ashlrai/phantom/issues/6926)) ([9be600e](https://github.com/ashlrai/phantom/commit/9be600e7f4627a25defa78d60a97bba616956aa3))
+* **RQ-PHX-SLACKENQUEUEEVIDENCE570S:** RQ-PHX-SLACKENQUEUEEVIDENCE570S ([#6923](https://github.com/ashlrai/phantom/issues/6923)) ([49617bd](https://github.com/ashlrai/phantom/commit/49617bdf64e3a7199831789b800573618a603181))
+* **RQ-YIELDSTOP18Q8:** RQ-YIELDSTOP18Q8 ([#6924](https://github.com/ashlrai/phantom/issues/6924)) ([99374b6](https://github.com/ashlrai/phantom/commit/99374b62c820835081c76f462306fe87f88b8e25))
+
 ## [Unreleased]
 
 ### Added
