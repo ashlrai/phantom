@@ -23,6 +23,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
+
+requireBuiltDist(['dist/cli/index.js']);
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const BIN = resolve(__dirname, '..', 'bin', 'ashlr');
