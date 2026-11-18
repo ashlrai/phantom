@@ -11,6 +11,7 @@ const HELP = `Usage: phm queue [--json]
        phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
+       phm queue overlap <prompt-file> [--json]
        phm queue coalesce [<file>] [--apply --out <directory>] [--json]
        phm queue supersede [--json] [--apply]
        phm queue add|claim|done|block|replay|list|import|export|spawn|promote|serve [options]
@@ -114,6 +115,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   if (command === 'coalesce') return (await import('./queue-coalesce.js')).cmdQueueCoalesce(args.slice(args.indexOf('coalesce') + 1));
   if (command === 'supersede') return (await import('./queue-supersede.js')).cmdQueueSupersede(args.slice(args.indexOf('supersede') + 1));
   if (command === 'dedupe') return (await import('./queue-dedupe.js')).cmdQueueDedupe(args.slice(args.indexOf('dedupe') + 1));
+  if (command === 'overlap') return (await import('./queue-overlap.js')).cmdQueueOverlap(args.filter((_, i) => i !== commandIndex));
   if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export', 'spawn', 'promote', 'serve'].includes(command ?? '') ||
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
     return (await import('./job-queue.js')).cmdJobQueue(args);
