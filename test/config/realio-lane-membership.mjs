@@ -56,6 +56,7 @@ export const REAL_IO_TEST_FILES = [
   'test/acp-seat-client.test.ts', // Real hermetic ACP stdio fixture subprocesses.
   'test/agents-app-adapters.test.ts', // Real fake-CLI shell subprocesses and session-record files.
   'test/pr-resolve-conflicts.test.ts', // Creates real git histories/worktrees and imports verified supersede bundles.
+  'test/fleet-republish.test.ts', // publish-log filesystem fixtures
   'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
