@@ -31,7 +31,7 @@ describe.each([['390 px', 390, 'stacked'], ['desktop width', 1440, 'split']] as 
     const list = await screen.findByRole('list', { name: 'Library items' });
     expect(list.parentElement).toHaveAttribute('data-layout', layout);
     expect(screen.getAllByRole('searchbox')).toHaveLength(1);
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['All', 'Files & media', 'Memory', 'Messages', 'Context']);
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['All', 'Files', 'Media', 'Memory', 'Messages', 'Context']);
     expect(list).toHaveTextContent('cos');
     expect(list).toHaveTextContent('2.0 KB');
     fireEvent.click(within(list).getByRole('button', { name: /review: Notes/ }));
