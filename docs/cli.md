@@ -432,6 +432,7 @@ Every command, grouped by topic.
     worktrees [--json] [--reap [--dry-run | --apply]]                                     List job worktrees by state and remove the ones safe to remove.
     worktrees prune [--dry-run | --apply] [--json]                                        Preview or remove clean, inactive worktrees for finished jobs.
     worktrees report [--dir <path>] [--json]                                              Report worktree age, size, last log time and job state.
+    host [--top N] [--json]                                                               What is using this machine: load, memory free and swap, the busiest program groups marked fleet or not, and orphaned job processes. Read-only; unknown stays unknown.
     disk [--wt-dir <abs>] [--json]                                                        Read-only disk report for agent worktrees: sizes, lifecycle state, and the bytes safe to reclaim.
     disk-maint [--apply] [--json] [--only <class>] [--allow <class>]                      Standing disk maintenance: rotate/compress quiet logs, prune dead session leftovers, stale staging and recovery dirs, and remove merged worktrees. Dry run unless --apply; protect-list never touches ~/.codex*, model weights, Docker, client trees or secrets.
     autofix [--apply] [--dry-run] [--json] [--only <fixer>]                               Act on Eng Ops incident files (prefix a, b, d, e; g is detect-only). Dry run unless --apply. Refuses when ~/.ashlr/KILL exists. Never reads the incident body into a command. See docs/AUTOFIX.md.

@@ -2672,6 +2672,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'host': {
+        const { cmdHost } = await import('./host.js');
+        process.exitCode = await cmdHost(rest);
+        break;
+      }
+
       case 'disk': {
         const { cmdDisk } = await import('./disk.js');
         process.exitCode = await cmdDisk(rest);

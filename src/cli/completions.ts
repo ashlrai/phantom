@@ -65,6 +65,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'estates', 'ci', 'ci-metrics', 'daily-fix', 'main',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
   'disk', 'app', 'radar',
+  // What is using this machine's CPU and memory (RQ-HOSTTOPN18FQ8).
+  'host',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
   // Read-only view of every pooled computer (RQ-NODESN17RQ8). `autonomy` was
@@ -93,6 +95,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   companions: ['--json', '--root', '--bin-dir', '--secrets-bin', '--locus-bin', '--lexicon-bin', '--help'],
   disk: ['--wt-dir', '--runs-dir', '--tmp-dir', '--json', '--help'],
   nodes: ['--json', '--can-take', '--help'],
+  host: ['--top', '--json', '--help'],
   map: ['--json', '--help'],
   'disk-maint': ['schedule', '--apply', '--json', '--only', '--allow', '--compress-days', '--prune-days', '--help'],
   autofix: ['--apply', '--dry-run', '--json', '--only', '--older-than', '--stuck-minutes', 'release-stuck-draft', 'launchd-crashloop', 'stuck-lane', 'outside-load', '--help'],

@@ -249,7 +249,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   // Usage meter motion audit; read-only.
   { id: 'fleet-ci-runs', load: async () => (await import('./fleet-ci-runs-api.js')).handleFleetCiRunsApi },
   { id: 'fleet-usage-audit', load: async () => (await import('./fleet-usage-audit-api.js')).handleFleetUsageAuditApi },
-  // Host memory guard projection: GET /api/verse/fleet/memory (core/verse/fleet-memory-api.ts); read-only.
+  // Host memory guard projection: GET /api/verse/fleet/memory, plus GET /api/verse/fleet/host (phm host);
+  // both in core/verse/fleet-memory-api.ts, read-only.
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
   // Local desktop app status and bounded launch, focus and restart actions.
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
