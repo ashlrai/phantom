@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 const toolNames = extractToolNames(
-  readFileSync(join(root, 'docs/MCP-TOOLS.md'), 'utf8'),
+  readFileSync(join(root, 'docs/MCP-TOOLS.md'), 'utf8').split('## `phantom-fleet`')[0]!,
 );
 
 describe('MCP tools documentation', () => {
