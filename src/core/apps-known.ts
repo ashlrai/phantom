@@ -24,14 +24,19 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { scanBusInbox } from './fleet/bus-inbox.js';
 
 export const KNOWN_APP_IDS = ['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'devin', 'safari'] as const;
 export type KnownAppId = (typeof KNOWN_APP_IDS)[number];
 
+/** What kind of app it is, for agents: typed, unlike the plain-words `role`. */
+export type AppKind = 'agent-app' | 'browser' | 'ide' | 'phantom';
+
 export interface KnownApp {
   id: KnownAppId;
   name: string;
+  kind: AppKind;
   /** What Phantom uses the app for, in plain words. */
   role: string;
   /** `.app` bundle file names to look for, in order. */
@@ -42,14 +47,14 @@ export interface KnownApp {
 }
 
 export const KNOWN_APPS: readonly KnownApp[] = [
-  { id: 'phantom', name: 'Phantom', role: 'This app', bundles: ['Phantom.app'], bundleIds: ['ai.ashlr.desktop'], quit: 'protected' },
-  { id: 'claude', name: 'Claude', role: 'Assistant', bundles: ['Claude.app'], bundleIds: ['com.anthropic.claudefordesktop'], quit: 'protected' },
-  { id: 'codex', name: 'Codex', role: 'Coding agent', bundles: ['Codex.app'], bundleIds: [], quit: 'protected' },
-  { id: 'chatgpt', name: 'ChatGPT', role: 'Assistant', bundles: ['ChatGPT.app'], bundleIds: ['com.openai.chat'], quit: 'protected' },
-  { id: 'cursor', name: 'Cursor', role: 'Editor', bundles: ['Cursor.app'], bundleIds: ['com.todesktop.230313mzl4w4u92'], quit: 'protected' },
-  { id: 'grok', name: 'Grok', role: 'Assistant', bundles: ['Grok.app'], bundleIds: [], quit: 'protected' },
-  { id: 'devin', name: 'Devin', role: 'Coding agent', bundles: ['Devin.app'], bundleIds: ['ai.cognition.devin'], quit: 'protected' },
-  { id: 'safari', name: 'Safari', role: 'Phantom’s agent browser', bundles: ['Safari.app'], bundleIds: ['com.apple.Safari'], quit: 'allowed' },
+  { id: 'phantom', kind: 'phantom', name: 'Phantom', role: 'This app', bundles: ['Phantom.app'], bundleIds: ['ai.ashlr.desktop'], quit: 'protected' },
+  { id: 'claude', kind: 'agent-app', name: 'Claude', role: 'Assistant', bundles: ['Claude.app'], bundleIds: ['com.anthropic.claudefordesktop'], quit: 'protected' },
+  { id: 'codex', kind: 'agent-app', name: 'Codex', role: 'Coding agent', bundles: ['Codex.app'], bundleIds: [], quit: 'protected' },
+  { id: 'chatgpt', kind: 'agent-app', name: 'ChatGPT', role: 'Assistant', bundles: ['ChatGPT.app'], bundleIds: ['com.openai.chat'], quit: 'protected' },
+  { id: 'cursor', kind: 'ide', name: 'Cursor', role: 'Editor', bundles: ['Cursor.app'], bundleIds: ['com.todesktop.230313mzl4w4u92'], quit: 'protected' },
+  { id: 'grok', kind: 'agent-app', name: 'Grok', role: 'Assistant', bundles: ['Grok.app'], bundleIds: [], quit: 'protected' },
+  { id: 'devin', kind: 'agent-app', name: 'Devin', role: 'Coding agent', bundles: ['Devin.app'], bundleIds: ['ai.cognition.devin'], quit: 'protected' },
+  { id: 'safari', kind: 'browser', name: 'Safari', role: 'Phantom’s agent browser', bundles: ['Safari.app'], bundleIds: ['com.apple.Safari'], quit: 'allowed' },
 ];
 
 /** Exact id, display name or listed bundle id, case-insensitive. */
@@ -172,6 +177,27 @@ export interface MacAppRow {
   action: MacAppAction | null;
   /** Why a column is unknown; null when every column was read. */
   reason: string | null;
+  kind: AppKind;
+  /** Name of the running main executable, as `ps` shows it; null when unknown or not running. */
+  processName: string | null;
+  /** Latest open, focus, quit or restart recorded in the feed; null when none is on record. */
+  lastAction: MacAppLastAction | null;
+}
+
+export interface MacAppLastAction { action: string; outcome: string; at: string }
+
+/** The latest acted-on result per known app, from the `apps-control` feed lines runAppsControl writes. */
+export function readLastAppActions(scan: () => Pick<ReturnType<typeof scanBusInbox>, 'rows'> = scanBusInbox): Map<KnownAppId, MacAppLastAction> {
+  const last = new Map<KnownAppId, MacAppLastAction & { ms: number }>();
+  for (const row of scan().rows) {
+    const body = row.envelope.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || body.kind !== 'apps-control' || body.phase !== 'result') continue;
+    const { action, outcome, app } = body;
+    if (typeof action !== 'string' || typeof outcome !== 'string' || typeof app !== 'string' || action === 'list' || action === 'status') continue;
+    const known = findKnownApp(app);
+    if (known && row.receivedAt >= (last.get(known.id)?.ms ?? 0)) last.set(known.id, { action, outcome, at: new Date(row.receivedAt).toISOString(), ms: row.receivedAt });
+  }
+  return new Map([...last].map(([id, { action, outcome, at }]) => [id, { action, outcome, at }]));
 }
 
 export interface MacAppsReport {
@@ -200,11 +226,13 @@ export function nextAction(row: Pick<MacAppRow, 'id' | 'installed' | 'running' |
 }
 
 /** One row per known app, always in catalog order, so the JSON shape is stable. */
-export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: string } = {}): Promise<MacAppsReport> {
+export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: string; lastActions?: () => Map<KnownAppId, MacAppLastAction> } = {}): Promise<MacAppsReport> {
   const probe = opts.probe === undefined ? defaultMacAppsProbe() : opts.probe;
+  const last = (opts.lastActions ?? readLastAppActions)();
   const base = (app: KnownApp): MacAppRow => ({
     id: app.id, name: app.name, role: app.role, installed: null, running: null, frontmost: null, pid: null, memoryMb: null,
     path: null, bundleId: null, quit: app.quit, action: null, reason: PROBE_MISSING_REASON,
+    kind: app.kind, processName: null, lastAction: last.get(app.id) ?? null,
   });
   if (!probe) return { schema: 'phm.apps/1', version: 1, probe: 'missing', reason: PROBE_MISSING_REASON, apps: KNOWN_APPS.map(base) };
 
@@ -229,10 +257,11 @@ export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: st
     const running = mine ? mine.length > 0 : null;
     const frontmost = !front.ok ? null : running === false ? false : frontPath !== null && inside(frontPath);
     const reasons = [...(procs.ok ? [] : [`running state: ${procs.reason}`]), ...(front.ok ? [] : [`frontmost: ${front.reason}`])];
+    // The main process runs from Contents/MacOS; helpers live deeper in the bundle.
+    const main = mine?.find(p => roots.some(r => p.path.startsWith(`${r}/Contents/MacOS/`)));
     const row: MacAppRow = {
-      ...base(app), installed: true, running, frontmost,
-      // The main process runs from Contents/MacOS; helpers live deeper in the bundle.
-      pid: mine && mine.length > 0 ? (mine.find(p => roots.some(r => p.path.startsWith(`${r}/Contents/MacOS/`))) ?? mine.reduce((a, b) => a.pid <= b.pid ? a : b)).pid : null,
+      ...base(app), installed: true, running, frontmost, processName: main ? basename(main.path) : null,
+      pid: mine && mine.length > 0 ? (main ?? mine.reduce((a, b) => a.pid <= b.pid ? a : b)).pid : null,
       memoryMb: mine && mine.length > 0 ? Math.round(mine.reduce((n, p) => n + p.rssKb, 0) / 1024) : null,
       path: found.value.path, bundleId: found.value.bundleId, reason: reasons.length ? reasons.join('; ') : null,
     };

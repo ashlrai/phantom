@@ -72,10 +72,11 @@ describe('readMacApps', () => {
     const a = JSON.stringify(await read());
     expect(JSON.stringify(await read())).toBe(a);
     const row = JSON.parse(a).apps[1];
-    expect(Object.keys(row)).toEqual(['id', 'name', 'role', 'installed', 'running', 'frontmost', 'pid', 'memoryMb', 'path', 'bundleId', 'quit', 'action', 'reason']);
+    expect(Object.keys(row)).toEqual(['id', 'name', 'role', 'installed', 'running', 'frontmost', 'pid', 'memoryMb', 'path', 'bundleId', 'quit', 'action', 'reason', 'kind', 'processName', 'lastAction']);
     expect(row).toEqual({
       id: 'claude', name: 'Claude', role: 'Assistant', installed: true, running: true, frontmost: true, pid: expect.any(Number), memoryMb: 150,
       path: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', quit: 'protected', action: null, reason: null,
+      kind: 'agent-app', processName: 'Claude', lastAction: null,
     });
   });
 
