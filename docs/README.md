@@ -91,6 +91,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Read the historical four-pillar assistant vision | [Original Phantom vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) |
 | See the six irreducible core parts and what is a plugin | [Core spec](https://github.com/ashlrai/phantom/blob/master/docs/CORE-SPEC.md) |
 | Route future work toward the optimized organization architecture | [Phantom end-state architecture](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ENDSTATE.md) |
 | Map org repository ownership, leverage and proposed cross-repo work | [Org repository map](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ORG-REPO-MAP.md) |
