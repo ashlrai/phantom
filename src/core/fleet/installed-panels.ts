@@ -1,3 +1,4 @@
+export const INVALID_MANIFEST_AGENTS = 'None (invalid manifest)';
 /**
  * installed-panels.ts: what plugins and skills fleet agents have, for the
  * desktop Plugins and Skills panes and `phm plugins|skills list --all --json`.
@@ -79,7 +80,7 @@ function phantomPlugins(home: string, enabledPlugins: () => string[]): Read<Inst
   try { enabled = new Set(enabledPlugins()); } catch { enabled = null; }
   return { state: 'read', value: dirs.value.map(dir => {
     const manifest = readManifest(join(root, dir));
-    if (!manifest.ok) return { name: dir, source: 'Phantom', agents: 'None (invalid manifest)', enabled: false, lastUsed: 'unknown' };
+    if (!manifest.ok) return { name: dir, source: 'Phantom', agents: INVALID_MANIFEST_AGENTS, enabled: false, lastUsed: 'unknown' };
     const name = manifest.manifest.name;
     return { name, source: 'Phantom', agents: 'Any agent that runs phm on this machine', enabled: enabled ? enabled.has(name) : 'unknown', lastUsed: 'unknown' };
   }) };
