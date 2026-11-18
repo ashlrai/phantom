@@ -30,6 +30,7 @@ It gives each job kind a keep, watch or stop verdict and names the five to stop
 first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).
 For only the job kinds to stop, run `phm jobs yield --stop-list` (one per line).
 To stop them, run `phm jobs yield --stop-file`: it writes them to the job stop file the fleet reads before any model call.
+Before a recut cycle, `phm recut plan --json` says per area whether to write a job; `phm recut prompt` puts the standard task line first.
 
 `jobs.empty.v1` adds `diagnosis`: `jobs` (id, lane, family, reason), `families`
 and `lanes` (name, total, topReason, suggestion). Existing top-level `jobs`,

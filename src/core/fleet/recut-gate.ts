@@ -64,12 +64,15 @@ export function shouldEmitRecut(input: RecutGateInput): RecutGateDecision {
 }
 
 /** The repo paths a recut area covers. An area missing here counts every path, which can only emit more. */
-const AREA_PATHS: Record<string, string[]> = {
+export const AREA_PATHS: Readonly<Record<string, readonly string[]>> = {
   CORE: ['src/core'], COREFLEET: ['src/core/fleet'], FLEETCLI: ['src/cli'], CLI: ['src/cli'], MCP: ['src/mcp'],
   WEBUI: ['src/web-ui'], DESK: ['src/web-ui', 'desktop'], VERSE: ['src/core/verse', 'src/web-ui/routes/verse'],
   COMMS: ['src/core/comms'], TESTONLY: ['test'], DOCS: ['docs'], SCRIPTS: ['scripts'], SRC: ['src'],
 };
 const KIND_PREFIX = /^(?:RQ-)?(?:PHX-)?(RECUT|RED(?:TYPE|TEST)?FIX)/;
+
+/** The recut areas the generator cycles through, in a fixed order. */
+export const RECUT_AREAS: readonly string[] = Object.keys(AREA_PATHS);
 
 /** `core`, `RQ-PHX-RECUTCORE` or `RQ-PHX-RECUTCOREC566` -> family RQ-PHX-RECUTCORE, area CORE, paths [src/core]. */
 export function recutTarget(arg: string): { family: string; area: string; paths: string[] } | null {
@@ -77,7 +80,7 @@ export function recutTarget(arg: string): { family: string; area: string; paths:
   const family = /^RQ-/i.test(arg) ? jobKind(arg.toUpperCase()) : `RQ-PHX-RECUT${arg.toUpperCase().replace(/-/g, '')}`;
   const prefix = KIND_PREFIX.exec(family.replace(/^RQ-/, ''));
   const area = prefix ? family.replace(/^RQ-/, '').replace(/^PHX-/, '').slice(prefix[1]!.length) : '';
-  return { family, area, paths: AREA_PATHS[area] ?? [] };
+  return { family, area, paths: [...(AREA_PATHS[area] ?? [])] };
 }
 
 export type GitRun = (args: readonly string[]) => Promise<{ code: number | null; stdout: string }>;
