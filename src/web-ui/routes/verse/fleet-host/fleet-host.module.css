@@ -46,3 +46,7 @@
 .tabTitle { flex: 1 1 100%; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .shot { margin: var(--space-2) 0; min-width: 0; }
 .shot img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.loadBar { display: flex; gap: 2px; height: var(--space-3); margin: var(--space-2) 0; border-radius: var(--radius-sm); overflow: hidden; }
+.loadBar > span { min-width: 2px; flex-basis: 0; }
+.loadLegend { margin: 0; padding: 0; list-style: none; }
+.loadKey { display: inline-block; width: var(--space-2); height: var(--space-2); margin-right: var(--space-2); border-radius: 2px; }

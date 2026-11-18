@@ -30,8 +30,9 @@ export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'budget get', 'chain verify', 'ci reruns', 'commands', 'companions', 'config effective', 'config path', 'constitution check',
   'daemon activation-preflight', 'daemon service-status', 'disk', 'doctor merge-path', 'ecosystem doctor', 'empties', 'enroll list',
   'estates', 'feed', 'fleet direction', 'fleet evidence doctor', 'fleet status', 'fleet vitals', 'gh', 'goals', 'goals status',
-  'graph', 'graph status', 'growth', 'help', 'home', 'inbox show', 'jobs empty', 'knowledge graph', 'knowledge impact', 'lanes',
+  'graph', 'graph status', 'growth', 'help', 'home', 'host load', 'inbox show', 'jobs empty', 'knowledge graph', 'knowledge impact', 'lanes',
   'lanes fit', 'library', 'log', 'ls', 'map', 'mcp list', 'metrics idle', 'metrics levers', 'metrics merges', 'models', 'models check', 'nodes',
+
   'observe', 'observe session', 'orient', 'pages list', 'pool admission', 'preflight', 'prs triage', 'pulse-test', 'queue batches',
   'reflect', 'release status', 'resources', 'route explain', 'router rank', 'router-calibration', 'run show', 'runs',
   'sandbox diff', 'sandbox list', 'seams', 'signals', 'skills audit', 'skills list', 'spec list', 'spec show', 'status',

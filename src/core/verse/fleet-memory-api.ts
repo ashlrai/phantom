@@ -5,11 +5,15 @@ import { readFleetMemoryFiles, type FleetMemoryFiles } from '../fleet/memory-fil
 import { memoryView, type FleetMemoryView } from '../fleet/memory-view.js';
 import { readEngineAdmission, type EngineAdmissionView } from '../fleet/engine-admission-view.js';
 import { diskForecast } from '../fleet/disk-forecast.js';
+import { readHostLoadReport, type HostLoadReport } from '../fleet/host-load.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 import { readSource } from '../fleet/runs-parked-queue.js';
 import { sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
 export const VERSE_FLEET_DISK_FORECAST_PATH = '/api/verse/fleet/memory/disk-forecast';
+/** What is loading this host, by group: the same host.load.v1 report `phm host load --json` prints. */
+export const VERSE_FLEET_HOST_LOAD_PATH = '/api/verse/fleet/memory/host-load';
 export const VERSE_FLEET_MEMORY_PATH = '/api/verse/fleet/memory';
 export interface FleetMemoryResponseV1 {
   v: 1;
@@ -24,6 +28,8 @@ export interface FleetMemoryApiDeps {
   /** Runs root holding the memory files. Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs. */
   runsDir?: string;
   readDiskSources?: (root: string) => Promise<[string | null, string | null]>;
+  /** Runs ps and reads the job claims; injected in tests. */
+  readHostLoad?: () => Promise<HostLoadReport>;
   now?: () => number;
 }
 
@@ -50,6 +56,11 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
       let sources: [string | null, string | null] = [null, null];
       try { sources = await (deps.readDiskSources ?? readDiskSources)(deps.runsDir ?? defaultRunsDir()); } catch { /* Unknown evidence. */ }
       sendJson(res, 200, { v: 1, forecast: diskForecast(...sources, now()) });
+      return true;
+    }
+    if (path === VERSE_FLEET_HOST_LOAD_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
+      sendJson(res, 200, sanitizePublicJson(await (deps.readHostLoad ?? readHostLoadReport)()));
       return true;
     }
     if (path !== VERSE_FLEET_MEMORY_PATH || method !== 'GET') return false;

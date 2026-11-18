@@ -65,6 +65,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'estates', 'ci', 'ci-metrics', 'daily-fix', 'main',
   // Read-only disk report for agent worktrees (RQ-DISKFLOW).
   'disk', 'app', 'radar',
+  // What is loading this computer, by group (RQ-HOSTLOADN18PQ8).
+  'host',
   // Standing disk maintenance: plan/apply reclaim classes (RQ-DISKMAINT).
   'disk-maint',
   // Read-only view of every pooled computer (RQ-NODESN17RQ8). `autonomy` was

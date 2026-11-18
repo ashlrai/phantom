@@ -1,0 +1,10 @@
+  PID  PPID  %CPU      RSS COMM
+    1     0   1.0    20480 /sbin/launchd
+   90     1   4.0    40960 /usr/libexec/logkeeper
+  200     1 400.0 20480000 /opt/homebrew/bin/ollama
+  201   200 300.0 10240000 runner
+  210     1 100.0  5120000 /opt/tools/bin/mlx-server
+  400     1   5.0    51200 worker
+  401   400  15.0   204800 node
+  800     1  30.0   512000 /Applications/Claude.app/Contents/MacOS/Claude
+  900     1  45.0   102400 /usr/local/bin/indexer
