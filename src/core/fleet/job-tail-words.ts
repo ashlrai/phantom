@@ -10,7 +10,6 @@
 export type JobTailStatus = 'unknown' | 'finished' | 'no-log' | 'live';
 
 export interface JobWordsInput {
-  schema?: string | null;
   job?: string | null;
   state?: string | null;
   lane?: string | null;
@@ -51,12 +50,15 @@ export function describeJob(d: JobWordsInput, nowMs: number): JobWords {
   }
   const missing = !d.log || d.log.source == null || d.log.source === 'missing';
   const empty = !missing && d.log?.bytes === 0 && (d.log?.tail?.length ?? 0) === 0;
+  const unreadable = d.sources?.['log'] === 'degraded' && (d.log?.tail?.length ?? 0) === 0;
   if (d.state === 'published' || d.state === 'archived') {
     const pr = d.publish?.prUrl ?? null;
     const result = d.state === 'published' ? (pr ? `published ${pr}` : 'published, no PR link recorded') : 'ended without publishing';
+    if (unreadable) return { status: 'finished', showLog: false, text: `Log is unavailable on this machine. Result: ${result}.` };
     if (missing) return { status: 'finished', showLog: false, text: `This job ended without a log. Result: ${result}.` };
     return { status: 'finished', showLog: !empty, text: `${name} finished. Result: ${result}.` };
   }
+  if (unreadable) return { status: 'no-log', showLog: false, text: 'Log is unavailable on this machine.' };
   if (d.state === 'running' && (missing || empty)) {
     const launched = d.launchedAt ? Date.parse(d.launchedAt) : NaN;
     if (d.lane === 'devin') {
