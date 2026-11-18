@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdApps, parseAllowlist, type AppsFeedEntry } from '../src/cli/apps-control.js';
+import { runAppsControl } from '../src/core/apps-control.js';
 import {
   createAppControl, detectUnsavedState, parseAxTree, parseRunningApps, type ToolCall,
 } from '../src/core/verse/desktop-adapters.js';
@@ -211,6 +212,37 @@ describe('phm apps', () => {
     expect(JSON.parse(lines[0]!)).toMatchObject({ ok: true, action: 'quit', outcome: 'done', logged: true });
     expect(feed.map((e) => [e.phase, e.action, e.outcome])).toEqual([['start', 'quit', undefined], ['result', 'quit', 'done']]);
     expect(d.names()).toContain('computer_ax_press');
+  });
+
+  it('refuses Devin by name and bundle id, while an unprotected app still quits', async () => {
+    allow(['ai.cognition.devin', 'Notes']);
+    const devinApps = APPS.replace(
+      '- Phantom (ai.ashlr.desktop): never available',
+      '- Devin (ai.cognition.devin): up to full control; this chat holds full control\n- Phantom (ai.ashlr.desktop): never available',
+    );
+    for (const target of ['Devin', 'ai.cognition.devin']) {
+      const desktop = fakeDesktop(CLEAN, devinApps);
+      const result = await runAppsControl({ action: 'quit', app: target }, { ...base(), call: desktop.call });
+      expect(result).toMatchObject({ exit: 1, report: { ok: false, outcome: 'refused', code: 'protected' } });
+      expect(desktop.names()).not.toContain('computer_ax_press');
+    }
+
+    const desktop = fakeDesktop();
+    const result = await runAppsControl({ action: 'quit', app: 'Notes' }, { ...base(), call: desktop.call });
+    expect(result).toMatchObject({ exit: 0, report: { ok: true, outcome: 'done' } });
+    expect(desktop.names()).toContain('computer_ax_press');
+  });
+
+  it('checks the resolved live app name when allowlist metadata does not identify it', async () => {
+    allow([{ name: 'Notebook', bundleId: 'com.apple.Notes' }]);
+    const apps = APPS.replace(
+      '- Notes (com.apple.Notes): up to full control; this chat holds full control',
+      '- Devin (com.apple.Notes): up to full control; this chat holds full control',
+    );
+    const desktop = fakeDesktop(CLEAN, apps);
+    const result = await runAppsControl({ action: 'quit', app: 'Notebook' }, { ...base(), call: desktop.call });
+    expect(result).toMatchObject({ exit: 1, report: { ok: false, outcome: 'refused', code: 'protected' } });
+    expect(desktop.names()).not.toContain('computer_ax_press');
   });
 
   it('routes a quit with unsaved state to needs-you (exit 3) and does not press Quit', async () => {
