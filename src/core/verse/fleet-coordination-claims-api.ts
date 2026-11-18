@@ -6,15 +6,13 @@
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { readFleetBoard, type FleetBoard } from '../fleet/coordination.js';
+import { projectCoordinationClaims } from '../fleet/coordination-claims-view.js';
 import {
   VERSE_FLEET_COORDINATION_BIND_PATH, VERSE_FLEET_COORDINATION_CLAIM_PATH, VERSE_FLEET_COORDINATION_RETURN_PATH, handleFleetCoordinationMutateApi,
 } from './fleet-coordination-mutate-api.js';
 import { VERSE_FLEET_COORDINATION_RETURNS_PATH, handleFleetCoordinationReturnsApi } from './fleet-coordination-returns-api.js';
 
 export const VERSE_FLEET_COORDINATION_CLAIMS_PATH = '/api/verse/fleet/coordination-claims';
-
-const MAX_CLAIMS = 50;
-const MAX_TASK_CHARS = 200;
 
 export interface FleetCoordinationClaimsApiDeps {
   /** Reader seam for tests. Default: readFleetBoard(). */
@@ -29,11 +27,7 @@ export interface FleetCoordinationClaimsApiDeps {
 
 export interface FleetClaimView {
   id: string; repo: string; task: string; agent: string;
-  claimedAt: string; expiresAt: string; expiresInSeconds: number;
-}
-
-function iso(ms: number): string {
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : 'unknown';
+  claimedAt: string; expiresAt: string; expiresInSeconds: number | null;
 }
 
 export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsApiDeps = {}): ApiModule {
@@ -53,23 +47,14 @@ export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsAp
       return true;
     }
     const at = now();
-    const base = { v: 1, generatedAt: at.toISOString(), source: 'coordination-ledger' };
-    let board: FleetBoard;
+    let board: FleetBoard | null;
     try {
       board = read();
     } catch {
-      sendJson(res, 200, { ...base, state: 'unknown', claims: [], expiredClaims: null, reason: 'coordination ledger: reader failed' });
-      return true;
+      board = null;
     }
-    const claims: FleetClaimView[] = [...board.claims]
-      .sort((a, b) => b.claimedAt - a.claimedAt)
-      .slice(0, MAX_CLAIMS)
-      .map(c => ({
-        id: c.id, repo: c.repo, task: String(c.task).slice(0, MAX_TASK_CHARS), agent: c.agent,
-        claimedAt: iso(c.claimedAt), expiresAt: iso(c.expiresAt),
-        expiresInSeconds: Math.round((c.expiresAt - at.getTime()) / 1000),
-      }));
-    sendJson(res, 200, { ...base, state: board.state, claims, expiredClaims: board.expiredClaims });
+    const { asOf, ...view } = projectCoordinationClaims(board, at.getTime());
+    sendJson(res, 200, { ...view, generatedAt: asOf });
     return true;
   };
 }
