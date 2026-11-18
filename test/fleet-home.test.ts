@@ -84,11 +84,11 @@ describe('phm home', () => {
     await put('NEEDS-MASON.md', `- ask:2fa Enter the fake 2FA code (asked ${at(4)})\n- Decide the fake rollout order\n- ask:payment Pay the fake invoice\n`);
     const home = await read(), asks = home.needsYou.state === 'ok' ? home.needsYou.value : [];
     expect(asks).toEqual([
-      { id: expect.stringMatching(/^nm-[0-9a-f]{12}$/), shortId: expect.any(String), kind: '2fa', request: 'Enter the fake 2FA code', ageSeconds: 240, answers: ['yes', 'no', 'done'] },
-      { id: expect.stringMatching(/^nm-[0-9a-f]{12}$/), shortId: expect.any(String), kind: 'payment', request: 'Pay the fake invoice', ageSeconds: null, answers: ['yes', 'no', 'done'] },
+      { id: expect.stringMatching(/^nm-[0-9a-f]{12}$/), shortId: expect.any(String), kind: '2fa', request: 'Enter the fake 2FA code', ageSeconds: 240, answers: ['yes', 'no', 'done', 'later'] },
+      { id: expect.stringMatching(/^nm-[0-9a-f]{12}$/), shortId: expect.any(String), kind: 'payment', request: 'Pay the fake invoice', ageSeconds: null, answers: ['yes', 'no', 'done', 'later'] },
     ]);
     expect(home.health).toBe('healthy');
-    expect(homeText(home)).toContain(`Needs you: Enter the fake 2FA code (yes, no, done ${asks[0]!.shortId}); Pay the fake invoice (yes, no, done ${asks[1]!.shortId})`);
+    expect(homeText(home)).toContain(`Needs you: Enter the fake 2FA code (yes, no, done, later ${asks[0]!.shortId}); Pay the fake invoice (yes, no, done, later ${asks[1]!.shortId})`);
     expect(homeText(await readHome({ runsDir: runs, now: NOW, read: async (dir, now) => ({ ...await readHomeSources(dir, now), asks: null }) }))).toContain('Needs you: unknown (The needs-you ledger could not be read.)');
   });
   it('reads through an injectable reader, so a fixture stands in for every source', async () => {
@@ -96,7 +96,7 @@ describe('phm home', () => {
     const home = await readHome({ runsDir: '/fake/runs', now: NOW, read: async (dir, now) => { seen.push([dir, now]); return { throughput: null, main: null, ledger: null, worklog: null, asks: { schema: 'asks.v1', asOf: at(0), ledger: 'available', count: 1, fleetDecides: 0,
       asks: [{ id: 'nm-0123456789ab', shortId: '0123', kind: 'device', request: 'Approve the fake device', created: null, ageSeconds: null }] } }; } });
     expect(seen).toEqual([['/fake/runs', NOW]]);
-    expect(home).toMatchObject({ schema: 'home.v1', health: 'unknown', running: UNKNOWN, main: UNKNOWN, needsYou: { state: 'ok', value: [{ id: 'nm-0123456789ab', request: 'Approve the fake device', answers: ['yes', 'no', 'done'] }] } });
+    expect(home).toMatchObject({ schema: 'home.v1', health: 'unknown', running: UNKNOWN, main: UNKNOWN, needsYou: { state: 'ok', value: [{ id: 'nm-0123456789ab', request: 'Approve the fake device', answers: ['yes', 'no', 'done', 'later'] }] } });
   });
   it('all sources missing: every field is unknown with a reason, never zero', async () => {
     const home = await read();

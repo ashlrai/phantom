@@ -5,10 +5,11 @@
  * Not a second store. An approval is one open NEEDS-MASON.md line, the same
  * ledger `phm asks` reads, and an answer is the same `needs_mason.resolved` bus
  * envelope plus resolved marker (resolveNeedsMasonWithInbox), with the
- * answerer's verified id added as `answeredBy`. The four `phm asks` kinds
- * (password, 2FA, device, payment) show here too with yes/no/done, so Mason has
- * one list. An answer only records the decision: nothing is paid, sent or
- * changed here.
+ * answerer's verified id added as `answeredBy`. The `phm asks` kinds
+ * (password, 2FA, device, payment, outreach) show here too with yes/no/later,
+ * so Mason has one list. An answer only records the decision: nothing is paid,
+ * sent or changed here. `phm decisions` is the same list for those kinds,
+ * folded with replies by foldDecisions below.
  *
  * Line format (written by raiseApproval, parsed by approvalOfLine):
  *   approval #3: Use the $40 credit? [use it|not now] (asked <ISO> by claude, expires <ISO>)
@@ -17,7 +18,7 @@ import { appendNeedsMasonLine } from './needs-mason-append.js';
 import { readNeedsMasonAnswer } from './needs-mason-answer.js';
 import { resolveNeedsMasonWithInbox } from './needs-mason-relay.js';
 import { readNeedsMasonLedger, type NeedsMasonLedgerItem, type NeedsMasonOptions } from './needs-mason-resolve.js';
-import { ASK_ANSWERS, askOfLine, formatAge, shortIds, type AskKind } from './asks.js';
+import { askOfLine, formatAge, shortIds, type AskKind } from './asks.js';
 import { OPERATOR_SENDER_ID } from './channel-envelope.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { homedir } from 'node:os';
@@ -94,6 +95,8 @@ const runsDirOf = (options: ApprovalsOptions): string =>
   options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 // eslint-disable-next-line no-control-regex
 const oneLine = (value: string): string => value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+/** One-letter replies a phone keyboard makes easy. */
+const SHORT_WORD: Readonly<Record<string, string>> = { y: 'yes', n: 'no' };
 const normalizeOption = (value: string): string => oneLine(value).toLowerCase().replace(/^["'“”‘’]+|["'“”‘’.!?]+$/g, '').trim();
 
 /** The approval a ledger line describes, or null when it is not an approval line. */
@@ -120,7 +123,7 @@ function viewOf(item: NeedsMasonLedgerItem, short: string, nowMs: number): Appro
   if (!ask) return null;
   const createdMs = ask.created === null ? NaN : Date.parse(ask.created);
   return {
-    id: item.id, ref: short, number: null, kind: ask.kind, question: ask.request, options: [...ASK_ANSWERS],
+    id: item.id, ref: short, number: null, kind: ask.kind, question: ask.request, options: [...DECISION_ANSWERS],
     askedBy: null, created: ask.created, ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null,
     expires: null,
   };
@@ -269,7 +272,7 @@ export async function answerApproval(refInput: unknown, optionInput: unknown, an
 export async function answerApprovalReply(text: string, answerer: ApprovalAnswerer, options: ApprovalsOptions = {},
     deps: ApprovalAnswerDeps = {}): Promise<ApprovalAnswerResult | null> {
   if (answerer.senderId !== OPERATOR_SENDER_ID || text.length > 80) return null;
-  const words = normalizeOption(text).split(' ').filter(Boolean);
+  const words = normalizeOption(text).split(' ').filter(Boolean).map(word => SHORT_WORD[word] ?? word);
   if (words.length === 0 || words.length > 5) return null;
   const list = listApprovals(options);
   if (list.ledger !== 'available' || list.count === 0) return null;
@@ -314,4 +317,177 @@ export function approvalsText(list: ApprovalsList): string[] {
       `asked ${formatAge(a.ageSeconds)} ago by ${a.askedBy ?? 'unknown'}${a.expires ? `, expires ${a.expires}` : ''}`),
     ...expired,
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Decisions (`phm decisions`): the asks folded with replies, one state each.
+
+export const DECISIONS_SCHEMA = 'decisions.v1';
+export const DECISIONS_VERSION = 1;
+/** The one-word answers a decision takes; `y` and `n` count as yes and no. */
+export const DECISION_ANSWERS = ['yes', 'no', 'later'] as const;
+export type DecisionAnswer = typeof DECISION_ANSWERS[number];
+export const SAY_WHICH_ONE = 'Say which one';
+
+export interface DecisionRecord {
+  id: string;
+  /** Short code Mason quotes in a reply ("yes 3f2a"). */
+  code: string;
+  kind: AskKind;
+  /** One plain line. */
+  question: string;
+  /** ISO time asked, or null when unknown (a reply then counts from any time). */
+  asked_at: string | null;
+  /** Who asked, or where the ask came from. */
+  source: string;
+  /** ISO expiry, or null for none. */
+  expires_at?: string | null;
+}
+/** A reply as a channel adapter received it; `sender_id` is the adapter's verified id, never text from the message. */
+export interface DecisionReply { channel: string; sender_id: string; text: string; at: string }
+export interface DecisionState extends Required<DecisionRecord> {
+  state: 'waiting' | 'answered' | 'expired';
+  answer: DecisionAnswer | null;
+  answered_by: { channel: string; sender_id: string; at: string } | null;
+}
+export type IgnoredReason = 'unverified sender' | 'not a one-word answer' | 'unknown time' | 'unknown code'
+  | 'nothing waiting' | 'already answered' | 'expired' | 'asked after this reply' | 'say which one';
+export interface IgnoredReply { channel: string; sender_id: string; text: string; at: string; reason: IgnoredReason }
+export interface DecisionsReport {
+  schema: typeof DECISIONS_SCHEMA;
+  version: typeof DECISIONS_VERSION;
+  as_of: string;
+  /** missing = nothing asked yet; unavailable = the ledger could not be read, so the list is unknown. */
+  ledger: ApprovalsList['ledger'];
+  waiting: number;
+  decisions: DecisionState[];
+  ignored: IgnoredReply[];
+  /** Plain words when a bare answer fitted several waiting decisions that are still waiting, else null. */
+  hint: string | null;
+}
+export interface FoldDecisionsOptions { verifiedSenderIds: readonly string[]; now: number; ledger?: ApprovalsList['ledger'] }
+
+const IGNORED_TEXT_MAX = 40;
+const answerWord = (word: string): DecisionAnswer | null => {
+  const w = SHORT_WORD[word] ?? word;
+  return (DECISION_ANSWERS as readonly string[]).includes(w) ? w as DecisionAnswer : null;
+};
+
+/** `yes`, `y 3f2a`, `3f2a later.`: the answer and the quoted code (null when bare), or null when not a one-word answer. */
+export function parseDecisionReply(text: string): { answer: DecisionAnswer; code: string | null } | null {
+  if (text.length > 80) return null;
+  const words = normalizeOption(text).split(' ').filter(Boolean).map(word => word.replace(/^#/, ''));
+  if (words.length === 1) { const answer = answerWord(words[0]!); return answer ? { answer, code: null } : null; }
+  if (words.length !== 2) return null;
+  const [a, b] = words as [string, string];
+  const first = answerWord(a), second = answerWord(b);
+  return first && !second ? { answer: first, code: b } : second && !first ? { answer: second, code: a } : null;
+}
+
+/**
+ * Pure: each decision's state after these replies, at `now`. Replies are taken
+ * oldest first. Only a sender in `verifiedSenderIds` counts; every other reply
+ * is listed under `ignored` with its reason, never applied. A reply answers a
+ * decision when it is one word (yes, no, later, y or n) and either quotes the
+ * decision's code or the decision is the only one waiting at that moment. The
+ * first answer wins. A bare answer while several wait answers none of them and
+ * leaves a "say which one" hint naming each code.
+ */
+export function foldDecisions(records: readonly DecisionRecord[], replies: readonly DecisionReply[], options: FoldDecisionsOptions): DecisionsReport {
+  const verified = new Set(options.verifiedSenderIds);
+  const ms = (iso: string | null | undefined): number | null => {
+    if (!iso) return null;
+    const value = Date.parse(iso);
+    return Number.isFinite(value) ? value : null;
+  };
+  const rows: DecisionState[] = records.map(r => ({
+    id: r.id, code: r.code.toLowerCase(), kind: r.kind, question: r.question, asked_at: r.asked_at, source: r.source,
+    expires_at: r.expires_at ?? null, state: 'waiting', answer: null, answered_by: null,
+  }));
+  const asked = (row: DecisionState, at: number) => (ms(row.asked_at) ?? -Infinity) <= at;
+  const live = (row: DecisionState, at: number) => (ms(row.expires_at) ?? Infinity) > at;
+  const ignored: IgnoredReply[] = [];
+  let ambiguous: string[] = [];
+  const ordered = replies.map((reply, index) => ({ reply, index, at: ms(reply.at) }))
+    .sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || a.index - b.index);
+  for (const { reply, at } of ordered) {
+    const ignore = (reason: IgnoredReason) => {
+      ignored.push({ channel: reply.channel, sender_id: reply.sender_id, text: clip(reply.text), at: reply.at, reason });
+    };
+    if (!verified.has(reply.sender_id)) { ignore('unverified sender'); continue; }
+    const parsed = parseDecisionReply(reply.text);
+    if (!parsed) { ignore('not a one-word answer'); continue; }
+    if (at === null) { ignore('unknown time'); continue; }
+    const waiting = rows.filter(row => row.answer === null && asked(row, at) && live(row, at));
+    let target: DecisionState;
+    if (parsed.code !== null) {
+      const hit = rows.find(row => row.code === parsed.code || row.id.toLowerCase() === parsed.code);
+      if (!hit) { ignore('unknown code'); continue; }
+      if (hit.answer !== null) { ignore('already answered'); continue; }
+      if (!asked(hit, at)) { ignore('asked after this reply'); continue; }
+      if (!live(hit, at)) { ignore('expired'); continue; }
+      target = hit;
+    } else if (waiting.length === 1) {
+      target = waiting[0]!;
+    } else {
+      if (waiting.length === 0) { ignore('nothing waiting'); continue; }
+      ignore('say which one');
+      ambiguous = waiting.map(row => row.id);
+      continue;
+    }
+    target.answer = parsed.answer;
+    target.state = 'answered';
+    target.answered_by = { channel: reply.channel, sender_id: reply.sender_id, at: reply.at };
+  }
+  for (const row of rows) if (row.answer === null && !live(row, options.now)) row.state = 'expired';
+  const stillWaiting = rows.filter(row => row.state === 'waiting');
+  const unclear = stillWaiting.filter(row => ambiguous.includes(row.id));
+  const hint = unclear.length > 1
+    ? `${SAY_WHICH_ONE}: ${unclear.slice(0, 4).map(row => `"yes ${row.code}" for: ${row.question}`).join('; or ')}.`
+    : null;
+  return {
+    schema: DECISIONS_SCHEMA, version: DECISIONS_VERSION, as_of: new Date(options.now).toISOString(),
+    ledger: options.ledger ?? 'available', waiting: stillWaiting.length, decisions: rows, ignored, hint,
+  };
+}
+
+const clip = (text: string): string => {
+  const line = scrubSecrets(oneLine(text));
+  return line.length > IGNORED_TEXT_MAX ? `${line.slice(0, IGNORED_TEXT_MAX - 1)}…` : line;
+};
+
+/** The ledger's open asks as decision records; an agent's own-option approvals stay in `phm approvals`. */
+export function decisionRecordsOf(list: ApprovalsList): DecisionRecord[] {
+  return list.approvals.flatMap((a): DecisionRecord[] => a.kind === 'approval' ? [] : [{
+    id: a.id, code: a.ref, kind: a.kind, question: a.question, asked_at: a.created, source: a.askedBy ?? 'needs-you ledger', expires_at: a.expires,
+  }]);
+}
+
+/**
+ * The live list. Replies on connected channels are applied as they arrive
+ * (answerApprovalReply, the Telegram owner check), so the ledger already holds
+ * them: this folds no further replies and the only verified id is Mason's.
+ */
+export function readDecisions(options: ApprovalsOptions = {}): DecisionsReport {
+  const list = listApprovals(options);
+  return foldDecisions(decisionRecordsOf(list), [], { verifiedSenderIds: [OPERATOR_SENDER_ID], now: Date.parse(list.asOf), ledger: list.ledger });
+}
+
+/** Plain words for a terminal. */
+export function decisionsText(report: DecisionsReport): string[] {
+  if (report.ledger === 'unavailable') return ['Decisions: unknown (the needs-you ledger could not be read).'];
+  const nowMs = Date.parse(report.as_of);
+  const waiting = report.decisions.filter(d => d.state === 'waiting');
+  const lines = waiting.length === 0 ? ['Nothing needs you.'] : [
+    `${waiting.length} waiting on you. Answer with: phm decisions answer <code> yes|no|later`,
+    ...waiting.map(d => {
+      const askedMs = d.asked_at === null ? NaN : Date.parse(d.asked_at);
+      const age = Number.isFinite(askedMs) ? `${formatAge(Math.max(0, Math.floor((nowMs - askedMs) / 1000)))} ago` : 'at an unknown time';
+      return `  ${d.code.padEnd(6)} ${d.kind.padEnd(8)} asked ${age}  ${d.question}`;
+    }),
+  ];
+  if (report.hint) lines.push(report.hint);
+  const expired = report.decisions.filter(d => d.state === 'expired').length;
+  if (expired) lines.push(`${expired} expired; they can no longer be answered.`);
+  return lines;
 }

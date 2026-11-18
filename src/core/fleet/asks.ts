@@ -1,6 +1,7 @@
 /**
  * Asks: the few things only Mason can do (a password, a 2FA code, a device
- * approval, a payment), answered with one word from any of his surfaces.
+ * approval, a payment, or sending something to a person outside the team),
+ * answered with one word from any of his surfaces.
  *
  * This is a typed view over the existing needs-you ledger, not a second store:
  * an ask is an open NEEDS-MASON.md line, and an answer is the same
@@ -20,9 +21,10 @@ import { readNeedsMasonLedger, type NeedsMasonLedgerItem, type NeedsMasonOptions
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const ASK_KINDS = ['password', '2fa', 'device', 'payment'] as const;
+export const ASK_KINDS = ['password', '2fa', 'device', 'payment', 'outreach'] as const;
 export type AskKind = typeof ASK_KINDS[number];
-export const ASK_ANSWERS = ['yes', 'no', 'done'] as const;
+/** `later` records "not now": the asker reads it and may ask again; nothing is snoozed here. */
+export const ASK_ANSWERS = ['yes', 'no', 'done', 'later'] as const;
 export type AskAnswer = typeof ASK_ANSWERS[number];
 export type AskSource = NonNullable<NeedsMasonOptions['source']>;
 export const ASK_REFUSAL = 'the fleet decides this itself';
@@ -50,7 +52,7 @@ export interface AsksList {
   ledger: 'available' | 'missing' | 'unavailable';
   count: number;
   asks: Ask[];
-  /** Open needs-you lines that are not one of the four kinds; the fleet handles these. */
+  /** Open needs-you lines that are not one of the ask kinds; the fleet handles these. */
   fleetDecides: number;
 }
 
@@ -71,7 +73,7 @@ export interface AskAnswerResult {
 export interface AsksOptions extends Pick<NeedsMasonOptions, 'runsDir' | 'bus'> { now?: () => number }
 export interface AnswerAskDeps { resolve?: typeof resolveNeedsMasonWithInbox; readAnswer?: typeof readNeedsMasonAnswer }
 
-const TAGGED = /^ask:(password|2fa|device|payment)\s+(.+?)(?:\s+\(asked\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\))?$/i;
+const TAGGED = /^ask:(password|2fa|device|payment|outreach)\s+(.+?)(?:\s+\(asked\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\))?$/i;
 const APPROVAL_LINE = /^approval #\d{1,6}: /;
 const STAMP = /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z)\b/;
 // First match wins: a 2FA code for a device sign-in is a 2FA ask, not a device one.
@@ -87,7 +89,7 @@ const runsDirOf = (options: AsksOptions): string =>
 const isKind = (value: unknown): value is AskKind => typeof value === 'string' && (ASK_KINDS as readonly string[]).includes(value);
 export const isAskAnswer = (value: unknown): value is AskAnswer => typeof value === 'string' && (ASK_ANSWERS as readonly string[]).includes(value);
 
-/** The ask a ledger line describes, or null when it is not one of the four kinds. */
+/** The ask a ledger line describes, or null when it is not one of the kinds. Outreach is only ever tagged, never guessed from wording. */
 export function askOfLine(text: string): { kind: AskKind; request: string; created: string | null } | null {
   // An agent's approval line (approvals.ts) has its own options; wording must not reclassify it.
   if (APPROVAL_LINE.test(text.trim())) return null;
@@ -140,7 +142,7 @@ export type RaiseAskResult =
   | { ok: false; reason: string };
 
 /**
- * Append one ask to the ledger. Only the four kinds are accepted, the request is
+ * Append one ask to the ledger. Only the ask kinds are accepted, the request is
  * one plain line, and an identical open ask is returned instead of a second line.
  * Never put the secret itself in the request: say what is needed, not the value.
  */
@@ -176,7 +178,7 @@ export async function answerAsk(idInput: unknown, answer: unknown, source: AskSo
     deps: AnswerAskDeps = {}): Promise<AskAnswerResult> {
   const idMatch = typeof idInput === 'string' ? ID_INPUT.exec(idInput.trim().toLowerCase()) : null;
   if (!idMatch) return result('invalid', { reason: 'Give the ask id (as shown by phm asks).' });
-  if (!isAskAnswer(answer)) return result('invalid', { reason: 'Answer yes, no or done.' });
+  if (!isAskAnswer(answer)) return result('invalid', { reason: 'Answer yes, no, done or later.' });
   const runsDir = runsDirOf(options);
   const ledger = readNeedsMasonLedger({ runsDir });
   if (ledger.status === 'unavailable') return result('unavailable', { reason: 'The needs-you ledger could not be read.' });
@@ -264,7 +266,7 @@ export function asksText(list: AsksList): string[] {
   if (list.ledger === 'unavailable') return ['Asks: unknown (the needs-you ledger could not be read).'];
   if (list.count === 0) return ['Nothing needs you.'];
   return [
-    `${list.count} ${list.count === 1 ? 'ask needs' : 'asks need'} you. Answer with: phm asks answer <id> yes|no|done`,
+    `${list.count} ${list.count === 1 ? 'ask needs' : 'asks need'} you. Answer with: phm asks answer <id> yes|no|done|later`,
     ...list.asks.map(ask => `${ask.shortId}  ${ask.kind.padEnd(8)}  ${formatAge(ask.ageSeconds).padStart(7)}  ${ask.request}`),
   ];
 }

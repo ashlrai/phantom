@@ -63,7 +63,7 @@ describe('create and list', () => {
     expect(Object.keys(credit!)).toEqual(['id', 'ref', 'number', 'kind', 'question', 'options', 'askedBy', 'created', 'ageSeconds', 'expires']);
     expect(credit).toMatchObject({ ref: '1', number: 1, kind: 'approval', question: 'Use the $40 example credit on the fake plan?', options: ['use it', 'not now'],
       askedBy: 'claude', created: '2026-11-17T14:55:00.000Z', ageSeconds: 300, expires: '2026-11-18T09:00:00.000Z' });
-    expect(device).toMatchObject({ number: null, kind: 'device', options: ['yes', 'no', 'done'], askedBy: null, ageSeconds: 3600 });
+    expect(device).toMatchObject({ number: null, kind: 'device', options: ['yes', 'no', 'later'], askedBy: null, ageSeconds: 3600 });
     // The `$40` wording must not turn the approval into a payment ask on the old asks list.
     expect(listAsks(opts)).toMatchObject({ count: 1, fleetDecides: 1 });
     expect(approvalsText(list)[2]).toMatch(/^ {2}1 +Use the \$40 .*\[use it \| not now\] {2}asked 5m ago by claude, expires 2026-11-18T09:00:00.000Z$/);

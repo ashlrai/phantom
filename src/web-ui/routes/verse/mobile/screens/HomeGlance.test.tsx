@@ -47,7 +47,7 @@ describe('phone Home', () => {
     expect(pulseCard.getAllByRole('listitem')).toHaveLength(5);
     expect(pulseCard.queryAllByText('unknown')).toHaveLength(kind === 'quiet' ? 5 : 0);
     // Top to bottom: the pulse, health, approvals (or their empty note), the message box, what shipped today.
-    const parts = [screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you.'), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
+    const parts = [screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you'), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect([...container.firstElementChild!.children]).toHaveLength(5);
     expect(checkView('home', 'Home', container).findings).toEqual([]);
@@ -70,7 +70,7 @@ describe('phone Home', () => {
     setMutationToken(TOKEN);
     const fetches = mac('needs', { [ANSWER]: { schema: 'approvals.answer.v1', status: 'answered', reason: null } });
     const { container } = renderMobile(<HomeGlance />);
-    const needs = await screen.findByRole('region', { name: 'Approvals' });
+    const needs = await screen.findByRole('region', { name: 'Decisions' });
     expect(within(needs).getByLabelText('3 waiting')).toHaveTextContent('3');
     expect((await health()).compareDocumentPosition(needs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(needs).getAllByRole('group')).toHaveLength(APPROVALS_SHOWN);
@@ -78,7 +78,7 @@ describe('phone Home', () => {
     expect(within(needs).getByText(/^asked at an unknown time/)).toBeInTheDocument();
     expect(within(needs).getByText('1 more after these.')).toBeInTheDocument();
     const first = within(needs).getAllByRole('group')[0]!;
-    expect(within(first).getAllByRole('button').map((button) => button.textContent)).toEqual(['Yes', 'No', 'Done']);
+    expect(within(first).getAllByRole('button').map((button) => button.textContent)).toEqual(['Yes', 'No', 'Later']);
     fireEvent.click(within(first).getByRole('button', { name: 'Yes' }));
     await waitFor(() => expect(fetches.posts()).toHaveLength(1));
     expect(fetches.posts()[0]).toMatchObject({ url: `${APPROVALS_PATH}/answer`, body: { id: 'nm-111111111111', option: 'yes', from: 'phone' } });

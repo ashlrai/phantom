@@ -3,7 +3,7 @@
  *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
  *   1. one line of fleet health: merges in the last hour, lanes running, main
  *      green or red (one read of `phm home --json`, home.v1);
- *   2. approvals, one tap each (the desktop Home card, built on `phm approvals`);
+ *   2. decisions, one tap each (the desktop Home Decisions card, built on `phm approvals`);
  *   3. a box that posts to the fleet inbox, the same API as the desktop inbox box;
  *   4. what shipped today (the desktop Shipped card, `phm shipped --since 1d`).
  * A fact the Mac could not read says unknown, never 0.
@@ -74,7 +74,7 @@ export function HomeGlance() {
         </section>
       )}
       {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
-      <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} emptyNote="Nothing needs you." />
+      <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
       <ShippedCard days={1} />
     </>
