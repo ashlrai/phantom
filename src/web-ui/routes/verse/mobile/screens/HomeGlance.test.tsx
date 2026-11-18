@@ -37,7 +37,7 @@ describe('phone Home', () => {
     ['empty', 'quiet', '0 merged in the last hour · 0 lanes running · main green', 'ok', 'Nothing merged in the last 24 hours.'],
     ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
     ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
-  ] as const)('%s at 390 px: exactly five parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
+  ] as const)('%s at 390 px: six parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
     const viewport = mockViewport(390);
     const fetches = mac(kind);
     const { container } = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
@@ -48,13 +48,13 @@ describe('phone Home', () => {
     const pulseCard = within(await screen.findByRole('region', { name: 'Pulse' }));
     expect(pulseCard.getAllByRole('listitem')).toHaveLength(5);
     expect(pulseCard.queryAllByText('unknown')).toHaveLength(kind === 'quiet' ? 5 : 0);
-    // Top to bottom: the pulse, health, approvals (or their empty note), the message box, what shipped today.
-    const parts = [screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you'), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
+    // Top to bottom: the pulse, health, approvals (or their empty note), pools, the message box, what shipped today.
+    const parts = [screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you'), screen.getByRole('region', { name: 'Pools' }), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect([...container.firstElementChild!.children]).toHaveLength(5);
+    expect([...container.firstElementChild!.children]).toHaveLength(6);
     expect(checkView('home', 'Home', container).findings).toEqual([]);
-    // One read each for pulse, health, approvals and shipped (one day); the only other reads are the message box's own inbox.
-    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, `${SHIPPED_PATH}?days=1`].sort());
+    // One read each for pulse, health, approvals, pools and shipped (one day); the only other reads are the message box's own inbox.
+    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, `${SHIPPED_PATH}?days=1`, '/api/usage/runway'].sort());
     viewport.restore();
   });
 
