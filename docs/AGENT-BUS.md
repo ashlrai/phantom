@@ -16,8 +16,9 @@ not yet been created, and `unavailable` when the store is unhealthy (503).
 
 To see what agents are saying to each other, run `phm messages` (JSON by
 default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
-`--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent` and `limit` params. Both return `agent-messages.v1`: newest
+`--with <name|lane>` for only what that agent and one other said to each
+other, `--limit <n>`) or GET `/api/verse/agent-bus/messages` with the same
+`since`, `agent`, `with` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
 `summary`, `conversation`, `job` and `pr`. Damaged records are skipped and

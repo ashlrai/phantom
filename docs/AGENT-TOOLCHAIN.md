@@ -166,17 +166,23 @@ phm tools --lane codex-local   # one lane's list, each tool with its source
 phm tools --json               # the full matrix, schema tools.matrix.v1
 ```
 
-`phm tools parity` prints a lane-by-tool matrix as JSON (`--text` for a short
-table): GitHub read, GitHub write through the publish path, web search,
-browser, computer use, shell, package install, and MCP servers, CLIs, skills
-and plugins by name. It reads declarations only, never a live probe: the
-router's declared lane capabilities, MCP, CLI and plugin connectors in the
-connector profile that name a lane, and the host's own
-`<runs>/queue/lane-tools.json`. Lanes come from `slots.json`. A tool no source
-declares is shown as unknown (`?`), never as missing.
+`phm tools parity` turns that around: one row per lane (the eleven org lanes,
+then any other lane a source names) and one column per tool family: MCP
+servers, CLI on PATH, skills, plugins, web search, browser, computer use and
+gh. Each cell is present, missing or unknown with the source it was read from.
+A named family is present when the lane lists every tool of that kind any lane
+lists, and missing when its list lacks one; the cell then says which. Every
+missing cell carries one `fix` naming the line to add. It reads declarations
+only, never a live probe: the router's declared lane capabilities, MCP, CLI and
+plugin connectors in the connector profile that name a lane, and the host's own
+`<runs>/queue/lane-tools.json`. A tool no source declares is unknown, never
+missing. The Tools pane shows the same data as a "Tool parity" card from
+`GET /api/verse/fleet/runs/tools/parity` (`?lane=` for one lane).
 
 ```sh
-phm tools parity --text
+phm tools parity                       # the matrix, then one fix per missing cell
+phm tools parity --lane codex-local    # one lane
+phm tools parity --json                # schema tools.parity.v2, version 2
 phm tools requires --needs github-read,browser
 ```
 

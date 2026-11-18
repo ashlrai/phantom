@@ -9,7 +9,7 @@ import { sendJson } from '../web/api.js';
 import type { Gh } from '../autopilot/github.js';
 import { readFleetBoard, type FleetBoard } from '../fleet/coordination.js';
 import { projectCoordinationReturns } from '../fleet/coordination-returns-view.js';
-import { checkReturnPrs, type ReturnPrChecked } from '../fleet/return-pr-check.js';
+import { checkReturnPrs, type ReturnPrCheckReport, type ReturnPrChecked } from '../fleet/return-pr-check.js';
 import { VERSE_FLEET_COORDINATION_RETURNS_PATH } from './fleet-coordination-returns-api.js';
 
 export const VERSE_FLEET_COORDINATION_RETURNS_VERIFY_PATH = `${VERSE_FLEET_COORDINATION_RETURNS_PATH}/verify`;
@@ -48,27 +48,49 @@ export function createFleetCoordinationReturnsVerifyApi(deps: FleetCoordinationR
   // qualifies currency at the observation clock.
   const read = deps.read ?? (() => readFleetBoard({ now: 0, reap: false }));
   const now = deps.now ?? (() => new Date());
-  let cached: { at: number; body: ReturnsVerifyBody } | null = null;
-  let inflight: Promise<ReturnsVerifyBody> | null = null;
+  type Observation = { at: number; check: ReturnPrCheckReport };
+  let cached: (Observation & { key: string }) | null = null;
+  let inflight: { key: string; at: number; promise: Promise<Observation> } | null = null;
+  let lastAt = -Infinity;
 
-  async function sweep(): Promise<ReturnsVerifyBody> {
+  async function observe(): Promise<ReturnsVerifyBody> {
     const at = now();
     let board: FleetBoard | null;
     try { board = read(); } catch { board = null; }
     const view = projectCoordinationReturns(board, at.getTime());
-    const check = await checkReturnPrs(view.returns, { gh: deps.gh, now: () => now().getTime() });
+    const ms = at.getTime();
+    if (ms < lastAt) { cached = null; inflight = null; }
+    lastAt = ms;
+    // Bounded projection, including provenance and coverage, but excluding temporal
+    // qualification: expiry alone does not require another GitHub observation.
+    const key = JSON.stringify([view.state, view.coverage, view.returns.map(row => ({ ...row }))]);
+    const fresh = (entry: { key: string; at: number } | null) => entry !== null
+      && entry.key === key && ms >= entry.at && ms - entry.at < RETURNS_VERIFY_CACHE_MS;
+    let observation: Observation;
+    if (fresh(cached)) observation = cached!;
+    else {
+      cached = null;
+      if (!fresh(inflight)) {
+        const flight = { key, at: ms, promise: checkReturnPrs(view.returns,
+          { gh: deps.gh, now: () => now().getTime() }).then(check => ({ at: ms, check })) };
+        inflight = flight;
+        void flight.promise.then(value => {
+          if (inflight === flight && view.state === 'known') cached = { key, ...value };
+        }, () => {}).finally(() => { if (inflight === flight) inflight = null; });
+      }
+      observation = await inflight!.promise;
+    }
+    const { check } = observation;
     const nonCurrentReceipts = view.returns
       .filter(row => row.result === 'VERIFIED' && row.evidenceKind === 'pr' && row.temporal !== 'current').length;
     const body: ReturnsVerifyBody = {
-      v: 1, authority: 'none', generatedAt: at.toISOString(), asOf: view.asOf,
+      v: 1, authority: 'none', generatedAt: new Date(observation.at).toISOString(), asOf: view.asOf,
       returnsState: view.state, coverage: view.coverage, unparsed: view.unparsed,
       checked: check.checked, skipped: check.skipped, truncated: check.truncated, nonCurrentReceipts,
       complete: view.state === 'known' && view.coverage.omitted === 0 && view.coverage.unparsed === 0
         && !check.truncated && nonCurrentReceipts === 0
         && check.checked.every(row => row.verdict === 'merged-at-head'),
     };
-    // An unreadable ledger asked GitHub nothing, so there is nothing worth holding.
-    if (view.state === 'known') cached = { at: at.getTime(), body };
     return body;
   }
 
@@ -83,14 +105,7 @@ export function createFleetCoordinationReturnsVerifyApi(deps: FleetCoordinationR
       return true;
     }
     try {
-      const age = cached === null ? -1 : now().getTime() - cached.at;
-      if (cached !== null && age >= 0 && age < RETURNS_VERIFY_CACHE_MS) {
-        sendJson(res, 200, cached.body);
-        return true;
-      }
-      // Single-flight: concurrent requests share one GitHub sweep.
-      inflight ??= sweep().finally(() => { inflight = null; });
-      sendJson(res, 200, await inflight);
+      sendJson(res, 200, await observe());
     } catch {
       sendJson(res, 500, { error: 'returns verify failed' });
     }

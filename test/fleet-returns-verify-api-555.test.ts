@@ -13,6 +13,7 @@ import { parseVerify } from '../src/web-ui/routes/verse/fleet-board/returns-veri
 
 const T = Date.parse('2026-11-14T18:00:00.000Z');
 const HEADS: Record<number, string> = { 11: 'aaaaaaa1111111', 12: 'bbbbbbb2222222' };
+const VERIFY_PATH_LITERAL = '/api/verse/fleet/coordination-claims/returns/verify';
 
 function board(): FleetBoard {
   return {
@@ -114,7 +115,7 @@ describe('coordination returns verify route', () => {
     expect(a.body.complete).toBe(true);
   });
 
-  it('reuses the last result for 60 s, then asks GitHub again', async () => {
+  it('reuses GitHub observations for 60 s with a fresh ledger asOf', async () => {
     const gh = fakeGh();
     const clock = { ms: T };
     const route = api(gh, clock);
@@ -122,17 +123,18 @@ describe('coordination returns verify route', () => {
     clock.ms = T + 59_000;
     const second = await call(route);
     expect(gh).toHaveBeenCalledTimes(2);
-    expect(second.body).toEqual(first.body);
+    expect(second.body).toEqual({ ...first.body, asOf: new Date(clock.ms).toISOString() });
     clock.ms = T + 60_000;
     expect((await call(route)).body.generatedAt).toBe(new Date(T + 60_000).toISOString());
     expect(gh).toHaveBeenCalledTimes(4);
   });
 
   it('is dispatched by the claims module ahead of the /returns match', async () => {
+    expect(PATH).toBe(VERIFY_PATH_LITERAL);
     const gh = fakeGh();
     const returns = vi.fn(async () => true);
     const claims = createFleetCoordinationClaimsApi({ read: board, returns, returnsVerify: api(gh) });
-    expect((await call(claims)).body).toMatchObject({ complete: true, authority: 'none' });
+    expect((await call(claims, 'GET', VERIFY_PATH_LITERAL)).body).toMatchObject({ complete: true, authority: 'none' });
     expect(returns).not.toHaveBeenCalled();
     // The default seam resolves the same path lazily; POST proves it without touching gh or the ledger.
     expect(await call(createFleetCoordinationClaimsApi({ read: board }), 'POST')).toMatchObject({ handled: true, status: 405 });

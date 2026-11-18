@@ -381,6 +381,35 @@ pane that already shows its details: the worker log for a job, Lanes, Computers,
 Usage for a pool, or Leader. The map is 2D only, because no 3D library is a
 dependency.
 
+#### Map edges
+
+`phm map edges [--json] [--since 10m]` lists who messaged whom, read from the
+same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
+(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m]` serves
+the same read with a current read session. The default window is the last 15
+minutes, the same as the map.
+
+- `edges[]`, newest first: `id`, `from`, `to`, `count`, `lastAt` and
+  `lastSummary` (the first 80 characters of the newest message, one scrubbed
+  line).
+- `from` and `to`: `name`, `role` (`leader`, `lane`, `worker` or `unknown`),
+  `lane` and `node`, the id of that agent on `phm map` or `null` when the map
+  does not draw it.
+- `agents`: every name on an edge, grouped by role.
+- `source`, `messages`, `skipped`, `since` and `generatedAt`.
+
+When the bus cannot be read, `edges`, `agents` and `messages` are `null` and
+the route answers 503 with that body: unknown, not zero. Notes to self,
+broadcasts and messages from people are not edges, the same rule the map's
+message lines use.
+
+On the Map pane a message line is thicker the more messages it carried and
+pulses for a minute after a new one. Selecting a line, or its row in the list
+under the map, opens the Messages pane on the last 20 messages between those
+two agents (`phm messages --agent <a> --with <b> --limit 20`). Agents that
+talk but are not drawn are listed under the map with their role. The 3D
+compute scene draws its message lines at the same thickness.
+
 ### Live sessions
 
 `phm sessions [--lane <lane>] [--repo <repo>] [--json]` lists every running

@@ -6,13 +6,19 @@
  * Fast by construction: one graph build serves every caller for 5 seconds,
  * and callers that arrive while a build is running share it, so the map costs
  * at most one fleet read per 5 s however many panes or agents poll it.
+ *
+ * GET /api/verse/fleet/control/map-edges[?since=10m] is `phm map edges --json`
+ * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
+ * default window is throttled the same way; 503 carries the typed "unknown" body.
  */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { buildFleetLiveMap, LIVE_MAP_WINDOW_MINUTES, type FleetLiveMap } from '../fleet/live-map.js';
+import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges } from '../fleet/map-edges.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 
 export const LIVE_MAP_PATH = '/api/verse/fleet/control/live-map';
+export const MAP_EDGES_PATH = '/api/verse/fleet/control/map-edges';
 export const LIVE_MAP_MIN_INTERVAL_MS = 5_000;
 
 /** Build the graph from the shared reads. Each source fails on its own into "unknown". */
@@ -40,14 +46,26 @@ export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock
   };
 }
 
-export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap())): ApiModule {
+export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap()),
+  edges: (since: string) => MapEdges | null = readMapEdges): ApiModule {
+  const defaultEdges = throttledLiveMap(async () => edges(MAP_EDGES_DEFAULT_SINCE));
   return async (ctx, req, res, path, method) => {
-    if (path !== LIVE_MAP_PATH) return false;
+    if (path !== LIVE_MAP_PATH && path !== MAP_EDGES_PATH) return false;
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
     if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) {
       sendJson(res, 401, { error: 'A current read session is required.' }); return true;
     }
-    if (new URL(req.url ?? path, 'http://localhost').search) { sendJson(res, 400, { error: 'The map takes no query.' }); return true; }
+    const params = new URL(req.url ?? path, 'http://localhost').searchParams;
+    if (path === MAP_EDGES_PATH) {
+      if ([...params.keys()].some(key => key !== 'since') || params.getAll('since').length > 1) { sendJson(res, 400, { error: 'Use since only, once.' }); return true; }
+      try {
+        const since = params.get('since'), result = since === null ? await defaultEdges() : edges(since);
+        if (!result) sendJson(res, 400, { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
+        else sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+      } catch { sendJson(res, 503, { error: 'Map edges unavailable.' }); }
+      return true;
+    }
+    if ([...params.keys()].length) { sendJson(res, 400, { error: 'The map takes no query.' }); return true; }
     try { sendJson(res, 200, await read()); }
     catch { sendJson(res, 503, { error: 'Fleet map unavailable.' }); }
     return true;

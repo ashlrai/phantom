@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
-    observability   Observability - cost, telemetry, audit (shipped, empties, home, …)
+    observability   Observability - cost, telemetry, audit (mobile, shipped, empties, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -317,10 +317,10 @@ Every command, grouped by topic.
     route explain [--json]                                                                                                                                        Read dispatcher pools and route-moves-per-hour.
     route decide --input <file|-> [--root <directory>] --json                                                                                                     Suggest a schema-validated route without changing launch behavior.
     route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json        Select an advisory fallback lane; optional receipt only, live dispatcher unwired.
-    map [--json]                                                                                                                                                  The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. Read only.
-    messages [--since 15m] [--agent <name>] [--limit <n>] [--text]                                                                                                What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR.
+    map [--json] | map edges [--json] [--since 10m]                                                                                                               The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. map edges lists those messages as from agent, to agent, count, last time and the first 80 characters of the last message, with each agent's org role. Read only.
+    messages [--since 15m] [--agent <name>] [--with <name>] [--limit <n>] [--text]                                                                                What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR. --agent with --with shows only what those two said to each other.
     tools [--json] [--lane <lane>]                                                                                                                                Which lane has which tool, a parity score per lane and the top 3 gaps with a fix. Read only.
-    tools parity [--text]                                                                                                                                         Which lane declares which tool (GitHub read/write, web search, browser, computer use, shell, package install, MCP servers, CLIs, skills, plugins). Unknown is never missing.
+    tools parity [--json] [--lane <lane>]                                                                                                                         Lanes by tool family (MCP servers, CLI on PATH, skills, plugins, web search, browser, computer use, gh): present, missing or unknown, with a fix per missing cell.
     tools requires --needs <need,...> [--text]                                                                                                                    List the lanes that can run a job with these needs, e.g. --needs github-read,browser.
     route fit --input <file|-> [--worktree <directory>] --json                                                                                                    Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.
     pool admission [--json]                                                                                                                                       Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.
@@ -334,6 +334,7 @@ Every command, grouped by topic.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
+    mobile check [--json]                                                                       Check every desktop view at 390 px: content wider than the screen, tap targets under 44 px, text under 12 px.
     shipped [--since 7d] [--json|--md]                                                          What shipped, in plain words: merged changes grouped by product area. --md writes docs/SHIPPED.md.
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.

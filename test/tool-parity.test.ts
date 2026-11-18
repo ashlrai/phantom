@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  buildToolMatrix, buildToolParity, formatToolMatrix, formatToolParity, formatToolRequires, loadToolParity, parseToolNeeds,
-  toolRequires, TOOL_CAPABILITIES, type ToolParityReaders,
+  buildLaneParity, buildToolMatrix, buildToolParity, formatLaneParity, formatToolMatrix, formatToolRequires, loadToolParity, parseToolNeeds,
+  toolRequires, TOOL_CAPABILITIES, TOOL_FAMILIES, type ToolParityReaders,
 } from '../src/core/fleet/tool-parity.js';
 import { cmdTools } from '../src/cli/tools.js';
 
@@ -49,9 +49,9 @@ describe('phm tools parity', () => {
     expect(report.parity).toBe('gaps');
     expect(report.gaps).toEqual([{ need: 'github-read', lanes: ['claude'] }]);
     expect(report.unknown).toEqual([]);
-    const text = formatToolParity(report);
-    expect(text).toContain('Missing: github-read (claude)');
-    expect(text).toMatch(/^claude\s+no\s+yes/m);
+    const text = formatLaneParity(buildLaneParity(report)!);
+    expect(text).toContain('  claude gh (from router): Give claude gh, then add "github-read": true under "claude" in <runs>/queue/lane-tools.json.');
+    expect(text).toMatch(/^claude\s+present(\s+unknown){3}(\s+present){3}\s+missing$/m);
   });
 
   it('keeps undeclared capabilities unknown, never missing, and ignores non-boolean values', async () => {
@@ -65,7 +65,7 @@ describe('phm tools parity', () => {
     expect(report.lanes.find(l => l.lane === 'gemini')!.capabilities['github-read']).toBe('unknown');
     expect(report.unknown.find(u => u.need === 'mcp:context7')).toEqual({ need: 'mcp:context7', lanes: ['claude', 'codex-local', 'gemini'] });
     expect(report.unknown.find(u => u.need === 'github-read')).toEqual({ need: 'github-read', lanes: ['codex-local', 'gemini'] });
-    expect(formatToolParity(report)).toMatch(/^codex-local(\s+\?){7}\s+\?$/m);
+    expect(formatLaneParity(buildLaneParity(report)!)).toMatch(/^codex-local(\s+unknown){8}$/m);
   });
 
   it('reads MCP servers per lane from connectors that name the lane and skips unrestricted ones', async () => {
@@ -96,16 +96,69 @@ describe('phm tools parity', () => {
     expect(Object.keys(a.lanes[0]!.capabilities)).toEqual([...TOOL_CAPABILITIES]);
   });
 
-  it('fits --text in 20 lines even with many lanes', () => {
-    const lanes = Array.from({ length: 40 }, (_, i) => `lane-${String(i).padStart(2, '0')}`);
+  it('text lists at most 12 fixes and names unreadable sources', () => {
+    const lanes = Array.from({ length: 20 }, (_, i) => `lane-${String(i).padStart(2, '0')}`);
     const report = buildToolParity({
-      lanes, sources: [{ name: 'router', lanes: { 'lane-00': { capabilities: { 'github-read': false } } } }],
+      lanes, sources: [{ name: 'router', lanes: Object.fromEntries(lanes.map(l => [l, { capabilities: { browser: false } }])) }],
       states: [{ name: 'router', state: 'declared' }, { name: 'slots.json', state: 'degraded' }],
     });
-    const lines = formatToolParity(report).split('\n');
-    expect(lines.length).toBeLessThanOrEqual(20);
-    expect(lines).toContain('Could not read: slots.json; their lanes and tools are not shown.');
-    expect(lines).toContain('… 26 more lane(s); use JSON for all.');
+    const lines = formatLaneParity(buildLaneParity(report, undefined, [])!).split('\n');
+    expect(lines[0]).toBe('Tool parity: gaps. 20 lane(s): 0 present, 20 missing, 140 unknown.');
+    expect(lines.filter(l => l.includes('Give lane-'))).toHaveLength(12);
+    expect(lines).toContain('  … 8 more; see phm tools parity --json.');
+    expect(lines).toContain('Could not read: slots.json.');
+  });
+});
+
+/** The org's eleven lanes, the rows of `phm tools parity`. */
+const ORG = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'];
+const ALL = { 'github-read': true, 'web-search': true, browser: true, 'computer-use': true, mcp: ['context7', 'fetch'], cli: ['phm'], skill: ['review'], plugin: ['ashlr'] };
+/** A lane-tools.json where every org lane declares every family; `change` edits or drops lanes. */
+async function parityOf(change: (lanes: Record<string, Record<string, unknown>>) => void = () => {}, lane?: string) {
+  const lanes: Record<string, Record<string, unknown>> = Object.fromEntries(ORG.map(l => [l, { ...ALL }]));
+  change(lanes);
+  const report = await loadToolParity({ readers: { connectors: async () => [], laneTools: async () => JSON.stringify({ v: 1, lanes }), slots: async () => ({ lanes: [], sourceState: 'missing' }) } });
+  return buildLaneParity(report, lane);
+}
+
+describe('phm tools parity (lanes by tool family)', () => {
+  it('all present: eleven lanes by eight families, every cell present with its source and no fix', async () => {
+    const m = (await parityOf())!;
+    expect(Object.keys(m)).toEqual(['schema', 'version', 'parity', 'families', 'lanes', 'counts', 'sources']);
+    expect(m).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'full', counts: { present: 88, missing: 0, unknown: 0 } });
+    expect(m.lanes.map(l => l.lane)).toEqual(ORG);
+    expect(m.families).toEqual(TOOL_FAMILIES.map(({ id, label }) => ({ id, label })));
+    expect(m.families.map(f => f.label)).toEqual(['MCP servers', 'CLI on PATH', 'Skills', 'Plugins', 'Web search', 'Browser', 'Computer use', 'gh']);
+    expect(Object.keys(m.lanes[0]!.cells)).toEqual(m.families.map(f => f.id));
+    expect(m.lanes[2]!.cells.mcp).toEqual({ state: 'present', source: 'lane-tools.json', has: ['context7', 'fetch'] });
+    expect(m.lanes[2]!.cells.gh).toEqual({ state: 'present', source: 'lane-tools.json' });
+    expect(formatLaneParity(m)).not.toContain('Fix:');
+  });
+
+  it('one lane missing MCP: that cell is missing with the line to add, the rest stay present', async () => {
+    const m = (await parityOf(lanes => { lanes['codex-local']!.mcp = ['context7']; }))!;
+    expect(m).toMatchObject({ parity: 'gaps', counts: { present: 87, missing: 1, unknown: 0 } });
+    expect(m.lanes.find(l => l.lane === 'codex-local')!.cells.mcp).toEqual({
+      state: 'missing', source: 'lane-tools.json', has: ['context7'], lacks: ['fetch'],
+      fix: 'Give codex-local MCP server fetch, then add "mcp": ["context7","fetch"] under "codex-local" in <runs>/queue/lane-tools.json.',
+    });
+    const text = formatLaneParity(m).split('\n');
+    expect(text[1]).toBe('lane            mcp      cli      skills   plugins  web-search  browser  computer-use  gh');
+    expect(text).toContain('codex-local     missing  present  present  present  present     present  present       present');
+    expect(text.slice(-3, -1)).toEqual(['Fix:', '  codex-local mcp (from lane-tools.json): Give codex-local MCP server fetch, then add "mcp": ["context7","fetch"] under "codex-local" in <runs>/queue/lane-tools.json.']);
+    // A lane that declares no MCP servers at all is missing them, not unknown.
+    const none = (await parityOf(lanes => { for (const l of ORG) lanes[l]!.mcp = []; }, 'zai'))!;
+    expect(none.lanes[0]!.cells.mcp).toMatchObject({ state: 'missing', has: [], lacks: [], fix: expect.stringContaining('add "mcp": ["<name>"] under "zai"') });
+  });
+
+  it('unknown lane: a lane no source declares is unknown in every family, never missing; a lane nobody names is null', async () => {
+    const m = (await parityOf(lanes => { delete lanes['devin-flash']; lanes.agy = { browser: true }; delete lanes.grok!.cli; }))!;
+    expect(m).toMatchObject({ parity: 'unknown', counts: { present: 80, missing: 0, unknown: 16 } });
+    expect(m.lanes.map(l => l.lane)).toEqual([...ORG, 'agy']);
+    expect(Object.values(m.lanes.find(l => l.lane === 'devin-flash')!.cells)).toEqual(Array(8).fill({ state: 'unknown', source: null }));
+    expect(m.lanes.find(l => l.lane === 'grok')!.cells.cli).toEqual({ state: 'unknown', source: null });
+    expect((await parityOf(undefined, 'devin-flash'))!.lanes.map(l => l.lane)).toEqual(['devin-flash']);
+    expect(await parityOf(undefined, 'nope')).toBeNull();
   });
 });
 
@@ -131,7 +184,7 @@ describe('phm tools requires', () => {
     expect(parseToolNeeds(' , ')).toHaveProperty('error');
   });
 
-  it('CLI: JSON by default, exit 1 when every lane is declared to lack a need, 2 on bad usage', async () => {
+  it('CLI: parity as text or --json, requires as JSON, exit 1 when every lane is declared to lack a need, 2 on bad usage', async () => {
     const s = await scene('one-missing.json');
     vi.stubEnv('ASHLR_RUNS_DIR', s.runsDir);
     vi.stubEnv('HOME', s.home);
@@ -139,7 +192,11 @@ describe('phm tools requires', () => {
     vi.spyOn(console, 'log').mockImplementation((v: unknown) => { out.push(String(v)); });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdTools(['parity'])).toBe(0);
-    expect(JSON.parse(out.pop()!).schema).toBe('tools.parity.v1');
+    expect(out.pop()).toMatch(/^Tool parity: gaps\. 11 lane\(s\): 9 present, 1 missing, 78 unknown\.\nlane /);
+    expect(await cmdTools(['parity', '--json', '--lane', 'claude'])).toBe(0);
+    expect(JSON.parse(out.pop()!)).toMatchObject({ schema: 'tools.parity.v2', version: 2, lanes: [{ lane: 'claude', cells: { gh: { state: 'missing', source: 'router' } } }] });
+    expect(await cmdTools(['parity', '--lane', 'nope'])).toBe(2);
+    expect(await cmdTools(['parity', '--bogus'])).toBe(2);
     expect(await cmdTools(['requires', '--needs', 'github-read'])).toBe(0);
     expect(JSON.parse(out.pop()!).can).toEqual(['codex-cmp']);
     expect(await cmdTools(['requires', '--needs', 'mcp:linear', '--text'])).toBe(1);

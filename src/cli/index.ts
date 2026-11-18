@@ -2243,6 +2243,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'mobile': {
+        const { cmdMobile } = await import('./mobile.js');
+        process.exitCode = await cmdMobile(rest);
+        break;
+      }
+
       case 'subagent': {
         const { cmdSubagent } = await import('./subagent.js');
         process.exitCode = await cmdSubagent(rest);

@@ -64,6 +64,7 @@ it('persists the unified directive lifecycle and makes evidence replay idempoten
     expect(replayed.prs).toEqual(verified.prs);
     expect(replayed.evidence.map(({ kind, ref, note }) => ({ kind, ref, note })))
       .toEqual(verified.evidence.map(({ kind, ref, note }) => ({ kind, ref, note })));
+    expect(replayed).toEqual(verified);
     expect((await run(['get', other.id])).item).toEqual(other);
   } finally {
     log.mockRestore();
