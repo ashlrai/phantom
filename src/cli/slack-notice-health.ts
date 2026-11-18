@@ -10,6 +10,10 @@ const reasons = {
 /** Bounded session evidence; skips do not overwrite the last substantive observation. */
 export function createSlackNoticeHealth() {
   const health = {
+    // completed/healthy/recovered describe the enqueue pass only.
+    stage: 'durable-bus-enqueue',
+    receiptKind: 'bus-note',
+    slackDelivery: 'unverified',
     lastAttemptAt: null as string | null,
     status: 'unknown' as string,
     reason: 'no-observation' as string | null,
