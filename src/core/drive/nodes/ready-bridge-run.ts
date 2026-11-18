@@ -41,10 +41,11 @@ export async function runConfiguredNodeBridge(opts: NodeBridgeRunOptions): Promi
   if (pool) {
     if (pool.role !== 'primary') inert ??= 'not-pool-primary';
     else if (owner !== pool.owner) inert ??= 'owner-not-pool-scope';
-    else router = poolBridgeRouter((verb, args) => callPool(pool!, verb, args));
+    else router = poolBridgeRouter((verb, args) => callPool(pool!, verb, args), join(ashlrHome(), 'node-pool'));
   } else if (existsSync(join(ashlrHome(), 'nodes'))) {
-    const store = new LocalNodesStore(join(ashlrHome(), 'nodes'));
-    router = localBridgeRouter(new DriveNodes(store));
+    const directory = join(ashlrHome(), 'nodes');
+    const store = new LocalNodesStore(directory);
+    router = localBridgeRouter(new DriveNodes(store), directory);
   }
   return runNodeBridge({
     host: { runsRoot: runsRoot(), wtRoot: join(homedir(), 'Projects', 'ashlrai', 'wt') },

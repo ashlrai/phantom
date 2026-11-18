@@ -125,7 +125,8 @@ dispatcher needs no change:
    a second pass cannot reconcile a staged manifest before its enqueue finishes.
 2. Under those locks, it reads the router view and ready rows, checks that no
    `.batched`, `.dispatched`, `.reaping` or `.line` marker and no worktree exists, and writes
-   `queue/batches/RQ-BATCH-NODE-<hash>.json` (schema `phantom.node-bridge.v1`).
+   `queue/batches/RQ-BATCH-NODE-<hash>.json` (schema `phantom.node-bridge.v1`)
+   bound to the current owner and router-store scope.
    Then it creates `queue/run/<job>.batched` with `O_EXCL` and removes the row
    from `ready.tsv`. dispatchd skips a leased row (`SKIP_BATCHED`). Its
    `LEASE_ORPHANED` sweep keeps a lease whose `RQ-BATCH-` owner has a manifest.
@@ -139,6 +140,10 @@ dispatcher needs no change:
    after re-reading the manifest and router view under both locks does the row
    go back to `ready.tsv` and the lease get released. An accepted completion
    keeps its lease and manifest as a tombstone, so the row is never relaunched.
+
+Reconciliation holds a manifest owned by another owner as `hold-owner-mismatch`,
+or one with a missing or changed router-store scope as `hold-router-mismatch`;
+both preserve the row, lease and manifest without withdrawing or requeueing.
 
 A ready row with a `needs` value other than an array of strings, or a
 `data_class` that is not a string own key of `DATA_CLASSES`, stays local with
