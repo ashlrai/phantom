@@ -6,8 +6,9 @@ import { JOB_KEEP_RATE, JOB_RECENT_LAUNCHES, JOB_STOP_MIN_LAUNCHES, JOB_STOP_RAT
 import { planStopFile, readStopFileText, STOP_FILE_ENV, STOP_FILE_SCHEMA, STOP_TTL_HOURS, STOP_TTL_MAX_HOURS, stopFilePath, stopRows, writeStopFile } from '../core/fleet/stop-file.js';
 import { runsRoot } from '../core/metrics/loop-collect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { emptyWhyLines, readJobsEmptyWhy } from '../core/fleet/jobs-empty-why.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json]';
+const yieldUsage = 'Usage: phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json]';
 
 /** `--stop-file`: turn every stop verdict into a stop-file row. Exit 1 when the yield or the file is unknown. */
 async function writeStops(parts: Awaited<ReturnType<typeof readJobYieldParts>>, opts: { ttl: number; out: string | null; dryRun: boolean; json: boolean; now: number }): Promise<number> {
@@ -51,7 +52,9 @@ export function jobYieldLines(report: JobYieldReport): string[] {
   ];
 }
 
-export async function cmdJobsYield(args: string[], read?: YieldLineReader, now = Date.now()): Promise<number> {
+export async function cmdJobsYield(args: string[], read?: YieldLineReader, now = Date.now(), emptyWhy = false): Promise<number> {
+  const usage = emptyWhy ? 'Usage: phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]' : yieldUsage;
+  if (emptyWhy && args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${usage}\nExplain EMPTY finishes and rank families by recorded wasted tokens. JSON: jobs.empty-why.v1. Unknown tokens remain null.`); return 0; }
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     console.log(`${usage}
 Which kinds of jobs are worth launching. Reads the job metrics file
@@ -76,13 +79,13 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
-    else if (arg === '--stop-list' && !stopList) stopList = true;
-    else if (arg === '--stop-file' && !stopFile) stopFile = true;
-    else if (arg === '--dry-run' && !dryRun) dryRun = true;
-    else if (arg === '--out' && out === null) {
+    else if (arg === '--stop-list' && !stopList && !emptyWhy) stopList = true;
+    else if (arg === '--stop-file' && !stopFile && !emptyWhy) stopFile = true;
+    else if (arg === '--dry-run' && !dryRun && !emptyWhy) dryRun = true;
+    else if (arg === '--out' && out === null && !emptyWhy) {
       out = args[++i] ?? '';
       if (!out || out.startsWith('-')) { console.error(usage); return 2; }
-    } else if (arg === '--ttl-hours' && ttl === null) {
+    } else if (arg === '--ttl-hours' && ttl === null && !emptyWhy) {
       ttl = /^\d+(\.\d+)?$/.test(args[++i] ?? '') ? Number(args[i]) : NaN;
       if (!(ttl > 0 && ttl <= STOP_TTL_MAX_HOURS)) { console.error(usage); return 2; }
     } else if (arg === '--metrics' && metrics === null) {
@@ -97,9 +100,15 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
   }
   if (!Number.isFinite(hours) || hours <= 0 || hours > 8760) { console.error(usage); return 2; }
   if (stopFile ? stopList : dryRun || out !== null || ttl !== null) { console.error(usage); return 2; }
-  const parts = await readJobYieldParts(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, now, read);
+  const parts = await readJobYieldParts(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, now, read, emptyWhy || json);
   if (stopFile) return writeStops(parts, { ttl: ttl ?? STOP_TTL_HOURS, out, dryRun, json, now });
   const report = parts.report;
+
+  if (emptyWhy) {
+    const why = report.empty_why ?? await readJobsEmptyWhy(null, '', hours, now);
+    console.log(json ? JSON.stringify(sanitizePublicJson(why)) : emptyWhyLines(why).join('\n'));
+    return why.known ? 0 : 1;
+  }
   if (json) console.log(JSON.stringify(sanitizePublicJson(report)));
   else if (stopList) {
     if (!report.known) { console.error(report.summary); return 1; }

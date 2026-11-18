@@ -65,3 +65,17 @@ it('lists stopped families with why and time left, and says unknown or none in w
   }
   expect([59, 3600, 7199, 172_800].map(expiresIn)).toEqual(['1 minute', '1 hour', '1 hour', '2 days']);
 });
+
+it('shows ranked empty reasons and partial token measurements from the typed report', () => {
+  render(<JobYieldCard report={{ ...jobYield([], now, 24), empty_why: { schema: 'jobs.empty-why.v1', version: 1, window_hours: 24, known: true, total: 2, jobs: [],
+    families: [{ family: 'RQ-REPAIR', empty: 2, wasted_tokens: 42, tokens_unknown_jobs: 1, reasons: { 'no-diff': 0, 'already-on-main': 1, 'precheck-catchable': 0, 'tool-error': 0, unknown: 1 } }] } }} />);
+  expect(screen.getByRole('region', { name: 'Why jobs ended empty' }).textContent).toContain('RQ-REPAIR: 42 wasted tokens (1 job with unknown tokens); 1 already on main, 1 unknown');
+});
+
+
+it('keeps stopped families visible beside empty-reason evidence after integration', () => {
+  render(<JobYieldCard stopped={[{family:'fixture-stop',why:'manual',until:1,expires_in_s:60,auto:false}]} report={{...jobYield([],now,24),empty_why:{schema:'jobs.empty-why.v1',version:1,window_hours:24,known:true,total:0,jobs:[],families:[]}}} />);
+  expect(screen.getByRole('heading',{name:'Stopped families'})).toBeTruthy();
+  expect(screen.getByRole('region',{name:'Why jobs ended empty'})).toBeTruthy();
+  expect(screen.getByText('fixture-stop')).toBeTruthy();
+});
