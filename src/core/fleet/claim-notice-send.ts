@@ -80,6 +80,7 @@ export interface ClaimNoticePassResult {
   baselined: boolean;
   planned: number;
   sent: number;
+  /** Failed notice deliveries or ledger appends, plus a failed snapshot write. */
   failed: number;
   skipped: number;
   deliveries: ClaimNoticeDelivery[];
@@ -156,11 +157,12 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
   // send leaves prev unchanged so the transition re-plans next pass, while
   // the ledger fences the ones that did go out. A lost snapshot write only
   // replays the diff — the ledger still stops a second post.
+  let reason: string | undefined;
   if (failed === 0) {
-    try { deps.writePrevSnapshot(next); } catch { /* replay next pass */ }
+    try { deps.writePrevSnapshot(next); } catch { failed++; reason = 'snapshot-write-failed'; }
   }
   return {
-    status: 'completed', baselined, planned: notices.length, failed,
+    status: 'completed', ...(reason ? { reason } : {}), baselined, planned: notices.length, failed,
     sent: deliveries.filter(d => d.result === 'sent').length,
     skipped: deliveries.filter(d => d.result === 'ledgered').length,
     deliveries,
@@ -335,13 +337,10 @@ export function readClaimNoticePrev(prevPath: string): ClaimThreadSnapshot | nul
   return result.state === 'available' ? result.snapshot : null;
 }
 
-/** Persist this pass's snapshot atomically (temp file + rename); never
- * throws — a lost snapshot only replays, the ledger still fences sends. */
+/** Persist this pass's snapshot atomically (temp file + rename). */
 export function writeClaimNoticePrev(prevPath: string, snapshot: ClaimThreadSnapshot): void {
-  try {
-    ensurePrivateDirectory(dirname(prevPath));
-    writePrivateFileAtomic(prevPath, JSON.stringify({ v: 1, ...snapshot }));
-  } catch { /* replay next pass; the ledger prevents double posts */ }
+  ensurePrivateDirectory(dirname(prevPath));
+  writePrivateFileAtomic(prevPath, JSON.stringify({ v: 1, ...snapshot }));
 }
 
 /** The durable state half of {@link ClaimNoticeSendDeps}; the caller still
