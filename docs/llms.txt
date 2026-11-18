@@ -101,6 +101,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Agent-to-agent channels](AGENT-TO-AGENT.md): This design describes possible coordination between an owner's agent and a co-founder's agent over email, Slack, or iMessage. This change provides a configuration schema only: i...
 - [AGENTS.md audit](AGENTS-MD-AUDIT.md): Public-source snapshot: 2026-10-26. Scope: the seven current repositories below, all of which already have a root AGENTS.md. No new AGENTS.md files are needed. Cortex is a separ...
 - [Drive agent apps](APP-DRIVE.md): phm drive <devin|claude|codex|phantom> <action> --json uses the running Phantom console's existing session API. Its enrolled seats execute through provider CLIs or APIs, preserv...
+- [App restart and session ownership](APP-RESTART.md): Zero-downtime app restart is not implemented in this build. The command below reports why it is held and exits 1. It leaves the app, sessions, jobs, bundles and authority state...
 - [Steer the leaders](APP-STEER.md): Send one message through the shared inbox receiver using the app's steer box, the fleet graph's Steer and Hand off buttons, or the CLI:
 - [Architecture knowledge map](ARCHITECTURE-KNOWLEDGE.md): This is a source navigation aid, not evidence that every integration is active.
 - [Phantom area owners](AREA-OWNERS.md): This map identifies entry points and representative modules and tests. Consult CODEOWNERS for the complete, current protected path list.
@@ -517,5 +518,3 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [PR triage](PR-TRIAGE.md): read-only open PR verdicts and JSON schema.
 
 - [oMLX dispatcher lane](../contrib/mac/README.md): memory-capped `omlx` pool, `127.0.0.1` health only, `phm lanes --json`; Security combined RETUNE pin required before installation.
-
-- [App restart](APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.
