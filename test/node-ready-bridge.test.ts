@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
+import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
@@ -34,17 +34,84 @@ function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: nu
   copyFileSync(resolve('contrib/mac/dispatchd.py'), join(host.runsRoot, 'bin', 'dispatchd.py'));
   writeFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), rows.map(r => r + '\n').join(''));
   let now = 1_000_000;
-  const nodes_ = new DriveNodes(new MemoryStore(), { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
+  const store = new MemoryStore();
+  const nodes_ = new DriveNodes(store, { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
   const sessions = new Map(nodes.map(n => [n.id, nodes_.join(n.id, { owners: ['ashlr'], caps: n.caps, ...(n.slots === undefined ? {} : { slots: n.slots }) })!]));
   const router = localBridgeRouter(nodes_);
   const pass = (apply = true, extra: Partial<Parameters<typeof runNodeBridge>[0]> = {}) =>
     runNodeBridge({ host, router, owner: 'ashlr', apply, now, pendingTtlMs: 60_000, ...extra });
   const ready = () => readFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), 'utf8');
   const lease = (job: string) => join(host.runsRoot, 'queue', 'run', `${job}.batched`);
-  return { host, nodes: nodes_, sessions, pass, ready, lease, advance: (ms: number) => { now += ms; } };
+  return { host, store, nodes: nodes_, sessions, pass, ready, lease, advance: (ms: number) => { now += ms; } };
 }
 
 describe('ready.tsv -> node router bridge', () => {
+  it('claims exactly once across two real bridge processes sharing ASHLR_HOME', async () => {
+    const f = fixture([row('RQ-REVIEW-PROCESSES')]);
+    const home = join(f.host.runsRoot, 'ashlr');
+    const nodes = new DriveNodes(new LocalNodesStore(join(home, 'nodes')));
+    nodes.join('real-worker', { owners: ['ashlr'], caps: READ, slots: 2 });
+    const code = `
+      const { DriveNodes, LocalNodesStore } = require('./src/core/drive/nodes/index.ts');
+      const { runNodeBridge, localBridgeRouter } = require('./src/core/drive/nodes/ready-bridge.ts');
+      const { join } = require('node:path');
+      process.stdin.once('data', async () => {
+        try {
+          const nodes = new DriveNodes(new LocalNodesStore(join(process.env.ASHLR_HOME, 'nodes')));
+          const report = await runNodeBridge({ host: ${JSON.stringify(f.host)},
+            router: localBridgeRouter(nodes), owner: 'ashlr', apply: true, now: Date.now() });
+          console.log(JSON.stringify(report));
+        } catch (error) { console.error(error); process.exitCode = 1; }
+        process.stdin.destroy();
+      });
+      console.log('ready');
+    `;
+    const children = [0, 1].map(() => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--eval', code], {
+        cwd: resolve('.'), env: { ...process.env, ASHLR_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      const ready = new Promise<void>(done => child.stdout.on('data', chunk => {
+        stdout += chunk.toString();
+        if (stdout.includes('ready\n')) done();
+      }));
+      child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+      const result = new Promise<Awaited<ReturnType<typeof runNodeBridge>>>((done, fail) => {
+        child.once('error', fail);
+        child.once('close', status => {
+          if (status !== 0) { fail(new Error(`bridge exited ${status}: ${stderr}`)); return; }
+          try { done(JSON.parse(stdout.trim().split('\n').at(-1)!)); } catch (error) { fail(error); }
+        });
+      });
+      return { child, ready: Promise.race([ready, result.then(() => { throw new Error('bridge exited before start'); })]), result };
+    });
+    try {
+      await Promise.all(children.map(c => c.ready));
+      for (const c of children) c.child.stdin.end('go\n');
+      const reports = await Promise.all(children.map(c => c.result));
+      expect(reports.flatMap(r => r.claimed)).toEqual(['RQ-REVIEW-PROCESSES']);
+      expect(reports.flatMap(r => r.requeued)).toEqual([]);
+      expect(nodes.view(['ashlr']).jobs).toHaveLength(1);
+      expect(f.ready()).toBe('');
+      expect(readFileSync(f.lease('RQ-REVIEW-PROCESSES'), 'utf8')).toBe(bridgeLeaseOwner('RQ-REVIEW-PROCESSES'));
+    } finally {
+      for (const c of children) c.child.kill();
+    }
+  });
+
+  it('restores a legacy producer withdrawal instead of tombstoning its row', async () => {
+    const f = fixture([row('RQ-REVIEW-LEGACY')]);
+    await f.pass();
+    f.nodes.withdraw('ready:RQ-REVIEW-LEGACY:1', 'ashlr');
+    delete f.store.state.jobs[0]!.producerWithdrawn;
+    const report = await f.pass();
+    expect(report.requeued).toEqual(['RQ-REVIEW-LEGACY']);
+    expect(report.completed).toEqual([]);
+    expect(f.ready()).toBe(row('RQ-REVIEW-LEGACY') + '\n');
+    expect(existsSync(f.lease('RQ-REVIEW-LEGACY'))).toBe(false);
+  });
+
   it('offloads an eligible row under a dispatchd-honored lease and a router job', async () => {
     const f = fixture([row('RQ-REVIEW-A')]);
     const dry = await f.pass(false);

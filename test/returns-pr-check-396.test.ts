@@ -94,7 +94,7 @@ describe('checkReturnPrs', () => {
     const gh: Gh = async () => { t += 30_000; return prBody(); };
     const report = await checkReturnPrs([row({ claimId: 'a' }), row({ claimId: 'b', pr: 2 })],
       { gh, now: () => t, timeoutMs: 20_000 });
-    expect(report.checked[0]).toMatchObject({ claimId: 'a', verdict: 'merged-at-head' });
+    expect(report.checked[0]).toMatchObject({ claimId: 'a', verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
     expect(report.checked[1]).toMatchObject({ claimId: 'b', verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
   });
   it('turns a gh throw into unknown with a fixed reason and no raw error text', async () => {
