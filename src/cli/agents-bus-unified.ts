@@ -9,6 +9,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
+import { seatParticipants } from '../core/bots/seats.js';
 
 export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters']);
 
@@ -112,8 +113,13 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const read = readAgentRegistry(options);
       if (read.status !== 'ok') return finish(read, '');
-      out(json ? JSON.stringify({ status: 'ok', identities: read.registry.identities, channels: read.registry.channels })
-        : read.registry.identities.map(i => `${i.handle.padEnd(16)} ${i.id}  runtimes=${i.runtimes.map(r => `${r.cli}/${r.provider}${r.model ? `/${r.model}` : ''}`).join(',') || '-'}${i.aliases.length ? `  aliases=${i.aliases.join(',')}` : ''}`).join('\n') || 'No identities registered.');
+      const participants = await seatParticipants();
+      const lines = [
+        ...read.registry.identities.map(i => `${i.handle.padEnd(16)} ${i.id}  runtimes=${i.runtimes.map(r => `${r.cli}/${r.provider}${r.model ? `/${r.model}` : ''}`).join(',') || '-'}${i.aliases.length ? `  aliases=${i.aliases.join(',')}` : ''}`),
+        ...participants.map(p => `${p.participantId.padEnd(16)} ${p.provider}  seat=${p.status}`),
+      ];
+      out(json ? JSON.stringify({ status: 'ok', identities: read.registry.identities, channels: read.registry.channels, participants })
+        : lines.join('\n') || 'No identities registered.');
       return 0;
     }
     if (verb === 'id' && sub === 'register') {

@@ -38,7 +38,7 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
-  { usage: 'phm bots list|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id> [--json]', description: 'Inspect provider-neutral bot metadata and advisory routing; plan creation without writing. Live creation refused.', safety: 'read', jsonShape: 'phantom-bot.v1 record, plan or explanation' },
+  { usage: 'phm bots list|seats|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id> [--json]', description: 'Inspect bot metadata and seat quota; handoff draining work (dry run unless --apply). Live creation refused.', safety: 'append', jsonShape: 'phantom-bot.v1, phantom-bot-seats.v1 or phantom-bot-handoff-plan.v1' },
   { usage: 'phm release notes [--since <tag>] [--json] [--write]', description: 'Draft local mainline release notes. --write updates only the generated Unreleased changelog block. Exit 0 success, 1 unavailable history/write failure, 2 usage.', safety: 'append', jsonShape: 'phantom.release-notes.v1 {since,head,summary,groups:{New,Improved,Fixed,Internal}}; entries: {text,prs,commits}' },
   { usage: 'phm worklog [--hours 6] [--kind merged|launched|finished|empty|leader|incident] [--repo <repo>] [--lane <lane>] [--json]', description: 'One feed of what the fleet did, newest first: merges, launches, finishes, empty jobs, leader replies and incidents, one plain-words line each. An unreadable source is reported as unknown with a reason. Exit 0 report, 1 read failure, 2 bad usage.', safety: 'read', jsonShape: 'worklog.v3 {hours,rows:[{at,kind,job,lane,repo,text,url,count}],sources:{jobs,events,leader:{state,reason?}},entries:[{kind,at,job,repo,lane,model,mergedAt,openToMergeSeconds,url}],malformedLines}' },
   { usage: 'phm queue batches [--runs <directory>] [--json]', description: 'Read batch sessions and per-line PR, empty, failed or unknown results. Local receipts only; never launches or publishes.', safety: 'read', jsonShape: 'phantom.queue-batches.v1 {evidence,sessions:[{id,repo,area,outcomes:[{job,outcome,pr,reason,autoMerge}]}],totals,gaps}' },
@@ -870,7 +870,7 @@ const TOPIC_LABELS: Record<HelpTopic, string> = {
 
 /** The full command table (the former inline cmdHelp list), topic-tagged. */
 export const HELP_ENTRIES: HelpEntry[] = [
-  { cmd: 'bots list|show|create --dry-run|explain [--json]', desc: 'Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.', topic: 'autonomy' },
+  { cmd: 'bots list|show|create --dry-run|explain|seats|handoff --seat <id> [--apply] [--json]', desc: 'Provider-neutral bot metadata, seat quota and draining handoffs. Handoff is dry-run unless --apply.', topic: 'autonomy' },
   { cmd: 'app restart --json', desc: 'Report a held restart while the native UI owns live runtime state; does not quit or update the app.', topic: 'core' },
   { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
@@ -1181,6 +1181,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'route fit --input <file|-> [--worktree <directory>] --json', desc: 'Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'admission explain [--json]', desc: 'Read existing admission inputs, the adaptive launch interval and its reason. Advisory; launches nothing.', topic: 'autonomy' },
+  { cmd: 'queue [--json]', desc: 'List queued jobs in launch order: position, id, repo, lane, tier, age and any newer cycle that replaces them.', topic: 'autonomy' },
+  { cmd: 'queue top|lane|drop <id> [<lane>] [--dry-run] [--json]', desc: 'Steer one queued job: move it to the front, to another lane, or out of the queue (kept in queue/dropped.tsv).', topic: 'autonomy' },
   { cmd: 'queue supersede [--json] [--apply]', desc: 'List queued jobs that a newer cycle of the same job replaces; --apply archives them.', topic: 'autonomy' },
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
@@ -1188,6 +1190,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'repos rank [proposals] [--json] [--recompute]', desc: 'Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.', topic: 'observability' },
   { cmd: 'job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]', desc: 'Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.', topic: 'observability' },
   { cmd: 'job cost <id> [--json]',       desc: 'Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or \'unknown\').', topic: 'observability' },
+  { cmd: 'job tail <id> [--lines N] [--follow] [--json]', desc: 'What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.', topic: 'observability' },
   { cmd: 'telemetry [status]',           desc: 'M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.', topic: 'observability' },
   { cmd: 'telemetry test',               desc: 'Emit a synthetic metadata-only test span; report sink+ok.', topic: 'observability' },
   { cmd: 'audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]', desc: 'Tail the append-only audit trail; --team lists workspace actions (read-only).', topic: 'observability' },
