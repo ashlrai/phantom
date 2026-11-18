@@ -245,6 +245,26 @@ Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
 API or CLI that agents can use (code-first, agent-native).
 
+## Observed check, admission and merge delays
+
+Run `phm fleet merge-latency --events merge-events.jsonl --hours 24 --json`.
+The typed report's `queue_stage_timing` uses schema `fleet.queue-stage-timing.v1`
+and is also returned by `GET /api/verse/fleet/merge-latency?hours=24`.
+It compares merged PRs in the window; merges with unknown times remain included
+as missing samples. Open PRs stay in the existing live diagnostics.
+`required_checks` sums observed check-blocker intervals; queue entry alone
+does not prove checks were pending. `queue_admission` measures readiness to
+enqueue (zero when already queued); `merge` measures ready time inside the queue
+until merge. Readiness requires an `eligible` observation. These are observed
+intervals, not a complete partition of PR lifetime. Each stage reports measured
+and missing counts, total seconds, median, p90 and maximum. `largest_delay`
+selects the greatest observed total; ties, all-zero and unmeasured totals return
+null. Missing, repeated, reversed or invalidated readiness boundaries stay
+unmeasured. Required checks remain in place; the report grants no merge authority.
+
+Acceptance: as simple and intuitive as possible, fewer steps, plain words, one
+obvious path, with every human surface backed by a typed API or CLI for agents.
+
 ## Queue latency by stage and automatic recut
 
 Run `phm fleet queue-latency --input snapshot.json` to see where PRs lose time

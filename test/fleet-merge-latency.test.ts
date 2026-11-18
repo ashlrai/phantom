@@ -11,6 +11,53 @@ const reader = (...rows: unknown[]) => async () => rows.map(r => typeof r === 's
 const SHA = 'a'.repeat(40);
 afterEach(() => vi.restoreAllMocks());
 
+const stageFixture = [
+  ev(1, 'blocked', 1200, { reason: 'required_checks' }), ev(1, 'eligible', 1000), ev(1, 'queued', 100), ev(1, 'merged', 10),
+  ev(2, 'blocked', 500, { reason: 'required_checks' }), ev(2, 'queued', 450), ev(2, 'eligible', 100), ev(2, 'merged', 10),
+  ev(3, 'queued', 80), ev(3, 'merged', 10),
+  ev(4, 'queued', 20), ev(4, 'merged', 10, { at: undefined }),
+  ev(5, 'blocked', 40000, { reason: 'required_checks' }), // Open waits do not inflate historical totals.
+  ev(6, 'blocked', 60000, { reason: 'required_checks' }), ev(6, 'eligible', 50000), ev(6, 'merged', 40000),
+];
+
+it('aggregates distinct queue stages through versioned CLI JSON, preserving missing timestamps and the window', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetMergeLatency(['--hours', '1', '--json'], { read: reader(...stageFixture), now })).toBe(0);
+  const timing = JSON.parse(log.mock.calls[0]![0] as string).queue_stage_timing;
+  expect(timing).toEqual({ schema: 'fleet.queue-stage-timing.v1', readOnly: true, requiredChecksPreserved: true, prs: 4,
+    largest_delay: 'queue_admission', stages: {
+      required_checks: { count: 2, missing: 2, total_s: 600, p50_s: 200, p90_s: 400, max_s: 400 },
+      queue_admission: { count: 2, missing: 2, total_s: 900, p50_s: 0, p90_s: 900, max_s: 900 },
+      merge: { count: 2, missing: 2, total_s: 180, p50_s: 90, p90_s: 90, max_s: 90 },
+    } });
+  const report = await fleetMergeLatency(reader(...stageFixture), now, 1);
+  expect((await fleetMergeLatency(reader(...stageFixture.toReversed()), now, 1)).queue_stage_timing).toEqual(timing);
+  expect(formatMergeLatency(report)).toContain('Largest observed queue delay: Waiting to join after readiness.');
+  expect(formatMergeLatency(report)).toContain('2 measured, 2 missing events); total observed 600s');
+});
+
+it.each(['required_checks', 'merge', null])('identifies %s as the largest measured delay, leaving ties unknown', async largest => {
+  const checks = largest === 'required_checks' ? 900 : 100;
+  const merge = largest === 'merge' ? 900 : 100;
+  const report = await fleetMergeLatency(reader(ev(1, 'blocked', checks + merge + 110, { reason: 'required_checks' }),
+    ev(1, 'eligible', merge + 110), ev(1, 'queued', merge + 10), ev(1, 'merged', 10)), now);
+  expect(report.queue_stage_timing?.largest_delay).toBe(largest);
+});
+
+it('keeps absent, ambiguous, reversed and lost-readiness spans unmeasured', async () => {
+  const report = await fleetMergeLatency(reader(ev(1, 'eligible', 100), ev(1, 'queued', 90), ev(1, 'queued', 80), ev(1, 'merged', 10),
+    ev(2, 'eligible', 10), ev(2, 'queued', 90), ev(2, 'merged', 20),
+    ev(3, 'eligible', 100), ev(3, 'queued', 90), ev(3, 'blocked', 80, { reason: 'required_checks' }), ev(3, 'merged', 10)), now);
+  expect(report.queue_stage_timing?.stages.queue_admission).toMatchObject({ count: 0, missing: 3, total_s: null });
+  expect(report.queue_stage_timing?.stages.merge).toMatchObject({ count: 0, missing: 3, total_s: null });
+  expect((await fleetMergeLatency(reader(), now)).queue_stage_timing).toMatchObject({ prs: 0, largest_delay: null,
+    stages: { required_checks: { count: 0, missing: 0, total_s: null, p50_s: null } } });
+  const zero = await fleetMergeLatency(reader(ev(1, 'eligible', 10), ev(1, 'queued', 10), ev(1, 'merged', 10)), now);
+  expect(zero.queue_stage_timing).toMatchObject({ largest_delay: null,
+    stages: { queue_admission: { count: 1, missing: 0, total_s: 0 }, merge: { count: 1, missing: 0, total_s: 0 } } });
+  expect((await fleetMergeLatency(async () => null, now)).queue_stage_timing).toBeNull();
+});
+
 it.each([undefined, 'invalid', '2099-01-01'])('keeps missing or unusable terminal time %s unmeasured', at => {
   expect(mergeQueueStatus([{ type: 'queued', at: ago(100) }, { type: 'merged', at }], now)).toEqual({
     stage: 'merged', since: null, waiting_s: null, delays_s: { queue: null, required_checks: null, conflict: null } });
