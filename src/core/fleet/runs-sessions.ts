@@ -44,6 +44,7 @@ import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { parsePublishResult } from './job-state.js';
 import { listLiveWorkers, type ListLiveWorkersOptions } from './runs-live-workers.js';
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,14 @@ export interface FleetSessionV1 {
   /** Finished sessions only: publish/exit outcome. */
   outcome: FleetSessionOutcome | null;
   prUrl: string | null;
+  /** Newest write to the worker's own `<job>.log` (lstat mtime): when the
+   *  agent last printed anything. Null when no regular log file was found.
+   *  Optional only because older servers do not send it. */
+  lastOutputAt?: string | null;
+  /** True when the job's publish record has a RESULT line: the work is done even
+   *  if no exit code or finish marker reached this host (cloud jobs). Optional
+   *  only because older servers do not send it. */
+  published?: boolean;
 }
 
 export interface FleetSessionsDispatcherV1 {
@@ -530,7 +539,7 @@ function emptySession(job: string): FleetSessionV1 {
     pid: null, live: 'no', exitCode: null, timedOut: false,
     enqueuedAt: null, claimedAt: null, launchedAt: null, startedAt: null, finishedAt: null,
     elapsedSeconds: null, durationSeconds: null, queueWaitSeconds: null,
-    tokensTotal: null, wallSeconds: null, diffLines: null, outcome: null, prUrl: null,
+    tokensTotal: null, wallSeconds: null, diffLines: null, outcome: null, prUrl: null, lastOutputAt: null,
   };
 }
 
@@ -799,6 +808,7 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
     const metaProbe = await probe(join(root, `${draft.job}.base.meta`));
 
     session.model = attemptLaunch?.launchModel ?? null;
+    session.lastOutputAt = logProbe.kind === 'file' && logProbe.mtimeMs !== null ? iso(logProbe.mtimeMs) : null;
     session.exitCode = m!.rc ?? attemptFinish?.exitCode ?? null;
 
     // Timestamps: marker content first (exact epochs), file mtimes next,
@@ -820,7 +830,11 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
     const publishText = publishProbe.kind === 'file'
       ? (await readSlice(join(root, `${draft.job}.publish`), PUBLISH_TAIL))?.text ?? null
       : null;
-    const finished = finFresh || attemptFinish !== null
+    // A RESULT PR/EMPTY publish record written for this attempt means done, with or
+    // without an exit code, worktree or local log (Devin cloud jobs have none).
+    const publishedResult = publishText !== null && publishProbe.mtimeMs !== null && publishProbe.mtimeMs >= lineMs - 2000
+      && parsePublishResult(publishText).result !== null;
+    const finished = finFresh || attemptFinish !== null || publishedResult
       || (publishText !== null && m!.rc !== null && !m!.reaping);
 
     // Liveness evidence shared by the requeue guard and status classification:
@@ -831,6 +845,8 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
       baseProbe.mtimeMs ?? 0, logProbe.mtimeMs ?? 0, launchProbe.mtimeMs ?? 0, lineMs,
     );
     const dispatchedMs = m!.dispatched !== null ? m!.dispatched * 1000 : lineMs;
+    // A RESULT written before this attempt was dispatched belongs to an earlier attempt.
+    session.published = publishedResult && (publishProbe.mtimeMs ?? 0) >= dispatchedMs;
     const withinGrace = m!.rc === null && nowMs - dispatchedMs <= LAUNCH_GRACE_MS;
     const diskLive = m!.rc === null && diskFreshMs > 0 && nowMs - diskFreshMs <= DISK_ACTIVE_MS;
     const attemptLive = worker !== undefined || m!.reaping || withinGrace || diskLive;

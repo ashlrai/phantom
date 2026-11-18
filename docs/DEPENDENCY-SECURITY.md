@@ -20,6 +20,32 @@ from the runner's private temporary directory, so repository-controlled
 `osv-scanner.toml` ignore rules cannot weaken the required check. Each lane
 records its provider result in the job summary.
 
+## Unpatched npm advisory
+
+On November 17, 2026, strict `npm ci` followed by the workflow's pinned npm
+11.6.0 reproduced 14 high and 0 critical findings in the root full graph.
+They all trace to [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf):
+picomatch's repeated-extglob regular expression denial of service. The root
+lockfile already resolves picomatch 4.0.7, the latest published release; the
+advisory affects `<=4.0.7` and lists no patched version. No dependency bump or
+override to a published picomatch release resolves it.
+
+The same audit reports 14 high findings in Raycast's full graph and 6 high
+findings in its production graph, through picomatch 4.0.4. The root production
+graph is clean. These counts include dependent packages affected by the same
+advisory, rather than separate underlying advisories.
+
+The workflow has one narrow, expiring exception in
+`.github/dependency-audit-exceptions.json` for `picomatch` and
+`GHSA-fc5q-39xc-vjpf` in full npm graphs. The npm report must name that exact
+package and every advisory URL in its `via` chain must match an active
+exception. Production audits using `--omit=dev` ignore the file entirely;
+malformed or expired exceptions fail closed, and unused exceptions warn in the
+step summary. Remove this exception when upstream ships a fix. It is not a
+general allowlist. Each audit step runs after earlier failures unless the job
+is cancelled, so the job summary reports both npm graphs and the Cargo result
+without masking failures.
+
 ## Universe example coverage gap
 
 At that source revision, `examples/universe-site/package-lock.json` resolves

@@ -48,9 +48,9 @@ const SNAPSHOT_QUERY = `query($name: String!, $cursor: String) {
     }
   }
 }`;
-const ENQUEUE = `mutation($id: ID!, $oid: GitObjectID!) {
-  enqueuePullRequest(input: { pullRequestId: $id, expectedHeadOid: $oid }) { mergeQueueEntry { id } }
-}`;
+export const enqueueMergeQueuePr = (gh, repo, pr) => gh([
+  'pr', 'merge', String(pr.number), '--repo', repo, '--auto', '--match-head-commit', pr.headSha,
+]);
 // MERGE method only: a base merge commit on top of the head, never a rewrite.
 const UPDATE = `mutation($id: ID!, $oid: GitObjectID!) {
   updatePullRequestBranch(input: { pullRequestId: $id, expectedHeadOid: $oid, updateMethod: MERGE }) { pullRequest { number } }
@@ -118,11 +118,12 @@ function makeGh(viaLocus) {
   return (args) => {
     const [cmd, argv] = viaLocus ? ['locus', ['exec', '--', 'gh', ...args]] : ['gh', args];
     try {
-      return JSON.parse(execFileSync(cmd, argv, {
+      const output = execFileSync(cmd, argv, {
         encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
         stdio: ['ignore', 'pipe', 'ignore'],
         env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat', NO_COLOR: '1' },
-      }));
+      });
+      return args[0] === 'api' ? JSON.parse(output) : undefined;
     } catch {
       // Provider text may carry credentials; callers see a constant error only.
       throw new Error('gh failed');
@@ -133,7 +134,7 @@ function makeGh(viaLocus) {
 const CHECKS = new Set(['SUCCESS', 'PENDING', 'EXPECTED', 'FAILURE', 'ERROR']);
 const MERGEABLE = new Set(['MERGEABLE', 'CONFLICTING']);
 
-function readSnapshot(gh, repo) {
+export function readSnapshot(gh, repo, claims = []) {
   const name = repo.split('/')[1];
   const prs = [];
   let cursor = null;
@@ -165,6 +166,7 @@ function readSnapshot(gh, repo) {
         reviewDecision: typeof node.reviewDecision === 'string' ? node.reviewDecision : null,
         inMergeQueue: node.isInMergeQueue === true,
         autoMerge: Boolean(node.autoMergeRequest),
+        activeOwner: claims.some(c => c.live && [`pr:${repo}#${node.number}`, `repo:${repo}`].includes(c.key.toLowerCase())),
         files,
         filesTruncated: Number(node.files?.totalCount ?? 0) > files.length,
       });
@@ -188,13 +190,18 @@ async function cycle(args) {
   const holdFile = resolve(flags['--hold-file'] ?? join(RUNS, 'queue', 'hold-list.txt'));
   const stateFile = resolve(flags['--state-file'] ?? `${queue}.mergeq-state.json`);
   const { runMergeQueueCycle, normalizeMergeQueueState } = await import('../dist/core/drive/merge-queue-loop.js');
+  const { claimBoard } = await import('../dist/core/agents/claim-store.js');
   const gh = makeGh(flags['--via-locus'] === true);
   const run = (query, pr) => gh(['api', 'graphql', '-H', 'GraphQL-Features: merge_queue',
     '-f', `query=${query}`, '-f', `id=${pr.id}`, '-f', `oid=${pr.headSha}`]);
   const ensureOk = (payload) => { if (payload?.errors) throw new Error('refused'); };
   const summary = runMergeQueueCycle({
-    readSnapshot: (repo) => readSnapshot(gh, repo),
-    enqueue: (_repo, pr) => ensureOk(run(ENQUEUE, pr)),
+    readSnapshot: (repo) => {
+      const owners = claimBoard();
+      if (owners.source === 'unavailable') throw new Error('owners unavailable');
+      return readSnapshot(gh, repo, owners.claims);
+    },
+    enqueue: (repo, pr) => enqueueMergeQueuePr(gh, repo, pr),
     updateBranch: (_repo, pr) => ensureOk(run(UPDATE, pr)),
     readQueueIds: () => readQueueIds(queue),
     appendQueueLine: (line) => {

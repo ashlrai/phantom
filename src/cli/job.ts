@@ -1,8 +1,58 @@
 import { isAbsolute } from 'node:path';
 import { isFleetJobId } from '../core/fleet/runs-job-detail.js';
 import { getFleetJobCost, type FleetJobCostV1 } from '../core/fleet/runs-job-cost.js';
+import { followFleetJobTail, getFleetJobTail, type FleetJobTailEvent } from '../core/fleet/runs-job-tail.js';
+import { isJobControlAction, jobControlText, type JobControlAction } from '../core/fleet/job-control-types.js';
+import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
+import { STRAY_ID_PATTERN } from '../core/fleet/stray-slots.js';
 
-const usage = 'Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]';
+const controlUsage = 'phm job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>]';
+const usage = `Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]\n       phm job tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       ${controlUsage}`;
+const controlHelp = 'Steer one fleet job. move needs --lane and refuses a lane that is held or full. ' +
+  'Repeating a request changes nothing and returns the first receipt. --json emits fleet.job.control.v1 ' +
+  'with status requested, applied, refused or unknown. Exit 0 requested or applied, 1 refused, unknown or unavailable, 2 bad usage.';
+const tailHelp = 'Tail one fleet job: status, lane, model, start time and PR, then its newest ledger events and last N log lines (1..120, default 40), every line redacted. --follow streams new lines until the job finishes or Ctrl-C. --json prints one {ts, source, text} object per line (source log, event or status). Exit 1 when the job is unknown on this machine.';
+
+/**
+ * `phm job pause|resume|stop|move <id>`: one control request for one job
+ * (core/fleet/job-control.ts), the same call the desktop job detail makes.
+ */
+async function cmdJobControl(action: JobControlAction, rest: string[]): Promise<number> {
+  const invalid = (extra?: string): number => {
+    console.error(`${extra ? `${extra}\n` : ''}Usage: ${controlUsage}`);
+    return 2;
+  };
+  let job: string | undefined;
+  let lane: string | undefined;
+  let runsDir: string | undefined;
+  const flags = new Set<string>();
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (flags.has(arg)) return invalid();
+    if (arg === '--help' || arg === '-h') { console.log(`Usage: ${controlUsage}\n${controlHelp}`); return 0; }
+    if (arg === '--json' || arg === '--dry-run') flags.add(arg);
+    else if (arg === '--lane' || arg === '--runs-dir') {
+      flags.add(arg);
+      const value = rest[++i];
+      if (!value || value.startsWith('--')) return invalid();
+      if (arg === '--lane') lane = value; else runsDir = value;
+    } else if (job === undefined && !arg.startsWith('-') && STRAY_ID_PATTERN.test(arg)) job = arg;
+    else return invalid();
+  }
+  if (!job || (runsDir !== undefined && !isAbsolute(runsDir))) return invalid();
+  if (action === 'move' ? !lane || !LANE_ID_RE.test(lane) : lane !== undefined) {
+    return invalid(action === 'move' ? 'move needs --lane <lane>' : `--lane only applies to move, not ${action}`);
+  }
+  try {
+    const { requestJobControl } = await import('../core/fleet/job-control.js');
+    const receipt = await requestJobControl({ action, job, lane, dryRun: flags.has('--dry-run') }, { runsDir, by: 'cli' });
+    console.log(flags.has('--json') ? JSON.stringify(receipt) : jobControlText(receipt));
+    return receipt.status === 'requested' || receipt.status === 'applied' ? 0 : 1;
+  } catch {
+    console.error('error: job control unavailable');
+    return 1;
+  }
+}
 const text = (v: number | string | null): string => v === null ? 'unknown' : String(v);
 const money = (v: number | null): string => v === null ? 'unknown' : `$${v.toFixed(4)}`;
 
@@ -36,7 +86,7 @@ function formatCost(job: FleetJobCostV1): string {
 
 /**
  * `phm job cost <id>` — per-model-call cost breakdown for one fleet job
- * (fleet.job.cost.v1). Reads the host's metrics ledgers; never fabricates:
+ * (fleet.job.cost.v1); `phm job pause|resume|stop|move` steers one (above). Reads the host's metrics ledgers; never fabricates:
  * a field with no evidence is null in --json and 'unknown' in text.
  * Exit codes: 0 ok, 1 read failure, 2 bad usage.
  */
@@ -47,9 +97,11 @@ export async function cmdJob(args: string[]): Promise<number> {
   };
   const [verb, ...rest] = args;
   if (verb === undefined || verb === '--help' || verb === '-h' || verb === 'help') {
-    console.log(`${usage}\nPer-model-call cost for a fleet job: tokens in/out, model and cost (or 'unknown'), from the runs metrics ledgers. --json emits fleet.job.cost.v1.`);
+    console.log(`${usage}\nPer-model-call cost for a fleet job: tokens in/out, model and cost (or 'unknown'), from the runs metrics ledgers. --json emits fleet.job.cost.v1.\n${tailHelp}\n${controlHelp}`);
     return 0;
   }
+  if (verb === 'tail') return cmdJobTail(rest);
+  if (isJobControlAction(verb)) return cmdJobControl(verb, rest);
   if (verb !== 'cost') return invalid(`unknown job command: ${verb}`);
   let id: string | undefined;
   let json = false;
@@ -82,6 +134,81 @@ export async function cmdJob(args: string[]): Promise<number> {
     return 0;
   } catch {
     console.error('error: job cost unavailable');
+    return 1;
+  }
+}
+
+export interface JobTailDeps {
+  snapshot?: typeof getFleetJobTail;
+  follow?: typeof followFleetJobTail;
+  out?: (line: string) => void;
+  err?: (line: string) => void;
+  signal?: AbortSignal;
+  intervalMs?: number;
+}
+
+/**
+ * `phm job tail <id>` — the CLI face of fleet.job.tail.v1, the same reads the
+ * desktop worker-log pane uses. Exit codes: 0 ok (running, finished or no log
+ * yet), 1 unknown job or read failure, 2 bad usage.
+ */
+export async function cmdJobTail(args: string[], deps: JobTailDeps = {}): Promise<number> {
+  const out = deps.out ?? ((line: string) => console.log(line));
+  const err = deps.err ?? ((line: string) => console.error(line));
+  const invalid = (): number => { err(usage); return 2; };
+  let id: string | undefined;
+  let lines: number | undefined;
+  let runsDir: string | undefined;
+  const flags = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--help' || arg === '-h') { out(`${usage}\n${tailHelp}`); return 0; }
+    if (arg.startsWith('--') && flags.has(arg)) return invalid();
+    flags.add(arg);
+    if (arg === '--json' || arg === '--follow') continue;
+    if (arg === '--lines') {
+      const n = Number(args[++i]);
+      if (!Number.isInteger(n) || n < 1 || n > 120) return invalid();
+      lines = n;
+    } else if (arg === '--runs-dir') {
+      const dir = args[++i];
+      if (!dir || !isAbsolute(dir)) return invalid();
+      runsDir = dir;
+    } else if (!id && isFleetJobId(arg)) {
+      id = arg;
+    } else return invalid();
+  }
+  if (!id) return invalid();
+  const json = flags.has('--json');
+  const print = (e: FleetJobTailEvent): void => {
+    if (json) out(JSON.stringify(e));
+    else out(e.source === 'log' ? e.text : `${e.source === 'event' ? `[event${e.ts ? ` ${e.ts}` : ''}]` : '»'} ${e.text}`);
+  };
+  try {
+    const tail = await (deps.snapshot ?? getFleetJobTail)(id, { ...(runsDir ? { runsDir } : {}), ...(lines ? { lines } : {}) });
+    const head = tail.message ? `${tail.headline}\n${tail.message}` : tail.headline;
+    if (json) out(JSON.stringify({ ts: tail.generatedAt, source: 'status', text: head, status: tail.status }));
+    else out(head);
+    if (tail.truncated && !json) out('… earlier lines not shown');
+    for (const event of tail.events) print(event);
+    if (tail.status === 'unknown') return 1;
+    if (!flags.has('--follow') || tail.status === 'finished') return 0;
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    deps.signal?.addEventListener('abort', stop, { once: true });
+    if (!deps.signal) process.once('SIGINT', stop);
+    try {
+      await (deps.follow ?? followFleetJobTail)(id, tail.cursor, {
+        ...(runsDir ? { runsDir } : {}), signal: controller.signal, onEvent: print,
+        ...(deps.intervalMs ? { intervalMs: deps.intervalMs } : {}),
+      });
+    } finally {
+      deps.signal?.removeEventListener('abort', stop);
+      process.removeListener('SIGINT', stop);
+    }
+    return 0;
+  } catch {
+    err('error: job tail unavailable');
     return 1;
   }
 }

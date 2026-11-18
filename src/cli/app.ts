@@ -24,7 +24,8 @@ const USAGE = `usage: phm app update status [--json]
        phm app restart --json
 
 Reports a held restart (exit 1) while the native UI owns live runtime state.
-Does not quit, signal processes, replace bundles, or resume authority.`;
+Does not quit, signal processes, replace bundles, or resume authority.
+See docs/APP-RESTART.md for the ownership audit and remaining implementation.`;
 export async function cmdApp(args: string[], dependencies?: AppUpdateStatusDependencies | {runsDir?: string}): Promise<number> {
   if (args[0] === 'restart') {
     if (args.includes('--help') || args.includes('-h')) {console.log(USAGE); return 0;}

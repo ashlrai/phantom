@@ -49,7 +49,14 @@ let _spawnSyncImpl: ReturnType<typeof vi.fn>;
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
 
-  const mockExecFile = ((...args: unknown[]) => _execFileImpl(...args)) as typeof actual.execFile & {
+  const mockExecFile = ((...args: unknown[]) => {
+    if (args[0] === 'gh') {
+      const result = _spawnSyncImpl(args[0], args[1]);
+      (args[3] as (error: Error | null, stdout: string, stderr: string) => void)(result.status === 0 ? null : new Error('gh unavailable'), result.stdout, result.stderr);
+      return;
+    }
+    return _execFileImpl(...args);
+  }) as typeof actual.execFile & {
     [k: symbol]: unknown;
   };
   mockExecFile[promisify.custom] = (

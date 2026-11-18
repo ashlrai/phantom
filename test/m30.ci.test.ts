@@ -712,6 +712,11 @@ echo pending=true; exit 2
     type Step = { name?: string; if?: string; run?: string; env?: unknown; uses?: string; with?: Record<string, unknown>; 'continue-on-error'?: unknown };
     const jobs = parse(ciYml).jobs as Record<string, { name: string; if?: string; needs?: unknown; 'runs-on': string; permissions?: unknown; 'continue-on-error'?: unknown; steps: Step[] }>;
     const job = jobs['authority-drift']!;
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.with?.filter).toBeUndefined();
+    expect(checkout?.with?.['fetch-depth']).toBe(1);
+    expect(checkout?.with?.['sparse-checkout']).toBe('.github');
+    expect(checkout?.with?.['sparse-checkout-cone-mode']).toBe(false);
     expect(job.name).toBe('Check authority drift (hermetic)');
     expect(job['runs-on']).toBe('ubuntu-latest');
     expect(job.if).toBe(jobs.quick!.if);
@@ -749,6 +754,10 @@ echo pending=true; exit 2
     expect(job.if).toBe("github.event_name == 'pull_request' || github.event_name == 'merge_group'");
     expect(job.env?.ASHLR_CI_BASE_SHA).toBe('${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}');
     const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(checkout?.with?.filter).toBeUndefined();
+    expect(checkout?.with?.['fetch-depth']).toBe(1);
+    expect(checkout?.with?.['sparse-checkout']).toBe('.github\npackage.json\npackage-lock.json\ntsconfig.json\nsrc/web-ui/tsconfig.json\neslint.config.js\ntest/config\n');
+    expect(checkout?.with?.['sparse-checkout-cone-mode']).toBe(false);
     expect(checkout?.with?.['persist-credentials']).toBe(false);
     expect(checkout?.with?.ref).toContain('merge_group.head_sha');
     for (const step of job.steps.filter((entry) => entry.uses)) expect(step.uses, step.uses).toMatch(/@[0-9a-f]{40}\b/);

@@ -28,6 +28,8 @@ export interface NeedsMasonOptions {
   /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'.
    *  'leader' (an agent relay) also sends the envelope as 'leader', never 'mason'. */
   source?: 'desktop' | 'telegram' | 'cli' | 'phone' | 'email' | 'leader';
+  /** Verified canonical id of who answered (approvals.ts), recorded in the envelope body. */
+  answeredBy?: string;
 }
 export type NeedsMasonResolveResult =
   | { ok: true; itemId: string; cursor: number; duplicate: boolean }
@@ -84,12 +86,23 @@ export type NeedsMasonReadResult =
   | { status: 'available' | 'missing'; items: NeedsMasonItem[] }
   | { status: 'unavailable'; items: NeedsMasonItem[] };
 
-/** Read the ledger without confusing an unavailable file with an empty one. */
-export function readNeedsMason(options: NeedsMasonOptions = {}): NeedsMasonReadResult {
+export interface NeedsMasonLedgerItem extends NeedsMasonItem { resolved: boolean }
+export type NeedsMasonLedgerResult =
+  | { status: 'available' | 'missing'; items: NeedsMasonLedgerItem[] }
+  | { status: 'unavailable'; items: NeedsMasonLedgerItem[] };
+
+/** Every ledger item in file order, open and resolved, so callers can answer a repeat idempotently. */
+export function readNeedsMasonLedger(options: NeedsMasonOptions = {}): NeedsMasonLedgerResult {
   const result = readTextResult(fileOf(options));
   if (result.status !== 'ok') return { status: result.status, items: [] };
   const { candidates, resolved } = scan(result.text);
-  return { status: 'available', items: candidates.filter(item => !resolved.has(item.id)) };
+  return { status: 'available', items: candidates.map(item => ({ ...item, resolved: resolved.has(item.id) })) };
+}
+
+/** Read the ledger without confusing an unavailable file with an empty one. */
+export function readNeedsMason(options: NeedsMasonOptions = {}): NeedsMasonReadResult {
+  const ledger = readNeedsMasonLedger(options);
+  return { status: ledger.status, items: ledger.items.filter(item => !item.resolved).map(({ id, text }) => ({ id, text })) };
 }
 
 /** Items still waiting on Mason, as the glance reader sees them. */
@@ -143,7 +156,8 @@ export function resolveNeedsMason(input: unknown, options: NeedsMasonOptions = {
     to: 'leaders', priority: 'P1', ttl: 7 * 24 * 60 * 60 * 1000,
     body: {
       kind: NEEDS_MASON_RESOLVED_KIND, itemId: id, source: options.source ?? 'desktop', item: item.text,
-      ...(note ? { reply: note } : {}), resolvedAt: new Date(now()).toISOString(),
+      ...(note ? { reply: note } : {}),
+      ...(options.answeredBy && /^[A-Za-z0-9._:@-]{1,64}$/.test(options.answeredBy) ? { answeredBy: options.answeredBy } : {}), resolvedAt: new Date(now()).toISOString(),
     },
   }, { ...options.bus, now: options.bus?.now ?? now });
   if (posted.status !== 'posted' && posted.status !== 'duplicate') return fail('unavailable', 'The bus did not accept the resolution.');

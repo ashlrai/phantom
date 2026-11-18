@@ -3,6 +3,7 @@
  * panel. Everything is null-tolerant: a missing reading is "unknown", never
  * zero and never "unused capacity".
  */
+import { wasteLevel } from '../../../core/fleet/pools-view.js';
 
 export const FLEET_USAGE_SCHEMA = 'fleet-usage.v1';
 /** Source readings older than this are flagged even if the feed forgot to. */
@@ -83,7 +84,7 @@ export function wasteRisk(lane: FleetUsageLane, nowMs: number): WasteRisk {
   if (lane.burnPctPerHour === null && !lane.held) return { level: 'unknown', unusedPct: null, label: 'Waste risk unknown (burn not reported)' };
   const burn = lane.held ? 0 : lane.burnPctPerHour ?? 0;
   const unusedPct = Math.max(0, Math.min(100, 100 - lane.usedPct - burn * ((resetMs - nowMs) / 3_600_000)));
-  const level: WasteLevel = unusedPct >= 50 ? 'high' : unusedPct >= 15 ? 'medium' : 'low';
+  const level: WasteLevel = wasteLevel(unusedPct);
   return { level, unusedPct, label: `${level === 'high' ? 'High waste: ' : ''}${pct(unusedPct)} unused at reset` };
 }
 

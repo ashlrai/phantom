@@ -338,6 +338,14 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/disk-runway') {
     return (await import('./fleet-disk-runway-api.js')).handleFleetDiskRunwayApi(ctx, req, res, path, method);
   }
+  // The Ideas view: ranked bottlenecks and suggested jobs (GET), and "Queue it" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/ideas' || path === '/api/verse/fleet/control/ideas/queue' || path === '/api/verse/fleet/control/ideas/bets') {
+    return (await import('./fleet-ideas-api.js')).handleFleetIdeasApi(ctx, req, res, path, method);
+  }
+  // The Models panel: registry list (GET) and "Verify" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/models' || path === '/api/verse/fleet/control/models/verify') {
+    return (await import('./models-api.js')).handleModelsApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/merge-graph') {
     return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
   }
@@ -346,6 +354,14 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   }
   if (path === '/api/verse/fleet/control/map') {
     return (await import('./fleet-org-map-api.js')).handleFleetOrgMapApi(ctx, req, res, path, method);
+  }
+  // Literal path: the whole-fleet graph behind `phm map` and the Map pane.
+  if (path === '/api/verse/fleet/control/live-map') {
+    return (await import('./fleet-live-map-api.js')).handleFleetLiveMapApi(ctx, req, res, path, method);
+  }
+  // Every running agent session, behind `phm sessions` and the Sessions pane.
+  if (path === '/api/verse/fleet/control/live-sessions') {
+    return (await import('./fleet-live-sessions-api.js')).handleFleetLiveSessionsApi(ctx, req, res, path, method);
   }
   if (path === '/api/verse/fleet/control/claim-notices') {
     return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);

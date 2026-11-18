@@ -1,6 +1,7 @@
 import { readTaskCheckJobs } from './fleet-task-check.js';
 import { mergeGraph } from '../core/fleet/merge-graph.js';
 import { readLeverageMix } from '../core/metrics/leverage-mix.js';
+export { runMetricsCli } from './metrics-impact.js';
 import { cmdMetricsIdle } from './metrics-idle.js';
 import { cmdMetricsProd } from './metrics-prod.js';
 /** `phm metrics [summary|dashboard|record|recommend|ingest]` — local telemetry + value metrics. */
@@ -14,7 +15,7 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../core/verse/pr
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { ingestMetrics, MetricsInputError } from '../core/fleet/metrics-ingest.js';
 
-const USAGE = `Usage: phm metrics <loop [--dry-run]|merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]|prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL]> [--json]
+const USAGE = `Usage: phm metrics <impact [--jobs file] [--queue file] [--overrides file]|loop [--dry-run]|merges|summary|dashboard [--out file] [--prs file]|record <json>|recommend <taskType> <arm...>|idle --status <snapshot.json> --jobs <jobs.jsonl>|ingest --jobs <jobs.jsonl> --status <status.json>|levers [--window <7d|30d>]|leverage-mix [--prs <file>]|prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL]> [--json]
 phm metrics loop [--json] measures throughput, loop times, cost per merged PR and capacity per node; see phm metrics loop --help.
 phm metrics merges [--json] reads the last 24 hourly buckets from the local jobs ledger.
 phm metrics ingest reads two explicit local files and prints deterministic lane and tier metrics as JSON.
@@ -51,6 +52,7 @@ function cmdIngest(args: string[], io: CliIo): number {
 }
 
 export function cmdMetrics(argv: string[], io?: CliIo): number | Promise<number> {
+  if (argv[0] === 'impact') return import('./metrics-impact.js').then(({ runMetricsCli }) => runMetricsCli(argv, io));
   if (argv[0] === 'prod') return cmdMetricsProd(argv, {}, io);
   if (argv[0] === 'idle') return cmdMetricsIdle(argv);
   if (argv[0] === 'loop') return import('./metrics-loop.js').then(({ cmdMetricsLoop }) => cmdMetricsLoop(argv.slice(1), io));

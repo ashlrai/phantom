@@ -26,6 +26,7 @@ curl -fsS -H "X-Ashlr-Token: $PHM_READ_TOKEN" "$PHM_URL/api/verse/fleet/runs"
 | `events` | Time, kind and text from `dispatch-events.log`. |
 | `codexPersonal` | Personal Codex session usage percent, reset time and observation time from local Codex session usage data. |
 | `inbox` | Recent entry time, source and text from `MASON-INBOX.md`. |
+| `leaderChat` | Optional. The same inbox entries and the leader's replies as one oldest-first chat: `id`, `ts` (null when unknown), `direction`, `channel`, `text`, `state` (`sent`, `received`, `answered`, `open-over-2h`, `reply`), plus `skipped.malformedInbox`. Absent when either journal was unread. `phm leader thread` prints the same list. |
 | `drop` | Pending lane and file basenames and done count from the leader drop directory. |
 
 Source states are `healthy` (reader succeeded), `degraded` (reader failed or

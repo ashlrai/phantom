@@ -18,13 +18,17 @@ import {
   type PoolReach,
   type PoolReachDeps,
 } from '../fleet/pool-reach.js';
+import { defaultNodesViewDeps, readNodesView, type NodesView, type NodesViewDeps } from '../fleet/nodes-view.js';
 
 export const VERSE_FLEET_TAILNET_PEERS_PATH = '/api/verse/fleet/runtime-identity/tailnet-peers';
 export const VERSE_FLEET_POOL_REACH_PATH = '/api/verse/fleet/runtime-identity/pool-reach';
+/** The Computers panel: the same rows as `phm nodes --json`. */
+export const VERSE_FLEET_NODES_PATH = '/api/verse/fleet/runtime-identity/nodes';
 
 export interface FleetHostReachApiDeps {
   tailnetDeps?: TailnetPeersDeps;
   poolDeps?: PoolReachDeps;
+  nodesDeps?: NodesViewDeps;
   /** Clock seam for tests; stamps generatedAt. */
   now?: () => Date;
 }
@@ -32,12 +36,22 @@ export interface FleetHostReachApiDeps {
 export function createFleetHostReachApi(deps: FleetHostReachApiDeps = {}): ApiModule {
   const now = deps.now ?? (() => new Date());
   return async (_ctx, _req, res, path, method) => {
-    if (path !== VERSE_FLEET_TAILNET_PEERS_PATH && path !== VERSE_FLEET_POOL_REACH_PATH) return false;
+    if (path !== VERSE_FLEET_TAILNET_PEERS_PATH && path !== VERSE_FLEET_POOL_REACH_PATH && path !== VERSE_FLEET_NODES_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'method not allowed' });
       return true;
     }
     const generatedAt = now().toISOString();
+    if (path === VERSE_FLEET_NODES_PATH) {
+      let view: NodesView;
+      try {
+        view = readNodesView(deps.nodesDeps ?? defaultNodesViewDeps());
+      } catch {
+        view = { schemaVersion: 1, asOf: generatedAt, self: UNKNOWN, registry: UNKNOWN, nodes: [], reasons: ['computers: reader failed; all fields unknown'] };
+      }
+      sendJson(res, 200, { v: 1, generatedAt, ...view });
+      return true;
+    }
     if (path === VERSE_FLEET_TAILNET_PEERS_PATH) {
       let peers: TailnetPeers;
       try {

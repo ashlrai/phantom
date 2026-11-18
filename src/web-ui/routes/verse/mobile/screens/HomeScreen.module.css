@@ -1,4 +1,4 @@
-/* routes/verse/mobile/screens/HomeScreen.module.css — Home's fleet card and stat tiles. */
+/* routes/verse/mobile/screens/HomeScreen.module.css — Home's number tiles, links and the unknown-home card. */
 
 .fleet {
   display: grid;
@@ -15,21 +15,6 @@
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.92em;
-}
-
-.lines {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.line {
-  margin: 0;
-  font-size: 1.05rem;
-  line-height: 1.35;
-}
-
-.line[data-tone="attention"] {
-  color: var(--status-danger, var(--text-primary));
 }
 
 .badgeSkeleton {
@@ -91,13 +76,61 @@ button.stat:active {
   gap: var(--space-4);
 }
 
-.shortcuts {
+/* Home (HomeGlance.tsx): .stat tiles laid sideways, two across on a phone and four from a tablet up. */
+.tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
 }
 
-.shortcuts button {
-  min-height: 44px;
+@media (min-width: 600px) {
+  .tiles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.tile {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 3.75rem;
+  padding: var(--space-2) var(--space-3);
+}
+
+.tile .statValue {
+  grid-row: span 2;
+}
+
+.statValue[data-tone='unknown'] {
+  font-size: 1em;
+  color: var(--text-secondary);
+}
+
+.needs {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.needs,
+.links {
+  margin: 0 0 var(--space-3);
+}
+
+.askText,
+.statHint {
+  overflow-wrap: anywhere;
+}
+
+.askText,
+p.statHint {
+  margin: 0;
+}
+
+.links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
 }

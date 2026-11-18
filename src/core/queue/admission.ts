@@ -8,10 +8,25 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir, loadavg, availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { GLOBAL_SLOT_KEYS } from '../fleet/runs-lane-targets.js';
+import { adaptiveSettle, readAdaptiveSettle, type SettleInputs, type SettleConfig, type SettleDecision } from './adaptive-settle.js';
 
 export const LOAD_MAX = 36;
 export const PROCS_MAX = 800;
+/** Floor of the active-worktree limit; the limit scales with cores (worktreesMax). */
 export const WORKTREES_MAX = 40;
+/** Active job worktrees allowed per core before admission blocks (18 cores → 72). */
+export const WORKTREES_PER_CPU = 4;
+/**
+ * A job worktree is ACTIVE when its job log, its `.base` record or the worktree
+ * directory changed within this window. Parked worktrees (kept for uncommitted
+ * work, publish holds) sit idle and are reported as `worktreesParked`, not counted.
+ */
+export const ACTIVE_WORKTREE_WINDOW_S = 30 * 60;
+
+export function worktreesMax(ncpu: number): number {
+  const cores = Number.isFinite(ncpu) && ncpu >= 1 ? Math.floor(ncpu) : 1;
+  return Math.max(WORKTREES_MAX, WORKTREES_PER_CPU * cores);
+}
 export const DAEMON_TICK_MAX_S = 15 * 60;
 /**
  * RQ-QUEUE-BATCH-1: dispatchd adapts the fleet cap every tick (contrib/mac/concurrency.py, queue/concurrency.json);
@@ -52,7 +67,12 @@ export function usageVerdict(row: Record<string, unknown>, now: number, critical
 
 export interface InstallLockHolder { pid: number; job?: string; command?: string; since?: number }
 export interface AdmissionInput {
-  load1: number; ncpu: number; procs: number; worktrees: number;
+  settleInputs?: Pick<SettleInputs, 'memoryFreePercent' | 'swapGrowthGb' | 'launchesLast10Minutes'>;
+  settleConfig?: SettleConfig;
+  load1: number; ncpu: number; procs: number;
+  /** Active job worktrees (recent activity); parked ones are `worktreesParked`. */
+  worktrees: number;
+  worktreesParked?: number;
   /** Seconds since the ashlr daemon's lastTickAt, or null when unknown. */
   daemonTickAgeS: number | null; daemonWhy?: string | null;
   slots: Record<string, unknown>; running: number; holder: InstallLockHolder | null;
@@ -60,6 +80,8 @@ export interface AdmissionInput {
   adaptiveCap?: number | null;
 }
 export interface AdmissionReport {
+  /** Advisory interval only; the pinned host guard must consume the policy to enforce it. */
+  settle: SettleDecision;
   snapshot?: Record<string, unknown>;
   /** Per-lane weekly-quota pacing verdicts (RQ-PACE-TO-RESET); absent on very old hosts. */
   lanes?: Record<string, LaneAdmission>;
@@ -67,6 +89,10 @@ export interface AdmissionReport {
   /** Only an older dispatchd snapshot can set this (its LOADGATE_OFF marker); live probes never disable the gate. */
   disabled: boolean;
   load: { load1: number; max: number }; ncpu: number; procs: number; worktrees: number;
+  /** The core-scaled active-worktree limit. */
+  worktreesMax?: number;
+  /** Job worktrees that exist but show no recent activity; never a blocker. */
+  worktreesParked?: number;
   daemon: { tickAgeSeconds: number | null; maxAgeSeconds: number; error: string | null };
   cap: number; hardCap: number | null; adaptiveCap: number | null; running: number; installLock: { holder: InstallLockHolder | null };
   /** Set when an admission.v2 snapshot exists but is missing its `ts` or older than DAEMON_TICK_MAX_S; the report then comes from live probes. */
@@ -96,7 +122,8 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   const reasons: string[] = [];
   if (!(input.load1 <= loadMax)) reasons.push(`loadavg ${input.load1.toFixed(1)} > ${loadMax.toFixed(1)}`);
   if (input.procs > PROCS_MAX) reasons.push(`procs ${input.procs} > ${PROCS_MAX}`);
-  if (input.worktrees > WORKTREES_MAX) reasons.push(`worktrees ${input.worktrees} > ${WORKTREES_MAX}`);
+  const wtMax = worktreesMax(input.ncpu);
+  if (input.worktrees > wtMax) reasons.push(`worktrees ${input.worktrees} > ${wtMax}`);
   if (input.daemonTickAgeS === null) reasons.push(`daemon_status_unavailable (${input.daemonWhy ?? 'unknown'})`);
   else if (input.daemonTickAgeS > DAEMON_TICK_MAX_S) reasons.push(`daemon_tick_stale ${Math.floor(input.daemonTickAgeS)}s > ${DAEMON_TICK_MAX_S}s`);
   const adaptiveCap = input.adaptiveCap ?? null;
@@ -105,14 +132,18 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   if (input.running >= cap) blockers.push(`at_cap running ${input.running} >= cap ${cap}`);
   const blocked = blockers.length > 0;
   return {
+    settle: adaptiveSettle({ memoryFreePercent: null, swapGrowthGb: null, launchesLast10Minutes: null,
+      ...input.settleInputs, load1: input.load1, ncpu: input.ncpu, runningJobs: input.running }, input.settleConfig),
     admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled: false,
     load: { load1: input.load1, max: loadMax }, ncpu: input.ncpu, procs: input.procs, worktrees: input.worktrees,
+    worktreesMax: wtMax, ...(input.worktreesParked !== undefined ? { worktreesParked: input.worktreesParked } : {}),
     daemon: { tickAgeSeconds: input.daemonTickAgeS, maxAgeSeconds: DAEMON_TICK_MAX_S, error: input.daemonWhy ?? null },
     cap, hardCap, adaptiveCap, running: input.running, installLock: { holder: input.holder },
   };
 }
 
 export interface ReadAdmissionOptions {
+  settleConfig?: SettleConfig;
   runsDir?: string; now?: () => number;
   load1?: () => number; ncpu?: () => number;
   countProcesses?: () => Promise<number>;
@@ -137,11 +168,18 @@ const defaultAlive = (pid: number) => {
 async function text(path: string): Promise<string | null> {
   try { return await readFile(path, 'utf8'); } catch { return null; }
 }
-async function exists(path: string): Promise<boolean> {
-  try { await stat(path); return true; } catch { return false; }
+async function mtimeMs(path: string): Promise<number | null> {
+  try { return (await stat(path)).mtimeMs; } catch { return null; }
 }
 
 export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<AdmissionReport> {
+  const now = (opts.now ?? Date.now)();
+  const report = await readAdmissionState({ ...opts, now: () => now });
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  return { ...report, settle: await readAdaptiveSettle(root, now, report.snapshot, opts.settleConfig) };
+}
+
+async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<AdmissionReport, 'settle'>> {
   const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const queue = join(root, 'queue');
   // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.
@@ -164,6 +202,7 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
       reasons: Array.isArray(a.reasons) ? a.reasons as string[] : [], disabled: a.disabled === true,
       load: { load1: Number(a.load1), max: Number(a.load_max) }, ncpu: Number(a.ncpu),
       procs: Number(a.procs), worktrees: Number(a.worktrees),
+      ...(isCount(a.worktrees_max) ? { worktreesMax: a.worktrees_max } : {}),
       daemon: { tickAgeSeconds: typeof a.daemon_tick_age_s === 'number' ? a.daemon_tick_age_s : null,
         maxAgeSeconds: Number(a.tick_max_s), error: null },
       cap: Number(a.cap), hardCap: isCount(a.hard_cap) ? a.hard_cap : null,
@@ -189,11 +228,18 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
     for (const row of Object.values(lanes)) if (isCount(row?.running)) running += row.running;
   } catch { /* no status yet: nothing known to be running */ }
 
-  let worktrees = 0;
+  // Active, not existing: a worktree kept for uncommitted work stays on disk for days and is no load.
+  let worktrees = 0; let worktreesParked = 0;
   try {
+    const activeSince = now - ACTIVE_WORKTREE_WINDOW_S * 1000;
     for (const name of (await readdir(root)).filter(n => n.endsWith('.base'))) {
       const fields = (await text(join(root, name)))?.split(/\s+/).filter(Boolean) ?? [];
-      if (fields.length >= 4 && await exists(fields[2]!)) worktrees++;
+      if (fields.length < 4) continue;
+      const dirMtime = await mtimeMs(fields[2]!);
+      if (dirMtime === null) continue;
+      const touched = Math.max(dirMtime, await mtimeMs(join(root, name)) ?? 0,
+        await mtimeMs(join(root, `${name.slice(0, -'.base'.length)}.log`)) ?? 0);
+      if (touched >= activeSince) worktrees++; else worktreesParked++;
     }
   } catch { /* no runs dir */ }
 
@@ -228,7 +274,7 @@ export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<Ad
   const report = evaluateAdmission({
     load1: (opts.load1 ?? (() => loadavg()[0]!))(), ncpu: (opts.ncpu ?? availableParallelism)(),
     // RQ-BATCH-SESSIONS-2: queue/LOADGATE_OFF no longer disables the gate (dispatchd reports it as off_switch_ignored).
-    procs, worktrees, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap,
+    procs, worktrees, worktreesParked, daemonTickAgeS, daemonWhy, slots, running, holder, adaptiveCap,
   });
   report.lanes = lanes;
   return staleSnapshot ? { ...report, staleSnapshot } : report;

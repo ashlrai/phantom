@@ -3,6 +3,7 @@
   "schemas": {
     "fleet.v1": "fleet.v1.schema.json",
     "loop.v1": "loop.v1.schema.json",
-    "ci_time.v1": "ci_time.v1.schema.json"
+    "ci_time.v1": "ci_time.v1.schema.json",
+    "ecosystem-changelog.v1": "ecosystem-changelog.v1.schema.json"
   }
 }

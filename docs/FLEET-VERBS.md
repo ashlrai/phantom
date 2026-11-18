@@ -7,6 +7,7 @@
 | aborts | `src/cli/fleet-aborts.ts` | Read-only count of `abort_*` jobs from the last 2 hours of the last 3000 lines of `~/.ashlr-runs/metrics/jobs.jsonl`, by class, lane and 15 minute bucket. Prints `GITHUB_PUSH_FAILING` and exits 1 when `abort_push` has 3 or more rows in the newest 15 minutes | no |
 | activity | `src/cli/fleet-activity.ts` | Read-only `fleet.agent-activity.v1` per-job lifecycle fold of `metrics/jobs.jsonl`: newest stage (queued/running/finished/published/merged/closed), boundary timestamps, queue-wait/run/publish-lag seconds and a bounded event timeline per job, inside `--hours` (default 6, max 168) and `--limit` (default 50, max 500). A repeated job id starts a new attempt at the next queue or launch after a terminal event; a finish/publish/outcome stamped before the newest queue/launch boundary stays with the older attempt. The report also carries `verified` (`fleet.verified-completion.v1`): completed tasks passing an independent reconciled-PR-outcome check vs eligible claims, plus duplicate/false-completion/unauthorized-action counts, printed as a trailing summary line. Missing ledger reports `sourceState: "missing"`; also served at `GET /api/fleet/activity` and `GET /api/fleet/verified-completion` | no |
 | admission | `src/cli/fleet-admission.ts` | Read-only global cap, running, load and admit reason from queue/status.json, plus each lane's running, target, queued, held and a plain reason (held, at target, blocked by the global cap, or ok). Red, exit 1, when any lane is blocked by the global cap with 5 or more queued | no |
+| autopilot | `src/cli/fleet-autopilot.ts` | One bounded read-only planning cycle (`--once --json`): reads queue/slots/admission state, computes lane utilization vs targets, picks the single highest-leverage gap (uncovered conflicting PRs, starved lane, stale parked deps, missing restock) and emits one proposed action (enqueue N of a type, hold lane, or no-op). `--repo` repeats for the optional gh rebase-coverage read. Advisory only — never mutates | no |
 | backlog | `src/cli/fleet-backlog.ts` | Read-only triage of the open-PR merge backlog | no |
 | bets | `src/cli/fleet-bets.ts` | Read-only status of every `- READY RQ-` bet in leader/VISION.md from the last 3000 jobs.jsonl lines: not seen, launched, skipped, PR open, merged, empty or closed; first line is merged n of m | no |
 | bet-trace | `src/cli/fleet-bet-trace.ts` | Offline supervisor-command reconciliation; no dispatch or mutation authority | no |
@@ -101,6 +102,13 @@ and [iMessage](IMESSAGE.md#fleet-teammate-tasks-and-evidence)):
 **Convention for adding a new verb.** Create `src/cli/fleet-<verb>.ts` exporting `cmdFleet<Verb>` (each dash-separated part title-cased and concatenated), then run `node scripts/gen-fleet-registry.mjs` and include the generated registry change. Update this document and, when appropriate, help and completions. The dispatcher cannot load a convention verb absent from the registry.
 
 `dirty-landed --json` includes `diffAnomaly` for a complete PR diff of at least 1,000 files with zero added or deleted text lines in every file. Causes distinguish unchanged-content mode changes, generated-looking paths (a naming heuristic), and other zero-line changes. Binary, incomplete, and ordinary large text diffs are not classified as zero-line anomalies. The recut loop and recut sweep skip confirmed anomalies; inspect them before deciding what to do. The existing landed class remains independent of this diagnostic.
+
+Recut selection also recognizes changes already on the base branch when newer
+edits make whole files differ. A clean scratch merge proves which paths still
+need work; conflicts and unavailable previews retain the original comparison.
+`dirty-landed --json` reports `reason: "already-present-on-base"` for landed work,
+and `recut-sweep --json` uses that reason in `skipped`. Partly landed work keeps
+its missing paths; the recut loop reports its existing `landed` skip reason.
 
 For `fleet eval-report`, CI correlation uses required-check evidence only. A PR
 export must include `headRefOid`, a complete nonempty `requiredChecks` array of

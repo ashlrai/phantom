@@ -20,7 +20,7 @@ describe('fleet map', () => {
     expect(map.nodes.filter(node => node.kind === 'job').map(node => [node.lane, node.jobId])).toEqual([
       ['codex', 'one'], ['codex', 'two'], ['claude-cli', 'three'], ['local', 'four'], ['local', 'five'],
     ]);
-    expect(map.edges).toContainEqual({ id: 'reports:job:three:lane:claude-cli', kind: 'reports-to', from: 'job:three', to: 'lane:claude-cli' });
+    expect(map.edges).toContainEqual({ id: 'reports:job:three:lane:claude-cli', kind: 'reports-to', from: 'job:three', to: 'lane:claude-cli', provider: 'Anthropic' });
   });
   it('preserves unknown state and unmatched lanes', () => {
     expect(fleetOrgMap(null).sources).toEqual({ fleet: 'unknown', sessions: 'unknown', messages: 'unknown' });
@@ -48,8 +48,12 @@ describe('fleet map', () => {
     expect(map.nodes.filter(node => node.kind === 'lane').map(node => node.label)).toEqual([...ORG_LANES]);
     expect(map.nodes.filter(node => node.kind === 'channel')).toHaveLength(5);
     expect(map.nodes.find(node => node.kind === 'guardian')?.status).toBe('unknown');
-    expect(map.edges.filter(edge => edge.kind === 'message')).toEqual([{ id: 'message:leader:lane:claude', kind: 'message', from: 'leader', to: 'lane:claude', count: 2 }]);
+    expect(map.edges.filter(edge => edge.kind === 'message')).toEqual([{ id: 'message:leader:lane:claude', kind: 'message', from: 'leader', to: 'lane:claude', provider: 'unknown', count: 2, lastAt: new Date(now).toISOString() }]);
     expect(map.unmappedMessages).toBe(1); expect(JSON.stringify(map)).not.toContain('private fixture body');
+    const nodeProvider = new Map(map.nodes.map(node => [node.id, node.provider]));
+    expect(map.edges.every(edge => edge.provider === nodeProvider.get(edge.from))).toBe(true);
+    expect(map.edges.find(edge => edge.id === 'reports:job:one:lane:codex-cmp')?.provider).toBe('OpenAI');
+    expect(map.nodes.find(node => node.id === 'lane:codex-local')?.provider).toBe('Local');
     const ids = new Set(map.nodes.map(node => node.id));
     expect(map.edges.every(edge => ids.has(edge.from) && ids.has(edge.to))).toBe(true);
   });
