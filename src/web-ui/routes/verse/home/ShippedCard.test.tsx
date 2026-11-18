@@ -4,7 +4,9 @@ import type { ShippedReport } from '../../../../core/release/shipped.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { ShippedCard } from './ShippedCard.js';
 
-const state = vi.hoisted(() => ({ read: { status: 'success', data: undefined as unknown } }));
+const state = vi.hoisted(() => ({
+  read: { status: 'success', data: undefined as unknown, error: undefined as Error | undefined, updatedAt: null as number | null },
+}));
 vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state.read }));
 
 const line = (text: string, number: number | null) => ({ text, number, mergedAt: '2026-11-16T10:00:00.000Z' });
@@ -18,7 +20,8 @@ const REPORT: ShippedReport = {
 };
 let viewport: ViewportMock | null = null;
 const show = (data: unknown, width = 390, status = 'success') => {
-  viewport = mockViewport(width); state.read = { status, data };
+  viewport = mockViewport(width);
+  state.read = { status, data, error: status === 'error' ? new Error('HTTP 503') : undefined, updatedAt: status === 'success' ? Date.now() : null };
   return render(<ShippedCard />);
 };
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; });
@@ -55,7 +58,7 @@ it('says unknown when nothing could be read, and stays hidden before the read or
   expect(screen.getByText('Unknown: No git history could be read here.')).toBeTruthy();
   cleanup();
   show(undefined, 390, 'error');
-  expect(screen.getByText('Unknown: what shipped could not be read.')).toBeTruthy();
+  expect(screen.getByRole('status').textContent).toBe('What shipped is unavailable right now. Try again.');
   cleanup();
   for (const data of [undefined, { error: 'nope' }, { schema: 'home.v1' }]) {
     expect(show(data).container.innerHTML).toBe('');
