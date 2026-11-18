@@ -1,6 +1,7 @@
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
-import { useQuery } from '../../../data/hooks.js';
+import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { useQuery, useRefetch } from '../../../data/hooks.js';
 import styles from '../fleet-host/fleet-host.module.css';
 
 export interface NodeReachItem { label: string; role: string; lastSeenIso: string | null; state: 'reachable' | 'stale' | 'unknown' }
@@ -43,6 +44,8 @@ export function NodeReachRows({ nodes, now }: { nodes: NodeReachItem[]; now: num
 }
 
 export function NodeReachList({ visible }: { visible: boolean }) {
+  const refetch = useRefetch(nodeReachQuery);
+  usePollWhileVisible(refetch, 30_000, { enabled: visible, refreshOnShow: false });
   const read = useQuery(nodeReachQuery, { enabled: visible, freshMs: 30_000 });
   return <NodeReachRows nodes={read.status === 'error' ? [] : read.data ?? []} now={Date.now()} />;
 }

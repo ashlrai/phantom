@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { nodeReachView, sanitizeNodeLabel } from '../src/core/fleet/node-reach-view.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { nodeReachView, sanitizeNodeLabel, readNodeReachSources } from '../src/core/fleet/node-reach-view.js';
 
 const NOW = Date.parse('2026-11-18T12:00:00.000Z');
 
@@ -36,4 +39,18 @@ describe('sanitizeNodeLabel', () => {
     expect(sanitizeNodeLabel('someone@fake-node-b')).toBe('fake-node-b');
     expect(sanitizeNodeLabel('100.64.0.1')).toBe('unknown-node');
   });
+});
+
+ it('never uses the primary pool heartbeat as evidence the backup is reachable', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-reach-'));
+  try {
+    const state = { version: 'drive.nodes.v1', sequence: 2, observedAt: NOW, leader: null, jobs: [],
+      nodes: [{ nodeId: 'fake-backup', session: 1, heartbeatAt: NOW - 180_000, expiresAt: NOW + 10_000 }],
+      pool: { primary: 'fake-primary', backup: 'fake-backup', active: 'primary', epoch: 2, heartbeatAt: NOW } };
+    writeFileSync(join(dir, 'nodes.json'), JSON.stringify(state));
+    expect(nodeReachView(readNodeReachSources(dir), NOW)).toMatchObject([{ label: 'fake-backup', state: 'stale' }]);
+    state.nodes = [];
+    writeFileSync(join(dir, 'nodes.json'), JSON.stringify(state));
+    expect(nodeReachView(readNodeReachSources(dir), NOW)).toMatchObject([{ label: 'fake-backup', state: 'unknown', lastSeenIso: null }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
