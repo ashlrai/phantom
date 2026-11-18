@@ -312,6 +312,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'planner-slate': () => import('./fleet-planner-slate.js'),
   'planner-tick': () => import('./fleet-planner-tick.js'),
   'pool-reach': () => import('./fleet-pool-reach.js'),
+  'pools': () => import('./fleet-pools.js'),
   'post': () => import('./fleet-post.js'),
   'post-merge-verify': () => import('./fleet-post-merge-verify.js'),
   'pr-cockpit': () => import('./fleet-pr-cockpit.js'),

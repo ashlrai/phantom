@@ -1,6 +1,7 @@
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { poolShareSnapshot, type PoolShareInput, type PoolShareSnapshot } from './runway.js';
 
 export const PACE_POOLS = ['zai', 'gemini', 'claude', 'codex-personal'] as const;
 export interface PaceRow { pool: string; projectedPercent: number | null; hoursLeft: number | null; recommendedSlots: number | null;
@@ -17,7 +18,9 @@ function paceLaneNames(budget: Record<string, unknown>): string[] {
   return [...core, ...extra].slice(0, MAX_POOLS);
 }
 
-export interface PaceSnapshot { v: 1; asOf: string | null; pools: PaceRow[] }
+export interface PaceSnapshot { v: 1; asOf: string | null; pools: PaceRow[];
+  /** Per-pool runway verdict and suggested share of new work (`phm fleet pools --json`), from the same readings. */
+  shares: PoolShareSnapshot }
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const number = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -38,6 +41,17 @@ export function paceTarget(lane: PaceTargetInput): number | null {
   return Math.min(hardCap, running + Math.floor(Math.max(0, loadMax - load1)), Math.max(0, Math.round(needed)));
 }
 
+/** Readings for planPoolShares; anything not fresh, known and current stays null (unknown). */
+function shareInput(pool: string, lane: unknown, now: number): PoolShareInput {
+  const pace = object(lane) && object(lane.use_it_all) ? lane.use_it_all : {};
+  if (pace.known !== true || pace.stale !== false) return { pool, usedPercent: null, burnPerHour: null, hoursToReset: null };
+  const resetMs = typeof pace.reset_at === 'string' ? Date.parse(pace.reset_at) : NaN;
+  // Overage readings above 1000% are malformed, as in spend.ts and runway-read.ts.
+  return { pool, usedPercent: number(pace.used_pct) && pace.used_pct <= 1000 ? pace.used_pct : null,
+    burnPerHour: number(pace.burn_pct_per_hour) ? pace.burn_pct_per_hour : null,
+    hoursToReset: Number.isFinite(resetMs) ? (resetMs - now) / 3_600_000 : number(pace.hours_to_reset) ? pace.hours_to_reset : null };
+}
+
 /** A controller tick may republish a stale reading; both freshness checks are required. */
 export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   const status = object(raw) ? raw : {};
@@ -46,7 +60,10 @@ export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   const budget = object(status.budget) ? status.budget : {};
   const lanes = object(status.lanes) ? status.lanes : {};
   const admission = object(status.admission) ? status.admission : {};
-  return { v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, pools: (fresh ? paceLaneNames(budget) : [...PACE_POOLS]).map(pool => {
+  const asOf = Number.isFinite(tick) ? new Date(tick).toISOString() : null;
+  const names = fresh ? paceLaneNames(budget) : [...PACE_POOLS];
+  const shares = poolShareSnapshot(names.map(pool => shareInput(pool, fresh ? budget[pool] : null, now)), asOf);
+  return { v: 1, asOf, shares, pools: names.map(pool => {
     const lane = object(budget[pool]) ? budget[pool] : {};
     const pace = object(lane.use_it_all) ? lane.use_it_all : {};
     const valid = fresh && pace.known === true && pace.stale === false && number(pace.projected_used_pct)
