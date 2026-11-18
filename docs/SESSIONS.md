@@ -24,6 +24,18 @@ Narrow it with `--lane <lane>` or `--repo <repo>`, and add `--json` for the
 `fleet.live-sessions.v1` list. The desktop Sessions pane shows the same list.
 See [live sessions](FLEET-API.md#live-sessions).
 
+For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit
+`--json` for plain text). The typed `reconcileSessions` API returns
+`fleet.session-reconciliation.v1`: local runs classified as `live`, `finished`
+or `unknown`, each with a reason, process observation and recorded times.
+It uses the same bounded session reader and attempt-scoped `metrics/jobs.jsonl`
+as the fleet view. A worker proves liveness; completion or exit records prove
+the attempt ended, not that it shipped. Conflicting evidence stays unknown.
+Old output or dispatcher heartbeats never prove a process died. Waiting jobs
+are excluded; counts cover returned runs only. Check `sources`, `malformed`
+and `truncated` for missing or partial evidence. This command changes no
+processes, queue records or resumable agent sessions.
+
 ## Commands
 
 ```sh

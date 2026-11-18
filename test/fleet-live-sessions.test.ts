@@ -9,7 +9,8 @@ import { readFleetSessionMap, type FleetSessionMap } from '../src/core/fleet/ses
 import { buildLiveSessions, renderLiveSessionsText, sessionsByLane } from '../src/core/fleet/live-sessions.js';
 import { readLiveSessions } from '../src/core/fleet/live-sessions-read.js';
 import { createFleetLiveSessionsApi } from '../src/core/verse/fleet-live-sessions-api.js';
-import { cmdLiveSessions, cmdSessions } from '../src/cli/sessions.js';
+import { cmdLiveSessions, cmdReconcileSessions, cmdSessions } from '../src/cli/sessions.js';
+import { reconcileSessions } from '../src/core/fleet/session-reconciliation.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -160,6 +161,20 @@ describe('phm sessions', () => {
     try { return { status: await run(), out: out.join('\n'), err }; }
     finally { log.mockRestore(); stderr.mockRestore(); stdout.mockRestore(); }
   };
+
+  it('exposes reconciliation as versioned JSON and plain text, excluding waiting jobs and refusing mutations', async () => {
+    const snapshot = inventory([session('WAIT', { status: 'queued' }), session('HELD', { status: 'parked' }),
+      session('QUIET', { status: 'stale', live: 'no' }), session('FRESH', { live: 'no' })]);
+    const read = vi.fn(async () => snapshot);
+    const json = await capture(() => cmdReconcileSessions(['--json'], read));
+    expect(json.status).toBe(0);
+    expect(JSON.parse(json.out)).toEqual(reconcileSessions(snapshot));
+    expect(JSON.parse(json.out).counts).toEqual({ live: 0, finished: 0, unknown: 2 });
+    expect((await capture(() => cmdReconcileSessions([], read))).out).toContain('QUIET | unknown');
+    expect((await capture(() => cmdSessions(['reconcile', '--apply']))).status).toBe(2);
+    expect((await capture(() => cmdSessions(['reconcile', 'JOB']))).status).toBe(2);
+    expect((await capture(() => cmdSessions(['reconcile', '--help']))).out).toContain('phm sessions reconcile');
+  });
 
   it('prints the list as JSON or text through the injected reader, passing the filters', async () => {
     const map = await mixedFleet();

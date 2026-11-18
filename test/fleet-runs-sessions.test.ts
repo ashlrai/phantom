@@ -23,7 +23,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as http from 'node:http';
@@ -38,6 +38,7 @@ import {
 } from '../src/core/fleet/runs-sessions.js';
 import { makeCfg } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
+import { reconcileSessions } from '../src/core/fleet/session-reconciliation.js';
 
 const ANCHOR = Date.parse('2026-11-05T12:00:00Z');
 const S = 1000;
@@ -105,6 +106,43 @@ async function runsDir(files: Record<string, string | Buffer>): Promise<string> 
 
 const byJob = (snap: FleetSessionsV1, job: string): FleetSessionV1 | undefined =>
   [...snap.sessions, ...snap.recent].find(s => s.job === job);
+
+describe('local session reconciliation', () => {
+  it('distinguishes live, finished, unknown and conflicting runs despite old heartbeats, without writes or signals', async () => {
+    const root = await runsDir({ 'queue/status.json': JSON.stringify({ last_tick: metricTs(ANCHOR - 7200 * S) }) });
+    const jobs = ['LIVE', 'DONE', 'UNKNOWN', 'RETRY', 'CONFLICT', 'EXIT'];
+    for (const job of jobs) {
+      await touch(await write(root, `queue/run/${job}.line`, line(job)), ANCHOR - 3600 * S);
+      await touch(await write(root, `${job}.log`, 'quiet fixture'), ANCHOR - 1800 * S);
+    }
+    await write(root, 'queue/run/EXIT.rc', '0');
+    const ledger = ['DONE', 'CONFLICT', 'RETRY'].map(job => JSON.stringify({ job, event: 'finish',
+      ts: metricTs(ANCHOR - (job === 'RETRY' ? 7200 : 600) * S), exit_code: 0 })).join('\n');
+    const path = await write(root, 'metrics/jobs.jsonl', ledger);
+    const before = await stat(path);
+    const kill = vi.spyOn(process, 'kill');
+    const report = reconcileSessions(await getFleetSessions({ ...opts, runsDir: root,
+      runPs: async () => psWorker(101, 'LIVE') + psWorker(102, 'CONFLICT') }));
+    expect(report.schema).toBe('fleet.session-reconciliation.v1');
+    expect(report.readOnly).toBe(true);
+    expect(report.dispatcher?.tickAgeSeconds).toBe(7200);
+    expect(report.counts).toEqual({ live: 1, finished: 2, unknown: 3 });
+    expect(Object.fromEntries(report.runs.map(r => [r.job, r.state]))).toEqual({
+      LIVE: 'live', DONE: 'finished', UNKNOWN: 'unknown', RETRY: 'unknown', CONFLICT: 'unknown', EXIT: 'finished',
+    });
+    expect(report.runs.find(r => r.job === 'LIVE')?.lastOutputAt).toBe(new Date(ANCHOR - 1800 * S).toISOString());
+    expect(kill).not.toHaveBeenCalled();
+    expect(await readFile(path, 'utf8')).toBe(ledger);
+    expect((await stat(path)).mtimeMs).toBe(before.mtimeMs);
+    const unavailable = reconcileSessions(await getFleetSessions({ ...opts, runsDir: root, runPs: psDown }));
+    expect(unavailable.sources.live).toBe('degraded');
+    expect(unavailable.runs.find(r => r.job === 'LIVE')).toMatchObject({ state: 'unknown', live: 'unknown' });
+    expect(unavailable.runs.find(r => r.job === 'DONE')?.state).toBe('finished');
+    await write(root, 'metrics/jobs.jsonl', '{broken');
+    const broken = reconcileSessions(await getFleetSessions({ ...opts, runsDir: root, runPs: noPs, maxSessions: 1 }));
+    expect(broken).toMatchObject({ sources: { metrics: 'degraded' }, malformed: 1, truncated: true });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Pure parsers
