@@ -7,7 +7,8 @@
  *   (a) the job kind is on the `phm jobs yield --stop-list` list,
  *   (b) the last N jobs of the same kind ended EMPTY and master has no new
  *       commits touching that area since,
- *   (c) the source ref is already contained in master.
+ *   (c) the source ref is already contained in master,
+ *   (d) a live row in the job stop file (`stop-file.ts`) matches the job id or its kind.
  * Missing facts never skip: unknown yield emits with reason "yield unknown".
  *
  * `shouldEmitRecut` is pure. `readRecutGateFacts` does the reading, reusing the
@@ -16,6 +17,7 @@
 import { execFile } from 'node:child_process';
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { jobKind, yieldTally } from './slot-yield.js';
+import { readLiveStops, stopFilePath, stoppedBy } from './stop-file.js';
 
 export const RECUT_EMPTY_STREAK = 3;
 export const RECUT_CHECK_SCHEMA = 'recut.check.v1';
@@ -33,15 +35,20 @@ export interface RecutGateInput {
   masterTouched: boolean | null;
   /** The source ref adds nothing to master; null when no ref was given or git could not tell. */
   diffContained: boolean | null;
+  /** The live stop-file row that matches this job or kind; null or absent when none does or the file is unknown. */
+  stopRow?: { until: number; reason: string } | null;
   streak?: number;
 }
 
-export type RecutGateCode = 'already-on-master' | 'yield-unknown' | 'stop-list' | 'empty-streak' | 'emit';
+export type RecutGateCode = 'already-on-master' | 'stop-file' | 'yield-unknown' | 'stop-list' | 'empty-streak' | 'emit';
 export interface RecutGateDecision { emit: boolean; code: RecutGateCode; reason: string }
 
 export function shouldEmitRecut(input: RecutGateInput): RecutGateDecision {
   const n = input.streak ?? RECUT_EMPTY_STREAK;
   if (input.diffContained === true) return { emit: false, code: 'already-on-master', reason: 'the source change is already on master' };
+  if (input.stopRow) {
+    return { emit: false, code: 'stop-file', reason: `${input.family} is stopped by the stop file until ${new Date(input.stopRow.until * 1000).toISOString()}${input.stopRow.reason ? ` (${input.stopRow.reason})` : ''}` };
+  }
   if (input.stopList === null) return { emit: true, code: 'yield-unknown', reason: 'yield unknown' };
   if (input.stopList.includes(input.family)) return { emit: false, code: 'stop-list', reason: `${input.family} is on the yield stop list` };
   const last = input.lastJobs.slice(0, n);
@@ -98,6 +105,8 @@ export interface RecutGateFacts extends RecutGateInput { area: string; paths: st
 export interface RecutGateReadOptions {
   metrics: string; git: GitRun; now?: number; base?: string; ref?: string | null;
   streak?: number; read?: YieldLineReader;
+  /** Stop file path; defaults to the configured one. Null or unreadable means no stop-file fact. */
+  stopFile?: string | null;
 }
 
 /** One pass over jobs.jsonl, then at most three git calls. Never throws; unreadable facts become null. */
@@ -129,5 +138,8 @@ export async function readRecutGateFacts(target: string, opts: RecutGateReadOpti
   }
   const ref = opts.ref ?? null;
   const diffContained = ref ? await refContained(opts.git, base, ref) : null;
-  return { family: t.family, area: t.area, paths: t.paths, stopList, lastJobs, masterTouched, diffContained, ref, since, streak: n };
+  const stops = await readLiveStops(opts.stopFile === undefined ? stopFilePath() : opts.stopFile, now);
+  const hit = stops && stoppedBy(stops, [target.toUpperCase(), t.family]);
+  return { family: t.family, area: t.area, paths: t.paths, stopList, lastJobs, masterTouched, diffContained, ref, since, streak: n,
+    stopRow: hit ? { until: hit.until, reason: hit.reason } : null };
 }

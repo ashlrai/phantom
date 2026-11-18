@@ -31,7 +31,7 @@ export function MetricsPane({ visible }: PaneProps) {
   return <section aria-label="Metrics"><h2>Metrics</h2>
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : null}
     <MetricsGlance report={data?.glance} capacity={capacity} />
-    <JobYieldCard report={data?.jobYield} />
+    <JobYieldCard report={data?.jobYield} stopped={data?.stopped} />
     <ReleasesCard report={releases.data} />
     <p>Merged PRs: {history?.mergesLastHour ?? 'unknown'} in the last hour · {history?.mergesLast24h ?? 'unknown'} in the last 24 hours.</p>
     <p>Updated: {history?.observedAt ? hourLabel(history.observedAt) : 'unknown'}.</p>

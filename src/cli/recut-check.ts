@@ -16,6 +16,7 @@ export async function cmdRecut(args: string[], deps: RecutCheckDeps = {}): Promi
 Should the next recut or red-fix job launch? Give an area (core, webui) or a job id
 (RQ-PHX-RECUTCOREC566, RQ-PHX-REDTYPEFIXC459). Skip when:
   - its job kind is on the phm jobs yield --stop-list list,
+  - a live row in the job stop file (phm jobs yield --stop-file) matches it,
   - its last 3 jobs ended empty and master has no new commits in that area since, or
   - --ref is already on master (empty diff, or every hunk already applied).
 Unreadable yield data never skips: it launches with reason "yield unknown".
@@ -49,7 +50,7 @@ Exit 0: launch it. Exit 1: skip it. Exit 2: usage. JSON is ${RECUT_CHECK_SCHEMA}
       schema: RECUT_CHECK_SCHEMA, version: 1, target, family: facts.family, area: facts.area || null, ...decision,
       facts: { yield: facts.stopList === null ? 'unknown' : 'known', on_stop_list: facts.stopList === null ? null : facts.stopList.includes(facts.family),
         last_jobs: facts.lastJobs, since: facts.since, area_paths: facts.paths, master_touched: facts.masterTouched,
-        base, ref: facts.ref, diff_contained: facts.diffContained },
+        base, ref: facts.ref, diff_contained: facts.diffContained, stop_file_row: facts.stopRow ?? null },
     })));
   } else output(decision.emit ? `recut launch: ${decision.reason}` : `recut skipped: ${decision.reason}`);
   return decision.emit ? 0 : 1;

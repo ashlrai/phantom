@@ -18,6 +18,7 @@ To see which kinds of jobs are worth launching at all, run `phm jobs yield --jso
 It gives each job kind a keep, watch or stop verdict and names the five to stop
 first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).
 For only the job kinds to stop, run `phm jobs yield --stop-list` (one per line).
+To stop them, run `phm jobs yield --stop-file`: it writes them to the job stop file the fleet reads before any model call.
 
 `jobs.empty.v1` adds `diagnosis`: `jobs` (id, lane, family, reason), `families`
 and `lanes` (name, total, topReason, suggestion). Existing top-level `jobs`,

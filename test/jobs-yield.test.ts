@@ -93,7 +93,8 @@ describe('jobYield', () => {
 
   it('names at most five kinds to stop, most slots first, and says "rarely merge" when one of them merged', () => {
     const lines = ['A', 'B', 'C', 'D', 'E', 'F'].flatMap((letter, n) => Array.from({ length: 6 + n }, (_, i) => empty(`RQ-BAD${letter}-${i + 1}`)).flat());
-    lines.push(...merged('RQ-BADF-99'));
+    // The one merge is older than the family's last 3 launches, so it does not keep the kind live.
+    lines.push(...merged('RQ-BADF-99').map(line => line.replace(at(2), at(3))));
     const report = jobYield(lines, now, 24);
     expect(report.families.filter(f => f.verdict === 'stop')).toHaveLength(6);
     expect(report.stop_first.map(s => [s.family, s.slots])).toEqual([['RQ-BADF', 12], ['RQ-BADE', 10], ['RQ-BADD', 9], ['RQ-BADC', 8], ['RQ-BADB', 7]]);
