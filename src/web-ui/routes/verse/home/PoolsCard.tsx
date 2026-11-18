@@ -1,5 +1,6 @@
-/** Home and phone share the existing phm pool runway JSON; missing readings stay unknown. */
+/** Home and phone share the existing phm pool runway JSON; missing readings stay unknown. Each metered pool has a used bar under its row; an unread pool's bar is hatched, never empty. */
 import { useId, useState } from 'react';
+import { Meter } from '../../../components/primitives/Meter.js';
 import { isRunwaySnapshot, type PoolRunway, type RunwaySnapshot } from '../../../../core/usage/runway.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -40,12 +41,17 @@ export function PoolsCard({ visible = true, onOpenJob }: { visible?: boolean; on
   const rows = [...POOLS, ...(snapshot?.pools.filter(row => !POOLS.some(([pool]) => pool === row.pool)).map(row => [row.pool, row.pool] as const) ?? [])];
   return <section className={styles.card} aria-label="Pools"><h3>Pools</h3><p>Choose a pool to see its running jobs.</p>
     {read.status === 'error' ? <p role="status">Pool readings unavailable; usage and times are unknown.</p> : null}
-    <ul>{rows.map(([pool, name]) => {
-      const line = poolLine(snapshot?.pools.find(row => row.pool === pool));
+    <ul className={styles.meters}>{rows.map(([pool, name]) => {
+      const reading = snapshot?.pools.find(row => row.pool === pool);
+      const line = poolLine(reading);
+      const usedPercent = reading?.usedPercent;
+      const used = measured(usedPercent) ? usedPercent : null;
       const workers = jobs.data?.workers?.filter(worker => worker.lane === pool) ?? [];
       return <li key={pool}><button type="button" className={styles.action} data-warn={line.early || undefined}
         aria-expanded={selected === pool} aria-controls={`${id}-${pool}`} onClick={() => select(selected === pool ? null : pool)}>
         {name}: {pool === 'codex-local' ? 'free, limited by memory' : line.text}</button>
+        {/* Local has no quota window, so it has no bar. */}
+        {pool === 'codex-local' ? null : <Meter variant="line" value={used} max={100} className={used === null ? styles.unknownMeter : undefined} aria-label={`${name} used`} />}
         {selected === pool ? <div id={`${id}-${pool}`} role="region" aria-label={`${name} running jobs`}>
           {jobs.status === 'error' || (jobs.data && !Array.isArray(jobs.data.workers)) ? <p>Running jobs unknown.</p> : !jobs.data ? <p>Reading jobs…</p> : workers.length === 0 ? <p>No running jobs.</p>
             : <ul>{workers.map(worker => <li key={worker.job}><button type="button" className={styles.action}
