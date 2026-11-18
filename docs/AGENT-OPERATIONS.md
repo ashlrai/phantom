@@ -977,8 +977,25 @@ source and time, on the existing needs-you ledger and bus; a repeat changes
 nothing. Agents raise one with `phm asks add <kind> "<request>"` and never put
 the secret itself in the request. Any other kind is refused: the fleet decides
 this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
-own private chat; the desktop Home view shows the same asks with Yes, No and
-Done buttons. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
+own private chat. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
+
+`phm approvals` puts every decision only Mason can make first: those asks plus
+an agent's own questions with their own options. An agent raises one with
+`phm approvals ask --question "<one line>" --options "use it,not now"` and may
+add `--expires <iso>` and `--by <name>`. It gets a number, and an identical
+open question is reused. Each row shows the number, the question, the options,
+who asked, the age and the expiry. `phm approvals answer <number> <option>`
+records the option once, with who answered, the channel and the time, on the
+same needs-you ledger and bus; a repeat changes nothing. Only Mason can answer:
+the CLI refuses agent processes (the same local-human check as
+`phm team approve`), Telegram accepts only his own private chat, and the
+desktop and phone need the unlock. From Telegram, `yes 3` answers approval 3,
+and a bare `use it` answers when exactly one open approval offers it; when
+several do, the reply asks which one. An expired approval cannot be answered.
+An answer only records the decision: nothing is paid or sent. The desktop and
+phone Home screens show an Approvals card with one big button per option.
+`--json` prints `approvals.v1`, with the list in `asks`
+(`approvals.asks.v1`); answers print `approvals.answer.v1`.
 
 `phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
 published, PRs merged, empty jobs and the median time from publish to merge. It

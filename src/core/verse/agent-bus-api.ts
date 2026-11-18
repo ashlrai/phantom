@@ -13,6 +13,9 @@
  * to the stored envelope. No caller may choose the storage root or clock.
  * GET .../needs-mason/asks is `phm asks --json` (asks.v1); POST .../needs-mason/asks/answer
  * takes {id, answer: yes|no|done} and records it once with source desktop (asks.answer.v1).
+ * GET .../needs-mason/approvals is the `phm approvals` asks list (approvals.asks.v1); POST
+ * .../needs-mason/approvals/answer takes {id, option, from?: desktop|phone} (approvals.answer.v1).
+ * Passing the mutation gate is the verified-Mason check here, exactly as for asks.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
@@ -25,6 +28,8 @@ import { CHANNEL_ACK_TIMEOUT_MS } from '../fleet/channel-envelope.js';
 import { listNeedsMason, type NeedsMasonResolveResult } from '../fleet/needs-mason-resolve.js';
 import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { answerAsk, listAsks, type AskAnswerResult } from '../fleet/asks.js';
+import { answerApproval, listApprovals, type ApprovalAnswerResult } from '../fleet/approvals.js';
+import { OPERATOR_SENDER_ID } from '../fleet/channel-envelope.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
 
@@ -34,6 +39,8 @@ const MESSAGES = `${PATH}/messages`;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
+const APPROVALS = `${NEEDS_MASON}/approvals`;
+const APPROVALS_ANSWER = `${APPROVALS}/answer`;
 type NeedsMasonApiResult = NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' };
 export interface AgentBusApiDeps {
   append?: typeof appendBusInbox;
@@ -47,7 +54,11 @@ export interface AgentBusApiDeps {
     resolve: (input: unknown) => NeedsMasonApiResult | Promise<NeedsMasonApiResult>;
   };
   asks?: { list: typeof listAsks; answer: (id: unknown, answer: unknown) => Promise<AskAnswerResult> };
+  approvals?: { list: typeof listApprovals; answer: typeof answerApproval };
 }
+const APPROVAL_STATUS_HTTP: Record<ApprovalAnswerResult['status'], number> = {
+  answered: 200, 'already-answered': 200, unverified: 403, expired: 410, unknown: 404, ambiguous: 409, invalid: 400, unavailable: 503,
+};
 const ASK_STATUS_HTTP: Record<AskAnswerResult['status'], number> = {
   answered: 200, 'already-answered': 200, refused: 403, unknown: 404, ambiguous: 409, invalid: 400, unavailable: 503,
 };
@@ -56,8 +67,8 @@ const ASK_STATUS_HTTP: Record<AskAnswerResult['status'], number> = {
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_ANSWER) return false;
-    if (method !== (path === NEEDS_MASON_RESOLVE || path === ASKS_ANSWER ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
+    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_ANSWER && path !== APPROVALS && path !== APPROVALS_ANSWER) return false;
+    if (method !== (path === NEEDS_MASON_RESOLVE || path === ASKS_ANSWER || path === APPROVALS_ANSWER ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
     if (method === 'GET' && (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now())) {
@@ -101,6 +112,22 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
           ? await (deps.asks?.answer ?? ((id, answer) => answerAsk(id, answer, 'desktop')))(fields.id, fields.answer)
           : await answerAsk(undefined, undefined, 'desktop');
         sendJson(res, ASK_STATUS_HTTP[outcome.status], outcome);
+      } else if (path === APPROVALS) {
+        // 200 even when the ledger is unreadable: the list says ledger: unavailable, so the card can show unknown.
+        sendJson(res, 200, (deps.approvals?.list ?? listApprovals)());
+      } else if (path === APPROVALS_ANSWER) {
+        let raw: string;
+        try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
+        let input: unknown;
+        try { input = JSON.parse(raw); } catch { input = null; }
+        const fields = input !== null && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null;
+        const shaped = fields !== null && Object.keys(fields).every(key => key === 'id' || key === 'option' || key === 'from')
+          && (fields.from === undefined || fields.from === 'desktop' || fields.from === 'phone');
+        // The gate above proved the operator's unlock; `from` only labels which of his screens it was.
+        const answerer = { channel: fields?.from === 'phone' ? 'phone' as const : 'desktop' as const, senderId: OPERATOR_SENDER_ID };
+        const answer = deps.approvals?.answer ?? answerApproval;
+        const outcome = shaped ? await answer(fields.id, fields.option, answerer) : await answer(undefined, undefined, answerer);
+        sendJson(res, APPROVAL_STATUS_HTTP[outcome.status], outcome);
       } else if (path === NEEDS_MASON_RESOLVE) {
         let raw: string;
         try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
