@@ -50,13 +50,22 @@ write_summary() {
   fi
 }
 
+# Exceptions apply to full graphs, plus the Raycast production graph where the
+# unpatched advisory arrives only through the @raycast/api CLI toolchain. The
+# root production graph never consults the exception file.
 exceptions_enabled=false
+exception_graph=full
 if [[ -z "${omit_arg}" ]]; then
   exceptions_enabled=true
-  if ! node - "${exception_file}" "${active_exceptions_file}" "${osv_config}" <<'NODE'
+elif [[ "${audit_label}" == "Raycast production graph" ]]; then
+  exceptions_enabled=true
+  exception_graph=raycast-production
+fi
+if [[ "${exceptions_enabled}" == true ]]; then
+  if ! node - "${exception_file}" "${active_exceptions_file}" "${osv_config}" "${exception_graph}" <<'NODE'
 const fs = require('node:fs');
 
-const [exceptionFile, activeFile, osvConfig] = process.argv.slice(2);
+const [exceptionFile, activeFile, osvConfig, targetGraph] = process.argv.slice(2);
 function fail(message) {
   console.error(`dependency audit exception file ${message}`);
   process.exit(1);
@@ -85,7 +94,9 @@ for (const [index, entry] of exceptions.entries()) {
       !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/.test(entry.package)) {
     fail(`entry ${index + 1} has an invalid package name.`);
   }
-  if (entry.graph !== 'full') fail(`entry ${index + 1} must target the full graph.`);
+  if (entry.graph !== 'full' && entry.graph !== 'raycast-production') {
+    fail(`entry ${index + 1} must target the full or raycast-production graph.`);
+  }
   if (typeof entry.expires !== 'string' ||
       !Number.isFinite(Date.parse(entry.expires)) ||
       new Date(entry.expires).toISOString().replace(/\.000Z$/, 'Z') !== entry.expires) {
@@ -95,7 +106,7 @@ for (const [index, entry] of exceptions.entries()) {
       /[\u0000-\u001f\u007f]/.test(entry.reason)) {
     fail(`entry ${index + 1} has an invalid reason.`);
   }
-  const key = `${entry.id}\u0000${entry.package}`;
+  const key = `${entry.graph}\u0000${entry.id}\u0000${entry.package}`;
   if (seen.has(key)) fail(`contains a duplicate exception for ${entry.id} (${entry.package}).`);
   seen.add(key);
   if (Date.parse(entry.expires) <= Date.now()) {
@@ -103,8 +114,9 @@ for (const [index, entry] of exceptions.entries()) {
   }
 }
 
-fs.writeFileSync(activeFile, `${JSON.stringify(exceptions)}\n`, { mode: 0o600 });
-const toml = exceptions.map(({ id, expires, reason }) => [
+const active = exceptions.filter(entry => entry.graph === targetGraph);
+fs.writeFileSync(activeFile, `${JSON.stringify(active)}\n`, { mode: 0o600 });
+const toml = active.map(({ id, expires, reason }) => [
   '[[IgnoredVulns]]',
   `id = ${JSON.stringify(id)}`,
   `ignoreUntil = ${expires}`,
@@ -136,34 +148,49 @@ if (!vulnerabilities || typeof vulnerabilities !== 'object' || Array.isArray(vul
 }
 
 const used = new Set();
-let allAllowed = Object.keys(vulnerabilities).length > 0;
-for (const [packageKey, vulnerability] of Object.entries(vulnerabilities)) {
-  if (!vulnerability || typeof vulnerability !== 'object' ||
-      vulnerability.name !== packageKey || !Array.isArray(vulnerability.via) ||
-      vulnerability.via.length === 0) {
-    allAllowed = false;
-    continue;
-  }
-  const packageExceptions = exceptions.filter(exception => exception.package === vulnerability.name);
-  if (packageExceptions.length === 0) {
-    allAllowed = false;
-    continue;
-  }
-  for (const advisory of vulnerability.via) {
-    if (!advisory || typeof advisory !== 'object' || typeof advisory.url !== 'string') {
-      allAllowed = false;
-      continue;
+// npm lists a package that is vulnerable only through another vulnerable
+// package as a string `via` entry naming that package, and those references
+// can be cyclic (vitest <-> @vitest/coverage-v8). Start by assuming every
+// package is exempt, then repeatedly drop any package with a `via` entry that
+// is neither an excepted advisory nor a package still assumed exempt.
+const names = Object.keys(vulnerabilities);
+const exempt = new Set(names);
+const usedByPackage = new Map();
+let changed = true;
+while (changed) {
+  changed = false;
+  for (const packageKey of names) {
+    if (!exempt.has(packageKey)) continue;
+    const vulnerability = vulnerabilities[packageKey];
+    let ok = Boolean(vulnerability) && typeof vulnerability === 'object' &&
+      vulnerability.name === packageKey && Array.isArray(vulnerability.via) &&
+      vulnerability.via.length > 0;
+    const found = [];
+    if (ok) {
+      const packageExceptions = exceptions.filter(exception => exception.package === vulnerability.name);
+      ok = vulnerability.via.every(advisory => {
+        if (typeof advisory === 'string') return advisory !== packageKey && exempt.has(advisory);
+        if (!advisory || typeof advisory !== 'object' || typeof advisory.url !== 'string') {
+          return false;
+        }
+        const ids = advisory.url.match(/GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi) ?? [];
+        const id = ids.length === 1 ? ids[0].toUpperCase() : '';
+        const exception = packageExceptions.find(candidate => candidate.id.toUpperCase() === id);
+        if (!exception) return false;
+        found.push(`${exception.id}\u0000${exception.package}`);
+        return true;
+      });
     }
-    const ids = advisory.url.match(/GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi) ?? [];
-    const id = ids.length === 1 ? ids[0].toUpperCase() : '';
-    const exception = packageExceptions.find(candidate => candidate.id.toUpperCase() === id);
-    if (!exception) {
-      allAllowed = false;
-      continue;
+    if (!ok) {
+      exempt.delete(packageKey);
+      changed = true;
+    } else {
+      usedByPackage.set(packageKey, found);
     }
-    used.add(`${exception.id}\u0000${exception.package}`);
   }
 }
+const allAllowed = names.length > 0 && exempt.size === names.length;
+for (const found of usedByPackage.values()) for (const key of found) used.add(key);
 fs.writeFileSync(process.argv[4], `${JSON.stringify([...used])}\n`);
 process.exit(allAllowed ? 0 : 1);
 NODE

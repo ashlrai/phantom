@@ -616,6 +616,7 @@ exit 0
         mode?: 'report' | 'transport';
         omitDev?: boolean;
         npmExit?: number;
+        label?: string;
       }) => {
         writeFileSync(
           exceptionFile,
@@ -628,7 +629,7 @@ exit 0
         writeFileSync(summaryFile, '');
         rmSync(osvMarker, { force: true });
         rmSync(osvConfigCopy, { force: true });
-        const args = ['fixture graph', lockfile];
+        const args = [input.label ?? 'fixture graph', lockfile];
         if (input.omitDev) args.push('--omit=dev');
         const result = spawnSync('bash', [script, ...args], {
           cwd: fixtureRoot,
@@ -693,6 +694,87 @@ exit 0
       expect(production.count).toBe(1);
       expect(production.summary).toContain('primary npm audit reported vulnerabilities');
       expect(production.summary).not.toContain('applied dependency audit exception');
+
+      const dependent = (name: string, via: unknown[]) => ({
+        name,
+        severity: 'high',
+        isDirect: false,
+        via,
+        effects: [],
+        range: '*',
+        nodes: [`node_modules/${name}`],
+        fixAvailable: false,
+      });
+      const dependentReport = (extra: Record<string, unknown>) => {
+        const base = report([advisory(activeException.id)]);
+        return {
+          ...base,
+          metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 4, critical: 0, total: 4 } },
+          vulnerabilities: {
+            ...base.vulnerabilities,
+            tinyglobby: dependent('tinyglobby', ['picomatch']),
+            // Mutually referencing dependents, like vitest and @vitest/coverage-v8.
+            vitest: dependent('vitest', ['tinyglobby', 'coverage']),
+            coverage: dependent('coverage', ['vitest']),
+            ...extra,
+          },
+        };
+      };
+      const withDependents = runScenario({
+        report: dependentReport({}),
+        exceptions: [activeException],
+      });
+      expect(withDependents.status).toBe(0);
+      expect(withDependents.summary).toContain('applied dependency audit exception');
+
+      const unrelatedDependent = runScenario({
+        report: dependentReport({ other: dependent('other', ['picomatch', 'unlisted']) }),
+        exceptions: [activeException],
+      });
+      expect(unrelatedDependent.status).toBe(1);
+      expect(unrelatedDependent.summary).toContain('failed closed');
+
+      const otherAdvisoryDependent = runScenario({
+        report: dependentReport({ other: dependent('other', [advisory('GHSA-aaaa-bbbb-cccc')]) }),
+        exceptions: [activeException],
+      });
+      expect(otherAdvisoryDependent.status).toBe(1);
+
+      const raycastProduction = {
+        ...activeException,
+        graph: 'raycast-production',
+      };
+      const raycastProductionRun = runScenario({
+        report: dependentReport({}),
+        exceptions: [activeException, raycastProduction],
+        omitDev: true,
+        label: 'Raycast production graph',
+      });
+      expect(raycastProductionRun.status).toBe(0);
+      expect(raycastProductionRun.summary).toContain('applied dependency audit exception');
+
+      const raycastProductionNeedsOwnEntry = runScenario({
+        report: dependentReport({}),
+        exceptions: [activeException],
+        omitDev: true,
+        label: 'Raycast production graph',
+      });
+      expect(raycastProductionNeedsOwnEntry.status).toBe(1);
+
+      const rootProductionStaysStrict = runScenario({
+        report: dependentReport({}),
+        exceptions: [activeException, raycastProduction],
+        omitDev: true,
+        label: 'root production graph',
+      });
+      expect(rootProductionStaysStrict.status).toBe(1);
+      expect(rootProductionStaysStrict.summary).not.toContain('applied dependency audit exception');
+
+      const fullGraphIgnoresRaycastEntry = runScenario({
+        report: dependentReport({}),
+        exceptions: [raycastProduction],
+      });
+      expect(fullGraphIgnoresRaycastEntry.status).toBe(1);
 
       const malformed = runScenario({
         report: report([advisory(activeException.id)]),
