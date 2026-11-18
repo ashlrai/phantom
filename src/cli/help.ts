@@ -898,6 +898,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]', desc: 'Rank supplied router decisions by pool budget reset; advisory, no writes.', topic: 'observability' },
   { cmd: 'router serve|models|pick|config [--json]', desc: 'Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.', topic: 'observability' },
   { cmd: 'router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]', desc: 'Compare recorded router predictions with outcomes and usage.', topic: 'observability' },
+  { cmd: 'metrics impact [--json] [--jobs path] [--queue path] [--overrides path]', desc: 'Versioned offline impact rewards, template ranking and advisory bandit recommendations from local PR and job evidence.', topic: 'autonomy' },
   { cmd: 'index [--refresh]',            desc: 'Build or refresh the desktop index; show counts by category.', topic: 'core' },
   { cmd: 'go [query] [--open|--cd]',     desc: 'Find a repo or item; open in editor (--open) or print path for cd (--cd).', topic: 'core' },
   { cmd: 'status [--json]',              desc: 'Attention board: dirty, off-sync, and stale repos; ecosystem summary.', topic: 'core' },
@@ -1260,6 +1261,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'onboard --ecosystem [--json]', desc: 'Detect existing tools, key binding names and loopback endpoints; select toggles and grant one integration bundle. See docs/ECOSYSTEM-ONBOARDING.md.', topic: 'core' },
   { cmd: 'demo [--no-cleanup] [--json]', desc: 'Watch the FULL autonomous chain run on a DISPOSABLE tmp repo (isolated tmp ~/.ashlr; proposal-only; auto-cleans). NEVER touches your portfolio or applies anything.', topic: 'safety' },
 
+  { cmd: 'ideas [--json]', desc: 'Read recorded fleet ideas.', topic: 'observability' },
   { cmd: 'goals [--json]', desc: 'Show dispatcher throughput, empty rates and resource resets.', topic: 'observability' },
   { cmd: 'top [--once] [--json]', desc: 'Read-only per-pool capacity and reset pressure snapshot.', topic: 'web' },
   { cmd: 'tui [--once]',                 desc: 'Interactive terminal dashboard (alias: dash). --once renders one frame and exits.', topic: 'web' },
