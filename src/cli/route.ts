@@ -47,7 +47,8 @@ async function routeDecide(args: string[]): Promise<number> {
     if (!request.success) { console.error(JSON.stringify({ error: 'Invalid route request' })); return 2; }
     const { loadRouteSources } = await import('../core/routing/decision-candidates.js');
     const { decideRoute } = await import('../core/routing/decision.js');
-    console.log(JSON.stringify(await decideRoute(request.data, await loadRouteSources(root))));
+    const { withRunwayYield } = await import('../core/queue/route-yield.js');
+    console.log(JSON.stringify(await decideRoute(request.data, await withRunwayYield(root, await loadRouteSources(root)))));
     return 0;
   } catch {
     console.error(JSON.stringify({ error: 'Route input or decision unavailable' })); return 1;

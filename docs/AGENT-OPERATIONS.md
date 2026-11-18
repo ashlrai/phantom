@@ -487,6 +487,25 @@ Missing, stale or malformed status reads produce nulls, displayed as unknown.
 The seven core pools remain visible, including the Claude API gift and local;
 other recorded pools remain supported. Local has no inferred quota or reset.
 
+### Pool runway
+
+Spend down asks whether usage will go unused. Runway also asks whether a pool
+runs dry before reset. `phm pool runway` prints one sentence, then one line per
+pool: used, burn per hour, hours to empty, hours to reset, a state and plain
+advice. The states are:
+
+- `starve`: the pool empties before reset and then sits idle for `idleHours`.
+- `spend`: the pool resets with at least 2% unused.
+- `pace`: the pool is on track.
+- `unknown`: a reading or burn rate is missing. Runway never guesses one.
+
+`phm pool runway --json` and `GET /api/usage/runway` return `pool.runway.v1`.
+The Usage view shows the same data as a Runway strip, with STARVE in red. The
+advisory route ranking (`phm route decide`) reads `burnPerHour` from
+`queue/route-capacity.json`. It sends work below frontier tier to a starving
+pool only when that job kind merges at least 0.3 PRs per launch over the last
+24 hours, as reported by `phm jobs yield`. Such work prefers `spend` pools.
+
 ### Metrics levers
 
 `phm metrics levers --json` returns a versioned report with the top three

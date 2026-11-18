@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { decidePairing, type PairingLane } from '../routing/pairing.js';
 import { validResetCalendarPool } from '../routing/reset-pressure.js';
 import { loadRouteSources } from '../routing/decision-candidates.js';
+import { withRunwayYield } from './route-yield.js';
 import { decideRoute } from '../routing/decision.js';
 import { modelModeTierSchema, routeRequestSchema, routeModelSchema } from '../routing/decision-schema.js';
 
@@ -74,7 +75,7 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
   let pairing: ReturnType<typeof decidePairing> | null = null;
   let decision: Awaited<ReturnType<typeof decideRoute>> | null = null;
   const posture = await postureEvidence(root);
-  const sources = await loadRouteSources(root);
+  const sources = await withRunwayYield(root, await loadRouteSources(root), now * 1000);
   const request = routeRequestSchema.safeParse(sources.request);
   if (request.success) decision = await decideRoute(request.data, sources, { backends: [], nowMs: now * 1000 });
   const fallback_chain = request.success && decision && 'lane' in decision && decision.lane

@@ -319,6 +319,14 @@ Among eligible lanes: closest future reset with positive allowance, then
 zero marginal cost, then cheapest known marginal cost; unknown cost sorts last.
 `ResetCalendarPool.costPerMTok?` is nonnegative marginal USD/M tokens, not
 subscription sticker price. Reset-calendar lanes now sort by reset before pace.
+`ResetCalendarPool.burnPerHour?` is the measured window percent per hour. With it,
+`runway()` (`src/core/usage/runway.ts`, pure) puts the pool in `spend`, `pace`,
+`starve` or `unknown`. `rankRouteCandidates(request, candidates, nowMs, familyYield?)`
+drops `starve` lanes for non-frontier work unless the job kind's merged-per-launch
+in `RouteSources.familyYield` is at least `JOB_KEEP_RATE`. It ranks `spend` lanes
+first for non-frontier work. `routeCandidateRejections` adds `runway_starve`.
+`readPoolRunway()` (`runway-read.ts`) returns `pool.runway.v1` for
+`phm pool runway --json` and `GET /api/usage/runway`.
 
 `decidePairing(lanes, nowMs, { bottleneck? })` in `src/core/routing/pairing.ts`
 is pure and returns `route.pairing.v1` with `advisory: true`, nullable lead and

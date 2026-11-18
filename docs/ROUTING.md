@@ -141,6 +141,13 @@ catalog price. Stale/exhausted allowance is excluded unless positive
 `creditBalance` remains. Invalid lane readings exclude that lane; missing
 snapshots supply no evidence. Callers own snapshot freshness.
 
+A lane may also carry `burnPerHour`, the measured window percent burned per
+hour. With it the router knows the lane's runway (`phm pool runway`). A lane
+that will run dry before reset (`starve`) takes only frontier work, or a job
+kind that merges at least 0.3 PRs per launch over the last 24 hours, as `phm jobs yield` reports.
+Other work goes elsewhere and prefers lanes that will reset with usage left (`spend`).
+Without a burn rate the runway is unknown and changes nothing.
+
 Explicit modes resolve deterministically without decision-model calls; reasons
 include `mode-tier`, `reset-pressure`, `free-capacity`, `cheapest`, or `cost-prior`
 when marginal price is unknown. Equal
