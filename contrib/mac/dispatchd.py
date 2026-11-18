@@ -1031,6 +1031,28 @@ def retire_bundle_worktree(j, wt):
 
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
 requeue = []; fork_seen = []; rl_seen = []
+# RQ-QUEUERECOVERYQ8: bounded launch retries (launch_precheck.launch_failure); one ledger file, keyed per job.
+from launch_precheck import (classify_launch_failure, classify_empty_failure, launch_hold, launch_failure, launch_ok,
+                             park_key as _launch_key)
+LAUNCH_RETRY_PATH = Q + "/launch-retries.json"
+launch_state = jload(LAUNCH_RETRY_PATH, {})
+if not isinstance(launch_state, dict): launch_state = {}
+def launch_retry_key(job, pf):   # job + prompt only: a lane move or reroute must not reset the attempt count
+    return _launch_key(job, rd(pf))
+def launch_failed(j, ln, out, why_ev):
+    """Classify, bound and receipt one failed solo launch. Requeues only while the budget lasts."""
+    reason, retryable = classify_launch_failure(out, _rc(j))
+    if not ln:   # no line to retry: nothing to bound, but the reason is still recorded
+        metric({"event": "launch_failed", "job": j, "reason": reason, "action": "give_up", "attempt": 1}); return
+    receipt = launch_failure(launch_state, j, launch_retry_key(j, ln.split("\t")[4] if ln.count("\t") > 3 else ""), NOW, reason, retryable)
+    jsave(LAUNCH_RETRY_PATH, launch_state)
+    metric(dict(receipt, event="launch_failed", lane=ln.split("\t")[2] if ln.count("\t") > 1 else None))
+    if receipt["action"] == "retry":
+        requeue.append(ln); ev("%s %s reason=%s attempt=%d/%d (requeued, retry in %ds)" % (
+            why_ev, j, reason, receipt["attempt"], receipt["max_attempts"], max(0, receipt["retry_at"] - NOW)))
+    else:
+        ev("LAUNCH_GAVE_UP %s reason=%s class=%s attempts=%d (not requeued; see %s.launch)" % (
+            j, reason, receipt["class"], receipt["attempt"], j))
 # Lines a bundle reap requeued after ready.tsv was already written (the reap phase runs after launch), carried over
 # when the lock was busy at the end of the previous tick.
 _REQUEUE_PENDING = Q + "/requeue-pending.tsv"
@@ -1043,7 +1065,9 @@ for p in glob.glob(RUN + "/*.dispatched"):
     if (ps_result.returncode and j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j)
             and not re.search(r"^(PAUSED|HELD|SKIPPED):", out, re.M)):
         alive.add(j); continue   # unknown liveness during a long fetch, even before .base exists
-    if "launched " in out: os.remove(p); continue
+    if "launched " in out:
+        if launch_ok(launch_state, j): jsave(LAUNCH_RETRY_PATH, launch_state)
+        os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
         if batch_manifest(j): release_batch(j, "launch held")   # members go back alone; the bundle id never requeues
@@ -1054,13 +1078,14 @@ for p in glob.glob(RUN + "/*.dispatched"):
         release_batch(j, "launch skipped")
     elif not out.strip() and not base(j):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if batch_manifest(j): release_batch(j, "launch interrupted")
-        elif ln: requeue.append(ln)
-        ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        if batch_manifest(j): release_batch(j, "launch interrupted"); ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        else: launch_failed(j, ln, out, "LAUNCH_INTERRUPTED")
     else:
+        ln = rd(RUN + "/" + j + ".line").strip()
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
-        release_batch(j, "launch failed")
+        if batch_manifest(j): release_batch(j, "launch failed")
+        else: launch_failed(j, ln, out, "LAUNCH_RETRY")
     metric(dict(event="launch_terminal", job=j, reason="launcher-exited"))
     os.remove(p)
 
@@ -1286,6 +1311,7 @@ def reap_worktrees():
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "empty_class": classify_empty(empty, _rc(j), perr),
+                    "failure_reason": classify_empty_failure(empty, _rc(j), perr),
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
@@ -1893,7 +1919,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if m and re.search(r"(?i)\b(?:P0|critical)\b", r): urgent_jobs.add(m.group(1))
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (m not in recuts.identities and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
+        return (m not in recuts.identities and launch_hold(launch_state, m, launch_retry_key(m, f[4]), NOW) is None
+                and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
@@ -2049,6 +2076,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue   # finished worktree awaiting reap: never double up
         seen.add(j)
         key = park_key(line, rd(pf))
+        held = launch_hold(launch_state, j, launch_retry_key(j, pf), NOW)
+        if held == "wait": rest.append(line); continue
+        if held == "gave_up": continue   # budget spent on this exact line; a changed line or prompt resets it
         if parked(park_state, j, key, NOW):
             rest.append(line); continue
         # A due parked job must be checked even when optional prechecks ran out.

@@ -64,7 +64,7 @@ for (const store of ['bindings', 'prev'] as const) {
     now += 30_000;
     const restarted = makeTick();
     expect(await restarted.maybeRun()).toEqual({ ran: true, sent: 1, deduped: 0, failed: 0 });
-    expect(sends).toEqual([{ thread, key: JSON.stringify(['ASSIGNED', claim.id, head]) }]);
+    expect(sends).toEqual([{ thread, key: JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, head]) }]);
     const sent = readFileSync(paths.sent);
     now += 30_000;
     expect(await restarted.maybeRun()).toEqual({ ran: true, sent: 0, deduped: 0, failed: 0 });
