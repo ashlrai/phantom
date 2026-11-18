@@ -154,7 +154,7 @@ const SLACK_REPLIES_TIMEOUT_MS = 5_000;
 function readFleetCoordinationClaims() {
   const now = Date.now();
   let board: FleetBoard | null;
-  try { board = readFleetBoard(); } catch { board = null; }
+  try { board = readFleetBoard({ now, reap: false }); } catch { board = null; }
   return projectCoordinationClaims(board, now);
 }
 
@@ -162,7 +162,7 @@ function readFleetCoordinationClaims() {
 function readFleetCoordinationReturns() {
   const now = Date.now();
   let board: FleetBoard | null;
-  try { board = readFleetBoard(); } catch { board = null; }
+  try { board = readFleetBoard({ now, reap: false }); } catch { board = null; }
   return projectCoordinationReturns(board, now);
 }
 
