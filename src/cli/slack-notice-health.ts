@@ -16,6 +16,7 @@ export function createSlackNoticeHealth() {
     lastTick: 'none' as string,
     blocked: 0,
     passErrors: 0,
+    failedNotices: 0,
     recovery: 'unknown' as 'unknown' | 'blocked' | 'healthy' | 'recovered',
   };
   return {
@@ -41,9 +42,13 @@ export function createSlackNoticeHealth() {
       } else if ('status' in tick && tick.status === 'dry-run') {
         health.lastTick = 'dry-run'; health.status = 'dry-run'; health.reason = 'dry-run';
         health.recovery = 'unknown';
+      } else if (tick.failed > 0) {
+        health.lastTick = 'completed-with-failures'; health.status = 'completed-with-failures';
+        health.reason = 'notice-pass-failed'; health.failedNotices += tick.failed;
+        health.recovery = 'blocked';
       } else {
         health.lastTick = 'completed'; health.status = 'completed'; health.reason = null;
-        health.recovery = health.blocked + health.passErrors > 0 ? 'recovered' : 'healthy';
+        health.recovery = health.blocked + health.passErrors + health.failedNotices > 0 ? 'recovered' : 'healthy';
       }
     },
   };
