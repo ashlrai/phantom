@@ -118,6 +118,21 @@ per heading). The leader's usual line,
 `## 2026-11-16 ~22:55 ET` heading, is read as the plain quoted text at 22:55
 ET. A heading with no time shows its time as "unknown".
 
+The desktop Home and the phone Home show the newest of these in a **From your
+leader** card (three on the desktop, one on the phone). The card reads
+`GET /api/verse/fleet/runs/leader-replies?limit=N`, which returns the same
+`leader.replies.v1` report as `phm leader replies --json`: `schema`,
+`version`, `sourceState`, an optional `reason`, and `replies`, newest first,
+each `{at, text, source}` with `source` `plan-log` or `outbox`. Identical text
+appears once, each reply is capped at 1,200 characters, and a reply with no
+dated heading above it has `at` `unknown`. `entries` keeps the dated plan-log
+replies with their ids. The reader looks at the last 200 KB of the plan log
+and of the `MASON-OUTBOX.md` beside it, and sends nothing.
+
+The plan log path comes from `--file`, then `PHANTOM_PLAN_LOG`, then the
+`comms.leaderPlanLogPath` config key (unset by default), then
+`leader/PLAN-LOG.md` under the runs directory.
+
 Run `phm leader replies sync --json` to copy new dated **Reply for Mason**
 blocks from `~/.ashlr-runs/leader/PLAN-LOG.md` into the existing Leader thread.
 The same typed function, `syncLeaderReplies()` in `leader-thread.ts`, serves

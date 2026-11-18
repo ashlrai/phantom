@@ -536,6 +536,16 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readHome({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), leaderSeenMs: seen ? Number(seen) : null }));
       return true;
     }
+    // Home's "From your leader" card reads the same leader.replies.v1 as `phm leader replies --json`. Read only.
+    if (path === '/api/verse/fleet/runs/leader-replies') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const limit = Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('limit') ?? 3);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'limit takes 1 to 50' }); return true; }
+      const { readLeaderReplies } = await import('../fleet/mason-outbox.js');
+      const planLog = deps.runsDir ? join(deps.runsDir, 'leader', 'PLAN-LOG.md') : (await import('../config.js')).loadConfigReadOnly().comms?.leaderPlanLogPath;
+      sendJson(res, 200, await readLeaderReplies({ limit, planLog }));
+      return true;
+    }
     // Home's Pulse card reads the same fleet.pulse.v1 as `phm fleet pulse --json`.
     if (path === '/api/verse/fleet/runs/pulse') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }

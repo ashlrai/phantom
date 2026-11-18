@@ -1,4 +1,4 @@
-/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed and the Disk card (`phm worktrees`) closes the column. */
+/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, and the Disk card (`phm worktrees`) closes the column. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
 import { apiGet } from '../../../data/client.js';
@@ -13,6 +13,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
 import { DiskCard } from './DiskCard.js';
+import { LeaderRepliesCard } from './LeaderRepliesCard.js';
 import { PulseCard } from './PulseCard.js';
 import { ShippedCard } from './ShippedCard.js';
 import styles from './home.module.css';
@@ -35,11 +36,12 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /><LeaderRepliesCard visible={visible} /></section>;
   return <section className={styles.root} aria-label="Home">
     <PulseCard visible={visible} />
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <ApprovalsCard visible={visible} />
+    <LeaderRepliesCard visible={visible} />
     <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>
       <p>Last hour: <Value field={home.mergedLastHour}>{String}</Value></p>
       <p>Last 24 hours: <Value field={home.merged24h}>{String}</Value></p>
