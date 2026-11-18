@@ -12,7 +12,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync, writeSync, openSync } from 'node:fs';
+import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, realpathSync, unlinkSync, writeFileSync, writeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
@@ -63,6 +63,7 @@ export interface NodeBridgeReport {
   claimed: string[]; requeued: string[]; completed: string[]; lostRace: string[];
 }
 export interface BridgeRouter {
+  scope: string;
   view(owner: string): { nodes: NodeView[]; jobs: JobView[] };
   enqueue(jobId: string, spec: { owner: string; requires: string[]; pack: string }): boolean;
   withdraw(jobId: string, owner: string): WithdrawOutcome;
@@ -71,7 +72,7 @@ export interface DispatcherLock { release(): Promise<void> }
 export type AcquireDispatcherLock = (queueDir: string, signal?: AbortSignal) => Promise<DispatcherLock | { busy: string }>;
 interface Manifest {
   schema: typeof NODE_BRIDGE_SCHEMA; id: string; job: string; line: string; routerJobId: string; owner: string;
-  createdAt: number; state: 'claimed' | 'offloaded' | 'completed'; completedAt?: number; result?: string;
+  routerScope?: string; createdAt: number; state: 'claimed' | 'offloaded' | 'completed'; completedAt?: number; result?: string;
 }
 
 const queueDir = (h: NodeBridgeHost) => join(h.runsRoot, 'queue');
@@ -198,7 +199,8 @@ function readManifests(host: NodeBridgeHost): Manifest[] {
   return names.flatMap(name => {
     try {
       const m = JSON.parse(readFileSync(join(batchesDir(host), name), 'utf8')) as Manifest;
-      return m?.schema === NODE_BRIDGE_SCHEMA && `${m.id}.json` === name && m.id === bridgeLeaseOwner(m.job) ? [m] : [];
+      return m?.schema === NODE_BRIDGE_SCHEMA && `${m.id}.json` === name && m.id === bridgeLeaseOwner(m.job) &&
+        (m.routerScope === undefined || typeof m.routerScope === 'string') ? [m] : [];
     } catch { return []; }
   });
 }
@@ -264,8 +266,9 @@ export const flockDispatcher: AcquireDispatcherLock = (dir, signal) => new Promi
   child.once('close', () => settle({ busy: 'lock-helper-unavailable' }));
 });
 
-export function localBridgeRouter(nodes: DriveNodes): BridgeRouter {
+export function localBridgeRouter(nodes: DriveNodes, storeDirectory: string): BridgeRouter {
   return {
+    scope: realpathSync(storeDirectory),
     view: owner => nodes.view([owner]),
     enqueue: (jobId, spec) => nodes.enqueue(jobId, spec),
     withdraw: (jobId, owner) => nodes.withdraw(jobId, owner),
@@ -273,13 +276,15 @@ export function localBridgeRouter(nodes: DriveNodes): BridgeRouter {
 }
 
 /** Pool witness transport (`callPool`). A demoted primary never claims. */
-export function poolBridgeRouter(call: (verb: string, args: string[]) => { demoted: boolean; result: Record<string, unknown> }): BridgeRouter {
+export function poolBridgeRouter(call: (verb: string, args: string[]) => { demoted: boolean; result: Record<string, unknown> },
+  storeDirectory: string): BridgeRouter {
   const ok = (verb: string, args: string[]) => {
     const reply = call(verb, args);
     if (reply.demoted) throw new Error('Node pool primary is demoted');
     return reply.result;
   };
   return {
+    scope: realpathSync(storeDirectory),
     view: owner => ok('status', ['--owner', owner]) as unknown as { nodes: NodeView[]; jobs: JobView[] },
     enqueue: (jobId, spec) => ok('enqueue', ['--job', jobId, '--owner', spec.owner, '--requires', spec.requires.join(','), '--pack', spec.pack])['enqueued'] === true,
     withdraw: (jobId, owner) => {
@@ -304,8 +309,10 @@ export interface NodeBridgeOptions {
   inert?: string | null;
 }
 
-function leaseAction(m: Manifest, job: JobView | undefined, now: number, ttl: number): string {
+function leaseAction(m: Manifest, job: JobView | undefined, owner: string | null, scope: string | null, now: number, ttl: number): string {
   if (m.state === 'completed') return 'keep-completed';
+  if (m.owner !== owner) return 'hold-owner-mismatch';
+  if (m.routerScope === undefined || m.routerScope !== scope) return 'hold-router-mismatch';
   if (!job) return 'requeue';
   if (job.state === 'completed') return job.producerWithdrawn === true ? 'requeue' : 'complete';
   if (job.state === 'running') return 'check-lease';
@@ -329,7 +336,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     report.leases = manifests.map(m => {
       const job = view.jobs.find(j => j.id === m.routerJobId);
       return { job: m.job, leaseOwner: m.id, routerJobId: m.routerJobId, state: m.state, routerState: job?.state ?? null,
-        action: leaseAction(m, job, now, ttl) };
+        action: leaseAction(m, job, owner, opts.router?.scope ?? null, now, ttl) };
     });
     const bridged = new Set(manifests.map(m => m.job));
     const plan = planNodeBridge({ rows: fresh.rows, claimed: j => bridged.has(j) || claimedLocally(host, j),
@@ -359,7 +366,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
     const requeue: Manifest[] = [];
     for (const m of manifests) {
       const action = report.leases.find(l => l.leaseOwner === m.id)!.action;
-      if (action === 'keep-completed' || action === 'wait') continue;
+      if (action === 'keep-completed' || action === 'wait' || action === 'hold-owner-mismatch' || action === 'hold-router-mismatch') continue;
       let outcome: WithdrawOutcome;
       try { outcome = router.withdraw(m.routerJobId, owner); } catch { continue; }
       if (outcome.state === 'withdrawn' || outcome.state === 'absent') requeue.push(m);
@@ -383,7 +390,8 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       const currentManifests = readManifests(host);
       safeRequeue = requeue.filter(m => {
         const currentManifest = currentManifests.find(current => current.id === m.id && current.job === m.job &&
-          current.line === m.line && current.routerJobId === m.routerJobId && current.owner === m.owner);
+          current.line === m.line && current.routerJobId === m.routerJobId && current.owner === m.owner &&
+          current.routerScope === m.routerScope && current.routerScope === router.scope);
         if (!currentManifest) return false;
         const job = currentView.jobs.find(current => current.id === m.routerJobId);
         return !job || (job.state === 'completed' && job.producerWithdrawn === true);
@@ -414,7 +422,7 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       const id = bridgeLeaseOwner(decision.job);
       if (!row || claimedLocally(host, decision.job) || existsSync(join(batchesDir(host), `${id}.json`))) { report.lostRace.push(decision.job); continue; }
       const manifest: Manifest = { schema: NODE_BRIDGE_SCHEMA, id, job: decision.job, line: row.line, routerJobId: decision.routerJobId!,
-        owner, createdAt: now, state: 'claimed' };
+        owner, routerScope: router.scope, createdAt: now, state: 'claimed' };
       const manifestPath = join(batchesDir(host), `${id}.json`);
       writeAtomic(manifestPath, JSON.stringify(manifest) + '\n');
       let fd: number;

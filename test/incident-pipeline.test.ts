@@ -57,6 +57,69 @@ describe('ingest', () => {
     expect(await ingestSignal(sig({ kind: 'log-anomaly', message: 'slow tick' }), deps)).toMatchObject({ status: 'observed', severity: 'sev4' });
     expect((await store.read()).jobs).toHaveLength(0);
   });
+  it('serializes concurrent events from independent scheduler instances', async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => ingestSignal(sig({
+      source: `monitor-${i}`, targetRevision: 'a'.repeat(40),
+    }), { ...deps, store: new QueueStore(store.directory) })));
+    expect(results.filter(r => r.status === 'enqueued')).toHaveLength(1);
+    expect(results.filter(r => r.status === 'duplicate')).toHaveLength(7);
+    expect(new Set(results.map(r => 'jobId' in r && r.jobId)).size).toBe(1);
+    expect((await store.read()).jobs).toHaveLength(1);
+  });
+  it('isolates revisions, repositories and failure fingerprints while retaining older active jobs', async () => {
+    deps.limits = { perRepoPerHour: 10 };
+    const original = sig({ targetRevision: 'a'.repeat(40) });
+    const first = await ingestSignal(original, deps);
+    const changed = await ingestSignal({ ...original, targetRevision: 'b'.repeat(40) }, deps);
+    expect(changed).toMatchObject({ status: 'enqueued', regression: false });
+    expect(changed).not.toMatchObject({ jobId: (first as { jobId: string }).jobId });
+    expect(await ingestSignal({ ...original, targetRevision: 'A'.repeat(40), repo: 'AshlrAI/Phantom' }, deps)).toMatchObject({ status: 'duplicate', jobId: (first as { jobId: string }).jobId });
+    expect((await ingestSignal({ ...original, repo: 'ashlrai/other' }, deps)).status).toBe('enqueued');
+    expect((await ingestSignal({ ...original, message: 'different failure' }, deps)).status).toBe('enqueued');
+    const jobs = (await store.read()).jobs;
+    expect(jobs).toHaveLength(4);
+    expect(jobs[0]!.scope).toContain(`Target revision: ${original.targetRevision}`);
+  });
+  it.each([undefined, 'a'.repeat(40), 'b'.repeat(64)])('escalates failed attempts once per retry and caps severity at sev1 (revision %#)', async targetRevision => {
+    deps.limits = { perRepoPerHour: 10 };
+    const signal = sig({ targetRevision, severity: 'sev3' });
+    let result = await ingestSignal(signal, deps) as { jobId: string };
+    for (const [severity, tier] of [['sev2', 'mid'], ['sev1', 'frontier'], ['sev1', 'frontier']]) {
+      await store.claim(result.jobId, 'worker');
+      await store.finish(result.jobId, 'worker', { reason: 'repair failed' });
+      const retries = await Promise.all([ingestSignal(signal, deps), ingestSignal(signal, deps)]);
+      expect(retries.filter(r => r.status === 'enqueued')).toHaveLength(1);
+      result = retries.find(r => r.status === 'enqueued') as { jobId: string };
+      expect(retries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: 'enqueued', severity }),
+        expect.objectContaining({ status: 'duplicate', severity, jobId: result.jobId }),
+      ]));
+      expect((await store.read()).jobs.at(-1)).toMatchObject({ tier, status: 'READY' });
+    }
+    const jobs = (await store.read()).jobs;
+    expect(jobs.filter(j => j.status === 'BLOCKED')).toHaveLength(3);
+    expect(jobs.filter(j => j.status === 'READY')).toHaveLength(1);
+    expect(sent).toHaveLength(2);
+  });
+  it('preserves admission caps during escalation and retries after the window', async () => {
+    deps.limits = { perRepoPerHour: 1 };
+    const first = await ingestSignal(sig(), deps) as { jobId: string };
+    await store.claim(first.jobId, 'worker');
+    await store.finish(first.jobId, 'worker', { reason: 'repair failed' });
+    expect(await ingestSignal(sig(), deps)).toMatchObject({ status: 'rate-limited', severity: 'sev2' });
+    expect((await store.read()).jobs).toHaveLength(1);
+    clock += 3_600_001;
+    expect(await ingestSignal(sig(), deps)).toMatchObject({ status: 'enqueued', severity: 'sev2', jobId: `${first.jobId}-2` });
+  });
+  it('keeps held or unfinished blocked work deduplicated', async () => {
+    const first = await ingestSignal(sig(), deps) as { jobId: string };
+    await store.hold(first.jobId, true);
+    expect(await ingestSignal(sig(), deps)).toMatchObject({ status: 'duplicate', jobId: first.jobId });
+    const doc = await store.read();
+    doc.jobs[0]!.status = 'BLOCKED';
+    (await import('node:fs')).writeFileSync(store.path, JSON.stringify(doc));
+    expect(await ingestSignal(sig(), deps)).toMatchObject({ status: 'duplicate', jobId: first.jobId });
+  });
   it('rate limits per repo and globally, letting sev1 past the soft caps only', async () => {
     deps.limits = { perRepoPerHour: 2, globalPerHour: 3, globalHardPerHour: 4 };
     const n = (i: number, over: Partial<IncidentSignal> = {}) => ingestSignal(sig({ message: `distinct failure kind${'abcdefgh'[i]}`, ...over }), deps);
@@ -72,7 +135,7 @@ describe('ingest', () => {
     expect((await n(2)).status).toBe('enqueued');
   });
   it('rejects malformed signals', async () => {
-    for (const bad of [sig({ repo: '../etc' }), sig({ message: '  ' }), sig({ kind: 'nope' as never }), sig({ count: 0 }), sig({ source: '' })]) {
+    for (const bad of [sig({ repo: '../etc' }), sig({ message: '  ' }), sig({ kind: 'nope' as never }), sig({ count: 0 }), sig({ source: '' }), sig({ targetRevision: 'main' }), sig({ targetRevision: '' })]) {
       expect((await ingestSignal(bad, deps)).status).toBe('invalid');
     }
     expect((await store.read()).jobs).toHaveLength(0);
