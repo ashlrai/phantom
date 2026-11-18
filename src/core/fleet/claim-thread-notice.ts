@@ -65,8 +65,8 @@ export function planClaimThreadNotices(
   // A claim id observed in more than one repository (live claims or return
   // receipts in either snapshot) earns a repo-qualified notice identity so
   // the durable sent ledger cannot fence one repository's notice with
-  // another's. Unambiguous first-seen notices keep the legacy
-  // [state, claimId, head] key so keys already ledgered still fence replays.
+  // another's. Notices without fresh acquisition evidence keep the legacy
+  // [state, claimId, head] key so historical keys still fence those replays.
   const claimRepos = new Map<string, Set<string>>();
   const noteRepo = (id: string, repo: string) => {
     const repos = claimRepos.get(id) ?? new Set<string>();
@@ -86,8 +86,8 @@ export function planClaimThreadNotices(
     const binding = matches[0]!;
     const actualHead = head ?? binding.head;
     const tail = actualHead ?? 'unknown';
-    // A re-acquisition or handoff of a claim the previous snapshot already
-    // knew gets a fully qualified identity (repo, owner, acquisition clock):
+    // A proven fresh acquisition or handoff gets a fully qualified identity
+    // (repo, owner, acquisition clock):
     // owner A -> B -> A and distinct acquisitions can never collide with
     // the earlier owner's ledgered key, while an identical replay recomputes
     // the same fields and stays fenced.
@@ -111,7 +111,12 @@ export function planClaimThreadNotices(
     // a fresh acquisition clock under a known claim id is a new assignment.
     if (!old || old.agent !== claim.agent || old.claimedAt !== claim.claimedAt) {
       add('ASSIGNED', claim.id, claim.repo, claim.agent, 'claim acquired', undefined, undefined,
-        old === undefined ? undefined : { agent: claim.agent, claimedAt: claim.claimedAt });
+        // A clock after the known absent snapshot proves a new acquisition,
+        // even when that snapshot no longer contains the previous owner.
+        // Older/equal clocks retain legacy replay fencing: the planner has
+        // no evidence to distinguish historical delivery from late discovery.
+        old !== undefined || claim.claimedAt > prev.asOf
+          ? { agent: claim.agent, claimedAt: claim.claimedAt } : undefined);
     }
   }
   for (const row of nextReturns) {
