@@ -13,6 +13,8 @@ import {
 } from '../core/agents/session.js';
 import { renderLiveSessionsText, SESSION_FILTER_RE } from '../core/fleet/live-sessions.js';
 import { readLiveSessions } from '../core/fleet/live-sessions-read.js';
+import { getFleetSessions } from '../core/fleet/runs-sessions.js';
+import { reconcileSessions, renderSessionReconciliation } from '../core/fleet/session-reconciliation.js';
 
 const USAGE = `Usage:
   phm sessions [--lane <lane>] [--repo <repo>] [--json]
@@ -20,6 +22,7 @@ const USAGE = `Usage:
                                       model, repo, tier, age, last output (quiet after
                                       10 min), PR and computer. Read only.
   phm sessions list [--json]          Show gateway sessions and agent sessions
+  phm sessions reconcile [--json]     Check local runs: live, finished or unknown. Read only.
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
   phm sessions create --agent <id> --agent-version <n> --environment <id> --job <queue-job-id> [--dir <queue-directory>] [--json]
                                       Start an agent session; the queue job is turn 1
@@ -126,6 +129,16 @@ export async function cmdLiveSessions(args: string[], read: typeof readLiveSessi
   return 0;
 }
 
+export async function cmdReconcileSessions(args: string[], read: typeof getFleetSessions = getFleetSessions): Promise<number> {
+  let values;
+  try {
+    ({ values } = parseArgs({ args, strict: true, allowPositionals: false, options: { json: { type: 'boolean' } } }));
+  } catch { process.stderr.write(USAGE); return 2; }
+  const report = reconcileSessions(await read());
+  console.log(values.json ? JSON.stringify(report, null, 2) : renderSessionReconciliation(report));
+  return 0;
+}
+
 export async function cmdSessions(args: string[]): Promise<number> {
   // No verb: the live list. `--json` alone stays the live list too; `list --json` is the gateway list.
   if (args[0] === undefined || args[0].startsWith('-')) return cmdLiveSessions(args);
@@ -137,6 +150,7 @@ export async function cmdSessions(args: string[]): Promise<number> {
     return 0;
   }
   if (more.includes('--help') || more.includes('-h')) { process.stdout.write(USAGE); return 0; }
+  if (sub === 'reconcile') return cmdReconcileSessions(args.slice(1));
 
   if (sub === 'list' && more.length === 0) {
     const sessions = listGatewaySessions();
