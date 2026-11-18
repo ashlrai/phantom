@@ -21,6 +21,7 @@ import { AppsCard } from './AppsCard.js';
 import { DiskForecastCard } from './DiskForecastCard.js';
 import { AllowedAppsCard } from './AllowedAppsCard.js';
 import { MacAppsCard } from './MacAppsCard.js';
+import { BrowserCard } from './BrowserCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
 import { DiskRunwayCard } from './DiskRunwayCard.js';
 import { hostView } from './fleet-host-model.js';
@@ -70,6 +71,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
     </header>
     <MacAppsCard visible={visible} />
     <AllowedAppsCard visible={visible} />
+    <BrowserCard visible={visible} />
     {data === null ? <p className={styles.muted}>The fleet runs API has not landed in this build yet.</p>
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>
       : <>
