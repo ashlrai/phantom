@@ -18,6 +18,8 @@ if [[ ! -f "${lockfile}" ]]; then
   exit 66
 fi
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exception_file="${script_dir}/../.github/dependency-audit-exceptions.json"
 npm_command=("${AUDIT_NODE_BIN:-${AUDIT_NPM_BIN:-npm}}")
 if [[ -n "${AUDIT_NPM_CLI:-}" ]]; then
   npm_command+=("${AUDIT_NPM_CLI}")
@@ -37,11 +39,159 @@ trap cleanup EXIT
 osv_config="${audit_tmp}/osv-scanner.toml"
 : > "${osv_config}"
 chmod 0600 "${osv_config}"
+active_exceptions_file="${audit_tmp}/active-exceptions.json"
+used_exceptions_file="${audit_tmp}/used-exceptions.json"
+printf '[]\n' > "${used_exceptions_file}"
+chmod 0600 "${used_exceptions_file}"
 
 write_summary() {
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     printf -- '- %s\n' "$1" >> "${GITHUB_STEP_SUMMARY}"
   fi
+}
+
+exceptions_enabled=false
+if [[ -z "${omit_arg}" ]]; then
+  exceptions_enabled=true
+  if ! node - "${exception_file}" "${active_exceptions_file}" "${osv_config}" <<'NODE'
+const fs = require('node:fs');
+
+const [exceptionFile, activeFile, osvConfig] = process.argv.slice(2);
+function fail(message) {
+  console.error(`dependency audit exception file ${message}`);
+  process.exit(1);
+}
+
+let exceptions;
+try {
+  exceptions = JSON.parse(fs.readFileSync(exceptionFile, 'utf8'));
+} catch {
+  fail(`is missing or malformed: ${exceptionFile}`);
+}
+if (!Array.isArray(exceptions)) fail('must contain a JSON array.');
+
+const seen = new Set();
+for (const [index, entry] of exceptions.entries()) {
+  const fields = ['expires', 'graph', 'id', 'package', 'reason'];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
+      Object.keys(entry).sort().join(',') !== fields.join(',')) {
+    fail(`entry ${index + 1} has an invalid shape.`);
+  }
+  if (typeof entry.id !== 'string' ||
+      !/^GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(entry.id)) {
+    fail(`entry ${index + 1} has an invalid advisory id.`);
+  }
+  if (typeof entry.package !== 'string' ||
+      !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/.test(entry.package)) {
+    fail(`entry ${index + 1} has an invalid package name.`);
+  }
+  if (entry.graph !== 'full') fail(`entry ${index + 1} must target the full graph.`);
+  if (typeof entry.expires !== 'string' ||
+      !Number.isFinite(Date.parse(entry.expires)) ||
+      new Date(entry.expires).toISOString().replace(/\.000Z$/, 'Z') !== entry.expires) {
+    fail(`entry ${index + 1} has an invalid expiration timestamp.`);
+  }
+  if (typeof entry.reason !== 'string' || !entry.reason.trim() ||
+      /[\u0000-\u001f\u007f]/.test(entry.reason)) {
+    fail(`entry ${index + 1} has an invalid reason.`);
+  }
+  const key = `${entry.id}\u0000${entry.package}`;
+  if (seen.has(key)) fail(`contains a duplicate exception for ${entry.id} (${entry.package}).`);
+  seen.add(key);
+  if (Date.parse(entry.expires) <= Date.now()) {
+    fail(`${entry.id} for ${entry.package} expired at ${entry.expires}.`);
+  }
+}
+
+fs.writeFileSync(activeFile, `${JSON.stringify(exceptions)}\n`, { mode: 0o600 });
+const toml = exceptions.map(({ id, expires, reason }) => [
+  '[[IgnoredVulns]]',
+  `id = ${JSON.stringify(id)}`,
+  `ignoreUntil = ${expires}`,
+  `reason = ${JSON.stringify(reason)}`,
+].join('\n')).join('\n\n');
+fs.writeFileSync(osvConfig, toml ? `${toml}\n` : '');
+NODE
+  then
+    write_summary "${audit_label}: dependency audit exception file is invalid or expired; failed closed."
+    exit 70
+  fi
+fi
+
+is_fully_exempt_npm_report() {
+  node - "$1" "${active_exceptions_file}" "${used_exceptions_file}" <<'NODE'
+const fs = require('node:fs');
+
+let report;
+let exceptions;
+try {
+  report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+  exceptions = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+} catch {
+  process.exit(1);
+}
+const vulnerabilities = report?.vulnerabilities;
+if (!vulnerabilities || typeof vulnerabilities !== 'object' || Array.isArray(vulnerabilities)) {
+  process.exit(1);
+}
+
+const used = new Set();
+let allAllowed = Object.keys(vulnerabilities).length > 0;
+for (const [packageKey, vulnerability] of Object.entries(vulnerabilities)) {
+  if (!vulnerability || typeof vulnerability !== 'object' ||
+      vulnerability.name !== packageKey || !Array.isArray(vulnerability.via) ||
+      vulnerability.via.length === 0) {
+    allAllowed = false;
+    continue;
+  }
+  const packageExceptions = exceptions.filter(exception => exception.package === vulnerability.name);
+  if (packageExceptions.length === 0) {
+    allAllowed = false;
+    continue;
+  }
+  for (const advisory of vulnerability.via) {
+    if (!advisory || typeof advisory !== 'object' || typeof advisory.url !== 'string') {
+      allAllowed = false;
+      continue;
+    }
+    const ids = advisory.url.match(/GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi) ?? [];
+    const id = ids.length === 1 ? ids[0].toUpperCase() : '';
+    const exception = packageExceptions.find(candidate => candidate.id.toUpperCase() === id);
+    if (!exception) {
+      allAllowed = false;
+      continue;
+    }
+    used.add(`${exception.id}\u0000${exception.package}`);
+  }
+}
+fs.writeFileSync(process.argv[4], `${JSON.stringify([...used])}\n`);
+process.exit(allAllowed ? 0 : 1);
+NODE
+}
+
+write_exception_usage_summary() {
+  [[ "${exceptions_enabled}" == true ]] || return 0
+  local usage
+  usage=$(node - "${active_exceptions_file}" "${used_exceptions_file}" <<'NODE'
+const fs = require('node:fs');
+const [activePath, usedPath] = process.argv.slice(2);
+const active = JSON.parse(fs.readFileSync(activePath, 'utf8'));
+const used = new Set(JSON.parse(fs.readFileSync(usedPath, 'utf8')));
+for (const exception of active) {
+  const key = `${exception.id}\u0000${exception.package}`;
+  const state = used.has(key) ? 'used' : 'unused';
+  console.log(`${state}\t${exception.id}\t${exception.package}`);
+}
+NODE
+  ) || return 1
+  while IFS=$'\t' read -r state id package_name; do
+    [[ -n "${id}" ]] || continue
+    if [[ "${state}" == "used" ]]; then
+      write_summary "${audit_label}: applied dependency audit exception ${id} for ${package_name}."
+    else
+      write_summary "WARNING: ${audit_label}: dependency audit exception ${id} for ${package_name} was unused."
+    fi
+  done <<< "${usage}"
 }
 
 is_valid_npm_report() {
@@ -100,9 +250,17 @@ for attempt in 1 2 3; do
       exit 70
     fi
     if ! is_clean_npm_report "${stdout_file}"; then
+      if [[ "${exceptions_enabled}" == true ]] &&
+        is_fully_exempt_npm_report "${stdout_file}"; then
+        write_exception_usage_summary
+        write_summary "${audit_label}: npm audit passed with only active, explicitly excepted full-graph advisories."
+        exit 0
+      fi
+      write_exception_usage_summary
       write_summary "${audit_label}: npm returned success with nonzero vulnerability counts; failed closed."
       exit 1
     fi
+    write_exception_usage_summary
     write_summary "${audit_label}: primary npm audit passed with a valid audit v2 report."
     exit 0
   fi
@@ -110,6 +268,13 @@ for attempt in 1 2 3; do
   # A valid nonzero audit report is a vulnerability result, not a transport
   # failure. Never route it through the fallback provider.
   if is_valid_npm_report "${stdout_file}"; then
+    if [[ "${exceptions_enabled}" == true ]] &&
+      is_fully_exempt_npm_report "${stdout_file}"; then
+      write_exception_usage_summary
+      write_summary "${audit_label}: npm audit passed with only active, explicitly excepted full-graph advisories."
+      exit 0
+    fi
+    write_exception_usage_summary
     write_summary "${audit_label}: primary npm audit reported vulnerabilities; failed closed."
     exit "${audit_rc}"
   fi
@@ -128,6 +293,9 @@ done
 write_summary "${audit_label}: npm transport failed after 3 bounded attempts; invoking pinned OSV-Scanner."
 if "${timeout_bin}" --signal=TERM --kill-after=5s 60s \
   "${osv_bin}" scan source --config "${osv_config}" --lockfile "${lockfile}" --format table; then
+  if [[ "${exceptions_enabled}" == true ]]; then
+    write_summary "${audit_label}: active full-graph exceptions were supplied to OSV-Scanner fallback."
+  fi
   write_summary "${audit_label}: pinned OSV-Scanner fallback passed for ${lockfile}."
   exit 0
 else

@@ -1,0 +1,9 @@
+[
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "graph": "full",
+    "expires": "2026-12-17T00:00:00Z",
+    "reason": "No fixed picomatch release; dev-only (tinyglobby/build tooling), absent from the production graph. Remove when upstream ships a fix."
+  }
+]

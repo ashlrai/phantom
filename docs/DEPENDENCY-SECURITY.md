@@ -35,9 +35,14 @@ findings in its production graph, through picomatch 4.0.4. The root production
 graph is clean. These counts include dependent packages affected by the same
 advisory, rather than separate underlying advisories.
 
-There is no npm audit allowlist in this repository. The audit remains failing
-until a patched release or a qualified replacement is available; this disclosure
-adds no exception. Each audit step runs after earlier failures unless the job
+The workflow has one narrow, expiring exception in
+`.github/dependency-audit-exceptions.json` for `picomatch` and
+`GHSA-fc5q-39xc-vjpf` in full npm graphs. The npm report must name that exact
+package and every advisory URL in its `via` chain must match an active
+exception. Production audits using `--omit=dev` ignore the file entirely;
+malformed or expired exceptions fail closed, and unused exceptions warn in the
+step summary. Remove this exception when upstream ships a fix. It is not a
+general allowlist. Each audit step runs after earlier failures unless the job
 is cancelled, so the job summary reports both npm graphs and the Cargo result
 without masking failures.
 
