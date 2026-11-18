@@ -8,7 +8,7 @@ import { validId, type TeamActor } from '../teams/protocol.js';
 import { teamState, type TeamState } from '../teams/state.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
 import { describeAccessAction } from '../teams/workspace.js';
-import { addTeamPerson, DirectoryInputError, teamDirectory } from '../teams/directory.js';
+import { addTeamPerson, DirectoryInputError, DirectoryRefusedError, OWNER_ONLY, teamDirectory } from '../teams/directory.js';
 
 export const VERSE_TEAM_PATH = '/api/verse/team';
 export const VERSE_TEAM_INVITE_PATH = '/api/verse/team/invite';
@@ -122,10 +122,12 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
         } else {
           const body = await jsonBody(req);
           if (!record(body) || Object.keys(body).length !== 2 || !validTeamId(body.team) || !('person' in body)) throw new DirectoryInputError('Invalid teammate request.');
-          sendJson(res, 201, addTeamPerson(body.team, body.person));
+          let who: TeamActor;
+          try { who = actor(); } catch { throw new DirectoryRefusedError(OWNER_ONLY); }
+          sendJson(res, 201, addTeamPerson(body.team, who, body.person));
         }
       } catch (error) {
-        sendJson(res, error instanceof DirectoryInputError ? 400 : 503, { version: 1,
+        sendJson(res, error instanceof DirectoryRefusedError ? 403 : error instanceof DirectoryInputError ? 400 : 503, { version: 1,
           error: error instanceof DirectoryInputError ? error.message : 'Team directory unavailable.' });
       }
       return true;
