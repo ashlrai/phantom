@@ -218,7 +218,7 @@ function slackReplyBinding(runsDir: string | undefined, now: Date): ReplyBinding
   return { store: 'ok', answeredAt, unansweredAt, futureDated: binding.futureDated };
 }
 
-function defaultSources(runsDir?: string): Record<ChannelName, ChannelSource> {
+export function defaultChannelSources(runsDir?: string): Record<ChannelName, ChannelSource> {
   return {
     slack: {
       configMissing: () => {
@@ -377,7 +377,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
 export async function readChannelHealth(deps: ChannelHealthDeps = {}): Promise<ChannelHealthReport> {
   const now = (deps.now ?? (() => new Date()))();
   const host = deps.host ?? hostname();
-  const defaults = deps.sources && deps.sources.slack && deps.sources.imessage ? null : defaultSources(deps.runsDir);
+  const defaults = deps.sources && deps.sources.slack && deps.sources.imessage ? null : defaultChannelSources(deps.runsDir);
   const channels: ChannelHealth[] = [];
   for (const channel of ['slack', 'imessage'] as const) {
     const src = deps.sources?.[channel] ?? defaults![channel];

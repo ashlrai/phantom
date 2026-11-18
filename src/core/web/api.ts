@@ -2276,6 +2276,15 @@ export async function handleApi(
       return true;
     }
 
+    // RQ-CHANNELSN18BQ8: the messaging-channel overview (same JSON as
+    // `phm channels --json`, schema phantom.channels.v1). Read class, behind
+    // the read-session gate; addresses arrive masked and no secret is read.
+    if (path === '/api/channels' && method === 'GET') {
+      const { readChannelsOverview } = await import('../fleet/channels-overview.js');
+      sendJson(res, 200, await readChannelsOverview());
+      return true;
+    }
+
     // POST /api/approvals/team/:id/decision {decision, team?}: the human's
     // click is the approval. Gated like every dispatch mutation (404 without
     // --allow-dispatch, token + JSON); identity is derived locally by
