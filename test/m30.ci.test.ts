@@ -638,7 +638,16 @@ echo pending=true; exit 2
         compilerOptions: { incremental: true, tsBuildInfoFile: cache, noEmit: true, strict: true, types: [], skipLibCheck: true },
         files: [source],
       }));
-      const compile = () => spawnSync(resolve(repoRoot, 'node_modules/.bin/tsgo'), ['--noEmit', '-p', config], { encoding: 'utf8' });
+      // The native compiler is a preview binary that is occasionally killed by a
+      // signal on constrained runners (status null). Diagnostics (exit 1/2) are
+      // final; only a signal death is retried, and a persistent one fails loudly.
+      const run = () => spawnSync(resolve(repoRoot, 'node_modules/.bin/tsgo'), ['--noEmit', '-p', config], { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL' });
+      const compile = () => {
+        let result = run();
+        for (let attempt = 1; attempt < 3 && result.signal && !result.error; attempt += 1) result = run();
+        expect({ status: result.status, signal: result.signal, error: result.error?.message, stderr: result.stderr }).toMatchObject({ status: expect.any(Number) });
+        return result;
+      };
       writeFileSync(source, 'export const candidate: number = 1;\n');
       expect(compile().status).toBe(0);
       const initial = readFileSync(cache, 'utf8');
