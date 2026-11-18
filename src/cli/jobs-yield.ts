@@ -6,7 +6,7 @@ import { JOB_KEEP_RATE, JOB_STOP_MIN_LAUNCHES, JOB_STOP_RATE, type JobYieldRepor
 import { runsRoot } from '../core/metrics/loop-collect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--json]';
+const usage = 'Usage: phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list] [--json]';
 
 /** The summary sentence, the kinds to stop first, then every kind: stop, watch, keep. */
 export function jobYieldLines(report: JobYieldReport): string[] {
@@ -25,16 +25,20 @@ export async function cmdJobsYield(args: string[], read?: YieldLineReader, now =
     console.log(`${usage}
 Which kinds of jobs are worth launching. Reads the job metrics file
 (default: <fleet runs dir>/metrics/jobs.jsonl) and counts each launch in the window once.
+Run phm jobs yield --stop-list to print only the job kinds to stop, one per line.
+The list includes every stop kind; no matches prints nothing. An unreadable file reports an error and exits 1.
+With --json, the full report is unchanged, even with --stop-list.
 A job kind is the job id minus its trailing counter (RQ-PHX-RECUTCOREC566 is RQ-PHX-RECUTCORE);
 one-test filler jobs group by repo. Per kind: launches, empty, skipped before launch, merged and merged per launch.
 keep: merged per launch ${JOB_KEEP_RATE} or more. stop: ${JOB_STOP_MIN_LAUNCHES} or more ended launches and merged per launch under ${JOB_STOP_RATE}. watch: the rest.
 JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never zero.`);
     return 0;
   }
-  let hours = 24, json = false, seenSince = false, metrics: string | null = null;
+  let hours = 24, json = false, stopList = false, seenSince = false, metrics: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--stop-list' && !stopList) stopList = true;
     else if (arg === '--metrics' && metrics === null) {
       metrics = args[++i] ?? '';
       if (!metrics || metrics.startsWith('-')) { console.error(usage); return 2; }
@@ -47,6 +51,11 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
   }
   if (!Number.isFinite(hours) || hours <= 0 || hours > 8760) { console.error(usage); return 2; }
   const report = await readJobYield(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, now, read);
-  console.log(json ? JSON.stringify(sanitizePublicJson(report)) : jobYieldLines(report).join('\n'));
+  if (json) console.log(JSON.stringify(sanitizePublicJson(report)));
+  else if (stopList) {
+    if (!report.known) { console.error(report.summary); return 1; }
+    const families = report.families.filter(row => row.verdict === 'stop').map(row => row.family);
+    if (families.length) console.log(families.join('\n'));
+  } else console.log(jobYieldLines(report).join('\n'));
   return 0;
 }
