@@ -888,6 +888,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'subagent spawn|list|result [opts]', desc: 'Plan bounded cross-provider children; apply stores held records only, never dispatches.', topic: 'autonomy' },
   { cmd: 'asks [--json] | asks answer <id> yes|no|done', desc: 'What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.', topic: 'observability' },
   { cmd: 'throughput [--hours 24] [--by lane|repo|tier] [--text]', desc: 'Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.', topic: 'observability' },
+  { cmd: 'jobs state <id> [--json]', desc: 'Show whether a job is running or done, with the evidence.', topic: 'observability' },
   { cmd: 'jobs empty [--since 24h] [--family F] [--json]', desc: 'Explain empty jobs with family and lane suggestions.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
   { cmd: 'graph nodes|edges|status [--json]', desc: 'Read-only GRAPH-1 nodes, edges, and availability; unavailable data exits 1. See phm graph --help.', topic: 'knowledge' },
