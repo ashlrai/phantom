@@ -169,3 +169,8 @@
   color: var(--status-danger-fg);
   font-size: var(--text-sm-size);
 }
+
+@media (width < 720px) {
+  .sourceGrid { grid-template-columns: minmax(0, 1fr); }
+  .goalHeader, .milestoneItem { flex-direction: column; align-items: flex-start; }
+}
