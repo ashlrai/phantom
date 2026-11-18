@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -61,6 +61,26 @@ describe('fleet runs api', () => {
     expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=claude' })).wire).toMatchObject({ lanes: ['claude'] });
     expect((await request(api, { path: '/api/verse/fleet/runs/tools?lane=nope' })).status).toBe(404);
     expect((await request(api, { path: '/api/verse/fleet/runs/tools', method: 'POST' })).status).toBe(405);
+  });
+  it('serves tool parity read-only: every org lane by tool family, one lane with ?lane=, 404 for an unknown lane', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'tools-parity-'));
+    mkdirSync(join(runsDir, 'queue'));
+    writeFileSync(join(runsDir, 'queue', 'lane-tools.json'), JSON.stringify({ v: 1, lanes: { claude: { mcp: ['docs'], browser: true }, 'codex-local': { mcp: [] } } }));
+    const api = createFleetRunsApi(deps({ runsDir }));
+    const all = await request(api, { path: '/api/verse/fleet/runs/tools/parity' });
+    expect(all.status).toBe(200);
+    const wire = all.wire as unknown as import('../src/core/fleet/tool-parity.js').LaneParityMatrix;
+    expect(wire).toMatchObject({ schema: 'tools.parity.v2', version: 2, parity: 'gaps', counts: { present: 2, missing: 2, unknown: 84 } });
+    expect(wire.families.map(f => f.id)).toEqual(['mcp', 'cli', 'skills', 'plugins', 'web-search', 'browser', 'computer-use', 'gh']);
+    expect(wire.lanes.map(l => l.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor']);
+    const one = (await request(api, { path: '/api/verse/fleet/runs/tools/parity?lane=codex-local' })).wire as unknown as typeof wire;
+    expect(one.lanes.map(l => l.lane)).toEqual(['codex-local']);
+    expect(one.lanes[0]!.cells.mcp).toEqual({
+      state: 'missing', source: 'lane-tools.json', has: [], lacks: ['docs'],
+      fix: 'Give codex-local MCP server docs, then add "mcp": ["docs"] under "codex-local" in <runs>/queue/lane-tools.json.',
+    });
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools/parity?lane=nope' })).status).toBe(404);
+    expect((await request(api, { path: '/api/verse/fleet/runs/tools/parity', method: 'POST' })).status).toBe(405);
   });
   it('mounts runs and live as separate families', () => {
     expect(workbenchFamilyFor(PATH)?.id).toBe('fleet-runs');

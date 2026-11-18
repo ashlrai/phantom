@@ -1333,6 +1333,18 @@ Read-only. Served by `phm tools [--json] [--lane L]` and
 `GET /api/verse/fleet/runs/tools[?lane=L]` (404 for an unknown lane) for the
 desktop Tools pane.
 
+`tools.parity.v2` (same module): `buildLaneParity(report, lane?, roster?)` and
+`formatLaneParity(matrix)`. One row per lane (`ORG_LANES`, then any other lane a
+source names), one cell per tool family in `TOOL_FAMILIES` (`mcp`, `cli`,
+`skills`, `plugins`, `web-search`, `browser`, `computer-use`, `gh`). Each cell
+is `{ state: present|missing|unknown, source, has?, lacks?, fix? }`; `fix` is
+set on missing cells only. `version` is 2, `counts` totals the three states, and
+an unnamed lane yields null. Served by `phm tools parity [--json] [--lane L]`
+(text by default; it replaces the `tools.parity.v1` JSON and `--text` table that
+command used to print) and `GET /api/verse/fleet/runs/tools/parity[?lane=L]`
+(404 for an unknown lane) for the Tool parity card on the Tools pane.
+`formatToolParity` is removed.
+
 `src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
