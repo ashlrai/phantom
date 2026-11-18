@@ -2,14 +2,15 @@ import { open, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ledgerFinishes } from './empties.js';
+import { ledgerFinishes, type EmptiesFinish } from './empties.js';
 import { jobFamily } from './slot-yield.js';
-import { classifyEmptyLog, diagnoseEmptyJob, EMPTY_JOB_REASONS, EMPTY_JOB_SUGGESTIONS, FLEET_EMPTY_WHY_REASONS, type EmptyJobDiagnosis, type FleetEmptyWhyReason } from './empty-why-classify.js';
+import { classifyEmptyLog, diagnoseEmptyJob, EMPTY_JOB_REASONS, EMPTY_JOB_SUGGESTIONS, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type EmptyJobDiagnosis, type FleetEmptyWhyReason } from './empty-why-classify.js';
 export { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
 
 export const EMPTY_CLASSES = ['duplicate', 'already-done', 'too-broad', 'tests-timeout', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
 export type EmptyClass = typeof EMPTY_CLASSES[number];
-export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string }
+export type EmptyJobOutcome = 'already-implemented' | 'duplicate' | 'failed' | 'empty' | 'unknown';
+export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string; outcome?: EmptyJobOutcome }
 export interface EmptyCause { class: EmptyClass; label: string; count: number; exampleJob: string }
 export interface EmptyJobReason { id: string; lane: string; reason: FleetEmptyWhyReason }
 /** The `fleet empty-why` log-tail tags for the newest empty jobs (the CLI's classifier, shared). */
@@ -43,20 +44,37 @@ const labels: Record<EmptyClass, string> = { duplicate: 'Duplicate of an earlier
 
 // Return fixed descriptions: notes and logs may contain private information.
 const rules: ReadonlyArray<readonly [EmptyClass, string, RegExp]> = [
-  ['duplicate', 'The job duplicated an earlier job.', /\bduplicate(?:d)? (?:of )?(?:an? |the )?(?:earlier |previous |existing )?(?:job|task|request)\b|\b(?:job|task|request) (?:is |was )?(?:a )?duplicate\b/i],
-  ['already-done', 'Work was already completed or covered.', /no change(?:s)? (?:is |are |was |were )?needed|already (?:done|implemented|completed|fixed|merged|covered|shipped|exists)|(?:existing|open) (?:pr|pull request).*cover/i],
+  ['duplicate', 'The job duplicated an earlier job.', /\bduplicate(?:d)? (?:of )?(?:an? |the )?(?:earlier |previous |existing )?(?:job|task|request)\b|\b(?:job|task|request) (?:is |was )?(?:a )?duplicate\b|\b(?:existing|open) (?:pr|pull request)\b[^\n]{0,80}\bcovers?\b|\bcovered by (?:an? )?(?:existing |open )?(?:pr|pull request)\b/i],
+  ['already-done', 'Work was already completed or covered.', /no change(?:s)? (?:is |are |was |were )?needed|already (?:done|implemented|completed|fixed|merged|covered|shipped|exists)|already (?:on|in) (?:origin\/)?(?:master|main)\b/i],
   ['too-broad', 'The task was too broad.', /\b(?:too broad|scope too (?:large|broad)|task is too large)\b/i],
   ['tests-timeout', 'Tests were slow or timed out.', /(?:tests?|test suite).{0,80}(?:slow|timed?\s*out|timeout)|(?:timed?\s*out|timeout).{0,80}(?:tests?|test suite)/i],
   ['blocked-by-env', 'A tool or environment problem blocked the work.', /\bEPERM\b|\bEACCES\b|permission denied|command not found|(?:tool|dependency|binary|executable).{0,30}(?:missing|unavailable|not found)|timed?\s*out|timeout|network (?:unavailable|error)|rate limit/i],
   ['missing-input', 'Required input was unavailable.', /missing (?:input|context|information|file|credentials?|data)|(?:need|needs|requires?|awaiting|waiting for) (?:user |owner |human )?(?:input|clarification|information|credentials?|access|approval)|(?:no|without) (?:access|input|context)/i],
   ['scope-too-cautious', 'The job stopped over scope or approval.', /(?:out(?:side)? of|beyond) (?:the )?scope|scope (?:extension|is unclear|was unclear)|(?:approval|permission|confirmation) (?:is )?(?:required|needed)|(?:cannot|can't|unable to) (?:proceed|continue) without/i],
 ];
-export function classifyEmpty(notes: string | null, log: string | null): Pick<EmptyJobResult, 'class' | 'reason'> {
-  for (const text of [notes, log]) {
+const FAILED = /\b(?:tests?|test suite|build|typecheck|tsc|lint|command|tool)\s+(?:(?:has|have|had)\s+)?(?:failed|crashed)\b/i;
+const NO_DIFF = /\bno (?:diff|changes? (?:made|produced))\b|\bnothing to commit\b|\bworking tree clean\b/i;
+const FAILED_CLASSES = new Set<EmptyClass>(['tests-timeout', 'blocked-by-env', 'missing-input']);
+
+/** Outcome is separate from the legacy cause classes; absent evidence stays unknown. */
+export function classifyEmpty(notes: string | null, log: string | null, finish?: Pick<EmptiesFinish, 'exitCode' | 'poolError'>): Pick<EmptyJobResult, 'class' | 'reason' | 'outcome'> {
+  if (finish?.poolError) return { class: 'blocked-by-env', reason: 'A provider error blocked the work.', outcome: 'failed' };
+  const failed = finish?.exitCode != null && finish.exitCode !== 0;
+  for (const text of [notes, log?.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n')]) {
     if (!text) continue;
-    for (const [kind, reason, pattern] of rules) if (pattern.test(text)) return { class: kind, reason };
+    const asserted = text.replace(/\b(?:not|never)\s+(?:already\s+)?(?:done|implemented|completed|fixed|merged|covered|shipped)\b|\b(?:does not|doesn't|cannot|can't) cover\b/gi, '');
+    for (const [kind, reason, pattern] of rules) {
+      if (!pattern.test(asserted)) continue;
+      if ((failed || FAILED.test(text)) && !FAILED_CLASSES.has(kind)) continue;
+      const outcome: EmptyJobOutcome = kind === 'duplicate' ? 'duplicate' : kind === 'already-done' ? 'already-implemented'
+        : FAILED_CLASSES.has(kind) ? 'failed' : 'unknown';
+      return { class: kind, reason, outcome };
+    }
+    if (!failed && FAILED.test(text)) return { class: 'other', reason: 'The run failed without a publishable change.', outcome: 'failed' };
+    if (!failed && NO_DIFF.test(text)) return { class: 'other', reason: 'The run produced no change.', outcome: 'empty' };
   }
-  return { class: 'other', reason: notes || log ? 'No known reason found.' : 'Notes and log were unavailable.' };
+  return { class: 'other', reason: failed ? 'The run failed without a publishable change.' : notes || log ? 'No known reason found.' : 'Notes and log were unavailable.',
+    outcome: failed ? 'failed' : finish?.exitCode === 0 ? 'empty' : 'unknown' };
 }
 
 async function tail(path: string, size: number): Promise<string | null> {
@@ -78,7 +96,7 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
   const ledger = await read(join(root, 'metrics/jobs.jsonl'));
   if (ledger === null) return null;
   const selected = ledgerFinishes(ledger, now, hours).finishes.filter(job => job.empty &&
-    (!options.family || jobFamily(job.id) === jobFamily(options.family))).map(({ id, lane }) => ({ id, lane }));
+    (!options.family || jobFamily(job.id) === jobFamily(options.family)));
   const jobs: EmptyJobResult[] = [];
   const logs = new Map<string, string | null>();
   const diagnoses = new Map<string, DiagnosedEmptyJob>();
@@ -87,8 +105,8 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
     jobs.push(...await Promise.all(batch.map(async job => {
       const [notes, log, publish] = await Promise.all([read(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), read(join(root, `${job.id}.log`), 65536), read(join(root, `${job.id}.publish`), 65536)]);
       logs.set(job.id, log);
-      diagnoses.set(job.id, { ...job, family: jobFamily(job.id), reason: diagnoseEmptyJob(log, publish) });
-      return { ...job, ...classifyEmpty(notes, log) };
+      diagnoses.set(job.id, { id: job.id, lane: job.lane, family: jobFamily(job.id), reason: diagnoseEmptyJob(log, publish) });
+      return { id: job.id, lane: job.lane, ...classifyEmpty(notes, log, job) };
     })));
   }
   const counts: Record<EmptyClass, number> = { duplicate: 0, 'already-done': 0, 'too-broad': 0, 'tests-timeout': 0, 'blocked-by-env': 0, 'missing-input': 0, 'scope-too-cautious': 0, other: 0 };
