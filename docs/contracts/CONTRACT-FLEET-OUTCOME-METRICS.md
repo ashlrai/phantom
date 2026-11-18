@@ -206,6 +206,45 @@ precheck skip rows, which take no slot. With no launches `merged_per_launch` is
 null. An unreadable or interrupted read gives `known: false`, null totals and
 empty lists, never zero.
 
+## Family yield (`fleet.family-yield.v1`)
+
+RQ-FAMYIELDN19NQ8. `phm fleet yield [--hours 24] [--metrics <jobs.jsonl>] [--json]`
+(`--since 24h` still works) judges coarse job families, so a generator that
+spreads its launches over many areas is judged as one. A family is the job id
+with its numbers collapsed (`collapseFamily`): `RQ-PHX-RECUTAPIC606` and
+`RQ-PHX-RECUTCLIC607` are `RQ-PHX-RECUT*C*`, `RQ-MD12A111815Q8` is `RQ-MD*A*Q8`.
+Families of one job id are listed under `single`.
+
+- Verdict: `stop` with 6+ finished runs and merged per launch under 0.2;
+  `watch` under 0.4; `keep` otherwise.
+- Order: most `wasted_tokens` (tokens on runs that did not merge) first.
+- Tokens: missing counts stay null (unknown). `tokens_unknown` counts ended runs
+  without a count; `wasted_tokens_partial` marks a lower bound.
+- Stop rows: one per `stop` family, `<anchored ERE>\t<until epoch s, now + 24 h>\t<reason>`,
+  in the job stop file format; `phm jobs yield --stop-file` keeps hand-pasted rows.
+- An unreadable file is `known: false` with null totals.
+
+`src/core/fleet/family-yield.ts` exports `collapseFamily(id)`, `familyVerdict(row)`,
+the pure `familyYield(lines, now, hours)`, `familyYieldFromRuns(runs, now, hours, lanesTiers?)`,
+`readFamilyYield(path, hours, now, read?)` and `unknownFamilyYield(hours)`; it parses
+through `yieldTally(...).runs()` (slot-yield.ts), which returns each launch as a
+read-only `YieldRun` with `last`, its newest row time.
+
+```json
+{ "schema": "fleet.family-yield.v1", "version": 1, "window_hours": 24, "known": true,
+  "launches": 14, "merged": 4, "wasted_tokens": 537000, "wasted_tokens_partial": false,
+  "families": [{ "family": "RQ-PHX-RECUT*C*", "jobs": 7, "launches": 7, "finished": 7,
+    "empty": 6, "prs": 1, "merged": 1, "merged_per_launch": 0.14, "tokens_total": 550000,
+    "tokens_unknown": 0, "tokens_per_merged": 550000, "wasted_tokens": 510000,
+    "wasted_tokens_partial": false, "last_seen": "2026-11-18T15:00:00.000Z", "verdict": "stop",
+    "reason": "1 merged of 7 launches, 6 empty, 510000 tokens on unmerged runs" }],
+  "single": [], "stops": [{ "family": "RQ-PHX-RECUT*C*", "pattern": "^RQ-PHX-RECUT[A-Z]+C[0-9]+$",
+    "until": 1795111200, "reason": "yield_1of7_empty6", "line": "<pattern>\t<until>\t<reason>" }],
+  "lanes": [], "tiers": [] }
+```
+
+Hermetic coverage: `test/fleet-family-yield.test.ts`.
+
 ## Recut cycle plan (`recut.plan.v1`)
 
 RQ-RECUTPROMPTN18ZQ8. `phm recut plan [--json] [--prs <dirty-landed.json>] [--base master] [--metrics <jobs.jsonl>] [<area>...]`
