@@ -74,7 +74,10 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
   The committed file is the baseline; each weekly run uploads a fresh copy.
 - On manual dispatch with `release_gate=true` (release-prep.yml once per master SHA, and Auto-tag on a tag): reuse a
-  completed successful **push** CI run for the exact master SHA. The unsigned
+  completed successful **push** CI run for the exact master SHA. After both
+  release-gate jobs succeed on master, CI dispatches Auto-tag with that run's
+  `GITHUB_SHA` (a `GITHUB_TOKEN` dispatch does not emit a `workflow_run` event);
+  the tag-driven path remains scoped to its tag ref. The unsigned
   combined `Desktop release smoke` job reuses an immutable artifact for that
   source when available, otherwise builds once with cached compiler inputs.
   On that same runner, the smoke phase checks source/version/package identity,
@@ -203,6 +206,13 @@ What runs without a per-release approval:
   selected.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
+- Release prep dispatches its release-gate CI run with `GITHUB_TOKEN`, which
+  does not produce a `workflow_run` event. After Desktop release smoke and
+  Release suites both succeed on master, CI explicitly dispatches Auto-tag
+  with that run's `GITHUB_SHA`. Auto-tag validates the supplied lowercase
+  40-character SHA as current or an ancestor of master, then evaluates checks
+  and the release gate on that SHA instead of moving master HEAD. A manual
+  Auto-tag dispatch without `sha` retains its fail-closed behavior.
 - Only the release-please PR changes the release version. The `Quick
   typecheck` job refuses a pull request that changes the `package.json`
   version or `.release-please-manifest.json` unless its head is a

@@ -16,22 +16,25 @@
 # - only GitHub Actions check runs (app id 15368) count; every latest run with
 #   a required name must be completed + success; commit statuses never count
 # - a required check missing, queued or in progress: bounded wait (~9.5 min),
-#   then no tag (notice on the push trigger, which workflow_run re-evaluates;
-#   failure on workflow_run)
+#   then no tag (notice on the push trigger; failure on workflow_run/dispatch)
 # - any conclusion other than success: fail at once. skipped and neutral are NOT
 #   green: required checks here use the skip-job pattern (phantom #811),
 #   which reports success, so a skipped required check means it did not run.
 # - "Check generated files" and "Check authority drift (hermetic)" are always
 #   required on the exact sha in addition to the discovered checks, even though
 #   the second is advisory for merge (RQ-PH-GATE-SPLIT-1).
+# Release prep dispatches the release-gate CI run with GITHUB_TOKEN, which does
+# not produce a workflow_run event. After both release-gate jobs succeed, CI
+# explicitly dispatches this workflow with the exact candidate SHA.
 name: Auto-tag
 
 on:
   push:
     branches: [master]
     paths: ["package.json"]
-  # Desktop release smoke and Release suites are jobs in CI. This fires when
-  # that run completes and evaluates the gate for workflow_run.head_sha.
+  # Desktop release smoke and Release suites are jobs in CI. For CI runs that
+  # produce a workflow_run event, evaluate workflow_run.head_sha. Release prep's
+  # GITHUB_TOKEN dispatch is handled by CI's explicit exact-SHA dispatch below.
   # Release prep starts that CI run on the master push and again every five
   # minutes, deduped per sha, so a missed push is retried without a second build.
   workflow_run:
@@ -41,13 +44,19 @@ on:
   schedule:
     - cron: "22,52 * * * *"
   workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact release-gated master commit to evaluate
+        required: false
+        type: string
+        default: ''
 
 permissions: {}
 
 # One evaluation per commit. A second completion for the same sha waits, then
 # the version step no-ops once the tag and its release both exist.
 concurrency:
-  group: auto-tag-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+  group: auto-tag-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && inputs.sha != '' && inputs.sha) || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -64,11 +73,11 @@ jobs:
       REPO: ${{ github.repository }}
       BRANCH: master
       VERSION_FILE: package.json
-      SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && inputs.sha != '' && inputs.sha) || github.sha }}
       # RELEASE-GATE-SPLIT-2: a dispatched master CI run (release_gate=true
-      # release prep, or a manual full) also re-evaluates its exact head SHA;
-      # GitHub rarely fires the half-hour schedule, so release prep is mostly
-      # dispatched. It holds quietly like a push when the gate is not green.
+      # release prep) explicitly dispatches this workflow after both release
+      # jobs succeed, passing the exact SHA. GitHub does not emit workflow_run
+      # for the GITHUB_TOKEN dispatch, so do not rely on that trigger for it.
       # A workflow_run for a push-event CI run evaluates a fresh master commit
       # that cannot have its own scheduled full yet, so it holds quietly like a
       # direct push. Only schedule-sourced workflow_run, schedule and dispatch
@@ -82,6 +91,23 @@ jobs:
       SKIP_OK: ""
       ACTIONS_APP_ID: "15368"   # GitHub Actions; other apps' same-named runs never count
     steps:
+      - name: Validate explicit dispatch SHA
+        id: validate-dispatch-sha
+        if: github.event_name == 'workflow_dispatch' && inputs.sha != ''
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::invalid sha input; expected a lowercase 40-character commit SHA"
+            exit 1
+          }
+          status=$(gh api "repos/$REPO/compare/$CANDIDATE_SHA...master" -q .status)
+          case "$status" in
+            ahead|identical) ;;
+            *) echo "::error::sha input is not an ancestor of current master (compare status: $status)"; exit 1 ;;
+          esac
       # GATES v4: preflight must not use workflow_run. Start it here, on
       # master, with the job token this workflow already holds. A dispatch
       # failure does not block the tag.
@@ -263,4 +289,3 @@ jobs:
           gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" --input - <<EOF
           {"ref":"v${VERSION}","inputs":{"release_gate":"true"}}
           EOF
-
