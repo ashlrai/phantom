@@ -323,16 +323,25 @@ not a complete historical ledger. Leader, guardian and channel health remain unk
 #### Org tree
 
 `phm org` prints the same facts as one `fleet.org.v1` tree, and the Fleet map
-draws that tree: the leader, one card per lane, one chip per running job.
+and the Org pane draw that tree: the leader, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
 
-- `leader`: `label`, `status` and the dispatcher's `lastTick` and `paused`.
-- `lanes[]`: `lane`, `provider`, `running`, `target`, `queued`, `held`, and
-  `usage` (`usedPct`, `asOf`, `resetAt`). Fleet lanes come first in a fixed
-  order, then any other lane by name.
-- `lanes[].jobs[]`: `id`, `repo`, `model`, `provider`, `status`, `startedAt`,
-  `lastEvent` (`at`, `kind`) and `lastActivityAt`. Oldest first.
+The tree carries `version: 1`; it changes only when a field is removed or
+changes meaning. Every node has `provider`, `model`, `state` (`running`,
+`idle`, `held`, `done` or `unknown`) and `doing`, a plain sentence.
+
+- `leader`: `label`, `status`, and the dispatcher's `lastTick` and `paused`.
+  Its `state` and `doing` describe the dispatcher; the leader's own process,
+  provider and model are not reported and stay `unknown` and `null`.
+- `lanes[]`: `lane`, `running`, `target`, `queued`, `held`, `heldReason` and
+  `usage` (`usedPct`, `asOf`, `resetAt`). `model` is the model its jobs share,
+  else the lane's newest launch. Fleet lanes come first in a fixed order, then
+  any other lane by name.
+- `lanes[].jobs[]`: `id`, `repo`, `status`, `startedAt`, `lastEvent` (`at`,
+  `kind`) and `lastActivityAt`. Oldest first. A job whose publish record has a
+  `RESULT` line is `done` and is left out of its lane's `running` count, even
+  when no exit code reached this computer (cloud jobs).
 - `messages[]`: `from`, `to`, `count` for the message window, or `null` when
   the bus could not be read.
 

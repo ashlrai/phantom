@@ -109,6 +109,10 @@ export interface FleetSessionV1 {
    *  agent last printed anything. Null when no regular log file was found.
    *  Optional only because older servers do not send it. */
   lastOutputAt?: string | null;
+  /** True when the job's publish record has a RESULT line: the work is done even
+   *  if no exit code or finish marker reached this host (cloud jobs). Optional
+   *  only because older servers do not send it. */
+  published?: boolean;
 }
 
 export interface FleetSessionsDispatcherV1 {
@@ -841,6 +845,8 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
       baseProbe.mtimeMs ?? 0, logProbe.mtimeMs ?? 0, launchProbe.mtimeMs ?? 0, lineMs,
     );
     const dispatchedMs = m!.dispatched !== null ? m!.dispatched * 1000 : lineMs;
+    // A RESULT written before this attempt was dispatched belongs to an earlier attempt.
+    session.published = publishedResult && (publishProbe.mtimeMs ?? 0) >= dispatchedMs;
     const withinGrace = m!.rc === null && nowMs - dispatchedMs <= LAUNCH_GRACE_MS;
     const diskLive = m!.rc === null && diskFreshMs > 0 && nowMs - diskFreshMs <= DISK_ACTIVE_MS;
     const attemptLive = worker !== undefined || m!.reaping || withinGrace || diskLive;

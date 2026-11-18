@@ -1232,6 +1232,18 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 10 minutes without output and null when that time is unknown.
 `throttledLiveMap` is now generic over its value type.
 
+**Org tree states (RQ-ORGVIEWN18BQ8).** `fleet.org.v1` gains `version: 1` and,
+on the leader, every lane and every job, `state` (`OrgState`: `running`,
+`idle`, `held`, `done`, `unknown`) and `doing` (plain words). The leader gains
+`provider` and `model`; lanes gain `model` and `heldReason`. Additive: no field
+was removed. `fleet.sessions.v1` rows gain optional `published` (the publish
+record has a `RESULT` line written since this dispatch), `FleetMapNode` gains
+optional `published`, and a published job is `done` and leaves its lane's
+`running` count. `readFleetOrgSources(minutes, readers?)` and
+`readFleetOrgMap(minutes, readers?)` take an optional `Partial<FleetOrgReaders>`
+(`live`, `sessions`, `runs`, `ledger`, `models`, `messages`, `now`); defaults
+are exported as `fleetOrgReaders`. `OrgTreeInputs` gains optional `models`.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,

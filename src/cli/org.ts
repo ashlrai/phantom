@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
 import { joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
 
-export const ORG_USAGE = `Usage: phm org [--text] [--minutes N]
+export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
        phm org <show|join|plan> [--file <org.toml>] [--json]
-  (no verb)                     The live organization as a fleet.org.v1 JSON tree: the leader, each lane with its
-                                running, target and queued counts and pool usage, and each running job.
-                                --text prints it for people. --minutes N sets the message window (1..1440, default 60).
+  (no verb)                     The live organization as a fleet.org.v1 JSON tree: the leader, each lane, each job under it.
+                                Every node has a provider, a model, a state (running, idle, held, done, unknown) and what it
+                                is doing in plain words. Lanes add running, target, queued and pool usage. A job whose
+                                publish record has a RESULT line is done, not running.
+                                JSON is the default (--json says so explicitly); --text prints it for people.
+                                --minutes N sets the message window (1..1440, default 60).
                                 A fact no source reported is null in JSON and "unknown" in text, never 0.
   show                          The org: members, agents, machines, lanes, shares and reporting lines
   join --member <id> --machine <id> [--lane <lane>[=<share>]]...
