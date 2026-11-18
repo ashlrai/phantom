@@ -14,7 +14,9 @@
  *    a base merge commit on top of the head, never a rewrite or force-push.
  *  - conflict: CONFLICTING/DIRTY needs an agent. One fix-forward line per
  *    head goes to the RQ queue under the same id refix-loop uses
- *    (`drainKey`), so the two producers can never double-append.
+ *    (`drainKey`), so the two producers can never double-append. Recovery
+ *    re-reads open PRs before acting and after mechanical resolution; a green
+ *    recovered head re-enters only through the same gated auto-merge path.
  *
  * What this cycle never does: merge, use --admin, skip or re-run checks,
  * enable auto-merge outside a merge queue, touch held or non-fleet PRs, or
@@ -299,7 +301,8 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       // Admit ready heads before slow branch updates or conflict resolution.
       // Stable sorting preserves PR-number order within each group and its caps.
       planned.sort((a, b) => Number(b.action === 'enqueue') - Number(a.action === 'enqueue'));
-      for (const { pr, action } of planned) {
+      for (const candidate of planned) {
+        let { pr, action } = candidate;
         const tag = `${shortName(repo)}#${pr.number}`;
         const key = `${repo}#${pr.number}`, previous = state.latency?.[key];
         const latency: MergeQueueLatency = previous?.headSha === pr.headSha && observedAt >= previous.observedAt
@@ -315,36 +318,65 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         if (dryRun || (action !== 'enqueue' && action !== 'rebase' && action !== 'conflict')) continue;
 
         if (action === 'conflict') {
-          const key = drainKey(repo, pr.number, pr.headSha);
-          if (queueIds.has(key) || key in state.drained) continue;
+          const initialKey = drainKey(repo, pr.number, pr.headSha);
+          if (queueIds.has(initialKey) || initialKey in state.drained) continue;
+          if (!budgetAllows('resolve', tag)) continue;
+          if (spent.resolve >= cycleCap) { summary.capped = true; continue; }
+          // Reserve the whole recovery, including reads, before any provider call.
+          spent.resolve++;
+          state.attempts[`resolve:${tag}:${now}`] = { pr: tag, action: 'resolve', at: now };
+          io.saveState(state);
+          const reread = (): { pr: MergeQueuePr; action: MergeQueueAction } | null => {
+            try {
+              const fresh = io.readSnapshot(repo);
+              const current = fresh.prs.find(p => p.number === pr.number && p.id === pr.id);
+              const held = io.readHoldList();
+              return current ? { pr: current, action: classifyMergeQueuePr(current, fresh, {
+                fleet: authors.has(bareLogin(current.author)), held: held.has(tag),
+              }) } : null; // Already merged/closed: no repair or requeue.
+            } catch {
+              result.failed.push(pr.number); summary.failed++;
+              io.log(`MERGEQ_GH_ERROR recovery-read ${repo}#${pr.number}`);
+              return null;
+            }
+          };
+          const current = reread();
+          if (!current) continue;
+          ({ pr, action } = current);
           // Mechanical first: lockfile, generated and changelog conflicts never need a model.
-          if (io.resolveConflict && budgetAllows('resolve', tag) && spent.resolve < cycleCap) {
-            spent.resolve++;
-            state.attempts[`resolve:${tag}:${now}`] = { pr: tag, action: 'resolve', at: now };
-            io.saveState(state);
+          if (action === 'conflict' && io.resolveConflict) {
             let outcome: 'resolved' | 'real' = 'real';
             try { outcome = io.resolveConflict(repo, pr); } catch { io.log(`MERGEQ_GH_ERROR resolve ${repo}#${pr.number}`); }
             if (outcome === 'resolved') {
               result.resolved.push(pr.number);
               summary.resolved++;
               io.log(`MERGEQ_RESOLVE ${repo}#${pr.number} head=${pr.headSha.slice(0, 7)}`);
-              continue;
+              const recovered = reread();
+              if (!recovered) continue;
+              ({ pr, action } = recovered);
+              // GitHub may still report the old conflicting head while settling.
+              if (action === 'conflict') continue;
             }
           }
-          if (spent.conflict >= cycleCap) { summary.capped = true; continue; }
-          spent.conflict++;
-          io.appendQueueLine(drainRow(repo, {
-            number: pr.number, headSha: pr.headSha, mergeState: pr.mergeState,
-            inMergeQueue: pr.inMergeQueue, author: pr.author, files: pr.files, filesTruncated: pr.filesTruncated,
-          }, key, 'merge conflict (DIRTY)', pr.filesTruncated || pr.files.some(securityPinnedPath)));
-          queueIds.add(key);
-          state.drained[key] = now;
-          result.drained.push(pr.number);
-          summary.drained++;
-          io.log(`MERGEQ_DRAIN ${key}`);
-          continue;
+          if (action === 'conflict') {
+            const key = drainKey(repo, pr.number, pr.headSha);
+            if (queueIds.has(key) || key in state.drained) continue;
+            if (spent.conflict >= cycleCap) { summary.capped = true; continue; }
+            spent.conflict++;
+            io.appendQueueLine(drainRow(repo, {
+              number: pr.number, headSha: pr.headSha, mergeState: pr.mergeState,
+              inMergeQueue: pr.inMergeQueue, author: pr.author, files: pr.files, filesTruncated: pr.filesTruncated,
+            }, key, 'merge conflict (DIRTY)', pr.filesTruncated || pr.files.some(securityPinnedPath)));
+            queueIds.add(key);
+            state.drained[key] = now;
+            result.drained.push(pr.number);
+            summary.drained++;
+            io.log(`MERGEQ_DRAIN ${key}`);
+            continue;
+          }
         }
 
+        if (action !== 'enqueue' && action !== 'rebase') continue;
         if (!budgetAllows(action, tag)) continue;
         if (spent[action] >= cycleCap) { summary.capped = true; continue; }
         spent[action]++;
