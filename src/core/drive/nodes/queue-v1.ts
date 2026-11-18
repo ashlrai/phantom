@@ -1,8 +1,10 @@
+import type { EmbeddedNodeTask } from './task.js';
 /** Provisional queue.v1 contract until RQ-PHANTOM-DRIVER-1-QUEUE lands.
  * Queue state and lease state MUST commit in the same transaction. A remote
  * adapter must perform compare-and-set at the authority, never read then write.
  */
 export interface QueueJobV1 {
+  task?: EmbeddedNodeTask;
   id: string;
   state: 'pending' | 'running' | 'completed';
   /** Owner scope: only nodes that belong to it may see, route or pull the job. */

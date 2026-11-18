@@ -59,6 +59,7 @@ export const REAL_IO_TEST_FILES = [
   'test/ui-settings.test.ts', // Binds a real settings API server.
   'test/web-ui-redfix-5262.test.ts', // Binds a real web API server.
   'test/work-trace-restart-proof-319s.test.ts', // Restarts real work trace child processes.
+  'test/node-runner-standalone.test.ts', // Spawns the standalone runner and binds a loopback fixture.
   'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
   'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
   'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.

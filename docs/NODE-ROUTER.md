@@ -163,7 +163,8 @@ work_market gives remote built-ins), `requirement_unverifiable` (`min_tier`,
 `max_tier` or `max_cost_class`, which no node reports), `need_not_routable`,
 `no_live_node`, `lane_mismatch`, `pack_inert`, `node_pack_unsupported`,
 `caps_missing`, `slots_unknown` (a node sent no slot telemetry, which is
-unknown, not zero), `pass_limit` or `no_free_slot`. Free slots are a node's
+unknown, not zero), `pass_limit`, `no_free_slot`, `task_unavailable`,
+`task_oversize`, `task_invalid` or `task_secret_shaped`. Free slots are a node's
 `slots` minus its running claims, after router jobs that are still waiting have
 been placed.
 
@@ -179,7 +180,11 @@ Pack caps come from the runner too. At join the worker runs
 `<runner> packs`. The runner must exit 0 within 5 s and print
 `{"protocol":"phm-node-worker/v1","packs":[...]}`. The worker then advertises
 `pack:<name>` for each valid name, up to 16. The reference runner answers
-through `phm node run-once packs`. A runner that does not support `packs`, or
+through the standalone `contrib/mac/node-runner.mjs`, installed as
+`~/.ashlr-runs/bin/node-runner`. It always advertises `shell-check`, advertises
+`codex-file` only with an executable codex in the provider binary allowlist
+(never from PATH), and `omlx-ping` only when loopback port 8000 accepts TCP.
+A runner that does not support `packs`, or
 that times out or prints anything else, advertises no pack caps. Rows then
 report `node_pack_unsupported` instead of being offered. Pack caps are never
 read from config.
@@ -189,6 +194,33 @@ read from config.
 The runner (`~/.ashlr-runs/bin/node-runner`, `phm-node-worker/v1`) supports
 `shell-check`, `omlx-ping` and `codex-file`. `codex-file` is codex exec in a
 read-only sandbox.
+
+On the primary, enable the bridge with `~/.ashlr/node-bridge.json` containing
+`{"enabled":true,"owner":"<scope>"}`. On each claiming node, preview installation
+from the repository with `python3 fleet/sync.py --json` (or use `--bin <scratch>`).
+An operator runs `python3 fleet/sync.py --apply` after reviewing the preview;
+agents never use `--apply` against the live bin directory.
+
+The worker invokes `node-runner run` with a `phm-node-worker/v1` JSON request.
+For `codex-file`, `ready:<job>:<attempt>` maps to task key `<job>` and
+scratch/result key `<job>.<attempt>`. After clearance checks, the bridge reads the
+ready row's prompt path (field 5), confined by realpath beneath `queue/prompts/`,
+and embeds `{text,sha256}` in the router job. Prompts must be regular non-symlink
+files, valid UTF-8, nonblank, at most 16 KiB, and secret-scrub clean. Confidential
+or restricted rows stay local without reading their prompts. Unavailable,
+oversized or invalid prompts stay local with `task_unavailable`, `task_oversize`
+or `task_invalid`; secret-shaped text stays local as `task_secret_shaped`, with
+no encoding fallback. The manifest records only the task digest, never its text.
+Only the claiming node's pull response includes the task; status, list, plan and
+withdraw responses omit it. Pool enqueue carries bounded plain UTF-8 chunks as
+inline `--task-part=<text>` arguments, split without breaking surrogate pairs.
+The unchanged transport secret scrubs see the text directly, and it is validated
+again on the primary. The worker and runner revalidate before execution; a
+`ready:` job without an embedded task is refused. No task file needs provisioning
+on the claiming node. Non-bridged local jobs and the direct `codex-file` verb
+retain the `~/.ashlr-runs/node-tasks/<job>.txt` fallback. Results are private,
+immutable JSON artifacts under `~/.ashlr-runs/node-results/`; codex output is
+never printed by the runner.
 
 | Ready row | Remote pack | Status |
 | --- | --- | --- |

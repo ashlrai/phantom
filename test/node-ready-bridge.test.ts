@@ -1,14 +1,23 @@
 import { spawn, type spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
-import { bridgeLeaseOwner, localBridgeRouter, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
+import { bridgeLeaseOwner, localBridgeRouter, poolBridgeRouter, nodeBridgeReadiness, runNodeBridge, type BridgeRouter, type NodeBridgeHost } from '../src/core/drive/nodes/ready-bridge.js';
+import { createHash } from 'node:crypto';
+import { initializePool, executePool } from '../src/core/drive/nodes/pool.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
 import { probeRunnerPacks } from '../src/core/drive/nodes/runner-packs.js';
+
+const io = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock('node:fs', async original => {
+  const fs = await original<typeof import('node:fs')>();
+  io.open.mockImplementation(fs.openSync);
+  return { ...fs, openSync: io.open };
+});
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -30,21 +39,84 @@ function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: nu
   const root = mkdtempSync(join(tmpdir(), 'node-bridge-'));
   roots.push(root);
   const host: NodeBridgeHost = { runsRoot: join(root, 'runs'), wtRoot: join(root, 'wt') };
-  for (const d of ['queue/run', 'queue/batches', 'bin']) mkdirSync(join(host.runsRoot, d), { recursive: true });
+  for (const d of ['queue/run', 'queue/batches', 'queue/prompts', 'bin']) mkdirSync(join(host.runsRoot, d), { recursive: true });
+  const prompts = join(host.runsRoot, 'queue/prompts');
+  for (const line of rows) {
+    const id = line.split('\t')[0]!;
+    writeFileSync(join(prompts, `${id}.md`), `Review ${id}`);
+  }
   copyFileSync(resolve('contrib/mac/dispatchd.py'), join(host.runsRoot, 'bin', 'dispatchd.py'));
-  writeFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), rows.map(r => r + '\n').join(''));
+  writeFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), rows.map(r => r.replace('/prompts/', prompts + '/') + '\n').join(''));
   let now = 1_000_000;
   const nodes_ = new DriveNodes(new MemoryStore(), { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
   const sessions = new Map(nodes.map(n => [n.id, nodes_.join(n.id, { owners: ['ashlr'], caps: n.caps, ...(n.slots === undefined ? {} : { slots: n.slots }) })!]));
   const router = localBridgeRouter(nodes_);
   const pass = (apply = true, extra: Partial<Parameters<typeof runNodeBridge>[0]> = {}) =>
     runNodeBridge({ host, router, owner: 'ashlr', apply, now, pendingTtlMs: 60_000, ...extra });
-  const ready = () => readFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), 'utf8');
+  const ready = () => readFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), 'utf8').replaceAll(prompts + '/', '/prompts/');
   const lease = (job: string) => join(host.runsRoot, 'queue', 'run', `${job}.batched`);
   return { host, nodes: nodes_, sessions, pass, ready, lease, advance: (ms: number) => { now += ms; } };
 }
 
 describe('ready.tsv -> node router bridge', () => {
+  it('embeds internal prompts after clearance, never opens confidential prompts, and records only the digest', async () => {
+    const f = fixture([row('RQ-REVIEW-IN', 'codex', { data_class: 'internal' }), row('RQ-REVIEW-PRIVATE', 'codex', { data_class: 'confidential' })]);
+    const open = io.open.mockClear();
+    const report = await f.pass();
+    expect(report.claimed).toEqual(['RQ-REVIEW-IN']);
+    expect(open.mock.calls.some(c => String(c[0]).endsWith('RQ-REVIEW-PRIVATE.md'))).toBe(false);
+    const pulled = f.nodes.pull(f.sessions.get('air-w4')!)!;
+    expect(pulled.job.task?.text).toBe('Review RQ-REVIEW-IN');
+    expect(JSON.stringify(f.nodes.view(['ashlr']))).not.toContain('Review RQ-REVIEW-IN');
+    const manifest = JSON.parse(readFileSync(join(f.host.runsRoot, 'queue/batches', bridgeLeaseOwner('RQ-REVIEW-IN') + '.json'), 'utf8'));
+    expect(manifest.taskSha256).toBe(pulled.job.task?.sha256);
+    expect(JSON.stringify(manifest)).not.toContain('Review RQ-REVIEW-IN');
+  });
+
+  it.each([['missing', 'task_unavailable'], ['oversize', 'task_oversize'], ['invalid', 'task_invalid'], ['secret', 'task_secret_shaped']])('keeps %s prompts local', async (mode, reason) => {
+    const f = fixture([row('RQ-REVIEW-BAD')]);
+    const path = join(f.host.runsRoot, 'queue/prompts/RQ-REVIEW-BAD.md');
+    if (mode === 'missing') rmSync(path);
+    else writeFileSync(path, mode === 'oversize' ? 'x'.repeat(16385) : mode === 'secret' ? `ghp_${'x'.repeat(36)}` : Buffer.from([0xff]));
+    const report = await f.pass();
+    expect(report.rows[0]?.reasons).toContain(reason);
+    expect(report.claimed).toEqual([]);
+    expect(f.nodes.view(['ashlr']).jobs).toEqual([]);
+    expect(f.ready()).toContain('RQ-REVIEW-BAD');
+  });
+
+  it('round-trips maximum plain UTF-8 task chunks, leading flags and emoji boundaries through the pool', () => {
+    const store = new MemoryStore();
+    initializePool(store, 'primary', 'backup', 1000);
+    const rpc = (verb: string, args: string[]) => executePool(store, { origin: 'primary', action: 'execute', verb, args }, 'ashlr', 1000);
+    const transport = vi.fn(rpc);
+    const bridge = poolBridgeRouter(transport);
+    const prefix = ('--review ' + 'review '.repeat(600)).slice(0, 3999);
+    const boundary = prefix + '😀 résumé ';
+    const text = boundary + 'review '.repeat(2400).slice(0, 16384 - Buffer.byteLength(boundary));
+    const task = { text, sha256: createHash('sha256').update(text).digest('hex') };
+    expect(bridge.enqueue('job', { owner: 'ashlr', requires: ['codex'], pack: 'codex-file', task })).toBe(true);
+    const args = transport.mock.calls[0]![1];
+    expect(args.length).toBeLessThanOrEqual(40);
+    expect(args.every(a => a.length <= 4096)).toBe(true);
+    const parts = args.filter(a => a.startsWith('--task-part=')).map(a => a.slice('--task-part='.length));
+    expect(Buffer.byteLength(text)).toBe(16384);
+    expect(parts[0]).toHaveLength(3999);
+    expect(parts[0]?.startsWith('--')).toBe(true);
+    expect(parts[1]?.startsWith('😀')).toBe(true);
+    expect(parts.every(p => p.length <= 4000 && Buffer.from(p).toString('utf8') === p)).toBe(true);
+    expect(parts.join('')).toBe(text);
+    expect(JSON.stringify(rpc('status', []))).not.toContain(text);
+    const session = String(rpc('join', ['--node', 'worker', '--caps', 'codex']).result['session']);
+    rpc('beat', ['--node', 'worker', '--session', session, '--capacity', JSON.stringify({ hostId: 'mac', sampledAtMs: 1000, ramBytes: 16 * 1024 ** 3, slots: 1, held: null })]);
+    expect((rpc('pull', ['--node', 'worker', '--session', session]).result['job'] as { task: unknown }).task).toEqual(task);
+  });
+  it('has no encoded task transport in the node modules or standalone runner', () => {
+    const dir = resolve('src/core/drive/nodes');
+    const sources = readdirSync(dir).filter(name => name.endsWith('.ts')).map(name => join(dir, name));
+    sources.push(resolve('contrib/mac/node-runner.mjs'));
+    for (const source of sources) expect(readFileSync(source, 'utf8')).not.toContain('base' + '64');
+  });
   it('offloads an eligible row under a dispatchd-honored lease and a router job', async () => {
     const f = fixture([row('RQ-REVIEW-A')]);
     const dry = await f.pass(false);

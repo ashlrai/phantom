@@ -6,6 +6,7 @@ import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '.
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { cmdNode } from '../src/cli/node.js';
+import { createHash } from 'node:crypto';
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -28,6 +29,26 @@ function fixture() {
 }
 
 describe('node router', () => {
+  it('validates embedded tasks before enqueue and reveals text only to the pulling node', () => {
+    const { box, store } = fixture();
+    const text = 'Review this embedded task';
+    const task = { text, sha256: createHash('sha256').update(text).digest('hex') };
+    const oversized = 'x'.repeat(16385);
+    const session = box.join('worker', { owners: ['acme'] })!;
+    for (const bad of [{ ...task, sha256: '0'.repeat(64) }, { text: oversized, sha256: createHash('sha256').update(oversized).digest('hex') },
+      { ...task, text: '\ud800' }, { ...task, text: '' }, { ...task, text: `ghp_${'x'.repeat(36)}` }]) {
+      expect(() => box.enqueue('bad', { owner: 'acme', pack: 'codex-file', task: bad })).toThrow('Invalid embedded node task');
+    }
+    expect(() => box.enqueue('wrong-pack', { owner: 'acme', pack: 'shell-check', task })).toThrow();
+    expect(store.state.jobs).toHaveLength(0);
+    expect(box.enqueue('good', { owner: 'acme', pack: 'codex-file', task })).toBe(true);
+    expect(parseState(structuredClone(store.state)).jobs[0]?.task).toEqual(task);
+    expect(JSON.stringify(box.view(['acme']))).not.toContain(text);
+    expect(JSON.stringify(box.plan())).not.toContain(text);
+    expect(box.pull(session)?.job.task).toEqual(task);
+    expect(JSON.stringify(box.view(['acme']))).not.toContain(text);
+    expect(JSON.stringify(box.withdraw('good', 'acme'))).not.toContain(text);
+  });
   it('routes by caps and live usage, deterministically, with the box as one more node', () => {
     const f = fixture();
     f.box.join('box-coordinator', { owners: ['acme'], caps: ['gh', 'build'] });
