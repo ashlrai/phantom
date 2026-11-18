@@ -183,6 +183,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/tune/`
 - `src/core/types/`
 - `src/core/universe/`
+- `src/core/update/`
 - `src/core/usage/`
 - `src/core/util/`
 - `src/core/verse/`

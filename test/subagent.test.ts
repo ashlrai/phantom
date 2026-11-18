@@ -2,6 +2,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
+import { localModelFit, memoryFit } from '../src/core/resources/local-memory-fit.js';
 import { cmdSubagent } from '../src/cli/subagent.js';
 import { listSubagents, planSubagentSpawn, readSubagentRecord, subagentRecordSchema, writeSubagentRecord, type SubagentOptions, type SubagentSpawnInput } from '../src/core/subagent/spawn.js';
 import { readSubagentResult, recordSubagentResult } from '../src/core/subagent/result.js';
@@ -85,6 +87,21 @@ describe('bounded cross-provider subagents', () => {
       [{ max_cost_class: 'included' }, 'scope-cost-not-subset'],
     ] as [Partial<SubagentSpawnInput>, string][]) expect((await planSubagentSpawn({ ...child, ...change }, options)).reason_codes).toContain(reason);
     expect((await planSubagentSpawn({ ...child, tools_allowed: [], write_scope: [] }, options)).ok).toBe(true);
+  });
+
+  it('refuses a local-only child when memory fit is unknown without widening its cost cap', async () => {
+    const { options, home } = await fixture();
+    vi.mocked(localModelFit).mockReturnValue(memoryFit('local-coder:small', null, 65536, null));
+    const result = await planSubagentSpawn({ ...input, max_cost_class: 'local', apply: true }, options);
+    expect(result).toMatchObject({ ok: false, applied: false, record: {
+      state: 'refused', lane: null, max_cost_class: 'local',
+    } });
+    expect(result.reason_codes).toContain('no-eligible-lane-quota');
+    expect(result.routing.decision?.local_models_refused).toEqual([
+      expect.objectContaining({ verdict: 'unknown' }),
+    ]);
+    expect(await readdir(home)).toEqual([]);
+    expect(await listSubagents(input.parent_id, options)).toMatchObject({ count: 0 });
   });
 
   it('never falls back to metered or unknown-cost lanes', async () => {
