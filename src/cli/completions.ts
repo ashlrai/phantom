@@ -41,7 +41,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   benchmark: ['run', '--compare-reports', 'help'],
   bets: ['list', 'launch', 'score', 'kill', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  bots: ['list', 'show', 'create', 'explain', 'help'],
+  bots: ['list', 'show', 'create', 'explain', 'seats', 'handoff', 'help'],
   budget: ['show', 'add', 'get', 'set', '--json', '--provider', '--period', '--usd', '--bucket', '--remaining', '--reset-at', '--at', '--source', '--input', '--help'],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   // Mirror the verb switch in src/cli/cloud.ts (runCloudCli).
@@ -76,7 +76,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   enroll: ['add', 'remove', 'list', 'kill'],
   estates: ['--repo', '--json', '--help'],
   eval: ['attention', 'swe-bench', 'router', 'prompts', 'passk', 'checkpoints'],
-  fleet: ['status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor', 'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight', 'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed'],
+  fleet: ['status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor', 'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight', 'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   gh: ['pr', 'issue', 'ci'],

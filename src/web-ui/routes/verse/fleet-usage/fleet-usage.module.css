@@ -40,3 +40,10 @@
 .incident[data-tone='danger'] { color: var(--status-danger-solid); }
 .incident[data-tone='warn'] { color: var(--status-warning-solid); }
 .incident .verdict { color: inherit; }
+
+@media (width < 720px) {
+  .row { flex-direction: column; align-items: stretch; gap: var(--space-1); }
+  .account, .windowLabel { max-width: none; white-space: normal; overflow: visible; }
+  .window { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .windowLabel, .reset { grid-column: 1 / -1; white-space: normal; }
+}

@@ -43,6 +43,7 @@ import {
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { spendDown, type SpendDownItem } from './spend-down-model.js';
 import styles from './fleet-usage.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 const ACCOUNTS_POLL_MS = 60_000;
 const RUNS_POLL_MS = 10_000;
@@ -239,7 +240,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const waiting = read === undefined || (runsRead.data === undefined && runsRead.error === undefined);
 
   return (
-    <section className={styles.root} aria-label="Usage">
+    <section className={`${styles.root} ${compact.view}`} aria-label="Usage">
       {accountsMissing && runsMissing && <p className={styles.message}>Usage not in this build</p>}
       {accountsMissing && <p className={styles.notice} role="status">{read.reason ?? 'Provider account usage is unavailable.'}</p>}
       {runsMissing && <p className={styles.notice} role="status">Live fleet usage is not in this build.</p>}
@@ -335,9 +336,9 @@ export function FleetUsagePane({ visible }: PaneProps) {
             <tbody>
               {lanes.map((lane) => (
                 <tr key={lane.lane}>
-                  <td>{lane.lane}</td>
-                  <td className={styles.num}>{lane.running === null && lane.target === null ? '—' : `${lane.running ?? '—'}/${lane.target ?? '—'}`}</td>
-                  <td className={styles.num}>{formatTokens(lane.tokensLastHour)}</td>
+                  <td data-label="Lane">{lane.lane}</td>
+                  <td data-label="Running" className={styles.num}>{lane.running === null && lane.target === null ? '—' : `${lane.running ?? '—'}/${lane.target ?? '—'}`}</td>
+                  <td data-label="Tokens" className={styles.num}>{formatTokens(lane.tokensLastHour)}</td>
                 </tr>
               ))}
             </tbody>
