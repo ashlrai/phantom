@@ -48,8 +48,11 @@ export async function readFleetSessionMap(options: {
     options.sessions ?? getFleetSessions({ runsDir: options.runsDir, now: () => now }),
   ]);
   const sessions = inventory.sessions.map(s => mapSession(s, compute));
-  const recent = inventory.recent.map(s => mapSession(s, compute));
-  const seen = new Set(sessions.map(s => s.job));
+  // A new active attempt wins over an older terminal row with the same job id.
+  const activeIds = new Set(sessions.map(s => s.job));
+  const recent = inventory.recent.filter(s => !activeIds.has(s.job)).map(s => mapSession(s, compute));
+  // Terminal receipts must not be shadowed by a stale node claim.
+  const seen = new Set([...sessions, ...recent].map(s => s.job));
   let truncated = inventory.truncated || compute.truncated;
   for (const node of compute.nodes) for (const claim of node.jobs) {
     if (seen.has(claim.job)) continue;
@@ -61,7 +64,10 @@ export async function readFleetSessionMap(options: {
   // Only this host's dispatch inventory has local artifacts. Claim-only jobs and
   // ambiguous/remote placements must never inherit this host's similarly named files.
   const localJobs = new Set(inventory.sessions.map(s => s.job));
-  const candidates = sessions.filter(s => localJobs.has(s.job) && s.placement !== 'conflict' &&
+  // Recent artifacts are read only with an explicit claim on this host;
+  // an unplaced or remote historical row cannot establish local ownership.
+  const localRecent = recent.filter(s => s.placement === 'claim' && s.nodeId === compute.localNodeId);
+  const candidates = [...sessions.filter(s => localJobs.has(s.job)), ...localRecent].filter(s => s.placement !== 'conflict' &&
     (s.nodeId === null || s.nodeId === compute.localNodeId) && !['queued', 'parked'].includes(s.status));
   if (candidates.length > 100) truncated = true;
   const pending = candidates.slice(0, 100);
