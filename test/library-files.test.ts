@@ -8,7 +8,7 @@ let root = '';
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
 describe('leader library files', () => {
-  it('lists bounded files and drafts with redacted previews, ignoring links and oversized files', async () => {
+  it('lists bounded files and drafts with redacted previews, ignoring links and retaining oversized titles as unavailable', async () => {
     root = await mkdtemp(join(tmpdir(), 'library-files-'));
     const leader = join(root, 'leader');
     await mkdir(join(leader, 'drafts'), { recursive: true });
@@ -18,7 +18,8 @@ describe('leader library files', () => {
     await writeFile(join(leader, 'drafts', 'idea.md'), 'A draft');
     await symlink(join(leader, 'VISION.md'), join(leader, 'INSPIRATION.md'));
     const rows = await listLeaderFiles(root);
-    expect(rows.map(row => row.name).sort()).toEqual(['VISION.md', 'drafts/idea.md']);
+    expect(rows.map(row => row.name).sort()).toEqual(['PLAN-LOG.md', 'VISION.md', 'drafts/idea.md']);
+    expect(rows.find(row => row.name === 'PLAN-LOG.md')).toMatchObject({ preview: '', unavailable: true });
     expect(rows.find(row => row.name === 'VISION.md')?.preview).toContain('[REDACTED]');
     expect(JSON.stringify(rows)).not.toContain(secret);
     expect(rows.every(row => row.size > 0 && !Number.isNaN(Date.parse(row.modifiedAt)))).toBe(true);

@@ -6,7 +6,7 @@
  */
 export const LEADER_FILE_PREVIEW_MAX = 240;
 
-export interface LeaderFile { name: string; size: number; modifiedAt: string; preview: string }
+export interface LeaderFile { name: string; size: number; modifiedAt: string; preview: string; unavailable?: boolean }
 export type LeaderFilesState = 'unavailable' | 'absent';
 export interface LeaderFilesResponse { v: 1; observedAt: string; files: LeaderFile[]; state?: LeaderFilesState }
 export interface LeaderFileRow { key: string; label: string; age: string; size: string; preview: string }
@@ -19,6 +19,7 @@ const SAFE_NAME = /^(?:[^/\\\0]+|drafts\/[^/\\\0]+)$/;
 function validFile(row: unknown): row is LeaderFile {
   return record(row) && typeof row.name === 'string' && SAFE_NAME.test(row.name) && row.name !== '..'
     && Number.isSafeInteger(row.size) && (row.size as number) >= 0
+    && (row.unavailable === undefined || typeof row.unavailable === 'boolean')
     && isTime(row.modifiedAt) && typeof row.preview === 'string' && row.preview.length <= LEADER_FILE_PREVIEW_MAX;
 }
 
@@ -56,5 +57,5 @@ export function leaderFileRows(files: readonly LeaderFile[], now: number): Leade
   return files.map((file, index) => ({ file, index, at: Date.parse(file.modifiedAt) }))
     .sort((a, b) => b.at - a.at || a.index - b.index)
     .map(({ file }) => ({ key: file.name, label: leaderFileLabel(file.name), age: leaderFileAge(file.modifiedAt, now),
-      size: leaderFileSize(file.size), preview: file.preview }));
+      size: leaderFileSize(file.size), preview: file.unavailable ? 'unavailable' : file.preview }));
 }

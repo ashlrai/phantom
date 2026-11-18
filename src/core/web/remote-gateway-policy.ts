@@ -58,6 +58,12 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/fleet/live/queue',
   '/api/verse/fleet/live/drop-jobs',
   '/api/verse/agent-bus',
+  '/api/verse/agent-bus/status',
+  '/api/verse/library/pins',
+  '/api/verse/fleet/library-files',
+  '/api/verse/fleet/handoffs',
+  '/api/verse/cos/memory',
+  '/api/verse/leader/attachment-metadata',
   '/api/verse/fleet/control/switches',
   '/api/verse/fleet/control/lanes',
   '/api/verse/fleet/control/holds',
@@ -115,6 +121,14 @@ function safeFile(path: string): boolean {
   return path.length > 0 && path.length <= 1024 && !path.startsWith('/') && !path.includes('\\')
     && !path.split('/').some((part) => part === '' || part === '.' || part === '..')
     && ![...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+}
+
+// The memory API resolves this project path through its existing root guard;
+// this permits its exact read query, never an arbitrary file read.
+function libraryProjectPath(value: string): boolean {
+  return value.length <= 1024 && (value.startsWith('/') || value.startsWith('~/'))
+    && !value.includes('\\') && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    && value.replace(/^~?\//, '').split('/').every(part => part !== '' && part !== '.' && part !== '..');
 }
 
 /** Every path and query shape here is reviewed separately; no general /api/* proxy. */
@@ -175,6 +189,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
   if (path === '/api/verse/fleet/cos/list' && query === undefined) return { kind: 'read', path };
   if (query === undefined) return { kind: 'deny' };
   const params = new URLSearchParams(query);
+  if (path === '/api/verse/memory'
+    && exactParams(params, { projectPath: libraryProjectPath })) return { kind: 'read', path };
   if (path === '/api/verse/activity'
     && exactParams(params, { since: (v) => ACTIVITY_CURSOR.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/authority/ledger'

@@ -44,7 +44,8 @@ import type {
 } from '../../../../core/verse/types.js';
 import { getMutationToken, reportSessionExpired, getReadClientProof, touchMutationHold } from '../../../data/auth-store.js';
 import { invalidate, invalidatePrefix } from '../../../data/cache.js';
-import { ApiError, apiPost } from '../../../data/client.js';
+import { ApiError, apiGet, apiPost } from '../../../data/client.js';
+import { isRemoteMobileMode } from '../../../data/remote-mode.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { invalidateVerseLists, verseSessionPath, VERSE_SESSIONS_KEY, VerseMutationLockedError } from '../verse-queries.js';
 import { setVerseSession } from '../verse-store.js';
@@ -77,6 +78,7 @@ async function refusalDetail(res: Response): Promise<string | null> {
  * expired read session) but keeps the server's refusal sentence.
  */
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  if (isRemoteMobileMode()) return apiGet<T>(path, signal);
   const res = await fetch(path, {
     method: 'GET',
     credentials: 'same-origin',

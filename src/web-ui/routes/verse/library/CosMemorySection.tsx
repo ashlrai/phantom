@@ -5,25 +5,16 @@
  * text, never HTML.
  */
 import { useEffect, useMemo, useState } from 'react';
-import type { MemoryEntry, MemoryKind } from '../../../../core/cos/memory.js';
-import { ApiError, apiGet, apiPost } from '../../../data/client.js';
+import type { MemoryKind } from '../../../../core/cos/memory.js';
+import { ApiError, apiPost } from '../../../data/client.js';
 import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
-import type { QueryDef } from '../../../data/queries.js';
 import { CardNote } from '../command/Surface.js';
 import {
   COS_MEMORY_FORGET_PATH, COS_MEMORY_KINDS, COS_MEMORY_MAX_CHARS, COS_MEMORY_PATH,
-  cosMemoryOutcome, cosMemoryRows, narrowCosMemory,
+  cosMemoryOutcome, cosMemoryRows,
 } from './cos-memory-model.js';
+import { cosMemoryQuery } from './library-queries.js';
 import styles from './library.module.css';
-
-const cosMemoryQuery: QueryDef<MemoryEntry[]> = {
-  key: 'verse-cos-memory',
-  fetch: async (signal) => {
-    const entries = narrowCosMemory(await apiGet<unknown>(COS_MEMORY_PATH, signal));
-    if (!entries) throw new Error('malformed memory response');
-    return entries;
-  },
-};
 
 const failure = (err: unknown): string =>
   err instanceof ApiError ? cosMemoryOutcome(err.status, err.detail) : cosMemoryOutcome(0);

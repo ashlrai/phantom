@@ -2,6 +2,29 @@ import { describe, expect, it } from 'vitest';
 import { classifyRemoteRoute, validateRemoteMutation } from '../src/core/web/remote-gateway-policy.js';
 
 describe('remote gateway fleet routes for the paired phone', () => {
+  it('allows only exact Library reads while keeping media bytes and writes private', () => {
+    const paths = ['/api/verse/fleet/library-files', '/api/verse/fleet/handoffs',
+      '/api/verse/cos/memory', '/api/verse/agent-bus/status', '/api/verse/leader/attachment-metadata'];
+    for (const path of paths) {
+      expect(classifyRemoteRoute('GET', path)).toEqual({ kind: 'read', path });
+      for (const method of ['POST', 'DELETE']) expect(classifyRemoteRoute(method, path)).toEqual({ kind: 'deny' });
+      expect(classifyRemoteRoute('GET', `${path}?extra=1`)).toEqual({ kind: 'deny' });
+    }
+    for (const projectPath of ['/repo', '~/Projects/phone library']) {
+      expect(classifyRemoteRoute('GET', `/api/verse/memory?${new URLSearchParams({ projectPath })}`))
+        .toEqual({ kind: 'read', path: '/api/verse/memory' });
+    }
+    for (const projectPath of ['', 'relative', '/repo/../private', '/repo/./file', '/repo//file', '/repo\\file', '/repo\nfile', `/${'x'.repeat(1024)}`]) {
+      expect(classifyRemoteRoute('GET', `/api/verse/memory?${new URLSearchParams({ projectPath })}`)).toEqual({ kind: 'deny' });
+    }
+    for (const target of ['/api/verse/memory', '/api/verse/memory?projectPath=/repo&projectPath=/other',
+      '/api/verse/memory?projectPath=/repo&extra=1', '/api/verse/leader/attachments',
+      '/api/verse/leader/attachment/0123456789abcdef.png', '/api/verse/cos/memory/forget']) {
+      expect(classifyRemoteRoute('GET', target)).toEqual({ kind: 'deny' });
+    }
+    expect(classifyRemoteRoute('POST', '/api/verse/memory')).toEqual({ kind: 'deny' });
+  });
+
   it('reads live runs, inbox, bus, queue, switches and lanes', () => {
     for (const [target, path] of [
       ['/api/verse/fleet/runs', '/api/verse/fleet/runs'],
