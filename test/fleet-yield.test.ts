@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fleetYield, jobFamily } from '../src/core/fleet/slot-yield.js';
-import { cmdFleetYield, readFleetYield, yieldLines, type YieldLineReader } from '../src/cli/fleet-yield.js';
+import { cmdFleetYield, familyYieldLines, type YieldLineReader } from '../src/cli/fleet-yield.js';
+import { readFamilyYield } from '../src/core/fleet/family-yield.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
 const now = Date.parse('2026-11-17T00:00:00Z');
@@ -97,13 +98,14 @@ describe('cmdFleetYield', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect((await FLEET_SUBCOMMAND_LOADERS.yield!()).cmdFleetYield).toBe(cmdFleetYield);
     const read = vi.fn<YieldLineReader>(async () => true);
-    for (const args of [['--since'], ['--since', '0h'], ['--since', '1w'], ['--json', '--json'], ['--metrics'], ['bad']]) {
+    for (const args of [['--since'], ['--since', '0h'], ['--since', '1w'], ['--hours'], ['--hours', '0'], ['--hours', '-1'], ['--hours', '9000'],
+      ['--hours', '2', '--since', '2h'], ['--json', '--json'], ['--metrics'], ['bad']]) {
       expect(await cmdFleetYield(args, read, now)).toBe(2);
     }
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('reads a metrics file and prints plain verdict lines or JSON', async () => {
+  it('reads a metrics file and prints family verdict lines, lanes and tiers, or JSON', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'fleet-yield-')); dirs.push(dir);
     const path = join(dir, 'jobs.jsonl');
     writeFileSync(path, `${fixture().join('\n')}\n`);
@@ -111,20 +113,20 @@ describe('cmdFleetYield', () => {
     expect(await cmdFleetYield(['--since', '1d', '--metrics', path], undefined, now)).toBe(0);
     const text = String(log.mock.calls[0]![0]);
     expect(text.split('\n').slice(0, 3)).toEqual([
-      '19 launches in the last 24 hours',
-      'Job families with 5+ launches, worst yield first:',
-      '  RQ-PHX-RECUT*: 3 PRs from 13 launches, 1 merged, 10 empty, tokens per merged PR unknown',
+      '19 launches in the last 24 hours, 6 merged, 7500+ tokens on unmerged runs',
+      'Job families, most wasted tokens first:',
+      '  stop  RQ-PHX-RECUT*C*: 1 merged of 13 launches, 10 empty, 7500+ tokens on unmerged runs; last seen 2026-11-16T20:00:00.000Z',
     ]);
     expect(text).toContain('By lane:\n  codex-personal: 3 PRs from 13 launches');
-    expect(await cmdFleetYield(['--json', '--metrics', path], undefined, now)).toBe(0);
+    expect(await cmdFleetYield(['--json', '--hours', '24', '--metrics', path], undefined, now)).toBe(0);
     const json = JSON.parse(String(log.mock.calls[1]![0]));
-    expect(json).toMatchObject({ schema: 'fleet.yield.v1', known: true, window_hours: 24, launches: 19 });
-    expect(json.families[0]).toMatchObject({ name: 'RQ-PHX-RECUT*', tokens_per_merged: null });
+    expect(json).toMatchObject({ schema: 'fleet.family-yield.v1', known: true, window_hours: 24, launches: 19 });
+    expect(json.families[0]).toMatchObject({ family: 'RQ-PHX-RECUT*C*', tokens_per_merged: null, verdict: 'stop' });
   });
 
   it('reports unknown when the metrics file is missing', async () => {
-    const report = await readFleetYield(join(tmpdir(), 'fleet-yield-missing', 'jobs.jsonl'), 24, now);
-    expect(report).toMatchObject({ known: false, launches: 0 });
-    expect(yieldLines(report)).toEqual(['Launch yield: unknown (job metrics file unreadable)']);
+    const report = await readFamilyYield(join(tmpdir(), 'fleet-yield-missing', 'jobs.jsonl'), 24, now);
+    expect(report).toMatchObject({ known: false, launches: null, wasted_tokens: null });
+    expect(familyYieldLines(report)).toEqual(['Family yield: unknown (job metrics file unreadable)']);
   });
 });

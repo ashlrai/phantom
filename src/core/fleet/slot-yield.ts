@@ -141,7 +141,8 @@ export interface YieldReport {
 }
 
 interface Run {
-  job: string; lane: string; tier: string; repo: string; at: number;
+  /** `at` is the launch time; `last` the newest timestamped row for the run (epoch ms). */
+  job: string; lane: string; tier: string; repo: string; at: number; last: number;
   finished: boolean; empty: boolean; aborted: boolean;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean;
@@ -270,7 +271,10 @@ function group(runs: Run[], key: (run: Run) => string): YieldRow[] {
 }
 
 /** Incremental tally so callers can stream a large ledger line by line. */
-export function yieldTally(now: number, hours: number): { add(line: string): void; report(): YieldReport; jobYield(): JobYieldReport; jobYieldParts(): JobYieldParts } {
+/** One launch as the tally sees it, after MERGED outcomes are credited. Read-only view for other reports. */
+export type YieldRun = Readonly<Omit<Run, 'prs'>> & { readonly prs: ReadonlySet<string> };
+
+export function yieldTally(now: number, hours: number): { add(line: string): void; report(): YieldReport; jobYield(): JobYieldReport; jobYieldParts(): JobYieldParts; runs(): YieldRun[] } {
   if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
   const start = now - hours * 3_600_000;
   const byJob = new Map<string, Run[]>();
@@ -303,7 +307,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       const runs = byJob.get(job);
       if (row.event === 'launch') {
         if (!Number.isFinite(at) || at > now) return;
-        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
+        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
@@ -317,6 +321,8 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         return;
       }
       if (!runs) return; // launched before the window, or never seen launching
+      const latest = runs[runs.length - 1]!;
+      if (Number.isFinite(at) && at <= now && at > latest.last) latest.last = at;
       if (row.event === 'finish') {
         const run = runs.find(r => !r.finished);
         if (!run) return;
@@ -333,6 +339,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         outcomes.set(job, word(row.state).toUpperCase());
       }
     },
+    runs: settle,
     jobYield: () => jobYieldParts(settle(), skips, hours).report,
     jobYieldParts: () => jobYieldParts(settle(), skips, hours),
     report(): YieldReport {

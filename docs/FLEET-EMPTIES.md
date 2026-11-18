@@ -20,11 +20,14 @@ The Work log's **Why jobs end empty** section reads the same report through
 `GET /api/fleet/empty-jobs` (24 hours, all families), also shown on Fleet.
 
 This extends the existing empty-job report, using the `phm empties` newest-finish
-reader and `phm fleet yield` family normalizer. The latter strips cycle numbers
+reader and the slot-yield family normalizer (`jobFamily`). The latter strips cycle numbers
 and groups generated recuts by kind: RECUTCOREC541 and RECUTCOREC544 are RECUT*.
 No second ledger is created. Counts cover distinct job ids, not individual retries.
 Only a newest empty finish is included; a later productive finish removes that id.
 
+To see which recurring families waste launches, run `phm fleet yield`: it prints
+merged per launch for each family, most wasted tokens first, and a ready job stop
+file row for each `stop` family.
 To see which kinds of jobs are worth launching at all, run `phm jobs yield --json`.
 It gives each job kind a keep, watch or stop verdict and names the five to stop
 first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).
