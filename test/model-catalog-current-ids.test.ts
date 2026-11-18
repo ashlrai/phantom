@@ -33,6 +33,22 @@ describe('model catalog current ids', () => {
     expect(terra?.reasoningEfforts).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
   });
 
+  it.each([
+    ['gpt-6.2-astra', 'ultra', 8, 40],
+    ['gpt-6.2-sol', 'normal', 2, 10],
+  ])('registers %s as an automatic Codex choice', (model, modeTier, input, output) => {
+    const entry = KNOWN_MODELS.find((m) => m.id === `codex:${model}`);
+    expect(entry).toMatchObject({
+      engine: 'codex', apiModelId: model, modeTier,
+      costPerMTokIn: input, costPerMTokOut: output,
+      apiContextWindow: 1_050_000, toolApi: 'responses',
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    });
+    expect(canonicalModelTag('codex', model)).toBe(model);
+    expect(catalogFor('codex').map((m) => m.id)).toContain(`codex:${model}`);
+    expect(pickModel({ engine: 'codex' })?.apiModelId).toBe('gpt-6.2-sol');
+  });
+
   it('keeps canonicalModelTag sonnet-5 spellings unchanged', () => {
     for (const spelling of ['sonnet-5', 'claude-sonnet-5', 'claude:sonnet-5', 'claude:claude-sonnet-5']) {
       expect(canonicalModelTag('claude', spelling)).toBe('sonnet-5');

@@ -828,6 +828,26 @@ The default is a dry run: one plain line per batch, or `--json` for the
 `prompts/<batch id>.md` there. It never replaces existing files and never
 edits the input queue.
 
+## Steer the queue
+
+Run `phm queue` to list the queued jobs in the order they launch: position, id,
+repo, lane, tier, age and, when a newer cycle of the same job is queued, the id
+that replaces it. `phm queue --json` returns the same list as the `launch` field
+(schema `queue.order.v1`, `version` 1) beside the batch report.
+
+Three actions change one queued job. Each takes `--dry-run`, which prints the
+change and writes nothing, and `--json` (schema `queue.action.v1`):
+
+- `phm queue top <id>` moves the job to the front.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
+
+Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
+keeps the earlier text in `queue/ready.tsv.bak`. If the dispatcher was in the
+middle of a run and wrote the old queue back, the command says so and exits 1;
+run it again. The Queue pane in the desktop app uses the same calls through
+`GET` and `POST /api/verse/fleet/queue/order`.
+
 ## Batch session results
 
 Run `phm queue batches` to see one plain summary of batch sessions, or

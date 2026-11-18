@@ -35,6 +35,7 @@ Check actual imports for a change rather than assuming an acyclic architecture.
 | Session recording/replay and risk | `src/fleet/` (distinct from `src/core/fleet/`) | [Replay boundary](../src/fleet/README.md) |
 | Diff classification | `src/planning/triviality.ts` | Callers and tests found via `rg classifyDiff` |
 | Agent coordination and message contracts | `src/core/agents/`, `comms/` | [Agent Bus v2](AGENT-BUS.md#v2), [channels contract](contracts/CONTRACT-CHANNELS.md) |
+| External bot seats and advisory adapters | `src/core/bots/seats.ts`, `src/core/bots/devin-bot-adapter.ts`, `src/cli/bots.ts`, `src/api/bot-templates.ts`, `src/web-ui/routes/bots/` | [Bot seats](BOT-SEATS.md): quota evidence, lifecycle, write-ahead handoffs and read-only console roster |
 | Authority, policy, security | `src/core/authority/`, `policy/`, `security/` | [Standing authority](STANDING-AUTHORITY.md), [runtime activation authority](RUNTIME_ACTIVATION_AUTHORITY.md) |
 | Console backend | `src/core/web/`, `verse/` | [Verse](VERSE.md), [architecture runtime map](ARCHITECTURE.md#current-runtime-map) |
 | Console frontend | `src/web-ui/main.tsx`, `app/`, `routes/`, `components/`, `hooks/`, `data/` | [Console layout](CONSOLE-LAYOUT.md); component tests are colocated |
