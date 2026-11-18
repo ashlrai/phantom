@@ -1112,6 +1112,7 @@
 /test/pool-budget-claude-observed-391.test.ts @masonwyatt23
 /test/pool-budget-store.test.ts @masonwyatt23
 /test/pool-budget.test.ts @masonwyatt23
+/test/pool-runway.test.ts @masonwyatt23
 /test/post-merge-credit-import-cycle.test.ts @masonwyatt23
 /test/post-merge-credit-release.test.ts @masonwyatt23
 /test/post-merge-halt-310b.test.ts @masonwyatt23

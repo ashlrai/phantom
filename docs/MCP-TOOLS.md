@@ -207,3 +207,13 @@ reference followed by every page. The Vercel build runs
 "All pages" block of `docs/llms.txt` complete. After adding or renaming a docs
 page, run `node scripts/generate-docs-llms.mjs`; `test/docs-agent-parity.test.ts`
 fails when a page is missing from `docs/llms.txt`.
+
+## Shipped feed (CLI and typed HTTP)
+
+`phm shipped --since 24h --json` and `GET /api/verse/shipped?since=24h` return
+`FleetShippedReport` (`fleet.shipped.v1`), also used by desktop Home’s **Shipped today** panel.
+Read-only across phantom, phantom-secrets, ashlr-plugin, ashlr-stack, locus, lexicon and ashlr-md.
+Items are newest first with PR links, body-named job IDs, metrics-derived lanes (unknown or conflicting lanes are null),
+and open-to-merge seconds. `byRepo` counts observed merges; totals include merged count, count / 24 hours,
+and median duration among timed PRs. Empty days have zero merges and null median; incomplete GitHub reads have
+null totals and `complete: false`. No MCP tool registration is required; use the CLI or typed HTTP route.
