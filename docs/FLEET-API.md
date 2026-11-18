@@ -47,6 +47,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet/job/cost` | id (required) | [FleetJobCostV1](../src/core/fleet/runs-job-cost.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/cost?id=example-job'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
+| GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -422,6 +423,26 @@ same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
 (`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m]` serves
 the same read with a current read session. The default window is the last 15
 minutes, the same as the map.
+
+#### Message graph
+
+`phm fleet message-graph [--json] [--since 10m]` shows the same messages as
+lines between organizations: the company behind each agent's lane, or
+`unknown` when the agent's name proves no lane (the leader included). `--json`
+prints `fleet.message-graph.v1` (`version` 1), and
+`GET /api/fleet/message-graph[?since=10m]` serves the same read; the Fleet map
+lists it under Messages.
+
+| Field | Meaning |
+| --- | --- |
+| `groups[]` | One row per pair of organizations, newest first: `from`, `to`, `count`, `lastAt` and its `edges[]` (`from` agent, `to` agent, `count`, `lastAt`). |
+| `organizations[]` | Each organization on a line: `name`, its `agents`, and messages `sent` and `received`. |
+| `messages`, `since`, `source`, `skipped` | The same meaning as in map edges. |
+
+Only names, counts and times are returned, never message text. When the bus
+cannot be read, `groups` and `organizations` are `null` (unknown, not zero),
+the CLI exits 1 and the route answers 503 with that same body. A bad `since`
+or any other query is exit 2 or 400.
 
 - `edges[]`, newest first: `id`, `from`, `to`, `count`, `lastAt` and
   `lastSummary` (the first 80 characters of the newest message, one scrubbed

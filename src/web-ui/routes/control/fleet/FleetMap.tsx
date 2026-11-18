@@ -4,9 +4,11 @@ import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
-import { fleetComputeQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
+import { fleetComputeQuery, fleetMessageGraphQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
 import { age, bytes, cpuPercent, elapsed, fresh, number, prLink } from './fleet-map-model.js';
 import styles from './FleetMap.module.css';
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function NodeMetrics({ node, cpu, now }: { node: ComputeNode; cpu: number | null; now: number }) {
   const stats = fresh(node.stats?.sampledAtMs, now) ? node.stats : null;
@@ -40,22 +42,23 @@ export function FleetMap() {
   const [now, setNow] = useState(Date.now);
   const compute = useQuery(fleetComputeQuery, { enabled: started, freshMs: 0 });
   const sessions = useQuery(fleetSessionMapQuery, { enabled: started, freshMs: 0 });
-  const refreshCompute = useRefetch(fleetComputeQuery), refreshSessions = useRefetch(fleetSessionMapQuery);
+  const messages = useQuery(fleetMessageGraphQuery, { enabled: started, freshMs: 0 });
+  const refreshCompute = useRefetch(fleetComputeQuery), refreshSessions = useRefetch(fleetSessionMapQuery), refreshMessages = useRefetch(fleetMessageGraphQuery);
   const [params, setParams] = useSearchParams();
   const [samples, setSamples] = useState(new Map<string, { stats: ComputeNode['stats']; cpu: number | null }>());
   useEffect(() => {
     const visibility = () => {
       const shown = document.visibilityState !== 'hidden';
       setVisible(shown); setNow(Date.now());
-      if (shown) { setStarted(true); refreshCompute(); refreshSessions(); }
+      if (shown) { setStarted(true); refreshCompute(); refreshSessions(); refreshMessages(); }
     };
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      setNow(Date.now()); refreshCompute(); refreshSessions();
+      setNow(Date.now()); refreshCompute(); refreshSessions(); refreshMessages();
     }, 4000);
     document.addEventListener('visibilitychange', visibility);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };
-  }, [refreshCompute, refreshSessions]);
+  }, [refreshCompute, refreshSessions, refreshMessages]);
   useEffect(() => {
     if (!compute.data) return;
     const nodes = compute.data.nodes;
@@ -86,7 +89,7 @@ export function FleetMap() {
       <p className={styles.caption}>{visible ? 'Refreshes every 4s' : 'Updates paused'} · Compute updated {age(compute.data?.generatedAt, now)} · Sessions updated {age(sessions.data?.generatedAt, now)}</p>
     </header>
     <p className={styles.caption}>Heat = claimed slots / measured ceiling. Dashed zones have unknown capacity. CPU needs two fresh samples.</p>
-    {([['Compute', compute], ['Sessions', sessions]] as const).map(([label, query]) => query.status === 'error' ?
+    {([['Compute', compute], ['Sessions', sessions], ['Messages', messages]] as const).map(([label, query]) => query.status === 'error' ?
       <p key={label} role="alert">{label} unavailable{query.data ? ' · showing last reading' : ''}.</p> : !query.data ? <p key={label}>Loading {label.toLowerCase()}…</p> : null)}
     {compute.data ? <p className={styles.caption}>Compute sources: {Object.entries(compute.data.sources).map(([key, state]) => `${key} ${state}`).join(' · ')}</p> : null}
     {sessions.data ? <p className={styles.caption}>Sessions source {sessions.data.sourceState} · Placement observed {age(sessions.data.computeAt, now)}</p> : null}
@@ -108,7 +111,14 @@ export function FleetMap() {
     {unplaced.length ? <section className={styles.unplaced} aria-label="Unplaced sessions"><h3>Machine unknown · {unplaced.length} sessions</h3><p className={styles.caption}>Placement is missing, conflicting, or outside the current machine snapshot.</p><SessionTokens sessions={unplaced} select={job => select('mapSession', job)} /></section> : null}
     {sessions.data && active.length === 0 ? <p>No active sessions observed{sessions.data.sourceState !== 'healthy' ? ' · session inventory incomplete' : ''}.</p> : null}
     {recent.length ? <details><summary>Recently finished · {recent.length}</summary><SessionTokens sessions={recent} select={job => select('mapSession', job)} /></details> : null}
-    <p className={styles.caption}>Collaboration unknown · no interaction evidence is available.</p>
+    {messages.data ? <section className={styles.messages} aria-label="Agent messages">
+      <h3>Messages · {plural(messages.data.messages ?? 0, 'message')} since {age(messages.data.since, now)}</h3>
+      <p className={styles.caption}>Who messaged whom, grouped by the organization behind each agent. Names and counts only.</p>
+      {messages.data.groups.length === 0 ? <p>No agent messages in this window.</p> : <ul className={styles.sessions}>{messages.data.groups.map(group => <li key={group.id}>
+        <strong>{group.from} → {group.to}</strong> · {plural(group.count, 'message')} · last {age(group.lastAt, now)}
+        <ul className={styles.caption}>{group.edges.map(edge => <li key={edge.id}>{edge.from} → {edge.to} · {edge.count}</li>)}</ul>
+      </li>)}</ul>}
+    </section> : null}
     <Sheet open={selectedJob !== null || selectedNode !== null} onClose={close} titleId="fleet-map-detail" title={selectedJob ?? selectedNode}>
       {session ? <>
         <p className={styles.detailActivity}>{session.activity ?? 'Activity unknown'}</p>
