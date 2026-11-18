@@ -1,0 +1,15 @@
+  PID  PPID  %CPU     RSS COMM
+    1     0   0.5   20480 /sbin/launchd
+  120     1   2.0   81920 /System/Library/CoreServices/windowkeeper
+  300     1   0.1    4096 /bin/zsh
+  400   300   1.0   51200 worker
+  401   400 300.0  921600 node
+  402   401 250.0  819200 testrunner
+  403   401  49.0  102400 compiler
+  500     1   0.5   30720 worker
+  501   500 200.0  614400 node
+  700     1  90.0 9216000 /opt/tools/bin/llama-server
+  800     1  20.0  512000 /Applications/Chrome.app/Contents/MacOS/Chrome
+  801   800  10.0  307200 /Applications/Chrome.app/Contents/Frameworks/Chrome Helper.app/Contents/MacOS/Chrome Helper
+  900     1  40.0  102400 /usr/local/bin/indexer
+  901     1  10.0   51200 /usr/local/bin/syncer

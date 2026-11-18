@@ -635,6 +635,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm health</code> | Score every ENROLLED repo on quality (tests/docs/deps/security/debt/CI/conventions); ranked, read-only. | - | - |
 | <code>phm help [&lt;topic&gt;&#124;--all&#124;--search &lt;term&gt;]</code> | Topic-grouped help; --all prints every command; --search &lt;term&gt; filters. | <code>--all</code>, <code>--search</code> | - |
 | <code>phm home [--json]</code> | Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary. | <code>--json</code> | <code>phm home --json</code> |
+| <code>phm host load [--json]</code> | Show what is loading this computer: fleet workers per job, local models, desktop apps, the system and other. Read-only; JSON is host.load.v1. | <code>--json</code> | <code>phm host load --json</code> |
 | <code>phm ideas [--json&#124;--text]</code> | Rank next bets by expected leverage with why, lane and status; missing local signals stay unknown. | <code>--json</code>, <code>--text</code> | <code>phm ideas --json</code> |
 | <code>phm ideas [--json]</code> | Read recorded fleet ideas. | <code>--json</code> | <code>phm ideas --json</code> |
 | <code>phm ideas list [--human]</code> | Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage). JSON by default; unreadable signals show as unknown. | <code>--human</code> | - |
