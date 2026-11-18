@@ -136,7 +136,7 @@ Phantom - every command (phm or ashlr)
     wiki status [repo]                 Wiki freshness: generated at <commit>, N pages stale.
 
   Autonomy - enrollment, backlog, daemon, inbox, goals
-    bots list|show|create --dry-run|explain [--json]                                                                                                              Provider-neutral bot metadata, dry-run creation and read-only route explanation. No dispatch.
+    bots list|show|create --dry-run|explain|seats|handoff --seat <id> [--apply] [--json]                                                                          Provider-neutral bot metadata, seat quota and draining handoffs. Handoff is dry-run unless --apply.
     subagent spawn|list|result [opts]                                                                                                                             Plan bounded cross-provider children; apply stores held records only, never dispatches.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
