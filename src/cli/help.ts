@@ -549,6 +549,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{id, appended}',
   },
   {
+    usage: 'phm connect list [--json] [--kind channel|connector|plugin|skill|tool]',
+    description: 'One row per thing the fleet can plug into (channels, connectors, plugins, skills, tools): state on, off, broken or unknown; last used, who uses it and the one next step when it is not on. Reads the sources behind phm channels, connectors, plugins, skills and tools; never reads or prints a credential (rows say needsSignIn). Same JSON as GET /api/connect and the desktop Connect pane. Exit 0 success/help, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ConnectList {schema:"phantom.connect.v1", version:1, at, kind, counts, unread[], rows[{id, name, kind, source, state, lastUsed, users[], needsSignIn, next, toggle}]}',
+  },
+  {
     usage: 'phm channels [--json]',
     description: 'One row per messaging channel (email, telegram, imessage, mobile, desktop, page, cli, slack): connected, not set up, failing or unknown: <reason>; last inbound/outbound, messages in 24 h, verified senders, masked address and the one next step. Failing first. Same JSON as GET /api/channels and the desktop Channels pane. Exit 0 success/help, 2 bad usage.',
     safety: 'read',
@@ -1199,6 +1205,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json', desc: 'Select an advisory fallback lane; optional receipt only, live dispatcher unwired.', topic: 'autonomy' },
   { cmd: 'map [--json]', desc: 'The whole fleet on one map: leader, lanes, running jobs, computers and pools, with who reports to whom, what runs where and who messaged whom in the last 15 minutes. Read only.', topic: 'autonomy' },
   { cmd: 'messages [--since 15m] [--agent <name>] [--limit <n>] [--text]', desc: 'What agents are saying to each other: asks, replies, handoffs, status and blockers, newest first, with the related job or PR.', topic: 'autonomy' },
+  { cmd: 'connect list [--json] [--kind <kind>]', desc: 'Everything the fleet can plug into (channels, connectors, plugins, skills, tools): on, off, broken or unknown, who uses it and the next step. Read only.', topic: 'autonomy' },
   { cmd: 'tools [--json] [--lane <lane>]', desc: 'Which lane has which tool, a parity score per lane and the top 3 gaps with a fix. Read only.', topic: 'autonomy' },
   { cmd: 'tools parity [--text]', desc: 'Which lane declares which tool (GitHub read/write, web search, browser, computer use, shell, package install, MCP servers, CLIs, skills, plugins). Unknown is never missing.', topic: 'autonomy' },
   { cmd: 'tools requires --needs <need,...> [--text]', desc: 'List the lanes that can run a job with these needs, e.g. --needs github-read,browser.', topic: 'autonomy' },

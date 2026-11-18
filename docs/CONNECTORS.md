@@ -248,3 +248,14 @@ not collide with native gateway tools, and placeholders must be declared.
 `createdBy` is a caller-declared label, not an authenticated identity.
 `phm connectors tool list|show|invoke|revoke|remove` manage them; a revoked
 entry is neither discoverable nor invocable. The registry grants no permissions.
+
+## One list of everything
+
+`phm connect list [--json] [--kind channel|connector|plugin|skill|tool]` prints
+one row per thing the fleet can plug into: connectors from this profile and the
+gateway registry, plus channels, plugins, skills and tools. Each row has a state
+(`on`, `off`, `broken` or `unknown`), when it was last used, who uses it and one
+next step when it is not on. It is read-only and never reads a credential: a row
+that needs one says "needs sign-in". The desktop Connect pane and
+`GET /api/connect` serve the same list (schema `phantom.connect.v1`). Only
+gateway connectors have a switch; every other row shows its next step.

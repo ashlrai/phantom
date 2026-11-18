@@ -1333,6 +1333,23 @@ Read-only. Served by `phm tools [--json] [--lane L]` and
 `GET /api/verse/fleet/runs/tools[?lane=L]` (404 for an unknown lane) for the
 desktop Tools pane.
 
+`phantom.connect.v1` (`src/core/fleet/connect-schema.ts`, built by
+`connect-list.ts`): `buildConnectList({ kind?, readers?, now? })`,
+`formatConnectList(list)`, `defaultConnectReaders()` and `isConnectKind(value)`.
+Everything the fleet can plug into as `ConnectList { schema, version: 1, at, kind,
+counts, unread[], rows[] }`. Each `ConnectRow` is `{ id, name, kind:
+channel|connector|plugin|skill|tool, source, state: on|off|broken|unknown,
+lastUsed: ISO|null|'unknown', users[], needsSignIn, next, toggle }`. It owns no
+store: rows are projected from the readers behind `phm channels`, the gateway
+connector manager, `phm connectors mesh`, the Plugins and Skills panels,
+`phm tools` and the tool registry (all injectable through `readers`). A source
+that cannot be read lists its kind in `unread`; `next` is null only when `on`;
+`toggle` (`{ path: '/api/verse/mcp/connectors', revision }`) is set only for
+gateway connectors, the one kind with an enable/disable route. No credential is
+read. Served by `phm connect list [--json] [--kind K]` and
+`GET /api/connect[?kind=K]` (400 for an unknown kind) for the desktop Connect
+pane. `installed-panels.ts` also exports `INVALID_MANIFEST_AGENTS`.
+
 `src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;

@@ -71,6 +71,9 @@ function collect(schema: InstalledPanel['schema'], now: Date, parts: Array<{ sou
   };
 }
 
+/** The `agents` text of a plugin whose manifest does not parse; `phm connect list` reports it as broken. */
+export const INVALID_MANIFEST_AGENTS = 'None (invalid manifest)';
+
 function phantomPlugins(home: string, enabledPlugins: () => string[]): Read<InstalledItem[]> {
   const root = join(home, '.ashlr', 'plugins');
   const dirs = readDirs(root);
@@ -79,7 +82,7 @@ function phantomPlugins(home: string, enabledPlugins: () => string[]): Read<Inst
   try { enabled = new Set(enabledPlugins()); } catch { enabled = null; }
   return { state: 'read', value: dirs.value.map(dir => {
     const manifest = readManifest(join(root, dir));
-    if (!manifest.ok) return { name: dir, source: 'Phantom', agents: 'None (invalid manifest)', enabled: false, lastUsed: 'unknown' };
+    if (!manifest.ok) return { name: dir, source: 'Phantom', agents: INVALID_MANIFEST_AGENTS, enabled: false, lastUsed: 'unknown' };
     const name = manifest.manifest.name;
     return { name, source: 'Phantom', agents: 'Any agent that runs phm on this machine', enabled: enabled ? enabled.has(name) : 'unknown', lastUsed: 'unknown' };
   }) };

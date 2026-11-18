@@ -2285,6 +2285,21 @@ export async function handleApi(
       return true;
     }
 
+    // RQ-CONNECTORSN18NQ8: everything the fleet can plug into (same JSON as
+    // `phm connect list --json`, schema phantom.connect.v1). Read class, behind
+    // the read-session gate; no credential is read. Toggles stay on their own
+    // gated route (row.toggle.path).
+    if (path === '/api/connect' && method === 'GET') {
+      const { buildConnectList, isConnectKind } = await import('../fleet/connect-list.js');
+      const kind = getQueryParam(req.url ?? '/', 'kind') || undefined;
+      if (kind !== undefined && !isConnectKind(kind)) {
+        sendJson(res, 400, { error: 'kind must be channel, connector, plugin, skill or tool' });
+        return true;
+      }
+      sendJson(res, 200, await buildConnectList({ kind }));
+      return true;
+    }
+
     // RQ-NOTIFYROUTEN18JQ8: the owner's update rules (same JSON as
     // `phm notify rules --json`, schema phantom.notify.rules.v1). GET is read
     // class; POST {type, channel} changes one rule and is gated like every

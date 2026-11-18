@@ -1,0 +1,37 @@
+/* One row per item, grouped by kind. Rows wrap instead of scrolling sideways at
+ * phone width (390 px): the text column shrinks (min-width: 0) and long values wrap. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.headline { margin: 0; font-size: var(--text-sm-size); font-variant-numeric: tabular-nums; }
+.message { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.message:empty { display: none; }
+.search:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.search { width: 100%; max-width: 28rem; min-height: 2.75rem; padding: 0 var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: transparent; color: inherit; font: inherit; box-sizing: border-box; }
+.group { display: grid; gap: var(--space-2); min-width: 0; }
+.kind { margin: 0; font-size: var(--text-sm-size); }
+.count { color: var(--text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.list { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.row { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; padding: var(--space-2) var(--space-3); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.row + .row { border-top: 1px solid var(--border-subtle); }
+.dot { flex: none; width: 0.5rem; height: 0.5rem; margin-top: 0.4rem; border-radius: 50%; background: var(--border-subtle); }
+.body { display: grid; flex: 1 1 0; gap: var(--space-1); min-width: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.name { font-size: var(--text-sm-size); }
+.state, .tag { border-radius: var(--radius-sm); padding: 0 var(--space-1); font-weight: 600; color: var(--text-secondary); background: var(--border-subtle); }
+.meta { margin: 0; color: var(--text-secondary); }
+.next { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
+.row[data-state='on'] .dot { background: var(--status-success-solid); }
+.row[data-state='on'] .state { color: var(--status-success-fg); background: var(--status-success-bg); }
+.row[data-state='broken'] .dot { background: var(--status-danger-solid); }
+.row[data-state='broken'] .state { color: var(--status-danger-fg); background: var(--status-danger-bg); }
+/* Unknown is a hollow dot: not measured, so neither good nor bad. */
+.row[data-state='unknown'] .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--status-unknown-fg); }
+.row[data-state='unknown'] .state { color: var(--status-unknown-fg); background: var(--status-unknown-bg); }
+/* A 44 px touch target around a small track; the knob slides when on. */
+.switch { flex: none; display: flex; align-items: center; width: 2.75rem; height: 2.75rem; padding: 0; border: 0; background: none; cursor: pointer; }
+.switch span { display: block; width: 100%; height: 1.5rem; border-radius: 0.75rem; background: var(--border-subtle); transition: background 120ms; position: relative; }
+.switch span::after { content: ''; position: absolute; top: 0.125rem; left: 0.125rem; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--bg-surface); transition: transform 120ms; }
+.switch[aria-checked='true'] span { background: var(--status-success-solid); }
+.switch[aria-checked='true'] span::after { transform: translateX(1.25rem); }
+.switch:disabled { cursor: not-allowed; opacity: 0.5; }
+.switch:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); border-radius: var(--radius-md); }
+@media (prefers-reduced-motion: reduce) { .switch span, .switch span::after { transition: none; } }
