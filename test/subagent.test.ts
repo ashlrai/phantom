@@ -28,7 +28,7 @@ describe('bounded cross-provider subagents', () => {
     const { options, home, runsRoot } = await fixture();
     const before = await readdir(join(runsRoot, 'queue'));
     const result = await planSubagentSpawn(input, options);
-    expect(result).toMatchObject({ ok: true, dry_run: true, applied: false, record: { state: 'planned', lane: 'local', depth: 1, max_tokens: 16000 }, parent: { kind: 'root', depth: 0 } });
+    expect(result).toMatchObject({ ok: true, dry_run: true, applied: false, record: { state: 'planned', lane: 'claude', depth: 1, max_tokens: 16000, max_cost_class: 'included' }, parent: { kind: 'root', depth: 0 } });
     expect(subagentRecordSchema.safeParse(result.record).success).toBe(true);
     expect(JSON.stringify(result)).not.toContain(input.task);
     expect(result.record.task_digest).toMatch(/^[a-f0-9]{64}$/);
@@ -76,13 +76,17 @@ describe('bounded cross-provider subagents', () => {
 
   it('inherits and narrows parent paths, tokens, tools, cost and tier', async () => {
     const { options } = await fixture();
-    const p = await planSubagentSpawn({ ...input, tier: 'mid', tools_allowed: ['read'], write_scope: ['src/**', 'test/'], max_tokens: 20000, max_cost_class: 'local', apply: true }, options);
+    const p = await planSubagentSpawn({ ...input, tier: 'mid', tools_allowed: ['read'], write_scope: ['src/**', 'test/'], max_tokens: 20000, max_cost_class: 'included', apply: true }, options);
     const child = { ...input, parent_id: p.record.id };
-    expect((await planSubagentSpawn({ ...child, write_scope: ['src/./x/y', 'test/a.ts'] }, options))).toMatchObject({ ok: true, record: { max_tokens: 16000, max_cost_class: 'local', tools_allowed: ['read'], write_scope: ['src/x/y', 'test/a.ts'] } });
+    expect((await planSubagentSpawn({ ...child, write_scope: ['src/./x/y', 'test/a.ts'] }, options))).toMatchObject({ ok: true, record: { max_tokens: 16000, max_cost_class: 'included', tools_allowed: ['read'], write_scope: ['src/x/y', 'test/a.ts'] } });
+    const local = await planSubagentSpawn({ ...child, max_cost_class: 'local' }, options);
+    expect(local).toMatchObject({ ok: false, record: { state: 'refused', max_cost_class: 'local' } });
+    expect(local.reason_codes).not.toContain('scope-cost-not-subset');
+    expect(local.reason_codes).toContain('no-eligible-lane-quota');
     for (const [change, reason] of [
       [{ tier: 'work' }, 'scope-tier-not-subset'], [{ tools_allowed: ['edit'] }, 'scope-tools-not-subset'],
       [{ write_scope: ['src2/a'] }, 'scope-write-not-subset'], [{ max_tokens: 20001 }, 'scope-tokens-not-subset'],
-      [{ max_cost_class: 'included' }, 'scope-cost-not-subset'],
+      [{ max_cost_class: 'metered' }, 'scope-cost-not-subset'],
     ] as [Partial<SubagentSpawnInput>, string][]) expect((await planSubagentSpawn({ ...child, ...change }, options)).reason_codes).toContain(reason);
     expect((await planSubagentSpawn({ ...child, tools_allowed: [], write_scope: [] }, options)).ok).toBe(true);
   });
