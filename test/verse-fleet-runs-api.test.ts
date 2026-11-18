@@ -167,6 +167,39 @@ describe('fleet runs api', () => {
   });
 });
 
+describe('drift route (Home Running build line)', () => {
+  const DRIFT = '/api/verse/fleet/runs/drift';
+  const report = { schema: 'phantom.self-drift.v1', version: 1, status: 'behind', line: 'Running build is 2 fixes behind. Restart to update.' };
+  it('serves the phm self drift report, reads at most once per minute, retries after a failure and is GET only', async () => {
+    let tick = NOW;
+    const read = vi.fn().mockRejectedValueOnce(new Error('/private/path')).mockResolvedValue(report);
+    const api = createFleetRunsApi(deps({ now: () => tick, readDrift: read }));
+    expect(await request(api, { path: DRIFT })).toMatchObject({ status: 503, wire: { code: 'DRIFT_UNAVAILABLE' } });
+    expect(await request(api, { path: DRIFT })).toMatchObject({ handled: true, status: 200, wire: report });
+    tick += 30_000;
+    await request(api, { path: DRIFT });
+    expect(read).toHaveBeenCalledTimes(2);
+    tick += 31_000;
+    await request(api, { path: DRIFT });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect((await request(api, { path: DRIFT, method: 'POST', body: {} })).status).toBe(405);
+  });
+  it('shares an in-flight read and contains a synchronous reader failure', async () => {
+    const bad = createFleetRunsApi(deps({ readDrift: () => { throw new Error('unreadable'); } }));
+    expect(await request(bad, { path: DRIFT })).toMatchObject({ status: 503, wire: { code: 'DRIFT_UNAVAILABLE' } });
+    let finish!: (value: unknown) => void;
+    const read = vi.fn().mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const api = createFleetRunsApi(deps({ readDrift: read }));
+    const first = request(api, { path: DRIFT });
+    const second = request(api, { path: DRIFT });
+    await Promise.resolve();
+    finish(report);
+    expect((await Promise.all([first, second])).map(value => value.status)).toEqual([200, 200]);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+});
+
 describe('worktrees route (Home Disk card)', () => {
   const WORKTREES = '/api/verse/fleet/runs/worktrees';
   const report = { schema: 'worktrees.v1', counts: { total: 3, safe: 1 }, rows: [] };
