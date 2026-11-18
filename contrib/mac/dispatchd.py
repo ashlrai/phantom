@@ -41,7 +41,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher, batch_sessions, work_market, postrun_pr
+import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
 from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash
 import fleet_controller as fc
@@ -1917,6 +1917,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if digest and (digest in hashes or digest in claimed_requests): continue
             hashes.add(digest); unique.append(c)
         pool = unique
+        rebase_order.assign_areas([task_info(f)] + pool)
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None

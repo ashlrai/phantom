@@ -24,6 +24,8 @@ import os
 import re
 import time
 
+import rebase_order
+
 SCHEMA = "dispatchd.batch.v1"
 TUNING_SCHEMA = "dispatchd.batch-tuning.v1"
 BATCH_PREFIX = "RQ-BATCH-"
@@ -36,6 +38,7 @@ SOLO_PREFIXES = ("RQ-FIX-MAIN-", "RQ-REL-", "RQ-DESK-", BATCH_PREFIX)
 SOLO_KINDS = re.compile(r"(?:RQ-)?(?:LAND|FIXUP|RECUT|SALVAGE|CONSOLIDATE|CLOSE)(?:[-_]|$)")
 MIN_BATCH = 2            # fewer related tasks than this launch individually
 MIN_SIZE, DEFAULT_SIZE, MAX_SIZE = 2, 8, 10   # Mason Nov 10: "about ten tasks in one session"
+MIN_REBASE_BATCH = 2
 MAX_PROMPT_CHARS = 200_000
 MAX_ATTEMPTS = 2
 MIN_SESSIONS = 3         # samples before a lane's throughput counts for lane choice or tuning
@@ -88,13 +91,20 @@ def pick_members(lead, pool, size, min_batch=MIN_BATCH):
     lead whose area is too small for a batch absorbs other small-area orphans of its repo, never members
     of an area big enough to batch on its own. Tiers may mix: each line gets its own subagent model. Batches are evened out (n tasks over
     ceil(n / size) batches) and bounded by MAX_PROMPT_CHARS. Returns [] when fewer than MIN_BATCH fit.
+
+    Rebase cluster areas (`rebase:` prefix, set by rebase_order.assign_areas) are closed
+    both ways: a cluster never absorbs orphans, orphans never absorb cluster members, and
+    the floor is MIN_REBASE_BATCH instead of MIN_BATCH.
     """
     peers = [c for c in pool if c["repo"] == lead["repo"]]
+    rebase = lead["area"].startswith(rebase_order.AREA_PREFIX)
+    floor = max(min_batch, MIN_REBASE_BATCH) if rebase else min_batch
     area_n = Counter(c["area"] for c in peers + [lead])
     group = [lead] + [c for c in peers if c["area"] == lead["area"]]
-    if len(group) < min_batch:
-        group += [c for c in peers if c["area"] != lead["area"] and area_n[c["area"]] < min_batch]
-    if len(group) < min_batch:
+    if not rebase and len(group) < floor:
+        group += [c for c in peers if c["area"] != lead["area"] and area_n[c["area"]] < floor
+                  and not c["area"].startswith(rebase_order.AREA_PREFIX)]
+    if len(group) < floor:
         return []
     take = math.ceil(len(group) / math.ceil(len(group) / max(MIN_SIZE, size)))
     out, chars = [], 0
@@ -105,7 +115,7 @@ def pick_members(lead, pool, size, min_batch=MIN_BATCH):
             continue
         out.append(c)
         chars += c["chars"]
-    return out if len(out) >= min_batch else []
+    return out if len(out) >= floor else []
 
 
 CHECK = re.compile(r"^\s*[-*]\s*\[(?P<box>[ xX])\]\s*(?P<job>[A-Za-z0-9._-]+)\s*(?:—|–|-|:)+\s*(?P<word>[A-Za-z]*)", re.M)

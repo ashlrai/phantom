@@ -210,6 +210,11 @@ restock) and emits one proposed action — `enqueue` N jobs of a type,
 `hold-lane`, or `no-op`. `--repo <owner/name>` repeats to include the
 read-only `gh pr list` rebase-coverage read. It never mutates; the proposal
 is advisory for the leader loop.
+Rebase batch ordering (RQ-SWE3-REBASEORDER-1): queuegen stamps REBASE lines
+with `cluster=clu-<PR>` (`src/core/fleet/rebase-order.ts`); dispatchd batches
+each file-overlap cluster via `contrib/mac/rebase_order.py` (eligible siblings batch within configured limits,
+disjoint PRs spread). See [rebase ordering](docs/REBASE-ORDERING.md).
+
 
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see

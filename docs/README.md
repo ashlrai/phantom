@@ -417,3 +417,4 @@ canonical release guide for required hosted qualification and publication.
 - [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
 
 - [App restart](https://github.com/ashlrai/phantom/blob/master/docs/APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.
+- [Rebase batch ordering](https://github.com/ashlrai/phantom/blob/master/docs/REBASE-ORDERING.md) — file-overlap clusters group eligible sibling rebase jobs within batch limits.
