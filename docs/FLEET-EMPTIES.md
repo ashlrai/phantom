@@ -17,6 +17,7 @@ Only a newest empty finish is included; a later productive finish removes that i
 To see which kinds of jobs are worth launching at all, run `phm jobs yield --json`.
 It gives each job kind a keep, watch or stop verdict and names the five to stop
 first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).
+For only the job kinds to stop, run `phm jobs yield --stop-list` (one per line).
 
 `jobs.empty.v1` adds `diagnosis`: `jobs` (id, lane, family, reason), `families`
 and `lanes` (name, total, topReason, suggestion). Existing top-level `jobs`,

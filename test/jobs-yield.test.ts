@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jobKind, jobVerdict, jobYield, unknownJobYield, type JobYieldFamily } from '../src/core/fleet/slot-yield.js';
 import { readJobYield } from '../src/core/fleet/metrics-series.js';
 import { readMetricsPanel } from '../src/core/fleet/metrics-panel.js';
@@ -116,6 +116,7 @@ describe('jobYield', () => {
 
 describe('phm jobs yield', () => {
   const dirs: string[] = [];
+  beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(now); });
   afterEach(() => { vi.restoreAllMocks(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
   const ledger = (lines: string[]) => {
     const dir = mkdtempSync(join(tmpdir(), 'jobs-yield-'));
@@ -144,6 +145,47 @@ describe('phm jobs yield', () => {
       stop_first: [{ family: 'one-test filler md', slots: 7 }] });
   });
 
+  it('prints only the stop prefix through the jobs CLI, excluding keep and watch kinds', async () => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdJobs(['yield', '--stop-list', '--metrics', ledger([...allMerge, ...allEmptyRecut, ...mixed]), '--since', '1d'])).toBe(0);
+    expect(out.mock.calls).toEqual([['RQ-PHX-RECUTCORE']]);
+  });
+
+  it('lists every stop kind in report order, including filler and kinds beyond the top five', async () => {
+    const lines = ['A', 'B', 'C', 'D', 'E', 'F'].flatMap(letter => Array.from({ length: 6 }, (_, i) => empty(`RQ-BAD${letter}-${i + 1}`)).flat());
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdJobsYield(['--metrics', ledger([...lines, ...fillerWithSkips]), '--stop-list'], undefined, now)).toBe(0);
+    expect(out.mock.calls).toEqual([['one-test filler md\nRQ-BADA\nRQ-BADB\nRQ-BADC\nRQ-BADD\nRQ-BADE\nRQ-BADF']]);
+  });
+
+  it.each([{ lines: [] }, { lines: allMerge }, { lines: mixed }])('prints nothing when no kind should stop (%#)', async ({ lines }) => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdJobsYield(['--stop-list', '--metrics', ledger(lines)], undefined, now)).toBe(0);
+    expect(out).not.toHaveBeenCalled();
+  });
+
+  it.each([['--stop-list', '--json'], ['--json', '--stop-list']])('keeps the full versioned JSON unchanged with %s %s', async (...flags) => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const metrics = ledger([...allMerge, ...allEmptyRecut, ...mixed]);
+    expect(await cmdJobsYield(['--json', '--metrics', metrics], undefined, now)).toBe(0);
+    expect(await cmdJobsYield([...flags, '--metrics', metrics], undefined, now)).toBe(0);
+    expect(out.mock.calls[1]).toEqual(out.mock.calls[0]);
+    expect(JSON.parse(String(out.mock.calls[1]![0]))).toMatchObject({ schema: 'jobs.yield.v1', version: 1,
+      families: [{ verdict: 'stop' }, { verdict: 'watch' }, { verdict: 'keep' }] });
+  });
+
+  it('keeps unknown reads out of the stop list and preserves unknown JSON', async () => {
+    const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const args = ['--stop-list', '--metrics', ledger([])];
+    const read = async () => false;
+    expect(await cmdJobsYield(args, read, now)).toBe(1);
+    expect(out).not.toHaveBeenCalled();
+    expect(err.mock.calls).toEqual([['Job yield: unknown (job metrics file unreadable)']]);
+    expect(await cmdJobsYield([...args, '--json'], read, now)).toBe(0);
+    expect(JSON.parse(String(out.mock.calls[0]![0]))).toEqual(unknownJobYield(24));
+  });
+
   it('shows an unreadable or interrupted read as unknown, never zero', async () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdJobsYield(['--metrics', join(tmpdir(), 'jobs-yield-missing', 'jobs.jsonl')], undefined, now)).toBe(0);
@@ -165,8 +207,10 @@ describe('phm jobs yield', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdJobsYield(['--help'])).toBe(0);
     expect(String(out.mock.calls[0]![0])).toContain('jobs.yield.v1');
-    for (const args of [['--since', '0h'], ['--since', 'soon'], ['--since'], ['--metrics'], ['--json', '--json'], ['--nope']]) expect(await cmdJobsYield(args)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(6);
+    expect(String(out.mock.calls[0]![0])).toContain('Run phm jobs yield --stop-list to print only the job kinds to stop, one per line.');
+    expect(String(out.mock.calls[0]![0])).toContain('With --json, the full report is unchanged, even with --stop-list.');
+    for (const args of [['--since', '0h'], ['--since', 'soon'], ['--since'], ['--metrics'], ['--json', '--json'], ['--stop-list', '--stop-list'], ['--nope']]) expect(await cmdJobsYield(args)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(7);
   });
 
   it('serves the same report to the Metrics view', async () => {

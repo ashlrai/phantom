@@ -121,10 +121,17 @@ Hermetic regression coverage: `test/fleet-outcome-metrics.test.ts`.
 
 ## Job yield (`jobs.yield.v1`)
 
-RQ-FAMILYYIELDN18RQ8. `phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--json]`
+RQ-FAMILYYIELDN18RQ8. `phm jobs yield [--since 24h] [--metrics <jobs.jsonl>] [--stop-list] [--json]`
 says which kinds of jobs are worth a launch slot. The Metrics pane shows the
 same report as the "Job yield" card, from `jobYield` on
 `GET /api/verse/fleet/runs/metrics`. Read-only; exit 0, or 2 for bad arguments.
+
+Run `phm jobs yield --stop-list` to print only the job kinds to stop, one per
+line. It lists every `stop` family in report order, including those beyond the
+top five, without headings or counts. No matches prints nothing. An unreadable
+or interrupted read prints the unknown reason to stderr and exits 1, so a failed
+read cannot look like an empty list. With `--json`, the full `jobs.yield.v1`
+report stays unchanged, even when `--stop-list` is present.
 
 `src/core/fleet/slot-yield.ts` exports the pure `jobYield(lines, now, hours)`,
 `jobKind(id, repo?)`, `jobVerdict({ launches, running, merged })` and
