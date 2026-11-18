@@ -11,13 +11,14 @@ import { sendLeaderReplies } from '../core/comms/imessage-leader-replies.js';
 import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
 import type { AshlrConfig } from '../core/types.js';
 
-const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]; phm imessage respond --apply [--json]; phm imessage replies [--json]';
+const USAGE = 'phm imessage doctor [--json]; phm imessage poll [--apply] [--json]; phm imessage respond --apply [--json]; phm imessage replies [--json]; phm imessage tasks enqueue|dispatch|list|peers --help';
 
 function loadCfg(): AshlrConfig | null {
   try { return loadConfigReadOnlyStrict(); } catch { return null; }
 }
 
 export async function cmdIMessage(args: string[]): Promise<number> {
+  if (args[0] === 'tasks') return (await import('./imessage-tasks.js')).cmdIMessageTasks(args.slice(1));
   const json = args.includes('--json');
   const out = (value: object, text: string): void => console.log(json ? JSON.stringify(value) : text);
   try {

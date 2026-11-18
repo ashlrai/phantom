@@ -38,6 +38,9 @@ export interface AgentCommandDoc {
  * actual effects and command-specific result/exit semantics.
  */
 export const AGENT_COMMANDS: AgentCommandDoc[] = [
+  { usage: 'phm imessage tasks enqueue --peer dot|instinct --job <id> --kind research|triage|report|rebase --scope <text> --repo <owner/name> [--pr <number> ...] --format <text> --deadline <ISO> [--apply|--dry-run] [--json]', description: 'Preview a scoped teammate task; --apply reserves a queue claim for the peer. No send during enqueue. Existing teammate send policy remains required. Exit 0 report, 1 unavailable/refused, 2 usage.', safety: 'append', jsonShape: 'Teammate task metadata; no message body or handle' },
+  { usage: 'phm imessage tasks dispatch [--apply|--dry-run] [--json]', description: 'Preview pending teammate work; --apply dispatches through the approved transport and correlates structured replies. Peer results are observations, never merge verification. Exit 0 report, 1 unavailable/refused, 2 usage.', safety: 'append', jsonShape: 'Teammate task dispatch counts and state' },
+  { usage: 'phm imessage tasks list|peers [--json]', description: 'Read pending/replied tasks or declared and observed peer capabilities without loading comms config or sending. Exit 0 report, 1 unavailable, 2 usage.', safety: 'read', jsonShape: 'Teammate task or capability metadata; no message body or handle' },
   { usage: 'phm bots list|seats|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id> [--json]', description: 'Inspect bot metadata and seat quota; handoff draining work (dry run unless --apply). Live creation refused.', safety: 'append', jsonShape: 'phantom-bot.v1, phantom-bot-seats.v1 or phantom-bot-handoff-plan.v1' },
   { usage: 'phm release notes [--since <tag>] [--json] [--write]', description: 'Draft local mainline release notes. --write updates only the generated Unreleased changelog block. Exit 0 success, 1 unavailable history/write failure, 2 usage.', safety: 'append', jsonShape: 'phantom.release-notes.v1 {since,head,summary,groups:{New,Improved,Fixed,Internal}}; entries: {text,prs,commits}' },
   { usage: 'phm worklog [--hours 6] [--kind merged|launched|finished|empty|leader|incident] [--repo <repo>] [--lane <lane>] [--json]', description: 'One feed of what the fleet did, newest first: merges, launches, finishes, empty jobs, leader replies and incidents, one plain-words line each. An unreadable source is reported as unknown with a reason. Exit 0 report, 1 read failure, 2 bad usage.', safety: 'read', jsonShape: 'worklog.v3 {hours,rows:[{at,kind,job,lane,repo,text,url,count}],sources:{jobs,events,leader:{state,reason?}},entries:[{kind,at,job,repo,lane,model,mergedAt,openToMergeSeconds,url}],malformedLines}' },
@@ -716,6 +719,9 @@ export function agentDocsText(): string {
   lines.push('phm_task_context reads current and historical task evidence for exact outcomeId and');
   lines.push('taskId; inspect coverage, omitted counts and observation time before treating it as complete.');
   lines.push('phm_agent_roster reads the unified live session roster. Unknown sources stay unknown.');
+  lines.push('Intent ledger tools: intent_add, intent_update, intent_list, intent_get,');
+  lines.push('intent_link, intent_ship, intent_stale and intent_import. Writes record local');
+  lines.push('tracking and caller-reported evidence; they do not verify remote outcomes or authorize work.');
   lines.push('Team tools (docs/architecture/teams.md): phm_team_register, phm_team_publish,');
   lines.push('phm_team_view, phm_team_claim, phm_team_handoff, phm_team_access_request,');
   lines.push('phm_team_context_add and phm_team_context_get. Claims are leases; consequential handoffs and access requests wait for human approval.');
@@ -1091,7 +1097,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
   { cmd: 'agentnet peers list|read|send | channels propose | identity register [--json]', desc: 'Session-bound team peer messages, verified inbox and Slack provisioning drafts.', topic: 'autonomy' },
   { cmd: 'channels add <kind> | status [--json] | slack status|map [--json]', desc: 'Bring a channel up (config only, credentials stay in custody), read the per-channel rollup, or inspect the Slack bridge mapping offline.', topic: 'autonomy' },
-  { cmd: 'imessage doctor|poll [--apply] [--json]', desc: 'iMessage intake: doctor checks permissions and config; poll counts waiting messages (dry run), --apply receipts them. Never prints message text.', topic: 'autonomy' },
+  { cmd: 'imessage doctor|poll|respond|replies | tasks enqueue|dispatch|list|peers [--apply|--dry-run] [--json]', desc: 'iMessage intake and scoped teammate tasks. Tasks preview by default; apply reserves work or dispatches through the approved transport. Task reports omit message bodies and handles.', topic: 'autonomy' },
   { cmd: 'director',                     desc: 'Retired — the Leader handles this (see `ashlr leader`). Still prints the read-only fleet god-view; sends nothing.', topic: 'autonomy' },
   { cmd: 'invent',                       desc: 'Generative backlog invention — propose novel high-value work items.', topic: 'autonomy' },
   { cmd: 'ideas list [--human]', desc: 'Rank what the fleet should fix next from local signals (empty launches, main-guardian fixups, disk trend, idle lanes, unspent usage). JSON by default; unreadable signals show as unknown.', topic: 'autonomy' },
