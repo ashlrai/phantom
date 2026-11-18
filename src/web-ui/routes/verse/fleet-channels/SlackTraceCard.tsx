@@ -5,6 +5,7 @@ import { workBoardQuery } from '../fleet-board/work-board-section.js';
 import { joinSlackWork, type SlackWorkCell } from './slack-trace-work-join.js';
 import { slackTraceQuery } from './slack-trace-query.js';
 import type { SlackTraceView } from './slack-trace-model.js';
+import { StatusEvidenceButton } from '../coordination/StatusEvidenceButton.js';
 import styles from './fleet-channels.module.css';
 
 /** Read-only: each recent Slack request's ingress receipt and reply outcome. */
@@ -39,6 +40,7 @@ export function SlackTraceBody({ view, nowMs, board }: { view: SlackTraceView; n
   const when = (iso: string) => Number.isFinite(Date.parse(iso)) ? formatRelative(iso, nowMs) : iso;
   return <section className={styles.root} aria-label="Slack request trace" data-testid="slack-trace">
     <strong>Slack request trace</strong>
+    <StatusEvidenceButton />
     <p className={styles.header}>{view.header}{view.asOf && <> · as of {when(view.asOf)}</>}</p>
     {!view.complete && view.total > 0 && <p className={styles.notice} role="status">Counts may be undercounted: {view.total} requests seen.</p>}
     {view.truncated && <p className={styles.message}>Showing the newest {view.rows.length} requests.</p>}

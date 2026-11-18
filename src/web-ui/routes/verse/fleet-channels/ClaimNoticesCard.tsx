@@ -5,6 +5,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { claimNoticesQuery } from './claim-notices-query.js';
 import type { ClaimNoticesView } from './claim-notices-model.js';
 import { bindClaimThread, isThreadKey, NEEDS_NEWER_HOST } from './claim-bind-action.js';
+import { SlackItemLadder } from '../slack/SlackItemLadder.js';
 import styles from './fleet-channels.module.css';
 
 /** Read-only: what Phantom has told, and would tell, a Slack thread. */
@@ -22,6 +23,7 @@ export function ClaimNoticesCard({ visible, nowMs }: { visible: boolean; nowMs: 
 export function ClaimNoticesBody({ view, nowMs }: { view: ClaimNoticesView; nowMs: number }) {
   return <section className={styles.root} aria-label="Slack thread notices" data-testid="claim-notices">
     <strong>Slack thread notices</strong>
+    <SlackItemLadder nowMs={nowMs} />
     {view.source === 'missing' && <p className={styles.notice} role="status">No claim-notice state found yet; nothing has been posted.</p>}
     {view.source === 'unreadable' && <p className={styles.notice} role="status">Claim-notice state is unreadable; counts are unknown.</p>}
     {view.source === 'ok' && <>
