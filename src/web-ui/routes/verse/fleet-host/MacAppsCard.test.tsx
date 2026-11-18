@@ -1,14 +1,16 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { MacAppsCard } from './MacAppsCard.js';
 
 const row = (id: string, name: string, extra: Record<string, unknown>) => ({
-  id, name, role: 'Assistant', installed: true, running: true, frontmost: false, memoryMb: 150, path: `/Applications/${name}.app`,
+  id, name, role: 'Assistant', installed: true, running: true, frontmost: false, pid: 4321, memoryMb: 150, path: `/Applications/${name}.app`,
   bundleId: null, quit: id === 'safari' ? 'allowed' : 'protected', action: 'focus', reason: null, ...extra,
 });
-const fixture = { schema: 'phm.apps/1', probe: 'ok', reason: null, apps: [
+const fixture = { schema: 'phm.apps/1', version: 1, probe: 'ok', reason: null, apps: [
   row('phantom', 'Phantom', { frontmost: true, action: null }),
   row('claude', 'Claude', { memoryMb: 2048 }),
   row('codex', 'Codex', { installed: false, running: false, frontmost: false, memoryMb: null, action: null }),
@@ -79,4 +81,38 @@ it('rejects malformed responses and does not fetch while hidden', async () => {
   unmount(); evictAll();
   const fetcher = serve(); render(<MacAppsCard visible={false} />);
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+const setWidth = (width: number) => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  window.dispatchEvent(new Event('resize'));
+};
+const KNOWN = [['phantom', 'Phantom'], ['claude', 'Claude'], ['codex', 'Codex'], ['chatgpt', 'ChatGPT'], ['cursor', 'Cursor'], ['grok', 'Grok'], ['devin', 'Devin'], ['safari', 'Safari']] as const;
+
+describe.each([['desktop', 1280], ['phone', 390]])('Apps card at %s width (%i px)', (_name, width) => {
+  beforeEach(() => setWidth(width));
+  afterEach(() => setWidth(1024));
+
+  it('draws one row per app, each with a name, a plain state and at most one button', async () => {
+    serve({ ...fixture, apps: KNOWN.map(([id, name], i) => row(id, name, id === 'phantom' ? { frontmost: true, action: null }
+      : i % 2 ? { running: false, memoryMb: null, pid: null, action: 'open' } : {})) });
+    render(<MacAppsCard visible />);
+    const rows = await screen.findAllByRole('listitem');
+    expect(rows.map(r => r.firstElementChild?.textContent)).toEqual(KNOWN.map(([, name]) => name));
+    for (const [i, item] of rows.entries()) {
+      expect(item.children[1]?.textContent).toMatch(/^(In front|Running|Not running)/);
+      expect(within(item).queryAllByRole('button')).toHaveLength(i === 0 ? 0 : 1);
+    }
+    expect(within(rows[6]!).getByRole('button', { name: 'Bring to front Devin' })).toHaveTextContent('Bring to front');
+    expect(within(rows[7]!).getByRole('button', { name: 'Open Safari' })).toHaveTextContent('Open');
+  });
+});
+
+it('fits a 390 px column: rows wrap, state text shrinks, nothing has a fixed width', () => {
+  // jsdom has no layout engine: assert the rules the 390 px layout depends on.
+  const css = readFileSync(resolve(process.cwd(), 'src/web-ui/routes/verse/fleet-host/fleet-host.module.css'), 'utf8');
+  const rules = [...css.matchAll(/^\.app\w+[^{]*\{[^}]*\}/gm)].map(m => m[0]).join('\n');
+  expect(rules).toMatch(/\.appRow \{[^}]*flex-wrap: wrap/);
+  expect(rules).toMatch(/\.appState \{[^}]*min-width: 0[^}]*overflow-wrap: anywhere/);
+  expect(rules).not.toMatch(/(?:^|[^-])width:\s*\d+px|min-width:\s*\d{3,}px/);
 });
