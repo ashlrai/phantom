@@ -14,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -275,55 +276,119 @@ class DispatchClaimTests(unittest.TestCase):
 class MaxRuntimeTests(unittest.TestCase):
     """RQ-JOB-MAX-RUNTIME-1: a live-but-wedged launch.sh group is killed past its limit, with .rc=124 and REAP TIMEOUT."""
 
-    def hung(self, age, lane='codex-cmp', slots=None, env_extra=None):
+    PID = 424242
+    START_TIME = 'Tue Nov 17 07:03:20 2026'
+    REUSED_START_TIME = 'Tue Nov 17 07:03:21 2026'
+
+    def mock_watchdog(self, home, current_start):
+        (home / 'mock-start-times.json').write_text(json.dumps({str(self.PID): current_start}))
+        (home / 'stubbin' / 'sitecustomize.py').write_text(
+            'import json, os\n'
+            'from pathlib import Path\n'
+            'import process_snapshot\n'
+            'home = Path(os.environ["HOME"])\n'
+            'def fake_killpg(pid, sig):\n'
+            '    with (home / "killpg.jsonl").open("a") as f:\n'
+            '        f.write(json.dumps({"pid": pid, "signal": sig}) + "\\n")\n'
+            'os.killpg = fake_killpg\n'
+            'os.getpgid = lambda pid: pid\n'
+            'def fake_start_time(pid):\n'
+            '    try:\n'
+            '        return json.loads((home / "mock-start-times.json").read_text()).get(str(pid))\n'
+            '    except Exception:\n'
+            '        return None\n'
+            'process_snapshot.read_start_time = fake_start_time\n')
+
+    def write_ps(self, home, start_time=START_TIME, lane='codex-cmp'):
+        inventory = f'{self.PID} {start_time} /bin/bash' if start_time else f'{self.PID} /bin/bash'
+        command = f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work'
+        (home / 'stubbin' / 'ps').write_text(
+            '#!/bin/bash\n'
+            'if [ "$1" = "-axo" ]; then\n'
+            f'  printf "%s\\\\n" "{inventory}"\n'
+            'elif [ "$1" = "-ww" ]; then\n'
+            f'  printf "%s\\\\n" "{command}"\n'
+            'fi\n')
+        (home / 'stubbin' / 'ps').chmod(0o755)
+
+    def killpg_calls(self, home):
+        f = home / 'killpg.jsonl'
+        return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+
+    def hung(self, age, lane='codex-cmp', slots=None, env_extra=None, snapshot_start=START_TIME, current_start=START_TIME):
         tmp = build(slots=slots); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         r = home / '.ashlr-runs'; run = r / 'queue/run'
-        child = subprocess.Popen(['sleep', '300'], start_new_session=True)   # its own group, like launch.sh
-        self.addCleanup(child.wait); self.addCleanup(lambda: (child.poll() is None) and child.kill())   # LIFO: kill, then reap
-        (home / 'stubbin/ps').write_text(f'#!/bin/bash\necho "{child.pid} /bin/bash {r}/bin/launch.sh RQ-HUNG phantom {lane} work"\n')
+        self.mock_watchdog(home, current_start)
+        self.write_ps(home, snapshot_start, lane)
         (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\t{lane}\twork\t/x\n')
         (run / 'RQ-HUNG.dispatched').write_text('0')
         t = time.time() - age; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
         result = tick(home, env_extra)
         self.assertEqual(result.returncode, 0, result.stderr)
-        return home, run, child
+        return home, run
 
     def test_overdue_job_is_terminated_with_rc_124(self):
-        home, run, child = self.hung(7300)
-        self.assertEqual(child.wait(timeout=10), -15)
+        home, run = self.hung(7300)
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
         self.assertEqual((run / 'RQ-HUNG.rc').read_text().strip(), '124')
-        self.assertTrue((run / 'RQ-HUNG.maxruntime').exists())
+        marker = run / 'RQ-HUNG.maxruntime'
+        self.assertEqual([json.loads(line) for line in marker.read_text().splitlines()],
+                         [{'pid': self.PID, 'start': self.START_TIME}])
         self.assertIn('REAP TIMEOUT RQ-HUNG lane=codex-cmp', events(home))
 
     def test_job_inside_limit_is_left_alone(self):
-        home, run, child = self.hung(3600)
-        self.assertIsNone(child.poll())
+        home, run = self.hung(3600)
         self.assertFalse((run / 'RQ-HUNG.rc').exists())
+        self.assertEqual(self.killpg_calls(home), [])
         self.assertNotIn('REAP TIMEOUT', events(home))
 
     def test_lane_override_in_slots_json(self):
         slots = {'codex-cmp': {'target': 2, 'floor': 0, 'ceiling': 4, 'hard_cap': 4, 'last_change': 0, 'max_runtime_s': 600}}
-        home, run, child = self.hung(900, slots=slots)
-        self.assertEqual(child.wait(timeout=10), -15)
+        home, run = self.hung(900, slots=slots)
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
         self.assertIn('limit=600s', events(home))
 
     def test_zero_disables_and_small_values_clamp(self):
-        home, run, child = self.hung(90000, env_extra={'ASHLR_JOB_MAX_RUNTIME_S': '0'})
-        self.assertIsNone(child.poll()); self.assertNotIn('REAP TIMEOUT', events(home))
-        home, run, child = self.hung(100, env_extra={'ASHLR_JOB_MAX_RUNTIME_S': '5'})
-        self.assertIsNone(child.poll())   # clamped to the 300 s floor, so 100 s is still fine
+        home, run = self.hung(90000, env_extra={'ASHLR_JOB_MAX_RUNTIME_S': '0'})
+        self.assertEqual(self.killpg_calls(home), [])
+        self.assertNotIn('REAP TIMEOUT', events(home))
+        home, run = self.hung(100, env_extra={'ASHLR_JOB_MAX_RUNTIME_S': '5'})
+        self.assertEqual(self.killpg_calls(home), [])   # clamped to the 300 s floor, so 100 s is still fine
 
-    def test_sigterm_survivor_is_killed_on_a_later_tick(self):
-        home, run, child = self.hung(7300)
-        child.wait(timeout=10)   # the fixture dies on TERM; replay the escalation on a stubborn group instead
-        stubborn = subprocess.Popen(['/bin/bash', '-c', 'trap "" TERM; while :; do sleep 1; done'], start_new_session=True)
-        self.addCleanup(stubborn.wait); self.addCleanup(lambda: (stubborn.poll() is None) and stubborn.kill())
-        r = home / '.ashlr-runs'
-        (home / 'stubbin/ps').write_text(f'#!/bin/bash\necho "{stubborn.pid} /bin/bash {r}/bin/launch.sh RQ-HUNG phantom codex-cmp work"\n')
+    def test_sigterm_then_sigkill_for_same_identity_after_grace(self):
+        home, run = self.hung(7300)
         mk = run / 'RQ-HUNG.maxruntime'; t = time.time() - 60; os.utime(mk, (t, t))
+        self.mock_watchdog(home, self.START_TIME)
+        self.write_ps(home, self.START_TIME)
         self.assertEqual(tick(home).returncode, 0)
-        self.assertEqual(stubborn.wait(timeout=10), -9)
+        self.assertEqual(self.killpg_calls(home), [
+            {'pid': self.PID, 'signal': signal.SIGTERM},
+            {'pid': self.PID, 'signal': signal.SIGKILL},
+        ])
+        self.assertEqual(mk.read_text().splitlines()[-1], 'KILL')
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGKILL', events(home))
+
+    def test_reused_pid_is_not_terminated(self):
+        home, run = self.hung(7300, current_start=self.REUSED_START_TIME)
+        self.assertEqual(self.killpg_calls(home), [])
+        self.assertIn('REAP TIMEOUT RQ-HUNG skip identity-mismatch', events(home))
+
+    def test_unknown_start_time_is_not_terminated(self):
+        for snapshot_start, current_start in ((self.START_TIME, None), (None, self.START_TIME)):
+            with self.subTest(snapshot_start=snapshot_start, current_start=current_start):
+                home, run = self.hung(7300, snapshot_start=snapshot_start, current_start=current_start)
+                self.assertEqual(self.killpg_calls(home), [])
+                self.assertIn('REAP TIMEOUT RQ-HUNG skip identity-mismatch', events(home))
+
+    def test_reused_pid_is_not_killed_during_escalation(self):
+        home, run = self.hung(7300)
+        mk = run / 'RQ-HUNG.maxruntime'; t = time.time() - 60; os.utime(mk, (t, t))
+        self.mock_watchdog(home, self.REUSED_START_TIME)
+        self.write_ps(home, self.REUSED_START_TIME)
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        self.assertIn('REAP TIMEOUT RQ-HUNG skip identity-mismatch', events(home))
+        self.assertEqual(mk.read_text().splitlines()[-1], 'KILL')
 
 
 class DiskMaintenanceTests(unittest.TestCase):
