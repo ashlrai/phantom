@@ -107,6 +107,8 @@ export function claimNoticePassDeps(deps: ClaimNoticeCliDeps = {}, dryRun = fals
   return {
     readBoard: deps.readBoard ?? (() => readFleetBoard({ now: now() })),
     readPrevSnapshot: deps.readPrevSnapshot ?? files.readPrevSnapshot,
+    readPrevSnapshotState: deps.readPrevSnapshotState
+      ?? (deps.readPrevSnapshot ? undefined : files.readPrevSnapshotState),
     writePrevSnapshot: deps.writePrevSnapshot ?? files.writePrevSnapshot,
     readBindings: deps.readBindings ?? files.readBindings,
     readSentLedger: deps.readSentLedger ?? files.readSentLedger,
