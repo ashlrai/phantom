@@ -74,7 +74,7 @@ export function readNodeReachSources(dir: string = join(ashlrHome(), 'nodes')): 
     const backup = state.pool?.backup;
     return {
       lease: state.leader ? { node: state.leader.nodeId, at: holder?.heartbeatAt ?? null } : null,
-      standby: backup ? { node: backup, at: state.pool?.heartbeatAt ?? null } : null,
+      standby: backup ? { node: backup, at: state.nodes.find(n => n.nodeId === backup)?.heartbeatAt ?? null } : null,
       joined,
     };
   } catch { return {}; }
