@@ -49,6 +49,28 @@ afterEach(() => {
 });
 
 describe('remote exposure is independent from local delivery visibility', () => {
+  it.each(['exit', 'error'] as const)('reconciles fleet capacity after transient failures then %s without rewriting on replay', async (status) => {
+    writeDevinTask(task({ origin: 'fleet', requestedBy: 'fleet' }));
+    const before = readDevinTask(id)!;
+    const getSession = vi.fn(async () => session({ status, acusConsumed: 3 }))
+      .mockRejectedValueOnce(new Error('provider unavailable'));
+    const gh = vi.fn(async () => ({ ok: false as const, stdout: '', stderr: 'unavailable' }));
+    let at = now;
+    const deps = { client: { orgId: FAKE_ORG, client: { getSession } }, gh, now: () => at };
+    const limits = budget({ maxConcurrent: 1, fleetMaxConcurrent: 1, reserveAcu: 0 });
+    expect(await refreshDevinTasks(deps)).toMatchObject({ checked: 1, updated: 0 });
+    expect(readDevinTask(id)).toEqual(before);
+    expect(devinBudgetView([before], limits, at)).toMatchObject({ running: 1, fleetRunning: 1, canFleetLaunch: { ok: false } });
+    at = new Date(now.getTime() + 60_000);
+    expect(await refreshDevinTasks(deps)).toMatchObject({ checked: 1, updated: 1 });
+    const settled = readDevinTask(id)!;
+    expect(settled.session?.status).toBe(status);
+    expect(devinBudgetView([settled], limits, at)).toMatchObject({ running: 0, fleetRunning: 0, acuInFlight: 0, canFleetLaunch: { ok: true } });
+    at = new Date(at.getTime() + 60_000);
+    expect(await refreshDevinTasks(deps)).toMatchObject({ updated: 0 });
+    expect(readDevinTask(id)).toEqual(settled);
+  });
+
   it.each(['expired', 'closed', 'failed', 'merged'] as const)('keeps actual usage and remaining cap for local %s', (state) => {
     const view = devinBudgetView([task({ state })], budget(), now);
     expect(view).toMatchObject({ acuUsed: 2, reportedAcuUsed: 2, unconfirmedAcuExposure: 8, acuInFlight: 8, acuToday: 10, running: 1 });
