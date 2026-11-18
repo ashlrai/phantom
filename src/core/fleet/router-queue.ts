@@ -1,15 +1,21 @@
 /**
- * RQ-QUEUE-AUTOFILL. Proposal-only handoff; no shell, provider or merge tools.
- * The bridge owns this directory outside job HOME. Config and receipts are
- * trusted local bookkeeping; router-queue.md and every task in it are DATA.
+ * RQ-QUEUE-AUTOFILL + RQ-DRAINRECUTQ8. Proposal-only handoff; no shell,
+ * provider or merge tools. The bridge owns this directory outside job HOME.
+ * Config and receipts are trusted local bookkeeping; router-queue.md and every
+ * task in it are DATA.
  *
  * Two independently verified GitHub observations enqueue work here:
- *   merged       a PR landed: one follow-up job, deduplicated by prUrl.
- *   conflicting  a PR head conflicts: one recut job per (prUrl, headSha). A newer
- *                observed head supersedes the queued recut for the old head; a
- *                merge for the PR supersedes every queued recut for it. The recut
- *                task is generated from validated fields only and never grants
- *                authority: no merge, force-push, protection change or launch.
+ *
+ *   merged       a PR landed → one follow-up job, deduplicated by prUrl.
+ *   conflicted   a PR is conflicting → one recut job, deduplicated by
+ *                (prUrl, headSha). A newer observation of a different head
+ *                supersedes the queued recut for the old one; a merge event
+ *                for the PR supersedes every queued recut for it. The recut
+ *                task is generated from structured fields only: preserve the
+ *                intended change, rebuild it on the current base, run the
+ *                required checks, and open a replacement PR. The queue never
+ *                merges — the replacement lands through the same protections
+ *                as any other change.
  */
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, writeSync } from 'node:fs';
@@ -39,9 +45,9 @@ export interface RouterConflict {
   v: 1;
   state: 'CONFLICTING';
   prUrl: string;
-  /** Conflicting source head the recut replays; a moved head makes a new job. */
+  /** The conflicting source head the recut replays; a moved head makes a new job. */
   headSha: string;
-  /** PR base branch at observation time: what the recut rebuilds onto. */
+  /** The PR's base branch at observation time — what the recut rebuilds onto. */
   baseRef: string;
   /** When the bridge verified the conflict (rejected when it postdates the read). */
   observedAt: string;
@@ -53,8 +59,8 @@ interface MergeReceipt extends RouterMerge {
   /** When the job was acknowledged complete; null while outstanding. */
   completedAt: string | null;
 }
-/** 'superseded': a newer head's recut (or the PR's merge) made this one stale. */
 interface ConflictReceipt extends RouterConflict {
+  /** 'superseded': a newer head's recut (or the PR's merge) made this one stale. */
   status: 'queued' | 'done' | 'superseded';
   enqueuedAt: string | null;
   completedAt: string | null;
@@ -138,6 +144,12 @@ function pastTime(value: unknown): value is string {
     Number.isFinite(Date.parse(value)) && Date.parse(value) <= Date.now() + 60_000;
 }
 
+/** A git ref name a PR base may legitimately carry; no '..' segments, slashes kept inside. */
+function baseRefName(value: unknown): value is string {
+  return typeof value === 'string' && BRANCH.test(value) && !value.includes('..') &&
+    !value.endsWith('/') && !value.endsWith('.lock') && !value.includes('@{');
+}
+
 /** Receipt timing fields are either both absent (pre-timing rows) or both present. */
 function timing(row: Record<string, unknown>): { enqueuedAt: string | null; completedAt: string | null } {
   const hasEnqueued = 'enqueuedAt' in row;
@@ -167,12 +179,6 @@ function mergeOf(value: unknown, repos: Set<string>, receipt = false): MergeRece
     enqueuedAt: at.enqueuedAt, completedAt: at.completedAt };
 }
 
-/** A git ref a PR base may carry: bounded charset, no '..', '@{', trailing '/' or '.lock'. */
-function baseRefName(value: unknown): value is string {
-  return typeof value === 'string' && BRANCH.test(value) && !value.includes('..') &&
-    !value.endsWith('/') && !value.endsWith('.lock') && !value.includes('@{');
-}
-
 function conflictOf(value: unknown, repos: Set<string>, receipt: true): ConflictReceipt;
 function conflictOf(value: unknown, repos: Set<string>): RouterConflict;
 function conflictOf(value: unknown, repos: Set<string>, receipt = false): ConflictReceipt {
@@ -191,15 +197,17 @@ function conflictOf(value: unknown, repos: Set<string>, receipt = false): Confli
 }
 
 function receiptOf(value: unknown, repos: Set<string>): Receipt {
-  const state = record(value)['state'];
-  if (state === 'MERGED') return mergeOf(value, repos, true);
-  if (state === 'CONFLICTING') return conflictOf(value, repos, true);
+  const row = record(value);
+  if (row['state'] === 'MERGED') return mergeOf(row, repos, true);
+  if (row['state'] === 'CONFLICTING') return conflictOf(row, repos, true);
   return fail();
 }
 
-/** Merge jobs dedupe on the PR; recut jobs on the PR and its conflicting head. */
+/** Merge jobs dedupe on the PR; recut jobs on the PR AND its conflicting head. */
 function idOf(receipt: RouterMerge | RouterConflict): string {
-  return receipt.state === 'MERGED' ? `rq-${hash(receipt.prUrl)}` : `rq-${hash(`conflict\x00${receipt.prUrl}\x00${receipt.headSha}`)}`;
+  return receipt.state === 'MERGED'
+    ? `rq-${hash(receipt.prUrl)}`
+    : `rq-${hash(`conflict\x00${receipt.prUrl}\x00${receipt.headSha}`)}`;
 }
 function defaultJob(merge: RouterMerge): RouterMergeJob {
   return { id: idOf(merge), repo: repoOf(merge.prUrl), prUrl: merge.prUrl, headSha: merge.headSha, mergeSha: merge.mergeSha,
@@ -369,9 +377,12 @@ function transaction<T>(root: string, action: (state: State, jobs: RouterJob[], 
 export function enqueueRouterFollowup(event: unknown, root = routerQueueRoot()): { status: 'enqueued' | 'duplicate'; jobId: string } {
   return transaction(root, (state, _jobs, repos) => {
     const merge = mergeOf(event, repos);
-    // A recorded merge settles the conflict: a queued recut would redo landed work.
+    // A recorded merge settles the conflict: any recut still queued for this
+    // PR would now redo work that already landed.
     for (const receipt of state.receipts) {
-      if (receipt.state === 'CONFLICTING' && receipt.prUrl === merge.prUrl && receipt.status === 'queued') receipt.status = 'superseded';
+      if (receipt.state === 'CONFLICTING' && receipt.prUrl === merge.prUrl && receipt.status === 'queued') {
+        receipt.status = 'superseded';
+      }
     }
     const existing = state.receipts.find((r): r is MergeReceipt => r.state === 'MERGED' && r.prUrl === merge.prUrl);
     if (existing) {
@@ -385,18 +396,21 @@ export function enqueueRouterFollowup(event: unknown, root = routerQueueRoot()):
 }
 
 /**
- * Idempotent recut path for a verified conflicting PR head, fed by the same
- * trusted bridge as `merged`. Replaying (prUrl, headSha) is a `duplicate`, even
- * after completion. A stale observation (older than a newer head's, or the PR
- * already merged) is `obsolete`. A newer head supersedes the queued recut for
- * the old one, so a PR never has two live recuts. A head that moves back revives
- * its superseded recut only when the observation postdates every other on record.
+ * The idempotent recut path for a conflicting PR, fed by the same trusted
+ * bridge that feeds `merged`. One outstanding recut per source head: a replay
+ * of the same observation is a `duplicate`; a stale observation (a newer head
+ * or a merge already on record) is `obsolete`; a moved head supersedes the
+ * queued recut for the old one and enqueues a fresh job — never two live
+ * recuts for one PR. A head that moves BACK revives its superseded recut only
+ * when the observation postdates every other one on record.
  */
 export function enqueueRouterRecut(event: unknown, root = routerQueueRoot()): { status: 'enqueued' | 'duplicate' | 'obsolete'; jobId: string | null } {
   return transaction(root, (state, _jobs, repos) => {
     const conflict = conflictOf(event, repos);
     const jobId = idOf(conflict);
-    if (state.receipts.some((r) => r.state === 'MERGED' && r.prUrl === conflict.prUrl)) return { status: 'obsolete', jobId: null };
+    if (state.receipts.some((r) => r.state === 'MERGED' && r.prUrl === conflict.prUrl)) {
+      return { status: 'obsolete', jobId: null };
+    }
     const recuts = state.receipts.filter((r): r is ConflictReceipt => r.state === 'CONFLICTING' && r.prUrl === conflict.prUrl);
     const at = Date.parse(conflict.observedAt);
     const match = recuts.find((r) => r.headSha === conflict.headSha);
@@ -406,6 +420,8 @@ export function enqueueRouterRecut(event: unknown, root = routerQueueRoot()): { 
       if (at <= Date.parse(match.observedAt) || match.status !== 'superseded') return { status: 'duplicate', jobId };
       const newestOther = Math.max(...recuts.filter((r) => r !== match).map((r) => Date.parse(r.observedAt)), -Infinity);
       if (at <= newestOther) return { status: 'obsolete', jobId: null };
+      // The head moved back to a previously superseded source: revive that
+      // recut and retire whichever newer head is still queued.
       for (const r of recuts) if (r.status === 'queued') r.status = 'superseded';
       match.status = 'queued';
       match.observedAt = conflict.observedAt;

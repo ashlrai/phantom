@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import work_market
 # restock.py — Mac-side deterministic restocker for the router queue (no LLM, no network of its own).
 # Installed to ~/.ashlr-runs/bin/restock.py via swap.sh and sha-pinned by selfrun.sh (G1-CODE-PIN); run as
 # `restock.py [--dry-run] [--per-lane N]`. RQ-QUEUEGEN-BOLD-30 + SPEC-AMEND Security #5 + RQ-DEVINROUTEDEFAULTQ7
@@ -6,9 +7,45 @@
 import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime, timezone
 from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
-                             attempt_identity, empty_reason, read_attempts, with_prompt)
+                             attempt_identity, empty_reason, read_attempts, with_prompt,
+                             admission_history, terminal_target)
 import queue_gate
+
+def semantic_dedupe(lines):
+    """Pure admission plan; keep in parity with core/queue/semantic-dedupe.ts."""
+    rows, unknown, repeats, marked = [], [], [], {}
+    target = re.compile(r"(?:[\w.-]+/)+[\w.-]+|[\w.-]+\.(?:tsx?|mjs|cjs|jsx?|py|rs|go|md|json|ya?ml|toml|sh|css|html)\b|\bmodule\s+`?[\w.-]+`?", re.ASCII)
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*-\s+(READY|CLAIMED|RUNNING)\b", line, re.I): continue
+        m = re.match(r"^\s*-\s+(READY|CLAIMED|RUNNING)\s+(?:\S+\s+)*?([\w.-]+)(?: r\d+)?\s+\(([^)]*)\):\s*(.*)", line, re.I | re.ASCII)
+        repo = re.search(r"\brepo=(?:ashlrai/)?([\w.-]+)(?=[,;\s)]|$)", m[3] if m else "", re.I | re.ASCII)
+        goal = m[4].lower() if m else ""
+        files = {re.sub(r"^module\s+`?|`$|\.+$", "", s) for s in target.findall(goal)}
+        tokens = set(re.findall(r"[a-z0-9]+", re.sub(r"\b(?:add\s+)?(?:one|single|1)[ -](?:test[ -])?case\b", " ", target.sub(" ", goal)))) - set("a an the to in of and or for with at on by is it be as acceptance".split())
+        if not m or not repo or not files or len(tokens) < 3:
+            unknown.append(dict(id=m[2] if m else None, line=i + 1, reason="Missing id, repo, file/module, or three goal tokens")); continue
+        prs = ','.join(sorted(re.findall(r"(?:\bpr[=#]|#|/pull/)(\d+)", m[3] + ' ' + goal, re.I)))
+        rows.append(dict(id=m[2], repo=repo[1].lower(), files=files, tokens=tokens, prs=prs, index=i, ready=m[1].upper() == "READY"))
+    kept = [r for r in rows if not r['ready']]
+    for row in (r for r in rows if r['ready']):
+        prior = next((p for p in kept if p['id'] != row['id'] and p['repo'] == row['repo'] and p['prs'] == row['prs'] and p['files'] & row['files']
+                      and len(p['tokens'] & row['tokens']) / len(p['tokens'] | row['tokens']) >= 0.5), None)
+        if prior is None: kept.append(row); continue
+        repeats.append(dict(id=row['id'], repeatOf=prior['id'], repo=row['repo'], file=sorted(prior['files'] & row['files'])[0],
+                            match='semantic-goal', reason='semantic-goal-overlap', jaccard=len(prior['tokens'] & row['tokens']) / len(prior['tokens'] | row['tokens'])))
+        marked[row['index']] = re.sub(r"^(\s*-\s+)READY\b", lambda m: m[1] + 'DUPLICATE-OF-' + prior['id'], lines[row['index']], flags=re.I)
+    return repeats, unknown, marked
+
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
+# Separate fixed read-only slice: never copy a ready.tsv job into the node queue.
+# Opt-in and Security re-pin required before live adoption. Keep dry runs read-only.
+if os.path.isfile(Q + "/muse-light.enabled") and "--dry-run" not in sys.argv:
+    try:
+        with open(Q + "/muse-light.lock", "a") as node_lock:
+            fcntl.flock(node_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            subprocess.run(["phm", "node", "light", "restock", "--apply", "--json"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired): pass  # unavailable node path never blocks lane restock
 gate = queue_gate.read_gate(Q)
 print("QUEUE_GATE allow=%s depth=%s target=%s src=restock" % (gate["allow"], gate["depth"], gate["target"]), file=sys.stderr)
 if not gate["allow"]: sys.exit(0)
@@ -17,9 +54,10 @@ PER = int(sys.argv[sys.argv.index("--per-lane") + 1]) if "--per-lane" in sys.arg
 TS = time.strftime("%F %T"); HM = time.strftime("%H:%M")
 CODEX = ["codex-cmp", "codex-personal", "devin", "codex-local", "omlx"]  # restockable lanes (devin unheld 2:25 PM per Mason; codex-local RQ-LOCAL-LANE)
 CODEX.append("claude-api")  # paced by claude-api.py via slots.json target (0 when no credit pool is open)
+CODEX.append("claude")  # shared work can be restocked when only the Claude executor has headroom
 GENERAL = [l for l in CODEX if l not in ("codex-local", "omlx")]  # rev1.1: local models are not a general fallback; only explicitly local pools go there
 # RQ-QUEUEGEN-BOLD-30 (SPEC-AMEND Security #5): GS_REPOS is the fleet allowlist — the core-fleet spine that is
-# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlar-landing live there too but
+# checked out under ~/Projects/ashlrai (docs/ECOSYSTEM-MAP.md). measurably and ashlr-landing live there too but
 # are not fleet: a directory existing is never enough to make a line selectable, and restock never creates for them.
 GS_REPOS = {"phantom", "phantom-secrets", "locus", "lexicon", "ashlr-md", "ashlr-plugin", "ashlr-stack"}
 BOLD_MIN = 0.30   # keep READY at >=30% bet=bold lines: counted before each restock; under the floor bold picks first
@@ -71,12 +109,15 @@ park_state = {j: e for j, e in park_state.items() if isinstance(e, dict)
 st = json.loads(rd(Q + "/status.json", "{}") or "{}"); lanes = st.get("lanes", {})
 slots = json.loads(rd(Q + "/slots.json", "{}") or "{}")
 hold = set(rd(R + "/HOLD").split())
+for lane, entry in slots.items():
+    if lane not in CODEX and isinstance(entry, dict) and entry.get("executor_ready") is True and isinstance(entry.get("capabilities"), list):
+        CODEX.append(lane); GENERAL.append(lane)
 need = {}
 for l in CODEX:
-    s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 10)
+    s = lanes.get(l, {}); t = slots.get(l, {}).get("target", DEVIN_T if l == "devin" else 0 if l == "claude" else 10)
     if l == "devin" and isinstance(t, int): t = min(t, DEVIN_C)   # leverage ceiling 16 caps restock need
     if slots.get(l, {}).get("held") or l in hold: need[l] = 0; continue
-    if l in ("claude-api", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled local pool or no credit pool open
+    if l in ("claude-api", "claude", "omlx") and not slots.get(l, {}).get("target"): need[l] = 0; continue   # disabled executor or no credit pool open
     free = max(t - s.get("running", 0), 0)
     want = PER if PER is not None else 3 * max(free, 4)
     need[l] = want
@@ -149,7 +190,7 @@ merged = set(); completed = set(); recent_outcomes = {}
 for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     try: d = json.loads(x)
     except Exception: continue
-    if not isinstance(d, dict): continue
+    if not isinstance(d, dict) or d.get("launched") is False: continue
     job = d.get("job")
     stamp = d.get("ts", d.get("timestamp", d.get("at")))
     try:
@@ -172,7 +213,7 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
 # a later copy. Missing or ambiguous history never proves completion.
 completed_groups = set(); group_outcomes = {}
 for raw in lines:
-    m = re.match(r"^- (?:READY|CLAIMED|DONE|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
+    m = re.match(r"^- (?:READY|CLAIMED|DONE(?:-NOOP)?|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
     if m:
         group = single_case_group(*m.groups())
         if group and m.group(1) in recent_outcomes:
@@ -215,13 +256,25 @@ def parse_parked_dep(line):
         return f[0], f[1], lane, f[3], f[4], line
     return None
 def prio(a): m = re.search(r"\bP(\d)\b", a); return int(m.group(1)) if m else 3
+SCOPE_BUDGETS = {
+    "frontier": {"maxFiles": 40, "maxLines": 600, "maxAreas": 8},
+    "work": {"maxFiles": 15, "maxLines": 200, "maxAreas": 1},
+    "mid": {"maxFiles": 8, "maxLines": 120, "maxAreas": 1},
+    "fast": {"maxFiles": 2, "maxLines": 80, "maxAreas": 1},
+}
 def prompt_body(j, repo, l, tier, attrs, text, gate=None):
+    scope = SCOPE_BUDGETS["fast" if l == "codex-local" else tier]
+    ambition = ("Combine related concerns needed for the complete feature in one PR. "
+                if tier == "frontier" and l != "codex-local" else "Keep the brief focused within this tier's budget. ")
     gate_line = ("DEPENDENCY GATE: %s\n\n" % ", ".join(gate)) if gate else ""
     pin_line = ("\n%s\n" % PIN_MERGE) if PIN_MERGE in (attrs + " " + text) else ""
     return (f"Job {j} (pool {l}, tier {tier}, repo {repo}). Task from the Ashlr router queue, verbatim:\n\n"
             f"{gate_line}{j} ({attrs}): {text}\n\n"
-            "Treat the task as the minimum: be ambitious and high-leverage, and finish one complete, self-contained, mergeable change "
-            "with new or updated tests that you run. If the full goal cannot be verified, ship the smallest correct, useful part with honest output "
+            f"SCOPE: up to {scope['maxFiles']} files, size<={scope['maxLines']} changed lines. "
+            "Explicit narrower task limits and named-file restrictions take precedence. "
+            f"{ambition}Finish the complete feature, not the minimum demo; add tests, run them, and update docs. "
+            "Deliver one complete, self-contained, mergeable PR per job. "
+            "If the full goal cannot be verified, ship the smallest correct, useful part with honest output "
             "(for example, age: unknown) and list the gap in BRIDGE_NOTES.md for the PR body. Use EMPTY only when already done or truly impossible. "
             "Never print environment variables, secrets or tokens; "
             "solve any secrets need through Phantom Secrets and any MCP/CLI access need through Locus. Do not commit or push, and do not edit .github/."
@@ -232,6 +285,7 @@ skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked =
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
 empty_attempts = read_attempts(R); empty_bases = {}
+_, terminal_prs = admission_history(empty_attempts, time.time())
 def empty_gate(j, repo, prompt):
     if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
     base = empty_bases[repo]
@@ -299,8 +353,16 @@ seclist = []
 for i, j, a2, t2, raw2 in recs:
     if SEC.search(NEGS.sub("", raw2)): seclist.append((i, j)); skip(j, "hold-security")
 parked = {i for i, j in seclist}
-# under the bold floor bold lines pick first, then P-level, then line order; at/above it the order is unchanged
-ordk = (lambda r: (not ISBOLD.search(r[2]), prio(r[2]), r[0])) if prefer_bold else (lambda r: (prio(r[2]), r[0]))
+duplicates, dedupe_unknown, duplicate_lines = semantic_dedupe([line if i not in parked else '' for i, line in enumerate(lines)])
+for duplicate in duplicates: skip(duplicate['id'], 'semantic-goal-overlap')
+recs = [r for r in recs if r[0] not in duplicate_lines]
+# Impact and priority precede bold/repository preferences at both admission boundaries.
+def market_rank(record):
+    try: rank = work_market.priority(work_market.from_envelope(record[2]))
+    except (ValueError, TypeError): rank = (1000001, 0)
+    return (*rank, not bool(ISBOLD.search(record[2])) if prefer_bold else False,
+            bool(re.search(r"A\d{6,}Q8$", record[1])))
+ordk = lambda r: (*market_rank(r), r[0])
 def ranked_records(records):
     ordered = sorted(records, key=ordk)
     try:
@@ -344,9 +406,12 @@ def ranked_records(records):
     except (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError):
         return ordered
 
-for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re.search(r"A\d{6,}Q8$", r[1]))):
+picked_specs = {}
+for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
+    try: spec = work_market.from_envelope(attrs)
+    except (ValueError, TypeError): skip(j, "invalid-requirements"); continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
     if re.search(r"sub of " + re.escape(j) + r"\b", RQ_TXT): skip(j, "split-into-subs"); continue
@@ -358,22 +423,23 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
     if not rm:
         for tok in [t.strip() for t in attrs.split(",")]:
             if tok in GS_REPOS: rm = re.match(r"(.*)", tok); break
-    pm = re.search(r"pool=([a-z-]+)", attrs); tm = re.search(r"tier=([a-z]+)", attrs)
+    pm = re.search(r"pool=([a-z-]+)", attrs); tm = re.search(r"(?:^|[,;\s])tier=([^,;\s]*)", attrs)
+    tiers = re.findall(r"(?:^|[,;\s])tier=([^,;\s]*)", attrs)
+    if any(t not in SCOPE_BUDGETS for t in tiers) or len(set(tiers)) > 1: skip(j, "unknown-tier"); continue
     if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
     if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
+    if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    if pool not in CODEX: skip(j, "lane-" + pool); continue
     if pool == "codex-local":
         fits, reason = local_fit(attrs, text)
         if not fits:
             pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
             print("LOCAL_FIT %s: %s; fallback=%s" % (j, reason, pool), file=sys.stderr)
     prp = set(re.findall(r"github\.com/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+)/pull/(\d+)", raw))
-    prp |= {(rm.group(1), n) for n in re.findall(r"(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
+    prp |= {(rm.group(1), n) for n in re.findall(r"(?i)(?:pull/|PR=|#)(\d+)", attrs + " " + text)}
     if prp & held_pr or any(("*", n) in held_pr for _, n in prp): skip(j, "hold-list-pr"); continue
-    if (rm.group(1), j) in completed or (None, j) in completed: skip(j, "already-merged"); continue
     deps = []
     for a in re.findall(r"after ([^,]+)", attrs):
         for d in re.split(r"\s+and\s+|,\s*", a.strip()):
@@ -385,25 +451,29 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
                 if d is None or d == j: deps.append(None); continue
             deps.append(d)
     if None in deps: skip(j, "bad-dep"); continue
-    tier = tm.group(1) if tm and tm.group(1) in ("frontier", "work", "mid", "fast") else "work"
+    tier = tm.group(1) if tm else "work"
     # RQ-QUEUE-AUTOUNPARK-1: unmet after= deps park as PARKED-DEP (status-first) with a DEPENDENCY GATE prompt
     # instead of silently skipping; restock unparks them once jobs.jsonl shows every id MERGED.
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
         if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
-        lane = pool if pool in CODEX else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-        dep_parks.append((j, rm.group(1), lane, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        dep_parks.append((j, rm.group(1), pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
+    if j in checked: skip(j, "dup-line"); continue
     key = park_key(raw, ""); task_keys[j] = key
+    quality_group = single_case_group(j, attrs, text)
+    # Local terminal evidence retires stale producer work before any network precheck.
+    reason = ("already-merged" if (rm.group(1), j) in completed or (None, j) in completed
+              else terminal_target(j, rm.group(1), f"{j} ({attrs}): {text}", terminal_prs))
+    if not reason and quality_group and quality_group in completed_groups: reason = "acceptance-already-merged"
+    if reason:
+        checked.add(j); park_state.pop(j, None)
+        done.append((i, j, (10, reason), rm.group(1))); skip(j, reason); continue
     if noop_parked(noops, j, key, ts): skip(j, "noop-streak"); continue
     if precheck_parked(park_state, j, key, ts): skip(j, "precheck-parked"); continue
     # A target PR identifies the same repair; a file alone does not.
     if prp & seen_pr: skip(j, "dup-pr"); continue
-    if j in checked: skip(j, "dup-line"); continue
-    quality_group = single_case_group(j, attrs, text)
-    if quality_group and quality_group in completed_groups:
-        skip(j, "acceptance-already-merged"); continue
     if quality_group and quality_group in empty_groups:
         skip(j, "recent-empty-streak"); continue
     if quality_group and quality_group in quality_groups:
@@ -430,8 +500,9 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=lambda r: bool(re
         park(park_state, j, key, ts, pc[0], pc[1]); skip(j, "precheck-parked"); continue
     park_state.pop(j, None)
     if pc:
-        done.append((i, j, pc)); skip(j, "done-noop"); continue
+        done.append((i, j, pc, rm.group(1))); skip(j, "done-noop"); continue
     picks[lane].append((j, rm.group(1), lane, tier, attrs, text, i))
+    picked_specs[j] = spec
     if quality_group: quality_groups.add(quality_group)
     seen_pr |= prp
 out = []
@@ -440,7 +511,7 @@ for lane in CODEX:
         p = prompt_body(j, repo, l, tier, attrs, text)
         pf = f"{Q}/prompts/{j}.md"
         out.append((j, repo, l, tier, pf, p, i))
-out.sort(key=lambda row: bool(re.search(r"A\d{6,}Q8$", row[0])))
+out.sort(key=lambda row: (*work_market.priority(picked_specs[row[0]]), bool(re.search(r"A\d{6,}Q8$", row[0]))))
 out = out[:gate["allow"]]
 dep_out = []   # PARKED-DEP rows to append (job, repo, lane, tier, pf, prompt, i, deps)
 for j, repo, l, tier, attrs, text, i, deps in dep_parks:
@@ -458,7 +529,10 @@ for j, repo, l, tier, pf, p, i in ([] if "--json" in sys.argv else out): print((
 for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY " if DRY else "") + "UNPARK\t%s\tdeps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
-    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, _ in done], "skips": skips,
+    print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, *_ in done], "skips": skips,
+                      "dedupe": {"repeats": duplicates, "unknown": dedupe_unknown},
+                      "jobs": [{"job": j, "repo": repo, "tier": tier, "requirements": picked_specs[j]} for j, repo, _l, tier, *_tail in out],
+                      "scope_budgets": SCOPE_BUDGETS,
                       "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
                       "unpark": [{"job": j, "deps": ids} for j, ids, _, _ in unparks],
                       "parked_dep": [{"job": j, "deps": deps} for j, *_r, deps in dep_out]}))
@@ -468,7 +542,7 @@ if not DRY:
     park_state = {j: e for j, e in park_state.items() if j in ready_ids}
     park_tmp = PARKF + ".%d.tmp" % os.getpid()
     open(park_tmp, "w").write(json.dumps(park_state)); os.replace(park_tmp, PARKF)
-if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates): sys.exit(0)
+if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates and not duplicates): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)
 # RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
@@ -573,7 +647,8 @@ if out or unparks or dep_out or rate_candidates:
             for x in snap:
                 x = repl.pop(x, x)
                 if x.strip(): f.write(x + "\n")
-            for j, repo, l, tier, pf, p, i in out: f.write("\t".join([j, repo, l, tier, pf]) + "\n")
+            for j, repo, l, tier, pf, p, i in out:
+                f.write("\t".join([j, repo, l, tier, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
                 f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
@@ -584,16 +659,20 @@ for j, repo, l, tier, pf, p, i in out:   # mark local copy so the next restock n
     lines[i] = re.sub(r"^- READY ", "- CLAIMED %s dispatchd %s " % (HM, l), lines[i], count=1)
 for j, repo, l, tier, pf, p, i, deps in dep_out:
     lines[i] = re.sub(r"^- READY ", "- CLAIMED %s restock-parked-dep %s " % (HM, l), lines[i], count=1)
-for i, j, pc in done:
+if done: os.makedirs(R + '/metrics', exist_ok=True)
+for i, j, pc, repo in done:
     lines[i] = re.sub(r"^- READY ", "- DONE-NOOP ", lines[i], count=1)
     ev("DONE-NOOP %s [precheck code=%d %s]" % (j, pc[0], pc[1]))
+    with open(R + '/metrics/jobs.jsonl', 'a') as stream:
+        stream.write(json.dumps(dict(event='outcome', state='DONE-NOOP', job=j, repo=repo, launched=False,
+                                     reason=pc[1], ts=datetime.now(timezone.utc).isoformat())) + '\n')
 for j, wait in rate_unpark: ev("UNPARK %s reason=MERGERATE observed_wait_seconds=%d" % (j, wait))
 for j, ids, _old, _new in unparks:
     ev("UNPARK %s deps=%s" % (j, ",".join(ids)))
 for j, repo, l, tier, pf, p, i, deps in dep_out:
     ev("PARKED-DEP %s deps=%s" % (j, ",".join(deps)))
 if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really queues, expired entries dropped
-    for _, j, _pc in done:
+    for _, j, *_ in done:
         e = noops.get(j, {})
         n = e.get("n", 0) if e.get("key") == task_keys[j] else 0
         noops[j] = {"n": n + 1, "at": ts, "key": task_keys[j]}
@@ -603,6 +682,7 @@ if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really que
 for i, j in seclist:   # park security-pinned lines; the tag stays on the line and READY is never restored
     lines[i] = re.sub(r"^- READY ", "- HOLD-SECURITY %s restock " % HM, lines[i], count=1)
     if PIN not in lines[i]: lines[i] = lines[i].rstrip() + " " + PIN
+for i, line in duplicate_lines.items(): lines[i] = line
 # RQ-PHX-RESTOCKAPPENDRACE31: the early read is stale by now, and a writer appending in between had
 # its lines erased by the whole-file replace. Re-read just before it and carry the appended tail
 # through; same-index lines keep this pass's CLAIMED/HOLD-SECURITY marks.

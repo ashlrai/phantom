@@ -1,5 +1,4 @@
 /** Trusted Socket Mode owner adapter for the existing Leader network. */
-import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +6,9 @@ import { realHome } from '../real-home.js';
 import { validateBusEnvelope, type BusEnvelope } from '../fleet/bus-envelope.js';
 import { leaderInboxAppender, leaderNetworkSources, noteUnifiedOwner, readLeaderNetworkConfig, type LeaderRuntimeOptions } from './leader-network-runtime.js';
 import { createLeaderNetwork, parseMasonIdentities } from './leader-network.js';
+import { recordSlackObservation } from './slack-journal.js';
+import { isSlackRequestId } from './slack-reply-identity.js';
+import { takeLeaderReplyBatch } from './leader-reply-queue.js';
 import { loadAgentNetworkConfig, isSlackUserId, parseSlackThreadRef } from './slack-network.js';
 import { createSlackApi, deliverSlackEnvelope, type SlackCall, type SlackDeliveryPolicy } from './slack-transport.js';
 import { parseCommsConfirmation, type DeliverResult, type TeamIdentity } from './channel-policy.js';
@@ -18,8 +20,9 @@ import type { LeaderChannelAdapter } from './leader-channel-adapter.js';
 export interface SlackStatusReply {
   /** Exact short owner asks only; anything else stays with the Leader. */
   ask(text: string): boolean;
-  /** Compose the answer for a gated ask. */
-  compose(runsDir: string, now: Date): Promise<string>;
+  /** Compose the answer for a gated ask; `text` is the owner's ask, so one
+   * reply seam can answer more than one exact ask (status, recheck). */
+  compose(runsDir: string, now: Date, text?: string): Promise<string>;
   /** Posted when compose throws or misses its deadline. */
   readonly fallback: string;
 }
@@ -100,6 +103,20 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
     ...checked.value, id: `slack-owner-${createHash('sha256').update(message.id).digest('hex').slice(0, 32)}`, from: 'mason',
     sender: { agent_id: 'mason', vendor: 'phantom', human: true, team: true },
   }, verifiedSender: identity, receivedAt, ...(deferInbox ? { inboxAlreadyRecorded: true } : {}) });
+  // Owner routing bypasses peer ingress; retain its receipt in the same trace.
+  const messageRef = body && typeof body === 'object' && !Array.isArray(body) && Array.isArray(body.refs)
+    && typeof body.refs[0] === 'string' ? parseSlackThreadRef(body.refs[0]) : undefined;
+  if (messageRef && messageRef.teamId === ref.teamId && messageRef.channelId === ref.channelId &&
+      message.id === `slack-${ref.teamId}-${ref.channelId}-${messageRef.rootTs}` && result.status !== 'duplicate') {
+    recordSlackObservation({ at: new Date(receivedAt).toISOString(), decision: 'ingested',
+      channelId: ref.channelId, threadTs: ref.rootTs, messageTs: messageRef.rootTs,
+      bus: result.status === 'accepted' ? 'posted' : 'failed',
+      // Only a positive Leader-route result carries a reply identity: the ingest
+      // either returned the Leader-addressed envelope or recorded it in the
+      // Leader inbox. An agent-addressed owner request gets no Leader reply.
+      ...(isSlackRequestId(result.requestId) && (result.envelope?.to === 'leader' || result.recorded === true)
+        ? { requestId: result.requestId } : {}) }, { runsDir });
+  }
   let statusAnswer: Promise<SlackStatusAnswer> | undefined;
   if (statusAsk && result.requestId && result.status !== 'duplicate') {
     // Detached so the socket ack is not held behind the brief read or the post;
@@ -110,7 +127,7 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
       text: text!.replace(/\r\n?/g, '\n').trim(),
     } : undefined;
     statusAnswer = (result.status === 'accepted'
-      ? answerOwnerStatus(statusReply!, result.requestId, network, runsDir, new Date(receivedAt))
+      ? answerOwnerStatus(statusReply!, result.requestId, network, runsDir, new Date(receivedAt), text!)
       : Promise.resolve({ answered: false, reason: 'ask did not reach the Leader bus' }))
       .then(async outcome => {
         if (outcome.answered || !fallback) return outcome;
@@ -130,9 +147,9 @@ export async function ingestSlackLeaderEnvelope(message: BusEnvelope, options: S
 
 /** Compose with the existing status builder and send through the journaled
  * Leader reply (MASON-OUTBOX record, bus publish, same Slack thread). */
-async function answerOwnerStatus(statusReply: SlackStatusReply, requestId: string, network: ReturnType<typeof createLeaderNetwork>, runsDir: string, now: Date): Promise<SlackStatusAnswer> {
+async function answerOwnerStatus(statusReply: SlackStatusReply, requestId: string, network: ReturnType<typeof createLeaderNetwork>, runsDir: string, now: Date, ask: string): Promise<SlackStatusAnswer> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const text = await Promise.race([statusReply.compose(runsDir, now),
+  const text = await Promise.race([statusReply.compose(runsDir, now, ask),
     new Promise<string>(resolve => { timer = setTimeout(() => resolve(statusReply.fallback), 10_000); })])
     .catch(() => statusReply.fallback).finally(() => clearTimeout(timer));
   try {
@@ -167,7 +184,8 @@ export async function deliverSlackLeaderMessage(identity: TeamIdentity, message:
   });
   const result = await deliverSlackEnvelope({ ...message, to: route.topic,
     body: { kind: 'note', text: body.text, thread: message.channel_ref! } }, {
-    ...policy, call, signal,
+    ...policy, call, signal, runsDir: options.runsDir, busRoot: options.busRoot, leaderRequestId: typeof body.requestId === 'string' ? body.requestId : undefined,
+    plainReply: options.statusReply !== undefined && body.text === `Leader: ${options.statusReply.fallback}`,
     stateRoot: options.runsDir ? join(options.runsDir, 'slack-transport') : undefined,
     readPolicy: () => {
       const current = readLeaderNetworkConfig(options);

@@ -16,7 +16,9 @@
  * Dedupe is one line per PR per 24h keyed `<repo>#<n>`, but it is
  * evidence-aware: the state entry records the headSha the line was minted
  * against, so a moved head (new pushes, new files) releases the suppression
- * while an unchanged head holds it. A legacy entry without recorded evidence
+ * while an unchanged head holds it. Active rebases hold the repo/PR across
+ * head changes; failed/cancelled attempts can retry with a fresh job id.
+ * A legacy entry without recorded evidence
  * keeps the old clock-only semantics. Queue ids already present are never
  * re-appended. Lines touching a pinned surface (.github, publish.sh,
  * dispatchd, git-safe, scrub, reap) carry `[Security pin required]`; a
@@ -44,7 +46,7 @@
  * host adapter (scripts/queuegen.mjs) stays thin.
  */
 
-import { assertQueueTier } from './queue-tier.js';
+import { assertQueueTier, QUEUE_TIER_SCOPE } from './queue-tier.js';
 import { collapseJobOutcomes, type JobOutcome } from '../queue/job-outcomes.js';
 
 export const QUEUEGEN_CYCLE_CAP = 20;
@@ -122,6 +124,8 @@ export interface QueuegenIo {
   conflictFiles(repo: string, pr: QueuegenPr): string[];
   /** Existing queue job ids; a malformed line must throw (fail closed). */
   readQueueIds(): Set<string>;
+  /** Repo#PR keys occupied by live rebases, plus terminal failed/cancelled job ids. */
+  readRebaseWork(): { active: ReadonlySet<string>; failed: ReadonlySet<string> };
   appendQueueLine(line: string): void;
   /** Canonical hold list as "<short>#<n>" entries; must throw if unreadable. */
   readHoldList(): Set<string>;
@@ -254,20 +258,22 @@ export function rebaseId(repo: string, pr: QueuegenPr): string {
 
 export function fixupLine(repo: string, pr: QueuegenPr, check: QueuegenCheck, file: string, err: string, pinned: boolean, stamp: string, opts: Required<Pick<QueuegenOptions, 'fixupPriority' | 'pool' | 'tier'>>): string {
   const tier = assertQueueTier(opts.tier);
+  const scope = QUEUE_TIER_SCOPE[tier];
   const short = shortName(repo);
   const text = `FIXUP ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="${quoted(check.name, 120)}" acceptance="${quoted(acceptanceCommand(file), 200)}" err="${quoted(err, 180)}": fix the failing required check in the named file and push to the head branch. https://github.com/${repo}/pull/${pr.number}`;
   // The pin leads the truncated body so the 560-char cap can never cut it.
-  return `- READY ${fixupId(repo, pr)} (${opts.fixupPriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
+  return `- READY ${fixupId(repo, pr)} (${opts.fixupPriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}, max-files=${scope.maxFiles}, size<=${scope.maxLines}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 
 export function rebaseLine(repo: string, pr: QueuegenPr, conflicts: readonly string[], pinned: boolean, stamp: string, opts: Required<Pick<QueuegenOptions, 'rebasePriority' | 'pool' | 'tier'>>): string {
   const tier = assertQueueTier(opts.tier);
+  const scope = QUEUE_TIER_SCOPE[tier];
   const short = shortName(repo);
   const shown = conflicts.slice(0, 8);
   const suffix = conflicts.length > shown.length ? ` +${conflicts.length - shown.length} more` : '';
   const file = shown[0] ?? '';
-  const text = `REBASE ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="merge-tree" acceptance="git merge-tree --write-tree ${noWs(pr.baseSha, 40)} ${noWs(pr.headSha, 40)}" conflicts="${quoted(shown.join(', '), 400)}${suffix}": resolve every listed conflict against the base and push to the head branch. https://github.com/${repo}/pull/${pr.number}`;
-  return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
+  const text = `REBASE ${short}#${pr.number} branch=${noWs(pr.headRef, 120)} head=${noWs(pr.headSha.slice(0, 7), 12)} file=${noWs(file, 200)} check="merge-tree" acceptance="git merge-tree --write-tree ${noWs(pr.baseSha, 40)} ${noWs(pr.headSha, 40)}" conflicts="${quoted(shown.join(', '), 400)}${suffix}": first run phm pr resolve-conflicts --repo ${repo} --pr ${pr.number} --json; use --apply for proven append unions. Follow a ready-supersede bundle plan through publish.sh; needs-agent requires resolving the reported hunks. Push only through the sanctioned publisher to the PR head. https://github.com/${repo}/pull/${pr.number}`;
+  return `- READY ${rebaseId(repo, pr)} (${opts.rebasePriority}, pool=${opts.pool}, tier=${tier}, repo=${short}, after none, queuegen ${stamp}, max-files=${scope.maxFiles}, size<=${scope.maxLines}): ${pinned ? `${QUEUEGEN_SECURITY_PIN} ` : ''}${singleLine(text)}`;
 }
 
 function emptyState(): QueuegenState {
@@ -398,12 +404,15 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
   }
   const state = normalizeState(io.loadState());
   let queueIds: Set<string>;
+  let rebaseWork: ReturnType<QueuegenIo['readRebaseWork']>;
   try {
     queueIds = io.readQueueIds();
+    rebaseWork = io.readRebaseWork();
   } catch (error) {
     io.log('QUEUEGEN_QUEUE_INVALID');
     throw error;
   }
+  const activeRebases = new Set(rebaseWork.active);
   // The outcomes ledger is read lazily — only a candidate that reaches the
   // suppression check pays for it — and at most once per cycle. A throw is
   // logged and the cycle continues unsuppressed.
@@ -435,20 +444,23 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
             hold.has(`${short}#${pr.number}`) || hold.has(`${repo}#${pr.number}`)) continue;
         if (!/^[0-9a-f]{7,40}$/i.test(pr.headSha) || !/^[0-9a-f]{7,40}$/i.test(pr.baseSha) || !pr.headRef) continue;
         const key = `${repo}#${pr.number}`;
+        const dirty = pr.mergeState === 'DIRTY';
+        if (dirty && activeRebases.has(key)) { summary.deduped++; continue; }
         const history = state.emitted[key] ?? [];
         const last = history[0];
         // Same head inside the window is the same candidate — dedupe before any
         // gh call. A moved head makes the recorded evidence stale: the push is
         // a new candidate and falls through to be re-evaluated on live reads.
-        if (last !== undefined && now - last.at < windowMs &&
+        if (last !== undefined && !(dirty && rebaseWork.failed.has(last.id)) && now - last.at < windowMs &&
             (last.headSha === undefined || last.headSha === pr.headSha)) {
           summary.deduped++;
           io.log(`QUEUEGEN_DEDUP ${key}`);
           continue;
         }
         const pinned = pr.filesTruncated || pr.files.some(securityPinnedPath);
-        const dirty = pr.mergeState === 'DIRTY';
-        const id = dirty ? rebaseId(repo, pr) : fixupId(repo, pr);
+        const baseId = dirty ? rebaseId(repo, pr) : fixupId(repo, pr);
+        let id = baseId;
+        for (let retry = 1; dirty && rebaseWork.failed.has(id); retry++) id = `${baseId}-retry${retry}`;
         if (queueIds.has(id)) { summary.deduped++; continue; }
         let line: string;
         let checkName: string;
@@ -465,7 +477,7 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
           if (conflicts.length === 0) { summary.skipped++; continue; }
           checkName = 'merge-tree';
           file = conflicts[0] ?? '';
-          line = rebaseLine(repo, pr, conflicts, pinned, stamp, emit);
+          line = rebaseLine(repo, pr, conflicts, pinned, stamp, emit).replace(`- READY ${baseId} `, `- READY ${id} `);
         } else {
           let checks: QueuegenCheck[];
           try {
@@ -501,6 +513,7 @@ export function runQueuegenCycle(io: QueuegenIo, options: QueuegenOptions = {}):
           continue;
         }
         io.appendQueueLine(line);
+        if (dirty) activeRebases.add(key);
         history.unshift({ id, at: now, headSha: pr.headSha, check: checkName, file });
         state.emitted[key] = history;
         queueIds.add(id);

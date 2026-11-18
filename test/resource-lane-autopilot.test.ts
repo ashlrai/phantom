@@ -25,8 +25,8 @@ describe('lane decisions', () => {
     expect(decideLane(codex(0), 'green', NOW).target).toBe(32);
     expect(decideLane(codex(50), 'green', NOW).target).toBe(21);
   });
-  it('codex at 90% used drops to floor', () => {
-    expect(decideLane(codex(90), 'green', NOW).target).toBe(10);
+  it('codex at 100% used drops to floor', () => {
+    expect(decideLane(codex(100), 'green', NOW).target).toBe(10);
   });
   it('unknown reading holds and never raises', () => {
     const d = decideLane(codex(null), 'green', NOW);

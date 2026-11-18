@@ -41,6 +41,10 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/runs/inbox` | limit, source | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | POST | `/api/verse/fleet/runs/inbox` | none | [inline {ok, at} (201)](../src/core/verse/fleet-runs-api.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Please review the queue","source":"operator"}' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | GET | `/api/fleet/job` | id (required) | [FleetJobDetailV1](../src/core/fleet/runs-job-detail.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job?id=example-job'` |
+| GET | `/api/fleet/job/activity` | id (required) | [FleetJobActivityV1](../src/core/fleet/runs-job-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/activity?id=example-job'` |
+| GET | `/api/fleet/job/text` | id, kind (required) | [FleetJobTextV1](../src/core/fleet/runs-job-texts.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/text?id=example-job&kind=notes'` |
+| GET | `/api/fleet/job/changes` | id (required) | [FleetJobChangesV1](../src/core/fleet/runs-job-changes.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/changes?id=example-job'` |
+| GET | `/api/fleet/job/cost` | id (required) | [FleetJobCostV1](../src/core/fleet/runs-job-cost.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/cost?id=example-job'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
@@ -62,6 +66,17 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/verse/fleet/control/switches` | none | [RunsSwitchesV1](../src/core/fleet/runs-switches.ts) | [source](../src/core/verse/fleet-control-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"id":"PAUSE","on":true}' 'http://127.0.0.1:7777/api/verse/fleet/control/switches'` |
 | GET | `/api/verse/fleet/control/runs/` (VERSE_FLEET_CONTROL_RUNS_PREFIX) + {runId} + /log | none | [FleetRunLogV1](../src/core/fleet/fleet-control-types.ts) | [source](../src/core/verse/fleet-control-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/control/runs/example-run/log'` |
 
+## Orchestration journal
+
+`GET /api/verse/fleet/control/orchestration` returns the read-only specialist
+assignment journal: `schemaVersion: 1`, `authority: none`, source (`ok` or
+`missing`), total, truncation, counts, unresolved reservations and the newest
+25 receipts. It accepts no query parameters (400 for any query); other methods
+return 405. Read failure or the five-second deadline returns 503. See
+[fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-COORDINATION.md#leader-orchestration)
+and the [handler](../src/core/verse/fleet-orchestration-api.ts). An admitted
+receipt proves coordination, not job execution.
+
 ## Live fleet
 
 | Method | Path | Query | Response type / source | Handler | Curl example |
@@ -74,7 +89,7 @@ named nested type. Relative source links refer to the source checkout.
 | POST | `/api/verse/fleet/live/drop-jobs` | none | [inline {v, status, file, bytes, at} (201)](../src/core/fleet/drop-job-writer.ts) | [source](../src/core/verse/fleet-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"id":"EXAMPLE01","lane":"claude","tier":"work","body":"Summarize the merge backlog."}' 'http://127.0.0.1:7777/api/verse/fleet/live/drop-jobs'` |
 | GET | `/api/verse/fleet/live/feedback` | none | [ExecutionFeedbackRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback'` |
 | GET | `/api/verse/fleet/live/feedback/cases/` (EXECUTION_FEEDBACK_CASE_PATH) + {caseId} | none | [ExecutionFeedbackCaseRead](../src/core/verse/execution-feedback-api-types.ts) | [source](../src/core/verse/execution-feedback-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/live/feedback/cases/example-case'` |
-| GET | `/api/verse/fleet/graph/live` | none | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
+| GET | `/api/verse/fleet/graph/live` | agent (optional) | [FleetGraphLiveResponseV1](../src/core/verse/fleet-graph-live-api.ts) | [source](../src/core/verse/fleet-graph-live-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/graph/live'` |
 | GET | `/api/verse/github/fleet-backlog` (VERSE_GITHUB_FLEET_BACKLOG_ROUTE) | repo (required) | [MergeBacklogReadV1](../src/core/fleet/merge-backlog-read.ts) | [source](../src/core/verse/github-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/github/fleet-backlog?repo=owner/example'` |
 
 `GET /api/verse/github/fleet-backlog?repo=<owner/name>` returns one enrolled repo's open-PR merge backlog — items shaped `{number, title, headRef, updatedAt, mergeStateStatus, isDraft, job, classification, suggestedAction}` plus per-merge-state and per-action counts — cached for 60 s per repo. `suggestedAction` is `merge`, `recut`, `refresh`, `wait` or `none` from the merge-backlog planner; a `503` with `source: "gh-failed"` means gh could not answer and `items` is empty.
@@ -162,6 +177,16 @@ CLI has related, independently shaped views and controls: `phm fleet status`,
 from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 [inbox CLI](../src/cli/inbox.ts) for flags and authority gates.
 
+`phm fleet status` also reports disk use and the ten largest proven cleanup
+candidates. `--json` adds typed `disk` data (`fleet.disk-attribution.v1`):
+categories, per-job entries, source health and ranked `cleanupCandidates`.
+Sizes are logical bytes, not promised physical savings; missing or partial
+totals are `null` with a measured lower bound. Worktrees use the census safety
+checks; job logs, publish results, prompts and notes are measured by metadata
+only and retained as evidence. Active, dirty, protected and uncertain trees
+are never candidates. This command deletes nothing. Roots honor `ASHLR_WT_DIR`
+and `ASHLR_RUNS_DIR`; size walks and git probes have shared two-second budgets.
+
 ## Merge queue age from a snapshot
 
 Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and
@@ -196,6 +221,12 @@ measured entry in that snapshot. Add `--apply` to queue recuts and, after a
 replacement is published, request head-pinned GitHub auto-merge. GitHub still
 enforces required checks and the merge queue. Retry the command after a failed
 request or publication; it reuses the recovery identity.
+Recovery rechecks the source before submitting work and reports work already
+present on the base. Each source PR has three recut attempts and three auto-merge
+attempts, persisted under `queue/merge-recover` in the runs directory. Failures
+and interrupted submissions consume attempts; changing heads does not reset them.
+`retry-limit` means that budget is exhausted. Preview reads the same budget
+without spending it; an unreadable store prevents submission.
 
 For a dropped auto-merge instead of a conflict, run `phm fleet merge-retry
 --events merge-events.jsonl --json` against the same ledger `phm fleet
@@ -271,10 +302,99 @@ Worktrees are the dispatcher's active worker worktrees, not all Git worktrees.
 ### Fleet map
 
 The Fleet screen shows a map of the Leader, reported lanes and active jobs.
-Run `phm fleet map --json` for the same `fleet.map.v1` tree. The map uses
-`/api/verse/fleet/live`: it shows only jobs in that snapshot, and a job with
-an unreported lane appears under an unknown lane. Provider marks are initials;
-the snapshot does not provide logos or the Leader's identity.
+Run `phm fleet map --minutes 60 --json` for the `fleet.map.v2` graph (replaces
+the nested v1 tree). `GET /api/verse/fleet/control/map?minutes=60` serves the same
+contract to the existing 2D/3D views with a current read session; minutes is 1..1440.
+Every node and every edge carries a `provider` field: `Anthropic`, `OpenAI`,
+`Cognition`, `xAI`, `Google`, `Z.ai`, `Cursor`, `Local` or `unknown`. A job's
+provider comes from its model id, then its lane; an edge carries its sender's
+(`from`) provider. One function decides this, `providerFor` in
+`src/core/fleet/provider.ts`, and the 2D and 3D maps draw its badge on each
+agent and message line. A name it does not recognise is `unknown` and shows a
+neutral “?” badge, never a guess. Reporting edges point from child to parent.
+Session evidence preserves exact lanes and stale jobs; missing model/provider/health
+is `unknown`. The 2D map opens the existing job detail sheet. The 3D view retains
+machine placement and reads shared job labels and message counts.
+Message edges count retained, unexpired local bus receipts in the window, exclude
+human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately.
+Each message edge also carries `lastAt`, the time of its newest message. This is
+not a complete historical ledger. Leader, guardian and channel health remain unknown.
+
+#### Org tree
+
+`phm org` prints the same facts as one `fleet.org.v1` tree, and the Fleet map
+draws that tree: the leader, one card per lane, one chip per running job.
+JSON is the default; `phm org --text` prints it for people.
+The map endpoint above carries the tree in its `tree` field.
+
+- `leader`: `label`, `status` and the dispatcher's `lastTick` and `paused`.
+- `lanes[]`: `lane`, `provider`, `running`, `target`, `queued`, `held`, and
+  `usage` (`usedPct`, `asOf`, `resetAt`). Fleet lanes come first in a fixed
+  order, then any other lane by name.
+- `lanes[].jobs[]`: `id`, `repo`, `model`, `provider`, `status`, `startedAt`,
+  `lastEvent` (`at`, `kind`) and `lastActivityAt`. Oldest first.
+- `messages[]`: `from`, `to`, `count` for the message window, or `null` when
+  the bus could not be read.
+
+A fact no source reported is `null` in JSON and "unknown" in text and on
+screen, never 0. A lane with no jobs reads "idle"; when no job source answered
+(`jobsKnown` is false) it reads "jobs unknown" instead. The dot beside a job is
+on when `lastActivityAt` is within the last 5 minutes. Selecting a job opens
+its detail sheet.
+
+#### Live map
+
+`phm map` shows the whole fleet as one graph: the leader, lanes, running jobs,
+computers and the pools lanes draw on. `phm map --json` prints it as
+`fleet.live-map.v1`. `GET /api/verse/fleet/control/live-map` serves the same
+graph to the desktop Map pane with a current read session. The graph adds no
+source of its own. It joins the org map and tree above, `phm nodes` (computers
+and the jobs each one holds) and the pool-usage ledger.
+
+- `nodes[]`: `id`, `kind` (`leader`, `lane`, `job`, `computer`, `resource`),
+  `level` (0 to 4, the row in the drawing), `label`, `provider`, `status`,
+  `detail` and `live` (jobs only). Ids are stable: `leader`, `lane:<name>`,
+  `job:<id>`, `computer:<name>`, `resource:<lane>`.
+- `edges[]`: `id`, `kind` (`reports-to`, `runs-on`, `uses-resource`,
+  `messaged-in-last-15-min`), `from`, `to`, `messages`, `lastMessageAt` and
+  `pulse` (a message in the last minute).
+- `counts`, `sources`, `unmappedMessages`, and `gaps`, which lists in plain
+  words every fact the map could not show.
+
+Every node and edge has the same keys in the same order, sorted by level and
+id, so the same facts always print the same JSON. A job runs on a computer when
+that computer's pool claim names it, or when a worker process for it was seen
+on this computer. Messages to or from something not on the map, such as a
+channel, are counted in `unmappedMessages` and never assigned to a node by
+guessing. The server builds the graph at most once every 5 seconds, and the
+pane polls no faster than that while it is visible. Selecting a node opens the
+pane that already shows its details: the worker log for a job, Lanes, Computers,
+Usage for a pool, or Leader. The map is 2D only, because no 3D library is a
+dependency.
+
+### Live sessions
+
+`phm sessions [--lane <lane>] [--repo <repo>] [--json]` lists every running
+agent session, grouped by lane. `--json` prints `fleet.live-sessions.v1`, and
+`GET /api/verse/fleet/control/live-sessions[?lane=<lane>][&repo=<repo>]`
+serves the same list to the desktop Sessions pane with a current read session.
+It adds no source of its own: it projects the session map behind
+`/api/verse/fleet/control/sessions` (the dispatch inventory joined with the
+computers in `fleet.compute.v1`).
+
+- `sessions[]`: `job`, `lane`, `model`, `repo`, `tier`, `status` (`launching`,
+  `running`, `publishing`, or `unknown` for a job only another computer's claim
+  names), `startedAt`, `ageSeconds`, `lastOutputAt` (the worker log's last
+  write), `lastOutputAgeSeconds`, `quiet` (no output for more than 10 minutes;
+  null when unknown), `prUrl`, `computer` (node id or `unknown`),
+  `thisComputer` and `unknown`, which maps each unknown field to the reason.
+- `counts` (`sessions`, `quiet`, `lanes`, `otherComputers`), `filter` and
+  `gaps`.
+
+Rows sort by lane order, then start time, then job id, with the same keys in
+the same order. The server reads the session map at most once every 5 seconds.
+Selecting a session in the pane opens the worker log, which has the existing
+pause and stop controls.
 
 ### Desktop workbench actions (WB-4)
 

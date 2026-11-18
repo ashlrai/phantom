@@ -10,6 +10,7 @@ import type { TidyRule } from './workspace.js';
 
 /** Persisted configuration for the hub. Lives at ~/.ashlr/config.json. */
 export interface AshlrConfig {
+  usage?: { liveSources?: import('../usage/resource-live/config.js').LiveSourcesConfig };
   /** Optional agent graph inspection root. Explicit existing canonical private directory;
    * absent disables firm MCP resources. Reading never enrolls, executes, or creates keys.
    */
@@ -20,8 +21,6 @@ export interface AshlrConfig {
   roots: string[];
   /** Preferred editor for deep links. */
   editor: 'cursor' | 'vscode';
-  /** Markdown opener. Default `ashlr-md` (when installed, else editor); `editor` opts out. */
-  markdownOpener?: 'ashlr-md' | 'editor';
   /** Days without modification before an item is considered stale/inactive. */
   staleDays: number;
   /** Map of category name -> absolute folder path (e.g. "dev-tools" -> ".../github/dev-tools"). */
@@ -160,6 +159,7 @@ export interface AshlrConfig {
    * Entirely opt-in: a no-op when unset - notify() never posts without one.
    */
   notify?: NotifyTarget;
+  ciRerun?: { enabled?: boolean; intervalMinutes?: number; repos?: string[]; maxPerHour?: number };
   /**
    * M45: multi-backend engine fleet (v4 Foundry). ENTIRELY OPT-IN - when absent,
    * behavior is unchanged (builtin only; external engines run raw as today).
@@ -1295,6 +1295,12 @@ export interface AshlrConfig {
    */
   devin?: {
     enabled?: boolean;
+    /** Devin Review requests per local day; default 5, 0 disables reviews. */
+    review?: { maxPerDay?: number };
+    /** Weekly ACU allowance of the Devin plan (Max meters weekly, not daily). Absent falls back to the local budget total. */
+    weeklyAcuAllowance?: number;
+    /** Any past or future weekly reset instant (ISO). Absent leaves the window, and so the measured use, unknown. */
+    weeklyResetAt?: string;
     /**
      * Let the fleet launch Devin sessions without a click (origin `fleet`).
      * Default false. Even when true a fleet launch also needs a live standing
@@ -1347,5 +1353,14 @@ export interface AshlrConfig {
   router?: {
     /** Enable the contextual Thompson sampler in routeTask. Default false. */
     bandit?: boolean;
+    /**
+     * Censored reward for the dispatch-log learner (outcome-learning.ts). Off
+     * unless exactly true. When on, an assignment with no outcome that is older
+     * than the horizon counts as a failed attempt instead of missing data.
+     * See docs/router/censored-reward.md.
+     */
+    censorUnmerged?: boolean;
+    /** Horizon in hours. Default: twice the p95 time to merge in the log, at least 24. */
+    censorHorizonHours?: number;
   };
 }

@@ -9,6 +9,7 @@ import {
   resolveTheme,
   subscribeDesktopCommands,
   subscribeShellCommands,
+  trackThemeForShell,
   type DesktopCommand,
 } from './desktop-shell.js';
 import {
@@ -110,6 +111,54 @@ describe('reportThemeToShell', () => {
   });
 });
 
+describe('trackThemeForShell', () => {
+  /** A controllable prefers-color-scheme query: flip it and fire 'change'. */
+  function fakeOs(dark: boolean) {
+    const listeners = new Set<() => void>();
+    const media = {
+      matches: dark,
+      addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+      removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+    };
+    vi.stubGlobal('matchMedia', () => media);
+    return {
+      flip(next: boolean) {
+        media.matches = next;
+        for (const fn of [...listeners]) fn();
+      },
+      listeners,
+    };
+  }
+
+  it('in system mode re-reports the painted theme each time the OS flips, until unsubscribed', () => {
+    const reportTheme = vi.fn();
+    win.__ASHLR_DESKTOP__ = { reportTheme };
+    const os = fakeOs(false);
+
+    const stop = trackThemeForShell('system');
+    expect(reportTheme).toHaveBeenLastCalledWith('light');
+    os.flip(true);
+    expect(reportTheme).toHaveBeenLastCalledWith('dark');
+    os.flip(false);
+    expect(reportTheme).toHaveBeenLastCalledWith('light');
+
+    stop();
+    expect(os.listeners.size).toBe(0);
+    os.flip(true);
+    expect(reportTheme).toHaveBeenCalledTimes(3);
+  });
+
+  it('an explicit theme reports once and does not listen to the OS', () => {
+    const reportTheme = vi.fn();
+    win.__ASHLR_DESKTOP__ = { reportTheme };
+    const os = fakeOs(true);
+
+    trackThemeForShell('light')();
+    expect(reportTheme).toHaveBeenCalledWith('light');
+    expect(os.listeners.size).toBe(0);
+  });
+});
+
 describe('subscribeDesktopCommands', () => {
   function dispatch(command: unknown): void {
     window.dispatchEvent(new CustomEvent('ashlr:desktop-command', { detail: { command } }));
@@ -158,6 +207,7 @@ describe('subscribeShellCommands', () => {
     const off = subscribeShellCommands((c) => seen.push(c));
 
     dispatch('open-needs-you');
+    dispatch('open-fleet');
     dispatch('new-chat');
     dispatch('focus-composer');
     dispatch('open-session:vs_01J9-abc.def');
@@ -165,6 +215,7 @@ describe('subscribeShellCommands', () => {
 
     expect(seen).toEqual([
       { kind: 'command', name: 'open-needs-you', commandId: 'needs-you.open' },
+      { kind: 'command', name: 'open-fleet', commandId: 'surface.fleet' },
       { kind: 'command', name: 'new-chat', commandId: 'chat.new' },
       { kind: 'command', name: 'focus-composer', commandId: 'app.summon' },
       { kind: 'open-session', sessionId: 'vs_01J9-abc.def' },

@@ -236,6 +236,32 @@ export function resolveOllamaBaseUrl(cfg: AshlrConfig, explicit?: string): strin
   return out;
 }
 
+function isLocalDiscoveryEndpoint(value: string | URL): boolean {
+  try {
+    const url = value instanceof URL ? value : new URL(value);
+    return url.protocol === 'http:'
+      && ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)
+      && !url.username
+      && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+const localDiscoveryFetches = new WeakMap<typeof fetch, typeof fetch>();
+
+function localDiscoveryFetch(fetchImpl: typeof fetch): typeof fetch {
+  const cached = localDiscoveryFetches.get(fetchImpl);
+  if (cached) return cached;
+  const wrapped: typeof fetch = async (input, init) => {
+    const target = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+    if (!isLocalDiscoveryEndpoint(target)) throw new Error('Local model discovery requires an unauthenticated HTTP loopback endpoint');
+    return fetchImpl(input, { ...init, redirect: 'error' });
+  };
+  localDiscoveryFetches.set(fetchImpl, wrapped);
+  return wrapped;
+}
+
 /**
  * Which lane local seats DISPATCH turns down: `ollama` (the default) or
  * `llama-server`.
@@ -1110,7 +1136,7 @@ export async function discoverSeats(cfg: AshlrConfig, opts: VerseSeatDiscoveryOp
   const accountsRoot = resolveAccountsRoot(cfg, opts.accountsRoot);
   const ollamaBaseUrl = resolveOllamaBaseUrl(cfg, opts.ollamaBaseUrl);
   const dispatchLane = resolveVerseLocalDispatch(cfg, opts.localDispatch);
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = localDiscoveryFetch(opts.fetchImpl ?? fetch);
   const claudeUsage = opts.claudeUsage ?? readClaudeUsage;
 
   const seats: VerseSeat[] = [];
@@ -1158,23 +1184,25 @@ export async function discoverSeats(cfg: AshlrConfig, opts: VerseSeatDiscoveryOp
   };
   try {
     const dispatchBaseUrl = await resolveLocalDispatchBaseUrl(cfg, dispatchLane, ollamaBaseUrl);
-    const local = await discoverLocalSeats(
-      fetchImpl,
-      ollamaBaseUrl,
-      preferredLocalTags(cfg),
-      { lane: dispatchLane, baseUrl: dispatchBaseUrl },
-      {
-        llamaSlot: dispatchLane === 'llama-server' ? llamaSlotWindow(cfg, fetchImpl, opts.llamaServerOrigin) : null,
-        serverDefault: () => (opts.ollamaServerDefault !== undefined ? opts.ollamaServerDefault : readOllamaServerDefault()),
-        harness: opts.localHarness ?? discoverLocalHarness,
-      },
-    );
-    localRuntime = local.localRuntime;
-    for (const seat of local.seats) {
-      if (launches.has(seat.id)) continue;
-      seats.push(seat);
-      const launch = local.launches.get(seat.id);
-      if (launch) launches.set(seat.id, launch);
+    if (isLocalDiscoveryEndpoint(ollamaBaseUrl) && isLocalDiscoveryEndpoint(dispatchBaseUrl)) {
+      const local = await discoverLocalSeats(
+        fetchImpl,
+        ollamaBaseUrl,
+        preferredLocalTags(cfg),
+        { lane: dispatchLane, baseUrl: dispatchBaseUrl },
+        {
+          llamaSlot: dispatchLane === 'llama-server' ? llamaSlotWindow(cfg, fetchImpl, opts.llamaServerOrigin) : null,
+          serverDefault: () => (opts.ollamaServerDefault !== undefined ? opts.ollamaServerDefault : readOllamaServerDefault()),
+          harness: opts.localHarness ?? discoverLocalHarness,
+        },
+      );
+      localRuntime = local.localRuntime;
+      for (const seat of local.seats) {
+        if (launches.has(seat.id)) continue;
+        seats.push(seat);
+        const launch = local.launches.get(seat.id);
+        if (launch) launches.set(seat.id, launch);
+      }
     }
   } catch {
     // Unreachable runtime: reported via localRuntime.reachable === false.

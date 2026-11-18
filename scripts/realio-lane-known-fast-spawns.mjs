@@ -17,6 +17,7 @@
  * move to REAL_IO_TEST_FILES instead.
  */
 export const KNOWN_FAST_SPAWN_FILES = [
+  'test/router-gateway.test.ts', // 2026-11-16: loopback gateway plus one node child; the file finished in under 1s.
   'test/resources-local-omlx-probe.test.ts', // Bounded loopback fixture; slowest case is the 2s timeout.
   'test/resources-local-omlx-probe-undefined-req-31.test.ts', // Bounded loopback fixture; single sub-second case.
   'test/cycle-emit.test.ts', // Three offline Node children, each bounded to 1s and isolated HOME.

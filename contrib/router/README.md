@@ -25,6 +25,9 @@ Issues in the configured ashlrai repos use `route:codex`, `route:claude`, `route
 
 `model:<name>` or `tier:frontier|workhorse|cheap` may appear on a label or a body line. A label wins. The default tier is `workhorse`.
 
+The example Codex ladder is `gpt-6.2-astra` for `frontier`, `gpt-6.2-sol` for
+`workhorse`, and the unchanged `gpt-6-luna` for `cheap`.
+
 ## Spend order
 
 For `route:any`, a living pool is used in this order:
@@ -153,7 +156,7 @@ The model flag is omitted when the probe rejected the configured model. Codex pr
 
 - A metered Grok login is detected and then skipped. There is no key exception and no `grok update`.
 - Claude's recorded model list is the aliases `fable`, `opus`, and `sonnet`. `claude auth status` decides whether Claude is logged in.
-- Codex can reject a catalog name, including `gpt-6.1-sol`. `gpt-6-astra` stays unverified until the exec probe accepts it. A runtime rejection drops the model into `probed_bad`, retries once without `--model`, and reroutes a codex job to the next pool when the default is rejected too. The pool stays up; an unknown model is never treated as an auth failure.
+- Codex can reject a catalog name even when another account accepts it. `gpt-6.2-astra` and `gpt-6.2-sol` passed read-only exec probes on Codex CLI 0.169.0 through ChatGPT subscription sign-in on 2026-11-17; each pool still probes its own access. A runtime rejection drops the model into `probed_bad`, retries once without `--model`, and reroutes a codex job to the next pool when the default is rejected too. The pool stays up; an unknown model is never treated as an auth failure.
 - The work `~/.codex` pool stays dead after an auth failure until the pool state is edited by hand.
 - Local oMLX applies a unified diff and never downloads. It is off by default. `omlx-mac.sh download` is a separate, disk-guarded step.
 - `phantom route --json` is optional. An invalid pick falls back to the spend order. A returned `ollama` cli is treated as `omlx`.

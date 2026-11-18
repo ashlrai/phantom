@@ -145,7 +145,7 @@ with the original qualified hosted archive.
 npm ci
 npm run check:release
 npm run prepublishOnly
-# If native desktop code changed: npm run build:binary; node desktop/scripts/prepare-sidecar.mjs; (cd desktop && cargo tauri build)
+# If native desktop code changed: npm run build:binary; node desktop/scripts/prepare-sidecar.mjs; npm --prefix desktop run build
 npm run ship:local -- --native  # uses a PREBUILT native binary; verify it was copied
 ```
 
@@ -227,7 +227,7 @@ and any attempt to quarantine `secret-shape`, `gitleaks`, `cargo-deny` or
 1. preflight existing `phm`/`ashlr` aliases; unrelated files or dangling/foreign links refuse;
 2. build a clean `dist/`, pack into OS temp, and extract a source-distinct CLI release;
 3. for native maintenance, require prior supported Stop/drain, known-empty execution leases and a normally closed app; Stop alone is insufficient;
-4. stage a full verified legacy `Ashlr.app` or current `Phantom.app`, apply fresh sidecar/public/native files, preserve the stable signing identity and verify a compressed full rollback archive;
+4. stage a full verified legacy `Ashlr.app` or current `Phantom.app`, apply fresh sidecar/public/native files and all plist edits, sign once with the existing stable identity, strictly verify and verify a compressed full rollback archive;
 5. switch the one active app to `Phantom.app` together with the exact current CLI symlink and missing `phm`/`ashlr` aliases; bare `phantom` remains Secrets;
 6. launch and accept only the exact native PID, parented sidecar, owned listener and healthy console. Never restart the resident or release Stop during maintenance.
 
@@ -237,6 +237,12 @@ The published 3.26.0 release includes the signed idle updater; publication does
 not enable automatic adoption. Both names present refuse rather
 than choosing one. A first native install requires a verified signed prebuilt
 `desktop/src-tauri/target/release/bundle/macos/Phantom.app`.
+Produce it with `npm --prefix desktop run build` after preparing the sidecar and
+icons as described in the [desktop build guide](../desktop/README.md#the-exact-steps-on-this-mac).
+This local build requires the existing `Ashlr Local` identity before compiling,
+signs only after Tauri has copied all bundle resources, requires a resource seal,
+and strictly verifies the bundle identifier and certificate hash. It builds only
+the `.app`; DMG/Finder layout failures cannot block the local install path.
 
 The private `/Applications/.phantom-install-*` transaction directory retains a
 `transaction.json` phase record and `previous-app.zip` full, non-launchable backup.
@@ -266,6 +272,32 @@ instead of creating another identity or falling back to ad-hoc signing. The bund
 identifier, executable names, entitlements and data identities remain stable.
 Codesign can still require a human Keychain approval for that existing key.
 Locally signed builds are not Apple Developer ID notarized.
+
+Raw `cargo tauri build` uses the distribution/development config, whose Apple
+signing identity is unset. On Apple Silicon, the linker's ad-hoc executable
+signature is not an app resource seal; the installer must reject that artifact.
+Use the local producer above rather than attempting to install an unverified app.
+`phm desktop install` consumes qualified published artifacts and never builds or
+repairs signatures; it is separate from this source-build maintenance path.
+
+After changing the local pipeline, verify on the Mac (Linux tests stub Apple tools):
+
+```sh
+security find-identity -p codesigning
+npm --prefix desktop run build
+codesign -dv --verbose=4 desktop/src-tauri/target/release/bundle/macos/Phantom.app
+test -f desktop/src-tauri/target/release/bundle/macos/Phantom.app/Contents/_CodeSignature/CodeResources
+codesign --verify --deep --strict desktop/src-tauri/target/release/bundle/macos/Phantom.app
+```
+
+Confirm `Identifier=ai.ashlr.desktop`, `Authority=Ashlr Local` and a certificate
+signature rather than `Signature=adhoc`. A self-signed local certificate need
+not have an Apple `TeamIdentifier`. After Stop/drain and normal Quit, run the
+supported `npm run ship:local -- --native`, verify the installed app's signature,
+and check native launch, owned sidecar, health and preserved microphone access.
+Also check that a build user without the identity fails before Cargo runs.
+Distribution DMG creation, Finder permissions and Gatekeeper acceptance still
+require separate Mac verification; no specific DMG failure is proven by Linux tests.
 
 `npm run ship:local -- --dry-run` prints every step and changes nothing.
 

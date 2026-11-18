@@ -1,0 +1,106 @@
+// Release prep: start one release-gate CI run per master sha.
+// Desktop release smoke and Release suites live in ci.yml and run only when
+// release_gate is set. A master push does not set it, and the half-hour
+// schedule rarely fires, so Auto-tag waits. This decides whether to dispatch
+// ci.yml with release_gate=true. It reads check runs and workflow runs for
+// one exact sha. It does not sign, publish, or create tags.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, realpathSync } from 'node:fs';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
+
+export const ACTIONS_APP_ID = 15368;
+export const SMOKE = 'Desktop release smoke';
+export const SUITES = 'Release suites (build + signing path)';
+const SHA = /^[a-f0-9]{40}$/;
+
+export function releasePrepDecision({ checks, runs }) {
+  assert.ok(Array.isArray(checks) && Array.isArray(runs), 'missing release prep inventory');
+  const named = (name) => checks.filter((row) => row?.name === name && row?.appId === ACTIONS_APP_ID);
+  const success = (rows) => rows.some((row) => row.status === 'completed' && row.conclusion === 'success');
+  const active = (rows) => rows.some((row) => row.status !== 'completed');
+  const smoke = named(SMOKE);
+  const suites = named(SUITES);
+  if (success(smoke) && success(suites)) return { dispatch: false, reason: 'already-green' };
+  if (active(smoke) || active(suites)) return { dispatch: false, reason: 'checks-in-progress' };
+  const inflight = runs.filter((row) => row?.path === '.github/workflows/ci.yml'
+    && (row.event === 'workflow_dispatch' || row.event === 'schedule')
+    && row.status !== 'completed');
+  if (inflight.length > 0) return { dispatch: false, reason: 'release-run-in-flight' };
+  return { dispatch: true, reason: 'needed' };
+}
+
+export function rateLimitDelay(status, headers, body, attempt, now = Date.now()) {
+  if (status !== 429 && !(status === 403 && (/rate limit/i.test(body) || headers['x-ratelimit-remaining'] === '0' || headers['retry-after']))) return null;
+  const retry = headers['retry-after'];
+  const retryMs = retry ? (/^\d+$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - now)) : 0;
+  const reset = Number(headers['x-ratelimit-reset']);
+  const resetMs = headers['x-ratelimit-remaining'] === '0' && Number.isFinite(reset) ? Math.max(0, reset * 1000 - now + 1000) : 0;
+  return Math.max(1000 * 2 ** (attempt - 1), Number.isFinite(retryMs) ? retryMs : 0, resetMs);
+}
+
+// One shared budget covers all inventory requests in this invocation.
+let waited = 0;
+export function githubJson(path, invoke = execFileSync, sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
+  assert.match(path, /^repos\/ashlrai\/phantom\/(?:commits\/[a-f0-9]{40}\/check-runs\?|actions\/workflows\/ci\.yml\/runs\?|commits\/master$)/);
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    let response;
+    try {
+      response = invoke('gh', ['api', '--include', '--hostname', 'github.com', path], {
+        encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      response = String(error.stdout ?? '');
+      if (!response.startsWith('HTTP/')) throw new Error('GitHub API request failed');
+    }
+    const separator = response.indexOf('\r\n\r\n') >= 0 ? '\r\n\r\n' : '\n\n';
+    const split = response.indexOf(separator);
+    assert.ok(split >= 0, 'invalid GitHub API response');
+    const lines = response.slice(0, split).split(/\r?\n/);
+    const status = Number(lines[0].match(/^HTTP\/\S+\s+(\d+)/)?.[1]);
+    const headers = Object.fromEntries(lines.slice(1).map((line) => {
+      const colon = line.indexOf(':');
+      return [line.slice(0, colon).toLowerCase(), line.slice(colon + 1).trim()];
+    }));
+    const body = response.slice(split + separator.length);
+    if (status >= 200 && status < 300) return JSON.parse(body);
+    const delay = rateLimitDelay(status, headers, body, attempt);
+    if (delay === null) throw new Error(`GitHub API request failed (HTTP ${status})`);
+    if (attempt === 4 || waited + delay >= 180_000) throw new Error(`GitHub API rate limit persisted after ${attempt} attempt(s); retry budget exhausted`);
+    waited += delay;
+    sleep(delay);
+  }
+
+}
+
+export function readReleasePrep(repo, sha, read = githubJson) {
+  assert.equal(repo, 'ashlrai/phantom');
+  assert.match(sha, SHA);
+  const checks = read(`repos/${repo}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100`);
+  assert.ok(Array.isArray(checks.check_runs), 'missing check runs');
+  const runs = read(`repos/${repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=20`);
+  assert.ok(Array.isArray(runs.workflow_runs), 'missing workflow runs');
+  return releasePrepDecision({
+    checks: checks.check_runs.map((row) => ({
+      name: row.name, status: row.status, conclusion: row.conclusion ?? null, appId: row.app?.id,
+    })),
+    runs: runs.workflow_runs.map((row) => ({
+      path: row.path, event: row.event, status: row.status,
+    })),
+  });
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    assert.equal(process.env.REPO, 'ashlrai/phantom');
+    const sha = githubJson(`repos/${process.env.REPO}/commits/master`).sha;
+    assert.match(sha ?? '', SHA);
+    const decision = readReleasePrep(process.env.REPO, sha);
+    appendFileSync(process.env.GITHUB_OUTPUT, `dispatch=${decision.dispatch}\n`);
+    process.stdout.write(`${JSON.stringify(decision)}\n`);
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
+}

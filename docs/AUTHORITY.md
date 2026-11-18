@@ -110,6 +110,7 @@ trailing context tag such as `[1m]` is ignored.
 | Claude Fable 5.1 | same | `claude-fable-5-1`, `fable-5-1` |
 | Claude Fable 5 | same | `claude-fable-5`, `fable-5` |
 | Claude Sonnet 5 | same | `claude-sonnet-5`, `sonnet-5` |
+| GPT-6.2 Astra / Sol | `codex`, `openai` | Exact `gpt-6.2-astra`, `gpt-6.2-sol`; older model-specific grants do not imply these versions |
 | GPT-6 Astra / Sol / Luna | `codex`, `openai`, `devin-cli` | `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, each also with `-minimal`, `-low`, `-medium`, `-high`, `-xhigh` or `-max` |
 | Grok 4.7 | `grok-cli` | `grok-4.7`, `grok-4.7-build-fast` |
 | Grok 4.6 | `grok-cli` | `grok-4.6`, `grok-4.6-build` |
@@ -460,6 +461,11 @@ installed plist has drifted from config.
       `gpt-5.5`, or `ASHLR_MODEL`). Both defaults are non-elite, so this fails
       closed unless `ASHLR_MODEL` names an elite model.
     - `llama-server` is excluded outright.
+22. **Renewing an expired Claude token is one masked prompt.** Run
+   `phm authority claude-signin` in your own terminal. It reads `claude auth
+   status` (exit code only), then asks for the `claude setup-token` output once,
+   hidden (that command prints a token and accepts none). The value goes straight
+   to custody and is never echoed, logged or read back. Never paste it into a chat.
 
     What stands in for the judge is your test suite: a repo whose tests are
     thin gets thin protection. The post-merge watch and its automatic revert
