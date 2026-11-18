@@ -36,12 +36,12 @@ function fixture(rows: string[], nodes: { id: string; caps: string[]; slots?: nu
   let now = 1_000_000;
   const nodes_ = new DriveNodes(new MemoryStore(), { now: () => now, nodeTtlMs: 600_000, leaderTtlMs: 600_000, claimTtlMs: 1_000 });
   const sessions = new Map(nodes.map(n => [n.id, nodes_.join(n.id, { owners: ['ashlr'], caps: n.caps, ...(n.slots === undefined ? {} : { slots: n.slots }) })!]));
-  const router = localBridgeRouter(nodes_);
+  const router = localBridgeRouter(nodes_, root);
   const pass = (apply = true, extra: Partial<Parameters<typeof runNodeBridge>[0]> = {}) =>
     runNodeBridge({ host, router, owner: 'ashlr', apply, now, pendingTtlMs: 60_000, ...extra });
   const ready = () => readFileSync(join(host.runsRoot, 'queue', 'ready.tsv'), 'utf8');
   const lease = (job: string) => join(host.runsRoot, 'queue', 'run', `${job}.batched`);
-  return { host, nodes: nodes_, sessions, pass, ready, lease, advance: (ms: number) => { now += ms; } };
+  return { host, nodes: nodes_, sessions, router, pass, ready, lease, advance: (ms: number) => { now += ms; } };
 }
 
 describe('ready.tsv -> node router bridge', () => {
@@ -59,6 +59,7 @@ describe('ready.tsv -> node router bridge', () => {
     expect(owner.startsWith('RQ-BATCH-')).toBe(true);
     // dispatchd's LEASE_ORPHANED sweep keeps a lease only when this manifest exists.
     expect(existsSync(join(f.host.runsRoot, 'queue', 'batches', `${owner}.json`))).toBe(true);
+    expect(JSON.parse(readFileSync(join(f.host.runsRoot, 'queue', 'batches', `${owner}.json`), 'utf8')).routerScope).toBe(f.router.scope);
     expect(f.ready()).toBe('');
     expect(f.nodes.view(['ashlr']).jobs).toEqual([expect.objectContaining({ id: 'ready:RQ-REVIEW-A:1', state: 'pending',
       pack: 'codex-file', secrets: [] })]);
@@ -161,6 +162,81 @@ describe('ready.tsv -> node router bridge', () => {
     expect(f.ready()).toBe(row(other) + '\n');
   });
 
+  it('holds a lease created under a different owner without withdrawing or requeueing it', async () => {
+    const f = fixture([row('RQ-REVIEW-OWNER')]);
+    await f.pass();
+    const leaseOwner = bridgeLeaseOwner('RQ-REVIEW-OWNER');
+    const manifestPath = join(f.host.runsRoot, 'queue', 'batches', `${leaseOwner}.json`);
+    const manifestBefore = readFileSync(manifestPath, 'utf8');
+    const leaseBefore = readFileSync(f.lease('RQ-REVIEW-OWNER'), 'utf8');
+    const readyBefore = f.ready();
+    let withdrawCalls = 0;
+    const router: BridgeRouter = { ...f.router, withdraw: (jobId, owner) => {
+      withdrawCalls++;
+      return f.router.withdraw(jobId, owner);
+    } };
+
+    const report = await f.pass(true, { owner: 'owner-b', router });
+    expect(report.leases[0]).toMatchObject({ leaseOwner, action: 'hold-owner-mismatch' });
+    expect(withdrawCalls).toBe(0);
+    expect(report.requeued).toEqual([]);
+    expect(f.ready()).toBe(readyBefore);
+    expect(readFileSync(f.lease('RQ-REVIEW-OWNER'), 'utf8')).toBe(leaseBefore);
+    expect(readFileSync(manifestPath, 'utf8')).toBe(manifestBefore);
+  });
+
+  it('holds a manifest from a different router scope without withdrawing or requeueing it', async () => {
+    const f = fixture([row('RQ-REVIEW-SCOPE')]);
+    await f.pass();
+    const leaseOwner = bridgeLeaseOwner('RQ-REVIEW-SCOPE');
+    const manifestPath = join(f.host.runsRoot, 'queue', 'batches', `${leaseOwner}.json`);
+    const manifestBefore = readFileSync(manifestPath, 'utf8');
+    const leaseBefore = readFileSync(f.lease('RQ-REVIEW-SCOPE'), 'utf8');
+    const readyBefore = f.ready();
+    let withdrawCalls = 0;
+    const router: BridgeRouter = { ...f.router, scope: `${f.router.scope}:changed`, withdraw: (jobId, owner) => {
+      withdrawCalls++;
+      return f.router.withdraw(jobId, owner);
+    } };
+
+    const report = await f.pass(true, { router });
+    expect(report.leases[0]).toMatchObject({ leaseOwner, action: 'hold-router-mismatch' });
+    expect(withdrawCalls).toBe(0);
+    expect(report.requeued).toEqual([]);
+    expect(f.ready()).toBe(readyBefore);
+    expect(readFileSync(f.lease('RQ-REVIEW-SCOPE'), 'utf8')).toBe(leaseBefore);
+    expect(readFileSync(manifestPath, 'utf8')).toBe(manifestBefore);
+  });
+
+  it('holds legacy manifests without a router scope, including when dry-run has no router', async () => {
+    const f = fixture([row('RQ-REVIEW-LEGACY')]);
+    await f.pass();
+    const leaseOwner = bridgeLeaseOwner('RQ-REVIEW-LEGACY');
+    const manifestPath = join(f.host.runsRoot, 'queue', 'batches', `${leaseOwner}.json`);
+    const legacy = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    delete legacy['routerScope'];
+    writeFileSync(manifestPath, JSON.stringify(legacy) + '\n');
+    const manifestBefore = readFileSync(manifestPath, 'utf8');
+    const leaseBefore = readFileSync(f.lease('RQ-REVIEW-LEGACY'), 'utf8');
+    const readyBefore = f.ready();
+    let withdrawCalls = 0;
+    const router: BridgeRouter = { ...f.router, withdraw: (jobId, owner) => {
+      withdrawCalls++;
+      return f.router.withdraw(jobId, owner);
+    } };
+
+    const report = await f.pass(true, { router });
+    expect(report.leases[0]).toMatchObject({ leaseOwner, action: 'hold-router-mismatch' });
+    expect(withdrawCalls).toBe(0);
+    expect(report.requeued).toEqual([]);
+    expect(f.ready()).toBe(readyBefore);
+    expect(readFileSync(f.lease('RQ-REVIEW-LEGACY'), 'utf8')).toBe(leaseBefore);
+    expect(readFileSync(manifestPath, 'utf8')).toBe(manifestBefore);
+
+    const dryRun = await f.pass(false, { router: null });
+    expect(dryRun.leases[0]).toMatchObject({ leaseOwner, action: 'hold-router-mismatch' });
+  });
+
   it('loses the duplicate-claim race to a running dispatchd tick and to an existing local claim', async () => {
     const f = fixture([row('RQ-REVIEW-A'), row('RQ-REVIEW-B')]);
     const tick = spawn('python3', ['-c', 'import fcntl,sys; f=open(sys.argv[1],"a"); fcntl.flock(f,fcntl.LOCK_EX); print("held",flush=True); sys.stdin.read()',
@@ -186,7 +262,7 @@ describe('ready.tsv -> node router bridge', () => {
 
   it('serializes two passes while a staged manifest is waiting for publication', async () => {
     const f = fixture([row('RQ-REVIEW-RACE')]);
-    const baseRouter = localBridgeRouter(f.nodes);
+    const baseRouter = localBridgeRouter(f.nodes, f.router.scope);
     let held = false;
     const lock = async () => {
       if (held) return { busy: 'bridge-pass-busy' };
@@ -195,6 +271,7 @@ describe('ready.tsv -> node router bridge', () => {
     };
     let secondPass: ReturnType<typeof runNodeBridge> | undefined;
     const router: BridgeRouter = {
+      scope: baseRouter.scope,
       view: owner => baseRouter.view(owner),
       withdraw: (jobId, owner) => baseRouter.withdraw(jobId, owner),
       enqueue: (jobId, spec) => {

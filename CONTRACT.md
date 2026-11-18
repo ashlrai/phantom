@@ -1171,6 +1171,13 @@ the constants `NODE_BRIDGE_SCHEMA`, `NODE_BRIDGE_LEASE_PREFIX`,
 `NodeBridgeReport`, `BridgeRowDecision`, `BridgeNodeView`, `BridgeLeaseView`,
 `BridgeRouter`, `ReadyRow`, `NodeBridgeHost`, `NodeBridgeOptions`,
 `DispatcherLock` and `AcquireDispatcherLock`.
+`BridgeRouter.scope` is a stable, non-secret identity of the canonical router
+store location; `localBridgeRouter(nodes, storeDirectory)` and
+`poolBridgeRouter(call, storeDirectory)` derive it from the real store path.
+Bridge manifests bind `owner` and
+optional `routerScope`; reconciliation holds owner mismatches as
+`hold-owner-mismatch` and missing or changed scopes as `hold-router-mismatch`,
+without withdrawing or requeueing those leases.
 `src/core/drive/nodes/ready-bridge-run.ts` exports `readNodeBridgeConfig`,
 `runConfiguredNodeBridge`, `NodeBridgeConfig` and `NodeBridgeRunOptions`.
 `DriveNodes.withdraw(jobId, owner)` returns a `WithdrawOutcome`
