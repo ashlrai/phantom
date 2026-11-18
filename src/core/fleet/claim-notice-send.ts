@@ -56,6 +56,9 @@ export interface ClaimNoticeSendDeps {
   readSentLedger: () => ReadonlySet<string> | null;
   /** Ledger one delivered dedupeKey (timestamped row, no text). */
   appendSentLedger: (dedupeKey: string, at: number) => void;
+  /** Persist the first attempt clock BEFORE enqueue, so retries render identical
+   * timestamps even when enqueue succeeded but the sent ledger write failed. */
+  noticeTime?: (dedupeKey: string, now: number) => number;
   send: ClaimNoticeSend;
   now: () => number;
   /** Plan only: never send, ledger or write the snapshot. */
@@ -113,7 +116,20 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
   let bindings: readonly ClaimThreadBinding[] | null;
   try { bindings = deps.readBindings(); } catch { bindings = null; }
   if (bindings === null) return empty('bindings-unavailable', 'claim-bindings-unreadable');
-  const notices = planClaimThreadNotices(prev, next, bindings, now);
+  let notices = planClaimThreadNotices(prev, next, bindings, now);
+  if (!deps.dryRun && deps.noticeTime) {
+    const times = new Map<string, number>();
+    try {
+      for (const notice of notices) {
+        if (!sent.has(notice.dedupeKey)) times.set(notice.dedupeKey, deps.noticeTime(notice.dedupeKey, now));
+      }
+      notices = planClaimThreadNotices(prev, next, bindings, now, times);
+    } catch {
+      // An unreadable/unwritable attempt clock cannot safely mint a new payload
+      // under an id that may already have been enqueued. Keep the delta pending.
+      return empty('ledger-unavailable', 'notice-clock-unavailable');
+    }
+  }
   const delivery = (notice: ClaimThreadNotice, result: ClaimNoticeDelivery['result'],
     extra: Partial<ClaimNoticeDelivery> = {}): ClaimNoticeDelivery =>
     ({ threadKey: notice.threadKey, state: notice.state, dedupeKey: notice.dedupeKey,
@@ -189,6 +205,7 @@ export interface ClaimNoticePaths {
   bindings: string;
   sent: string;
   prev: string;
+  clocks: string;
 }
 
 export function claimNoticePaths(root = claimNoticeDir()): ClaimNoticePaths {
@@ -196,6 +213,7 @@ export function claimNoticePaths(root = claimNoticeDir()): ClaimNoticePaths {
     bindings: join(root, 'claim-thread-bindings.jsonl'),
     sent: join(root, 'claim-notice-sent.jsonl'),
     prev: join(root, 'claim-notice-prev.json'),
+    clocks: join(root, 'claim-notice-clocks.jsonl'),
   };
 }
 
@@ -347,14 +365,33 @@ export function writeClaimNoticePrev(prevPath: string, snapshot: ClaimThreadSnap
 /** The durable state half of {@link ClaimNoticeSendDeps}; the caller still
  * supplies readBoard, send and now. */
 export function claimNoticeFileDeps(root = claimNoticeDir()): Pick<ClaimNoticeSendDeps,
-  'readPrevSnapshot' | 'readPrevSnapshotState' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger'> {
+  'readPrevSnapshot' | 'readPrevSnapshotState' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger' | 'noticeTime'> {
   const paths = claimNoticePaths(root);
   return {
     readPrevSnapshot: () => readClaimNoticePrev(paths.prev),
     readPrevSnapshotState: () => readClaimNoticePrevState(paths.prev),
-    writePrevSnapshot: snapshot => writeClaimNoticePrev(paths.prev, snapshot),
+    writePrevSnapshot: snapshot => {
+      writeClaimNoticePrev(paths.prev, snapshot);
+      // Every notice is now ledgered and the snapshot is durable. Pending
+      // clocks may be retired only after that checkpoint, never before it.
+      writePrivateFileAtomic(paths.clocks, '');
+    },
     readBindings: () => readClaimThreadBindingsState(paths.bindings),
     readSentLedger: () => readClaimNoticeSent(paths.sent),
     appendSentLedger: (dedupeKey, at) => appendClaimNoticeSent(paths.sent, dedupeKey, at),
+    noticeTime: (key, at) => {
+      // Same bounded, private key+clock format as the sent ledger. No message
+      // text or thread content is stored. Never evict a pending retry clock.
+      const rows = readClaimNoticeSentRows(paths.clocks);
+      if (rows === null || !safeInt(at)) throw new Error('notice clock unavailable');
+      const prior = rows.find(row => row.key === key);
+      if (prior) {
+        if (prior.at > at) throw new Error('notice clock in future');
+        return prior.at;
+      }
+      if (rows.length >= CLAIM_NOTICE_SENT_MAX_KEYS) throw new Error('notice clock capacity');
+      appendClaimNoticeSent(paths.clocks, key, at);
+      return at;
+    },
   };
 }

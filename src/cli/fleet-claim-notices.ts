@@ -113,6 +113,7 @@ export function claimNoticePassDeps(deps: ClaimNoticeCliDeps = {}, dryRun = fals
     readBindings: deps.readBindings ?? files.readBindings,
     readSentLedger: deps.readSentLedger ?? files.readSentLedger,
     appendSentLedger: deps.appendSentLedger ?? files.appendSentLedger,
+    noticeTime: deps.noticeTime ?? files.noticeTime,
     send: deps.send ?? claimNoticeSlackSender(
       deps.busRoot ?? join(ashlrHome(), 'fleet'), deps.readConfig ?? loadAgentNetworkConfig),
     now, dryRun,
