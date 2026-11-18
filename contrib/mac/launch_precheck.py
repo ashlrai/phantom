@@ -506,3 +506,84 @@ def read_attempts(runs):
                         original['capability_failure'] = reason; break
         except (OSError, KeyError, ValueError, TypeError): pass
     return rows
+
+
+# RQ-QUEUERECOVERYQ8: a launch that fails used to drop its ready line with no reason and no
+# bound (LAUNCH_FAILED), or requeue it forever (LAUNCH_INTERRUPTED). A failed launch now gets
+# a fixed machine-readable reason, at most LAUNCH_MAX_ATTEMPTS tries with doubling backoff,
+# and then a permanent give-up receipt. Only queue input changes (park_key) reset the count.
+# Reasons are fixed labels: launcher output is untrusted and is never copied into state.
+LAUNCH_MAX_ATTEMPTS = 3
+LAUNCH_BACKOFF_S = 120
+RETRYABLE = "retryable"      # a later attempt can succeed: host pressure, timeout, local backend down
+PERMANENT = "permanent"      # retrying cannot help until someone changes credentials or the job
+_LAUNCH_REASONS = (          # first match wins; (reason, retryable, pattern)
+    ("local_backend_unavailable", True,
+     re.compile(r"(?i)127\.0\.0\.1:8123|localhost:8123|connection refused|econnrefused|local (model|backend)")),
+    ("authentication", False,
+     re.compile(r"(?i)\b(401|403)\b|unauthori[sz]ed|forbidden|not logged in|invalid (api )?key|authentication (failed|required)")),
+    ("resource_exhausted", True,
+     re.compile(r"(?i)resource temporarily unavailable|cannot fork|cannot allocate memory|BlockingIOError|"
+                r"\[Errno (11|12|35)\]|too many processes|no space left")),
+    ("provider_unavailable", True,
+     re.compile(r"(?i)\b(429|502|503|504)\b|rate[ _-]?limit|quota|overloaded|timed out|temporar(y|ily) unavailable|"
+                r"connection (reset|aborted)")),
+)
+
+
+def classify_launch_failure(out, exit_code=None):
+    """Launcher output and exit status -> (reason, retryable). Fixed labels only."""
+    if exit_code == 124:
+        return ("launch_timeout", True)
+    text = out if isinstance(out, str) else ""
+    if not text.strip():
+        return ("launch_interrupted", True)   # no output and no worktree: the launcher died before it started
+    for reason, retryable, rx in _LAUNCH_REASONS:
+        if rx.search(text):
+            return (reason, retryable)
+    return ("launch_script_error", True)      # unknown: still bounded by LAUNCH_MAX_ATTEMPTS
+
+
+def classify_empty_failure(empty, exit_code, pool_error=None):
+    """Why a finished-empty job produced nothing: a fixed reason, or None when it is not a failure.
+
+    A clean exit with no diff is a legitimate no-op (classify_empty -> no_diff), never a failure.
+    """
+    kind = classify_empty(empty, exit_code, pool_error)
+    if kind is None or kind == EMPTY_NO_DIFF:
+        return None
+    if exit_code == 124:
+        return "launch_timeout"
+    if pool_error:
+        return "provider_" + re.sub(r"[^a-z0-9]+", "_", str(pool_error).lower()).strip("_")[:32]
+    return "agent_exit_nonzero" if kind == EMPTY_ERROR else "exit_status_missing"
+
+
+def launch_hold(state, job, key, now):
+    """'gave_up' (budget spent, drop the line), 'wait' (backing off, keep it) or None (may launch)."""
+    entry = state.get(job)
+    if not isinstance(entry, dict) or entry.get("key") != key:
+        state.pop(job, None)
+        return None
+    if entry.get("gave_up"):
+        return "gave_up"
+    return "wait" if now < entry.get("retry_at", 0) else None
+
+
+def launch_failure(state, job, key, now, reason, retryable):
+    """Record one failed launch; returns the receipt the dispatcher emits as a metric."""
+    previous = state.get(job) if isinstance(state.get(job), dict) and state[job].get("key") == key else {}
+    attempt = min(previous.get("attempts", 0) + 1, LAUNCH_MAX_ATTEMPTS)
+    gave_up = not retryable or attempt >= LAUNCH_MAX_ATTEMPTS
+    entry = {"key": key, "attempts": attempt, "reason": reason, "gave_up": gave_up,
+             "retry_at": None if gave_up else now + (0 if reason == "launch_interrupted" and attempt == 1
+                                                      else LAUNCH_BACKOFF_S * 2 ** (attempt - 1))}
+    state[job] = entry
+    return {"job": job, "reason": reason, "class": RETRYABLE if retryable else PERMANENT, "attempt": attempt,
+            "max_attempts": LAUNCH_MAX_ATTEMPTS, "action": "give_up" if gave_up else "retry",
+            "retry_at": entry["retry_at"]}
+
+
+def launch_ok(state, job):
+    """A launch that started clears its failure history."""
+    return state.pop(job, None) is not None
