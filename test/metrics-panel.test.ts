@@ -79,5 +79,7 @@ it('joins the dispatcher rollup to lane capacity and preserves missing readings'
     const measured = await readMetricsPanel(root, now);
     expect(measured.series).toMatchObject({ known: true, mergesLastHour: 1, mergesLast24h: 1 });
     expect(measured.hourlyMerges?.at(-1)).toBe(1);
+    // The same read also carries the `phm metrics` report; this status has no dispatcher schema or fresh tick, so its lanes stay unknown.
+    expect(measured.glance).toMatchObject({ schema: 'metrics.glance.v1', version: 1, sources: { jobs: 'ok', status: 'stale' }, merged_per_hour: { last_1h: 1 }, lanes: null, pools_at_risk: null });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

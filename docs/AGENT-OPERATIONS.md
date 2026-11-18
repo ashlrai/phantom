@@ -1009,6 +1009,20 @@ changes nothing. Each PR counts once. A value that was not measured is `null`
 `malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
 Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`).
 
+`phm metrics` shows how well the self-improving loop is running, in one glance:
+PRs merged per hour over the last 1, 6 and 24 hours, the median time from publish
+to merge, the empty rate, each lane's jobs, merged PRs, empty rate and merge
+rate, merge rate by tier, and spend-down per pool (used, hours to reset,
+projected unused, waste risk). `--hours N` (1 to 168, default 24) sets the period
+for merge time and empty rate; `--json` prints schema `metrics.glance.v1` with
+`version: 1`. Merge numbers come from `~/.ashlr-runs/metrics/jobs.jsonl`; lanes,
+tiers and pools come from `rollup_24h` and `budget.*.use_it_all` in
+`~/.ashlr-runs/queue/status.json`, and are unknown when the dispatcher has not
+ticked for two minutes. A missing or stale value is `null` (or "unknown"), never
+zero, and `sources` says which file was unreadable. It changes nothing. Exit 1
+only when neither file gives a reading. The desktop Metrics pane shows the same
+report (the `glance` field of `GET /api/verse/fleet/runs/metrics`).
+
 `phm fleet repo-rate --json` reads merged PR outcomes from
 `~/.ashlr-runs/metrics/jobs.jsonl` for the last six hours. It reports each repo's
 merge count, median time to merge in seconds, and newest merge time. Each PR
