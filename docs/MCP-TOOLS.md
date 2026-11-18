@@ -81,6 +81,8 @@ or control apps.
 | `phm_proactive_agents_create` | Save private agent identity, capabilities and assignment preferences. Does not connect an adapter or authorize dispatch or spending. |
 | `phm_proactive_agents_update` | Edit agent metadata using patch.expectedVersion from a fresh read. Identity and connection verification cannot change. |
 | `phm_proactive_agents_delete` | Remove a local agent profile using its current expectedVersion. Does not delete the provider agent or account. |
+| `phm_pool_reading_set` | Record measured pool usage with automatic capture time. Requires pool, pct, future reset_at and source; does not launch work. |
+| `phm_pool_reading_show` | Read saved pool usage, age in seconds and the stale after 8h flag; optional pool filter. |
 | `phm_task_context` | Read private evidence, sources, times, conflicts and missing history for an exact saved outcome task and repo. Does not import an inbox or dispatch work. |
 | `phm_team_register` | Register an agent and its capabilities on the local team bus. Identity only; grants no authority. |
 | `phm_team_publish` | Post a team message or presence heartbeat. Credential-shaped text is refused. |
@@ -207,3 +209,9 @@ reference followed by every page. The Vercel build runs
 "All pages" block of `docs/llms.txt` complete. After adding or renaming a docs
 page, run `node scripts/generate-docs-llms.mjs`; `test/docs-agent-parity.test.ts`
 fails when a page is missing from `docs/llms.txt`.
+
+### Measured pool usage
+
+`phm_pool_reading_set` takes `{pool, pct, reset_at, source}`. `pct` is used percent (0–100); `reset_at` is a future ISO instant or Unix seconds. The tool sets capture time; extra fields including `ts` are refused. `phm_pool_reading_show` accepts optional `pool` and returns readings with `ageSeconds`, `stale`, and `staleAfterSeconds: 28800`. Set uses the existing mutation/KILL gate; show is read-only. These tools record evidence and grant no launch or spending authority.
+
+The same service backs `phm pool reading set|show` and GET/POST `/api/verse/resources/pool/reading` (GET optionally takes `?pool=ultra`; POST requires existing mutation authentication and `{pool,pct,reset_at,source}`). Files under `ASHLR_RUNS_DIR/queue/<pool>-reading.json` (default `~/.ashlr-runs`) contain exactly `{pct,ts,reset_at,src}`, with epoch seconds, and are regular files under 4096 bytes replaced atomically. Readings become stale after 8h; the Pools pane displays their age and flag separately from verified quota.

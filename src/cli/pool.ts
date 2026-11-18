@@ -3,6 +3,7 @@ import type { PoolRunway, RunwaySnapshot } from '../core/usage/runway.js';
 
 const HELP = `Usage: phm pool runway [--json]
        phm pool admission [--json]
+       phm pool reading <set|show> [--help]
 
 runway: will each pool last until it resets, at the burn rate measured now?
   One sentence, then one line per pool: state, used, burn per hour, hours to empty,
@@ -53,6 +54,11 @@ export function runwayLine(row: PoolRunway): string {
 export interface PoolDeps extends ReadAdmissionOptions { readRunway?: () => Promise<RunwaySnapshot> }
 
 export async function cmdPool(args: string[], deps: PoolDeps = {}): Promise<number> {
+  if (args[0] === 'reading') {
+    const { cmdPoolReading, POOL_READING_HELP } = await import('./pool-reading.js');
+    if (args.includes('--help')) { console.log(POOL_READING_HELP); return 0; }
+    return cmdPoolReading(args.slice(1));
+  }
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') { console.log(HELP); return 0; }
   const rest = args.slice(1);
   if (!['admission', 'runway'].includes(args[0] ?? '') || rest.some(a => a !== '--json' && a !== '--help' && a !== '-h') || new Set(rest).size !== rest.length) {

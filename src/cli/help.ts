@@ -1240,6 +1240,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'tools parity [--json] [--lane <lane>]', desc: 'Lanes by tool family (MCP servers, CLI on PATH, skills, plugins, web search, browser, computer use, gh): present, missing or unknown, with a fix per missing cell.', topic: 'autonomy' },
   { cmd: 'tools requires --needs <need,...> [--text]', desc: 'List the lanes that can run a job with these needs, e.g. --needs github-read,browser.', topic: 'autonomy' },
   { cmd: 'route fit --input <file|-> [--worktree <directory>] --json', desc: 'Check that a lane can do a job (gh, network, browser, outside files) and name the next lane or gh context pack.', topic: 'autonomy' },
+  { cmd: 'pool reading set <pool> --pct <0-100> --reset-at <iso|epoch> --source <text> [--json]', desc: 'Record measured usage; capture time is automatic. Unix epochs are seconds.', topic: 'autonomy' },
+  { cmd: 'pool reading show [<pool>] [--json]', desc: 'Show measured usage, age and stale after 8h flag.', topic: 'autonomy' },
   { cmd: 'pool runway [--json]', desc: 'Will each pool last until it resets? One line per pool: used, burn per hour, hours to empty, hours to reset, and a state (starve, spend, pace or unknown) with what to do. Read-only.', topic: 'autonomy' },
   { cmd: 'pool admission [--json]', desc: 'Read-only load gate: loadavg, ncpu, running cap, install-lock holder and admit true/false with the reason.', topic: 'autonomy' },
   { cmd: 'admission explain [--json]', desc: 'Read existing admission inputs, the adaptive launch interval and its reason. Advisory; launches nothing.', topic: 'autonomy' },
