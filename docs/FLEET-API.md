@@ -361,6 +361,12 @@ and the jobs each one holds) and the pool-usage ledger.
 - `counts`, `sources`, `unmappedMessages`, and `gaps`, which lists in plain
   words every fact the map could not show.
 
+In the Map pane the two directions between a pair of nodes share one count on
+the line. Selecting it lists the pair's messages in a side panel, read from
+`GET /api/verse/agent-bus/messages?since=15m` (the `phm messages` read). A
+message is listed only when its sender and receiver each name exactly one
+node: `leader`, a lane, a job id or an exact label.
+
 Every node and edge has the same keys in the same order, sorted by level and
 id, so the same facts always print the same JSON. A job runs on a computer when
 that computer's pool claim names it, or when a worker process for it was seen

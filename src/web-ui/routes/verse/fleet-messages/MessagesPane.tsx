@@ -15,7 +15,8 @@ function prHref(pr: string): string | null {
   return m ? pullUrl(m[1] ?? 'ashlrai/phantom', Number(m[2])) : null;
 }
 
-function Message({ message, onOpenJob }: { message: AgentMessage; onOpenJob: (job: string) => void }) {
+/** One message row; shared with the Map pane's edge panel. */
+export function Message({ message, onOpenJob }: { message: AgentMessage; onOpenJob: (job: string) => void }) {
   const href = message.pr ? prHref(message.pr) : null;
   const inner = <>
     <span className={styles.time}>{time(message.ts)}</span>

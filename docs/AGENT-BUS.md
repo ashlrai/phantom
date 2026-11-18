@@ -271,7 +271,10 @@ writes the same `~/.ashlr-runs` store the API endpoints target.
 The Messages pane shows the same `agent-messages.v1` read as a timeline
 grouped by conversation, with an agent filter; clicking a message with a job
 opens that job's log. The Org pane draws one line per conversation between
-two agents in the last 15 minutes.
+two agents in the last 15 minutes. The Map pane puts the message count on the
+line between two nodes that exchanged messages in the last 15 minutes;
+selecting the count, or the pair's row under the map, opens a side panel that
+lists those messages, newest first, from the same read.
 
 ## v2
 

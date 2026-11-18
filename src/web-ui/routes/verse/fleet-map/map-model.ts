@@ -5,6 +5,7 @@
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
+import type { AgentMessage, AgentRef } from '../fleet-messages/messages-model.js';
 
 export const LIVE_MAP_API = '/api/verse/fleet/control/live-map';
 /** The pane polls no faster than the server rebuilds the graph. */
@@ -107,3 +108,49 @@ export function mapHeadline(map: FleetLiveMap): string {
 
 /** Nothing to draw beyond the leader. */
 export const emptyMap = (map: FleetLiveMap) => map.nodes.every(node => node.kind === 'leader');
+
+/** Two map nodes that exchanged messages in the window: one line and one count, whichever way the messages went. */
+export interface MessagePair { key: string; a: string; b: string; count: number | null; lastMessageAt: string | null; edges: LiveMapEdge[] }
+
+/** Merge the map's directed message edges into pairs, newest first. A count is unknown when any direction's is. */
+export function messagePairs(map: FleetLiveMap): MessagePair[] {
+  const pairs = new Map<string, MessagePair>();
+  for (const edge of map.edges) {
+    if (edge.kind !== 'messaged-in-last-15-min' || edge.from === edge.to) continue;
+    const [a, b] = [edge.from, edge.to].sort() as [string, string], key = `${a}|${b}`;
+    const pair = pairs.get(key);
+    if (!pair) { pairs.set(key, { key, a: edge.from, b: edge.to, count: edge.messages, lastMessageAt: edge.lastMessageAt, edges: [edge] }); continue; }
+    pair.count = pair.count === null || edge.messages === null ? null : pair.count + edge.messages;
+    if (edge.lastMessageAt && (!pair.lastMessageAt || edge.lastMessageAt > pair.lastMessageAt)) pair.lastMessageAt = edge.lastMessageAt;
+    pair.edges.push(edge);
+  }
+  return [...pairs.values()].sort((x, y) => (y.lastMessageAt ?? '').localeCompare(x.lastMessageAt ?? '') || x.key.localeCompare(y.key));
+}
+
+/**
+ * The map node a `phm messages` agent names: the leader, a lane, a job or an exact label.
+ * Null when no node or more than one matches, so a message is never guessed onto a line.
+ */
+export function nodeOfAgent(agent: AgentRef, map: FleetLiveMap): string | null {
+  const ids = [agent.name, `lane:${agent.name}`, `job:${agent.name}`];
+  const hits = map.nodes.filter(node => ids.includes(node.id) || node.label === agent.name);
+  return hits.length === 1 ? hits[0]!.id : null;
+}
+
+/** The `phm messages` rows between a pair's two nodes, in the order given (newest first). */
+export function pairMessages(messages: readonly AgentMessage[], map: FleetLiveMap, pair: Pick<MessagePair, 'a' | 'b'>): AgentMessage[] {
+  return messages.filter(message => {
+    const from = nodeOfAgent(message.from, map), to = nodeOfAgent(message.to, map);
+    return (from === pair.a && to === pair.b) || (from === pair.b && to === pair.a);
+  });
+}
+
+/**
+ * A message line and the point its count sits on. Lines between rows bow sideways so they never hide a
+ * reporting line between the same two nodes; lines along a row rise into the gap above it, clear of the nodes between.
+ */
+export function messageCurve(a: { x: number; y: number }, b: { x: number; y: number }): { d: string; mid: { x: number; y: number } } {
+  const row = a.y === b.y;
+  const cx = (a.x + b.x) / 2 + (row ? 0 : 40 * (a.x <= b.x ? 1 : -1)), cy = (a.y + b.y) / 2 - (row ? NODE_H + 36 : 40);
+  return { d: `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`, mid: { x: (a.x + 2 * cx + b.x) / 4, y: (a.y + 2 * cy + b.y) / 4 } };
+}
