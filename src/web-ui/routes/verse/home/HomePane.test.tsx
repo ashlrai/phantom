@@ -9,8 +9,8 @@ import { getVerseUiState, resetVerseUi } from '../verse-ui-store.js';
 import { HomePane } from './HomePane.js';
 
 const state = vi.hoisted(() => ({ status: 'success', data: undefined as unknown, openDockPane: vi.fn() }));
-// One mocked read serves every query, so the Asks card sees a home.v1 body and stays hidden (AsksCard.test.tsx covers it).
-vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state, useRefetch: () => vi.fn(), useMutationHold: () => ({ hasHold: false, token: null, touch: vi.fn() }) }));
+const releases = vi.hoisted(() => ({ status: 'error', data: undefined }));
+vi.mock('../../../data/hooks.js', () => ({ useQuery: (def: { key: string }) => def.key === 'fleet-releases' ? releases : state, useRefetch: () => vi.fn(), useMutationHold: () => ({ hasHold: false, token: null, touch: vi.fn() }) }));
 vi.mock('../dock/dock-store.js', async original => ({ ...await original<typeof import('../dock/dock-store.js')>(), openDockPane: state.openDockPane }));
 const unknown = (reason: string) => ({ state: 'unknown' as const, reason });
 const HEALTHY: HomeSummary = {
@@ -28,7 +28,7 @@ const MISSING: HomeSummary = {
   main: unknown('The main guardian status could not be read.'), running: unknown('No fleet status has been written yet.'), unreadLeaderReplies: unknown('No leader plan log has been written yet.'),
   atRisk: unknown('No resource has a fresh usage reading, a burn rate and a future reset.'), worklog: unknown('No jobs ledger has been written yet.'), needsYou: unknown('The needs-you ledger could not be read.'),
 };
-const CARDS = ['Merged PRs', 'Main', 'Running jobs', 'Most at risk of going unused', 'Work log', 'Leader'];
+const CARDS = ['Merged PRs', 'Main', 'Releases', 'Running jobs', 'Most at risk of going unused', 'Work log', 'Leader'];
 let viewport: ViewportMock | null = null;
 const show = (data: unknown, width = 1440) => {
   viewport = mockViewport(width); state.data = data;
@@ -54,7 +54,7 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
     expect(screen.getByText('Unknown: The job metrics file could not be read.', { selector: 'p' })).toBeTruthy();
     for (const name of CARDS) expect(card(name).getAllByText(/^Unknown: .+\.$/).length).toBeGreaterThan(0);
     expect(card('Main').getByText('Unknown: The main guardian status could not be read.')).toBeTruthy();
-    expect(screen.getAllByRole('button')).toHaveLength(6);
+    expect(screen.getAllByRole('button')).toHaveLength(7);
   });
   it('says so before the summary arrives and when it cannot be read', () => {
     show(undefined, width);

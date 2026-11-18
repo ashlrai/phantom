@@ -24,7 +24,7 @@ Phantom - phm, the CLI for agentic engineers (ashlr remains compatible)
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
-    observability   Observability - cost, telemetry, audit (empties, home, asks, …)
+    observability   Observability - cost, telemetry, audit (empties, home, releases, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -139,6 +139,7 @@ Phantom - every command (phm or ashlr)
     bots list|show|create --dry-run|explain|seats|handoff --seat <id> [--apply] [--json]                                                                          Provider-neutral bot metadata, seat quota and draining handoffs. Handoff is dry-run unless --apply.
     subagent spawn|list|result [opts]                                                                                                                             Plan bounded cross-provider children; apply stores held records only, never dispatches.
     metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]                                                                                            Estimate idle slot-minutes and flag long-running jobs from local snapshots.
+    metrics impact [--json] [--jobs path] [--queue path] [--overrides path]                                                                                       Versioned offline impact rewards, template ranking and advisory bandit recommendations from local PR and job evidence.
     enroll list                                                                                                                                                   List enrolled repos + kill switch state.
     enroll add <repo> [--locus-firm]                                                                                                                              Enroll a repo for autonomous work. First enroll soft-offers locus.firm when locus CLI is present; --locus-firm / ASHLR_LOCUS_FIRM=1 enable without prompt (default off).
     enroll remove <repo>                                                                                                                                          Remove a repo from the enrollment registry.
@@ -317,6 +318,7 @@ Phantom - every command (phm or ashlr)
   Observability - cost, telemetry, audit
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
+    releases [--json] [--root <directory>]                                                      What is unreleased per Ashlr repo: latest tag and age, commits and PRs since, changelog coverage and one next action. Read-only.
     asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
     throughput [--hours 24] [--by lane|repo|tier] [--text]                                      Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
     jobs empty [--since 24h] [--family F] [--json]                                              Explain empty jobs with family and lane suggestions.
@@ -334,7 +336,7 @@ Phantom - every command (phm or ashlr)
     router serve|models|pick|config [--json]                                                    Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                     Compare recorded router predictions with outcomes and usage.
     worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]                One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.
-    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context. Read-only; list [--json] keeps the leader-file format.
+    library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context, newest first, with owner and size. Read-only; show <id> prints one item; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                       Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.
     autonomy [--hours 24] [--json]                                                              Measure merges, human involvement, fleet improvements, releases and main health from local evidence.
     signals [--json]                                                                            Read real repository adoption signals.
@@ -380,6 +382,7 @@ Phantom - every command (phm or ashlr)
     lanes fit --lane <lane> [--json]                                                            Show job kinds to send or avoid from measured PR rates.
     lanes --json                                                                                Read dispatcher pools, slot caps and local endpoint health.
     lanes health [--json]                                                                       Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.
+    ideas [--json]                                                                              Read recorded fleet ideas.
     goals [--json]                                                                              Show dispatcher throughput, empty rates and resource resets.
 
   Integrations - MCP, GitHub, Vercel, editors

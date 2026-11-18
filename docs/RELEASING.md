@@ -508,6 +508,8 @@ and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
 to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
 `--file <path>` still inspects a saved release-train state file.
 
+For changelog coverage and the next step per enrolled repo, run `phm releases`.
+
 ### Draft release notes
 
 Run `phm release notes` inside a repository for Markdown since its latest

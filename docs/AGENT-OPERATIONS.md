@@ -980,6 +980,16 @@ this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
 own private chat; the desktop Home view shows the same asks with Yes, No and
 Done buttons. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
 
+`phm releases` answers: is anything unreleased? One row per Ashlr repo gives the
+latest tag on the default branch and its age, commits and merged PRs since, and
+whether `CHANGELOG.md` has a `## [Unreleased]` section covering them, then one
+next action: "nothing to release", "write changelog" or "ready: open release PR".
+It reads local Git refs under `~/Projects/ashlrai` (change with `--root <directory>`)
+and never fetches, tags or releases, so fetch first for fresh numbers.
+`phm releases --json` prints schema `phantom.releases.v1`; fields use the same
+`{state,value|reason}` shape as `home.v1`, and `summary` is the field Home reuses.
+The desktop Home view shows it as the Releases card.
+
 `phm throughput` shows what the fleet produced, hour by hour: jobs launched, PRs
 published, PRs merged, empty jobs and the median time from publish to merge. It
 prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
