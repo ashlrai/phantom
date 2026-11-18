@@ -104,6 +104,7 @@ function createCliAdapter(spec: CliSpec, deps: CliAdapterDeps): AgentAppAdapter 
     const status = result.code === 0 && !parsed.failed ? 'idle' : 'failed';
     const row = { adapter: id, sessionId, status, model, updatedAt: (deps.now ?? (() => new Date()))().toISOString(), output: cleanOutput(parsed.output) } as const;
     upsertAgentAppLedger(ledger, row);
+    if (status === 'failed') return refuse('failed', parsed.failed ?? `${spec.provider} exited unsuccessfully (exit ${result.code ?? 'signal'})`);
     return { ok: true, value: sessionFromRow(row) };
   }
 

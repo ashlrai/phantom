@@ -1,0 +1,33 @@
+# Historical evidence — 2026-11-17
+
+Recovered verbatim below from PR #6642 head `8e01b30b448b192938dc47c773aeb26c6cfe737e`, dated 2026-11-17. References to master, open PRs, routing and unmerged modules describe that historical observation, not current state.
+
+# PR 6570 owner qualification
+
+Owner route: RQ-DEVINCLOUD-APPADAPT3-N17, branch `codex-bridge/RQ-DEVINCLOUD-APPADAPT3-N17`, PR #6570, head `b69a5d3e8a1568795b78fe95af53a8cb17715383`. This is a handoff to that existing owner, not a new implementation or evidence of a live assignment. Public PR metadata reports it open. The supplied fleet snapshot lists no qualification owner; a parked-job query did not establish live claim ownership. Live host/claim access remains unconfirmed, not proof of vacancy.
+
+## Content audit
+
+Compared with `origin/master` at `54eae652080c0453b56d3f1c11c217ef433c6c99`, the named adapter, registry, CLI dispatcher, documentation and original test are new; the bus dispatcher adds help and lazy routing. The owner adds Codex and Claude CLI launch/resume with local session storage, a Devin CLI stub, and desktop operator adapters for five apps. The original documentation says desktop launch/send only types into a composer and requires a separate click; it cannot set model or directory. These are distinct source changes, not evidence of integration with the shared resource pool or cross-computer dispatch. Protected and shared hunks were not adopted.
+
+## Observed qualification
+
+The accompanying test dynamically loads the original source from a disposable checkout of the exact head, with fake absolute binaries, injected runner, temporary ledger and fixed clock. No provider, desktop helper or API is invoked. Three tests passed: both CLI adapters recorded and resumed their session IDs using the corresponding provider binary; a nonzero runner with an ID returned `ok: true` and `status: failed`; timeout returned `ok: false`, `code: failed`; engaged and throwing stop probes blocked both launch and send without runner calls. Devin describes launch as unsupported and refuses it. A Linux desktop describes itself unavailable while advertising the abstract launch capability; model and cwd requests return unsupported. This does not establish desktop runtime availability or submission.
+
+**Owner defect to reproduce:** inject a runner returning `{code: 1, stdout: '{"type":"thread.started","thread_id":"failed_1"}', stderr: '', timedOut: false, missing: false}` and call Codex `launchTask`. `src/core/agents/apps/cli-adapters.ts:104` records `status: failed`, but line 107 returns `ok: true`. `src/cli/agents-apps.ts:55` therefore returns exit 0 for this failed execution. The test records the actual result; the requirement that a failed runner cannot imply successful execution is **not met** at the CLI boundary. Return this evidence to the existing owner for a source fix and protected-path review; no implementation is supplied here. The timeout case does not exhibit this success result.
+
+A local ledger row is not a fleet claim receipt, a lease, a cross-computer coordination receipt, or proof of a live worker. The audited adapter does not connect its launch/resume to such receipts; the operational bridge and evidence for Mason's shared-resource-pool and receipt-backed coordination orders remain missing. Source tests do not establish installation, provider execution, dispatch, or shipment.
+
+Reproduce from this repository after checking out the owner's exact head separately and making its existing dependencies available: `HOME=$(mktemp -d) APP_OWNER_SOURCE=/absolute/path/to/owner-checkout npm run test:ci -- test/agent-app-owner-qualification-527s.test.ts`. Verify that checkout's HEAD before running. The test requires that explicit path and does not statically import unmerged modules.
+
+## Current recovery — 2026-11-18, RQ-PHX-APPFAILURERECOVER589S
+
+Current base: `c4745953a95cfe10d8d9328e49c0ab765cc796f5`. The adapter implementation and CLI dispatcher are now present on master; they were not rebuilt or imported from the historical branch. Only this report and `test/agent-app-owner-qualification-527s.test.ts` were recovered from #6642 head `8e01b30b448b192938dc47c773aeb26c6cfe737e` (2026-11-17). The historical report above is retained verbatim under a dated wrapper.
+
+The recovered test now directly imports current modules, uses the same injected fake runners and temporary ledgers, and requires no `APP_OWNER_SOURCE` or external checkout. Launch/resume, timeout, engaged/throwing stop probes, Devin refusal and Linux desktop constraints remain covered. Its one semantic assertion change replaces the historical observation `ok:true, value.status:failed` with the required `ok:false, code:failed`; array elements gain non-null assertions for direct typed imports. No original behavior coverage was removed.
+
+The new 589s regression reproduced the defect before repair: 12 failed execution/CLI cases failed, while its four success/invalid-id cases passed. The adapted historical suite additionally failed its corrected assertion. The source fix saves valid failed ledger rows before returning the existing failed-result contract. Nonzero/null exits and parsed provider failures on exit zero now return failure; output remains available through session reads. `runAgentsAppsCli` was tested directly through its existing injected registry with real current adapters and fake runners: launch/send failures return 1, successful launch/send return 0. This proves the dispatcher return boundary, not a spawned top-level CLI process or live provider.
+
+After repair, the same serial hermetic three-file selection reports 25 passed / 1 failed. All 16 new and 3 recovered tests pass. The remaining failure is the unchanged `test/agents-app-adapters.test.ts:66`, which expects the old successful envelope for a Claude error result. That file is explicitly outside this job's write scope; a separate authorized assertion update must expect `{ok:false, code:'failed'}` and read the retained output/status via `readSession('s-9')`. Do not publish this as a green change until that dependency is resolved. No tests were weakened, skipped or deleted.
+
+Current PR search found historical #6642 and unrelated matches, with no competing implementation identified. Host claim storage is OS-inaccessible; ownership remains unknown and no assignment receipt is claimed. This recovery preserves only the two named evidence paths and enumerated behaviors, not all of #6642 or #6570. It establishes no fleet coordination receipt, installed runtime, hosted CI, shipment, desktop submission or provider execution. Exact verification commands and tooling limitations are in `BRIDGE_NOTES.md`.
