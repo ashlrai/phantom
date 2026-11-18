@@ -177,7 +177,7 @@ available; actual expected savings remain unmeasured.
 | `companion-smoke.yml` | Daily / manual | 30 |
 | `ecosystem-stats.yml` | Daily / manual data publication | 10 |
 | `attest-ci-build.yml` | Half-hour / manual attestation | 15 |
-| `auto-tag.yml` | Selected push / CI completion / half-hour / manual | 15 |
+| `auto-tag.yml` | Selected push / CI completion / exact-SHA release-gate dispatch / half-hour / manual | 15 |
 | `release-please.yml` | Master push / five-minute / manual | 10 + conditional 10 |
 | `release-train.yml` | Five-minute / workflow completion / manual, variable-gated | 20 |
 | `publish-canonical-npm.yml` | Manual | 60 |

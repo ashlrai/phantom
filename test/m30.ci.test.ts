@@ -292,6 +292,7 @@ describe('M30 CI workflow', () => {
     expect(permissionJobs).toEqual([
       ['release-build', { contents: 'read', actions: 'read' }],
       ['release-suites', { contents: 'read' }],
+      ['release-gate-autotag', { actions: 'write' }],
     ]);
     // Release-gate dispatches share one group per tag so a second train queues
     // behind the first (#4592); every other run keeps its PR or run_id group.
@@ -433,7 +434,7 @@ describe('M30 CI workflow', () => {
     expect(receipt.name).toBe('Master full qualification');
     expect(receipt.permissions).toBeUndefined();
     expect(receipt.needs.slice().sort()).toEqual(Object.keys(jobs).filter(id =>
-      !['master-full', 'fixup-queue', 'release-suites'].includes(id)).sort());
+      !['master-full', 'fixup-queue', 'release-suites', 'release-gate-autotag'].includes(id)).sort());
     expect(runs('master-full', 'schedule', 'refs/heads/master')).toBe(true);
     expect(runs('master-full', 'schedule', 'refs/heads/master', '0,30 * * * *')).toBe(false);
     for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
@@ -545,6 +546,24 @@ echo pending=true; exit 2
       expect(steps.indexOf(step)).toBeGreaterThan(proof);
       expect(step.if).toContain("steps.full.outputs.green == 'true'");
     }
+  });
+
+  it('dispatches Auto-tag only after a successful master release-gate run', () => {
+    const jobs = parse(ciYml).jobs as Record<string, {
+      if?: string;
+      needs?: string[];
+      permissions?: Record<string, string>;
+      steps: { name?: string; run?: string; env?: Record<string, string> }[];
+    }>;
+    const job = jobs['release-gate-autotag']!;
+    expect(job.if).toBe("github.event_name == 'workflow_dispatch' && inputs.release_gate == true && github.ref == 'refs/heads/master' && needs['release-build'].result == 'success' && needs['release-suites'].result == 'success'");
+    expect(job.needs).toEqual(['release-build', 'release-suites']);
+    expect(job.permissions).toEqual({ actions: 'write' });
+    const dispatch = job.steps.find((entry) => entry.name === 'Dispatch Auto-tag for exact release-gate SHA');
+    expect(dispatch?.env?.GH_TOKEN).toBe('${{ github.token }}');
+    expect(dispatch?.run).toContain('repos/${GITHUB_REPOSITORY}/actions/workflows/auto-tag.yml/dispatches');
+    expect(dispatch?.run).toContain('{"ref":"master","inputs":{"sha":"${GITHUB_SHA}"}}');
+    expect(jobs['merge-gate']!.needs).not.toContain('release-gate-autotag');
   });
 
   it('keeps Quick typecheck advisory and free of the two split-out checks', () => {
@@ -1087,9 +1106,10 @@ echo pending=true; exit 2
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(29);
-    expect(new Set(names).size).toBe(29);
+    expect(names).toHaveLength(30);
+    expect(new Set(names).size).toBe(30);
     expect(names).toContain('Release suites (build + signing path)');
+    expect(names).toContain('Dispatch Auto-tag for green release-gate SHA');
     expect(names).toContain('Check generated files');
     expect(names).toContain('Check authority drift (hermetic)');
     expect(names).toContain('Fast gate (typecheck + affected tests)');
