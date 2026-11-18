@@ -6,6 +6,33 @@ import tempfile
 import unittest
 
 
+class LaunchState(unittest.TestCase):
+    def test_duplicate_events_keep_one_attempt_until_terminal(self):
+        from launch_precheck import update_launch_state
+        for terminal in ('finish', 'launch_terminal'):
+            with self.subTest(terminal=terminal):
+                active = set()
+                for event in ('claim', 'launch', 'launch'):
+                    update_launch_state(active, dict(event=event, job='RQ-ONE', launch_dedupe=True))
+                self.assertEqual(active, {'RQ-ONE'})
+                update_launch_state(active, dict(event=terminal, job='RQ-OTHER'))
+                self.assertEqual(active, {'RQ-ONE'})
+                update_launch_state(active, dict(event=terminal, job='RQ-ONE'))
+                self.assertEqual(active, set())
+                update_launch_state(active, dict(event='launch', job='RQ-ONE'))
+                self.assertEqual(active, {'RQ-ONE'})
+
+    def test_old_pr_resolution_and_legacy_claim_do_not_change_active_attempt(self):
+        from launch_precheck import update_launch_state
+        active = set()
+        for row in (None, {}, dict(event='launch', job=[]), dict(event='claim', job='RQ-OLD')):
+            update_launch_state(active, row)
+        self.assertEqual(active, set())
+        update_launch_state(active, dict(event='launch', job='RQ-ONE'))
+        update_launch_state(active, dict(event='outcome', job='RQ-ONE', state='MERGED', url='https://github.com/o/r/pull/1'))
+        self.assertEqual(active, {'RQ-ONE'})
+
+
 class RepairFreshness(unittest.TestCase):
     def test_only_current_complete_matching_evidence_retires_a_repair(self):
         from launch_precheck import repair_freshness

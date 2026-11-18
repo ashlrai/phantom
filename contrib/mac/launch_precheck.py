@@ -7,6 +7,21 @@ import subprocess
 from datetime import datetime
 
 
+def update_launch_state(active, row):
+    """Fold append-order receipts; duplicate launches retain one active attempt.
+
+    A URL resolution can belong to an older attempt, so only worker completion
+    or explicit launcher termination releases the current reservation.
+    """
+    if not isinstance(row, dict): return
+    job, event = row.get("job"), row.get("event")
+    if not isinstance(job, str) or not job: return
+    if event == "launch" or (event == "claim" and row.get("launch_dedupe") is True):
+        active.add(job)
+    elif event in ("finish", "launch_terminal"):
+        active.discard(job)
+
+
 def merged_jobs(rows):
     """Exact job/repo receipts only; missing legacy repos use fleet-wide IDs."""
     return {(repo.removeprefix("ashlrai/") if repo is not None else None, row['job'])

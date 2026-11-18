@@ -43,7 +43,7 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
 import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -183,6 +183,7 @@ MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
 # at the parse point, metric() also mirrors this tick's own rows in memory exactly
 # as a file re-read would see them.
 JOBS_RAW, JOBS = [], []
+ACTIVE_LAUNCHES = set()
 _JOBS_LIVE = False
 def metric(d):
     # launch.sh owns the pick; carry its exact tag without treating it as a new pool.
@@ -198,8 +199,9 @@ def metric(d):
             if a: d["ab"] = a.group(1)
             if b: d["arm"] = b.group(1)
         except Exception: pass
-    if _JOBS_LIVE: JOBS_RAW.append(d); JOBS.append(d)
     with open(MD + "/jobs.jsonl", "a") as f: f.write(json.dumps(d, sort_keys=True) + "\n")
+    if _JOBS_LIVE:
+        JOBS_RAW.append(d); JOBS.append(d); update_launch_state(ACTIVE_LAUNCHES, d)
 CLS = [("credits_exhausted", re.compile(r"(?i)(credits? (are |have been )?(exhausted|depleted)|out of credits|insufficient credits|no credits remaining)")),
        ("usage_limit", re.compile(r"(?i)(usage limit|you've hit your|weekly limit)")),
        ("model_capacity", re.compile(r"(?i)(at capacity|over capacity|overloaded|\b529\b)")),
@@ -1059,6 +1061,7 @@ for p in glob.glob(RUN + "/*.dispatched"):
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
         release_batch(j, "launch failed")
+    metric(dict(event="launch_terminal", job=j, reason="launcher-exited"))
     os.remove(p)
 
 # ---- (a) reap
@@ -1068,6 +1071,7 @@ running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
 _attempts = {}; _merged_urls = set()
 _raw_rows = batcher.parse_rows(MD + "/jobs.jsonl")
 JOBS_RAW.extend(_raw_rows); JOBS.extend(batcher.project_rows(_raw_rows))
+for row in JOBS_RAW: update_launch_state(ACTIVE_LAUNCHES, row)
 _JOBS_LIVE = True
 for row in JOBS:
     if not isinstance(row, dict): continue
@@ -1892,7 +1896,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
-                and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
+                and m not in ACTIVE_LAUNCHES and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
                 and batch_attempts(m) < batcher.MAX_ATTEMPTS)
     _tasks = {}
@@ -1946,6 +1950,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
         if j in seen: continue  # duplicate line
+        if j in ACTIVE_LAUNCHES:
+            rest.append(line); seen.add(j); continue
         why = retired(j)
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
@@ -2063,6 +2069,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             else:
                 picked = held; lane = blane
         if batch:
+            if bid in ACTIVE_LAUNCHES:
+                for c in picked: batch_sessions.release_lease(RUN, c["job"], bid)
+                rest.append(line); continue
             tier = "work" if lane == "claude" else tier   # Sonnet orchestrates; hard lines get Opus subagents
             members = []
             for c in picked:
@@ -2134,7 +2143,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         hashes = [h for h in hashes if h]
         # The job ledger says why a claim left its hinted lane; the full ranking stays in work-market.jsonl.
         override = decision["override"] if not batch and decision["override"] and decision["override"]["to"] == lane else None
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes,
+        # Tick flock covers ledger replay, reservation and spawn: even a later
+        # tick with no process/base evidence cannot launch this attempt twice.
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes, launch_dedupe=True,
                     **({"lane_hint": override["from"], "lane_override": override["reason"],
                         "lane_hint_blocked_by": override["preferred_lane_blocked_by"]} if override else {})))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
@@ -2145,6 +2156,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                              stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                              env=env, start_new_session=True, cwd=H)
         except OSError as e:   # EAGAIN/ENOMEM: the host is past its process or memory limit. Back off now, retry later.
+            metric(dict(event="launch_terminal", job=j, reason="spawn-failed"))
             os.remove(RUN + "/" + j + ".dispatched")
             if batch: release_batch(j, "spawn failed", into=rest)   # members go back alone; the bundle id never queues
             else: rest.append(line)

@@ -177,6 +177,45 @@ def auth_mark(home, job):
 
 
 class DispatchClaimTests(unittest.TestCase):
+    def test_atomic_launch_dedup_survives_missing_artifacts_then_allows_retry(self):
+        from concurrent.futures import ThreadPoolExecutor
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); job = 'RQ-DEDUP'
+        queue_job(home, job, lane='devin')
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(lambda _: tick(home, env), range(2)))
+        for result in results: self.assertEqual(result.returncode, 0, result.stderr)
+        ledger = home / '.ashlr-runs/metrics/jobs.jsonl'
+        def launches():
+            return [row for row in map(json.loads, ledger.read_text().splitlines())
+                    if row.get('event') == 'launch' and row.get('job') == job]
+        self.assertEqual(len(launches()), 1)
+        # Lost process/file evidence must not release a recorded active attempt.
+        (home / f'.ashlr-runs/queue/run/{job}.dispatched').unlink(missing_ok=True)
+        queue_job(home, job, lane='devin')
+        with ledger.open('a') as f: f.write(json.dumps(launches()[0]) + '\n')
+        before = ledger.read_text()
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertEqual(ledger.read_text(), before)
+        self.assertTrue(any(line.startswith(job + '\t') for line in ready_lines(home)))
+        with ledger.open('a') as f: f.write(json.dumps(dict(event='finish', job=job, lane='devin')) + '\n')
+        self.assertEqual(tick(home, env).returncode, 0)
+        self.assertEqual(len(launches()), 3)  # two copies of attempt one, one new attempt
+
+    def test_held_launcher_records_terminal_and_retries(self):
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        env = launch_stubs(home); job = 'RQ-HELD-RETRY'
+        queue_job(home, job, lane='devin')
+        self.assertEqual(tick(home, env).returncode, 0)
+        root = home / '.ashlr-runs'
+        (root / f'{job}.launch').write_text('HELD: provider unavailable\n')
+        receipt = root / f'queue/run/{job}.dispatched'
+        old = time.time() - 300; os.utime(receipt, (old, old))
+        self.assertEqual(tick(home, env).returncode, 0)
+        rows = list(map(json.loads, (root / 'metrics/jobs.jsonl').read_text().splitlines()))
+        self.assertEqual(sum(r.get('event') == 'launch_terminal' and r.get('job') == job for r in rows), 1)
+        self.assertEqual(sum(r.get('event') == 'launch' and r.get('job') == job for r in rows), 2)
+
     def test_tick_claim_recovers_after_owner_exit(self):
         tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
         env = launch_stubs(home); queue_job(home, 'RQ-CLAIM', lane='devin')
@@ -202,11 +241,15 @@ class DispatchClaimTests(unittest.TestCase):
         q = home / '.ashlr-runs/queue'; line = (q / 'ready.tsv').read_text()
         (q / 'ready.tsv').write_text('')
         (q / 'run/RQ-CRASH.line').write_text(line)
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(
+            json.dumps(dict(event='claim', job='RQ-CRASH', launch_dedupe=True)) + '\n')
         receipt = q / 'run/RQ-CRASH.dispatched'; receipt.write_text('0')
         os.utime(receipt, (time.time() - 300, time.time() - 300))
         self.assertEqual(tick(home, env).returncode, 0)
         self.assertTrue(dispatched(home, 'RQ-CRASH'))
         self.assertIn('LAUNCH_INTERRUPTED RQ-CRASH', events(home))
+        rows = list(map(json.loads, (home / '.ashlr-runs/metrics/jobs.jsonl').read_text().splitlines()))
+        self.assertEqual(sum(r.get('event') == 'launch_terminal' for r in rows), 1)
 
     def test_candidate_worker_cwd_prevents_duplicate_after_grace(self):
         candidate = SCRIPT.parent / 'host-integration/dispatchd.candidate.py'
