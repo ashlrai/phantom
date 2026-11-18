@@ -17,7 +17,7 @@ transport or spending authority.
 | Usage limits | Generic router quota, capacity and cost-class admission |
 | Access/sharing | Agent profiles and channel allowlists; per-bot sharing UI is a gap |
 
-A Devin Bot could later be an optional seat type behind a generic seat interface; not implemented.
+External bots can join as optional provider-neutral [bot seats](BOT-SEATS.md), with quota evidence, draining handoffs and an advisory Devin Bot adapter.
 
 ## Phantom Bots schema and CLI
 

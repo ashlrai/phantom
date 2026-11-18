@@ -115,7 +115,7 @@ route request. Mode is a capability/cost class independent of company,
 transport and queue scope (`tier_hint` stays `frontier|work|mid|fast`). A CLI
 subscription seat, API key, Devin cloud/CLI resource or loopback model can fill
 any class it qualifies for. Lite covers small efficient models; normal covers
-Opus 5.5 / GPT-6.1 Sol peers; ultra covers Fable 5.2 / Astra 6 peers. Fusion
+Opus 5.5 / GPT-6.2 Sol peers; ultra covers Fable 5.2 / Astra 6.2 peers. Fusion
 returns `route.pairing.v1`: an ultra lead plans/reviews and lite/normal
 sidekicks implement. Missing roles stay null; no single-model downgrade occurs.
 

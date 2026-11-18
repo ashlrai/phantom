@@ -123,7 +123,8 @@ function cleanField(value: string): string {
   return value.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, MAX_FIELD_CHARS);
 }
 
-function scrubLogLine(line: string): string {
+/** The one redaction every job-log line passes before it leaves: detail, scan and `phm job tail`. */
+export function scrubJobLogLine(line: string): string {
   const cleaned = redactHomePaths(scrubSecrets(cleanField(line)));
   return SENSITIVE_LINE.test(cleaned) ? REDACTED_LINE : cleaned;
 }
@@ -202,7 +203,7 @@ function tailLines(text: string, dropFirst: boolean, maxLines: number): { lines:
   if (lines.length > 0 && lines[lines.length - 1] === '') lines = lines.slice(0, -1);
   const truncated = dropFirst || lines.length > maxLines;
   if (lines.length > maxLines) lines = lines.slice(-maxLines);
-  return { lines: lines.map(scrubLogLine), truncated };
+  return { lines: lines.map(scrubJobLogLine), truncated };
 }
 
 function firstLine(text: string): string {
@@ -221,15 +222,15 @@ function parseLaunch(text: string, job: string): { lane: string | null; pid: num
   for (const m of text.matchAll(LAUNCHED)) {
     if (m[1] !== job) continue; // a launch record naming another job is not ours
     matched = true;
-    lane = scrubLogLine(m[2]!);
+    lane = scrubJobLogLine(m[2]!);
     pid = Number(m[3]);
-    baseSha = scrubLogLine(m[4]!);
+    baseSha = scrubJobLogLine(m[4]!);
   }
   if (!matched) {
     const p = text.match(/\bpid\s+(\d+)\b/);
     if (p) pid = Number(p[1]);
     const b = text.match(/\bbase\s+([0-9a-fA-F]{4,64})\b/);
-    if (b) baseSha = scrubLogLine(b[1]!);
+    if (b) baseSha = scrubJobLogLine(b[1]!);
   }
   return { lane, pid, baseSha, matched };
 }
@@ -240,10 +241,10 @@ function parsePublish(text: string): NonNullable<FleetJobDetailV1['publish']> {
   const test = text.match(/^TEST\b[^\n]*/m);
   const sens = text.match(/\bSENS=\[([^\]]*)\]/);
   return {
-    prUrl: pr ? scrubLogLine(pr[1]!) : null,
+    prUrl: pr ? scrubJobLogLine(pr[1]!) : null,
     autoMerge: am ? am[1] === 'on' : null,
-    testLine: test ? scrubLogLine(test[0].trim()) : null,
-    sensitive: sens ? sens[1]!.split(/[\s,]+/).filter(Boolean).map(scrubLogLine) : null,
+    testLine: test ? scrubJobLogLine(test[0].trim()) : null,
+    sensitive: sens ? sens[1]!.split(/[\s,]+/).filter(Boolean).map(scrubJobLogLine) : null,
   };
 }
 
@@ -306,8 +307,8 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
       try {
         const fields = firstLine(await readSlice(file('base'), pBase.size, 0, SMALL_READ_BYTES)).split(/\s+/);
         if (fields.length >= 2) {
-          baseSha = scrubLogLine(fields[0]!);
-          branch = scrubLogLine(fields[1]!);
+          baseSha = scrubJobLogLine(fields[0]!);
+          branch = scrubJobLogLine(fields[1]!);
           sources.base = 'healthy';
         }
       } catch { /* stays degraded */ }
@@ -324,9 +325,9 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
       try {
         const m = (await readSlice(file('base.meta'), pMeta.size, 0, SMALL_READ_BYTES)).match(/^MODEL\s+(\S+)\s+(\S+)\s+(\S+)/m);
         if (m) {
-          metaLane = scrubLogLine(m[1]!);
-          tier = scrubLogLine(m[2]!);
-          model = scrubLogLine(m[3]!);
+          metaLane = scrubJobLogLine(m[1]!);
+          tier = scrubJobLogLine(m[2]!);
+          model = scrubJobLogLine(m[3]!);
           sources.meta = 'healthy';
         }
       } catch { /* stays degraded */ }
@@ -401,12 +402,12 @@ export async function getFleetJobDetail(job: string, options: FleetJobDetailOpti
   return {
     schema: 'fleet.job.v1',
     generatedAt: now.toISOString(),
-    job: scrubLogLine(job),
+    job: scrubJobLogLine(job),
     state,
     lane: launchLane ?? metaLane,
-    requestedLane: requested ? scrubLogLine(requested) : null,
+    requestedLane: requested ? scrubJobLogLine(requested) : null,
     launchedLane: eventLane ?? launchLane,
-    laneReason: reason ? scrubLogLine(reason) : null,
+    laneReason: reason ? scrubJobLogLine(reason) : null,
     tier,
     model,
     pid,
@@ -452,15 +453,6 @@ const DEFAULT_SCAN_BYTES = 384 * 1024;
 const DEFAULT_SCAN_LINES = 4000;
 const MAX_SCAN_GZ_CHARS = 4 * 1024 * 1024;
 
-function scanLines(text: string, dropFirst: boolean, maxLines: number): { lines: string[]; truncated: boolean } {
-  let lines = text.split('\n');
-  if (dropFirst && lines.length > 0) lines = lines.slice(1);
-  if (lines.length > 0 && lines[lines.length - 1] === '') lines = lines.slice(0, -1);
-  const truncated = dropFirst || lines.length > maxLines;
-  if (lines.length > maxLines) lines = lines.slice(-maxLines);
-  return { lines: lines.map(scrubLogLine), truncated };
-}
-
 /**
  * A wider, still bounded read of J.log / J.log.gz for surfaces that need more
  * than the detail tail (the per-job activity stream's command list). Same
@@ -481,7 +473,7 @@ export async function scanJobLog(job: string, options: JobLogScanOptions = {}): 
   if (readable(pLog)) {
     try {
       const start = Math.max(0, pLog.size - maxBytes);
-      const out = scanLines(await readSlice(file('log'), pLog.size, start, maxBytes), start > 0, maxLines);
+      const out = tailLines(await readSlice(file('log'), pLog.size, start, maxBytes), start > 0, maxLines);
       return { source: 'live', lines: out.lines, truncated: out.truncated, bytes: pLog.size };
     } catch {
       return { source: 'degraded', lines: [], truncated: false, bytes: pLog.size };
@@ -495,7 +487,7 @@ export async function scanJobLog(job: string, options: JobLogScanOptions = {}): 
       const gz = await readGzipTail(file('log.gz'));
       const clipped = gz.text.length > MAX_SCAN_GZ_CHARS;
       const text = clipped ? gz.text.slice(-MAX_SCAN_GZ_CHARS) : gz.text;
-      const out = scanLines(text, gz.headDropped || gz.overCap || clipped, maxLines);
+      const out = tailLines(text, gz.headDropped || gz.overCap || clipped, maxLines);
       return { source: 'archived', lines: out.lines, truncated: out.truncated || gz.overCap || clipped, bytes: pLogGz.size };
     } catch {
       return { source: 'degraded', lines: [], truncated: false, bytes: pLogGz.size };

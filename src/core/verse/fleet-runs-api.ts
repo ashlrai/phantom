@@ -35,6 +35,8 @@ import { VERSE_FLEET_RUNS_CONTROL_PATH, isJobControlAction } from '../fleet/job-
 import type { requestJobControl } from '../fleet/job-control.js';
 import { laneMedians, overrunOf } from '../fleet/job-overrun.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
+import { QUEUE_ORDER_ACTIONS, VERSE_FLEET_QUEUE_ORDER_PATH, type QueueOrderAction } from '../queue/order-types.js';
+import type { readQueueOrder, steerQueue } from '../queue/order.js';
 import { isJobCommand, renderJobCommandReply, runTelegramJobCommand } from '../comms/telegram-job-command.js';
 
 export const VERSE_FLEET_RUNS_REASSIGN_PATH = '/api/verse/fleet/runs/reassign';
@@ -135,6 +137,9 @@ export interface FleetRunsApiDeps {
   /** One-job stop behind POST .../runs/stop. Injected so tests never signal a real process. */
   stopJob?: (id: string, opts: StopJobOptions) => Promise<JobStopResult>;
   reassign?: typeof reassignQueuedJobs;
+  /** The queue in launch order and its top, lane and drop actions behind .../queue/order. Default: queue/order.ts. */
+  queueOrder?: typeof readQueueOrder;
+  queueSteer?: typeof steerQueue;
   /** Pause, resume, stop or move one job behind POST .../runs/control. Default: fleet/job-control.ts. */
   jobControl?: typeof requestJobControl;
   /** Briefing behind GET .../runs/mission. Default reads the runs directory. */
@@ -669,6 +674,38 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       catch {
         sendJson(res, 200, { v: 1, generatedAt: new Date(now()).toISOString(), source: 'unavailable', pairs: [], openDirty: 0 } satisfies SupersededReadV1);
       }
+      return true;
+    }
+    if (path === VERSE_FLEET_QUEUE_ORDER_PATH) {
+      // The same reader and writer `phm queue` uses; a refusal carries its plain sentence and code.
+      const mod = await import('../queue/order.js');
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      const refuse = (error: unknown): void => {
+        if (error instanceof mod.QueueSteerError) sendJson(res, error.status, { code: 'QUEUE_REFUSED', reason: error.code, error: error.message });
+        else sendJson(res, 503, { code: 'QUEUE_UNAVAILABLE', error: 'The queue is unavailable.' });
+      };
+      if (method === 'GET') {
+        try { sendJson(res, 200, await (deps.queueOrder ?? mod.readQueueOrder)({ runsDir })); } catch (error) { refuse(error); }
+        return true;
+      }
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req, 4096)); } catch { body = null; }
+      if (!record(body) || Object.keys(body).some(k => !['id', 'action', 'lane', 'dryRun'].includes(k)) ||
+        typeof body.id !== 'string' || !STRAY_ID_PATTERN.test(body.id) || !QUEUE_ORDER_ACTIONS.includes(body.action as QueueOrderAction) ||
+        (body.action === 'lane' ? typeof body.lane !== 'string' || !/^[a-z][a-z0-9-]{1,30}$/.test(body.lane) : body.lane !== undefined) ||
+        (body.dryRun !== undefined && typeof body.dryRun !== 'boolean')) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid queue action body' }); return true;
+      }
+      try {
+        const report = await (deps.queueSteer ?? mod.steerQueue)(
+          { action: body.action as QueueOrderAction, id: body.id, ...(typeof body.lane === 'string' ? { lane: body.lane } : {}), dryRun: body.dryRun === true },
+          { runsDir, by: req.headers['x-ashlr-channel'] === 'mobile' ? 'mobile' : 'desktop' });
+        if (report.changed && !report.dryRun) { generation++; cached = undefined; }
+        sendJson(res, 200, report);
+      } catch (error) { refuse(error); }
       return true;
     }
     if (path === VERSE_FLEET_RUNS_REASSIGN_PATH) {
