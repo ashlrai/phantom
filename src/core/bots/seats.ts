@@ -248,8 +248,9 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       } else if (held) {
         const claim = row.work.claims.find(c => c.key === record.work.ref)!;
         if (claim.origin === 'queue') throw new Error('Bus claim release refused.');
-        const result = releaseCoordinationBySource({ root: fleet(o), origin: claim.origin, sourceId: claim.sourceId, now: (o.now ?? Date.now)() });
-        if (!['released', 'lost', 'expired'].includes(result.status)) throw new Error('Bus claim release refused.');
+        const result = releaseCoordinationBySource({ root: fleet(o), origin: claim.origin, sourceId: claim.sourceId,
+          owner: claim.owner, leaseUntil: claim.leaseUntil, now: (o.now ?? Date.now)() });
+        if (!['released', 'lost', 'stale', 'expired'].includes(result.status)) throw new Error('Bus claim release refused.');
       }
       const notifications = receipts[record.handoffId] ?? {};
       if (existing && notifications.bus && notifications.owner && !held) continue;
