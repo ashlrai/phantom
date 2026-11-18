@@ -444,6 +444,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'union-preview': () => import('./fleet-union-preview.js'),
   'update-why': () => import('./fleet-update-why.js'),
   'usage': () => import('./fleet-usage.js'),
+  'usage-history': () => import('./fleet-usage-history.js'),
   'verbs': () => import('./fleet-verbs.js'),
   'verdict': () => import('./fleet-verdict.js'),
   'vision-lint': () => import('./fleet-vision-lint.js'),
