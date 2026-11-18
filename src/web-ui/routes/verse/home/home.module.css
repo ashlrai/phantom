@@ -24,3 +24,5 @@
 .reply + .reply { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
 .reply p { white-space: pre-wrap; }
 .replyWhen { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.poolAction { display: block; width: 100%; min-height: 2.75rem; padding: var(--space-2) 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.poolAction:hover { text-decoration: underline; }

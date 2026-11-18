@@ -16,6 +16,7 @@ import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
+import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
 import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
@@ -37,6 +38,7 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
   },
 };
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
+  refetchQuery(poolsQuery.key, () => poolsQuery.fetch(), true).catch(() => undefined),
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
   refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
@@ -59,7 +61,7 @@ export function healthLine(home: HomeSummary): { text: string; tone: 'ok' | 'red
 }
 
 export function HomeGlance() {
-  const { permissions } = useMobile();
+  const { permissions, navigate } = useMobile();
   const read = useQuery(homeQuery);
   const refetch = useRefetch(homeQuery);
   usePollWhileVisible(refetch, 15_000);
@@ -79,6 +81,7 @@ export function HomeGlance() {
       {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
       <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
       <LeaderRepliesCard limit={1} />
+      <PoolsCard onOpenJob={job => navigate({ screen: 'worker', job })} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
       <ShippedCard days={1} />
     </>
