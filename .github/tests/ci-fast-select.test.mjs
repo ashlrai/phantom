@@ -49,6 +49,9 @@ test('global inputs fall back to a bounded broader set instead of skipping', () 
   assert.ok(r.tests.length > 0 && r.tests.length <= FALLBACK_SHARDS * 40);
   assert.deepEqual([...r.shards.flat()].sort(), r.tests);
   for (const t of TIER1_TESTS) assert.ok(r.tests.includes(t), `fallback keeps ${t}`);
+  const manifest = plan({ cwd: process.cwd(), paths: ['package.json'] });
+  assert.ok(manifest.tests.includes('test/package-files-allowlist.test.ts'));
+  assert.ok(manifest.shards.some((shard) => shard.includes('test/package-files-allowlist.test.ts')));
   assert.deepEqual(selectFallback({ cwd: process.cwd() }).tests, selectFallback({ cwd: process.cwd() }).tests);
 });
 
