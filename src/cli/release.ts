@@ -1,4 +1,4 @@
-import { getReleaseStatus, formatReleaseStatus } from '../core/release/status.js';
+import { getReleaseStatus, formatReleaseStatus, getReleases, formatReleases } from '../core/release/status.js';
 import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '../core/release/train.js';
 import { collectReleaseNotes, formatReleaseNotes, writeReleaseNotes } from '../core/release/notes.js';
 import { execFileSync } from 'node:child_process';
@@ -36,6 +36,24 @@ function notesCommand(args: string[]): number {
 
 function emit(payload: unknown, json: boolean): void {
   process.stdout.write(`${JSON.stringify(payload, null, json ? undefined : 2)}\n`);
+}
+
+export const RELEASES_USAGE = 'phm releases [--json]';
+
+/** `phm releases`: which Ashlr repo is due a release. Read-only; it never tags or publishes. */
+export function cmdReleases(args: string[]): number {
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(`${RELEASES_USAGE}\nShow which Ashlr repo is due a release, from local clones. A repo is due when its latest tag is over 7 days old or over 50 PRs merged since it. Reports only; never tags or publishes.\n`);
+    return 0;
+  }
+  if (args.some(arg => arg !== '--json') || args.length > 1) {
+    process.stderr.write(`${RELEASES_USAGE}\n`);
+    return 2;
+  }
+  const report = getReleases();
+  if (args.length) emit(report, true);
+  else process.stdout.write(formatReleases(report));
+  return 0;
 }
 
 export async function cmdRelease(args: string[]): Promise<number> {

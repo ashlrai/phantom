@@ -1881,6 +1881,13 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/releases' && method === 'GET') {
+      // The same report as `phm releases --json`: local clones only, never tags or publishes.
+      const { getReleases } = await import('../release/status.js');
+      sendJson(res, 200, getReleases());
+      return true;
+    }
+
     if (path === '/api/fleet/empty-jobs' && method === 'GET') {
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();

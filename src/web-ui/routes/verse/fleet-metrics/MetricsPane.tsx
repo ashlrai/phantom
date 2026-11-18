@@ -1,4 +1,5 @@
 import type { MetricsPanel } from '../../../../core/fleet/metrics-panel.js';
+import type { ReleasesReport } from '../../../../core/release/status.js';
 import { ChartContainer } from '../../../components/charts/ChartContainer.js';
 import { LineChart } from '../../../components/charts/LineChart.js';
 import { apiGet } from '../../../data/client.js';
@@ -8,9 +9,13 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { JobYieldCard } from './JobYieldCard.js';
 import { MetricsGlance } from './MetricsGlance.js';
+import { ReleasesCard } from './ReleasesCard.js';
 
 const query: QueryDef<MetricsPanel> = { key: 'fleet-metrics-panel', fetch: signal => apiGet('/api/verse/fleet/runs/metrics', signal) };
+const releasesQuery: QueryDef<ReleasesReport> = { key: 'fleet-releases', fetch: signal => apiGet('/api/fleet/releases', signal) };
 export function MetricsPane({ visible }: PaneProps) {
+  // Tags move slowly, so this is read when the pane opens and kept for five minutes.
+  const releases = useQuery(releasesQuery, { enabled: visible, freshMs: 300_000 });
   const read = useQuery(query, { enabled: visible, freshMs: 0 });
   const refresh = useRefetch(query);
   usePollWhileVisible(refresh, 60_000, { enabled: visible });
@@ -27,6 +32,7 @@ export function MetricsPane({ visible }: PaneProps) {
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : null}
     <MetricsGlance report={data?.glance} capacity={capacity} />
     <JobYieldCard report={data?.jobYield} />
+    <ReleasesCard report={releases.data} />
     <p>Merged PRs: {history?.mergesLastHour ?? 'unknown'} in the last hour · {history?.mergesLast24h ?? 'unknown'} in the last 24 hours.</p>
     <p>Updated: {history?.observedAt ? hourLabel(history.observedAt) : 'unknown'}.</p>
     {history?.known && history.malformedLines > 0 ? <p>Merge history skipped {history.malformedLines} malformed lines.</p> : null}

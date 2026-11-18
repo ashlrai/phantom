@@ -518,6 +518,22 @@ and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
 to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
 `--file <path>` still inspects a saved release-train state file.
 
+### See which repo is due a release
+
+`phm releases` lists the seven Ashlr repos with the latest tag, its age in
+days, the PRs merged since and a verdict: `fresh`, `due`, `no release yet` or
+`unknown`. A repo is due when its latest tag is over 7 days old or over 50 PRs
+merged since it; an old tag with nothing merged since is fresh. `--json` emits
+`phantom.releases.v1` with `version`, `repos` and `next`, the single most
+overdue repo, or `null` when nothing is due. The Metrics pane shows the same
+report as a Releases card, read from `GET /api/fleet/releases`.
+
+The command only reports. It reads local clones under `~/Projects/ashlrai`,
+makes no network calls and never tags or publishes; open the release PR through
+the repo's own release workflow. Fetch the clones first for current numbers. A
+missing clone or an unreadable tag date is `unknown`. A shallow clone is counted
+only when its history reaches back to the latest tag.
+
 ### Draft release notes
 
 Run `phm release notes` inside a repository for Markdown since its latest
