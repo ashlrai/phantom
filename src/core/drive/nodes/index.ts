@@ -128,6 +128,19 @@ export class DriveNodes implements QueueV1 {
         throw new Error('Invalid or regressed drive authority clock');
       }
       state.observedAt = now;
+      // Legacy producer fences predate producerWithdrawn. Result text alone is
+      // also a valid worker result, so require the complete withdrawal signature.
+      for (const job of state.jobs) {
+        const claim = job.claim;
+        if (job.producerWithdrawn === undefined && job.state === 'completed' && job.result === WITHDRAWN_RESULT &&
+            claim?.nodeId === WITHDRAWN_RESULT && claim.jobId === job.id &&
+            Number.isSafeInteger(claim.token) && claim.token > 0 && claim.token <= state.sequence &&
+            claim.session === claim.token && claim.leaderToken === claim.token &&
+            job.completedAt !== undefined && Number.isSafeInteger(job.completedAt) && job.completedAt >= 0 &&
+            claim.expiresAt === job.completedAt && job.completedAt <= now) {
+          job.producerWithdrawn = true;
+        }
+      }
       return structuredClone(fn(state, now));
     });
   }
