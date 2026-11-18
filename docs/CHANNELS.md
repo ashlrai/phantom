@@ -150,6 +150,38 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
 
 `phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are the single owner thread across desktop, Telegram, email, iMessage and Slack. Inbound messages from the configured owner land in one ordered thread. A reply goes back to that channel and to the desktop thread, and nowhere else. Adapters stay disabled until configured. Secret fields are Phantom Secrets handle names. KILL and the comms pause halt every adapter. See [Owner thread](OWNER-THREAD.md).
 
+## Send each update to the right channel
+
+`phm notify rules` shows which channel each kind of update goes to, and
+`phm notify rules set <type> <channel>` changes one. The Rules card in the
+desktop Channels pane shows and edits the same rows through
+`GET`/`POST /api/notify/rules` (`phantom.notify.rules.v1`).
+
+| Update | Default channel | When |
+| --- | --- | --- |
+| `decision` (decisions and approvals) | iMessage | Now; reply YES or NO |
+| `incident` | iMessage | Now |
+| `texts-digest` (a digest whose `source` is `texts`) | iMessage | Once a day |
+| `digest` (email and LinkedIn digests) | Email | When the digest is ready |
+| `shipped` | Email | Next digest |
+| `fyi` | Desktop app | Now |
+
+Every update is also shown in the desktop app. Rules live in
+`~/.ashlr/comms/notify-rules.json`; with no file, or one that cannot be used,
+the defaults above apply and the view says why.
+
+`phm notify route <update.json> --json` classifies one update and prints its
+delivery plan (`phantom.notify.plan.v1`). It never sends: the owner-thread
+adapters do. The update is a JSON object with optional `id`, `type`, `source`,
+`text`, `status` and `to`. A named `type` wins (`approval`, `merged` and
+`status` are older names for `decision`, `shipped` and `fyi`); without one the
+text decides. An unrecognized type is `unknown` and goes to the desktop app
+only. `status` keeps RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED exactly;
+any other word is `unknown`. Every step carries the one `owner` thread id, so a
+reply on any channel lands in the same thread. A `to` outside the `[mason]` and
+`[team]` identities in `~/.ashlr/agent-network.toml` makes every step a
+`draft`, never a `send`.
+
 ## Preview an update route
 
 `phm notify route approval` prints a JSON plan by default. Add `--text` for

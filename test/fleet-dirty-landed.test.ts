@@ -125,6 +125,7 @@ describe('fleet dirty-landed', () => {
       const gh = ghReturning([row(1, head, 'DIRTY', 'bridge: RQ-PHX-YIELD')]);
       expect(await cmdFleetDirtyLanded(['--json'], { gh, remote: dir })).toBe(0);
       const pr = (JSON.parse(output[0]!) as DirtyLandedReport).prs[0]!;
+      expect(pr.baseSha).toBe(before);
       expect(pr.class).toBe(state === 'landed' ? 'landed' : conflict ? 'needs-recut' : 'partly-landed');
       expect(pr.remainingPaths).toEqual(state === 'landed' ? [] : conflict ? ['a.txt', 'b.txt'] : ['b.txt']);
       if (state === 'landed') expect(pr.reason).toBe('already-present-on-base');

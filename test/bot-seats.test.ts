@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, seatMayClaim, seatParticipants, sendSeatMessage, transitionSeatState, type QuotaEvidence, type SeatOptions, type SeatState } from '../src/core/bots/seats.js';
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
-import { acquireCoordination } from '../src/core/agents/claim-store.js';
+import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { runBotsCli } from '../src/cli/bots.js';
@@ -96,6 +96,56 @@ it('plans read-only and hands each live bus claim and fenced node job off once',
   expect(state.jobs[0].state).toBe('pending'); expect(state.jobs[0].declined).toEqual([node.session]);
   expect((await stat(join(o.root, 'seat-state.json'))).mode & 0o777).toBe(0o600);
   expect((await stat(join(o.root, 'handoffs.jsonl'))).mode & 0o777).toBe(0o600);
+});
+it('fences source releases to the lease generation and still releases the current holder', async () => {
+  const o = await fixture();
+  const root = join(o.home, '.ashlr', 'fleet');
+  const sourceId = 'same-source';
+  const oldLeaseUntil = now + 10_000;
+  expect(acquireCoordination({ root, origin: 'resource', key: 'pr:o/r#12', owner: 'old-holder',
+    sourceId, leaseMs: 10_000, leaseUntil: oldLeaseUntil, now }).status).toBe('acquired');
+  const successorLeaseUntil = now + 20_001;
+  expect(acquireCoordination({ root, origin: 'resource', key: 'pr:o/r#12', owner: 'successor',
+    sourceId, leaseMs: 10_000, leaseUntil: successorLeaseUntil, now: now + 10_001 }).status).toBe('acquired');
+
+  expect(releaseCoordinationBySource({ root, origin: 'resource', sourceId, owner: 'old-holder',
+    leaseUntil: oldLeaseUntil, now: now + 10_002 }).status).toBe('stale');
+  expect(listCoordination(root, now + 10_002).claims).toContainEqual(expect.objectContaining({
+    sourceId, owner: 'successor', leaseUntil: successorLeaseUntil, live: true,
+  }));
+
+  expect(releaseCoordinationBySource({ root, origin: 'resource', sourceId, owner: 'successor',
+    leaseUntil: successorLeaseUntil, now: now + 10_002 }).status).toBe('released');
+  expect(listCoordination(root, now + 10_002).claims).not.toContainEqual(expect.objectContaining({ sourceId }));
+});
+it('keeps a successor lease when a seat handoff releases its stale snapshot', async () => {
+  const o = await fixture({ ...seat(), nodeId: 'helper-node' });
+  const root = join(o.home, '.ashlr', 'fleet');
+  const sourceId = 'handoff-race';
+  const oldLeaseUntil = now + 10_000;
+  acquireCoordination({ root, origin: 'resource', key: 'pr:o/r#13', owner: 'helper',
+    sourceId, leaseMs: 10_000, leaseUntil: oldLeaseUntil, now });
+  let clock = now, replaced = false;
+  const state = emptyState();
+  const store: NodesStore = { transaction: fn => {
+    const result = fn(state);
+    if (!replaced) {
+      replaced = true;
+      clock = now + 10_001;
+      acquireCoordination({ root, origin: 'resource', key: 'pr:o/r#13', owner: 'successor',
+        sourceId, leaseMs: 10_000, leaseUntil: now + 20_001, now: clock });
+    }
+    return result;
+  } };
+  const result = await applySeatHandoff('helper', {
+    ...o, now: () => clock, nodesStore: store, readQuota: async () => exhausted,
+    ownerNotice: async () => undefined, busPost: async () => undefined,
+  });
+
+  expect(result.handoffs).toHaveLength(1);
+  expect(listCoordination(root, clock).claims).toContainEqual(expect.objectContaining({
+    sourceId, owner: 'successor', leaseUntil: now + 20_001, live: true,
+  }));
 });
 it('CLI emits empty roster and dry-run/apply JSON; refuses active or unknown seats', async () => {
   const o = await fixture();

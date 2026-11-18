@@ -21,6 +21,8 @@
  *   suggestActionClass(action, class)       Leader memo via vision/leader-advice.ts (advisory, escalate-only)
  *   labelTaskClass(text) / primeTaskClasses orchestration task typing
  *   decide / decideEach                     anything new
+ *   decide({question, options, context})    one question, a fixed option list, "unknown" instead of a guess
+ *                                           (router model, not Jev; see options.ts and `phm decide`)
  */
 
 export type {
@@ -38,6 +40,8 @@ export type {
 
 export { decide, decideEach, effectiveThreshold, jevReady, MAX_BATCH_ITEMS } from './decide.js';
 export type { BatchItem, DecideEachOptions } from './decide.js';
+export { DECIDE_UNKNOWN, DECIDE_VERSION, DecideInputError } from './options.js';
+export type { DecideDeps, DecideInput, DecideReply, DecideResult, DecideRunner } from './options.js';
 
 export {
   ACTION_CLASSES,

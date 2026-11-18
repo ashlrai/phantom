@@ -27,6 +27,8 @@ export interface NeedsMasonAnswer {
   /** Scrubbed surface label recorded at resolution time. */
   source: string;
   resolvedAt: string;
+  /** Verified id that answered, present only when the writer recorded one (approvals). */
+  answeredBy?: string;
 }
 
 export type NeedsMasonAnswerResult =
@@ -39,7 +41,7 @@ export interface NeedsMasonAnswerDeps { list?: typeof listBusInboxAfter }
 function answerFields(body: unknown, itemId: string): Omit<NeedsMasonAnswer, 'itemId'> | null {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
   const record = body as Record<string, unknown>;
-  const { kind, item, reply, source, resolvedAt } = record;
+  const { kind, item, reply, source, resolvedAt, answeredBy } = record;
   if (kind !== NEEDS_MASON_RESOLVED_KIND || record.itemId !== itemId ||
       typeof item !== 'string' || !item.length || item.length > ITEM_TEXT_MAX ||
       (reply !== undefined && (typeof reply !== 'string' || !reply.length || reply.length > NEEDS_MASON_REPLY_MAX)) ||
@@ -51,6 +53,7 @@ function answerFields(body: unknown, itemId: string): Omit<NeedsMasonAnswer, 'it
     reply: typeof reply === 'string' ? scrubSecrets(reply) : null,
     source: scrubSecrets(source),
     resolvedAt: scrubSecrets(resolvedAt),
+    ...(typeof answeredBy === 'string' && /^[A-Za-z0-9._:@-]{1,64}$/.test(answeredBy) ? { answeredBy } : {}),
   };
 }
 

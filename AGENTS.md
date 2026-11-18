@@ -104,8 +104,8 @@ Leader board: every Leader tick records a `fleet.leader-board.v1` state at
 `~/.ashlr-runs/coordination/leader-board.json` — lanes, queue depth by tier,
 merges in the last hour, the conflicting-PR count trend (RQ-REBASE rows in
 ready.tsv are the local proxy for GitHub-conflicting PRs) and open
-needs-Mason items. Read it back with `phm fleet board --leader --json`; all inputs are
-local files, never gh or a model.
+needs-Mason items. Read that JSON file directly; all inputs are local files,
+never gh or a model.
 
 Disk maintenance: `phm disk-maint` is a dry run that reports reclaimable bytes
 per class; `--apply` rotates, compresses and deletes rebuildable leftovers and
@@ -240,10 +240,12 @@ displayed draft digest. Do not treat a queued job or result draft as send author
 
 ## Apps control
 
-`phm apps --json` reports Phantom, Claude, Codex, ChatGPT, Cursor, Grok and
+`phm apps --json` reports Phantom, Claude, Codex, ChatGPT, Cursor, Grok, Devin and
 Safari (installed, running, frontmost, memory; unknown with a reason), and
 `phm apps open|focus <name> --json` acts on them. Quit refuses every one of
-them except Safari. `phm apps list|open|quit|focus|status [--json]` and
+them except Safari, and refuses Chrome. `phm apps suggest --pressure warning --json`
+lists the idle apps that would free the most memory and never quits anything.
+`phm apps list|open|quit|focus|status [--json]` and
 `phm apps request open|quit|focus <app> --json` manage other desktop apps named in
 `~/.ashlr/apps-allow.json` (empty by default). Copy and paste these commands;
 see [APPS-CONTROL](docs/APPS-CONTROL.md):
@@ -255,6 +257,11 @@ phm apps list --json
 phm apps status Notes --json
 phm apps quit Notes --json
 ```
+
+Safari is Phantom's own agent browser: `phm browser --json` lists its tabs and
+the latest screenshot, `phm browser open <url> --json`, `phm browser shot <path.png> --json`
+and `phm browser close --json` act on it, and `phm browser doctor --json` says whether
+remote automation is on. Chrome is always refused.
 
 The Fleet Host Allowed apps card and GET/POST `/api/verse/apps/control` share
 the CLI service. Allowlist entries accept `actions` and `mode: "request"` policies;

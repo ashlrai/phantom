@@ -171,6 +171,18 @@ No verified alternative means no call. A missing or invalid registry fails close
 `unverified` and `stale` (verified over 30 days ago) flags. The desktop Models
 panel shows the same rows from `GET /api/verse/fleet/control/models`.
 
+`phm models check [--json] [--diff <file>]` is the one read-only answer to "can
+the router use this name?". For every model in the registry or chosen in
+`models.json` it reports provider, ID, lanes, source URL, the date it was last
+confirmed and a state: `confirmed`, `stale` (confirmed more than 14 days ago,
+still routable) or `unconfirmed` (no source; `routable` is `false`, the same
+answer the gateway gives). The JSON is `models.check.v1` with `version: 1`; a
+registry that cannot be read gives `registry: "unknown"` and no models. Exit 0
+means nothing needs doing. `--diff` takes a provider release-notes page saved to
+disk (the command never fetches) and lists `new`, `renamed` and `retired` IDs
+for that provider as leads to confirm; it changes nothing. The Models card shows
+the same report from `GET /api/verse/fleet/control/models/check`.
+
 To qualify a new model on release day, confirm its exact ID in official docs, then
 run `phm models verify <id> --source <url>` (add `--provider <name>` for an ID that
 is not listed yet, and `--lane <lane>` for each lane that can run it). The command

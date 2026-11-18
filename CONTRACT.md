@@ -42,7 +42,10 @@ Exports:
   refused. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
   `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
   retries held releases on replay, declines node sessions and releases bus
-  claims by source. It returns `phantom-bot-handoff-plan.v1` with `apply`, state
+  claims by source. Source releases require the current owner; seat handoffs also
+  match the captured stored lease generation. Team and board clears use owner-only
+  fencing because acquisition may normalize the requested expiry. It returns
+  `phantom-bot-handoff-plan.v1` with `apply`, state
   and handoffs; apply handoffs include `notifications: {bus, owner}` statuses.
   Durable notice receipts suppress repeated attempts; crashes before receipt
   persistence retry with stable deduplication keys. Notification exceptions are
@@ -1231,6 +1234,18 @@ and claim-only (`unknown`) sessions. Unknown text fields read `unknown`, unknown
 times are null, and `unknown` names the reason for each. `quiet` is true after
 10 minutes without output and null when that time is unknown.
 `throttledLiveMap` is now generic over its value type.
+
+**Org tree states (RQ-ORGVIEWN18BQ8).** `fleet.org.v1` gains `version: 1` and,
+on the leader, every lane and every job, `state` (`OrgState`: `running`,
+`idle`, `held`, `done`, `unknown`) and `doing` (plain words). The leader gains
+`provider` and `model`; lanes gain `model` and `heldReason`. Additive: no field
+was removed. `fleet.sessions.v1` rows gain optional `published` (the publish
+record has a `RESULT` line written since this dispatch), `FleetMapNode` gains
+optional `published`, and a published job is `done` and leaves its lane's
+`running` count. `readFleetOrgSources(minutes, readers?)` and
+`readFleetOrgMap(minutes, readers?)` take an optional `Partial<FleetOrgReaders>`
+(`live`, `sessions`, `runs`, `ledger`, `models`, `messages`, `now`); defaults
+are exported as `fleetOrgReaders`. `OrgTreeInputs` gains optional `models`.
 
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 

@@ -72,6 +72,7 @@ export interface AsksOptions extends Pick<NeedsMasonOptions, 'runsDir' | 'bus'> 
 export interface AnswerAskDeps { resolve?: typeof resolveNeedsMasonWithInbox; readAnswer?: typeof readNeedsMasonAnswer }
 
 const TAGGED = /^ask:(password|2fa|device|payment)\s+(.+?)(?:\s+\(asked\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\))?$/i;
+const APPROVAL_LINE = /^approval #\d{1,6}: /;
 const STAMP = /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z)\b/;
 // First match wins: a 2FA code for a device sign-in is a 2FA ask, not a device one.
 const WORDING: Array<[AskKind, RegExp]> = [
@@ -88,6 +89,8 @@ export const isAskAnswer = (value: unknown): value is AskAnswer => typeof value 
 
 /** The ask a ledger line describes, or null when it is not one of the four kinds. */
 export function askOfLine(text: string): { kind: AskKind; request: string; created: string | null } | null {
+  // An agent's approval line (approvals.ts) has its own options; wording must not reclassify it.
+  if (APPROVAL_LINE.test(text.trim())) return null;
   const tagged = TAGGED.exec(text.trim());
   if (tagged) return { kind: tagged[1]!.toLowerCase() as AskKind, request: tagged[2]!.trim(), created: validIso(tagged[3]) };
   const match = WORDING.find(([, pattern]) => pattern.test(text));
@@ -101,7 +104,7 @@ function validIso(value: string | undefined): string | null {
 }
 
 const hexOf = (id: string): string => id.slice('nm-'.length);
-function shortIds(items: readonly NeedsMasonLedgerItem[]): Map<string, string> {
+export function shortIds(items: readonly NeedsMasonLedgerItem[]): Map<string, string> {
   const out = new Map<string, string>();
   for (const item of items) {
     const hex = hexOf(item.id);
@@ -128,7 +131,8 @@ export function listAsks(options: AsksOptions = {}): AsksList {
       ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null,
     });
   }
-  return { schema: 'asks.v1', asOf: new Date(nowMs).toISOString(), ledger: ledger.status, count: asks.length, asks, fleetDecides: open.length - asks.length };
+  return { schema: 'asks.v1', asOf: new Date(nowMs).toISOString(), ledger: ledger.status, count: asks.length, asks,
+    fleetDecides: open.filter(item => !APPROVAL_LINE.test(item.text)).length - asks.length };
 }
 
 export type RaiseAskResult =

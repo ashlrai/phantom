@@ -10,6 +10,8 @@ export interface FleetMapNode {
   jobId?: string; lane?: string; model?: string; repo?: string; ageSeconds?: number | null;
   /** Jobs only. Start instant, and whether a worker process was seen when the map was built. */
   startedAt?: string | null; processLive?: 'yes' | 'no' | 'unknown';
+  /** Jobs only. The publish record has a RESULT line, so the job is done, not running. */
+  published?: boolean;
 }
 /** `provider` is the sender's (`from`) provider: who is behind the reporting agent or the message. */
 export interface FleetMapEdge {
@@ -60,19 +62,23 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   ORG_LANES.forEach(addLane);
   snapshot?.lanes.forEach(lane => addLane(lane.lane));
   const jobs = new Set<string>();
-  const addJob = (jobId: string, lane: string | null, model: string | null, repo: string | null, status: string, seconds: number | null, startedAt: string | null, processLive: FleetMapNode['processLive'] = 'unknown', title = jobId) => {
+  const addJob = (jobId: string, lane: string | null, model: string | null, repo: string | null, status: string, seconds: number | null, startedAt: string | null, processLive: FleetMapNode['processLive'] = 'unknown', title = jobId, published = false) => {
     if (jobs.has(jobId)) return;
     jobs.add(jobId);
     const parent = addLane(lane), id = `job:${jobId}`;
     const node: FleetMapNode = { id, kind: 'job', label: title || jobId, jobId, lane: known(lane), model: known(model), repo: known(repo),
       provider: providerFor(model, lane).name, status, ageSeconds: age(seconds),
-      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive };
+      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive, ...(published ? { published } : {}) };
     nodes.push(node); reportsTo(node, parent);
   };
   // Session evidence wins over the older engine-only snapshot; stale claims never become running jobs.
   const sessionIds = new Set([...(sessions?.sessions ?? []), ...(sessions?.recent ?? [])].map(row => row.job));
   for (const row of sessions?.sessions ?? []) {
-    if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live);
+    if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live, row.job, row.published === true);
+  }
+  // Current readers move valid published attempts to the bounded recent tail.
+  for (const row of sessions?.recent ?? []) {
+    if (row.status === 'finished' && row.published === true) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live, row.job, true);
   }
   for (const row of snapshot?.runs ?? []) {
     const id = row.taskId || row.id;
