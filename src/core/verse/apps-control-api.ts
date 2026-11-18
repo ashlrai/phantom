@@ -35,12 +35,13 @@ export function createAppsControlApi(deps: AppsControlDeps = {}): ApiModule {
       let body: unknown;
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       if (!body || typeof body !== 'object' || Array.isArray(body) ||
-        Object.keys(body).some(k => !['action', 'app', 'request'].includes(k))) {
+        Object.keys(body).some(k => !['action', 'app', 'request', 'dryRun'].includes(k))) {
         sendJson(res, 400, { error: 'invalid app request' }); return true;
       }
       const value = body as Record<string, unknown>;
       if (!APP_ACTIONS.some(a => a === value.action) || typeof value.app !== 'string' ||
-        (value.request !== undefined && typeof value.request !== 'boolean')) {
+        (value.request !== undefined && typeof value.request !== 'boolean') ||
+        (value.dryRun !== undefined && typeof value.dryRun !== 'boolean')) {
         sendJson(res, 400, { error: 'invalid app request' }); return true;
       }
       input = value as unknown as AppsRequest;

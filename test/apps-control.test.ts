@@ -35,16 +35,18 @@ const UNSAVED_TITLE = [{ ref: 'e1', role: 'AXWindow', title: 'Draft - Edited' },
 function fakeDesktop(tree: Array<Record<string, unknown>> | 'error' | 'ungranted-then' = CLEAN, apps = APPS) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let asked = false;
+  let quit: unknown;
   const call: ToolCall = async (name, args) => {
     calls.push({ name, args });
-    if (name === 'computer_list_apps') return ok(apps);
+    // A pressed Quit closes the app: it leaves the running list.
+    if (name === 'computer_list_apps') return ok(apps.split('\n').filter((l) => !quit || !l.includes(`(${String(quit)})`)).join('\n'));
     if (name === 'computer_request_access') { asked = true; return ok('requested'); }
     if (name === 'computer_ax_tree') {
       if (tree === 'error') return err('Notes is not granted to this chat.');
       if (tree === 'ungranted-then' && !asked) return err('That app is not granted to this chat.');
       return ok(treeText(tree === 'ungranted-then' ? CLEAN : tree));
     }
-    if (name === 'computer_ax_press') return ok('Pressed');
+    if (name === 'computer_ax_press') { quit = args.app; return ok('Pressed'); }
     return err(`unexpected tool ${name}`);
   };
   return { call, calls, names: () => calls.map((c) => c.name) };
@@ -199,8 +201,8 @@ describe('phm apps', () => {
     expect(await cmdApps(['list', '--json'], { ...base(), call: d.call })).toBe(0);
     const out = JSON.parse(lines[0]!);
     expect(out.apps).toEqual([
-      { name: 'Notes', bundleId: null, actions: ['open', 'quit', 'focus', 'status'], mode: 'direct', running: true, frontmost: false },
-      { name: 'Mail', bundleId: null, actions: ['open', 'quit', 'focus', 'status'], mode: 'direct', running: false, frontmost: false },
+      { name: 'Notes', bundleId: null, actions: ['open', 'quit', 'focus', 'status', 'restart'], mode: 'direct', running: true, frontmost: false },
+      { name: 'Mail', bundleId: null, actions: ['open', 'quit', 'focus', 'status', 'restart'], mode: 'direct', running: false, frontmost: false },
     ]);
     expect(JSON.stringify(out)).not.toContain('Pages');
   });

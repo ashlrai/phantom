@@ -442,6 +442,26 @@ two agents (`phm messages --agent <a> --with <b> --limit 20`). Agents that
 talk but are not drawn are listed under the map with their role. The 3D
 compute scene draws its message lines at the same thickness.
 
+#### Agent messages
+
+`phm agents messages [--since 1h] [--limit N] [--json]` lists recent
+agent-to-agent messages from the same bus read (no new store), newest first.
+`--json` prints `agents.messages.v1` (`version` 1), and
+`GET /api/verse/fleet/control/agent-messages[?since=1h&limit=50]` serves the
+same read with a current read session.
+
+- `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
+  characters), `threadId` when the message names a thread, then `fromName` and
+  `toName`. `from` and `to` are map node ids (`leader`, `lane:<name>`,
+  `job:<id>`), or `unknown` when the map does not draw that agent.
+- `pairs[]`: one per direction between two node ids over the whole window:
+  `count`, `lastAt` and `recent` (the last 5 summaries).
+
+On the Map pane, hovering a message line or its row shows a card with that
+line's count and last 5 messages. The Messages switch above the map hides
+every message line and the list. Reduced motion (the Settings motion choice or
+the system setting) stops the pulse; lines keep their thickness.
+
 ### Live sessions
 
 `phm sessions [--lane <lane>] [--repo <repo>] [--json]` lists every running

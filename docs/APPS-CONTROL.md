@@ -35,6 +35,26 @@ first; with `--need-mb` it stops at the fewest that cover it. It is read-only
 and never quits anything. Rows for your own apps carry `command: null`: close
 those yourself. JSON is `schema: "phm.apps.suggest/1"`.
 
+`phm apps restart <app>` quits an app and opens it again, under every quit
+rule above. Quit and restart also refuse the app in front (code `focused`):
+that is the one you are using. After pressing Quit, Phantom watches for up to
+10 s; if the app has not closed, the answer is `outcome: "unknown"` with code
+`quit-timeout`, and a restart does not reopen it.
+
+Add `--dry-run` to open, focus, quit or restart to check every rule without
+acting: the answer is `outcome: "dry-run"` with `commands`, the exact steps a
+real run would take. Nothing is run and nothing is logged.
+
+```sh
+phm apps restart safari --dry-run
+phm apps open cursor --dry-run --json
+```
+
+Each row also carries `kind` (`agent-app`, `browser`, `ide` or `phantom`),
+`processName` (the running main executable, or null) and `lastAction` (the
+latest open, focus, quit or restart in the feed, or null). Action answers are
+`schema: "phm.apps.action/1"`; the allowlist is `schema: "phm.apps.allowed/1"`.
+
 The report reads the filesystem, `plutil`, `ps` and `lsappinfo` only. It needs
 no Accessibility or Automation permission and never launches anything. Apps
 are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/1"`)

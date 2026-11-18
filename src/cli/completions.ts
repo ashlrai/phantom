@@ -119,7 +119,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', 'notes', '--since', '--write', '--json', '--file', '--help'],
   releases: ['--json', '--help'],
-  agents: ['apps', 'bus', 'help', 'list', 'show', 'validate', 'versions'],
+  agents: ['apps', 'bus', 'help', 'list', 'messages', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],

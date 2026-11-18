@@ -360,6 +360,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{status:ok, agent, messages[], nextCursor} | {status:ok, agent, wakes[]} | {adapters[]}',
   },
   {
+    usage: 'ashlr agents messages [--since 1h] [--limit N] [--json]',
+    description: 'Recent agent-to-agent messages from the agent bus with sender and recipient as map node ids (unknown when the map does not draw them), a 160-character summary, the thread when named, and per-line message counts with the last 5 summaries. Read only.',
+    safety: 'read',
+    jsonShape: 'agents.messages.v1 {schema, version, generatedAt, since, source, messages[{at, from, to, kind, summary, threadId?, fromName, toName}], pairs[{from, to, count, lastAt, recent[]}], matched, skipped}',
+  },
+  {
     usage: 'ashlr agents roster [--json]',
     description: 'Unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Each probe times out in about 5s and degrades to unknown. Read-only; no secrets.',
     safety: 'read',
@@ -950,7 +956,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]', desc: 'Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.', topic: 'core' },
   { cmd: 'desktop list-apps|windows|focus|read|scroll|type|click|screenshot|doctor [--json]', desc: 'Operate macOS desktop apps through the desktop-operator helper. Reads are free. focus, scroll, type and click post a bus intent first. KILL and comms pause block writes.', topic: 'core' },
-  { cmd: 'apps list|open|quit|focus|status [<app>] [--json] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
+  { cmd: 'apps list|open|quit|restart|focus|status [<app>] [--json] [--dry-run] | apps request open|quit|focus <app> [--json]', desc: 'Manage desktop apps named in ~/.ashlr/apps-allow.json (empty by default). Per-app action policy; logged to the feed. Requests and unsafe quits go to needs-you.', topic: 'core' },
   { cmd: 'browser [tabs|doctor|open <url>|shot [<path.png>]|close] [--json]', desc: 'Drive Safari, Phantom\'s own agent browser: list agent tabs, open a web address, save a screenshot, close its windows. doctor says whether remote automation is on and the one step to enable it. Chrome is always refused.', topic: 'core' },
   { cmd: 'desktopctl capabilities|status|run <resource> [--json]', desc: 'Drive Claude, Codex, Devin and a browser as interchangeable desktop resources. Flag-gated by ~/.ashlr/desktopctl.json; reports missing TCC grants, never prompts. Logged to the feed.', topic: 'core' },
   { cmd: 'desktop-update inspect|apply --stage <32hex> --json', desc: 'Verify signed paired updates; apply after native exit, Stop/drain and unchanged active grant. Never resumes the resident.', topic: 'core' },

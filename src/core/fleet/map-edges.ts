@@ -53,7 +53,8 @@ export interface MapEdges {
 }
 
 const JOB = /^(?:job:)?((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})$/;
-function agentOf(ref: AgentRef): MapEdgeAgent {
+/** The map node and org role a routing label proves; `node` null when the map does not draw it. Shared with `phm agents messages`. */
+export function mapEdgeAgent(ref: AgentRef): MapEdgeAgent {
   const { name } = ref, job = JOB.exec(name)?.[1];
   if (name === 'leader') return { name, role: 'leader', lane: null, node: 'leader' };
   if (ref.lane === name || (ORG_LANES as readonly string[]).includes(name)) return { name, role: 'lane', lane: name, node: `lane:${name}` };
@@ -71,7 +72,7 @@ export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly
   for (const message of projectAgentMessages(rows)) {
     const id = `${message.from.name}->${message.to.name}`, edge = edges.get(id);
     if (edge) edge.count++;
-    else edges.set(id, { id, from: agentOf(message.from), to: agentOf(message.to), count: 1, lastAt: message.ts, lastSummary: message.summary.slice(0, MAP_EDGE_SUMMARY_MAX) });
+    else edges.set(id, { id, from: mapEdgeAgent(message.from), to: mapEdgeAgent(message.to), count: 1, lastAt: message.ts, lastSummary: message.summary.slice(0, MAP_EDGE_SUMMARY_MAX) });
   }
   const list = [...edges.values()].sort((a, b) => (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
   const agents: Record<MapEdgeRole, string[]> = { leader: [], lane: [], worker: [], unknown: [] };
