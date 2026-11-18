@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.37 |
-| Latest dated changelog release (2026-11-18) | 3.30.37 |
+| Source package | 3.30.38 |
+| Latest dated changelog release (2026-11-18) | 3.30.38 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,29 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.38](https://github.com/ashlrai/phantom/compare/v3.30.37...v3.30.38) (2026-11-18)
-
-
-### Changes
-
-* **RQ-DEVINCLOUD-AUTOTAG1-N17:** ([#6902](https://github.com/ashlrai/phantom/issues/6902)) ([b8bedf4](https://github.com/ashlrai/phantom/commit/b8bedf4353d00a451e56f4e3dbf7280dc00675e7))
-* **RQ-DEVINCLOUD-UPGRADEFIX1-N17:** ([#6916](https://github.com/ashlrai/phantom/issues/6916)) ([9b113ae](https://github.com/ashlrai/phantom/commit/9b113aed8130557d3d8a0fe1ee4d56b2eab7e082))
-* **RQ-FAMILYYIELDN18RQ8:** RQ-FAMILYYIELDN18RQ8: job yield ([#6905](https://github.com/ashlrai/phantom/issues/6905)) ([46caa2f](https://github.com/ashlrai/phantom/commit/46caa2f6d259a974071035961497a65a7ac756b3))
-* **RQ-PHX-SLACKABORTREJECTION564S:** Slack abort rejection bridge ([#6900](https://github.com/ashlrai/phantom/issues/6900)) ([a24d6d4](https://github.com/ashlrai/phantom/commit/a24d6d480d0388ea2783e24de37d4491e15a5504))
-* **RQ-PHX-SLACKHEALTHDURABLE569S:** RQ-PHX-SLACKHEALTHDURABLE569S ([#6912](https://github.com/ashlrai/phantom/issues/6912)) ([2c05929](https://github.com/ashlrai/phantom/commit/2c059296901580203b6e237d6b9a4bd249088f87))
-* **RQ-PHX-SLACKPARTIALHEALTH567S:** Slack partial notice health — bridge report ([#6903](https://github.com/ashlrai/phantom/issues/6903)) ([4c722cf](https://github.com/ashlrai/phantom/commit/4c722cf3f6fa3c2ad57e5aaca2d41ce495d70713))
-* **RQ-PHX-SLACKPREVSTATEWIRE562S:** Slack prior-state factory handoff ([#6897](https://github.com/ashlrai/phantom/issues/6897)) ([1cbb741](https://github.com/ashlrai/phantom/commit/1cbb7410a2a77cdeb92c64d2e442385b2345d41e))
-* **RQ-PHX-SLACKREACQUIRE566S:** RQ-PHX-SLACKREACQUIRE566S ([#6901](https://github.com/ashlrai/phantom/issues/6901)) ([4694f96](https://github.com/ashlrai/phantom/commit/4694f96df95bc6739172bd2996f501337323bfa4))
-* **RQ-PHX-SLACKRUNOUTAGE563S:** RQ-PHX-SLACKRUNOUTAGE563S ([#6898](https://github.com/ashlrai/phantom/issues/6898)) ([2435fc4](https://github.com/ashlrai/phantom/commit/2435fc4d1e8df7f97604cc007ebc7c2005913e4d))
-* **RQ-PHX-SLACKSNAPSHOTWRITE563S:** Snapshot checkpoint health handoff ([#6899](https://github.com/ashlrai/phantom/issues/6899)) ([382cad0](https://github.com/ashlrai/phantom/commit/382cad04dc60acdd4c6b26d1cdea1614f24e8f6e))
-* **RQ-PULSEN18RQ8:** RQ-PULSEN18RQ8: fleet Pulse ([#6904](https://github.com/ashlrai/phantom/issues/6904)) ([c59cbb3](https://github.com/ashlrai/phantom/commit/c59cbb3b1b5158cebaff828cde39d7145d1e8b7e))
-* **RQ-QUEUEWAIT18Q8:** RQ-QUEUEWAIT18Q8 ([#6914](https://github.com/ashlrai/phantom/issues/6914)) ([67139e7](https://github.com/ashlrai/phantom/commit/67139e784e0cb8c7da212d76c89a78cf3b4e70b8))
-
-
-### Tests
-
-* **slack:** assert current status digest in owner roundtrip proof ([#6910](https://github.com/ashlrai/phantom/issues/6910)) ([1a9ced3](https://github.com/ashlrai/phantom/commit/1a9ced3ff9ad0ceef248ce56c8e42686e43d7ee8))
 
 ## [Unreleased]
 
@@ -88,6 +65,29 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.38] - 2026-11-18
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-AUTOTAG1-N17:** ([#6902](https://github.com/ashlrai/phantom/issues/6902)) ([b8bedf4](https://github.com/ashlrai/phantom/commit/b8bedf4353d00a451e56f4e3dbf7280dc00675e7))
+* **RQ-DEVINCLOUD-UPGRADEFIX1-N17:** ([#6916](https://github.com/ashlrai/phantom/issues/6916)) ([9b113ae](https://github.com/ashlrai/phantom/commit/9b113aed8130557d3d8a0fe1ee4d56b2eab7e082))
+* **RQ-FAMILYYIELDN18RQ8:** RQ-FAMILYYIELDN18RQ8: job yield ([#6905](https://github.com/ashlrai/phantom/issues/6905)) ([46caa2f](https://github.com/ashlrai/phantom/commit/46caa2f6d259a974071035961497a65a7ac756b3))
+* **RQ-PHX-SLACKABORTREJECTION564S:** Slack abort rejection bridge ([#6900](https://github.com/ashlrai/phantom/issues/6900)) ([a24d6d4](https://github.com/ashlrai/phantom/commit/a24d6d480d0388ea2783e24de37d4491e15a5504))
+* **RQ-PHX-SLACKHEALTHDURABLE569S:** RQ-PHX-SLACKHEALTHDURABLE569S ([#6912](https://github.com/ashlrai/phantom/issues/6912)) ([2c05929](https://github.com/ashlrai/phantom/commit/2c059296901580203b6e237d6b9a4bd249088f87))
+* **RQ-PHX-SLACKPARTIALHEALTH567S:** Slack partial notice health — bridge report ([#6903](https://github.com/ashlrai/phantom/issues/6903)) ([4c722cf](https://github.com/ashlrai/phantom/commit/4c722cf3f6fa3c2ad57e5aaca2d41ce495d70713))
+* **RQ-PHX-SLACKPREVSTATEWIRE562S:** Slack prior-state factory handoff ([#6897](https://github.com/ashlrai/phantom/issues/6897)) ([1cbb741](https://github.com/ashlrai/phantom/commit/1cbb7410a2a77cdeb92c64d2e442385b2345d41e))
+* **RQ-PHX-SLACKREACQUIRE566S:** RQ-PHX-SLACKREACQUIRE566S ([#6901](https://github.com/ashlrai/phantom/issues/6901)) ([4694f96](https://github.com/ashlrai/phantom/commit/4694f96df95bc6739172bd2996f501337323bfa4))
+* **RQ-PHX-SLACKRUNOUTAGE563S:** RQ-PHX-SLACKRUNOUTAGE563S ([#6898](https://github.com/ashlrai/phantom/issues/6898)) ([2435fc4](https://github.com/ashlrai/phantom/commit/2435fc4d1e8df7f97604cc007ebc7c2005913e4d))
+* **RQ-PHX-SLACKSNAPSHOTWRITE563S:** Snapshot checkpoint health handoff ([#6899](https://github.com/ashlrai/phantom/issues/6899)) ([382cad0](https://github.com/ashlrai/phantom/commit/382cad04dc60acdd4c6b26d1cdea1614f24e8f6e))
+* **RQ-PULSEN18RQ8:** RQ-PULSEN18RQ8: fleet Pulse ([#6904](https://github.com/ashlrai/phantom/issues/6904)) ([c59cbb3](https://github.com/ashlrai/phantom/commit/c59cbb3b1b5158cebaff828cde39d7145d1e8b7e))
+* **RQ-QUEUEWAIT18Q8:** RQ-QUEUEWAIT18Q8 ([#6914](https://github.com/ashlrai/phantom/issues/6914)) ([67139e7](https://github.com/ashlrai/phantom/commit/67139e784e0cb8c7da212d76c89a78cf3b4e70b8))
+
+
+### Tests
+
+* **slack:** assert current status digest in owner roundtrip proof ([#6910](https://github.com/ashlrai/phantom/issues/6910)) ([1a9ced3](https://github.com/ashlrai/phantom/commit/1a9ced3ff9ad0ceef248ce56c8e42686e43d7ee8))
 
 ## [3.30.37] - 2026-11-18
 
