@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { evictAll } from '../../../data/cache.js';
+import { evictAll, getQuerySnapshot, invalidate } from '../../../data/cache.js';
 import { ClaimDriftCard } from './ClaimDriftCard.js';
 import { claimDriftHeadline, parseClaimDrift } from './claim-drift-model.js';
 
@@ -59,6 +59,24 @@ it('renders the request failure text', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
   render(<ClaimDriftCard visible />);
   expect(await screen.findByText('Claim stores unknown: request failed')).toBeTruthy();
+});
+
+it('marks a cached claim report stale after a 503 refresh', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(Response.json(body()))
+    .mockResolvedValueOnce(new Response('{}', { status: 503 })));
+  render(<ClaimDriftCard visible />);
+  expect(await screen.findByText(/Claim stores agree/)).toBeTruthy();
+  const lastSuccess = getQuerySnapshot('verse-fleet-claim-drift').updatedAt;
+  expect(lastSuccess).not.toBeNull();
+
+  invalidate('verse-fleet-claim-drift');
+
+  const warning = await screen.findByRole('status');
+  expect(warning.textContent).toContain('Refresh failed; showing the last claim-store report, which may be stale.');
+  expect(warning.querySelector('time')?.getAttribute('datetime')).toBe(new Date(lastSuccess!).toISOString());
+  expect(screen.getByText(/Stale evidence: Claim stores agree/)).toBeTruthy();
+  expect(getQuerySnapshot('verse-fleet-claim-drift').updatedAt).toBe(lastSuccess);
 });
 
 it('parser rejects bad shapes and headline names missing sources', () => {
