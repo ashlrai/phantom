@@ -1,6 +1,8 @@
-/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, and the Disk card (`phm worktrees`) closes the column. */
+/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, and the Disk card (`phm worktrees`) closes the column.
+ * The headline carries a state mark and the time the summary was read; lanes with a target and repos draw their reading (a bar, a mark) beside the same words. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
+import { Meter } from '../../../components/primitives/Meter.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -27,6 +29,11 @@ const openPane = (paneId: string) => { setFocusMode(false); setVerseSection('cha
 
 const openPoolJob = (job: string) => { requestWorkerLogJob(job); openPane('worker-log'); };
 
+/** The summary's own read time. An unparseable stamp is no time at all, never "now". */
+function readAt(iso: string): string | null {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? null : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 function Value<T>({ field, children }: { field: HomeField<T>; children: (value: T) => ReactNode }) {
   return field.state === 'ok' ? <>{children(field.value)}</> : <span data-unknown>Unknown: {field.reason}</span>;
 }
@@ -41,13 +48,19 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /><LeaderRepliesCard visible={visible} /><PoolsCard visible={visible} onOpenJob={openPoolJob} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} /><PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} /></section>;
+  // A failed refresh keeps the last summary on screen; it must not read as current.
+  const stale = read.status === 'error';
+  const at = readAt(home.asOf);
   return <section className={styles.root} aria-label="Home">
     <PulseCard visible={visible} />
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
-    <ApprovalsCard visible={visible} />
-    <LeaderRepliesCard visible={visible} />
-    <PoolsCard visible={visible} onOpenJob={openPoolJob} />
+    <p className={styles.asOf} data-stale={stale || undefined} role={stale ? 'status' : undefined}>
+      {stale ? 'Could not refresh. Showing the reading from ' : 'As of '}{at ? <time dateTime={home.asOf}>{at}</time> : 'an unknown time'}.</p>
+    {/* Keyed like the loading branch above: the read-time line sits before these cards only here, and an open pool or a half-given answer must survive the summary arriving. */}
+    <ApprovalsCard key="approvals" visible={visible} />
+    <LeaderRepliesCard key="leader-replies" visible={visible} />
+    <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} />
     <ThisMacCard visible={visible} className={styles.card} />
     <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>
       <p>Last hour: <Value field={home.mergedLastHour}>{String}</Value></p>
@@ -55,10 +68,12 @@ export function HomePane({ visible }: PaneProps) {
       <p>Median time to merge: <Value field={home.medianMergeSeconds}>{seconds => seconds < 90 ? `${Math.round(seconds)} seconds` : `${Math.round(seconds / 60)} minutes`}</Value></p>
     </Card>
     <Card title="Main" action="Open Fleet" onOpen={() => setVerseSection('fleet')}>
-      <Value field={home.main}>{repos => <ul>{repos.map(repo => <li key={repo.repo}>{repo.repo}: {repo.state}</li>)}</ul>}</Value>
+      <Value field={home.main}>{repos => <ul className={styles.marks}>{repos.map(repo => <li key={repo.repo} data-state={repo.state}>{repo.repo}: {repo.state}</li>)}</ul>}</Value>
     </Card>
     <Card title="Running jobs" action="Open Lanes" onOpen={() => openPane('fleet-lanes')}>
-      <Value field={home.running}>{lanes => <ul>{lanes.map(lane => <li key={lane.lane}>{lane.lane}: {lane.running}{lane.target === null ? '' : ` of ${lane.target}`}</li>)}</ul>}</Value>
+      <Value field={home.running}>{lanes => <ul className={styles.meters}>{lanes.map(lane => <li key={lane.lane}>{lane.lane}: {lane.running}{lane.target === null ? '' : ` of ${lane.target}`}
+        {/* A lane with no recorded target has nothing to fill against, so it gets no bar. */}
+        {lane.target !== null && lane.target > 0 ? <Meter variant="line" tone="accent" value={lane.running} max={lane.target} aria-label={`${lane.lane} running of target`} /> : null}</li>)}</ul>}</Value>
     </Card>
     <Card title="Most at risk of going unused" action="Open Usage" onOpen={() => openPane('fleet-usage')}>
       <p><Value field={home.atRisk}>{risk => risk ? `${risk.resource}. ${risk.reason}` : 'Nothing is set to expire unused.'}</Value></p>

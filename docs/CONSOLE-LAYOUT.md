@@ -52,6 +52,15 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Home's card column draws each reading beside the words that state it. The
+headline has a state mark (green healthy, amber stalled, red main, a hollow
+ring for unknown) and the time the summary was read underneath; if a refresh
+fails, that line says the reading is an old one. Each pool has a thin bar of
+the share used, and each lane with a recorded target has a bar of running
+jobs against it. A pool with no reading gets a hatched bar and a lane with no
+target gets none, so a missing number never looks like zero. Main lists one
+mark per repository.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), incidents (dispatch incidents, lane holds,

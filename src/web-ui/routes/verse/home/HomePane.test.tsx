@@ -35,7 +35,7 @@ const show = (data: unknown, width = 1440) => {
   return render(<HomePane {...({ visible: true } as Parameters<typeof HomePane>[0])} />);
 };
 const card = (name: string) => within(screen.getByRole('region', { name }));
-beforeEach(() => { state.openDockPane.mockClear(); localStorage.clear(); resetHomeChoice(); resetVerseUi(); window.location.hash = ''; });
+beforeEach(() => { state.status = 'success'; state.openDockPane.mockClear(); localStorage.clear(); resetHomeChoice(); resetVerseUi(); window.location.hash = ''; });
 afterEach(() => { cleanup(); viewport?.restore(); });
 describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, width) => {
   it('shows the headline and one column of cards, each with one action', () => {
@@ -79,6 +79,38 @@ it('quiet fleet: zero and nothing are words, not unknown', () => {
   expect(card('Most at risk of going unused').getByText('Nothing is set to expire unused.')).toBeTruthy();
   expect(card('Work log').getByText('No work recorded in the last 24 hours.')).toBeTruthy();
   expect(card('Leader').getByText('No unread replies.')).toBeTruthy();
+});
+it('draws each reading beside its words: a state mark per repo and a bar per lane that has a target', () => {
+  show(HEALTHY);
+  expect(card('Main').getByText('phantom: green').getAttribute('data-state')).toBe('green');
+  expect(card('Main').getByText('locus: red').getAttribute('data-state')).toBe('red');
+  // 3 of 8 is drawn; grok has no recorded target, so it has no bar rather than an invented one.
+  const bars = card('Running jobs').getAllByRole('meter');
+  expect(bars.map(bar => [bar.getAttribute('aria-label'), bar.getAttribute('aria-valuenow')])).toEqual([['claude running of target', '38']]);
+  // The mocked read is not a runway report, so every pool bar is unknown: no value, never 0.
+  for (const bar of card('Pools').getAllByRole('meter')) expect([bar.getAttribute('aria-valuenow'), bar.getAttribute('aria-valuetext')]).toEqual([null, 'unknown']);
+});
+it('says when the summary was read, and that it is an old reading when the refresh failed', () => {
+  const view = show(HEALTHY);
+  const fresh = view.container.querySelector('time[datetime="2026-11-17T12:00:00.000Z"]')?.parentElement;
+  expect(fresh?.textContent).toMatch(/^As of .+\.$/);
+  expect(fresh?.getAttribute('role')).toBeNull();
+  cleanup(); state.status = 'error';
+  show(HEALTHY);
+  const stale = screen.getAllByRole('status').find(node => node.hasAttribute('data-stale'));
+  expect(stale?.textContent).toMatch(/^Could not refresh\. Showing the reading from .+\.$/);
+  expect(screen.getByText(HEALTHY.headline)).toBeTruthy();
+  cleanup(); state.status = 'success';
+  show({ ...HEALTHY, asOf: 'not a time' });
+  expect(screen.getByText('As of an unknown time.')).toBeTruthy();
+});
+it('every color and size the Home styles name is a real design token', () => {
+  const read = (path: string) => readFileSync(join(process.cwd(), 'src/web-ui', path), 'utf8');
+  const defined = new Set((read('design/tokens.css') + read('design/global.css')).match(/--[\w-]+(?=\s*:)/g));
+  for (const file of ['home.module.css', 'this-mac.module.css', 'approvals.module.css']) {
+    const used = [...new Set(read(`routes/verse/home/${file}`).match(/(?<=var\()--[\w-]+/g))];
+    expect(used.filter(name => !defined.has(name)), file).toEqual([]);
+  }
 });
 it('is one column at every width: no grid, no row and no width breakpoint', () => {
   const css = readFileSync(join(process.cwd(), 'src/web-ui/routes/verse/home/home.module.css'), 'utf8');
