@@ -24,7 +24,7 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { showMessagePair, type MessagePair } from '../fleet-messages/messages-pair.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing } from './map-model.js';
+import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing } from './map-model.js';
 import { useViewport } from '../shell/viewport.js';
 import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
 import { MapStage3D } from './MapStage3D.js';
@@ -60,6 +60,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
   const layout = layoutLiveMap(map);
   const pulse = (edge: LiveMapEdge) => pulsing(edge, map, now, reducedMotion) ? 'true' : undefined;
+  const counts = showMessages ? messagePairs(map) : [];
   const talk = showMessages ? map.edges.filter(edge => edge.kind === 'messaged-in-last-15-min') : [];
   const hover = (edge: LiveMapEdge) => ({ onMouseEnter: () => setHovered(edge.id), onMouseLeave: () => setHovered(null),
     onFocus: () => setHovered(edge.id), onBlur: () => setHovered(null) });
@@ -81,6 +82,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
       {!compact && <Segmented<MapViewMode> options={VIEW_OPTIONS} value={mode} onChange={choose} size="sm" aria-label="Map view" />}
       <button type="button" aria-pressed={showMessages} onClick={() => { setShowMessages(on => !on); setHovered(null); }}>Messages</button>
     </div>
+    <p className={styles.notice}>Map as of {Number.isFinite(Date.parse(map.generatedAt)) ? <time dateTime={map.generatedAt}>{map.generatedAt}</time> : 'unknown'}.</p>
     {emptyMap(map) && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
     {mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={edge => onOpenMessages(pairOf(edge))} nameOf={nameOf}
       showMessages={showMessages} reducedMotion={reducedMotion} onHover={setHovered} cardEdge={card}
@@ -92,9 +94,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
             const a = layout.at.get(edge.from), b = layout.at.get(edge.to);
             const message = edge.kind === 'messaged-in-last-15-min';
             if (!a || !b || (message && !showMessages)) return null;
-            // Messages bow sideways so they never hide a reporting line between the same two nodes.
-            const bend = message ? 40 * (a.x <= b.x ? 1 : -1) : 0;
-            const d = `M${a.x},${a.y} Q${(a.x + b.x) / 2 + bend},${(a.y + b.y) / 2 - Math.abs(bend)} ${b.x},${b.y}`;
+            const d = message ? messageCurve(a, b).d : `M${a.x},${a.y} L${b.x},${b.y}`;
             if (!message) return <path key={edge.id} d={d} className={styles.edge} data-kind={edge.kind} />;
             return <g key={edge.id}>
               <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: messageLineWidth(edge.messages) }} />
@@ -102,6 +102,15 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
             </g>;
           })}
         </svg>
+        {counts.map(pair => {
+          const a = layout.at.get(pair.edge.from), b = layout.at.get(pair.edge.to);
+          if (!a || !b) return null;
+          const { mid } = messageCurve(a, b);
+          const words = pair.count === null ? 'an unknown number of messages' : `${pair.count} message${pair.count === 1 ? '' : 's'}`;
+          return <button key={pair.key} type="button" className={styles.count} style={{ left: mid.x, top: mid.y }}
+            aria-label={`Show ${words} between ${label(pair.edge.from)} and ${label(pair.edge.to)}`}
+            onClick={() => onOpenMessages(pairOf(pair.edge))}>{pair.count ?? '?'}</button>;
+        })}
         {card && <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} />}
         {layout.nodes.map(node => <button key={node.id} type="button" className={styles.node} data-kind={node.kind} data-status={node.status}
           style={{ left: node.x - NODE_W / 2, top: node.y - NODE_H / 2, width: NODE_W, height: NODE_H }}
@@ -164,6 +173,9 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
   if (!read.data) return <div className={styles.root}><p className={styles.notice} role="status">Map unavailable right now. It retries every few seconds.</p></div>;
   return <>
     {read.error && <p className={styles.notice} role="status">Refresh failed; showing the last map, which may be stale.</p>}
+    <p className={styles.notice}>Message summaries as of {edges.updatedAt === null ? 'unknown' : <time dateTime={new Date(edges.updatedAt).toISOString()}>{new Date(edges.updatedAt).toISOString()}</time>}
+      {edges.error ? ' · refresh failed; cached summaries may be stale' : ''}. Message cards as of {pairs.updatedAt === null ? 'unknown' : <time dateTime={new Date(pairs.updatedAt).toISOString()}>{new Date(pairs.updatedAt).toISOString()}</time>}
+      {pairs.error ? ' · refresh failed; cached cards may be stale' : ''}.</p>
     <MapView map={read.data} now={Date.now()} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
       pairs={pairs.data} reducedMotion={prefersReducedMotion()} />
   </>;
