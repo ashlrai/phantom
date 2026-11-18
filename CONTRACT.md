@@ -1150,6 +1150,25 @@ See [node runner](docs/NODES.md#reference-runner-security-review-before-installa
 
 ## Ready queue to node bridge (`phantom.node-bridge.v1`)
 
+`JobSpec`, `JobView` and `QueueJobV1` accept optional `task: {text, sha256}` for
+`codex-file` only. `task.ts` exports `EmbeddedNodeTask`, `NODE_TASK_LIMIT` (16384),
+`validNodeTask(value)` and `nodeTaskArgs(task)`. Enqueue validates nonblank UTF-8,
+byte bounds, secret scrubbing and SHA-256 before mutation. Only `DriveNodes.pull`
+returns task text; operator views, plans and withdrawal outcomes omit it.
+Pool enqueue accepts repeatable inline `--task-part=<plain UTF-8 text>` chunks
+(at most 4000 UTF-16 code units each, split only on code-point boundaries) and
+`--task-sha256 sha256:<hex>`, concatenated and validated at the authority.
+The existing per-argument and SSH request secret scrubs see the unencoded text;
+the complete concatenated text must also pass the same secret scrub. Bridge
+prompts are read only after eligibility/clearance checks, confined to
+`queue/prompts/`; manifests record `taskSha256` only. `task_unavailable`,
+`task_oversize`, `task_invalid` and `task_secret_shaped` keep a row local, with
+no encoding fallback for secret-shaped text. Worker validation failures
+release/decline without spawn. The standalone runner's `run` envelope is bounded
+at 128 KiB (including JSON escaping); embedded text remains bounded at 16 KiB.
+Bridged `ready:` requests require an embedded task, and any supplied claim must
+match the job ID. Non-bridged and direct CLI task-file execution stays supported.
+
 `src/core/drive/nodes/ready-bridge.ts` exports `runNodeBridge`, `planNodeBridge`,
 `parseReadyRow`, `remoteLaneCap`, `remotePackFor`, `bridgeLeaseOwner`,
 `nodeBridgeReadiness`, `flockDispatcher`, `localBridgeRouter`, `poolBridgeRouter`,

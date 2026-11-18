@@ -61,6 +61,8 @@ inventory of what still needs migrating.
   Security adopts `sync.py`; a test keeps install.sh's `FILES` list a subset of
   the manifest's `managed` set so the two can never disagree. `wt-prune.sh` and
   `wt-prune.py` are the first scripts covered by `sync.py` but not install.sh.
+  The standalone `contrib/mac/node-runner.mjs` is also managed here, installed
+  as executable `node-runner` for node pack probing and bridged jobs.
 
 See [the migration plan](../docs/MACHINERY-MIGRATION.md) for how the remaining
 ops-side machinery moves into this pipeline.
