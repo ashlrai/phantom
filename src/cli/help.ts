@@ -1231,6 +1231,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'notify route <type> [--text]', desc: 'Preview an owner update route in JSON (default) or plain words; never sends.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
+  { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
 
   { cmd: 'worktrees [--json] [--reap [--dry-run | --apply]]', desc: 'List job worktrees by state and remove the ones safe to remove.', topic: 'safety' },
   { cmd: 'worktrees prune [--dry-run | --apply] [--json]', desc: 'Preview or remove clean, inactive worktrees for finished jobs.', topic: 'safety' },
