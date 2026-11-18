@@ -353,6 +353,7 @@ Every command, grouped by topic.
     router rank --tier <local|mid|frontier> [--routes FILE] [--slots pool=count ...] [--json]   Rank supplied router decisions by pool budget reset; advisory, no writes.
     router serve|models|pick|config [--json]                                                    Loopback OpenAI-compatible endpoint over routeSeat, its model list, a routing preview and the versioned config. See docs/ROUTER-GATEWAY.md.
     router-calibration --jobs <jobs.jsonl> [--posthog <runs.json>] [--json]                     Compare recorded router predictions with outcomes and usage.
+    log [--since 6h] [--lane <lane>] [--repo <repo>] [--json]                                   What the fleet did, one row per job, newest first, under a one-line summary: jobs, merged, no-change rate and median time to merge.
     worklog [--hours 6] [--kind <kind>] [--repo <repo>] [--lane <lane>] [--json]                One feed of what the fleet did, newest first: merges, launches, empty jobs, leader replies and incidents.
     library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]        Search Library files, memory, messages and context, newest first, with owner and size. Read-only; show <id> prints one item; list [--json] keeps the leader-file format.
     queue report --events <file> [--json]                                                       Local per-station lambda, mu, rho, W and bottleneck; queue --help describes event input.

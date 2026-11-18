@@ -2811,6 +2811,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'log': {
+        // One row per job over the same reader as `worklog` (src/core/fleet/job-log.ts).
+        const { cmdLog } = await import('./log.js');
+        process.exitCode = await cmdLog(rest);
+        break;
+      }
+
       case 'fleet': {
         if (rest[0] === 'usage' && wantsHelp(rest)) {
           printCoreUsage('fleet usage', 'Read fleet usage.', [

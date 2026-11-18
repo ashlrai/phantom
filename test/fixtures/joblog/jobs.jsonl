@@ -1,0 +1,16 @@
+{"event":"launch","job":"JOB-MERGED","repo":"phantom","lane":"work","model":"model-a","ts":"2026-11-09T10:00:00Z"}
+{"event":"finish","job":"JOB-MERGED","exit_code":0,"empty":false,"ts":"2026-11-09T10:05:00Z"}
+{"event":"publish","job":"JOB-MERGED","title":"Add the log view","url":"https://github.com/ashlrai/phantom/pull/7","ts":"2026-11-09T10:06:00Z"}
+{"event":"outcome","state":"MERGED","url":"https://github.com/ashlrai/phantom/pull/7","ts":"2026-11-09T10:08:00Z","ttm_s":120}
+{"event":"launch","job":"JOB-EMPTY","repo":"locus","lane":"fast","model":"model-b","ts":"2026-11-09T10:10:00Z"}
+{"event":"finish","job":"JOB-EMPTY","exit_code":0,"empty":true,"ts":"2026-11-09T10:11:00Z"}
+{"event":"launch","job":"JOB-FAILED","repo":"phantom","lane":"fast","ts":"2026-11-09T10:12:00Z"}
+{"event":"finish","job":"JOB-FAILED","exit_code":1,"empty":true,"reason":"tests did not pass","ts":"2026-11-09T10:13:00Z"}
+{"event":"launch","job":"JOB-RUNNING","repo":"phantom","lane":"work","model":"model-a","ts":"2026-11-09T10:14:00Z"}
+{"event":"launch","job":"JOB-CLOSED","repo":"phantom","lane":"work","ts":"2026-11-09T10:15:00Z"}
+{"event":"publish","job":"JOB-CLOSED","url":"https://github.com/ashlrai/phantom/pull/8","ts":"2026-11-09T10:16:00Z"}
+{"event":"outcome","state":"CLOSED","job":"JOB-CLOSED","url":"https://github.com/ashlrai/phantom/pull/8","ts":"2026-11-09T10:17:00Z"}
+{"event":"launch","job":"JOB-OPEN","repo":"phantom","lane":"fast","ts":"2026-11-09T10:18:00Z"}
+{"event":"publish","job":"JOB-OPEN","url":"https://github.com/ashlrai/phantom/pull/9","ts":"2026-11-09T10:19:00Z"}
+{"event":"outcome","state":"MERGED","url":"https://github.com/ashlrai/locus/pull/3","ts":"2026-11-09T10:20:00Z"}
+{bad

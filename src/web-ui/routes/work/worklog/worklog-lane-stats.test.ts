@@ -3,7 +3,7 @@ import type { WorklogEntry } from '../../../../core/fleet/worklog.js';
 import { formatDuration, laneStats } from './worklog-lane-stats.js';
 
 const entry = (lane: string | null, seconds: number | null, model: string | null = null): WorklogEntry => ({
-  job: null, repo: null, lane, model, kind: 'merged', at: '', mergedAt: '', openToMergeSeconds: seconds, url: null,
+  job: null, repo: null, lane, model, kind: 'merged', at: '', mergedAt: '', openToMergeSeconds: seconds, url: null, goal: null, detail: null,
 });
 
 describe('laneStats', () => {
