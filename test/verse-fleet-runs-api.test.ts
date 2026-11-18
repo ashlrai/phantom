@@ -103,6 +103,15 @@ describe('fleet runs api', () => {
     const bad = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, claimed: [{ ...claim, job: '/Users/private' }] }) })), { path: PATH });
     expect(bad.wire).toMatchObject({ sources: { runsDir: 'degraded' }, lanes: [] });
   });
+  it('carries the not actually running list, empty for older readers, and rejects malformed rows', async () => {
+    const row = { job_or_lane: 'grok-one', kind: 'held_launch', reason: 'ultra reading older than 8h', since: null, unblock: 'Record a current Grok usage percent' };
+    const good = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, notRunning: [{ ...row, prompt: 'private' }] }) })), { path: PATH });
+    expect(good.wire).toMatchObject({ notRunning: [row], sources: { runsDir: 'healthy' } });
+    expect(JSON.stringify(good.wire)).not.toContain('private');
+    expect((await request(createFleetRunsApi(deps()), { path: PATH })).wire).toMatchObject({ notRunning: [], sources: { runsDir: 'healthy' } });
+    const bad = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, notRunning: [{ ...row, unblock: 7 }] }) })), { path: PATH });
+    expect(bad.wire).toMatchObject({ sources: { runsDir: 'degraded' }, lanes: [] });
+  });
   it('rejects malformed nested rows and private paths without partially applying runs', async () => {
     for (const bad of [{ ...runs, lanes: [{ lane: 'codex' }] }, { ...runs, events: [{ at: 'now', kind: 'debug', text: '/Users/private/work' }] }]) {
       const { wire } = await request(createFleetRunsApi(deps({ readRunsDir: async () => bad })), { path: PATH });

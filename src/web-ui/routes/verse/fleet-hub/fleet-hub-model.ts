@@ -48,6 +48,13 @@ export function snapshotAge(generatedAt: string | null, nowMs: number): string {
   return `read ${relativeText(generatedAt, nowMs)}`;
 }
 
+/** How long a "Not actually running" row has been stuck, as " · for 3 d"; empty when the start is unknown. */
+export function stuckFor(since: string | null, nowMs: number): string {
+  const minutes = since === null ? NaN : Math.floor((nowMs - Date.parse(since)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 0) return '';
+  return ` · for ${minutes >= 2880 ? `${Math.floor(minutes / 1440)} d` : minutes >= 120 ? `${Math.floor(minutes / 60)} h` : `${minutes} min`}`;
+}
+
 export function curatedWorkspace(presentIds: readonly string[]) {
   return CURATED_FLEET_WORKSPACE.filter((id) => presentIds.includes(id));
 }

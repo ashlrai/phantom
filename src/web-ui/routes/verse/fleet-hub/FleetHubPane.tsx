@@ -13,7 +13,7 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { pairedDevicesQuery } from '../sections/paired-devices-query.js';
 import { pendingPhonesQuery } from '../sections/pending-phones-query.js';
 import { setVerseSection } from '../verse-ui-store.js';
-import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge } from './fleet-hub-model.js';
+import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge, stuckFor } from './fleet-hub-model.js';
 import { lastOrderLine } from './hub-last-order.js';
 import { busTile } from './hub-bus-tile.js';
 import { phoneTile } from './hub-phone-tile.js';
@@ -70,12 +70,20 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
     <span className={styles.count}>{backlog.text}</span>
     <span className={styles.count}>{backlog.detail}{backlog.stale ? ' · stale' : ''}</span>
   </button>;
+  const notRunning = read.data?.notRunning ?? [];
   const lastOrder = lastOrderLine(read.data ?? null, now);
   const orderAt = lastOrder ? parseInboxAt(lastOrder.at, now) : null;
   const runsDir = read.data && 'runsDir' in read.data && typeof read.data.runsDir === 'string' && read.data.runsDir.trim()
     ? read.data.runsDir : '~/.ashlr-runs';
 
   return <section className={styles.pane} aria-label="Fleet">
+    {notRunning.length > 0 ? <section className={styles.notRunning} aria-label="Not actually running">
+      <strong>Not actually running · {notRunning.length}</strong>
+      <ul>{notRunning.map((row) => <li key={`${row.kind}:${row.job_or_lane}`}>
+        <span><strong>{row.job_or_lane}</strong> · {row.reason}{stuckFor(row.since, now)}</span>
+        <span className={styles.count}>Next: {row.unblock}</span>
+      </li>)}</ul>
+    </section> : null}
     <button type="button" className={styles.primary} onClick={() => openDockPane('company')}>Company overview</button>
     <button type="button" className={styles.primary} disabled={workspaceIds.length === 0} onClick={() => openFleetWorkspace(workspaceIds)}>Open fleet workspace</button>
     <button type="button" className={styles.secondary} disabled={presentIds.length === 0} onClick={() => openFleetWorkspace(presentIds)}>Open all fleet panes</button>

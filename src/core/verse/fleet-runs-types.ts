@@ -20,5 +20,7 @@ export interface FleetRunsV1 {
   /** Additive: the Leader chat (inbox + replies, time-ordered, with state); absent when either journal was unread. */
   leaderChat?: import('../fleet/leader-chat-types.js').LeaderChat;
   drop: { pending: Array<{ lane: string; file: string }>; done: number } | null;
+  /** Additive: launched or staffed but not actually running (`phm fleet held --json` prints the same rows). */
+  notRunning?: import('../fleet/fleet-held.js').NotRunningRow[];
 }
 export interface FleetRunsInboxBody { text: string; source?: string }
