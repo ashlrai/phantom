@@ -14,6 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import './helpers/local-memory.js';
 import {
   LEADER_CLOUD_AREA,
   LEADER_CLOUD_PROMPT_MAX,

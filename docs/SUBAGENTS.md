@@ -25,6 +25,7 @@ A non-`sa-` parent identifier is treated as a root session/job (1–128 letters,
 digits, periods, underscores, colons or hyphens, starting alphanumeric).
 Its fixed root scope is frontier tier, read/search/edit/test/shell tools,
 `**` write scope, 200000 tokens and included cost class.
+The router selects an eligible provider lane; a local lane is not guaranteed.
 Depth starts at 1 and is capped at 3.
 
 `--tools`, `--write-scope`, `--max-tokens` and `--max-cost-class` can narrow,

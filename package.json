@@ -96,6 +96,7 @@
     "docs/AGENT-HARNESS-EVOLUTION.md",
     "docs/RESET-AWARE-SCHEDULING.md",
     "docs/EXECUTION-FEEDBACK.md",
+    "docs/ECOSYSTEM-CHANGELOG.md",
     "docs/RESOURCE-EVIDENCE.md",
     "docs/RUNTIME_ACTIVATION_AUTHORITY.md",
     "docs/REMOTE-PHONE.md",
@@ -105,6 +106,7 @@
     "docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md",
     "docs/MACHINE-TELEMETRY.md",
     "docs/REPO-OWNERS.md",
+    "docs/IMPACT-METRICS.md",
     "docs/PRODUCTION-METRICS.md"
   ],
   "bundledDependencies": [
