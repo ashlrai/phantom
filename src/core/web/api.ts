@@ -1251,6 +1251,12 @@ export async function handleApi(
       sendJson(res, 200, await readUsageSpend());
       return true;
     }
+    if (path === '/api/usage/runway' && method === 'GET') {
+      // Same snapshot as `phm pool runway --json` (pool.runway.v1).
+      const { readPoolRunway } = await import('../usage/runway-read.js');
+      sendJson(res, 200, await readPoolRunway());
+      return true;
+    }
     if (path === HOST_SUMMARY_PATH) {
       if (method !== 'GET') {
         res.setHeader('Allow', 'GET');

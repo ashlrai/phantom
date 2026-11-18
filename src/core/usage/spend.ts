@@ -173,11 +173,11 @@ export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot
     || (a.hoursLeft ?? Infinity) - (b.hoursLeft ?? Infinity) || a.pool.localeCompare(b.pool));
   return { schema: USAGE_SPEND_SCHEMA, v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, headline: spendHeadline(pools), pools };
 }
-export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {
+/** The dispatchd status file, read with a 1 MiB bound (also when the file grows); null when missing, oversized or not JSON. */
+export async function readDispatchStatus(path: string): Promise<unknown> {
   try {
     const file = await open(path, 'r');
     try {
-      // As in readUsagePace, bound the read itself, including a file that grows.
       const bytes = Buffer.alloc(1024 * 1024 + 1);
       let length = 0;
       while (length < bytes.length) {
@@ -185,9 +185,12 @@ export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queu
         if (bytesRead === 0) break;
         length += bytesRead;
       }
-      if (length === bytes.length) return projectUsageSpend(null, now);
-      return projectUsageSpend(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown, now);
+      if (length === bytes.length) return null;
+      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown;
     } finally { await file.close(); }
-  }
-  catch { return projectUsageSpend(null, now); }
+  } catch { return null; }
+}
+
+export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {
+  return projectUsageSpend(await readDispatchStatus(path), now);
 }
