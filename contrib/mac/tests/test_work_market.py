@@ -206,6 +206,37 @@ class MarketUnit(unittest.TestCase):
         self.assertIn('tier_unavailable', reasons['codex-personal'])
         self.assertIn('quota_exhausted', reasons['claude'])
 
+    def test_hard_down_evidence(self):
+        # RQ-CONSTRAINT-AUDIT-1: provider-attributed (autobackoff) holds are hard-down; manual holds are not.
+        for slot, expected in [({}, False), ({'held': True}, False), ({'held': True, 'held_by': 'manual'}, False),
+                               ({'held': False, 'held_by': 'autobackoff'}, False), ({'quota': True}, False),
+                               ({'held': True, 'held_by': 'autobackoff'}, True), ({'auth_failed': True}, True),
+                               ({'quota': 0}, True), ({'quota': 0.0}, True),
+                               ({'held': True, 'held_reason': 'auth_failure'}, True),
+                               ({'held': True, 'held_reason': 'credits exhausted (RQ-X 2026-11-16)'}, True),
+                               ({'held': False, 'held_reason': 'credits exhausted'}, False)]:
+            self.assertIs(market.hard_down(slot), expected, slot)
+        # The operator HOLD list wins over provider backoff evidence; explicit auth/quota evidence still counts.
+        self.assertIs(market.hard_down({'held': True, 'held_by': 'autobackoff'}, True), False)
+        self.assertIs(market.hard_down({'held': True, 'held_reason': 'credits exhausted'}, True), False)
+        self.assertIs(market.hard_down({'quota': 0}, True), True)
+
+    def test_autobackoff_hold_releases_residency_but_not_move_cap_or_launch(self):
+        record = {'pool': 'codex-personal', 'decided_at': 9999, 'moves': []}
+        lanes = view(**{'codex-personal': {'held': True, 'held_by': 'autobackoff'}})
+        result, moved = self.choose(lanes=lanes, record=record)
+        self.assertEqual(result['chosen_lane'], 'claude')
+        self.assertIn('hard_down', result['reason_codes'])
+        self.assertEqual(moved['moves'], [10000])
+        for extra, reason in [({'moves': [9900, 9950]}, 'move_cap'), ({'launched': True}, 'launched')]:
+            result, _ = self.choose(lanes=lanes, record={**record, **extra})
+            self.assertIsNone(result['chosen_lane'])
+            self.assertIn('hysteresis_' + reason, result['reason_codes'])
+        manual = view(**{'codex-personal': {'held': True, 'held_by': 'manual'}})
+        result, _ = self.choose(lanes=manual, record=record)
+        self.assertIsNone(result['chosen_lane'])
+        self.assertIn('hysteresis_minimum_residency', result['reason_codes'])
+
     def test_hysteresis_hard_down_move_cap_and_launch_fence(self):
         record = {'pool': 'codex-personal', 'decided_at': 9999, 'moves': []}
         lanes = view(); lanes['codex-personal']['running'] = 2

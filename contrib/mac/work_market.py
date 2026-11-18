@@ -278,9 +278,19 @@ def serves_repo(lane_view_entry, repo):
     return repos is None or (repo is not None and repo in repos)
 
 
-def hard_down(slot):
-    return (slot.get("auth_failed") is True or number(slot.get("quota")) == 0
-            or (slot.get("held") and slot.get("held_reason") == "auth_failure"))
+def hard_down(slot, operator_hold=False):
+    """Evidence that a lane cannot run work now, so unlaunched jobs may leave it before minimum residency.
+
+    RQ-CONSTRAINT-AUDIT-1: a provider backoff hold (autobackoff usage/quota/auth, or credit exhaustion) counts,
+    matching fleet_controller.reroute_sources. A manual hold, or a lane on the operator HOLD list
+    (`operator_hold`), is an operator decision about that lane's work and never counts. The move cap and the
+    launched fence in route_decision still apply, so a job never moves after launch or more than twice in 6 h.
+    """
+    if slot.get("auth_failed") is True or number(slot.get("quota")) == 0: return True
+    if not slot.get("held"): return False
+    if slot.get("held_reason") == "auth_failure": return True
+    return not operator_hold and (slot.get("held_by") == "autobackoff"
+                                  or str(slot.get("held_reason", "")).startswith("credits exhausted"))
 
 
 def executor_capabilities(lane, slot):
@@ -343,7 +353,7 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
             "cost_class": slot.get("cost_class", "local" if local else "metered" if lane in ("claude-api", "devin") else "included" if lane in BUILTIN else None),
             "target": targets[lane], "running": running[lane],
             "held": bool(slot.get("held") or lane in holds),
-            "auth_failed": hard_down(slot),
+            "auth_failed": hard_down(slot, lane in holds),
             "quota": min(known_quota) if known_quota else None,
             "backoff": slot.get("backoff", False) or signal.get("backoff") is True,
             "local": local,
