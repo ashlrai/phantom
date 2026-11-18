@@ -306,6 +306,65 @@ class DiskMaintenanceTests(unittest.TestCase):
         self.assertEqual(sum('--apply --json --wtroot' in line for line in lines), 4)
 
 
+class CloudCompletionCountTests(unittest.TestCase):
+    def fixture(self, result=None, grace=False):
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'
+        job = 'RQ-CLOUD-DONE'
+        wt = home / 'Projects/ashlrai/wt' / job
+        wt.mkdir()
+        (r / f'{job}.base').write_text(f'deadbeef phantom {wt} devin\n')
+        if grace:
+            (r / f'queue/run/{job}.dispatched').write_text(str(time.time()))
+        if result is not None:
+            (r / f'{job}.publish').write_text(result + '\n')
+        (r / 'PUBLISH_HOLD').write_text('fixture hold')
+        (r / 'PUBLISH_HOLD.checked').touch()
+        return home, r, job
+
+    def count(self, home):
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads((home / '.ashlr-runs/queue/status.json').read_text())['lanes']['devin']['running']
+
+    def test_terminal_cloud_result_releases_fresh_slot_idempotently(self):
+        for result in ('RESULT PR https://github.com/ashlrai/phantom/pull/1', 'RESULT EMPTY'):
+            for grace in (False, True):
+                with self.subTest(result=result, grace=grace):
+                    home, r, job = self.fixture(result, grace)
+                    ledger = (r / 'metrics/jobs.jsonl').read_text()
+                    for _ in range(2):
+                        self.assertEqual(self.count(home), 0)
+                    self.assertEqual((r / 'metrics/jobs.jsonl').read_text(), ledger)
+                    self.assertTrue((r / f'{job}.base').exists())
+
+    def test_missing_completion_after_api_failure_keeps_cloud_slot(self):
+        for result in (None, 'ERROR provider unavailable', 'RESULT PR'):
+            with self.subTest(result=result):
+                home, r, job = self.fixture(result)
+                old = time.time() - 3600
+                os.utime(r / f'{job}.base', (old, old))
+                for _ in range(2):
+                    self.assertEqual(self.count(home), 1)
+
+    def test_previous_attempt_result_does_not_release_new_launch(self):
+        home, r, job = self.fixture('RESULT EMPTY', grace=True)
+        old = time.time() - 3600
+        os.utime(r / f'{job}.publish', (old, old))
+        self.assertEqual(self.count(home), 1)
+
+    def test_terminal_receipt_admits_waiting_job_on_the_same_tick(self):
+        home, r, _ = self.fixture('RESULT EMPTY', grace=True)
+        slots = held_lanes()
+        slots['devin'] = lane_slot(target=1, floor=1, ceiling=1, last_change=int(time.time()))
+        (r / 'queue/slots.json').write_text(json.dumps(slots))
+        launch_stubs(home)
+        queue_job(home, 'RQ-NEXT', 'devin')
+        self.assertEqual(self.count(home), 1)
+        self.assertTrue(dispatched(home, 'RQ-NEXT'))
+
+
 class SlotDefaultTests(unittest.TestCase):
     def test_missing_devin_slot_seeds_leverage_defaults(self):
         # No devin entry in slots.json: the DEFAULT row seeds target 6, floor 3, ceiling 10, hard_cap 10.

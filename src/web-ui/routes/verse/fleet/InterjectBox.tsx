@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { apiGet } from '../../../data/client.js';
+import type { QueryDef } from '../../../data/queries.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { Tag } from '../../../components/primitives/Tag.js';
 import { runQuery } from '../../../data/cache.js';
@@ -10,6 +12,7 @@ import { runsGraphQuery } from './runs-graph-queries.js';
 import { insertMention, matchRunningJobs, mentionQuery, targetsOf } from './interject-target-model.js';
 import { interjectOutcome } from './interject-outcome-model.js';
 import { entryContract } from './interject-server-state.js';
+import { INTERJECT_PR_CHECK_MAX, githubAgreement, interjectPrCheckUrl, parseInterjectPrCheck, type InterjectPrCheck } from './interject-pr-check-model.js';
 import { orderStateQuery } from '../fleet-board/order-state-query.js';
 import { usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { subscribeSteerFocus, takeSteerFocus } from '../shell/steer-hotkey.js';
@@ -32,6 +35,13 @@ const ACK_TEXT = {
   skipped: 'Planner saw it · no reply route',
   expired: 'Not acknowledged yet · check the Inbox pane',
 } as const;
+// One batched, read-only GitHub check for the merged entries on screen; keyed by the PR set.
+const idlePrCheck: QueryDef<InterjectPrCheck | null> = { key: 'verse-interject-pr-check:none', fetch: async () => null };
+const prCheckQuery = (prs: readonly number[]): QueryDef<InterjectPrCheck | null> => prs.length === 0 ? idlePrCheck : {
+  key: `verse-interject-pr-check:${prs.join(',')}`,
+  fetch: async signal => parseInterjectPrCheck(await apiGet<unknown>(interjectPrCheckUrl(prs), signal)),
+};
+const PR_HREF = /\/pull\/(\d+)$/;
 const absent = (error: unknown) => error instanceof ApiError && (error.status === 404 || error.status === 503);
 
 export function InterjectBox() {
@@ -225,6 +235,27 @@ export function InterjectBox() {
   const entryTime = (at: string) => parseInboxAt(at, now);
   const entries = [...(read.data?.inbox ?? [])].sort((a, b) =>
     (entryTime(b.at) ?? Date.parse(b.at)) - (entryTime(a.at) ?? Date.parse(a.at))).slice(0, 5);
+  const outcomes = entries.map(entry => interjectOutcome(entry.at, ackState(entryTime(entry.at), newestPass) === 'seen', trace));
+  const mergedPrs = [...new Set(outcomes.flatMap(outcome => {
+    const n = outcome.stage === 'merged' && outcome.href ? Number(PR_HREF.exec(outcome.href)?.[1]) : NaN;
+    return Number.isSafeInteger(n) && n >= 1 ? [n] : [];
+  }))].slice(0, INTERJECT_PR_CHECK_MAX);
+  const prCheckDef = prCheckQuery(mergedPrs);
+  const prCheck = useQuery(prCheckDef, { enabled: mergedPrs.length > 0, freshMs: 60_000 });
+  const refreshPrCheck = useRefresh(prCheckDef);
+  const [prCheckFailures, setPrCheckFailures] = useState(0);
+  const prCheckFailed = Boolean(prCheck.error) || prCheck.status === 'error';
+  useEffect(() => { setPrCheckFailures(0); }, [prCheckDef.key]);
+  useEffect(() => {
+    if (prCheck.status === 'success') setPrCheckFailures(0);
+    else if (prCheck.status === 'error') setPrCheckFailures(count => Math.min(count + 1, 4));
+  }, [prCheck.status, prCheckDef.key]);
+  const prCheckPollMs = Math.min(60_000 * 2 ** prCheckFailures, 15 * 60_000);
+  usePollWhileVisible(refreshPrCheck, prCheckPollMs, {
+    enabled: mergedPrs.length > 0,
+    refreshOnShow: !prCheckFailed,
+  });
+  const githubByPr = new Map((prCheck.error ? [] : prCheck.data?.items ?? []).map(item => [item.pr, item]));
   return <section className={styles.panel} aria-labelledby={`${id}-title`}>
     <h2 id={`${id}-title`}>Tell the leaders</h2>
     <form onSubmit={event => { event.preventDefault(); void send(); }}
@@ -301,10 +332,16 @@ export function InterjectBox() {
       </details>
       <div className={styles.ack}><span className={styles.dot} data-state={ackState(entryTime(entry.at), newestPass)} aria-hidden="true" />{ackText(ackState(entryTime(entry.at), newestPass))}</div>
       {(() => {
-        const outcome = interjectOutcome(entry.at, ackState(entryTime(entry.at), newestPass) === 'seen', trace);
+        const outcome = outcomes[index]!;
         const { state, missing, source, blocker } = entryContract(serverOrders.data, entry.at, outcome.contract);
-        return <div className={styles.ack} data-outcome={outcome.stage} data-contract={state} data-contract-source={source} title={missing.length ? `missing: ${missing.join(', ')}` : undefined}>
-          {`${state}${state === 'BLOCKED' && blocker ? ` · waiting on: ${blocker}` : ''} · `}{outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
+        const pr = outcome.stage === 'merged' && outcome.href ? Number(PR_HREF.exec(outcome.href)?.[1]) : NaN;
+        const github = Number.isNaN(pr) ? null : githubAgreement(githubByPr.get(pr));
+        const verdict = github === null ? null : githubByPr.get(pr)?.verdict ?? 'unknown';
+        // GitHub can only withhold VERIFIED, never grant it.
+        const shown = state === 'VERIFIED' && (verdict === 'open' || verdict === 'closed-unmerged') ? 'unconfirmed' : state;
+        return <div className={styles.ack} data-outcome={outcome.stage} data-contract={state} data-contract-source={source} data-github={verdict ?? undefined} title={missing.length ? `missing: ${missing.join(', ')}` : undefined}>
+          {`${shown}${state === 'BLOCKED' && blocker ? ` · waiting on: ${blocker}` : ''} · `}{outcome.href ? <a href={outcome.href} target="_blank" rel="noopener noreferrer">{outcome.text}</a> : outcome.text}
+          {github ? <> · <span data-tone={github.tone} title={github.title}>{github.label}</span></> : null}
         </div>;
       })()}
     </li>)}</ol> : <p>{read.status === 'error' ? 'The inbox tail is unavailable.' : read.data ? 'Nothing in the inbox yet.' : 'Reading the inbox…'}</p>}
