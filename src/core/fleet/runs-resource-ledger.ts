@@ -1,4 +1,4 @@
-/** Read-only projection of dispatchd's resource ledger and API spend tail. */
+/** Projection of dispatchd's resource ledger and API spend tail. Read-only unless `recordHistory` is set. */
 import { quotaEvidence, type QuotaEvidence, type QuotaMeasurement } from './resource-reset-evidence.js';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -118,7 +118,11 @@ export function summarizeApiSpend(lines: string, nowMs: number, tzOffsetMinutes 
   return parseSpend(lines, nowMs, tzOffsetMinutes).summary;
 }
 
-export async function readResourceLedger(opts: { runsDir?: string; now?: () => number; personalCodexHome?: string } = {}): Promise<ResourceLedgerV1> {
+/**
+ * `recordHistory` appends this reading to metrics/usage-history.json (see
+ * usage-history.ts). Off by default: most callers only read.
+ */
+export async function readResourceLedger(opts: { runsDir?: string; now?: () => number; personalCodexHome?: string; recordHistory?: boolean } = {}): Promise<ResourceLedgerV1> {
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
   const result: ResourceLedgerV1 = { v: 1, generatedAt: new Date(now).toISOString(), sources: { status: 'missing', apiSpend: 'missing', jobs: 'missing' }, asOf: null, lanes: [], apiSpend: null, jobsMalformedRows: null };
@@ -234,5 +238,6 @@ export async function readResourceLedger(opts: { runsDir?: string; now?: () => n
     const byLane = new Map((signals as ReturnType<typeof laneDeadSignals>).lanes.map(signal => [signal.lane, signal]));
     for (const lane of result.lanes) lane.deadSignal = byLane.get(lane.lane) ?? { lane: lane.lane, lastFinishes: 0, emptyFailures: 0, state: 'ok' };
   }
+  if (opts.recordHistory) await (await import('./usage-history.js')).recordLedgerUsage(root, result, now);
   return result;
 }

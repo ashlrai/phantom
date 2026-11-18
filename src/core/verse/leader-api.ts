@@ -870,7 +870,20 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
       else if ((req.url ?? '').includes('?')) sendInvalid(res, 'this route takes no query parameters');
       else {
         const { readResourceLedger } = await import('../fleet/runs-resource-ledger.js');
-        sendJson(res, 200, await readResourceLedger({ now }));
+        // Each desktop poll is a new ledger reading; keep it in the spend-down history.
+        sendJson(res, 200, await readResourceLedger({ now, recordHistory: true }));
+      }
+      return true;
+    }
+    if (path === `${VERSE_LEADER_PATH}/resources/usage-history`) {
+      const query = new URLSearchParams((req.url ?? '').split('?')[1] ?? '');
+      const pool = query.get('pool') ?? undefined;
+      if (method !== 'GET') sendJson(res, 405, { error: 'method not allowed' });
+      else if ([...query.keys()].some(key => key !== 'pool') || query.getAll('pool').length > 1
+        || (pool !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(pool))) sendInvalid(res, 'only ?pool=<name> is accepted');
+      else {
+        const { readUsageHistory } = await import('../fleet/usage-history.js');
+        sendJson(res, 200, await readUsageHistory({ now, ...(pool === undefined ? {} : { pool }) }));
       }
       return true;
     }
