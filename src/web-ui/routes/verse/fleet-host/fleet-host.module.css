@@ -50,3 +50,24 @@
 .loadBar > span { min-width: 2px; flex-basis: 0; }
 .loadLegend { margin: 0; padding: 0; list-style: none; }
 .loadKey { display: inline-block; width: var(--space-2); height: var(--space-2); margin-right: var(--space-2); border-radius: 2px; }
+/* Computers: what each computer is running. Slots are a thin bar under the words that state both numbers. */
+.slots { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+/* One row per job: id, repo and when it last spoke on one line, its last message under it. The whole row is the button. */
+.jobs { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+.job { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: start; }
+.job[data-state='quiet'] { border-color: var(--status-warning-solid); }
+button.job, .jobsMore { cursor: pointer; }
+button.job:hover, .jobsMore:hover { background: var(--bg-hover); }
+button.job:focus-visible, .jobsMore:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.jobTop { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); min-width: 0; }
+.jobId { min-width: 0; font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+.jobFact { color: var(--text-secondary); overflow-wrap: anywhere; }
+.jobWhen { margin-inline-start: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Running is activity, not health, so its mark is the accent and never green. */
+.jobWhen::before { content: ''; display: inline-block; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-1); border-radius: var(--radius-full); background: var(--accent-500); }
+.jobWhen[data-state='quiet'] { color: var(--status-warning-fg); font-weight: 600; }
+.jobWhen[data-state='quiet']::before { background: var(--status-warning-solid); }
+/* The last message: two lines at most, so one long message cannot push the next computer off the screen. */
+.jobSaid { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.jobSaid[data-unknown] { color: var(--text-tertiary); font-style: italic; }
+.jobsMore { align-self: flex-start; min-height: var(--control-h-sm); padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; }
