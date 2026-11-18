@@ -1,13 +1,14 @@
 /**
- * routes/verse/goals-pane/FleetGoalCards.tsx: the fleet's standing goals, one
- * row each, behind first: status, value now, target, a 24 h and a 7 d trend
+ * routes/verse/goals-pane/FleetGoalCards.tsx: the fleet's self-managed goals,
+ * one card each, behind first: the number now with an up, down or flat mark,
+ * the target, one sentence on why the goal matters, a 24 h and a 7 d trend
  * line drawn against the target, and one action ("See evidence") that opens
  * the pane behind the number. Built only on `phm goals --json`
- * (core/fleet/goal-scorecard.ts, `fleet.goal-scorecard.v2`). Fails on its
+ * (core/fleet/goal-scorecard.ts, `fleet.goal-scorecard.v3`). Fails on its
  * own; unknown is shown as unknown with its reason, never as zero. One column
- * that wraps, so it reads at 390 px.
+ * that wraps, so it reads at 390 px; the phone Goals screen mounts it too.
  */
-import type { FleetGoal, GoalScorecard, GoalStatus, GoalTrend, TrendDirection } from '../../../../core/fleet/goal-scorecard.js';
+import { TREND_MARK, type FleetGoal, type GoalScorecard, type GoalStatus, type GoalTrend, type TrendDirection } from '../../../../core/fleet/goal-scorecard.js';
 import { Sparkline } from '../../../components/charts/Sparkline.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';
@@ -38,7 +39,7 @@ export function goalsSummary(goals: readonly FleetGoal[]): string {
     .filter(([s]) => count(s) > 0).map(([s, words]) => `${count(s)} ${words}`).join(' · ');
 }
 
-function asOfText(asOf: string | null): string {
+function asOfText(asOf: string | null | undefined): string {
   if (!asOf) return 'As of: unknown';
   const at = new Date(asOf);
   return `As of ${at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
@@ -58,22 +59,31 @@ function TrendLine({ goal, span, trend }: { goal: FleetGoal; span: '24 h' | '7 d
   );
 }
 
-function GoalCard({ goal, onEvidence }: { goal: FleetGoal; onEvidence: () => void }) {
+/** ↑, ↓ or → with the words for screen readers; "?" when there is no trend yet. */
+function TrendMark({ direction }: { direction: TrendDirection | undefined }) {
+  const d = direction && direction in TREND_MARK ? direction : 'unknown';
+  return <span className={styles.trendMark} data-trend={d} role="img" aria-label={`Trend: ${DIRECTION[d]}`} title={DIRECTION[d]}>{TREND_MARK[d]}</span>;
+}
+
+/** `onEvidence` is absent where no pane can open (the phone), so no dead button is drawn. */
+function GoalCard({ goal, onEvidence }: { goal: FleetGoal; onEvidence?: (() => void) | undefined }) {
   const parts = Array.isArray(goal.parts) ? goal.parts : [];
   return (
     <Card title={goal.title} caption={<span className={styles.badge} data-status={goal.status}>{STATUS[goal.status] ?? 'Unknown'}</span>}
-      actions={<button type="button" onClick={onEvidence}>See evidence</button>}>
+      actions={onEvidence ? <button type="button" onClick={onEvidence}>See evidence</button> : undefined}>
       <p className={styles.metric} data-state={goal.status}>
-        <span className={styles.metricValue}>{goal.valueText}</span>
-        <span>Target: {goal.target}</span>
+        <span className={styles.metricValue}>{goal.currentText ?? 'unknown'}</span>
+        <TrendMark direction={goal.trend} />
+        <span>Target: {goal.targetText}</span>
       </p>
+      {goal.why ? <p className={styles.why}>{goal.why}</p> : null}
       <div className={styles.trends}>
         <TrendLine goal={goal} span="24 h" trend={goal.trend24h} />
         <TrendLine goal={goal} span="7 d" trend={goal.trend7d} />
       </div>
       {parts.length ? <p className={styles.meta}>{parts.map(p => `${p.name} ${p.value}`).join(' · ')}</p> : null}
-      <p className={styles.meta}>{goal.status === 'unknown' ? `Unknown: ${goal.why}` : goal.why}</p>
-      <p className={styles.meta}>{asOfText(goal.asOf)} · {goal.source}</p>
+      <p className={styles.meta}>{goal.status === 'unknown' ? `Unknown: ${goal.reason}` : goal.reason}</p>
+      <p className={styles.meta}>{asOfText(goal.updated_at)} · {goal.source}</p>
     </Card>
   );
 }
@@ -92,7 +102,7 @@ export function FleetGoalCards({ visible = true, host }: Pick<Partial<PaneProps>
         ? <CardNote>No fleet goals yet. They appear once Phantom has recorded jobs, usage pools or releases.</CardNote>
         : <>
           <p className={styles.mission}>{goalsSummary(goals)}</p>
-          {goals.map(goal => <GoalCard key={goal.id} goal={goal} onEvidence={() => host?.openPane(goal.evidencePane)} />)}
+          {goals.map(goal => <GoalCard key={goal.id} goal={goal} onEvidence={host ? () => host.openPane(goal.evidencePane) : undefined} />)}
         </>}
     </section>
   );
