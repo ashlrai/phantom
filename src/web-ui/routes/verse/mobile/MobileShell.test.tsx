@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 async function glanceLoaded() {
-  await screen.findByText('Red: phantom');
+  await screen.findByText(/main red: phantom/);
 }
 
 async function openFleet() {
@@ -143,7 +143,7 @@ describe('the shell', () => {
       await refreshActivity();
     });
     expect(await screen.findByText(/Can’t reach your Mac\. Updated just now\./)).toBeInTheDocument();
-    expect(screen.getByText('Red: phantom')).toBeInTheDocument();
+    expect(screen.getByText(/main red: phantom/)).toBeInTheDocument();
   });
 
   it('says the phone is offline when the browser reports it', async () => {
