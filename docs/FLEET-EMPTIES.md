@@ -50,7 +50,9 @@ It reads the job metrics file (`metrics/jobs.jsonl` under the runs directory, `A
 | `precheck_skip` | a `precheck_skip` or `skipped_empty` metrics row (the job never launched), or a precheck marker in the log |
 | `already_on_master` | an `EMPTY_REASON: duplicate-landed` or `no-change-needed` line, or notes or log saying the work is already on master, merged, done or covered |
 | `no_eligible_target` | `EMPTY_REASON: prompt-unclear`, `NO CANDIDATE`, or "no eligible target", "no conflicting PRs left", "nothing to do" |
-| `blocked_tool` | `EMPTY_REASON: blocked`, a sandbox denial, no GitHub sign-in, or a missing tool |
+| `no_diff` | "no diff", "no changes made", "nothing to commit" or "working tree clean", without a more specific cause |
+| `blocked_tool` | `EMPTY_REASON: blocked`, a sandbox denial, or no GitHub sign-in |
+| `tool_missing` | `command not found`, `spawn <tool> ENOENT`, or a tool that "is not installed" |
 | `timeout` | the timeout marker, exit code 124, 137 or 143, or `timed out` |
 | `model_error` | a `pool_error` on the finish row, or a usage limit, rate limit, overload or API error in the log |
 | `unknown` | none of the above, including a job with no notes and no log |
@@ -60,6 +62,8 @@ A worker's own `EMPTY_REASON` line outranks everything except a precheck skip, a
 `reasons` lists every reason, most frequent first, with `count`, `share_of_finishes` (of all finishes in the window, 0 to 1), `tokens` (summed over jobs that recorded `tokens_total`), `tokens_unknown_jobs`, the top three `lanes` and `prefixes` (job families: ids without their `RQ-`, `PHX-`, `FIXUP-` or `CI-` routing prefix, grouped by shared name, so `RQ-PHX-RECUTCOREFLEETC518` and `RQ-RECUTWEBUIC502` are both `RECUT`), two `examples` and one `next_step` sentence such as "Stop queuing RECUT jobs: the work is already on master." The top level holds `finishes`, `empties`, `empty_share`, `tokens`, `malformed_lines` and `notes_missing`.
 
 Missing data is never shown as zero: `tokens` is null when no job recorded any, and every count is null with `metrics: "unreadable"` (exit 1) when the metrics file cannot be read. Output holds job ids, lane names, counts and fixed sentences only, never note or log text.
+
+`top_families` names the three most frequent empty-job families across all reasons in the window (24 hours by default), as `[{name, count}]`. Counts sort highest first; ties sort by name. Unknown reasons still count. Published jobs, older finishes and future rows do not count. Fewer than three families returns only those seen; an empty window returns `[]`, and unreadable metrics returns `null`.
 
 `families` ranks all job families by `empty_rate` (empty finishes divided by all finishes), then `wasted_tokens` descending, then name for ties. It uses the same window: 24 hours by default, adjustable with `--since`. Each row has `name`, `finishes`, `empties`, `empty_rate`, `wasted_tokens`, `tokens_unknown_jobs` and `recommendation`. Family membership uses all finishes, including productive jobs. Wasted tokens sum only empty jobs' recorded tokens; missing measurements remain null (sorted last), partial sums carry an unknown-job count, and a family with no empties has zero waste. An unreadable or empty window has `families: []`.
 

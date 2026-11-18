@@ -15,6 +15,7 @@ import { CardNote } from '../command/Surface.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { isSharedFeedReport, sharedLink } from './feed-model.js';
 import styles from './feed.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 export const FEED_PAGE = 30;
 const LABEL: Record<FeedKind, string> = { merged: 'Merged', released: 'Released', failed: 'Failed', incident: 'Incidents', leader: 'Leader' };
@@ -52,7 +53,7 @@ export function SharedFeed({ visible, now, openPane, openJob }: {
     if (job && href === `${PANE}worker-log`) openJob(job); else openPane(href.slice(PANE.length));
   };
 
-  return <div className={styles.root}>
+  return <div className={`${styles.root} ${compact.view}`}>
     <div className={styles.filters} role="group" aria-label="Filter the feed">
       {(['all', ...FEED_KINDS] as const).map(id => <button key={id} type="button" className={styles.chip} aria-pressed={kind === id} onClick={() => choose(id)}>
         {id === 'all' ? 'All' : LABEL[id]}

@@ -73,6 +73,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 - Mac dispatcher: `contrib/mac/dispatchd.py` is the single source for the live `~/.ashlr-runs/bin/dispatchd.py`. Change it here, never on the host. `contrib/mac/install.sh` diffs and installs it (plus `install-gate.py` and `launch-gate.sh`) with timestamped backups, but only after Security has reviewed and re-pinned the files; agents preview with `contrib/mac/install.sh --dry-run --json` and never run it against the live directory. Copy-paste install, once pinned: `contrib/mac/install.sh --json`. See [contrib/mac/README.md](contrib/mac/README.md#installing-the-dispatcher).
 - Fleet machinery: `fleet/manifest.json` (`fleet.machinery.v1`) inventories every `~/.ashlr-runs/bin` file by class. `managed` installs via `python3 fleet/sync.py`, `manual`/`pinned` are report-only (pinned GATES v3 files stay ops-side). Agents preview with `fleet/sync.py --json` or `--bin <scratch>` and never `--apply` live. Migration plan: [docs/MACHINERY-MIGRATION.md](docs/MACHINERY-MIGRATION.md).
 - Agent Bus v2: the provider contract (participants, body kinds, claim keys and overlap rules, work feed) is in [docs/AGENT-BUS.md](docs/AGENT-BUS.md#v2); `ashlr agents bus contract --json` prints its schema version and kinds. Claims coordinate and grant no execution authority. Schemas: `src/core/agents/bus-v2-schema.ts`.
+- External bot seats: `phm bots seats --json` reads quota evidence and participant metadata; `phm bots handoff --seat <id> --json` plans draining handoffs (only `--apply` releases work). Devin Bot messaging stays advisory; no on-demand spend. See [bot seats](docs/BOT-SEATS.md).
 - Learned skills: `phm skills list --json` shows skills written from merged PR outcomes (metadata only, scrubbed, capped; counts real or `"unknown"`). See [docs/SKILLS.md](docs/SKILLS.md).
 - Channels: `phm channels add <kind>` writes config only (credentials stay in existing custody, never printed); `phm channels status --json` reports real counts or `"unknown"`. See [docs/CHANNELS.md](docs/CHANNELS.md).
 - Owner thread (RQ-COMMS-UNIFIED-1): `phm comms status --json`, `phm comms thread --json` and `phm comms send-owner --text "<reply>" --json` are one ordered thread for desktop, Telegram, email, iMessage and Slack. Replies go only to the configured owner, on the channel they used and on the desktop thread. Adapters stay disabled until configured; credentials are Phantom Secrets handle names. KILL halts them. See [docs/OWNER-THREAD.md](docs/OWNER-THREAD.md).
@@ -98,6 +99,13 @@ timeout; unmeasured figures are `null`. See [lane health](docs/LANE-HEALTH.md).
 Standing lane freshness: `phm fleet lane-slots --json` reads the Fleet screen's
 API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
+
+Leader board: every Leader tick records a `fleet.leader-board.v1` state at
+`~/.ashlr-runs/coordination/leader-board.json` — lanes, queue depth by tier,
+merges in the last hour, the conflicting-PR count trend (RQ-REBASE rows in
+ready.tsv are the local proxy for GitHub-conflicting PRs) and open
+needs-Mason items. Read it back with `phm fleet board --leader --json`; all inputs are
+local files, never gh or a model.
 
 Disk maintenance: `phm disk-maint` is a dry run that reports reclaimable bytes
 per class; `--apply` rotates, compresses and deletes rebuildable leftovers and
@@ -176,7 +184,8 @@ fails the existing Merge Gate even when the full authority shards do not run.
 
 Route hysteresis: ready.tsv pool proposals pass through dispatchd's persisted
 60-minute residency, immutable launch pool and two-moves/six-hours cap. Only
-explicit auth failure or zero quota permits early movement. See
+explicit auth failure, zero quota or a provider backoff hold (never a manual or
+HOLD-list hold) permits early movement. See
 [route hysteresis](docs/ROUTE-HYSTERESIS.md) for replay, `phm route explain --json`
 and the Security pin handoff. Never install a candidate over the live pinned file.
 
@@ -192,6 +201,15 @@ phm fleet parked --json
 
 `unmetDeps` lists parked rows whose gate ids are still unmet. Restock.py changes
 need a Security re-pin before live `bin/` install; do not install yourself.
+
+Fleet autopilot (RQ-SWE3-AUTOPILOT-1): `phm fleet autopilot --once --json` runs
+one bounded read-only planning cycle: it reads queue/slots/admission state,
+computes lane utilization vs targets, picks the single highest-leverage gap
+(uncovered conflicting PRs, a starved lane, stale parked deps, missing
+restock) and emits one proposed action — `enqueue` N jobs of a type,
+`hold-lane`, or `no-op`. `--repo <owner/name>` repeats to include the
+read-only `gh pr list` rebase-coverage read. It never mutates; the proposal
+is advisory for the leader loop.
 
 Durable memory: `phm memory add|list|search|forget --json` stores Mason's
 preferences, doctrine and facts as markdown under `~/.phantom/memory/`; see
@@ -439,3 +457,5 @@ kill switch is on.
 Provider-neutral [failover chains](docs/ROUTING.md#failover-chains) remain inert with `failover_dispatcher_unwired`; no dispatcher installation is authorized by a plan.
 
 `phm route decide --input request.json --json` validates a closed set from local model, slot and admission snapshots. Local fast, one schema retry, existing Jev escalation and deterministic fallback share a 450 ms service budget. Advisory only; dispatcher observations append `metrics/route.explain.jsonl` without changing launches. See [typed routing](docs/ROUTING.md) for the request schema and a copy-paste offline example.
+
+App restart: `phm app restart --json` currently exits 1 with a held result and performs no restart. See [ownership audit and acceptance work](docs/APP-RESTART.md). Do not infer session survival from an app relaunch.

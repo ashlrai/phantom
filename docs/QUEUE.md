@@ -11,6 +11,18 @@ This is the source candidate in `contrib/mac/dispatchd.py`, supported by
 then the sanctioned `contrib/mac/install.sh` path. Agents never install over
 `~/.ashlr-runs/bin`. Publication remains fork-only through `publish.sh`.
 
+## Recover a pushed job without a PR
+
+Run `phm fleet republish --dry-run --json` (omit `--json` for one plain line per job).
+It reads `~/.ashlr-runs/<job>.publish`, or `--runs-dir <dir>`, and checks public GitHub evidence.
+Only an abort after the push marker, an exact surviving fork branch, and no open or merged PR
+produce a READY proposal to cherry-pick the observed SHA onto fresh `master`. Nothing is queued or written.
+JSON uses `fleet.republish.v1`; each job has `status`, `reason`, `head`, `sha`, `readyLine`, and `pr_state`
+(`none`, `open`, `merged`, `closed`, or `unknown` when the PR lookup is unavailable).
+Exit codes: 0 complete, 1 unknown evidence, 2 bad usage. Missing push links, unreadable/oversized
+logs, private repositories, API failures and incomplete PR pages stay unknown. Logs are capped at 2 MiB.
+This preview cannot establish cherry-pick compatibility or find recovery PRs under another head.
+
 ## Job requirements
 
 The live producer input is `queue/router-queue.md`. For example:

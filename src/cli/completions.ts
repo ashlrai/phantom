@@ -31,7 +31,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'comms-agent',
   'agentnet', 'amplify', 'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'growth', 'world', 'settings', 'drafts',
   'director', 'best-of-n', 'invent', 'ideas', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime', 'tune', 'tools', 'messages', 'map',
+  'skills', 'universe', 'runtime', 'tune', 'tools', 'pools', 'messages', 'map',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'console', 'local-runtime',
@@ -122,7 +122,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   job: ['cost', '--help'],
   admission: ['explain', '--json', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'prod', 'loop', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
   bets: ['list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
@@ -155,7 +155,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed',
+    'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot',
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
@@ -179,6 +179,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   genome: ['recall', 'learn', 'teach', 'consolidate', 'export', 'playbook'],
   comms: ['status', 'thread', 'send-owner', 'send-test', 'cycle', 'ask', 'digest', 'ask-vision', 'ask-merges', 'setup-telegram', 'telegram-brand', 'inbox', 'bus', 'email-drop', 'email-cycle', 'setup-email', 'pair-telegram', 'diagnose', 'health'],
   memory: ['add', 'list', 'search', 'forget', '--kind', '--source', '--json', '--help'],
+  library: ['show', 'list', '--kind', '--since', '--q', '--json', '--text', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   tools: ['parity', 'requires', '--needs', '--text', '--help'],
   messages: ['--since', '--agent', '--limit', '--text', '--help'],
@@ -187,7 +188,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   amplify: ['status', 'tick', 'goal', '--json', '--help'],
   channels: ['add', 'status', 'slack', 'map', 'probe', 'run', '--seconds', '--json', '--help'],
   stack: ['status', 'list', 'providers', 'recommend', 'scan', 'doctor', 'add', 'apply'],
-  ecosystem: ['doctor'],
+  ecosystem: ['doctor', 'changelog'],
   roadmap: ['run', 'resume', 'status'],
   seams: ['status'],
   completions: ['zsh', 'bash'],
@@ -218,7 +219,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   // Mirror the verb switch in src/cli/jev.ts (runJevCli).
   jev: ['status', 'test', 'help'],
   // Mirror the verb switch in src/cli/devin.ts (runDevinCli).
-  bots: ['list', 'show', 'create', 'explain', 'help'],
+  bots: ['list', 'show', 'create', 'explain', 'seats', 'handoff', 'help'],
   devin: ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'refresh', 'message', 'budget', 'bus', 'land', 'autoland', 'review', 'help'],
   // Mirror the verb switch in src/cli/playbook.ts (runPlaybookCli).
   playbook: ['list', 'show', 'new', 'edit', 'run', 'help'],

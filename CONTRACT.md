@@ -12,6 +12,65 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## External bot seats
+
+`src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,
+`SeatState`, `SeatHandoff` and `SeatOptions`. The strict on-disk roster schema is
+`phantom-bot-seats.v1` at `~/.phantom/bots/seats.json`; missing means empty.
+Kinds are devin-bot, grok-bot, openai-bot, local and other; other requires a bus
+provider, all others derive it. Secret handles are names only; secret-shaped
+metadata is rejected. Unknown quota has no numeric usage value.
+
+Exports:
+- `transitionSeatState(prev: SeatState, state: SeatState['state'], now: string): SeatState`
+  enforces active to draining to idle to active; invalid edges throw.
+- `nextSeatState(prev, {quota, openWork, now}): SeatState` is pure. Fresh measured
+  evidence below 100, newer than idle time and after any recorded exhausted
+  reset, permits reactivation. Unknown evidence does not change state.
+- `advisorySeatAdapter(seat: BotSeat, usage: () => Promise<QuotaEvidence>): SeatAdapter`
+  is inert; local is loopback-only.
+- `listSeats(opts?: SeatOptions)` returns `{schema:'phantom-bot-seats.v1', seats}`.
+  Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
+  claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
+  transitions may persist during listing; missing node stores stay missing.
+- `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
+  with measured quota. The module acquires no claims.
+- `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;
+  draining/idle map to idle. `phm agents bus id list` adds these as `participants`
+  without modifying stored identities, channels or authority.
+- `planSeatHandoff(id: string, opts?)` is a dry-run projection; active seats are
+  refused. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
+  `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
+  retries held releases on replay, declines node sessions and releases bus
+  claims by source. It returns `phantom-bot-handoff-plan.v1` with `apply`, state
+  and handoffs; apply handoffs include `notifications: {bus, owner}` statuses.
+  Durable notice receipts suppress repeated attempts; crashes before receipt
+  persistence retry with stable deduplication keys. Notification exceptions are
+  value-free statuses, not post-release exceptions.
+- `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
+  unified bus DMs or owner notices; unknown seats/secret-shaped text are refused.
+
+`SeatOptions` injects home, runs, clock, quota reader, node store, node-release
+port, owner-thread options, owner notice and bus post. Default coordination and
+node storage use canonical roots; owner defaults on apply use the same fixed
+settings/runs construction as the comms CLI and retain KILL/pause checks.
+Injected homes relocate storage for hermetic tests. Public handoff metadata
+uses unknown/null when evidence is unavailable; tokens are never serialized.
+
+`src/core/bots/devin-bot-adapter.ts` exports:
+- `devinQuota(read?: () => Promise<DevinUsageResult>): Promise<QuotaEvidence>`
+  maps the existing documented org-cycle consumption reader without guessing.
+- `createDevinBotAdapter(options?: {secretHandle?: string; readUsage?: () => Promise<QuotaEvidence>}): SeatAdapter`
+  exposes kind, message, status and usage. Status is unknown and messaging is
+  advisory (`no-documented-bot-messaging-api`); default messaging never makes a
+  network call. Missing/exhausted evidence refuses, and no evidence enables
+  paid execution. Usage source is `devin-api-v3-org-cycle`, not per-Bot quota.
+
+`GET /api/bots/seats` delegates to `listSeats()` through `handleBotTemplates`,
+returns 503 with a value-free error if unavailable, and disallows mutation
+methods. `/bots` consumes `botSeatsQuery` and renders accessible measured quota
+meters, unknown evidence, claims/jobs and handoffs; there is no web apply route.
+See [bot seats](docs/BOT-SEATS.md) for storage and API-gap boundaries.
 # Codex model defaults
 
 The source-owned Codex default is `gpt-6.2-sol` for work, mid, fast,
@@ -745,6 +804,61 @@ last tick; `generatedAt` is the read time. Recent outcomes are the producer's
 (null at the underlying 50-record cap). No free text, environment,
 credentials, paths, or job contents are returned. Partial source health must be
 checked before interpreting observations as complete.
+
+## Persistent fleet worker sessions (RQ-CMP-ORG-RUNTIME-1)
+
+`src/core/fleet/session-pool.ts` exports `sessionPoolPolicy(policy?:
+SessionPoolPolicy): Required<SessionPoolPolicy>` and
+`runSessionPool(ports: SessionPoolPorts, policy?: SessionPoolPolicy,
+signal?: AbortSignal): Promise<SessionPoolResult>`.
+
+- Policy fields: `tasks` (default 100, range 1–100), `rotateAfterTasks`
+  (25, 1–100), `rotateAfterMs` and `taskTimeoutMs` (1,800,000 each,
+  range 1–1,800,000), `renewEveryMs` (3,000, range 1–3,000). A context rotates
+  between tasks; its maximum age is rotation age plus one task timeout.
+- Ports: unique non-secret `id`, `now(): number`, `held(): boolean`,
+  `heartbeat(): void`, `pull(): Pulled | null`, `renew(JobClaim): JobClaim | null`,
+  `complete(JobClaim, resultRef: string): boolean`, `leave(): void`,
+  `open(): SessionExecutor`, `emit(SessionPoolEvent): void`. Queue ports are
+  synchronous authority transactions, matching the existing node pool. Lease
+  periods must exceed the renewal interval plus transport latency.
+- `SessionExecutor` provides `run(Pulled, AbortSignal): Promise<string>` and
+  synchronous `close(): void`, which must fence/terminate outstanding work.
+  One context handles sequential tasks; only one task is claimed at a time.
+- Result: `{ completed: number, contexts: number, reason:
+  'limit' | 'empty' | 'aborted' | 'held' | 'failed' }`. After valid setup the pool
+  owns cleanup, including failure paths. Invalid policy/identity throws.
+- Node, leader and task fences remain authoritative. Renew before execution,
+  periodically during execution and before completion. Death, cancellation,
+  timeout or lost authority stops the batch. Unfinished tasks become routable
+  at claim expiry (30 seconds by default), including after SIGKILL or failed
+  leave. Completed tasks never requeue. External effects require sink-side
+  fencing; this does not promise exactly-once effects.
+- `SessionPoolEvent`: schema `fleet.session-pool.v1`, ISO `ts`, `sessionId`,
+  `context` number and `event` (`session_start`, `session_rotate`, `launch`,
+  `finish`, `session_stop`). Task rows include unique attempt `job` and logical
+  `jobId`; finish `outcome` is `completed` or `lease-expiry`. No prompts, output,
+  credentials or fencing tokens are logged. Metrics failure stops admission.
+
+The host adapter exports `openSessionRunner(runner: string): SessionExecutor`
+and `runHostSessionPool(runner: string, policy: SessionPoolPolicy,
+signal?: AbortSignal): Promise<SessionPoolResult>`. The latter validates the
+operator-owned executable, requires existing node-pool configuration and local
+provider login, honors host pause/KILL/capacity, joins with one slot, and appends
+to `~/.ashlr-runs/metrics/jobs.jsonl`. It refuses jobs requiring secret access.
+
+`phm fleet session run --runner /absolute/owned/runner --tasks 100
+--rotate-after 25 --json` invokes a persistent `runner session` process per
+context. Stdin carries one JSON line `{protocol: "phm-session-worker/v1", job,
+claim}` per task. Stdout must return exactly one line `{protocol:
+"phm-session-worker/v1", jobId, token, resultRef}` (at most 4 KiB), matching
+that task's fence. Only an ID-shaped result reference is retained. Stderr is
+ignored. The runner must sandbox provider work, fence each effect at its sink,
+retain context between tasks, and terminate on stdin EOF. A new process resets
+context. Arbitrary queued commands are never executed. This protocol requires
+a compatible host runner; existing one-shot `runner run` programs need an
+adapter. Exit codes: 0 drained/batch limit, 1 held/interrupted/failed, 2 usage.
+Existing `fleet session <job> --json [--follow]` behavior is preserved.
 
 ## Fleet merge-batch action compiler v1
 

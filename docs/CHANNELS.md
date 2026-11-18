@@ -96,6 +96,26 @@ verification — the page source is the channel label.
 - **Ack timeout** — 2 000 ms per [`CHANNEL_ACK_TIMEOUT_MS`](../src/core/fleet/channel-envelope.ts);
   the transport is best-effort and never unwrites a durable receipt.
 
+## Is each channel working?
+
+`phm channels` prints one row per channel you reach the Leader on: email,
+Telegram, iMessage, mobile, the desktop app, the Phantom page, the terminal
+and Slack. Each row says `connected`, `not set up`, `failing` or
+`unknown: <reason>`, when the channel last carried a message in and out, how
+many messages arrived in the last 24 h, how many senders are verified, the
+channel's address (masked to its last four characters) and, when it is not
+connected, the one next step. Failing channels come first.
+
+```sh
+phm channels          # the table
+phm channels --json   # schema phantom.channels.v1, same as GET /api/channels
+```
+
+The desktop app's **Channels** pane (⌘K → "Open pane: Channels") draws the
+same JSON as one card per channel. A value no source can prove reads
+`unknown`, never a guessed zero; last outbound is `unknown` for channels
+without a per-channel delivery receipt yet.
+
 ## Setup and status from the CLI
 
 `phm channels` is the one path: `add` writes a channel's config and nothing
@@ -118,8 +138,10 @@ report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
 
 ## Where to watch it
 
-- **Desktop console** — the Channels pane (top-level navigation) and the Inbox pane.
-- **CLI** — `phm channels status [--json]` rolls all six kinds up;
+- **Desktop console** — the Channels pane (one card per channel), the
+  Channel activity pane (inbox traffic per channel) and the Inbox pane.
+- **CLI** — `phm channels [--json]` shows every channel's state;
+  `phm channels status [--json]` rolls the six inbox kinds up;
   `phm comms bus read` shows every accepted bus envelope;
   `phm comms inbox read` reads the inbox file directly.
 - **API** — the `GET /api/verse/fleet/runs/inbox` route exposes the inbox in JSON.

@@ -492,3 +492,5 @@ messages, so these links are not a complete history; A2A events are not yet
 included. A missing or unreadable bus reports unknown edges, not an empty list.
 
 Group-chat projection: [Agent group chat](AGENT-CHAT.md) documents the scoped CLI and local read API.
+
+Local-only preparation component: [Owner note draft composer](AGENT-CHAT-DRAFT.md).
