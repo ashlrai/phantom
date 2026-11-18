@@ -8,6 +8,7 @@ import { validId, type TeamActor } from '../teams/protocol.js';
 import { teamState, type TeamState } from '../teams/state.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
 import { describeAccessAction } from '../teams/workspace.js';
+import { addTeamPerson, DirectoryInputError, teamDirectory } from '../teams/directory.js';
 
 export const VERSE_TEAM_PATH = '/api/verse/team';
 export const VERSE_TEAM_INVITE_PATH = '/api/verse/team/invite';
@@ -109,6 +110,26 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
   }
 
   return async (ctx, req, res, path, method) => {
+    if (path === `${VERSE_TEAM_PATH}/people`) {
+      if (!['GET', 'POST'].includes(method)) { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (method === 'POST' && !passesMutationGate(req, res, ctx.token)) return true;
+      try {
+        if (method === 'GET') {
+          const team = new URL(req.url ?? '/', 'http://localhost').searchParams.get('team') ?? DEFAULT_TEAM;
+          if (!validTeamId(team)) throw new DirectoryInputError('Invalid team.');
+          sendJson(res, 200, teamDirectory(team));
+        } else {
+          const body = await jsonBody(req);
+          if (!record(body) || Object.keys(body).length !== 2 || !validTeamId(body.team) || !('person' in body)) throw new DirectoryInputError('Invalid teammate request.');
+          sendJson(res, 201, addTeamPerson(body.team, body.person));
+        }
+      } catch (error) {
+        sendJson(res, error instanceof DirectoryInputError ? 400 : 503, { version: 1,
+          error: error instanceof DirectoryInputError ? error.message : 'Team directory unavailable.' });
+      }
+      return true;
+    }
     const route = path === VERSE_TEAM_PATH ? 'view' : path === VERSE_TEAM_INVITE_PATH ? 'invite' : null;
     if (route === null) return false;
     if (method !== (route === 'view' ? 'GET' : 'POST')) {

@@ -375,6 +375,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/slack-trace') {
     return (await import('./fleet-slack-trace-api.js')).handleFleetSlackTraceApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/work-trace') return (await import('./fleet-work-trace-api.js')).handleFleetWorkTraceApi(ctx, req, res, path, method);
   if (path === '/api/verse/fleet/control/compute') {
     return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
   }

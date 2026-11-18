@@ -3,11 +3,16 @@
  * Agents use the phm_team_* MCP tools; humans join, view, approve and claim here.
  */
 import { userInfo } from 'node:os';
+import { addTeamPerson, DirectoryInputError, removeTeamPerson, teamDirectory } from '../core/teams/directory.js';
 import {
   inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, describeAccessAction, releaseClaim, teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
 
-const USAGE = `Usage: phm team <view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
+const USAGE = `Usage: phm team <list|add|show|view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
+  list | show <id>             People, identity evidence, declared lanes and agent seats
+  add <display-name> [--role founder|engineer|viewer] [--email address] [--slack id] [--phone +number] [--lanes a,b] [--seats a,b]
+                               Save a pending teammate; nothing is sent and no access is granted
+  remove <person:id>           Remove a pending directory record only
   view                         Members, presence, claims, handoffs and pending approvals
   join [--role admin]          Join as the local human (first human becomes owner; --as is ignored)
   join <invite>                Accept an invite on your own node (team comes from the invite; uses only this node's local auth)
@@ -44,6 +49,24 @@ export async function cmdTeam(argv: string[]): Promise<number> {
   const out = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
   try {
     switch (sub) {
+      case 'list': case 'show': {
+        if (rest.length !== (sub === 'show' ? 1 : 0)) throw new DirectoryInputError('Use phm team list or phm team show <id>.');
+        const directory = teamDirectory(team);
+        const people = sub === 'show' ? directory.people.filter(p => p.id === rest[0]) : directory.people;
+        if (sub === 'show' && !people.length) throw new DirectoryInputError('Teammate not found. Use phm team list.');
+        return out(sub === 'show' ? { version: 1, team, orgState: directory.orgState, person: people[0] } : directory,
+          [directory.orgState === 'unknown' ? 'Org data unavailable; showing team log.' : `Team ${team}`, ...people.map(p =>
+            `${p.displayName} (${p.role}, ${p.status}) [${p.id}]\n  Identities: ${p.identities.map(i => `${i.kind} ${i.value}: ${i.state}`).join(', ') || 'unknown'}\n  Declared lanes: ${p.lanes.join(', ') || 'none'}; seats: ${p.seats.join(', ') || 'none'}`),
+          ...(people.length ? [] : ['No teammates yet. Use phm team add <display-name>.'])].join('\n'));
+      }
+      case 'add': {
+        if (argv.some((v, i) => v.startsWith('--') && v !== '--json' && (!argv[i + 1] || argv[i + 1]!.startsWith('--')))) throw new DirectoryInputError('Every teammate flag needs a value.');
+        const role = flag(rest, '--role'), email = flag(rest, '--email'), slack = flag(rest, '--slack'), phone = flag(rest, '--phone');
+        const lanes = flag(rest, '--lanes'), seats = flag(rest, '--seats');
+        if (rest.length !== 1 || rest[0]!.startsWith('-')) throw new DirectoryInputError('Use phm team add <display-name> with optional role, identities, lanes and seats.');
+        const r = addTeamPerson(team, { displayName: rest[0], role, email, slack, phone, lanes: lanes?.split(','), seats: seats?.split(',') });
+        return out(r, `Added ${r.person.displayName} (pending) [${r.person.id}].\n${r.next}`);
+      }
       case 'view': {
         const s = teamState(team);
         if (json) return out(s, '');
@@ -76,6 +99,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
           return out(r, `Invited ${r.member} to ${team} (membership only; no credentials in the invite).\n${r.invite}\n${r.next}`);
         }
         if (sub === 'remove') {
+          if (rest[0]!.startsWith('person:')) { const r = removeTeamPerson(team, rest[0]!); return out(r, 'Pending teammate removed.'); }
           const ev = updateWorkspace(team, localHumanActor(), { type: 'member.removed', memberId: memberIdForGithubUser(rest[0]!) });
           const p = ev.payload as { drainedClaims: string[]; reopenedHandoffs: string[] };
           return out(ev, `Removed ${rest[0]} from ${team}: drained ${p.drainedClaims.length} claims, reopened ${p.reopenedHandoffs.length} handoffs. Re-invite with: phm team invite ${rest[0]} --team ${team}`);
@@ -103,6 +127,10 @@ export async function cmdTeam(argv: string[]): Promise<number> {
       default: console.error(USAGE); return 2;
     }
   } catch (err) {
+    if (['list', 'show', 'add'].includes(sub) || (sub === 'remove' && rest[0]?.startsWith('person:'))) {
+      const error = err instanceof DirectoryInputError ? err.message : 'Team directory unavailable.';
+      console.error(json ? JSON.stringify({ version: 1, error }) : `phm team: ${error}`); return 1;
+    }
     console.error(`phm team: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }

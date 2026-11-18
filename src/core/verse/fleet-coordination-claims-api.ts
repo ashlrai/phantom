@@ -13,9 +13,14 @@ import {
 import { VERSE_FLEET_COORDINATION_RETURNS_PATH, handleFleetCoordinationReturnsApi } from './fleet-coordination-returns-api.js';
 
 export const VERSE_FLEET_COORDINATION_CLAIMS_PATH = '/api/verse/fleet/coordination-claims';
+/** Must equal VERSE_FLEET_COORDINATION_RETURNS_VERIFY_PATH; repeated here so the
+ * module that shells out to gh loads only when its route is first requested. */
+const RETURNS_VERIFY_PATH = `${VERSE_FLEET_COORDINATION_RETURNS_PATH}/verify`;
+const lazyReturnsVerify: ApiModule = async (...args) =>
+  (await import('./fleet-coordination-returns-verify-api.js')).handleFleetCoordinationReturnsVerifyApi(...args);
 
 export interface FleetCoordinationClaimsApiDeps {
-  /** Reader seam for tests. Default: readFleetBoard(). */
+  /** Reader seam for tests. Default: readFleetBoard({ reap: false }). */
   read?: () => FleetBoard;
   /** Clock seam for tests; stamps generatedAt and expiresInSeconds. */
   now?: () => Date;
@@ -23,6 +28,8 @@ export interface FleetCoordinationClaimsApiDeps {
   mutate?: ApiModule;
   /** Module for the /returns sub-path. Default: handleFleetCoordinationReturnsApi. */
   returns?: ApiModule;
+  /** Module for the /returns/verify sub-path. Default: handleFleetCoordinationReturnsVerifyApi, loaded lazily. */
+  returnsVerify?: ApiModule;
 }
 
 export interface FleetClaimView {
@@ -31,15 +38,17 @@ export interface FleetClaimView {
 }
 
 export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsApiDeps = {}): ApiModule {
-  const read = deps.read ?? (() => readFleetBoard());
+  const read = deps.read ?? (() => readFleetBoard({ reap: false }));
   const now = deps.now ?? (() => new Date());
   const mutate = deps.mutate ?? handleFleetCoordinationMutateApi;
   const returns = deps.returns ?? handleFleetCoordinationReturnsApi;
+  const returnsVerify = deps.returnsVerify ?? lazyReturnsVerify;
   return async (ctx, req, res, path, method) => {
     if (path === VERSE_FLEET_COORDINATION_CLAIM_PATH || path === VERSE_FLEET_COORDINATION_RETURN_PATH
       || path === VERSE_FLEET_COORDINATION_BIND_PATH) {
       return mutate(ctx, req, res, path, method);
     }
+    if (path === RETURNS_VERIFY_PATH) return returnsVerify(ctx, req, res, path, method);
     if (path === VERSE_FLEET_COORDINATION_RETURNS_PATH) return returns(ctx, req, res, path, method);
     if (path !== VERSE_FLEET_COORDINATION_CLAIMS_PATH) return false;
     if (method !== 'GET') {

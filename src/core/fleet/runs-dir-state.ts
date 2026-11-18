@@ -7,6 +7,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
 
 export interface FleetRunsLane {
+  seat?: { health: 'ok'|'degraded'|'down'|'unknown'; usedPct: number|null; resetAt: string|null; observedAt: string|null; passAt: string|null; passMs: number|null };
   healthy?: boolean; lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
   queued: number; held: boolean; heldReason: string|null; tokensLastHour: number|null;
   merged24h: number|null; mergeRate24h: number|null;
@@ -16,6 +17,7 @@ export interface FleetRunsPublish { job: string; lane: string|null; url: string|
 export interface FleetRunsClaim { job: string; lane: string; tier: string; at: string }
 type Health = 'healthy'|'missing'|'degraded';
 export interface FleetRunsDirState {
+  leader?: { lane: string|null; model: string|null; lastSuccessAt: string|null };
   v: 1; generatedAt: string; runsDirPresent: boolean; sourceState: Health;
   sources: Record<'status'|'claimed'|'events'|'metrics'|'claudeLane'|'switches'|'drop', Health>;
   lastTick: string|null; paused: boolean|null; memFreePct: number|null; diskFreeGb: number|null;
@@ -139,6 +141,10 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
       const paused = pauseState(s);
       if (!timestamp(s.last_tick) || paused === null || number(s.mem_free_pct) === null || Number(s.mem_free_pct) > 100 || !s.lanes || Array.isArray(s.lanes) || typeof s.lanes !== 'object') throw new Error('invalid status');
       state.lastTick = s.last_tick; state.paused = paused; state.memFreePct = number(s.mem_free_pct);
+      const leader = object(s.leader);
+      state.leader = { lane: typeof leader.lane === 'string' && validLane(leader.lane) ? leader.lane : null,
+        model: typeof leader.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(leader.model) && scrubSecrets(leader.model) === leader.model ? leader.model : null,
+        lastSuccessAt: timestamp(leader.last_success_at) && Date.parse(leader.last_success_at) <= now ? leader.last_success_at : null };
       state.diskFreeGb = number(object(object(s.autopilot).disk).free_gb);
       for (const [lane, raw] of Object.entries(object(s.lanes))) {
         if (GLOBAL_SLOT_KEYS.has(lane)) continue;
@@ -147,7 +153,13 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
           state.sources.status = 'degraded'; continue;
         }
         const rollup = object(object(object(s.rollup_24h).by_lane)[lane]);
+        const budget = object(object(s.budget)[lane]);
+        const health = l.health === 'ok' || l.health === 'degraded' || l.health === 'down' || l.health === 'unknown'
+          ? l.health : l.healthy === true ? 'ok' : l.healthy === false ? 'down' : 'unknown';
         state.lanes.push({ lane, running: l.running as number, target: l.target as number, queued: l.queued as number,
+          seat: { health, usedPct: number(budget.weekly_used_pct),
+            resetAt: timestamp(budget.reset_at) ? budget.reset_at : null, observedAt: timestamp(budget.observed_at) ? budget.observed_at : null,
+            passAt: timestamp(l.leader_pass_at) ? l.leader_pass_at : null, passMs: number(l.leader_pass_ms) },
           ...(typeof l.healthy === 'boolean' ? { healthy: l.healthy } : {}),
           floor: number(l.floor), ceiling: number(l.ceiling), held: l.held,
           heldReason: typeof l.held_reason === 'string' ? clean(l.held_reason, 200) : null,
