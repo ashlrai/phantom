@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path';
 import { getLocalReleaseStatus, type ReleaseSummary } from '../fleet/release-chain-status.js';
 export { getLocalReleaseStatus } from '../fleet/release-chain-status.js';
 import { AUTONOMY_REPOS } from './autonomy-audit.js';
+import { readBehindReleases, type InstalledBuild } from './drift.js';
 
 export interface ReleaseStatusRow {
   repo: string;
@@ -18,7 +19,7 @@ export interface ReleaseStatusRow {
   mergedPrsSinceTag: number | null;
 }
 export interface ReleaseStatusReport { schema: 'phantom.release-status.v2'; repos: ReleaseStatusRow[]; release: ReleaseSummary }
-export interface ReleaseStatusDeps { root?: string; repos?: readonly string[]; now?: number; repoPath?: string; runsDir?: string; cadenceMinutes?: number }
+export interface ReleaseStatusDeps { root?: string; repos?: readonly string[]; now?: number; repoPath?: string; runsDir?: string; cadenceMinutes?: number; installed?: () => InstalledBuild }
 const DAY_MS = 86_400_000;
 
 /** Reads local clones only. Local refs can be stale; missing or incomplete evidence is reported as null. */
@@ -66,8 +67,16 @@ export const RELEASES_SCHEMA = 'phantom.releases.v1';
 export const RELEASE_DUE = { days: 7, mergedPrs: 50 } as const;
 export type ReleaseVerdict = 'fresh' | 'due' | 'no release yet' | 'unknown';
 /** One repo's release facts, gathered by the caller. `readable: false` means the facts could not be read at all. */
-export interface ReleaseCadenceInput { repo: string; latestTag: string | null; taggedAt: string | null; mergedPrsSinceTag: number | null; readable?: boolean }
-export interface ReleaseCadenceRow { repo: string; latestTag: string | null; taggedAt: string | null; ageDays: number | null; mergedPrsSince: number | null; verdict: ReleaseVerdict; suggestion: string }
+export interface ReleaseCadenceInput {
+  repo: string; latestTag: string | null; taggedAt: string | null; mergedPrsSinceTag: number | null; readable?: boolean;
+  /** Releases the installed build trails (Phantom only, from `phm self drift`); unknown or absent adds nothing. */
+  behindReleases?: number | 'unknown' | null;
+}
+export interface ReleaseCadenceRow {
+  repo: string; latestTag: string | null; taggedAt: string | null; ageDays: number | null; mergedPrsSince: number | null; verdict: ReleaseVerdict; suggestion: string;
+  /** Present only when the installed build is known to trail this repo's releases. */
+  behindReleases?: number;
+}
 export interface ReleasesReport {
   schema: typeof RELEASES_SCHEMA; version: 1; checkedAt: string; dueWhen: typeof RELEASE_DUE;
   counts: Record<ReleaseVerdict, number>; repos: ReleaseCadenceRow[];
@@ -76,7 +85,10 @@ export interface ReleasesReport {
 }
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
-const overdue = (row: ReleaseCadenceRow): number => Math.max((row.ageDays ?? 0) / RELEASE_DUE.days, (row.mergedPrsSince ?? 0) / RELEASE_DUE.mergedPrs);
+// Each release the installed build trails adds one full "due" unit, so an overdue Phantom the fleet is not
+// even running yet ranks above repos that are merely due by age or PR count.
+const overdue = (row: ReleaseCadenceRow): number =>
+  Math.max((row.ageDays ?? 0) / RELEASE_DUE.days, (row.mergedPrsSince ?? 0) / RELEASE_DUE.mergedPrs) + (row.behindReleases ?? 0);
 
 /**
  * Pure release cadence verdicts. A repo is due when its latest tag is over 7 days old or over 50 PRs
@@ -88,14 +100,16 @@ export function releaseCadence(inputs: readonly ReleaseCadenceInput[], now: numb
     const merged = typeof input.mergedPrsSinceTag === 'number' && Number.isSafeInteger(input.mergedPrsSinceTag) && input.mergedPrsSinceTag >= 0 ? input.mergedPrsSinceTag : null;
     const at = input.taggedAt === null ? NaN : Date.parse(input.taggedAt);
     const ageDays = input.latestTag !== null && Number.isFinite(at) ? Math.max(0, Math.floor((now - at) / DAY_MS)) : null;
-    const row = { repo: input.repo, latestTag: input.latestTag, taggedAt: ageDays === null ? null : input.taggedAt, ageDays, mergedPrsSince: merged };
+    const behind = typeof input.behindReleases === 'number' && Number.isSafeInteger(input.behindReleases) && input.behindReleases > 0 ? input.behindReleases : null;
+    const row = { repo: input.repo, latestTag: input.latestTag, taggedAt: ageDays === null ? null : input.taggedAt, ageDays, mergedPrsSince: merged, ...(behind ? { behindReleases: behind } : {}) };
+    const lag = behind ? `; installed build ${count(behind, 'release')} behind` : '';
     if (input.readable === false) return { ...row, verdict: 'unknown', suggestion: `${name}: release state unknown (local clone missing or incomplete)` };
     if (input.latestTag === null) return { ...row, verdict: 'no release yet', suggestion: `${name}: no release yet${merged === null ? '' : `; ${count(merged, 'PR')} merged`}` };
     const facts = `${merged === null ? 'unknown PRs' : count(merged, 'PR')} since ${input.latestTag}${ageDays === null ? ', tag age unknown' : ` ${count(ageDays, 'day')} ago`}`;
     const byCount = merged !== null && merged > RELEASE_DUE.mergedPrs;
     const byAge = ageDays !== null && ageDays > RELEASE_DUE.days && merged !== 0;
     const verdict: ReleaseVerdict = byCount || byAge ? 'due' : merged === 0 || (merged !== null && ageDays !== null) ? 'fresh' : 'unknown';
-    return { ...row, verdict, suggestion: `${name}: ${facts}; ${verdict === 'due' ? 'release due' : verdict === 'fresh' ? merged === 0 ? 'nothing to release' : 'fresh' : 'cannot tell if a release is due'}` };
+    return { ...row, verdict, suggestion: `${name}: ${facts}; ${verdict === 'due' ? 'release due' : verdict === 'fresh' ? merged === 0 ? 'nothing to release' : 'fresh' : 'cannot tell if a release is due'}${lag}` };
   });
   const counts: Record<ReleaseVerdict, number> = { fresh: 0, due: 0, 'no release yet': 0, unknown: 0 };
   for (const row of repos) counts[row.verdict] += 1;
@@ -106,7 +120,12 @@ export function releaseCadence(inputs: readonly ReleaseCadenceInput[], now: numb
 
 /** Release cadence for the Ashlr repos from local clones: no network, no writes. */
 export function getReleases(deps: ReleaseStatusDeps = {}): ReleasesReport {
-  return releaseCadence(readReleaseRows(deps), deps.now ?? Date.now());
+  const rows = readReleaseRows(deps);
+  const phantom = rows.find(row => row.repo === 'ashlrai/phantom' && row.readable);
+  const root = deps.root ?? join(homedir(), 'Projects', 'ashlrai');
+  // Only a readable Phantom clone is asked: the boost reads its tags and the installed manifest, never the network.
+  const behindReleases = phantom ? readBehindReleases({ repo: join(root, 'phantom'), installed: deps.installed }) : null;
+  return releaseCadence(rows.map(row => row === phantom ? { ...row, behindReleases } : row), deps.now ?? Date.now());
 }
 
 export function formatReleases(report: ReleasesReport): string {

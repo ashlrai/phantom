@@ -28,6 +28,7 @@ import { loadAppsRecoveryIncident } from '../fleet/apps-recovery-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
+import type { SelfDriftV1 } from '../release/drift-shape.js';
 import type { WorktreesReport } from '../fleet/worktrees.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
@@ -113,6 +114,8 @@ export interface FleetRunsApiDeps {
   laneModels?: () => Promise<LaneModelSnapshot>;
   /** Home's Disk card; default is readWorktrees('list') from core/fleet/worktrees. */
   readWorktrees?: () => Promise<WorktreesReport>;
+  /** Home's Running build line; default is readSelfDrift() from core/release/drift (`phm self drift --json`). */
+  readDrift?: () => Promise<SelfDriftV1>;
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
@@ -443,6 +446,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // ledger yields an empty map — workers then carry no overrun field and the
   // composite read still succeeds.
   let worktreesRead: { at: number; read: Promise<WorktreesReport> } | null = null;
+  let driftRead: { at: number; read: Promise<SelfDriftV1> } | null = null;
   let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
   let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
   function overrunMedians(): Promise<ReadonlyMap<string, number>> {
@@ -551,6 +555,19 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       const { readPulse } = await import('../fleet/pulse.js');
       sendJson(res, 200, await readPulse({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
+    // Home's Running build line reads the same report as `phm self drift --json`.
+    if (path === '/api/verse/fleet/runs/drift') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      // One read per 10 minutes at most: each read runs the installed CLI once per fleet capability.
+      if (!driftRead || now() - driftRead.at > 600_000) {
+        const read = deps.readDrift ? deps.readDrift() : import('../release/drift.js').then(m => m.readSelfDrift());
+        driftRead = { at: now(), read };
+        read.catch(() => { if (driftRead?.read === read) driftRead = null; });
+      }
+      try { sendJson(res, 200, await driftRead.read); }
+      catch { sendJson(res, 503, { code: 'DRIFT_UNAVAILABLE' }); }
       return true;
     }
     // Home's Disk card reads the same report as `phm worktrees --json`; read-only (removal stays in the CLI).
