@@ -8,9 +8,12 @@ import { fleetOrgMap, mapWindowMinutes, type FleetOrgMap } from '../fleet/org-ma
 import { fleetOrgTree, type FleetOrgTree } from '../fleet/org-tree.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readResourceLedger, type ResourceLedgerV1 } from '../fleet/runs-resource-ledger.js';
+import { buildLeaderSeat } from '../fleet/leader-seat.js';
+import { loadVerifiedRegistry, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
 
 /** Every source the org reads. Tests pass fixtures; each reader may fail alone and its facts then read unknown. */
 export interface FleetOrgReaders {
+  registry: () => Promise<VerifiedModelRegistryEntry[]>;
   live: () => Promise<Pick<Awaited<ReturnType<typeof buildFleetLiveSnapshot>>, 'snapshot'>>;
   sessions: (clock: { now: () => number }) => Promise<FleetSessionsV1>;
   runs: (clock: { now: () => number }) => Promise<FleetRunsDirState>;
@@ -20,6 +23,7 @@ export interface FleetOrgReaders {
   now: () => number;
 }
 export const fleetOrgReaders: FleetOrgReaders = { live: buildFleetLiveSnapshot, sessions: getFleetSessions, runs: readFleetRunsDirState,
+  registry: loadVerifiedRegistry,
   ledger: readResourceLedger, models: () => getLaneModelSnapshot(), messages: readFleetEdges, now: Date.now };
 
 /** The org map, its tree and the pool-usage ledger it was built from (`phm map` also draws the ledger's resources). */
@@ -27,12 +31,13 @@ export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOr
   mapWindowMinutes(String(minutes));
   const read = { ...fleetOrgReaders, ...readers }, now = read.now(), clock = { now: () => now };
   const settled = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : null;
-  const [live, sessions, runs, ledger, models] = await Promise.allSettled([read.live(), read.sessions(clock), read.runs(clock), read.ledger(clock), read.models()]);
+  const [live, sessions, runs, ledger, models, registry] = await Promise.allSettled([read.live(), read.sessions(clock), read.runs(clock), read.ledger(clock), read.models(), read.registry()]);
   let messages: FleetEdges | null = null;
   try { messages = read.messages({ ...clock, windowMinutes: minutes }); } catch { /* messages then read unknown */ }
   const snapshot = settled(live)?.snapshot ?? null, usage = settled(ledger);
   const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now });
-  return { map: { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models) }) }, usage };
+  const leaderSeat = buildLeaderSeat(settled(runs), settled(models), settled(registry), now);
+  return { map: { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat }) }, usage };
 }
 export async function readFleetOrgMap(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
   return (await readFleetOrgSources(minutes, readers)).map;
