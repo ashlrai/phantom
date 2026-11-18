@@ -351,6 +351,7 @@ Every command, grouped by topic.
     recut check [--json] [--ref <branch>] <area-or-job-id>                                                  Should the next recut or red-fix job launch? Exit 0 launch, 1 skip; the reason is one plain line.
     recut plan [--json] [--prs <dirty-landed.json>] [<area>...]                                             Per recut area, emit or skip this cycle with one plain reason. Writes nothing.
     recut prompt <job-id> --lane <lane> --tier <tier>                                                       Print a recut prompt from stdin with the standard task line first.
+    jobs state <id> [--json]                                                                                Show whether a job is running or done, with the evidence.
     jobs empty [--since 24h] [--family F] [--json]                                                          Explain empty jobs with family and lane suggestions.
     jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]                                          Why jobs ended empty, ranked by recorded wasted tokens.
     radar list|run|diff [--json]                                                                            Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
