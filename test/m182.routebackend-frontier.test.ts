@@ -34,6 +34,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import './helpers/local-memory.js';
 
 // ---------------------------------------------------------------------------
 // Mocks — hoisted before module imports
