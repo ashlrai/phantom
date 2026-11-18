@@ -34,7 +34,8 @@ it('inspecting a failed claim notice preserves it for delivery after restart', a
     if (!claim.ok) throw new Error(claim.error);
     expect(appendClaimThreadBinding(paths.bindings,
       { claimId: claim.value.claim.id, repo: 'fake/recovery', threadKey, pr: 7, head }, now).ok).toBe(true);
-    const key = JSON.stringify(['ASSIGNED', claim.value.claim.id, head]);
+    const acquired = claim.value.claim;
+    const key = JSON.stringify(['ASSIGNED', acquired.repo, acquired.id, acquired.agent, acquired.claimedAt, head]);
     const failed = await pass();
     expect(failed).toMatchObject({ status: 'completed', planned: 1, sent: 0, failed: 1,
       deliveries: [{ threadKey, state: 'ASSIGNED', dedupeKey: key, result: 'failed' }] });
