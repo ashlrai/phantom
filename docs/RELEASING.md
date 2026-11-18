@@ -508,6 +508,17 @@ and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
 to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
 `--file <path>` still inspects a saved release-train state file.
 
+`phm releases [--repo phantom] [--json]` and Home's Releases card read the same
+`phantom.releases.v1` report (`version: 1`) at `GET /api/verse/fleet/runs/releases`.
+The API accepts `?repo=phantom`; both accept short or `ashlrai/` repo names.
+Published stable releases and drafts are separate. Freshness counts PRs merged
+into the default branch after publication: fresh, behind N merged PRs, or unknown.
+This is a cadence signal, not proof of artifact contents; direct commits are not PRs.
+Missing, malformed or capped reads stay unknown, including repos without a stable release.
+Local tag age and commit counts use `origin/HEAD` under `~/Projects/ashlrai`
+(`--root` changes this); refs may be stale. Changelog entries suggest review,
+not complete coverage. No command here fetches, tags, publishes or opens a PR.
+
 ### Draft release notes
 
 Run `phm release notes` inside a repository for Markdown since its latest

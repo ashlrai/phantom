@@ -13,6 +13,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
 import { DiskCard } from './DiskCard.js';
+import { ReleasesCard } from './ReleasesCard.js';
 import styles from './home.module.css';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
@@ -33,7 +34,7 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /><ReleasesCard visible={visible} /></section>;
   return <section className={styles.root} aria-label="Home">
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <ApprovalsCard visible={visible} />
@@ -45,6 +46,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Main" action="Open Fleet" onOpen={() => setVerseSection('fleet')}>
       <Value field={home.main}>{repos => <ul>{repos.map(repo => <li key={repo.repo}>{repo.repo}: {repo.state}</li>)}</ul>}</Value>
     </Card>
+    <ReleasesCard visible={visible} />
     <Card title="Running jobs" action="Open Lanes" onOpen={() => openPane('fleet-lanes')}>
       <Value field={home.running}>{lanes => <ul>{lanes.map(lane => <li key={lane.lane}>{lane.lane}: {lane.running}{lane.target === null ? '' : ` of ${lane.target}`}</li>)}</ul>}</Value>
     </Card>
