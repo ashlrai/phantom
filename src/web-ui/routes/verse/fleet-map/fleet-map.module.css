@@ -1,7 +1,9 @@
 .root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
 .headline { margin: 0; font-family: var(--font-display); font-size: var(--text-sm-size); font-weight: 600; font-variant-numeric: tabular-nums; }
 .notice { margin: 0; color: var(--text-secondary); }
-.scroll { overflow: auto; max-width: 100%; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+/* Map and side panel sit side by side when the pane is wide and stack when it is narrow (390 px). */
+.stage { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.scroll { flex: 1 1 420px; min-width: 0; overflow: auto; max-width: 100%; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
 .canvas { position: relative; }
 .edges { position: absolute; inset: 0; pointer-events: none; }
 .edge { fill: none; stroke: var(--border-strong, var(--text-tertiary)); stroke-width: 1.25; }
@@ -28,6 +30,14 @@
 .swatch[data-kind='messaged-in-last-15-min'] { border-top-color: var(--accent-500); }
 .swatch[data-pulse='true'] { border-top-width: 3px; }
 .talk, .gaps { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
-.talk li[data-pulse='true'] { font-weight: 600; }
+.talk button { min-height: 28px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: underline dotted; cursor: pointer; overflow-wrap: anywhere; }
+.talk button[data-pulse='true'] { font-weight: 600; }
+.count { position: absolute; transform: translate(-50%, -50%); min-width: 28px; height: 28px; padding: 0 var(--space-1); border: 1.5px solid var(--accent-500); border-radius: 14px;
+  background: var(--surface-raised, var(--surface-1, Canvas)); color: inherit; font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+.count:hover, .count:focus-visible, .count[aria-pressed='true'] { background: var(--accent-500); color: var(--text-on-accent, Canvas); }
+.panel { flex: 1 1 280px; min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.panelHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.panelHead h3 { min-width: 0; overflow-wrap: anywhere; }
+.close { min-height: 28px; padding: 0 var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; cursor: pointer; }
 .gaps { color: var(--text-secondary); }
 @media (prefers-reduced-motion: reduce) { .edge[data-pulse='true'] { animation: none; } }
