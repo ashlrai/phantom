@@ -9,14 +9,13 @@ import { projectCoordinationReturns } from '../fleet/coordination-returns-view.j
 export const VERSE_FLEET_COORDINATION_RETURNS_PATH = '/api/verse/fleet/coordination-claims/returns';
 
 export interface FleetCoordinationReturnsApiDeps {
-  /** Reader seam for tests. Default: readFleetBoard({ reap: false }). */
+  /** Reader seam for tests. Default reads retained returns at the route clock without reaping. */
   read?: () => FleetBoard;
   /** Clock seam for tests. */
   now?: () => Date;
 }
 
 export function createFleetCoordinationReturnsApi(deps: FleetCoordinationReturnsApiDeps = {}): ApiModule {
-  const read = deps.read ?? (() => readFleetBoard({ reap: false }));
   const now = deps.now ?? (() => new Date());
   return async (_ctx, _req, res, path, method) => {
     if (path !== VERSE_FLEET_COORDINATION_RETURNS_PATH) return false;
@@ -26,7 +25,7 @@ export function createFleetCoordinationReturnsApi(deps: FleetCoordinationReturns
     }
     const at = now();
     let board: FleetBoard | null;
-    try { board = read(); } catch { board = null; }
+    try { board = deps.read ? deps.read() : readFleetBoard({ now: at.getTime(), reap: false, includeExpiredReturns: true }); } catch { board = null; }
     const body = { ...projectCoordinationReturns(board, at.getTime()), authority: 'none' as const, generatedAt: at.toISOString() };
     // Round-trip through JSON so each row's non-enumerable toJSON runs before any sanitizer.
     sendJson(res, 200, JSON.parse(JSON.stringify(body)));
