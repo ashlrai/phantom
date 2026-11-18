@@ -211,6 +211,8 @@ describe('ingestIMessages', () => {
     const result = await ingestIMessages(cfg(), ingestDeps());
     expect(result).toMatchObject({ accepted: 1, duplicate: 1, cursor: 2 });
     expect(inbox().match(/\[src:imessage id:/g)).toHaveLength(1);
+    // A same-channel repeat is recorded but not re-sent: one outbound ack only.
+    expect(calls.filter((c) => c.file === 'osascript')).toHaveLength(1);
   });
 
   it('refuses secret-shaped text without storing it, and still moves the cursor past it', async () => {
