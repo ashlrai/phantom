@@ -14,6 +14,15 @@ export const NATIVE_EXECUTABLE = 'ashlr-desktop';
 
 const paths = [PHANTOM_APP_PATH, LEGACY_APP_PATH];
 const fail = (message) => { throw new Error(`Native installation held: ${message}`); };
+const canonicalLauncherDigests = JSON.parse(readFileSync(new URL('./canonical-launcher-digests.json', import.meta.url), 'utf8'));
+if (!Array.isArray(canonicalLauncherDigests) || canonicalLauncherDigests.length === 0 ||
+  canonicalLauncherDigests.some((digest) => typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) ||
+  new Set(canonicalLauncherDigests).size !== canonicalLauncherDigests.length) {
+  throw new Error('canonical launcher digest list is invalid');
+}
+const canonicalLauncherDigestSet = new Set(canonicalLauncherDigests);
+const canonicalLauncherMatches = (actual, expected) => actual.equals(expected) ||
+  canonicalLauncherDigestSet.has(createHash('sha256').update(actual).digest('hex'));
 const call = (io, cmd, argv) => {
   const result = io.exec(cmd, argv);
   if (result.status !== 0) fail(`${cmd} ${argv[0]} failed; no unverified app will be installed`);
@@ -23,6 +32,9 @@ const call = (io, cmd, argv) => {
 /** A successful rename with an unreadable result cannot be treated as an unchanged pointer. */
 export function switchLocalCurrentPointer(path, before, target, temporary, io) {
   if (JSON.stringify(io.readCurrentPointer(path)) !== JSON.stringify(before)) fail('current release changed during staging');
+  const launcherPath = join(target, 'bin/ashlr');
+  const expectedLauncher = io.readLauncher(launcherPath);
+  if (!canonicalLauncherMatches(expectedLauncher, io.readLauncher(join(io.repoRoot, 'bin/ashlr')))) fail('new release launcher identity is unsupported');
   let renamed = false;
   try {
     io.createLink(target, temporary);
@@ -32,6 +44,7 @@ export function switchLocalCurrentPointer(path, before, target, temporary, io) {
       renamed = true;
       const after = io.readCurrentPointer(path);
       if (!after || after.target !== target) fail('the switched pointer is missing or changed');
+      if (!io.readLauncher(join(after.target, 'bin/ashlr')).equals(expectedLauncher)) fail('the switched release launcher changed');
       return after;
     } finally { if (io.exists(temporary)) io.unlink(temporary); }
   } catch (error) {
@@ -193,7 +206,7 @@ export function inspectCurrentPointer(path, io) {
     const pkg = JSON.parse(io.readBoundedFile(join(target, 'package.json'), 65536));
     const actual = Buffer.from(io.readBoundedFile(launcher, 65536));
     const expected = Buffer.from(io.readBoundedFile(join(io.repoRoot, 'bin/ashlr'), 65536));
-    if (!['@ashlr/hub', '@ashlr/phantom'].includes(pkg.name) || typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(pkg.version) || !actual.equals(expected)) fail('current release package/canonical launcher identity is unsupported');
+    if (!['@ashlr/hub', '@ashlr/phantom'].includes(pkg.name) || typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(pkg.version) || !canonicalLauncherMatches(actual, expected)) fail('current release package/canonical launcher identity is unsupported');
     const after = io.lstat(path);
     if (!after?.isSymbolicLink || stat.dev !== after.dev || stat.ino !== after.ino || stat.ctimeMs !== after.ctimeMs) fail('current release changed while reading');
     return {target, dev: stat.dev, ino: stat.ino, ctimeMs: stat.ctimeMs, birthtimeMs: stat.birthtimeMs};
@@ -369,6 +382,10 @@ export function createLocalAppTransactionIo({packageRoot, home = homedir(), Refu
   };
   const fileStat = (path) => { try { const stat = lstatSync(path); return { dev: stat.dev, ino: stat.ino, ctimeMs: stat.ctimeMs, birthtimeMs: stat.birthtimeMs, size: stat.size, isFile: stat.isFile(), isDirectory: stat.isDirectory(), isSymbolicLink: stat.isSymbolicLink() }; } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
   const currentTarget = (path) => inspectCurrentPointer(path, {home: home, repoRoot, validateLocalPath: safeParents, lstat: fileStat, readLink: readlinkSync, readBoundedFile: (file, max) => safeFile(file, max).toString('utf8')});
+  const readLauncher = (path) => {
+    if (path.startsWith(home + '/')) safeParents(path);
+    return safeFile(path, 65536);
+  };
 
   return {
     platform: process.platform,
@@ -393,12 +410,13 @@ export function createLocalAppTransactionIo({packageRoot, home = homedir(), Refu
     exclusiveRenamePreflight: exclusiveRenameAvailable,
     renameExclusive: renamePathExclusive,
     readCurrentPointer: currentTarget,
+    isCanonicalLauncher: (path) => canonicalLauncherMatches(readLauncher(path), readLauncher(join(repoRoot, 'bin/ashlr'))),
     validateLocalPath: safeParents,
     readLink: (path) => {safeParents(path); return readlinkSync(path);},
     linkTargetExists: (path) => { try { return statSync(path).isFile(); } catch {return false;} },
     createAlias: (path, target) => { safeParents(path); mkdirSync(dirname(path), {recursive: true}); safeParents(path); symlinkSync(target, path); },
     removeAlias: (path) => {safeParents(path); unlinkSync(path);},
-    switchCurrentPointer: (path, before, target) => switchLocalCurrentPointer(path, before, target, `${path}.phantom-${randomBytes(8).toString('hex')}`, {readCurrentPointer: currentTarget, createLink: symlinkSync, rename: renameSync, exists: lstatExists, unlink: unlinkSync}),
+    switchCurrentPointer: (path, before, target) => switchLocalCurrentPointer(path, before, target, `${path}.phantom-${randomBytes(8).toString('hex')}`, {repoRoot, readCurrentPointer: currentTarget, readLauncher, createLink: symlinkSync, rename: renameSync, exists: lstatExists, unlink: unlinkSync}),
     restoreCurrentPointer: (path, before, expected) => {
       if (JSON.stringify(currentTarget(path)) !== JSON.stringify(expected)) throw new Refusal('current release changed; rollback held');
       if (before === null) rmSync(path);

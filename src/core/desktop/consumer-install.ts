@@ -20,6 +20,7 @@ type Alias = {path: string; target: string; identity: unknown};
 export interface ConsumerInstallIo extends Record<string, unknown> {
   home: string; log(line: string): void;
   readCurrentPointer(path: string): Pointer | null;
+  isCanonicalLauncher(path: string): boolean;
   switchCurrentPointer(path: string, before: Pointer | null, target: string): Pointer;
   restoreCurrentPointer(path: string, before: Pointer | null, expected: Pointer): void;
   writeInstallJournal(owner: string, value: {phase: string}): void;

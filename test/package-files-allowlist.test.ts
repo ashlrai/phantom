@@ -55,6 +55,7 @@ describe('package files allowlist', () => {
       'docs/PRODUCTION-METRICS.md',
       'docs/IMPACT-METRICS.md',
       'docs/ECOSYSTEM-CHANGELOG.md',
+      'scripts/canonical-launcher-digests.json',
     ]));
     expect(() => assertRuntimeReleaseRootPackagePortability(packageJson, [], inventory))
       .not.toThrow();
