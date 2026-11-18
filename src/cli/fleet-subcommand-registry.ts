@@ -322,6 +322,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'precheck-waste': () => import('./fleet-precheck-waste.js'),
   'procs': () => import('./fleet-procs.js'),
   'proof': () => import('./fleet-proof.js'),
+  'pulse': () => import('./fleet-pulse.js'),
   'queue-age': () => import('./fleet-queue-age.js'),
   'queue-counts': () => import('./fleet-queue-counts.js'),
   'queue-latency': () => import('./fleet-queue-latency.js'),

@@ -1,4 +1,4 @@
-/** The phone's Home on fixture `phm home`, `phm approvals` and `phm shipped` payloads: empty, normal, red main, approvals, unknown; measured at 390 px. */
+/** The phone's Home on fixture `phm fleet pulse`, `phm home`, `phm approvals` and `phm shipped` payloads: empty, normal, red main, approvals, unknown; measured at 390 px. */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShippedReport } from '../../../../../core/release/shipped.js';
@@ -7,9 +7,10 @@ import { evictAll } from '../../../../data/cache.js';
 import { resetGuard } from '../../shell/guard-store.js';
 import { mockViewport } from '../../shell/viewport.test-support.js';
 import { APPROVALS_PATH } from '../../home/ApprovalsCard.js';
+import { PULSE_PATH } from '../../home/PulseCard.js';
 import { SHIPPED_PATH } from '../../home/ShippedCard.js';
 import { INTERJECT_POST_PATH } from '../../fleet/interject-request.js';
-import { approvalsList, homeSummary, type HomeFixture } from '../home.test-support.js';
+import { approvalsList, homeSummary, pulse, type HomeFixture } from '../home.test-support.js';
 import { checkView } from '../mobile-check.test-support.js';
 import { json, permissionsFor, renderMobile, stubFetch, TOKEN } from '../mobile.test-support.js';
 import { ui } from '../ui.js';
@@ -23,7 +24,7 @@ const shipped = (total: number | null): ShippedReport => ({
   areas: total ? [{ id: 'desktop', label: 'Desktop app', count: total, lines: [{ text: 'Add a phone Home.', number: 12, mergedAt: '2026-11-17T10:00:00.000Z' }] }] : [],
 });
 const mac = (kind: HomeFixture, more: Record<string, unknown> = {}) => stubFetch({
-  [`GET ${HOME_PATH}`]: homeSummary(kind), [`GET ${APPROVALS_PATH}`]: approvalsList(kind),
+  [`GET ${HOME_PATH}`]: homeSummary(kind), [`GET ${PULSE_PATH}`]: pulse(kind), [`GET ${APPROVALS_PATH}`]: approvalsList(kind),
   [`GET ${SHIPPED_PATH}`]: shipped(kind === 'unknown' ? null : kind === 'quiet' ? 0 : 3), ...INBOX, ...more });
 const health = () => screen.findByRole('status', { name: 'Fleet health' });
 
@@ -34,7 +35,7 @@ describe('phone Home', () => {
     ['empty', 'quiet', '0 merged in the last hour · 0 lanes running · main green', 'ok', 'Nothing merged in the last 24 hours.'],
     ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', '3 changes in the last 24 hours.'],
     ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', '3 changes in the last 24 hours.'],
-  ] as const)('%s at 390 px: exactly four parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
+  ] as const)('%s at 390 px: exactly five parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
     const viewport = mockViewport(390);
     const fetches = mac(kind);
     const { container } = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
@@ -42,12 +43,15 @@ describe('phone Home', () => {
     expect(await health()).toHaveAttribute('data-tone', tone);
     const today = within(await screen.findByRole('region', { name: 'Shipped today' }));
     expect(today.getByText(shippedLine)).toBeInTheDocument();
-    // Top to bottom: health, approvals (or their empty note), the message box, what shipped today.
-    const parts = [await health(), screen.getByText('Nothing needs you.'), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
+    const pulseCard = within(await screen.findByRole('region', { name: 'Pulse' }));
+    expect(pulseCard.getAllByRole('listitem')).toHaveLength(5);
+    expect(pulseCard.queryAllByText('unknown')).toHaveLength(kind === 'quiet' ? 5 : 0);
+    // Top to bottom: the pulse, health, approvals (or their empty note), the message box, what shipped today.
+    const parts = [screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you.'), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect([...container.firstElementChild!.children]).toHaveLength(4);
+    expect([...container.firstElementChild!.children]).toHaveLength(5);
     expect(checkView('home', 'Home', container).findings).toEqual([]);
-    // One read each for health, approvals and shipped (one day); the only other reads are the message box's own inbox.
+    // One read each for pulse, health, approvals and shipped (one day); the only other reads are the message box's own inbox.
     expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, `${SHIPPED_PATH}?days=1`].sort());
     viewport.restore();
   });

@@ -536,6 +536,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readHome({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), leaderSeenMs: seen ? Number(seen) : null }));
       return true;
     }
+    // Home's Pulse card reads the same fleet.pulse.v1 as `phm fleet pulse --json`.
+    if (path === '/api/verse/fleet/runs/pulse') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readPulse } = await import('../fleet/pulse.js');
+      sendJson(res, 200, await readPulse({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
     // Home's Disk card reads the same report as `phm worktrees --json`; read-only (removal stays in the CLI).
     if (path === '/api/verse/fleet/runs/worktrees') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }

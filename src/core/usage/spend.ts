@@ -173,7 +173,7 @@ export function projectUsageSpend(raw: unknown, now = Date.now()): SpendSnapshot
     || (a.hoursLeft ?? Infinity) - (b.hoursLeft ?? Infinity) || a.pool.localeCompare(b.pool));
   return { schema: USAGE_SPEND_SCHEMA, v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, headline: spendHeadline(pools), pools };
 }
-export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json')): Promise<SpendSnapshot> {
+export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queue', 'status.json'), now = Date.now()): Promise<SpendSnapshot> {
   try {
     const file = await open(path, 'r');
     try {
@@ -185,9 +185,9 @@ export async function readUsageSpend(path = join(homedir(), '.ashlr-runs', 'queu
         if (bytesRead === 0) break;
         length += bytesRead;
       }
-      if (length === bytes.length) return projectUsageSpend(null);
-      return projectUsageSpend(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown);
+      if (length === bytes.length) return projectUsageSpend(null, now);
+      return projectUsageSpend(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length))) as unknown, now);
     } finally { await file.close(); }
   }
-  catch { return projectUsageSpend(null); }
+  catch { return projectUsageSpend(null, now); }
 }

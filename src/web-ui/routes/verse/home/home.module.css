@@ -10,3 +10,12 @@
 .action { align-self: flex-start; min-height: 2.75rem; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
 .card [data-warn] { color: var(--warning-500, var(--text-primary)); }
 .command { font-family: var(--font-mono, monospace); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+/* Pulse: five rows, title and value on one line, the plain line under them. Wraps the same at 390 px and wide. */
+.pulse { display: flex; flex-direction: column; gap: var(--space-2); }
+.pulseRow { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; column-gap: var(--space-2); min-width: 0; }
+.pulseTitle { color: var(--text-secondary); font-size: var(--text-sm-size); }
+.pulseValue { color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); text-align: right; white-space: nowrap; }
+.pulseLine { flex-basis: 100%; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.spark { flex-basis: 100%; width: 100%; height: 1.5rem; color: var(--accent-500, var(--text-secondary)); }
+.arrow[data-tone='better'] { color: var(--success-500, var(--text-primary)); }
+.arrow[data-tone='worse'] { color: var(--danger-500, var(--text-primary)); }

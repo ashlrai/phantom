@@ -1,5 +1,6 @@
 /**
- * The phone opens here, on exactly four things, top to bottom:
+ * The phone opens here, on exactly five things, top to bottom:
+ *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
  *   1. one line of fleet health: merges in the last hour, lanes running, main
  *      green or red (one read of `phm home --json`, home.v1);
  *   2. approvals, one tap each (the desktop Home card, built on `phm approvals`);
@@ -13,6 +14,7 @@ import { apiGet, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
+import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
 import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -35,6 +37,7 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
   refetchQuery(shippedQuery(1).key, () => shippedQuery(1).fetch(), true).catch(() => undefined),
 ]);
 
@@ -63,6 +66,7 @@ export function HomeGlance() {
   const health = home ? healthLine(home) : null;
   return (
     <>
+      <PulseCard />
       {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
         <section className={`${ui.card} ${styles.needs}`} role="alert">
           <p className={styles.askText}>Fleet health is unknown. {read.error ? readFailureReason(read.error) : 'Your Mac’s build does not serve it yet. Update Phantom on your Mac.'}</p>

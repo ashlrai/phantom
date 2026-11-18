@@ -599,6 +599,7 @@ function printPulseHelp(): void {
   console.log('');
   console.log(`    phm pulse [options]`);
   console.log(`    phm pulse memory --samples <file> [--json] [--send]`);
+  console.log(`    ${dim('Is the fleet doing well right now (merges, time to merge, mains, releases, pools)? Run phm fleet pulse.')}`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');
