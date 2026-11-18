@@ -14,7 +14,13 @@ export const FLEET_CLAIM_TTL_MS = 60 * 60_000;
 const MAX_TTL_MS = 7 * 24 * FLEET_CLAIM_TTL_MS;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REPO = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
-export interface FleetCoordinationOptions { path?: string; now?: number; reap?: boolean }
+export interface FleetCoordinationOptions {
+  path?: string;
+  now?: number;
+  reap?: boolean;
+  /** Include retained, published return history only with reap:false. Compaction may remove it. */
+  includeExpiredReturns?: boolean;
+}
 export interface FleetClaim { id: string; repo: string; task: string; agent: string; claimedAt: number; expiresAt: number }
 export interface FleetMessage { id: string; from: string; to: string; body: string; at: number; expiresAt: number }
 export interface FleetAssignment { id: string; repo: string; task: string; to: string; at: number; expiresAt: number; executionAuthorized: false }
@@ -185,7 +191,7 @@ function cleanClaim(claim: OwnedClaim): FleetClaim {
 }
 /** Keep journal receipt identities distinct while exposing one current result
  * under the existing claim identity used by return projections and notices. */
-function boardMessages(state: State, now: number): FleetMessage[] {
+function boardMessages(state: State, now: number, includeExpiredReturns = false): FleetMessage[] {
   const posted = new Set(state.messages.map(m => m.id));
   const latest = new Map([...state.pendingReturns.keys()].map(id => [`return-${id}`, '']));
   // If the newest intent is unposted, retain the last published correction.
@@ -196,10 +202,13 @@ function boardMessages(state: State, now: number): FleetMessage[] {
   for (const pending of state.pendingReturns.values()) {
     if (posted.has(pending.message.id)) latest.set(`return-${pending.id}`, pending.message.id);
   }
-  return state.messages.filter(m => m.expiresAt > now).flatMap(m => {
+  return state.messages.flatMap(m => {
     const base = latest.has(m.id) ? m.id : m.id.slice(0, m.id.lastIndexOf('.'));
     const selected = latest.get(base);
     if (selected && selected !== m.id) return [];
+    // History is evidence, never a live message. Require the durable return
+    // intent and its selected published receipt; a return-like id alone is insufficient.
+    if (m.expiresAt <= now && !(includeExpiredReturns && selected === m.id)) return [];
     return [{ ...m, id: scrubSecrets(selected ? base : m.id), from: scrubSecrets(m.from),
       to: scrubSecrets(m.to), body: scrubSecrets(m.body) }];
   });
@@ -217,7 +226,7 @@ export function readFleetBoard(options: FleetCoordinationOptions = {}): FleetBoa
       state = reaped.value;
     }
     return { schema: 'fleet.coordination.v1', state: 'known', claims: [...state.claims.values()].filter(c => c.expiresAt > now).map(cleanClaim),
-      messages: boardMessages(state, now),
+      messages: boardMessages(state, now, options.reap === false && options.includeExpiredReturns === true),
       proposals: state.proposals.filter(p => p.expiresAt > now).map(p => ({ ...p, id: scrubSecrets(p.id), repo: scrubSecrets(p.repo), task: scrubSecrets(p.task), to: scrubSecrets(p.to) })),
       expiredClaims: claims.filter(c => c.expiresAt <= now).length };
   } catch { return { schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null }; }
