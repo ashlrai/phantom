@@ -11,6 +11,7 @@ import {
   type RuntimeIdentity,
   type RuntimeIdentityDeps,
 } from '../fleet/runtime-identity.js';
+import { nodeReachView, readNodeReachSources, type NodeReachRow } from '../fleet/node-reach-view.js';
 import { handleFleetBridgeCheckApi, VERSE_FLEET_BRIDGE_CHECK_PATH } from './fleet-bridge-check-api.js';
 import { handleFleetClaimDriftApi, VERSE_FLEET_CLAIM_DRIFT_PATH } from './fleet-claim-drift-api.js';
 import { handleFleetClaimExecutionApi, VERSE_FLEET_CLAIM_EXECUTION_PATH } from './fleet-claim-execution-api.js';
@@ -78,7 +79,9 @@ export function createFleetRuntimeIdentityApi(deps: FleetRuntimeIdentityApiDeps 
     } catch {
       identity = unknownIdentity(generatedAt);
     }
-    sendJson(res, 200, { v: 1, generatedAt, identity });
+    let nodes: NodeReachRow[] = [];
+    try { nodes = nodeReachView(readNodeReachSources(), now().getTime()); } catch { /* nodes stay empty: unknown, not offline */ }
+    sendJson(res, 200, { v: 1, generatedAt, identity, nodes });
     return true;
   };
 }

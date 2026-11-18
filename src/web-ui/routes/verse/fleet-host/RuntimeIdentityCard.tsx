@@ -4,6 +4,7 @@ import { formatAge, type RuntimeIdentityView } from './runtime-identity-model.js
 import { executionLine, type ExecutionLine } from './runtime-execution-line.js';
 import { runtimeIdentityQuery } from './runtime-identity-query.js';
 import { coordinationLine, runtimeSnapshotQuery, type CoordinationLine } from './runtime-snapshot-query.js';
+import { NodeReachList } from '../runtime/NodeReachList.js';
 import styles from './fleet-host.module.css';
 
 export function RuntimeIdentityBody({ view, coordination, execution }: { view: RuntimeIdentityView | null; coordination?: CoordinationLine; execution?: ExecutionLine }) {
@@ -49,5 +50,6 @@ export function RuntimeIdentityCard({ visible }: { visible: boolean }) {
     <RuntimeIdentityBody view={read.status === 'error' ? null : read.data ?? null}
       coordination={coordinationLine(snapshot.data, snapshot.error)}
       execution={executionLine(snapshot.data, snapshot.error)} />
+    <NodeReachList visible={enabled} />
   </section>;
 }
