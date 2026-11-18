@@ -4,29 +4,32 @@ import { evictAll } from '../../../data/cache.js';
 import { ReturnsStrip, ReturnsBody } from './ReturnsStrip.js';
 import { parseReturns } from './returns-model.js';
 
+const NOW = Date.parse('2026-11-14T18:00:00.000Z');
 const ROW = {
   claimId: 'fake-392', repo: 'example/phantom', result: 'VERIFIED', evidenceKind: 'pr',
   pr: 42, head: 'abcdef1234567890', evidence: 'pr #42 head abcdef1234567890', from: 'fake-agent',
-  at: '2026-11-14T18:00:00.000Z', expiresAt: '2026-11-15T18:00:00.000Z',
+  at: '2026-11-14T18:00:00.000Z', expiresAt: '2026-11-15T18:00:00.000Z', temporal: 'current',
 };
 const BLOCKED = { ...ROW, claimId: 'fake-blocked', result: 'BLOCKED', evidenceKind: 'dependency', pr: null, head: null, evidence: 'dependency fake-api' };
 const body = (over: Record<string, unknown> = {}) => ({
-  v: 1, authority: 'none', generatedAt: ROW.at, source: 'coordination-ledger', asOf: ROW.at,
+  v: 1, authority: 'none', generatedAt: ROW.at, source: 'coordination-ledger', asOf: new Date(NOW).toISOString(),
   state: 'known', returns: [ROW, BLOCKED], unparsed: 0, ...over,
 });
 const stub = (value: unknown, status = 200) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(value), { status })));
-afterEach(() => { cleanup(); evictAll(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); evictAll(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('renders agent receipts, short heads, age and the evidence caption', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW);
   stub(body());
   render(<ReturnsStrip />);
-  await waitFor(() => expect(screen.getByText('1 verified, 1 blocked')).toBeInTheDocument());
-  expect(screen.getByText('VERIFIED')).toBeInTheDocument();
-  expect(screen.getByText('BLOCKED')).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText('1 current verified, 1 current blocked · 0 background')).toBeInTheDocument());
+  expect(screen.getByText('VERIFIED · current')).toBeInTheDocument();
+  expect(screen.getByText('BLOCKED · current')).toBeInTheDocument();
   expect(screen.getByText('PR #42 · head abcdef1')).toBeInTheDocument();
   expect(screen.getByText('dependency')).toBeInTheDocument();
   expect(screen.getAllByText('fake-agent')).toHaveLength(2);
   expect(screen.getAllByText('example/phantom')).toHaveLength(2);
+  expect(screen.getAllByText('0s ago')).toHaveLength(2);
   expect(screen.getByText("VERIFIED is the returning agent's evidence; Phantom has not checked the PR.")).toBeInTheDocument();
 });
 
