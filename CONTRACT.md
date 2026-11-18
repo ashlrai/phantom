@@ -1247,6 +1247,14 @@ optional `published`, and a published job is `done` and leaves its lane's
 (`live`, `sessions`, `runs`, `ledger`, `models`, `messages`, `now`); defaults
 are exported as `fleetOrgReaders`. `OrgTreeInputs` gains optional `models`.
 
+**Org chart (RQ-ORGCHARTN18PQ8).** `fleet.org.v1` gains optional `planners`
+(`OrgTreePlanner[]`: `id` `OrgPlannerId`, `label`, `role`, `state`, `doing`,
+`lastActivityAt`), built only from the dispatch events and message edges the
+tree already reads. `OrgTreeJob` gains `tier`, `ageSeconds` and `goal`;
+`FleetMapNode` gains optional `tier` and `goal`. `ORG_PLANNER_QUIET_MS` is
+exported. Lane `doing` for idle and held lanes now names the reason. Additive;
+`version` stays 1.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,

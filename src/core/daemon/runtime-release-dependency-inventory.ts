@@ -551,6 +551,8 @@ function rootPackageIsPortable(
     'docs/MACHINE-TELEMETRY.md',
     'docs/REPO-OWNERS.md',
     'docs/PRODUCTION-METRICS.md',
+    'docs/IMPACT-METRICS.md',
+    'docs/ECOSYSTEM-CHANGELOG.md',
     'docs/contracts/CONTRACT-M515.md',
     'docs/contracts/CONTRACT-M521.md',
     'docs/contracts/CONTRACT-M568.md',

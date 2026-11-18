@@ -40,23 +40,23 @@ describe('fleetOrgTree', () => {
     expect(find(tree, 'claude')).toMatchObject({ provider: 'Anthropic', model: null, state: 'running', doing: '2 jobs running', heldReason: null, running: 2, target: 8, queued: 3, held: false,
       usage: { usedPct: 41.6, asOf: '2026-11-17T11:59:00Z', resetAt: null } });
     expect(find(tree, 'claude').jobs).toEqual([
-      { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', state: 'running', doing: 'Working in phantom',
+      { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working in phantom',
         startedAt: '2026-11-17T11:50:00Z', lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
       // RQ-A's events never attach to RQ-AB, and its missing facts stay null.
-      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', state: 'running', doing: 'Working', startedAt: null, lastEvent: null, lastActivityAt: null },
+      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working', startedAt: null, lastEvent: null, lastActivityAt: null },
     ]);
     expect(orgLive(AT, NOW)).toBe(true); expect(orgLive('2026-11-17T11:54:59Z', NOW)).toBe(false); expect(orgLive(null, NOW)).toBeNull();
     const text = renderOrgTreeText(tree, NOW);
     expect(text).toContain('claude (Anthropic, model unknown): running. 2 running of 8, 3 queued, usage 42% (measured 1m ago)');
-    expect(text).toContain('* RQ-A | running | Working in phantom | claude-fable-5-2 | started 10m ago | last event PUBLISH_START 2m ago');
-    expect(text).toContain('- RQ-AB | running | Working | model unknown | started unknown | last event unknown');
+    expect(text).toContain('* RQ-A | running | Working in phantom | claude-fable-5-2 | started 10m ago | last event PUBLISH_START 2m ago | tier unknown | goal unknown');
+    expect(text).toContain('- RQ-AB | running | Working | model unknown | started unknown | last event unknown | tier unknown | goal unknown');
   });
 
   it('says idle for an empty lane, and unknown when no job source answered', () => {
     const tree = fleetOrgTree(map([]), { runs: runs([lane('gemini', 0, 1, 0)]) });
     expect(find(tree, 'gemini')).toMatchObject({ running: 0, target: 1, queued: 0, jobs: [] });
     expect(tree.jobsKnown).toBe(true);
-    expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google, model unknown\): idle\. 0 running of 1, 0 queued, usage unknown\n {4}idle/);
+    expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google, model unknown\): idle\. Idle, nothing queued\. 0 running of 1, 0 queued, usage unknown\n {4}idle/);
     const dark = fleetOrgTree(fleetOrgMap(null));
     expect(dark.jobsKnown).toBe(false); expect(dark.messages).toBeNull();
     expect(renderOrgTreeText(dark, NOW)).toContain('jobs unknown'); expect(renderOrgTreeText(dark, NOW)).not.toMatch(/\bidle\b/);
@@ -96,7 +96,7 @@ describe('fleetOrgTree', () => {
       { runs: runs(flip ? [...laneRows].reverse() : laneRows) }));
     expect(build(true)).toBe(build(false));
     const tree = JSON.parse(build(false)) as FleetOrgTree;
-    expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
+    expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'planners', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
     expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
     expect(find(tree, 'claude').jobs.map(job => job.id)).toEqual(['RQ-C', 'RQ-A']);
     expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3 }, { from: 'Leader (CEO)', to: 'devin', count: 1 }]);
