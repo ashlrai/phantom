@@ -14,6 +14,8 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 
 Chasing open-source RSI (recursive self-improvement) is Phantom's mission. We're building Phantom into an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute. The [strategy for recursive self-improvement and an open fleet](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md) explains how we'll test improvements and open the fleet without sharing credentials.
 
+Agents run the factory; the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow. The owner sets direction and is needed only for passwords, 2FA, device approvals and payments. See [how agents work on Phantom](#how-agents-work-on-phantom).
+
 ![Phantom fleet console showing sample worker assignments and lane capacity; labeled demo data, no live execution.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-fleet-demo.png)
 
 *Current source UI with synthetic demo data, captured at 2× resolution. No provider or fleet ran. [Capture details](https://github.com/ashlrai/phantom/blob/master/docs/images/CAPTURES.md).*
@@ -167,12 +169,23 @@ The repo's `.mcp.json` declares six companion MCP servers: `phantom-secrets`, `l
 
 | Project | Purpose |
 | --- | --- |
+| [Phantom](https://github.com/ashlrai/phantom) (this repo) | The factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work. |
 | [Phantom Secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. |
 | [Locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. |
-| [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger. |
+| [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger; the `ashlr` server above. |
 | [Lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. |
 | [Ashlr MD](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. |
 | [Ashlr Stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. |
+
+## How agents work on Phantom
+
+Phantom is built mostly by coding agents, including Phantom's own fleet. The rules they follow are in [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md):
+
+- **Agents may** branch, commit, open pull requests, enable auto-merge, merge to master and dispatch releases through the repository's sanctioned workflow. They fix CI, tests, docs and dependencies forward.
+- **Kept limits** stay with the owner or are refused outright: secret values, force-pushes and admin bypass, spending and billing, and messages to people outside the organization.
+- **Evidence over claims**: a completed run, a merged PR and a published release are recorded separately, and unknown readings stay unknown.
+
+To watch it work, run `phm org --text` for the live leader, lanes and running jobs, or `phm improve propose --json` for evidence-backed improvement proposals.
 
 ## Documentation and contributing
 
