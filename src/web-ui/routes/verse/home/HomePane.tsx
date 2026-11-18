@@ -1,4 +1,4 @@
-/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, and the Disk card (`phm worktrees`) closes the column.
+/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, the Blocked card says what is waiting, and the Disk card (`phm worktrees`) closes the column.
  * The headline carries a state mark and the time the summary was read; lanes with a target and repos draw their reading (a bar, a mark) beside the same words. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
@@ -15,6 +15,7 @@ import { readLastSeen } from '../shell/last-seen-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
+import { BlockedCard } from './BlockedCard.js';
 import { DiskCard } from './DiskCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
 import { PoolsCard } from './PoolsCard.js';
@@ -51,7 +52,7 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<BlockedCard key="blocked" visible={visible} open={openPane} /><PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} /></section>;
   // A failed refresh keeps the last summary on screen; it must not read as current.
   const stale = read.status === 'error';
   const at = readAt(home.asOf);
@@ -63,7 +64,7 @@ export function HomePane({ visible }: PaneProps) {
     {/* Keyed like the loading branch above: the read-time line sits before these cards only here, and an open pool or a half-given answer must survive the summary arriving. */}
     <ApprovalsCard key="approvals" visible={visible} />
     <LeaderRepliesCard key="leader-replies" visible={visible} />
-    {working(visible)}
+    {working(visible)}<BlockedCard key="blocked" visible={visible} open={openPane} />
     <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} />
     <ThisMacCard visible={visible} className={styles.card} />
     <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>

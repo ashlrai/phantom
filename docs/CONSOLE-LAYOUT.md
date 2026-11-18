@@ -84,6 +84,22 @@ asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
 
+Home's **Blocked** card, right under Working now, answers
+"what is stopping work?". One headline counts it. Below are
+the reason launches are paused and how long nothing has
+launched, each repository hold with its reason and when it
+lifts, each lane whose jobs wait with nothing running (select
+one to open Lanes on that lane) and the parked-job count.
+**Open Lanes** is its one action. It reads the live fleet
+status and the launch-stall view the Lanes pane already uses,
+every 30 seconds while visible, and changes nothing. The card
+waits for both reads, so half an answer never says "Nothing
+is blocked". A reading that could not be made is listed as
+unknown with its reason, and the headline then says only that
+nothing is recorded as blocked. A failed refresh keeps the
+last reading and says it may be stale. `phm status --json`
+lists the same repository holds.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), incidents (dispatch incidents, lane holds,
