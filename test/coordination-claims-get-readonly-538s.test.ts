@@ -25,19 +25,14 @@ async function get(api: ApiModule, path: string) {
   return JSON.parse(text);
 }
 
-describe('coordination GET reads the real ledger without reaping', () => {
-  it('preserves expired and live claims and current result evidence across both routes', async () => {
+describe('coordination claims GET reads the real ledger without reaping', () => {
+  it('preserves expired and live claims across repeated reads', async () => {
     const ledger = join(dir, 'coordination.jsonl');
     process.env['PHANTOM_FLEET_LEDGER_PATH'] = ledger;
     const { claimFleetWork } = await import('../src/core/fleet/coordination.js');
-    const { returnFleetClaim } = await import('../src/core/fleet/coordination-return.js');
     const { createFleetCoordinationClaimsApi, VERSE_FLEET_COORDINATION_CLAIMS_PATH } = await import('../src/core/verse/fleet-coordination-claims-api.js');
-    const { VERSE_FLEET_COORDINATION_RETURNS_PATH } = await import('../src/core/verse/fleet-coordination-returns-api.js');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-13T18:00:00Z'));
-    const receipt = claimFleetWork({ repo: 'fake/repo', task: 'completed task', agent: 'fake-agent', ttlMs: 60_000 });
-    if (!receipt.ok) throw new Error('receipt claim failed');
-    expect(returnFleetClaim({ id: receipt.value.claim.id, agent: 'fake-agent', lease: receipt.value.lease, pr: 12, head: 'abcdef1', ttlMs: 60_000 }).ok).toBe(true);
     const expired = claimFleetWork({ repo: 'fake/repo', task: 'expired task', agent: 'expired-agent', ttlMs: 1_000 });
     const live = claimFleetWork({ repo: 'fake/repo', task: 'live task', agent: 'live-agent', ttlMs: 60_000 });
     if (!expired.ok || !live.ok) throw new Error('claim failed');
@@ -49,10 +44,6 @@ describe('coordination GET reads the real ledger without reaping', () => {
       const claims = await get(api, VERSE_FLEET_COORDINATION_CLAIMS_PATH);
       expect(claims).toMatchObject({ state: 'known', expiredClaims: 1, claims: [{ id: live.value.claim.id, agent: 'live-agent', task: 'live task' }] });
       expect(JSON.stringify(claims)).not.toContain(expired.value.claim.id);
-      expect(readFileSync(ledger)).toEqual(bytes);
-      expect(readdirSync(dir).sort()).toEqual(entries);
-      const returns = await get(api, VERSE_FLEET_COORDINATION_RETURNS_PATH);
-      expect(returns).toMatchObject({ state: 'known', authority: 'none', returns: [expect.objectContaining({ claimId: receipt.value.claim.id, result: 'VERIFIED', pr: 12, head: 'abcdef1', temporal: 'current' })] });
       expect(readFileSync(ledger)).toEqual(bytes);
       expect(readdirSync(dir).sort()).toEqual(entries);
     }

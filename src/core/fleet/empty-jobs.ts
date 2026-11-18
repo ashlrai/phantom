@@ -4,13 +4,16 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ledgerFinishes, type EmptiesFinish } from './empties.js';
 import { jobFamily } from './slot-yield.js';
+import { scrubSecrets } from '../util/scrub.js';
+import type { DecideInput, DecideResult } from '../decide/options.js';
 import { classifyEmptyLog, diagnoseEmptyJob, EMPTY_JOB_REASONS, EMPTY_JOB_SUGGESTIONS, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type EmptyJobDiagnosis, type FleetEmptyWhyReason } from './empty-why-classify.js';
 export { classifyEmptyLog, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type FleetEmptyWhyReason } from './empty-why-classify.js';
 
 export const EMPTY_CLASSES = ['duplicate', 'already-done', 'too-broad', 'tests-timeout', 'blocked-by-env', 'missing-input', 'scope-too-cautious', 'other'] as const;
 export type EmptyClass = typeof EMPTY_CLASSES[number];
 export type EmptyJobOutcome = 'already-implemented' | 'duplicate' | 'failed' | 'empty' | 'unknown';
-export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string; outcome?: EmptyJobOutcome }
+/** `source: 'decide'` marks a class picked by a model (ASHLR_EMPTY_DECIDE=1) rather than a rule. It is advisory: retry planners skip it. */
+export interface EmptyJobResult { id: string; lane: string; class: EmptyClass; reason: string; outcome?: EmptyJobOutcome; source?: 'decide' }
 export interface EmptyCause { class: EmptyClass; label: string; count: number; exampleJob: string }
 export interface EmptyJobReason { id: string; lane: string; reason: FleetEmptyWhyReason }
 /** The `fleet empty-why` log-tail tags for the newest empty jobs (the CLI's classifier, shared). */
@@ -21,6 +24,14 @@ export interface DiagnosedEmptyJob { id: string; lane: string; family: string; r
 export interface EmptyDiagnosisGroup { name: string; total: number; topReason: EmptyJobDiagnosis; suggestion: string }
 export interface EmptyDiagnosisReport { jobs: DiagnosedEmptyJob[]; families: EmptyDiagnosisGroup[]; lanes: EmptyDiagnosisGroup[] }
 export type EmptyJobsReader = (path: string, maxBytes?: number) => Promise<string | null>;
+/** The option form of `decide` (core/decide), injectable for tests. */
+export type EmptyDecider = (input: DecideInput) => Promise<Pick<DecideResult, 'choice'>>;
+/** Off by default. Set to 1 to let `decide` class the empty jobs no rule matched. */
+export const EMPTY_DECIDE_ENV = 'ASHLR_EMPTY_DECIDE';
+/** Model calls per report: the newest unmatched jobs only. Answers are kept per job for the life of the process. */
+export const EMPTY_DECIDE_LIMIT = 5;
+const NO_RULE_MATCHED = 'No known reason found.';
+const decided = new Map<string, EmptyClass | null>();
 
 function groupDiagnoses(jobs: DiagnosedEmptyJob[], key: 'family' | 'lane'): EmptyDiagnosisGroup[] {
   const groups = new Map<string, DiagnosedEmptyJob[]>();
@@ -73,8 +84,28 @@ export function classifyEmpty(notes: string | null, log: string | null, finish?:
     if (!failed && FAILED.test(text)) return { class: 'other', reason: 'The run failed without a publishable change.', outcome: 'failed' };
     if (!failed && NO_DIFF.test(text)) return { class: 'other', reason: 'The run produced no change.', outcome: 'empty' };
   }
-  return { class: 'other', reason: failed ? 'The run failed without a publishable change.' : notes || log ? 'No known reason found.' : 'Notes and log were unavailable.',
+  return { class: 'other', reason: failed ? 'The run failed without a publishable change.' : notes || log ? NO_RULE_MATCHED : 'Notes and log were unavailable.',
     outcome: failed ? 'failed' : finish?.exitCode === 0 ? 'empty' : 'unknown' };
+}
+
+/**
+ * Behind the flag only: ask `decide` to pick a class for the newest jobs whose notes and log matched no rule.
+ * "unknown", an unlisted answer or a failed call leaves the rule's answer in place. The reason stays a fixed sentence.
+ */
+async function decideUnmatched(jobs: EmptyJobResult[], evidence: ReadonlyMap<string, string>, decider?: EmptyDecider): Promise<void> {
+  const ask: EmptyDecider = decider ?? (async input => (await import('../decide/decide.js')).decide(input));
+  const options = EMPTY_CLASSES.filter(kind => kind !== 'other');
+  const meanings = options.map(kind => `${kind}: ${labels[kind]}`).join('\n');
+  if (decided.size > 1000) decided.clear();
+  for (const job of jobs.filter(row => row.class === 'other' && row.reason === NO_RULE_MATCHED).slice(-EMPTY_DECIDE_LIMIT)) {
+    if (!decided.has(job.id)) {
+      const choice = await ask({ question: 'Why did this job finish with no change?', options, use: 'empty-job-class',
+        context: `What each option means:\n${meanings}\n\nThe job's notes and log tail:\n${scrubSecrets(evidence.get(job.id) ?? '')}` }).then(result => result.choice, () => null);
+      decided.set(job.id, options.find(kind => kind === choice) ?? null);
+    }
+    const kind = decided.get(job.id);
+    if (kind) Object.assign(job, { class: kind, reason: rules.find(rule => rule[0] === kind)![1], source: 'decide' });
+  }
 }
 
 async function tail(path: string, size: number): Promise<string | null> {
@@ -90,7 +121,7 @@ async function tail(path: string, size: number): Promise<string | null> {
   } catch { return null; } finally { await file?.close(); }
 }
 
-export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs'), worktrees = process.env.ASHLR_WT_DIR?.trim() || join(homedir(), 'Projects/ashlrai/wt'), now = Date.now(), options: { read?: EmptyJobsReader; family?: string } = {}): Promise<EmptyJobsReport | null> {
+export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs'), worktrees = process.env.ASHLR_WT_DIR?.trim() || join(homedir(), 'Projects/ashlrai/wt'), now = Date.now(), options: { read?: EmptyJobsReader; family?: string; decide?: boolean; decider?: EmptyDecider } = {}): Promise<EmptyJobsReport | null> {
   const reader: EmptyJobsReader = options.read ?? ((path, max) => max ? tail(path, max) : readFile(path, 'utf8'));
   const read: EmptyJobsReader = (path, max) => reader(path, max).catch(() => null);
   const ledger = await read(join(root, 'metrics/jobs.jsonl'));
@@ -99,16 +130,19 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
     (!options.family || jobFamily(job.id) === jobFamily(options.family)));
   const jobs: EmptyJobResult[] = [];
   const logs = new Map<string, string | null>();
+  const evidence = new Map<string, string>();
   const diagnoses = new Map<string, DiagnosedEmptyJob>();
   for (let offset = 0; offset < selected.length; offset += 16) {
     const batch = selected.slice(offset, offset + 16);
     jobs.push(...await Promise.all(batch.map(async job => {
       const [notes, log, publish] = await Promise.all([read(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), read(join(root, `${job.id}.log`), 65536), read(join(root, `${job.id}.publish`), 65536)]);
       logs.set(job.id, log);
+      evidence.set(job.id, [notes?.slice(0, 4000), log?.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n').slice(-4000)].filter(Boolean).join('\n\n'));
       diagnoses.set(job.id, { id: job.id, lane: job.lane, family: jobFamily(job.id), reason: diagnoseEmptyJob(log, publish) });
       return { id: job.id, lane: job.lane, ...classifyEmpty(notes, log, job) };
     })));
   }
+  if (options.decide ?? process.env[EMPTY_DECIDE_ENV] === '1') await decideUnmatched(jobs, evidence, options.decider);
   const counts: Record<EmptyClass, number> = { duplicate: 0, 'already-done': 0, 'too-broad': 0, 'tests-timeout': 0, 'blocked-by-env': 0, 'missing-input': 0, 'scope-too-cautious': 0, other: 0 };
   for (const job of jobs) counts[job.class]++;
   const topCauses = EMPTY_CLASSES.filter(kind => counts[kind] > 0)

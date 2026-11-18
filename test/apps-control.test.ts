@@ -245,6 +245,40 @@ describe('phm apps', () => {
     expect(desktop.names()).not.toContain('computer_ax_press');
   });
 
+  it('refuses a resolved Chrome identity through an unannotated Browser alias', async () => {
+    allow(['Browser']);
+    const apps = APPS.replace(
+      '- Notes (com.apple.Notes): up to full control; this chat holds full control',
+      '- Browser (com.google.Chrome): up to full control; this chat holds full control',
+    );
+    const desktop = fakeDesktop(CLEAN, apps);
+    const result = await runAppsControl({ action: 'quit', app: 'Browser' }, { ...base(), call: desktop.call });
+    expect(result).toMatchObject({ exit: 1, report: { ok: false, outcome: 'refused', code: 'protected' } });
+    expect(desktop.names()).not.toContain('computer_ax_press');
+    expect(desktop.names()).not.toContain('computer_ax_tree');
+  });
+
+  it('does not re-resolve an app after an empty preflight list', async () => {
+    allow([{ name: 'Notebook', bundleId: 'com.openai.codex' }]);
+    let listCalls = 0;
+    const names: string[] = [];
+    const empty = ['0 running apps:', '<untrusted id="a" source="s">', '</untrusted id="a">'].join('\n');
+    const codex = ['1 running app:', '<untrusted id="a" source="s">',
+      '- Codex (com.openai.codex): up to full control; this chat holds full control', '</untrusted id="a">'].join('\n');
+    const call: ToolCall = async name => {
+      names.push(name);
+      if (name === 'computer_list_apps') return ok(++listCalls === 1 ? empty : codex);
+      if (name === 'computer_ax_tree') return ok(treeText(CLEAN));
+      if (name === 'computer_ax_press') return ok('Pressed');
+      return err(`unexpected tool ${name}`);
+    };
+    const result = await runAppsControl({ action: 'quit', app: 'Notebook' }, { ...base(), call });
+    expect(result).toMatchObject({ exit: 0, report: { ok: true, outcome: 'done', detail: 'not running; nothing to quit.' } });
+    expect(listCalls).toBe(1);
+    expect(names).not.toContain('computer_ax_tree');
+    expect(names).not.toContain('computer_ax_press');
+  });
+
   it('routes a quit with unsaved state to needs-you (exit 3) and does not press Quit', async () => {
     allow(['Notes']);
     const d = fakeDesktop(UNSAVED_BUTTON);

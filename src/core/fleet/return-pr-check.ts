@@ -82,8 +82,27 @@ async function checkOne(gh: Gh, row: { claimId: string; repo: string; pr: number
     || ('full_name' in obj(baseRepo) && (typeof fullName !== 'string' || fullName.toLowerCase() !== repo.toLowerCase()))) {
     return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'invalid-response-identity' };
   }
-  const observedHead = str(obj(raw['head'])['sha']);
+  const head = obj(raw['head']);
+  const observedHead = str(head['sha']);
   const mergedAt = str(raw['merged_at']);
+  const validHead = (value: unknown): boolean => typeof value === 'string' && /^[a-f0-9]+$/i.test(value);
+  const timestamp = raw['merged_at'];
+  const invalidTimestamp = timestamp !== undefined && timestamp !== null
+    && (typeof timestamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(timestamp)
+      || !Number.isFinite(Date.parse(timestamp))
+      || new Date(timestamp).toISOString().slice(0, 19) !== timestamp.slice(0, 19));
+  const invalidResponse = invalidTimestamp
+    || (row.head !== null && !validHead(row.head))
+    || ('head' in raw && (raw['head'] === null || typeof raw['head'] !== 'object' || Array.isArray(raw['head'])))
+    || ('sha' in head && !validHead(head['sha']))
+    || ('merged' in raw && typeof raw['merged'] !== 'boolean')
+    || ('state' in raw && raw['state'] !== 'open' && raw['state'] !== 'closed')
+    || (raw['merged'] === false && mergedAt !== null)
+    || (raw['merged'] === true && timestamp === null)
+    || (raw['state'] === 'open' && (raw['merged'] === true || mergedAt !== null));
+  if (invalidResponse) {
+    return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'invalid-response-evidence' };
+  }
   const merged = raw['merged'] === true || mergedAt !== null;
   if (merged) {
     if (observedHead === null) return { ...base, verdict: 'unknown', observedHead, mergedAt, reason: 'unparseable' };
