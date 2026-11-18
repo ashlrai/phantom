@@ -80,12 +80,19 @@ export type MergeQueueAction =
   | 'enqueue' | 'rebase' | 'conflict'
   | 'queued' | 'wait' | 'red' | 'blocked' | 'pinned' | 'no-queue' | 'skip' | 'owned';
 
+const BLOCKERS = ['conflict', 'stale', 'checks', 'review'] as const;
+export type MergeQueueBlocker = typeof BLOCKERS[number];
+
 export interface MergeQueueLatency {
   headSha: string;
   state: MergeQueueAction;
   since: number;
   observedAt: number;
   stateMs: Partial<Record<MergeQueueAction, number>>;
+  /** Independent of the action: queued/owned PRs may still have blockers. */
+  blockers?: MergeQueueBlocker[];
+  /** Sampled, overlapping durations; do not sum them as total queue time. */
+  blockerMs?: Partial<Record<MergeQueueBlocker, number>>;
 }
 
 export interface MergeQueueState {
@@ -220,9 +227,14 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
     if (raw && typeof raw.headSha === 'string' && SHA.test(raw.headSha) && actions.has(raw.state)
       && Number.isSafeInteger(raw.since) && raw.since >= 0 && Number.isSafeInteger(raw.observedAt) && raw.observedAt >= raw.since
       && raw.stateMs && typeof raw.stateMs === 'object' && !Array.isArray(raw.stateMs)
-      && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && ms >= 0)) {
+      && Object.entries(raw.stateMs).every(([s, ms]) => actions.has(s as MergeQueueAction) && Number.isSafeInteger(ms) && ms >= 0)
+      && (raw.blockers === undefined || (Array.isArray(raw.blockers)
+        && new Set(raw.blockers).size === raw.blockers.length && raw.blockers.every(b => BLOCKERS.includes(b))))
+      && (raw.blockerMs === undefined || (raw.blockerMs && typeof raw.blockerMs === 'object' && !Array.isArray(raw.blockerMs)
+        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && ms >= 0)))) {
       (state.latency ??= {})[key] = { headSha: raw.headSha, state: raw.state,
-        since: raw.since, observedAt: raw.observedAt, stateMs: { ...raw.stateMs } };
+        since: raw.since, observedAt: raw.observedAt, stateMs: { ...raw.stateMs },
+        blockers: [...(raw.blockers ?? [])], blockerMs: { ...raw.blockerMs } };
     }
   }
   return state;
@@ -306,9 +318,20 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         const tag = `${shortName(repo)}#${pr.number}`;
         const key = `${repo}#${pr.number}`, previous = state.latency?.[key];
         const latency: MergeQueueLatency = previous?.headSha === pr.headSha && observedAt >= previous.observedAt
-          ? { ...previous, stateMs: { ...previous.stateMs } }
+          ? { ...previous, stateMs: { ...previous.stateMs }, blockerMs: { ...previous.blockerMs } }
           : { headSha: pr.headSha, state: action, since: observedAt, observedAt, stateMs: {} };
-        latency.stateMs[latency.state] = (latency.stateMs[latency.state] ?? 0) + observedAt - latency.observedAt;
+        const elapsed = observedAt - latency.observedAt;
+        latency.stateMs[latency.state] = (latency.stateMs[latency.state] ?? 0) + elapsed;
+        latency.blockerMs ??= {};
+        for (const blocker of latency.blockers ?? []) {
+          latency.blockerMs[blocker] = (latency.blockerMs[blocker] ?? 0) + elapsed;
+        }
+        latency.blockers = [];
+        if (pr.mergeable === 'CONFLICTING' || pr.mergeState === 'DIRTY') latency.blockers.push('conflict');
+        if (pr.mergeState === 'BEHIND') latency.blockers.push('stale');
+        if (pr.checks !== 'SUCCESS') latency.blockers.push('checks');
+        if (['CHANGES_REQUESTED', 'REVIEW_REQUIRED'].includes(pr.reviewDecision ?? '')) latency.blockers.push('review');
+        for (const blocker of latency.blockers) latency.blockerMs[blocker] ??= 0;
         if (latency.state !== action) latency.since = observedAt;
         latency.state = action;
         latency.observedAt = observedAt;

@@ -44,6 +44,27 @@ function fixture(remainingPaths = source.remainingPaths) {
   return { run, state, inspected, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
 }
 describe('fleet merge-recover', () => {
+  it('carries an automatic recut through publication and re-arms its replacement without bypassing checks', async () => {
+    const f = fixture();
+    expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
+    expect(f.writes).toBe(1);
+    expect(f.body).toContain('Never bypass required checks or the merge queue.');
+    f.state.replacement = true;
+    f.liveReplacement.headRefOid = 'c'.repeat(40);
+    f.liveReplacement.mergeStateStatus = 'BLOCKED';
+    expect(await f.run(true)).toBe(0);
+    expect(f.report.rows[0].action).toBe('auto-merge-requested');
+    expect(await f.run(true)).toBe(0);
+    // GitHub evicts the replacement and disarms auto-merge while checks rerun.
+    f.state.auto = false;
+    expect(await f.run(true)).toBe(0);
+    expect(f.calls.filter(args => args[1] === 'merge')).toEqual(Array.from({ length: 2 }, () =>
+      ['pr', 'merge', '43', '--repo', 'ashlrai/phantom', '--auto', '--match-head-commit', 'c'.repeat(40)]));
+    f.state.replacementState = 'MERGED';
+    expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('replacement-merged');
+    expect(f.writes).toBe(1);
+  });
+
   it('defaults to a mutation-free conflict preview', async () => {
     const f = fixture(); expect(await f.run()).toBe(0);
     expect(f.writes).toBe(0); expect(f.report.dryRun).toBe(true);

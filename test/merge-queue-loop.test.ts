@@ -157,6 +157,65 @@ describe('classifyMergeQueuePr', () => {
 });
 
 describe('runMergeQueueCycle', () => {
+  it('measures overlapping blockers hidden by queue membership and ownership', () => {
+    let at = NOW;
+    const snapshots = only([pr({ inMergeQueue: true, mergeState: 'BEHIND', checks: 'PENDING', reviewDecision: 'REVIEW_REQUIRED' })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const cycle = (dryRun = false) => runMergeQueueCycle(fake.io, { repos: [REPO], dryRun }).repos[0]!.latency[0]!;
+    expect(cycle()).toMatchObject({ state: 'queued', blockers: ['stale', 'checks', 'review'], blockerMs: { stale: 0, checks: 0, review: 0 } });
+    at += MIN;
+    snapshots.set(REPO, snap([pr({ activeOwner: true, mergeable: 'CONFLICTING', checks: 'FAILURE' })]));
+    expect(cycle()).toMatchObject({ state: 'owned', blockers: ['conflict', 'checks'],
+      stateMs: { queued: MIN }, blockerMs: { stale: MIN, checks: MIN, review: MIN, conflict: 0 } });
+    at += 2 * MIN;
+    const saved = structuredClone(fake.state());
+    expect(cycle(true)).toMatchObject({ stateMs: { queued: MIN, owned: 2 * MIN },
+      blockerMs: { stale: MIN, review: MIN, checks: 3 * MIN, conflict: 2 * MIN } });
+    expect(fake.state()).toEqual(saved);
+    const measured = cycle().blockerMs;
+    expect(cycle().blockerMs).toEqual(measured); // Same-time reads add no time.
+    expect(measured).toEqual({ stale: MIN, review: MIN, checks: 3 * MIN, conflict: 2 * MIN });
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), checks: 'EXPECTED' })]));
+    expect(cycle()).toMatchObject({ stateMs: { wait: 0 }, blockers: ['checks'], blockerMs: { checks: 0 } });
+    at -= MIN; expect(cycle().blockerMs).toEqual({ checks: 0 });
+    expect(fake.calls.every(call => call.startsWith('read '))).toBe(true);
+    expect(fake.lines).toEqual([]);
+  });
+
+  it('starts legacy blocker measurements at observation and rejects malformed histories', () => {
+    const legacy = { headSha: sha('a'), state: 'queued', since: NOW, observedAt: NOW, stateMs: { queued: MIN } };
+    const state = normalizeMergeQueueState({ latency: { [`${REPO}#1`]: legacy } });
+    const fake = makeIo({ state, snapshots: only([pr({ inMergeQueue: true, checks: 'NONE' })]), now: () => NOW + MIN });
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).repos[0]!.latency[0]).toMatchObject({
+      stateMs: { queued: 2 * MIN }, blockers: ['checks'], blockerMs: { checks: 0 } });
+    for (const patch of [{ blockers: null }, { blockers: ['unknown'] }, { blockers: ['checks', 'checks'] },
+      { blockerMs: [] }, { blockerMs: { checks: -1 } }, { blockerMs: { checks: 1.5 } }, { blockerMs: { bypass: 1 } }]) {
+      expect(normalizeMergeQueueState({ latency: { bad: { ...legacy, ...patch } } }).latency).toBeUndefined();
+    }
+  });
+
+  it('drains a conflict once, waits for repaired-head checks and reenters the queue after eviction', () => {
+    let at = NOW;
+    const snapshots = only([pr({ mergeState: 'DIRTY' })]), fake = makeIo({ snapshots, now: () => at });
+    const commands: string[][] = [];
+    fake.io.enqueue = (repo, head) => enqueueMergeQueuePr((args: string[]) => commands.push(args), repo, head);
+    const cycle = () => runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(cycle().drained).toBe(1); expect(cycle().drained).toBe(0);
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), checks: 'PENDING' })]));
+    expect(cycle().enqueued).toBe(0);
+    snapshots.set(REPO, snap([pr({ headSha: sha('b') })]));
+    expect(cycle().enqueued).toBe(1);
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), inMergeQueue: true, checks: 'PENDING' })]));
+    expect(cycle().repos[0]!.latency[0]).toMatchObject({ state: 'queued', blockers: ['checks'] });
+    at += 15 * MIN;
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), autoMerge: true, checks: 'FAILURE' })]));
+    expect(cycle().enqueued).toBe(0);
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), autoMerge: true })]));
+    expect(cycle().enqueued).toBe(1); expect(cycle().enqueued).toBe(0);
+    expect(commands).toEqual(Array.from({ length: 2 }, () => ['pr', 'merge', '1', '--repo', REPO, '--auto', '--match-head-commit', sha('b')]));
+    expect(fake.lines).toHaveLength(1);
+  });
+
   it('reports sampled state milliseconds as JSON, resets on new heads and omits closed PRs', () => {
     let at = NOW;
     const snapshots = only([pr({ checks: 'PENDING' })]), fake = makeIo({ snapshots, now: () => at });
@@ -179,11 +238,12 @@ describe('runMergeQueueCycle', () => {
 
   it('does not infer time across failed reads or accept malformed persisted timings', () => {
     let at = NOW;
-    const failRead = new Set<string>(), fake = makeIo({ snapshots: only([pr()]), failRead, now: () => at });
+    const failRead = new Set<string>(), fake = makeIo({ snapshots: only([pr({ mergeState: 'BEHIND' })]), failRead, now: () => at });
     runMergeQueueCycle(fake.io, { repos: [REPO] });
     failRead.add(REPO); at += MIN; runMergeQueueCycle(fake.io, { repos: [REPO] });
     failRead.clear(); at += MIN;
-    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).repos[0]?.latency[0]?.stateMs).toEqual({ enqueue: 0 });
+    expect(runMergeQueueCycle(fake.io, { repos: [REPO] }).repos[0]?.latency[0]).toMatchObject({
+      stateMs: { enqueue: 0 }, blockers: ['stale'], blockerMs: { stale: 0 } });
     expect(normalizeMergeQueueState({ latency: { bad: { headSha: sha('a'), state: 'enqueue', since: 0, observedAt: 1, stateMs: { enqueue: -1 } } } }).latency).toBeUndefined();
   });
 
