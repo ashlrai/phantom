@@ -40,6 +40,8 @@ import { serviceStatus } from '../core/daemon/service.js';
 import { assertResidentServiceInstallAuthorized } from '../core/daemon/service-install-authority.js';
 import { queryServeService } from './dashboard.js';
 import { desktopUpdateProfileForPackage, type DesktopUpdateProfile } from '../core/desktop/update-manifest.js';
+import { detectReleaseDirectory, updateReleaseDirectory } from '../core/update/release-directory.js';
+import { probeNpmRegistry } from '../core/update/registry.js';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers (non-TTY safe)
@@ -350,12 +352,13 @@ function parseUpdateArgs(args: string[]): ParsedUpdateArgs {
 // ---------------------------------------------------------------------------
 
 /**
- * 'npm' when the compiled module runs from inside a node_modules install
- * (global or local `npm install @ashlr/hub`); 'git' for a repo checkout.
+ * Release directories update from the registry; node_modules uses npm;
+ * other locations use the git checkout flow.
  * Exported for tests.
  */
-export function detectChannel(moduleUrl: string = import.meta.url): 'git' | 'npm' {
+export function detectChannel(moduleUrl: string = import.meta.url): 'git' | 'npm' | 'release' {
   const here = fileURLToPath(moduleUrl);
+  if (detectReleaseDirectory(resolve(dirname(here), '../..'))) return 'release';
   return here.includes(`${sep}node_modules${sep}`) ? 'npm' : 'git';
 }
 
@@ -396,31 +399,24 @@ async function runNpmChannel(parsed: ParsedUpdateArgs, repoRoot: string, identit
   const localVersion = identity.version;
   const packageName = identity.profile.packageName;
 
-  // `npm view` is a network call — explicit, bounded, read-only.
-  let latest: string | null = null;
-  try {
-    const res = spawnSync('npm', ['view', packageName, 'version'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    latest = res.status === 0 ? res.stdout.trim() || null : null;
-  } catch {
-    latest = null;
-  }
+  const probe = await probeNpmRegistry(packageName);
+  const metadata = probe.metadata as { name?: string; version?: string } | null;
+  const latest = metadata?.name === packageName && typeof metadata.version === 'string'
+    && /^\d+\.\d+\.\d+$/.test(metadata.version) ? metadata.version : null;
 
   const upToDate = latest !== null && localVersion !== null && latest === localVersion;
 
   // Flat status message (avoid a nested ternary for the three states).
   let message: string;
   if (latest === null) {
-    message = 'registry unreachable — could not check for updates';
+    message = probe.reachable ? 'registry metadata unavailable' : 'registry unreachable - could not check for updates';
   } else if (upToDate) {
     message = 'up to date';
   } else {
     message = `update available: ${localVersion ?? '?'} → ${latest}`;
   }
 
-  if (jsonMode) {
+  if (jsonMode && !(parsed.yes && !parsed.check && latest !== null && !upToDate)) {
     process.stdout.write(
       JSON.stringify(
         {
@@ -435,7 +431,7 @@ async function runNpmChannel(parsed: ParsedUpdateArgs, repoRoot: string, identit
         2,
       ) + '\n',
     );
-  } else {
+  } else if (!jsonMode) {
     out('', false);
     out(bold('  phm update') + gray('  — npm channel'), false);
     out(`  installed: ${cyan(localVersion ?? 'unknown')}`, false);
@@ -465,7 +461,8 @@ async function runNpmChannel(parsed: ParsedUpdateArgs, repoRoot: string, identit
   });
   const ok = install.status === 0;
   if (jsonMode) {
-    process.stdout.write(JSON.stringify({ channel: 'npm', updated: ok, versionLatest: latest }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ channel: 'npm', updated: ok, versionLocal: localVersion,
+      versionLatest: latest, upToDate: ok, message: ok ? 'updated' : 'npm install failed' }, null, 2) + '\n');
   } else {
     out(ok ? green(`  ✓ updated to ${latest}`) : red('  ✗ npm install failed'), false);
     out('', false);
@@ -506,7 +503,8 @@ function printHelp(): void {
   console.log(`    ${dim('• Only uses git pull --ff-only — never force-push/reset/rebase.')}`);
   console.log(`    ${dim('• Aborts on a dirty working tree (commit your changes first).')}`);
   console.log(`    ${dim('• If no remote is configured, reports no-op and exits 0.')}`);
-  console.log(`    ${dim('• Mutating update requires service registration proven absent and not running.')}`);
+  console.log(`    ${dim('• Git and npm updates require service registration proven absent and not running.')}`);
+  console.log('    Release directories verify the published package, swap current, and recover services automatically.');
   console.log('');
   console.log('  ' + bold('Exit codes:'));
   console.log('');
@@ -553,6 +551,17 @@ export async function cmdUpdate(args: string[]): Promise<number> {
 
   // ── M33: channel routing — npm installs update via the registry, not git ──
   const channel = parsed.channel ?? detectChannel();
+  if (channel === 'release') {
+    const result = await updateReleaseDirectory(repoRoot, { check: parsed.check, services: () => {
+      const services = [serviceStatus(), queryServeService()];
+      if (services.some(service => service.registrationState === 'unknown')) throw new Error('Service state unavailable');
+      if (process.platform !== 'darwin' && services.some(service => service.registrationState === 'present')) throw new Error('Service recovery requires launchd');
+      return services.flatMap((service, index) => service.running ? [`gui/${process.getuid!()}/ai.ashlr.${index === 0 ? 'daemon' : 'serve'}`] : []);
+    } });
+    process.stdout.write((jsonMode ? JSON.stringify(result) : result.error ??
+      (parsed.check ? `Phantom ${result.from} to ${result.to}` : result.log_line)) + '\n');
+    return result.error ? 1 : 0;
+  }
   let npmIdentity: NpmUpdateIdentity | undefined;
   if (channel === 'npm') {
     try { npmIdentity = readNpmUpdateIdentity(repoRoot); }
