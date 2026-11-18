@@ -425,6 +425,8 @@ Every command, grouped by topic.
     wire --claude-md                                                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
     notify test                                                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
     notify route <type> [--text]                                                                                     Preview an owner update route in JSON (default) or plain words; never sends.
+    notify route <update.json> [--json]                                                                              Classify one update (decision, shipped, incident, digest, fyi) and print its delivery plan by your rules; never sends.
+    notify rules [--json] | rules set <type> <channel>                                                               Show or change which channel each update type goes to. Same JSON as GET /api/notify/rules.
     stack [status|list|providers|recommend|scan|doctor|add|apply]                                                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
     ecosystem doctor [--json] [--deep]                                                                               Read-only sibling-repository health scan across the ecosystem.
     ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]  Render the ecosystem changelog from public sources.

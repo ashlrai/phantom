@@ -1240,6 +1240,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'wire --claude-md',             desc: 'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).', topic: 'integrations' },
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'notify route <type> [--text]', desc: 'Preview an owner update route in JSON (default) or plain words; never sends.', topic: 'integrations' },
+  { cmd: 'notify route <update.json> [--json]', desc: 'Classify one update (decision, shipped, incident, digest, fyi) and print its delivery plan by your rules; never sends.', topic: 'integrations' },
+  { cmd: 'notify rules [--json] | rules set <type> <channel>', desc: 'Show or change which channel each update type goes to. Same JSON as GET /api/notify/rules.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
   { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },
