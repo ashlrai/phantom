@@ -7,7 +7,9 @@ import { scrubSecrets } from '../util/scrub.js';
 import { GLOBAL_SLOT_KEYS, LANE_ID_RE } from './runs-lane-targets.js';
 
 export interface FleetRunsLane {
-  seat?: { health: 'ok'|'degraded'|'down'|'unknown'; usedPct: number|null; resetAt: string|null; observedAt: string|null; passAt: string|null; passMs: number|null };
+  seat?: { health: 'ok'|'degraded'|'down'|'unknown'; usedPct: number|null; resetAt: string|null; observedAt: string|null; passAt: string|null; passMs: number|null;
+    /** Last provider rate limit and last failed leader pass on this lane; absent fields stay null (unknown). */
+    rateLimitedAt?: string|null; failedAt?: string|null };
   healthy?: boolean; lane: string; running: number; target: number; floor: number|null; ceiling: number|null;
   queued: number; held: boolean; heldReason: string|null; tokensLastHour: number|null;
   merged24h: number|null; mergeRate24h: number|null;
@@ -153,13 +155,18 @@ export async function readFleetRunsDirState(opts: ReadFleetRunsDirOptions = {}):
           state.sources.status = 'degraded'; continue;
         }
         const rollup = object(object(object(s.rollup_24h).by_lane)[lane]);
-        const budget = object(object(s.budget)[lane]);
+        const weekly = object(object(s.budget)[lane]);
+        // No weekly reading: fall back to the lane's fresh use_it_all pace reading, observed at this tick.
+        const pace = object(weekly.use_it_all);
+        const budget = number(weekly.weekly_used_pct) === null && pace.known === true && pace.stale === false
+          ? { weekly_used_pct: pace.used_pct, reset_at: pace.reset_at, observed_at: s.last_tick } : weekly;
         const health = l.health === 'ok' || l.health === 'degraded' || l.health === 'down' || l.health === 'unknown'
           ? l.health : l.healthy === true ? 'ok' : l.healthy === false ? 'down' : 'unknown';
         state.lanes.push({ lane, running: l.running as number, target: l.target as number, queued: l.queued as number,
           seat: { health, usedPct: number(budget.weekly_used_pct),
             resetAt: timestamp(budget.reset_at) ? budget.reset_at : null, observedAt: timestamp(budget.observed_at) ? budget.observed_at : null,
-            passAt: timestamp(l.leader_pass_at) ? l.leader_pass_at : null, passMs: number(l.leader_pass_ms) },
+            passAt: timestamp(l.leader_pass_at) ? l.leader_pass_at : null, passMs: number(l.leader_pass_ms),
+            rateLimitedAt: timestamp(l.rate_limited_at) ? l.rate_limited_at : null, failedAt: timestamp(l.leader_failed_at) ? l.leader_failed_at : null },
           ...(typeof l.healthy === 'boolean' ? { healthy: l.healthy } : {}),
           floor: number(l.floor), ceiling: number(l.ceiling), held: l.held,
           heldReason: typeof l.held_reason === 'string' ? clean(l.held_reason, 200) : null,

@@ -179,6 +179,8 @@ export function LeaderCard({ read, loading, actions, seatNames }: { read: Option
           ) : null}
         </>
       )}
+      {/* Server-built plain line (`phm leader seat`): where the leader runs and where it moves next. */}
+      {state?.seat ? <p className={styles.muted} aria-label="Leader seat">{state.seat.line}</p> : null}
       <LeaderLine />
     </Card>
   );

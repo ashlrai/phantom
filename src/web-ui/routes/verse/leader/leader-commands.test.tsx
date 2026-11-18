@@ -5,7 +5,7 @@
  *   a Needs-you Leader question's "Answer" (the item's own actions stay Dismiss-only);
  *   and Mind itself: the conversation is its first card, lazily loaded.
  */
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
@@ -99,6 +99,18 @@ describe('Command’s Leader card', () => {
     expect(screen.getByText('Improve Phantom; keep "Ashlrverse"')).toBeInTheDocument();
     expect(screen.getByText('Build Phantom')).toBeInTheDocument();
     expect(JSON.stringify(state)).toBe(raw);
+  });
+
+  it('shows the current seat and its fallback, and nothing when the seat is unknown', () => {
+    stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [] } } });
+    const state = leaderState('live');
+    render(<LeaderCardHarness state={state} />);
+    expect(screen.queryByLabelText('Leader seat')).toBeNull();
+    cleanup();
+    state.seat = { ok: true, pool: 'claude', model: 'claude-opus-5-5', cli: 'claude', reason: 'fixture', line: 'Leader: Opus 5.5 on Claude, next: GPT-6.1 Sol on Codex',
+      next: { pool: 'codex-personal', model: 'gpt-6.1-sol', cli: 'codex' } };
+    render(<LeaderCardHarness state={state} />);
+    expect(screen.getByLabelText('Leader seat')).toHaveTextContent('Leader: Opus 5.5 on Claude, next: GPT-6.1 Sol on Codex');
   });
 
   it('previews the Leader’s latest message and opens the composer on Mind', async () => {

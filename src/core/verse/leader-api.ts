@@ -71,7 +71,7 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
 import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
 import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
-import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo } from '../vision/leader-types.js';
+import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo, type LeaderStateV1 } from '../vision/leader-types.js';
 import { leaderRoot, listMemoIds, readLeaderMemo } from '../vision/leader-memo.js';
 import {
   OPERATOR_DIRECTIVE_KINDS,
@@ -448,6 +448,8 @@ interface LeaderApiHooks {
   /** Test seam for the planner-plan route: the runs root to read. */
   plannerRunsRoot?: () => string;
   plannerRun?: (opts: RunPlannerPassOpts) => Promise<PlannerRunResult>;
+  /** Test seam for the Leader card's seat line. */
+  leaderSeat?: () => Promise<import('../fleet/leader-seat.js').LeaderSeatReport>;
 }
 
 let hooks: LeaderApiHooks = {};
@@ -979,7 +981,15 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
       }
       if (path === VERSE_LEADER_PATH) {
         const { leader } = await modules();
-        sendJson(res, 200, leader.buildLeaderState(now()));
+        const state = leader.buildLeaderState(now());
+        // Additive: where the leader runs and where it moves next. A failed read leaves it out (unknown), never the card.
+        let seat: LeaderStateV1['seat'];
+        try {
+          const { readLeaderSeat, pickSeat, leaderSeatLine } = await import('../fleet/leader-seat.js');
+          const report = await (hooks.leaderSeat ?? readLeaderSeat)();
+          seat = { ...pickSeat(report), line: leaderSeatLine(report) };
+        } catch { seat = undefined; }
+        sendJson(res, 200, seat ? { ...state, seat } : state);
         return true;
       }
       const m = MEMO_PATH_RE.exec(path);
