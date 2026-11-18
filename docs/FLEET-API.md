@@ -322,8 +322,9 @@ not a complete historical ledger. Leader, guardian and channel health remain unk
 
 #### Org tree
 
-`phm org` prints the same facts as one `fleet.org.v1` tree, and the Fleet map
-and the Org pane draw that tree: the leader, each lane, each job under it.
+`phm org` prints the same facts as one `fleet.org.v1` tree, and the Org pane
+and the Fleet world's Org tab draw that tree top down: the leader, its
+planners, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
 
@@ -334,11 +335,21 @@ changes meaning. Every node has `provider`, `model`, `state` (`running`,
 - `leader`: `label`, `status`, and the dispatcher's `lastTick` and `paused`.
   Its `state` and `doing` describe the dispatcher; the leader's own process,
   provider and model are not reported and stay `unknown` and `null`.
+- `planners[]`: `executor` (Executor), `orchestrator` (Core orchestrator),
+  `guardian` (Main guardian) and `comms` (Comms), always in that order, each
+  with `label`, `role`, `state`, `doing` and `lastActivityAt`. Executor and
+  orchestrator read the newest `LEADER` and `ORCH-*` dispatch events (the same
+  attribution as `phm fleet brains`); guardian and comms read the newest agent
+  message touching the guardian or a channel. A sign within 90 minutes is
+  `running`, an older one `idle`, none in the short window read `unknown`.
+  Optional: older servers do not send it.
 - `lanes[]`: `lane`, `running`, `target`, `queued`, `held`, `heldReason` and
   `usage` (`usedPct`, `asOf`, `resetAt`). `model` is the model its jobs share,
   else the lane's newest launch. Fleet lanes come first in a fixed order, then
   any other lane by name.
-- `lanes[].jobs[]`: `id`, `repo`, `status`, `startedAt`, `lastEvent` (`at`,
+- `lanes[].jobs[]`: `id`, `repo`, `tier`, `ageSeconds`, `goal` (the task
+  title as one line; `null` for session rows, which never carry the prompt),
+  `status`, `startedAt`, `lastEvent` (`at`,
   `kind`) and `lastActivityAt`. Oldest first. A job whose publish record has a
   `RESULT` line is `done` and is left out of its lane's `running` count, even
   when no exit code reached this computer (cloud jobs).
@@ -346,7 +357,8 @@ changes meaning. Every node has `provider`, `model`, `state` (`running`,
   the bus could not be read.
 
 A fact no source reported is `null` in JSON and "unknown" in text and on
-screen, never 0. A lane with no jobs reads "idle"; when no job source answered
+screen, never 0. Idle and held lanes are grey and say why on the row: the held
+reason, "Turned off (0 seats)", or what is queued. A lane with no jobs reads "idle"; when no job source answered
 (`jobsKnown` is false) it reads "jobs unknown" instead. The dot beside a job is
 on when `lastActivityAt` is within the last 5 minutes. Selecting a job opens
 its detail sheet.
