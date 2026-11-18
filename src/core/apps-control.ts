@@ -269,16 +269,22 @@ export async function runAppsControl(input: AppsRequest, deps: AppsControlDeps =
     // Opening may skip the app list only with no desktop connection at all and an explicit bundle id in the
     // allowlist file. A connected desktop whose list errors (KILL, pause, no grant) and a name-only entry still refuse.
     const control = makeControl(verb === 'open' && deps.call === undefined && allowed.bundleId !== null);
+    let resolvedQuitApp: RunningApp | null = null;
     if (verb === 'quit') {
       const live = await control.list();
       if (!live.ok) return result('failed', 'cannot verify the live app identity before quitting.', { code: 'failed' });
       const lookup = (allowed.bundleId ?? allowed.name).toLowerCase();
-      const resolved = live.apps.find(app => app.bundleId?.toLowerCase() === lookup)
-        ?? live.apps.find(app => app.name.toLowerCase() === lookup);
-      const protectedApp = resolved ? protectedLiveApp(resolved) : undefined;
+      resolvedQuitApp = live.apps.find(app => app.bundleId?.toLowerCase() === lookup)
+        ?? live.apps.find(app => app.name.toLowerCase() === lookup)
+        ?? null;
+      const resolvedBrowser = ownerBrowserQuitReason(resolvedQuitApp?.name, resolvedQuitApp?.bundleId);
+      if (resolvedBrowser) return result('refused', resolvedBrowser, { code: 'protected' });
+      const protectedApp = resolvedQuitApp ? protectedLiveApp(resolvedQuitApp) : undefined;
       if (protectedApp) return result('refused', protectedQuitReason(protectedApp), { code: 'protected' });
     }
-    const res: AppControlResult = await control[verb](allowed.bundleId ?? allowed.name);
+    const res: AppControlResult = verb === 'quit'
+      ? await control.quitResolved(resolvedQuitApp)
+      : await control[verb](allowed.bundleId ?? allowed.name);
     if (res.ok) return result('done', res.detail, { running: res.running, frontmost: res.frontmost });
     // Quit reads the app through Accessibility. When the desktop says that grant is missing, say so
     // with the one place to turn it on, rather than reporting possible unsaved work.
