@@ -12,7 +12,7 @@ import {
 import { parseVerify } from '../src/web-ui/routes/verse/fleet-board/returns-verify-model.js';
 
 const T = Date.parse('2026-11-14T18:00:00.000Z');
-const HEADS: Record<number, string> = { 11: 'aaaaaaa1111111', 12: 'bbbbbbb2222222' };
+const HEADS: Record<number, string> = { 11: 'a'.repeat(40), 12: 'b'.repeat(40) };
 const VERIFY_PATH_LITERAL = '/api/verse/fleet/coordination-claims/returns/verify';
 
 function board(): FleetBoard {
@@ -29,7 +29,7 @@ function board(): FleetBoard {
 function fakeGh(over: Record<number, Record<string, unknown>> = {}) {
   return vi.fn(async (args: string[]) => {
     const pr = Number(args.at(-1)!.split('/').pop());
-    return JSON.stringify(over[pr] ?? { state: 'closed', merged: true, merged_at: '2026-11-14T17:00:00Z', head: { sha: `${HEADS[pr]}00` } });
+    return JSON.stringify(over[pr] ?? { state: 'closed', merged: true, merged_at: '2026-11-14T17:00:00Z', head: { sha: HEADS[pr] } });
   });
 }
 
@@ -65,7 +65,7 @@ describe('coordination returns verify route', () => {
   });
 
   it('is incomplete when one PR is still open', async () => {
-    const r = await call(api(fakeGh({ 12: { state: 'open', merged: false, head: { sha: 'bbbbbbb222222200' } } })));
+    const r = await call(api(fakeGh({ 12: { state: 'open', merged: false, head: { sha: HEADS[12] } } })));
     expect(r.body.complete).toBe(false);
     expect(r.body.checked.find((c: { pr: number }) => c.pr === 12).verdict).toBe('open');
   });
