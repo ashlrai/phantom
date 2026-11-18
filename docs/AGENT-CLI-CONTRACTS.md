@@ -138,6 +138,23 @@ phm fleet runs --json --lane fake-lane
 phm fleet runs --watch --interval-ms 5000 --json
 ```
 
+### Pools: what would go unused
+
+`phm pools` derives `pools.v1` from the same ledger
+([`pools-view.ts`](../src/core/fleet/pools-view.ts)); `GET /api/app/pools`
+returns the identical object. Rows are sorted by `wasteRisk` (`high`, `medium`,
+`low`, `unknown`), then soonest `resetAt`, then `id`. A reading older than
+`staleAfterMinutes`, past its reset, or missing has `wasteRisk: "unknown"`, a
+`reason`, and `null` numbers; never treat it as zero or as spare capacity.
+`burnBasis` says whether the burn was `reported`, a `window-average`, or zero
+because the lane is `held`. `gaps` lists what the view cannot see. Exit 0 with
+JSON on stdout, 2 on an unknown flag.
+
+```sh
+phm pools
+phm pools --text
+```
+
 ## Keep streams and exit codes separate
 
 Do not merge stderr into a JSON pipeline (`2>&1`), and do not assume a pipeline's

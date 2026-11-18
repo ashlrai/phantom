@@ -365,6 +365,7 @@ Phantom - every command (phm or ashlr)
     usage resource-live [--json] [--watch] [--force] [--show] [--browser]                       Read every allowance and write state/resource-live.json: readings with source and observed time, the burn-down spend order, and a reset decision draft for Mason. Unverified readings are null.
     usage history --lane <id> [--json] [--runs-dir <abs>]                                       Read seven days of measured per-lane allowance history.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                      Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
+    pools [--text]                                                                              What would go unused at reset, per resource: used percent, hours left, burn and waste risk. JSON by default.
     queue stats [--json] [--window <seconds>]                                                   Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     queue batches [--runs <directory>] [--json]                                                 Show each batch line’s PR, empty reason, failure or unknown result.
     repos rank [proposals] [--json] [--recompute]                                               Repository scheduling rank from seed priority, local merged-PR recency and autonomy leverage (daily ceiling); proposals are read-only.
