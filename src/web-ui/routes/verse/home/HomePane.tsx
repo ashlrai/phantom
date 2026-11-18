@@ -6,6 +6,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { openDockPane } from '../dock/dock-store.js';
 import type { PaneProps } from '../panes/pane-registry.js';
+import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { setFocusMode } from '../shell/focus-mode.js';
 import { setHomeChoice } from '../shell/home-view-store.js';
 import { readLastSeen } from '../shell/last-seen-store.js';
@@ -14,6 +15,7 @@ import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
 import { DiskCard } from './DiskCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
+import { PoolsCard } from './PoolsCard.js';
 import { PulseCard } from './PulseCard.js';
 import { FleetShippedCard } from './FleetShippedCard.js';
 import { ThisMacCard } from './ThisMacCard.js';
@@ -22,6 +24,8 @@ import styles from './home.module.css';
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
 const query: QueryDef<HomeSummary> = { key: 'fleet-home', fetch: signal => apiGet(`/api/verse/fleet/runs/home?leaderSeen=${readLastSeen().leader}`, signal) };
 const openPane = (paneId: string) => { setFocusMode(false); setVerseSection('chat'); openDockPane(paneId); };
+
+const openPoolJob = (job: string) => { requestWorkerLogJob(job); openPane('worker-log'); };
 
 function Value<T>({ field, children }: { field: HomeField<T>; children: (value: T) => ReactNode }) {
   return field.state === 'ok' ? <>{children(field.value)}</> : <span data-unknown>Unknown: {field.reason}</span>;
@@ -37,12 +41,13 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /><LeaderRepliesCard visible={visible} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard visible={visible} /><LeaderRepliesCard visible={visible} /><PoolsCard visible={visible} onOpenJob={openPoolJob} /></section>;
   return <section className={styles.root} aria-label="Home">
     <PulseCard visible={visible} />
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <ApprovalsCard visible={visible} />
     <LeaderRepliesCard visible={visible} />
+    <PoolsCard visible={visible} onOpenJob={openPoolJob} />
     <ThisMacCard visible={visible} className={styles.card} />
     <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>
       <p>Last hour: <Value field={home.mergedLastHour}>{String}</Value></p>
