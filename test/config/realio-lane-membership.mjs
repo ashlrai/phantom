@@ -43,6 +43,8 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  // Builds local Git refs to exercise queue overlap without network access.
+  'test/queue-overlap.test.ts',
   'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
   'test/comms-confirm-http-original-264s.test.ts', // Runs confirmation transport child processes.
   'test/email-outbox-crash-batch-103.test.ts', // Restarts real outbox processes after crashes.
