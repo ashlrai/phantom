@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetRuntime, type FleetRuntimeDeps } from '../src/cli/fleet-runtime.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { readFleetBoard } from '../src/core/fleet/coordination.js';
+import { readClaimExecution } from '../src/core/fleet/claim-execution-evidence.js';
 
 const NOW = Date.parse('2026-11-13T14:00:00.000Z');
 let home: string;
@@ -37,6 +38,13 @@ beforeEach(() => {
     host: () => 'fake-host', platform: () => 'fakeos', arch: () => 'fakearch',
     pid: () => 123, uptime: () => 120.5, installedVersion: () => '1.2.3', sourceVersion: () => '1.2.4',
     tailnet: () => 'fake-tailnet', board: options => readFleetBoard({ ...options, path: ledger }),
+    execution: () => readClaimExecution({
+      now: () => NOW,
+      workers: async () => ({
+        v: 1, generatedAt: new Date(NOW).toISOString(), sourceState: 'healthy',
+        workers: [], leaders: [], orchestratorAgents: 0,
+      }),
+    }),
   };
   output = [];
   vi.spyOn(console, 'log').mockImplementation(value => { output.push(String(value)); });
