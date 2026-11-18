@@ -57,9 +57,13 @@ exceptions_enabled=false
 exception_graph=full
 if [[ -z "${omit_arg}" ]]; then
   exceptions_enabled=true
-elif [[ "${audit_label}" == "Raycast production graph" ]]; then
-  exceptions_enabled=true
-  exception_graph=raycast-production
+else
+  resolved_lockfile=$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "${lockfile}")
+  raycast_lockfile=$(node -e 'process.stdout.write(require("node:fs").realpathSync(process.argv[1]))' "${script_dir}/../src/raycast/package-lock.json")
+  if [[ "${resolved_lockfile}" == "${raycast_lockfile}" ]]; then
+    exceptions_enabled=true
+    exception_graph=raycast-production
+  fi
 fi
 if [[ "${exceptions_enabled}" == true ]]; then
   if ! node - "${exception_file}" "${active_exceptions_file}" "${osv_config}" "${exception_graph}" <<'NODE'
@@ -280,7 +284,7 @@ for attempt in 1 2 3; do
       if [[ "${exceptions_enabled}" == true ]] &&
         is_fully_exempt_npm_report "${stdout_file}"; then
         write_exception_usage_summary
-        write_summary "${audit_label}: npm audit passed with only active, explicitly excepted full-graph advisories."
+        write_summary "${audit_label}: npm audit passed with only active, explicitly excepted advisories."
         exit 0
       fi
       write_exception_usage_summary
@@ -298,7 +302,7 @@ for attempt in 1 2 3; do
     if [[ "${exceptions_enabled}" == true ]] &&
       is_fully_exempt_npm_report "${stdout_file}"; then
       write_exception_usage_summary
-      write_summary "${audit_label}: npm audit passed with only active, explicitly excepted full-graph advisories."
+      write_summary "${audit_label}: npm audit passed with only active, explicitly excepted advisories."
       exit 0
     fi
     write_exception_usage_summary
@@ -321,7 +325,7 @@ write_summary "${audit_label}: npm transport failed after 3 bounded attempts; in
 if "${timeout_bin}" --signal=TERM --kill-after=5s 60s \
   "${osv_bin}" scan source --config "${osv_config}" --lockfile "${lockfile}" --format table; then
   if [[ "${exceptions_enabled}" == true ]]; then
-    write_summary "${audit_label}: active full-graph exceptions were supplied to OSV-Scanner fallback."
+    write_summary "${audit_label}: active dependency audit exceptions were supplied to OSV-Scanner fallback."
   fi
   write_summary "${audit_label}: pinned OSV-Scanner fallback passed for ${lockfile}."
   exit 0

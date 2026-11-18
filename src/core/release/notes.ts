@@ -11,9 +11,13 @@ export interface ReleaseNotes {
 }
 export interface NoteCommit { sha: string; author: string; subject: string; files: string[] }
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-const internal = (file: string): boolean => /^(test\/|scripts\/|\.github\/)|(?:^|\/)(?:[^/]*\.test\.[^/]+|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|BRIDGE_NOTES\.md)$/.test(file);
+/** Tests, scripts, CI and lockfiles: work a user never sees. `phm shipped` counts it as maintenance. */
+export const internal = (file: string): boolean => /^(test\/|scripts\/|\.github\/)|(?:^|\/)(?:[^/]*\.test\.[^/]+|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|BRIDGE_NOTES\.md)$/.test(file);
 const safeText = (text: string): string => text.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim();
 const markdown = (text: string): string => text.replace(/[\\`*_[\]<>]/g, '\\$&');
+
+/** The `git log` arguments whose output parseNotesLog reads. */
+export const NOTES_LOG_ARGS = ['--first-parent', '--diff-merges=first-parent', '--no-renames', '--no-ext-diff', '--format=%x1e%H%x00%an%x00%s%x00%b%x00', '--name-only', '-z'] as const;
 
 /** NUL-separated fields and filenames; record separators delimit Git commits. */
 export function parseNotesLog(log: string): NoteCommit[] {
@@ -98,7 +102,7 @@ export function collectReleaseNotes(directory = process.cwd(), since?: string, r
   const base = git('rev-parse', '--verify', '--end-of-options', `refs/tags/${since}^{commit}`).trim();
   // A shallow clone is sufficient only when its mainline reaches the base tag.
   if (!git('rev-list', '--first-parent', head).split('\n').includes(base)) throw new Error('Release tag is not on the available mainline; fetch history and tags');
-  const log = git('log', '--first-parent', '--diff-merges=first-parent', '--no-renames', '--no-ext-diff', '--format=%x1e%H%x00%an%x00%s%x00%b%x00', '--name-only', '-z', `${base}..${head}`, '--');
+  const log = git('log', ...NOTES_LOG_ARGS, `${base}..${head}`, '--');
   return buildReleaseNotes(since, head, parseNotesLog(log));
 }
 

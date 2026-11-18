@@ -18,7 +18,9 @@ describe('dispatchd runs directory', () => {
   it('projects all fixture sources independently', async () => {
     const s = await snapshot(await fixture());
     expect(s.sourceState).toBe('healthy');
-    expect(s.lanes).toEqual([{ lane: 'codex-personal', running: 1, target: 2, floor: 1, ceiling: 3, queued: 4, held: false, heldReason: null, tokensLastHour: 12350, merged24h: 2, mergeRate24h: 0.5 }]);
+    expect(s.lanes).toEqual([{ lane: 'codex-personal', running: 1, target: 2, floor: 1, ceiling: 3, queued: 4, held: false, heldReason: null, tokensLastHour: 12350, merged24h: 2, mergeRate24h: 0.5,
+      seat: { health: 'unknown', usedPct: null, resetAt: null, observedAt: null, passAt: null, passMs: null } }]);
+    expect(s.leader).toEqual({ lane: null, model: null, lastSuccessAt: null });
     expect(s.publishesLastHour).toEqual([{ job: 'RQ-FAKE-1', lane: 'devin', url: 'https://github.com/example/fake/pull/1', at: '2026-10-31T00:03:21Z' }]);
     expect(s.events.map(e => e.kind)).toEqual(['PUBLISHED', 'LAUNCH']);
     expect(s.claimed[0]).toMatchObject({ job: 'RQ-FAKE-1', lane: 'codex-personal', tier: 'frontier' });

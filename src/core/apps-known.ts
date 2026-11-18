@@ -48,7 +48,7 @@ export const KNOWN_APPS: readonly KnownApp[] = [
   { id: 'chatgpt', name: 'ChatGPT', role: 'Assistant', bundles: ['ChatGPT.app'], bundleIds: ['com.openai.chat'], quit: 'protected' },
   { id: 'cursor', name: 'Cursor', role: 'Editor', bundles: ['Cursor.app'], bundleIds: ['com.todesktop.230313mzl4w4u92'], quit: 'protected' },
   { id: 'grok', name: 'Grok', role: 'Assistant', bundles: ['Grok.app'], bundleIds: [], quit: 'protected' },
-  { id: 'devin', name: 'Devin', role: 'Coding agent', bundles: ['Devin.app'], bundleIds: [], quit: 'protected' },
+  { id: 'devin', name: 'Devin', role: 'Coding agent', bundles: ['Devin.app'], bundleIds: ['ai.cognition.devin'], quit: 'protected' },
   { id: 'safari', name: 'Safari', role: 'Phantom’s agent browser', bundles: ['Safari.app'], bundleIds: ['com.apple.Safari'], quit: 'allowed' },
 ];
 

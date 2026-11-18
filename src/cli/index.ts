@@ -379,6 +379,11 @@ const loadAppsCmd = lazyCmd(
   'apps command requires src/cli/apps-control.ts.',
 );
 
+const loadBrowserCmd = lazyCmd(
+  () => import('./browser.js'), (m) => m.cmdBrowser as Cmd,
+  'browser command requires src/cli/browser.ts.',
+);
+
 const loadDesktopctlCmd = lazyCmd(
   () => import('./desktopctl.js'), (m) => m.cmdDesktopctl as Cmd,
   'desktopctl command requires src/cli/desktopctl.ts.',
@@ -2232,6 +2237,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'shipped': {
+        const { cmdShipped } = await import('./shipped.js');
+        process.exitCode = await cmdShipped(rest);
+        break;
+      }
+
       case 'subagent': {
         const { cmdSubagent } = await import('./subagent.js');
         process.exitCode = await cmdSubagent(rest);
@@ -2523,6 +2534,10 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadAppsCmd())(rest);
         break;
       }
+      case 'browser': {
+        process.exitCode = await (await loadBrowserCmd())(rest);
+        break;
+      }
       case 'desktopctl': {
         process.exitCode = await (await loadDesktopctlCmd())(rest);
         break;
@@ -2780,6 +2795,13 @@ async function main(): Promise<void> {
         }
         const { cmdReposRank } = await import('./repos-rank.js');
         process.exitCode = cmdReposRank(rest);
+        break;
+      }
+
+      case 'decide': {
+        // One typed decision: a question, a fixed option list, "unknown" instead of a guess (src/cli/decide.ts).
+        const { cmdDecide } = await import('./decide.js');
+        process.exitCode = await cmdDecide(rest);
         break;
       }
 

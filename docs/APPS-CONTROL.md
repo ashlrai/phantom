@@ -41,6 +41,37 @@ are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/1"`)
 has one row per app in a fixed order; GET `/api/verse/apps/mac` returns it.
 Every `phm apps` JSON answer carries `version: 1`; new fields are additive.
 
+## Browser (Safari)
+
+Safari is Phantom's own agent browser. `phm browser` drives it and nothing
+else: Chrome, by name, address or profile path, is always refused.
+
+```sh
+phm browser --json
+phm browser doctor --json
+phm browser open https://example.com/ --json
+phm browser shot page.png --json
+phm browser close --json
+```
+
+`phm browser` (or `tabs`) lists the open agent tabs and the latest screenshot.
+`open` loads an http or https address in a new tab. `shot` saves a picture of
+the front Safari window and keeps a copy for the Browser card. `close` closes
+every Safari window without quitting Safari. `doctor` says whether Safari
+remote automation is on and the one step to turn it on (Safari > Settings >
+Developer > Allow remote automation); Phantom never changes that setting.
+Anything it cannot read says unknown.
+
+Every answer is `schema: "phm.browser/1"` with `version: 1`, `ok`, `outcome`
+(`done`, `refused`, `failed`, `needs_permission`), `code` and `detail`; new
+fields are additive. Exit 0 done, 1 refused or failed, 2 usage. The Fleet Host
+**Browser** card uses the same service: GET `/api/verse/apps/browser` (tabs),
+GET `/api/verse/apps/browser/doctor`, GET `/api/verse/apps/browser/shot`
+(latest screenshot) and POST `/api/verse/apps/browser` with
+`{ "action": "open" | "shot" | "close", "url"? }`. The API takes no file path.
+`open`, `shot` and `close` are logged to the feed; KILL and comms pause block
+`open` and `close`. Phantom never reads cookies or saved passwords.
+
 ## Allowed apps
 
 The Phantom desktop Fleet Host pane's **Allowed apps** card and `phm apps` use
