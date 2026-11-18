@@ -346,6 +346,8 @@ Every command, grouped by topic.
     throughput [--hours 24] [--by lane|repo|tier] [--text]                                                  Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
     jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json]  Which kinds of jobs are worth launching: keep, watch or stop. Use --stop-list for only the kinds to stop, one per line, or --stop-file to write them to the job stop file; --json keeps the full report.
     recut check [--json] [--ref <branch>] <area-or-job-id>                                                  Should the next recut or red-fix job launch? Exit 0 launch, 1 skip; the reason is one plain line.
+    recut plan [--json] [--prs <dirty-landed.json>] [<area>...]                                             Per recut area, emit or skip this cycle with one plain reason. Writes nothing.
+    recut prompt <job-id> --lane <lane> --tier <tier>                                                       Print a recut prompt from stdin with the standard task line first.
     jobs empty [--since 24h] [--family F] [--json]                                                          Explain empty jobs with family and lane suggestions.
     jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]                                          Why jobs ended empty, ranked by recorded wasted tokens.
     radar list|run|diff [--json]                                                                            Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.

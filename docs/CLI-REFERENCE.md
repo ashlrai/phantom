@@ -764,6 +764,8 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm recovery attest&#124;abandon</code> | Record an exact interactive terminal no-replay disposition for one prepared effect. | - | - |
 | <code>phm recovery list&#124;inspect</code> | Inspect bounded metadata-only prepared/committed tool-effect evidence. | - | - |
 | <code>phm recut check [--json] [--ref &lt;branch&gt;] &lt;area-or-job-id&gt;</code> | Should the next recut or red-fix job launch? Exit 0 launch, 1 skip; the reason is one plain line. | <code>--json</code>, <code>--ref</code> | <code>phm recut check --json [--ref &lt;branch&gt;] &lt;area-or-job-id&gt;</code> |
+| <code>phm recut plan [--json] [--prs &lt;dirty-landed.json&gt;] [&lt;area&gt;...]</code> | Per recut area, emit or skip this cycle with one plain reason. Writes nothing. | <code>--json</code>, <code>--prs</code> | <code>phm recut plan --json [--prs &lt;dirty-landed.json&gt;] [&lt;area&gt;...]</code> |
+| <code>phm recut prompt &lt;job-id&gt; --lane &lt;lane&gt; --tier &lt;tier&gt;</code> | Print a recut prompt from stdin with the standard task line first. | <code>--lane</code>, <code>--tier</code> | - |
 | <code>phm reflect [--since &lt;Nd&gt;]</code> | Score your OWN past runs/swarms locally; report effectiveness/cost deltas (read-only). | <code>--since</code> | - |
 | <code>phm reflect playbooks [--persist]</code> | Distill repeatable playbooks from past swarms (report-only; --persist writes them to the genome). | <code>--persist</code> | - |
 | <code>phm reflect propose</code> | Emit routing/policy/prompt tuning suggestions as PENDING inbox proposals (never auto-applies). | - | - |

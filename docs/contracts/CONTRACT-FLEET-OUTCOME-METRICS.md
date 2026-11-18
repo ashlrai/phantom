@@ -205,3 +205,31 @@ keep, most launches first; `stop_first` holds at most 5. `skipped` counts
 precheck skip rows, which take no slot. With no launches `merged_per_launch` is
 null. An unreadable or interrupted read gives `known: false`, null totals and
 empty lists, never zero.
+
+## Recut cycle plan (`recut.plan.v1`)
+
+RQ-RECUTPROMPTN18ZQ8. `phm recut plan [--json] [--prs <dirty-landed.json>] [--base master] [--metrics <jobs.jsonl>] [<area>...]`
+says, per recut area (`RECUT_AREAS` in `recut-gate.ts`, default all 13), whether the
+recut generator should write a job this cycle. Read-only; exit 0, or 2 for bad usage.
+
+- The gate decides first: `shouldEmitRecut` over `readRecutGateFacts`, so the stop
+  list, a live stop-file row (`ASHLR_JOBS_STOP_FILE`) and the empty streak all skip.
+- A passing area then needs an eligible PR: an open conflicting PR from
+  `phm fleet dirty-landed` (or `--prs`, a saved `fleet.dirty-landed.v1` report) that
+  `recutDropJob` accepts, with a remaining path in the area. Zero skips with code
+  `no-eligible-pr`. An unreadable list, or zero from a list cut short at its page
+  limit, is unknown (`eligible: null`) and never skips.
+- Human output is one line per area: `emit <area>: <reason>` or `skip <area>: <reason>`.
+- JSON: `{schema,version,generated_at,emit,skip,prs:{source,known,complete},
+  stop_file:"unset"|"unreadable"|"read",areas:[{area,family,emit,code,reason,eligible,prs}]}`.
+
+`phm recut prompt <job-id> --lane <lane> --tier <tier> [--repo phantom] [--task <text>]`
+reads a prompt on stdin and prints it with the standard task line
+`<job-id> (P1, pool=<lane>, tier=<tier>, repo=<repo>): <task>` as its first non-blank
+line; the rest is unchanged, and a prompt already starting with `<job-id> (` is printed
+as it is. The launch precheck and stop list only see a job through that line.
+
+`src/core/fleet/recut-plan.ts` exports the pure `recutTaskLine(input)`, `promptTask(prompt)`,
+`withTaskLine(prompt, line, id)`, `eligibleRecutPrs(prs, area, now)` and
+`planRecutArea(area, family, gate, list, now)`; `recut-gate.ts` exports `AREA_PATHS` and `RECUT_AREAS`.
+Hermetic coverage: `test/recut-plan.test.ts`.

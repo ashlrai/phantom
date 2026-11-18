@@ -33,7 +33,8 @@ export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   'graph', 'graph status', 'growth', 'help', 'home', 'host load', 'inbox show', 'jobs empty', 'knowledge graph', 'knowledge impact', 'lanes',
   'lanes fit', 'library', 'log', 'ls', 'map', 'mcp list', 'metrics idle', 'metrics levers', 'metrics merges', 'models', 'models check', 'nodes',
 
-  'observe', 'observe session', 'orient', 'pages list', 'pool admission', 'preflight', 'prs triage', 'pulse-test', 'queue batches', 'recut check',
+  'observe', 'observe session', 'orient', 'pages list', 'pool admission', 'preflight', 'prs triage', 'pulse-test', 'queue batches', 'recut check', 'recut plan',
+  'recut prompt',
   'reflect', 'release status', 'resources', 'route explain', 'router rank', 'router-calibration', 'run show', 'runs',
   'sandbox diff', 'sandbox list', 'seams', 'signals', 'skills audit', 'skills list', 'spec list', 'spec show', 'spend', 'status',
   'swarm show', 'swarms', 'throughput', 'tools requires', 'top', 'universe compare', 'universe graph', 'usage history', 'vercel',
