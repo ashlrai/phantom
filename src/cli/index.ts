@@ -3359,6 +3359,11 @@ async function main(): Promise<void> {
 
       case 'agents': {
         // Roster is a separate dispatcher so the bus-contract command stays untouched.
+        if (rest[0] === 'messages') {
+          const { runAgentsMessagesCli } = await import('./agents-messages.js');
+          process.exitCode = await runAgentsMessagesCli(rest.slice(1));
+          break;
+        }
         if (rest[0] === 'roster') {
           const cmdRoster = await loadAgentsRosterCmd();
           process.exitCode = await cmdRoster(rest.slice(1));
