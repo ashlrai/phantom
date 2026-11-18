@@ -190,6 +190,7 @@ const workersShape: Shape = {
 };
 const claimsShape: Shape = [{ job: 'string', lane: 'string', tier: 'string', at: 'string' }];
 const dropShape: Shape = { pending: [{ lane: 'string', file: 'string' }], done: 'number' };
+const notRunningShape: Shape = [{ job_or_lane: 'string', kind: 'string', reason: 'string', since: 'string?', unblock: 'string' }];
 const codexShape: Shape = { usedPct: 'number?', resetsAt: 'string?', asOf: 'string?' };
 const mergesShape: Shape = {
   count: 'number?', perHour: 'number?', medianOpenToMergeMs: 'number?',
@@ -381,7 +382,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
         const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];
+        // Older injected readers predate this list; absent means none reported.
+        const notRunning = key === 'runsDir' && record(raw) && raw.notRunning != null ? project(raw.notRunning, notRunningShape) : [];
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
+        if (key === 'runsDir') result.notRunning = notRunning as FleetRunsV1['notRunning'];
         if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
         if (key === 'inbox') {

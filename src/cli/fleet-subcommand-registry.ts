@@ -184,6 +184,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'harness-refresh': () => import('./fleet-harness-refresh.js'),
   'health-age': () => import('./fleet-health-age.js'),
   'heartbeat': () => import('./fleet-heartbeat.js'),
+  'held': () => import('./fleet-held.js'),
   'hold-check': () => import('./fleet-hold-check.js'),
   'ideation': () => import('./fleet-ideation.js'),
   'ideation-status': () => import('./fleet-ideation-status.js'),

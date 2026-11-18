@@ -1377,6 +1377,24 @@ command used to print) and `GET /api/verse/fleet/runs/tools/parity[?lane=L]`
 (404 for an unknown lane) for the Tool parity card on the Tools pane.
 `formatToolParity` is removed.
 
+`src/core/fleet/fleet-held.ts` exports the pure `fleetNotRunning({ lanes,
+launches, metricsTail, metricsClipped?, now, limit? })`, returning
+`NotRunningRow[]`: `{ job_or_lane, kind, reason, since, unblock }`. `kind` is
+`held_launch` (a `<job>.launch` record whose first line is not `launched ...`),
+`idle_lane` (target above 0, nothing running, nothing queued),
+`launched_no_finish` (launch older than 60 minutes with no finish) or
+`finished_no_publish` (a non-empty finish 10 minutes to 24 hours old with no
+publish row and no `<job>.publish`). `since` is ISO or null when not known.
+`unblock` is one plain sentence; an unrecognized reason passes its raw first
+line through as `reason` with `unblock: "unknown"`. A null `metricsTail` leaves
+the finish and publish kinds unlisted. `readFleetRunsDirState` reads the newest
+500 launch records from the last 7 days and returns the list as `notRunning`
+(empty for a missing directory). `phm fleet held [--json]` prints it
+(`fleet.held.v1`: `{ schema, generatedAt, count, items }`; exit 0 when read, 1
+when the read fails, 2 for bad arguments), `GET /api/verse/fleet/runs` carries
+it as the additive `notRunning` field, and the desktop Fleet hub shows it first
+as "Not actually running" when it is not empty.
+
 `src/web-ui/routes/verse/panes/pane-presence.ts` exposes `hasRegisteredPane(id)`,
 `subscribeRegisteredPaneIds(listener)` (returns an unsubscribe function), and
 `publishRegisteredPaneIds(ids)`. The registry publishes membership synchronously;
