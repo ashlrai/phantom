@@ -29,7 +29,7 @@ function fixture(messages: FleetMessage[]) {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const gh = vi.fn(async (args: string[]) => {
     expect(args.at(-1)).toMatch(/^repos\/fake\/repo\/pulls\/\d+$/);
-    return JSON.stringify({ merged: true, head: { sha: 'abc1234abcdef' } });
+    return JSON.stringify({ merged: true, head: { sha: 'abc1234abcdef000000000000000000000000000' } });
   });
   async function run(code: number, json = true, limit = 50) {
     log.mockClear();

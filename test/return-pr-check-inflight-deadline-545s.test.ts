@@ -4,7 +4,7 @@ import { checkReturnPrs, type ReturnEvidenceRow } from '../src/core/fleet/return
 const rows: ReturnEvidenceRow[] = [1, 2, 3].map(pr => ({
   claimId: `fake-${pr}`, repo: 'example/demo', result: 'VERIFIED', evidenceKind: 'pr', pr, head: `abc123${pr}`,
 }));
-const body = JSON.stringify({ state: 'open', head: { sha: 'abc1234' } });
+const body = JSON.stringify({ state: 'open', head: { sha: 'abc1234000000000000000000000000000000000' } });
 function deferred() {
   let resolve!: (value: string) => void;
   let reject!: (reason: Error) => void;
