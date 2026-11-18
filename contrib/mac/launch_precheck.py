@@ -72,6 +72,45 @@ def merged_jobs(rows):
             for repo in [row.get('repo')] if repo is None or isinstance(repo, str)}
 
 
+class RecutAdmission:
+    """Join published loop identities to merge receipts and current owners, not prose.
+
+    The loop only produces phantom jobs. Heads are immutable; a changed head,
+    ambiguous identity, missing receipt or dead owner cannot satisfy new work.
+    """
+    def __init__(self, rows, completed, alive):
+        identities = {}
+        for row in rows:
+            if not isinstance(row, dict): continue
+            ident = row.get('id')
+            if not isinstance(ident, str) or len(ident) > 64: continue
+            match = re.fullmatch(r'RECUT([1-9][0-9]*)L[1-9][0-9]*', ident)
+            if not match: continue
+            head = row.get('headSha')
+            key = (int(match[1]), head) if (type(row.get('pr')) is int and row['pr'] == int(match[1])
+                    and isinstance(head, str) and re.fullmatch(r'[0-9a-f]{40}', head)
+                    and 'leaseUntil' not in row) else None
+            job = 'RQ-PHX-' + ident
+            identities[job] = key if job not in identities or identities[job] == key else None
+        self.identities = {job: key for job, key in identities.items() if key}
+        self.merged = {key: job for job, key in sorted(self.identities.items())
+                       if ('phantom', job) in completed or (None, job) in completed}
+        self.owners = {key: job for job, key in sorted(self.identities.items()) if job in alive}
+
+    def decide(self, job, repo):
+        key = self.identities.get(job) if repo == 'phantom' else None
+        if key is None: return None
+        merged, owner = self.merged.get(key), self.owners.get(key)
+        reason, action, prior = ('recut-already-merged', 'skip', merged) if merged else (
+            ('recut-in-flight', 'defer', owner) if owner and owner != job else
+            ('recut-no-current-coverage', 'ready', None))
+        return dict(reason=reason, action=action, repeatOf=prior, targetPr=key[0], headSha=key[1])
+
+    def launched(self, job, repo):
+        if repo == 'phantom' and job in self.identities:
+            self.owners[self.identities[job]] = job
+
+
 def request_hash(job, repo, prompt):
     """Conservative identity: preserve case, PR targets, dependencies and scope.
 
