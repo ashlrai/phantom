@@ -1,0 +1,7 @@
+# Local model memory fit — Security handoff
+
+Source routing checks measured resident bytes plus KV/runtime allowance (at least 2 GiB, 256 KiB per context token). It keeps 25% of total RAM free, refuses positive swap growth, and withholds local routes when evidence is unknown. Task/fleet/vitals use 64K context; gateway/Leader use their request budget. Cloud grants, quotas and local-only policy still apply.
+
+Machine telemetry must be at most 30 seconds old: `~/.ashlr-runs/fleet.json` resources.machine, capped by current OS free memory. Model sizes come from resources.models there or `~/.ashlr/fleet.json` inventory. No model name is guessed into a size. Vitals never loads/unloads models. Typed advisory reports include `local_models_refused`.
+
+Gaps for the PR body: loaded models and last unload reason remain JSON null (CLI: unknown); inventory is not current residency. Direct legacy provider calls, model startup and external dispatcher launches remain outside this partial change. Concurrent processes have no shared reservation. Security handoff: enforce the same check before live launches/loads, reserve memory across processes, publish residency/unload evidence, and re-pin through the sanctioned process. The new `src/core/resources/local-memory-fit.ts` closure entry needs reviewed snapshot regeneration; no new Tier-1 root. No live dispatcher, sandbox, pin, workflow or snapshot was changed.

@@ -942,6 +942,7 @@
     "src/core/resources/engineering-worker-rpc.ts",
     "src/core/resources/execution-veto.ts",
     "src/core/resources/grok-account-probe.ts",
+    "src/core/resources/local-memory-fit.ts",
     "src/core/resources/local-model-refresh.ts",
     "src/core/resources/machine-verified-roots.ts",
     "src/core/resources/metadata-coordinator.ts",
