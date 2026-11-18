@@ -9,7 +9,8 @@ import type { QueryDef } from '../../../data/queries.js';
 import styles from './home.module.css';
 
 export const SHIPPED_PATH = '/api/verse/shipped';
-const query: QueryDef<ShippedReport> = { key: 'shipped', fetch: signal => apiGet(SHIPPED_PATH, signal) };
+/** One cached read per window: the week on desktop Home, one day ("today") on the phone. */
+export const shippedQuery = (days: number): QueryDef<ShippedReport> => ({ key: `shipped-${days}`, fetch: signal => apiGet(`${SHIPPED_PATH}?days=${days}`, signal) });
 /** The card is a glance; `phm shipped` and the docs page hold the longer list. */
 const LINES_PER_AREA = 2;
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
@@ -21,10 +22,11 @@ function reportOf(data: unknown): ShippedReport | null {
   return report.schema === 'shipped.v1' && Array.isArray(report.areas) ? report as ShippedReport : null;
 }
 
-export function ShippedCard({ visible = true }: { visible?: boolean }) {
-  const read = useQuery(query, { enabled: visible });
+export function ShippedCard({ visible = true, days = 7 }: { visible?: boolean; days?: number }) {
+  const read = useQuery(shippedQuery(days), { enabled: visible });
   const report = reportOf(read.data);
-  const window = `the last ${plural(report?.days ?? 7, 'day')}`;
+  const today = (report?.days ?? days) === 1;
+  const window = today ? 'the last 24 hours' : `the last ${plural(report?.days ?? days, 'day')}`;
   let body;
   if (read.status === 'error' && !report) body = <p data-unknown>Unknown: what shipped could not be read.</p>;
   // Before the first read, or any other payload (an older server), the card stays hidden.
@@ -42,8 +44,8 @@ export function ShippedCard({ visible = true }: { visible?: boolean }) {
       </ul>)}
       {maintenance > 0 && <p>Maintenance: {plural(maintenance, 'change')} (tests and chores).</p>}
       {report.note && <p data-unknown>{report.note}</p>}
-      <p>For the full list, run <code className={styles.command}>phm shipped</code></p>
+      <p>For the full list, run <code className={styles.command}>phm shipped{today ? ' --since 1d' : ''}</code></p>
     </>;
   }
-  return <section className={styles.card} aria-label="Shipped"><h3>Shipped</h3>{body}</section>;
+  return <section className={styles.card} aria-label={today ? 'Shipped today' : 'Shipped'}><h3>{today ? 'Shipped today' : 'Shipped'}</h3>{body}</section>;
 }

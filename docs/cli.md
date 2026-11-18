@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
-    observability   Observability - cost, telemetry, audit (shipped, empties, home, …)
+    observability   Observability - cost, telemetry, audit (mobile, shipped, empties, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -231,7 +231,8 @@ Every command, grouped by topic.
     org [--text]                                                                                                                                                  The live organization as a tree: leader, lanes with running, target, queued and pool usage, and each running job. JSON by default; unknown stays unknown.
     org show|join|plan [--file <org.toml>] [--json]                                                                                                               Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.
     leader status|ask|org|assign [--json]                                                                                                                         Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.
-    leader seat|inbox [--json]                                                                                                                                    Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.
+    leader seat [pick] [--json]                                                                                                                                   Show the current leader, fallback health and headroom, or recommend the next confirmed seat. Read-only.
+    leader inbox [--json]                                                                                                                                         Inspect the durable CEO inbox/outbox; --text records a policy-checked message.
     leader say|thread|answer|approve|directives                                                                                                                   Talk to the Leader: say something through the verified inbox writer, read your messages and its replies as one chat with received/answered state, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.
     leader oversight-plist --print                                                                                                                                Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.
     cloud launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder's GitHub origin.
@@ -330,6 +331,7 @@ Every command, grouped by topic.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
+    mobile check [--json]                                                                       Check every desktop view at 390 px: content wider than the screen, tap targets under 44 px, text under 12 px.
     shipped [--since 7d] [--json|--md]                                                          What shipped, in plain words: merged changes grouped by product area. --md writes docs/SHIPPED.md.
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
@@ -415,7 +417,7 @@ Every command, grouped by topic.
     approvals [--team <id>] [--json]                                                                                 What needs a human: decisions only Mason can make first, then pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.
     approvals ask --question <text> --options yes,no [--expires <iso>] [--by <name>] [--json]                        For agents: raise one decision only Mason can make, with its own options; it is numbered and an identical open one is reused.
     approvals answer <ref> <option> [--json]                                                                         Mason only (agent processes are refused): record his answer once, with who answered, the channel and the time. It only records; nothing is paid or sent.
-    team <view|join|invite|role|link|approve|claim|release|say>                                                      Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.
+    team <list|add|show|view|join|invite|remove|role|link|approve|deny|claim|release|say> [--json]                   Team directory and bus: pending teammate drafts, identity evidence, declared lanes and seats; membership and approvals keep their existing gates.
     companions [--json] [--root <dir>] [--bin-dir <dir>]                                                             Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.
     mcp install <claude|ashlrcode>                                                                                   Add the ashlr gateway to a target mcpServers config (backs up first).
     gh <pr|issue|ci>                                                                                                 Read GitHub open PRs, issues, or CI status for the current repo (read-only).
