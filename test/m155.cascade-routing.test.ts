@@ -1,3 +1,4 @@
+import './helpers/local-memory.js';
 /**
  * test/m155.cascade-routing.test.ts — M155: Cheap-first cascade routing.
  *

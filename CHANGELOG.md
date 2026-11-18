@@ -58,6 +58,7 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
 - Run the dependency audit on every master push so release signing is not blocked, and bump `hono` and `@hono/node-server` to clear it ([#5535](https://github.com/ashlrai/phantom/pull/5535), [#5532](https://github.com/ashlrai/phantom/pull/5532)).
 - Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
+- Offer `spend` as a completion verb for `phm usage`, matching the documented `phm usage spend --json`, so `test/doc-facts.test.ts` passes again.
 - Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
 - Fix release auto-tag to admit a green full CI run on an ancestor commit and a manual full dispatch, to treat a missing current-version tag ref as not yet tagged, and to send the enqueue GraphQL variable it names ([#6304](https://github.com/ashlrai/phantom/pull/6304), [#6300](https://github.com/ashlrai/phantom/pull/6300), [#6299](https://github.com/ashlrai/phantom/pull/6299)).
 

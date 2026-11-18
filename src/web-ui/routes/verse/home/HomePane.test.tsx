@@ -20,13 +20,13 @@ const HEALTHY: HomeSummary = {
   running: { state: 'ok', value: [{ lane: 'claude', running: 3, target: 8 }, { lane: 'grok', running: 1, target: null }] },
   atRisk: { state: 'ok', value: { resource: 'claude', percentUnused: 50, resetAt: '2026-11-17T22:00:00.000Z', reason: '50.0% will expire unused in 10.0h at current burn.' } },
   worklog: { state: 'ok', value: [{ at: '2026-11-17T11:50:00.000Z', kind: 'merged', text: 'Merged a fake change', url: null }, { at: '2026-11-17T11:40:00.000Z', kind: 'leader', text: 'Leader: a fake reply', url: null }] },
-  unreadLeaderReplies: { state: 'ok', value: 2 },
+  unreadLeaderReplies: { state: 'ok', value: 2 }, needsYou: { state: 'ok', value: [] },
 };
 const MISSING: HomeSummary = {
   schema: 'home.v1', asOf: HEALTHY.asOf, health: 'unknown', headline: 'Unknown: The job metrics file could not be read.',
   mergedLastHour: unknown('The job metrics file could not be read.'), merged24h: unknown('The job metrics file could not be read.'), medianMergeSeconds: unknown('The job metrics file could not be read.'),
   main: unknown('The main guardian status could not be read.'), running: unknown('No fleet status has been written yet.'), unreadLeaderReplies: unknown('No leader plan log has been written yet.'),
-  atRisk: unknown('No resource has a fresh usage reading, a burn rate and a future reset.'), worklog: unknown('No jobs ledger has been written yet.'),
+  atRisk: unknown('No resource has a fresh usage reading, a burn rate and a future reset.'), worklog: unknown('No jobs ledger has been written yet.'), needsYou: unknown('The needs-you ledger could not be read.'),
 };
 const CARDS = ['Merged PRs', 'Main', 'Running jobs', 'Most at risk of going unused', 'Work log', 'Leader'];
 let viewport: ViewportMock | null = null;

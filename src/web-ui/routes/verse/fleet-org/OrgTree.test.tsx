@@ -28,7 +28,7 @@ function tree(sessions: object[] | null, lanes: object[] | null): FleetOrgTree {
 }
 const busy = () => tree(
   [session('RQ-A', 'claude'), session('RQ-CLOUD', 'devin', { status: 'stale', live: 'no', published: true })],
-  [lane('claude', 1, 8), lane('devin', 1, 0, { held: true, heldReason: 'autobackoff: usage limit' }), lane('gemini', 0, 1)]);
+  [lane('claude', 1, 8), lane('devin', 0, 0, { held: true, heldReason: 'autobackoff: usage limit' }), lane('gemini', 0, 1)]);
 const head = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name},`) });
 
 let viewport: ViewportMock | null = null;

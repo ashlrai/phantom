@@ -26,6 +26,7 @@ import { passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
  *   GET /api/bots/templates    -> starter bot templates; GET /api/bots -> bots created from them
+ *   GET /api/bots/seats        -> external bot seats, quota evidence, claims and recent handoffs (no dispatch)
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -2045,6 +2046,21 @@ export async function handleApi(
       return true;
     }
 
+    // fleet.job.tail.v1 — the `phm job tail` snapshot (status words, header,
+    // ledger events, redacted last N log lines). Same read class as above.
+    if (path === '/api/fleet/job/tail' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobTail } = await import('../fleet/runs-job-tail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 120) {
+        sendJson(res, 400, { error: 'valid job id and lines (1..120) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobTail(id, { lines }));
+      return true;
+    }
+
     if (path === '/api/fleet/job/cost' && method === 'GET') {
       const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
       const { getFleetJobCost } = await import('../fleet/runs-job-cost.js');
@@ -2257,6 +2273,15 @@ export async function handleApi(
     if (path === '/api/approvals' && method === 'GET') {
       const team = getQueryParam(req.url ?? '/', 'team');
       sendJson(res, 200, await buildApprovalsProjection(team || undefined));
+      return true;
+    }
+
+    // RQ-CHANNELSN18BQ8: the messaging-channel overview (same JSON as
+    // `phm channels --json`, schema phantom.channels.v1). Read class, behind
+    // the read-session gate; addresses arrive masked and no secret is read.
+    if (path === '/api/channels' && method === 'GET') {
+      const { readChannelsOverview } = await import('../fleet/channels-overview.js');
+      sendJson(res, 200, await readChannelsOverview());
       return true;
     }
 
@@ -2616,6 +2641,21 @@ export async function handleApi(
       }
       const { readFleetUsageFeed } = await import('../resources/fleet-usage.js');
       sendJson(res, 200, await readFleetUsageFeed());
+      return true;
+    }
+
+    // ── GET /api/app/pools (pools.v1, the Pools pane; same data as `phm pools`) ──
+    if (path === '/api/app/pools') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const [{ readResourceLedger }, { buildPoolsView }] = await Promise.all([
+        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'),
+      ]);
+      const now = Date.now();
+      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now));
       return true;
     }
 

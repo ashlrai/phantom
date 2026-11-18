@@ -971,6 +971,7 @@ export interface LeaderRunDeps {
   announceRelease?: () => Promise<unknown>;
   /** Offline advisory pass: its only write is metrics/amplify.jsonl. */
   amplifyTick?: (nowMs: number) => Promise<void>;
+  board?: { record(nowMs: number): Promise<unknown> };
 }
 
 export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<LeaderRunDeps> {
@@ -1496,7 +1497,28 @@ export interface LeaderTickResult {
  * grades due moves, and STARTS a run when one is due without waiting for the
  * model (a memo can take minutes on a local model; a tick must not).
  */
+function recordLeaderBoardTick(deps: LeaderRunDeps, nowMs: number): Promise<void> {
+  const record = deps.board?.record;
+  try {
+    const job = record
+      ? Promise.resolve().then(() => record.call(deps.board, nowMs))
+      : import('../fleet/leader-board.js').then(m => m.recordLeaderBoard({ nowMs }));
+    return job.then(() => undefined, () => undefined);
+  } catch {
+    return Promise.resolve();
+  }
+}
+
 export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
+  const boardJob = recordLeaderBoardTick(deps, deps.now());
+  try {
+    return await leaderTickOnce(deps, opts);
+  } finally {
+    await boardJob;
+  }
+}
+
+async function leaderTickOnce(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
   const nowMs = deps.now();
   try { await deps.amplifyTick?.(nowMs); }
   catch { console.error('leader tick: amplify advisory journal unavailable'); }

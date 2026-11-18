@@ -76,6 +76,10 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   for (const row of sessions?.sessions ?? []) {
     if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live, row.job, row.published === true);
   }
+  // Current readers move valid published attempts to the bounded recent tail.
+  for (const row of sessions?.recent ?? []) {
+    if (row.status === 'finished' && row.published === true) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live, row.job, true);
+  }
   for (const row of snapshot?.runs ?? []) {
     const id = row.taskId || row.id;
     if (sessionIds.has(id) || sessionIds.has(row.id) || row.endedAt || row.outcome || ['queued', 'parked'].includes(row.phase)) continue;

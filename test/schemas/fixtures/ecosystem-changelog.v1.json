@@ -1,0 +1,95 @@
+{
+  "schema": "ecosystem-changelog.v1",
+  "generatedAt": "2026-10-28T12:00:00.000Z",
+  "complete": true,
+  "window": { "since": null },
+  "totals": {
+    "repositories": 2,
+    "changes": 4,
+    "changelog": 2,
+    "releases": 1,
+    "pullRequests": 1,
+    "crossRepo": 1
+  },
+  "recent14d": {
+    "days": 14,
+    "since": "2026-10-14T12:00:00.000Z",
+    "changes": 2,
+    "changelogEntries": 1,
+    "releases": 0,
+    "pullRequests": 1,
+    "crossRepo": 1,
+    "repositories": 2
+  },
+  "repositories": [
+    {
+      "repository": "ashlrai/locus",
+      "directory": "locus",
+      "tier": "core-fleet",
+      "sources": [
+        { "source": "changelog", "status": "complete" },
+        { "source": "release", "status": "complete" },
+        { "source": "pull-request", "status": "complete" }
+      ],
+      "changes": [
+        {
+          "id": "ashlrai/locus:changelog:0.5.0",
+          "repository": "ashlrai/locus",
+          "source": "changelog",
+          "title": "[0.5.0] - 2026-10-26",
+          "date": "2026-10-26T00:00:00.000Z",
+          "url": "https://github.com/ashlrai/locus/blob/HEAD/CHANGELOG.md",
+          "crossRepo": false,
+          "relatedPullRequests": []
+        }
+      ]
+    },
+    {
+      "repository": "ashlrai/phantom",
+      "directory": "phantom",
+      "tier": "core-fleet",
+      "sources": [
+        { "source": "changelog", "status": "complete" },
+        { "source": "release", "status": "complete" },
+        { "source": "pull-request", "status": "complete" }
+      ],
+      "changes": [
+        {
+          "id": "ashlrai/phantom:pull-request:1040",
+          "repository": "ashlrai/phantom",
+          "source": "pull-request",
+          "title": "Add the ecosystem changelog collector",
+          "date": "2026-10-24T12:00:00.000Z",
+          "url": "https://github.com/ashlrai/phantom/pull/1040",
+          "number": 1040,
+          "crossRepo": true,
+          "relatedPullRequests": ["ashlrai/locus#77"]
+        },
+        {
+          "id": "ashlrai/phantom:release:11",
+          "repository": "ashlrai/phantom",
+          "source": "release",
+          "title": "v3.29.16",
+          "date": "2026-10-10T12:00:00.000Z",
+          "url": "https://github.com/ashlrai/phantom/releases/tag/v3.29.16",
+          "version": "v3.29.16",
+          "prerelease": false,
+          "crossRepo": false,
+          "relatedPullRequests": []
+        },
+        {
+          "id": "ashlrai/phantom:changelog:Unreleased",
+          "repository": "ashlrai/phantom",
+          "source": "changelog",
+          "title": "[Unreleased]",
+          "date": null,
+          "url": "https://github.com/ashlrai/phantom/blob/HEAD/CHANGELOG.md",
+          "version": "Unreleased",
+          "unreleased": true,
+          "crossRepo": false,
+          "relatedPullRequests": []
+        }
+      ]
+    }
+  ]
+}

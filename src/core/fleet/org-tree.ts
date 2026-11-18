@@ -32,7 +32,7 @@ export interface OrgTreeLane {
   /** The model its jobs share, else the lane's newest launch; null when neither is known. */
   model: string | null;
   state: OrgState; doing: string; heldReason: string | null;
-  /** Running jobs. A job the dispatcher still counts but that already published is not running. */
+  /** Running jobs reported by the dispatcher or resource ledger. */
   running: number | null; target: number | null; queued: number | null; held: boolean | null;
   /** Pool usage and when it was measured. */
   usage: { usedPct: number | null; asOf: string | null; resetAt: string | null };
@@ -104,10 +104,10 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
         state, doing: jobDoing(state, job.status, text(job.repo)), startedAt,
         lastEvent: last, lastActivityAt: newest(last?.at, job.processLive === 'yes' ? map.generatedAt : null) };
     }).sort((a, b) => start(a) - start(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const live = jobs.filter(job => job.state === 'running').length, done = jobs.filter(job => job.state === 'done').length;
-    // The dispatcher (and the ledger read from it) still counts a published job; the in-app engine never did.
+    const live = jobs.filter(job => job.state === 'running').length;
+    // Counts already exclude completed attempts upstream. Never subtract recent jobs again.
     const reported = row ? row.running : count(pool?.running);
-    const running = reported === null ? count(engine?.busy) : Math.max(0, reported - done);
+    const running = reported === null ? count(engine?.busy) : reported;
     const held = row ? row.held : pool?.held ?? null, queued = row ? row.queued : null;
     const state: OrgState = held ? 'held' : (running ?? 0) > 0 || live > 0 ? 'running' : running === 0 || (jobsKnown && !jobs.length) ? 'idle' : 'unknown';
     const models = [...new Set(jobs.map(job => job.model))];

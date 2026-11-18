@@ -1,7 +1,8 @@
 # Queue statistics
 
 `phm queue stats --json` reads the local metadata journal at
-`$ASHLR_HOME/queue/visits.jsonl` (default `~/.ashlr/queue/visits.jsonl`) and
+`$ASHLR_HOME/queue/visits.jsonl` when `ASHLR_HOME` is an absolute path, otherwise
+`~/.ashlr/queue/visits.jsonl`, and
 returns station and pool aggregates for sliding
 1 hour, 24 hour and 7 day windows. `--window <seconds>` selects one window.
 The command is read-only and requires no service or credentials. Missing journals

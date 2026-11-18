@@ -11,6 +11,18 @@ This is the source candidate in `contrib/mac/dispatchd.py`, supported by
 then the sanctioned `contrib/mac/install.sh` path. Agents never install over
 `~/.ashlr-runs/bin`. Publication remains fork-only through `publish.sh`.
 
+## Recover a pushed job without a PR
+
+Run `phm fleet republish --dry-run --json` (omit `--json` for one plain line per job).
+It reads `~/.ashlr-runs/<job>.publish`, or `--runs-dir <dir>`, and checks public GitHub evidence.
+Only an abort after the push marker, an exact surviving fork branch, and no open or merged PR
+produce a READY proposal to cherry-pick the observed SHA onto fresh `master`. Nothing is queued or written.
+JSON uses `fleet.republish.v1`; each job has `status`, `reason`, `head`, `sha`, `readyLine`, and `pr_state`
+(`none`, `open`, `merged`, `closed`, or `unknown` when the PR lookup is unavailable).
+Exit codes: 0 complete, 1 unknown evidence, 2 bad usage. Missing push links, unreadable/oversized
+logs, private repositories, API failures and incomplete PR pages stay unknown. Logs are capped at 2 MiB.
+This preview cannot establish cherry-pick compatibility or find recovery PRs under another head.
+
 ## Job requirements
 
 The live producer input is `queue/router-queue.md`. For example:
@@ -819,6 +831,26 @@ The default is a dry run: one plain line per batch, or `--json` for the
 `router-queue.original.md`, then writes `router-queue.md` and
 `prompts/<batch id>.md` there. It never replaces existing files and never
 edits the input queue.
+
+## Steer the queue
+
+Run `phm queue` to list the queued jobs in the order they launch: position, id,
+repo, lane, tier, age and, when a newer cycle of the same job is queued, the id
+that replaces it. `phm queue --json` returns the same list as the `launch` field
+(schema `queue.order.v1`, `version` 1) beside the batch report.
+
+Three actions change one queued job. Each takes `--dry-run`, which prints the
+change and writes nothing, and `--json` (schema `queue.action.v1`):
+
+- `phm queue top <id>` moves the job to the front.
+- `phm queue lane <id> <lane>` moves it to another lane. Held and unknown lanes are refused.
+- `phm queue drop <id>` takes it out. The row is copied to `queue/dropped.tsv` and its router line is marked `DROPPED`.
+
+Every write holds `queue/ready.lock`, edits a fresh read of `queue/ready.tsv` and
+keeps the earlier text in `queue/ready.tsv.bak`. If the dispatcher was in the
+middle of a run and wrote the old queue back, the command says so and exits 1;
+run it again. The Queue pane in the desktop app uses the same calls through
+`GET` and `POST /api/verse/fleet/queue/order`.
 
 ## Batch session results
 

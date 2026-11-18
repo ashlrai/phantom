@@ -2,7 +2,9 @@
 
 # Devin in Phantom
 
-See [Phantom Bots](BOTS.md) for provider-neutral bot metadata and routing.
+See [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) for provider-neutral bot metadata and routing.
+See [external bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md) for quota-driven handoffs and the advisory
+Devin Bot adapter: the documented v3 API has no Bot messaging/status endpoints.
 
 ## Devin Review
 

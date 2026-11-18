@@ -82,14 +82,14 @@ describe('phm org reader', () => {
 
   it('shows a published cloud job as done and does not count it as running', async () => {
     const tree = await org(fleet({ sessions: [session('RQ-CLOUD', 'devin', { status: 'stale', live: 'no', published: true }), session('RQ-LIVE', 'devin')],
-      lanes: [lane('devin', 2, 4), lane('zai', 1, 1)] }));
+      lanes: [lane('devin', 1, 4), lane('zai', 1, 1)] }));
     const devin = find(tree, 'devin');
     expect(devin).toMatchObject({ state: 'running', doing: '1 job running', running: 1, target: 4 });
     expect(devin.jobs.map(job => [job.id, job.state, job.doing])).toEqual([
       ['RQ-CLOUD', 'done', 'Published its result; waiting for cleanup'], ['RQ-LIVE', 'running', 'Working in phantom']]);
     expect(renderOrgTreeText(tree, NOW)).toContain('RQ-CLOUD | done | Published its result; waiting for cleanup');
     // A lane whose only job already published is idle, not running.
-    const only = await org(fleet({ sessions: [session('RQ-CLOUD', 'devin', { published: true })], lanes: [lane('devin', 1, 4)] }));
+    const only = await org(fleet({ sessions: [session('RQ-CLOUD', 'devin', { published: true })], lanes: [lane('devin', 0, 4)] }));
     expect(find(only, 'devin')).toMatchObject({ state: 'idle', running: 0 });
     expect(only.leader.state).toBe('idle');
   });
@@ -97,19 +97,22 @@ describe('phm org reader', () => {
   it('reads "published" from the publish record itself: a RESULT line from this attempt, no exit code needed', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'org-reader-')), run = join(dir, 'queue', 'run'), at = (NOW - 3_600_000) / 1000;
     mkdirSync(run, { recursive: true });
-    for (const job of ['RQ-CLOUD', 'RQ-BUSY', 'RQ-RETRY']) {
+    for (const job of ['RQ-CLOUD', 'RQ-BUSY', 'RQ-RETRY', 'RQ-DENIED']) {
       writeFileSync(join(run, `${job}.line`), `${job}\tphantom\tdevin\tfrontier\t/fixture/prompt.md\n`);
       writeFileSync(join(run, `${job}.dispatched`), `${at}\n`);
     }
     writeFileSync(join(dir, 'RQ-CLOUD.publish'), 'RESULT PR https://github.com/ashlrai/phantom/pull/1\n');
     writeFileSync(join(dir, 'RQ-BUSY.publish'), 'AUTO_MERGE on\n');
+    writeFileSync(join(dir, 'RQ-DENIED.publish'), 'RESULT DENIED\n');
     // A RESULT left by an earlier attempt, written before this dispatch, says nothing about this one.
     writeFileSync(join(dir, 'RQ-RETRY.publish'), 'RESULT EMPTY\n'); utimesSync(join(dir, 'RQ-RETRY.publish'), at - 600, at - 600);
     const sessions = await getFleetSessions({ runsDir: dir, now: () => NOW, runPs: async () => '' });
-    const published = Object.fromEntries(sessions.sessions.map(row => [row.job, row.published]));
-    expect(published).toEqual({ 'RQ-CLOUD': true, 'RQ-BUSY': false, 'RQ-RETRY': false });
-    const tree = await org({ ...fleet({ lanes: [lane('devin', 3, 4)] }), sessions: async () => sessions });
+    const published = Object.fromEntries([...sessions.sessions, ...sessions.recent].map(row => [row.job, row.published]));
+    expect(published).toEqual({ 'RQ-CLOUD': true, 'RQ-BUSY': false, 'RQ-RETRY': false, 'RQ-DENIED': false });
+    const tree = await org({ ...fleet({ lanes: [lane('devin', 2, 4)] }), sessions: async () => sessions });
     expect(find(tree, 'devin').jobs.map(job => [job.id, job.state])).toEqual(expect.arrayContaining([['RQ-CLOUD', 'done']]));
+    expect(sessions.recent.find(row => row.job === 'RQ-CLOUD')).toMatchObject({ status: 'finished', published: true });
+    expect(sessions.sessions.some(row => row.job === 'RQ-CLOUD')).toBe(false);
     expect(find(tree, 'devin').running).toBe(2);
   });
 });

@@ -4,11 +4,12 @@
 
 # Phantom documentation
 
-- [Phantom Bots](BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
+- [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
+- [External bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md): unified roster, quota-driven draining, write-ahead handoffs and the Devin Bot advisory API gap.
 
 - [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
 
-- [Append-union PR conflict resolver](PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.
+- [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.
 
 Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
 
@@ -42,7 +43,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 
 | Your task | Canonical guide |
 |-----------|-----------------|
-| Plan bounded cross-provider child agents | [Subagents](SUBAGENTS.md) |
+| Plan bounded cross-provider child agents | [Subagents](https://github.com/ashlrai/phantom/blob/master/docs/SUBAGENTS.md) |
 | Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
@@ -90,6 +91,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Quarantine a flaky test only with a tracked, expiring ledger row | [Quarantine ledger](https://github.com/ashlrai/phantom/blob/master/docs/QUARANTINE-LEDGER.md) |
 | See real candidates, rejection and parent-linked improvement without model credentials | [Executable demo](DEMO.md) |
 | Understand the objective and how progress is measured | [Phantom North Star](NORTH-STAR.md) |
+| Read the historical four-pillar assistant vision | [Original Phantom vision](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) |
 | See the six irreducible core parts and what is a plugin | [Core spec](https://github.com/ashlrai/phantom/blob/master/docs/CORE-SPEC.md) |
 | Route future work toward the optimized organization architecture | [Phantom end-state architecture](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ENDSTATE.md) |
 | Map org repository ownership, leverage and proposed cross-repo work | [Org repository map](https://github.com/ashlrai/phantom/blob/master/docs/strategy/ORG-REPO-MAP.md) |
@@ -146,6 +148,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Preview or remove finished job worktrees | [Worktree prune](https://github.com/ashlrai/phantom/blob/master/docs/WORKTREE-PRUNE.md) |
 | Reclaim rebuildable disk bytes by class, or install the daily maintenance job | [Standing disk maintenance](DISK-MAINT.md) |
+| Compare documented commands, configuration and versions with source | [Documentation drift checker](https://github.com/ashlrai/phantom/blob/master/docs/DOCS-DRIFT.md) |
 | Act on Eng Ops incident files for a stuck release, a launchd loop, a stalled lane, or outside load | [Autofix](https://github.com/ashlrai/phantom/blob/master/docs/AUTOFIX.md) |
 | Build release evidence and distinguish distribution from activation | [Releasing — source guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md) |
 | Understand the signed desktop updater feed and its published-state verification | [Desktop update channel](https://github.com/ashlrai/phantom/blob/master/docs/DESKTOP-UPDATE-CHANNEL.md) |
@@ -167,6 +170,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Inspect recorded producer outcomes and their deterministic learning path | [Execution feedback](EXECUTION-FEEDBACK.md) |
 | Review the fleet queueing-network model and its proposed child-job backlog | [Queueing-network plan](https://github.com/ashlrai/phantom/blob/master/workplans/2026-10-26-queue-network/README.md) |
 | Ingest local queue snapshots into lane and tier merge metrics and advisory priors | [Local router metrics feed — source guide](https://github.com/ashlrai/phantom/blob/master/docs/METRICS-ROUTER-FEED.md) |
+| Score landed impact and exploration from local PR and queue evidence | [Impact metrics](IMPACT-METRICS.md) |
 | Read bridge PR merge, release ancestry and exact npm or crates.io publication | [Bridge production metrics](PRODUCTION-METRICS.md) (`phm metrics prod --json`) |
 | Read current and historical account usage, credit units, captured dollar balances and cloud estimates | [Resource evidence](RESOURCE-EVIDENCE.md) |
 | Refresh standalone advertised model metadata through Phantom Secrets | [Model capability cache](https://github.com/ashlrai/phantom/blob/master/docs/MODELCAPS.md) |
@@ -189,6 +193,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Understand the standing authority design, and turn autonomy on under a grant that starts in shadow | [Standing authority — source guide](https://github.com/ashlrai/phantom/blob/master/docs/STANDING-AUTHORITY.md) · [Current activation state](AUTONOMY-GAP.md#current-activation-state-315) |
 | Find a Verse route family, its gates and wire shapes | [Verse build contract — source guide](https://github.com/ashlrai/phantom/blob/master/docs/VERSE-CONTRACT-V1.md#v310-additive-contract--the-workbench-and-the-autonomy-console) |
 | Score a built site or repo checkout for agent-facing readiness signals | [Agent readiness scorer (source)](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md) |
+| Read or regenerate the cross-repo changelog and its JSON document | [Ecosystem changelog](ECOSYSTEM-CHANGELOG.md) |
 
 The CLI's `universe help`, `resources pool --help` and `runtime help` describe
 the command surface in the exact binary you are running. A source guide may
@@ -323,6 +328,7 @@ canonical release guide for required hosted qualification and publication.
 - [Execution Identity V1](https://github.com/ashlrai/phantom/blob/master/docs/EXECUTION-IDENTITY-V1.md)
 - [Friction loop doctrine](https://github.com/ashlrai/phantom/blob/master/docs/doctrine/FRICTION-LOOP.md)
 - [Constraints and guardrails ledger](https://github.com/ashlrai/phantom/blob/master/docs/strategy/CONSTRAINTS.md)
+- [Fleet constraint audit: classification and follow-ups](https://github.com/ashlrai/phantom/blob/master/docs/CONSTRAINT-AUDIT.md)
 - [Grok Bot beside Phantom](https://github.com/ashlrai/phantom/blob/master/docs/GROK-BOT-COMPANION.md)
 - [Harness digest contribution format](https://github.com/ashlrai/phantom/blob/master/docs/HARNESS-DIGEST-FORMAT.md)
 - [Historical release and operator reference](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING-HISTORICAL.md)
@@ -408,3 +414,5 @@ canonical release guide for required hosted qualification and publication.
 [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 
 - [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
+
+- [App restart](https://github.com/ashlrai/phantom/blob/master/docs/APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.

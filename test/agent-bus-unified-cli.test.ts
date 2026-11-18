@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
+import * as seats from '../src/core/bots/seats.js';
 
 let base: string;
 let root: string;
@@ -27,6 +28,22 @@ async function run(args: string[], env: NodeJS.ProcessEnv = {}) {
 }
 
 describe('phm agents bus (unified)', () => {
+  it('lists configured seat participants additively without registering identities or channels', async () => {
+    const participant = { participantId: 'review-seat', provider: 'devin' as const, displayName: 'Reviewer', capabilities: ['code'],
+      status: 'idle' as const, wake: { kind: 'poll' as const, target: 'review-seat' } };
+    const read = vi.spyOn(seats, 'seatParticipants').mockResolvedValueOnce([participant]);
+    try {
+      expect(await run(['id', 'list'])).toMatchObject({ code: 0, json: { identities: [], channels: [], participants: [participant] } });
+    } finally { read.mockRestore(); }
+    expect((await run(['id', 'list'])).json.participants).toEqual([]);
+  });
+  it('surfaces unavailable seat rosters without registering identities', async () => {
+    const read = vi.spyOn(seats, 'seatParticipants').mockRejectedValueOnce(new Error('Unsafe seat file.'));
+    try {
+      await expect(run(['id', 'list'])).rejects.toThrow('Unsafe seat file.');
+    } finally { read.mockRestore(); }
+    expect((await run(['id', 'list'])).json.identities).toEqual([]);
+  });
   it('registers, messages, hands off and reads an inbox end to end', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude', '--model', 'opus'])).json).toMatchObject({ status: 'created', identity: { handle: 'atlas' } });
     expect((await run(['id', 'register'], { PHM_AGENT_ID: 'nova', CODEX_SANDBOX: 'seatbelt' })).json)

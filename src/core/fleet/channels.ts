@@ -64,6 +64,8 @@ export interface ChannelsStatusOptions {
   /** Defaults to process.env — presence checks only, values are never read. */
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
+  /** A shared-inbox read the caller already made, so one pass reads the file once. */
+  inbox?: Awaited<ReturnType<typeof readInboxEntries>>;
 }
 
 /** Map an inbox `source` label back to its channel kind. */
@@ -102,7 +104,8 @@ function telegramPaired(runsDir: string): boolean {
   }
 }
 
-function emailPairedCount(runsDir: string): number {
+/** Verified email senders: addresses that completed the pairing-secret handshake. */
+export function emailPairedCount(runsDir: string): number {
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(runsDir, 'queue', 'email-paired.json'), 'utf8'));
     const addresses = parsed && typeof parsed === 'object' ? (parsed as { addresses?: unknown }).addresses : null;
@@ -151,7 +154,7 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
   const env = opts.env ?? process.env;
   const now = opts.now ?? (() => new Date());
 
-  const inbox = await readInboxEntries({ runsDir, limit: Number.MAX_SAFE_INTEGER });
+  const inbox = opts.inbox ?? await readInboxEntries({ runsDir, limit: Number.MAX_SAFE_INTEGER });
   const seen = new Map<InboundChannel, { received: number; lastSeenAt: string | null; lastMs: number }>();
   if (inbox.sourceState !== 'degraded') {
     for (const entry of inbox.entries) {

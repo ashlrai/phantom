@@ -313,8 +313,14 @@ for line in ready_raw:
     ids = gate_ids(rd(pf))
     if not ids: parked_diagnostics["empty_gate"] += 1; continue
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
+    try:
+        fields = line.split("\t")
+        spec = work_market.requirements([j, repo, lane, tier, pf] + fields[6 if PARK_DEP.match(fields[0]) else 5:])
+        if work_market.needs_gh(rd(pf)) and "gh" not in spec["needs"]: spec["needs"].append("gh")
+        spec = work_market.requirements([j, repo, lane, tier, pf, json.dumps(spec)])
+    except (ValueError, TypeError): parked_diagnostics["invalid"] += 1; continue
     need[lane] = max(need[lane] - 1, 0)
-    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
+    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf, json.dumps(spec, separators=(",", ":"))])))
 # Recover up to observed PR capacity promptly, with one hourly probe at saturation.
 # Reservations prevent repeated ticks from spending the same capacity twice.
 # Unknown evidence stays parked; the separate publish drip still applies.
@@ -410,7 +416,7 @@ picked_specs = {}
 for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
-    try: spec = work_market.from_envelope(attrs)
+    try: spec = work_market.from_envelope(attrs, text)
     except (ValueError, TypeError): skip(j, "invalid-requirements"); continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
@@ -457,6 +463,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
         if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
         dep_parks.append((j, rm.group(1), pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        picked_specs[j] = spec
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
@@ -478,9 +485,12 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
         skip(j, "recent-empty-streak"); continue
     if quality_group and quality_group in quality_groups:
         skip(j, "duplicate-single-case-test-file"); continue
-    # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
-    lane = pool if len(picks[pool]) < need[pool] or pool in ("codex-local", "omlx") else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    if len(picks[lane]) >= need[lane]: continue
+    # Keep capability needs in ready.tsv so dispatch cannot route a repair back to an incapable lane.
+    candidates = [pool] if pool in ("codex-local", "omlx") else GENERAL
+    capable = [l for l in candidates if len(picks[l]) < need[l]
+               and set(spec["needs"]).issubset(work_market.executor_capabilities(l, slots.get(l, {})) or set())]
+    if not capable: skip(j, "no-capable-capacity"); continue
+    lane = pool if pool in capable else max(capable, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     prompt = prompt_body(j, rm.group(1), lane, tier, attrs, text)
     reason = empty_gate(j, rm.group(1), prompt)
     if reason:
@@ -650,7 +660,7 @@ if out or unparks or dep_out or rate_candidates:
             for j, repo, l, tier, pf, p, i in out:
                 f.write("\t".join([j, repo, l, tier, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
-                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
+                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
 if out:
     with open(Q + "/claimed.tsv", "a") as f:

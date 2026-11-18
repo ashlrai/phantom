@@ -44,7 +44,8 @@ it('keeps the disk contract byte-compatible and adds launch evidence only as ext
   const old = await readFleetVitals(root, 100_000);
   const host = await readHostVitals(root, 100_000);
   expect(host).toMatchObject({ schema: 'fleet.vitals.v1', status: old.status, disk: old.disk });
-  expect(Object.keys(host).sort()).toEqual(['disk', 'emptyCauses', 'launch', 'launchCost', 'schema', 'status', 'stuck']);
+  expect(Object.keys(host).sort()).toEqual(['disk', 'emptyCauses', 'launch', 'launchCost', 'local_models', 'schema', 'status', 'stuck']);
+  expect(host.local_models).toEqual({ loaded_models: null, last_unload_reason: null, models: [] });
   expect(Object.keys(old).sort()).toEqual(['disk', 'schema', 'status']);
   expect(host.launch).toEqual({ reason: null, nextWindowSeconds: null, queued: 3, lanes: [{ lane: 'claude', running: 1, target: 8, queued: 3 }] });
   expect(host.launchCost.launches).toHaveLength(1);
@@ -75,6 +76,7 @@ it('reads measured, partial and unknown launch costs while projecting only metad
   expect(await cmdFleetVitals(['--runs-dir', root, '--json'])).toBe(0);
   const out = JSON.parse(String(log.mock.calls[0]![0]));
   expect(out.schema).toBe('fleet.vitals.v1');
+  expect(out.local_models.loaded_models).toBeNull();
   expect(out.launchCost.launches).toHaveLength(3);
   expect(typeof (await FLEET_SUBCOMMAND_LOADERS.vitals!()).cmdFleetVitals).toBe('function');
 });
@@ -102,6 +104,7 @@ it('rejects bad arguments and prints text with disk lines first', async () => {
   expect(lines.some(l => l.startsWith('Launch queue: unknown'))).toBe(true);
   expect(lines.some(l => l.startsWith('Launch cost: unknown (source missing)'))).toBe(true);
   expect(lines).toContain('Next launch window: unknown');
+  expect(lines).toContain('Local models: loaded models, memory fit and last unload reason unknown');
   expect(lines).toContain('Empty causes (24h): unknown');
   expect(lines).toContain('Jobs stuck: unknown');
 });

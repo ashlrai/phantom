@@ -398,7 +398,7 @@ def tgt(l):   # the target a lane may launch against: the controller's effective
 # with no work). Only held_by == "autobackoff" entries are ever auto-unheld or extended; manual holds are never touched.
 # Nothing from the log is stored or logged: only a fixed pattern id, lane, job, until and src.
 AB_BY = "autobackoff"; AB_TAIL = 16384; AB_CAP = 86400   # rev5: 7d max removed (Security: log merges model stdout, any line is forgeable)
-AB_MAX = AB_CAP; AB_DEF = 6 * 3600
+AB_DEF = 6 * 3600
 _Q = r"(?:'|\u2019)"; _CX = r"^(?:\[[0-9T:.\-]+Z?\]\s*)?ERROR: "
 AB_RX = {"codex": [("codex_usage_limit", re.compile(r"(?im)" + _CX + r"you" + _Q + r"ve hit your usage limit\b.*$")),
                    ("codex_credits_exhausted", re.compile(r"(?im)" + _CX + r"(?:credits? (?:are |have been )?(?:exhausted|depleted)|out of credits|insufficient credits)\b.*$")),
@@ -677,7 +677,7 @@ if isinstance(_disk_growth, dict) and _disk_growth:
 DISK_GATE = (AP or {}).get("lane_disk_gate") or "yellow"
 if DISK_GATE not in ("green", "freeze", "halve"): DISK_GATE = "yellow"
 PREV_DISK_GATE = rd(R + "/.autopilot-disk-gate").strip() if os.path.exists(R + "/.autopilot-disk-gate") else ""
-if AP:   # devin limits: 10/3/16 by default (DEVIN-LEVERAGE-20261026); a devin block in budget-overrides.json overrides floor and ceiling
+if AP:   # devin limits: target 6, floor 3, ceiling 10 by default (DEFAULT above, DEVIN-LEVERAGE-20261026); a devin block in budget-overrides.json overrides floor and ceiling
     lim = AP.get("devin", {}).get("limits") or {}
     for a in ("floor", "ceiling"):
         if isinstance(lim.get(a), int): slots["devin"][a] = lim[a]
@@ -1172,7 +1172,9 @@ for bp in glob.glob(R + "/*.base"):
     if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
-    if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+    # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
+    published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
+    if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
         if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
         if _rc(j) is None and not result(j):
             target = drain_target(j, _job_repo(j))
@@ -1215,7 +1217,9 @@ def reap_worktrees():
         if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
         try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
         except Exception: recent = NOW
-        if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+        # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
+        published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
+        if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
             if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
             if _rc(j) is None and not result(j):
                 target = drain_target(j, _job_repo(j))
@@ -1575,8 +1579,7 @@ for line in _raw + requeue:
         else:
             routed.append("\t".join(f)); continue
     current = slots.get(previous["pool"], {}) if previous else {}
-    hard_down = (current.get("auth_failed") is True or (type(current.get("quota")) in (int, float) and current["quota"] == 0)
-                 or (current.get("held") and current.get("held_reason") == "auth_failure"))
+    hard_down = work_market.hard_down(current, previous["pool"] in hold) if previous else False   # one definition shared with the work market (RQ-CONSTRAINT-AUDIT-1)
     record, reason = route_decision(previous, proposed, NOW, hard_down, launched)
     if previous is None and not launched: record["assigned"] = False
     route_state[job] = record
@@ -2083,7 +2086,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
             prior = route_state.get(route_job)
             if prior and not prior.get("assigned", True): prior = None
-            rec, why = route_decision(prior, lane, NOW, work_market.hard_down(slots.get(prior["pool"], {})) if prior else False)
+            rec, why = route_decision(prior, lane, NOW, work_market.hard_down(slots.get(prior["pool"], {}), prior["pool"] in hold) if prior else False)
             if why and rec["pool"] != lane: raise RuntimeError("batch route violated hysteresis")
             rec.update(assigned=True, launched=True)
             route_state[route_job] = rec

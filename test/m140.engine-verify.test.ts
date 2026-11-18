@@ -32,6 +32,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { callEngineerTool } from '../src/core/mcp-native-engineer.js';
 
 // ============================================================================
 // 3. Fuzzy patch-apply ladder — pure, no I/O
@@ -487,12 +488,7 @@ vi.mock('../src/core/config.js', async () => {
   };
 });
 
-// Lazy import AFTER mocks.
-let callEngineerTool: typeof import('../src/core/mcp-native-engineer.js')['callEngineerTool'];
-
-beforeEach(async () => {
-  const mod = await import('../src/core/mcp-native-engineer.js');
-  callEngineerTool = mod.callEngineerTool;
+beforeEach(() => {
   mockDetect.mockReset();
   mockRun.mockReset();
 });

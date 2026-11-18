@@ -259,7 +259,7 @@ describe('verse seats — native accounts', () => {
     // newest model the catalog offers, not whichever one was newest when this
     // test was written. Pinning a specific id here is how the Codex list went
     // stale at gpt-5.5 while the catalog had moved on to the GPT-6 family.
-    expect(codex.models[0]?.id).toBe('gpt-6.1-sol');
+    expect(codex.models[0]?.id).toBe('gpt-6.2-sol');
     expect(codex.models.map((m) => m.id)).not.toContain('gpt-5.5-mini');
     // Hidden catalog slugs are never offered, even from the built-in list.
     expect(codex.models.map((m) => m.id)).not.toContain('gpt-reserve');

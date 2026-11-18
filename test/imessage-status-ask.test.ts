@@ -41,6 +41,7 @@ vi.mock('../src/core/comms/imessage-outbox.js', async (importOriginal) => {
 import { ingestIMessages } from '../src/core/comms/imessage-inbox-bridge.js';
 import { isOwnerStatusRequest, OWNER_STATUS_FALLBACK } from '../src/core/agents/owner-status-reply.js';
 import { formatChannelAck } from '../src/core/fleet/channel-ack-text.js';
+import { IMESSAGE_STATUS_REPLY_LOADER } from '../src/core/comms/imessage-inbox-bridge.js';
 import { readCursor, writeCursor, type IntakeMsg } from '../src/core/integrations/imessage.js';
 import type { AshlrConfig } from '../src/core/types.js';
 
@@ -131,5 +132,29 @@ describe('owner status ask over iMessage', () => {
     expect(result).toMatchObject({ ok: true, accepted: 1, cursor: 11 });
     expect(mockSends).toEqual([{ text: OWNER_STATUS_FALLBACK, to: MASON }]);
     expect(readCursor(runsDir)).toBe(11);
+  });
+});
+
+describe('published default status reply loader (no per-call seam)', () => {
+  const ingestDefault = (messages: IntakeMsg[]) => ingestIMessages(cfg(), {
+    runsDir, now, platform: 'darwin', busRoot: join(runsDir, 'bus'),
+    poll: async () => ({ ok: true, messages }), maxRowId: async () => ({ ok: true, rowid: 10 }),
+  });
+  afterEach(() => { delete (globalThis as Record<symbol, unknown>)[IMESSAGE_STATUS_REPLY_LOADER]; });
+
+  it('uses the published loader reply for a verified Mason ask', async () => {
+    (globalThis as Record<symbol, unknown>)[IMESSAGE_STATUS_REPLY_LOADER] =
+      async () => ({ ask: isOwnerStatusRequest, compose: async () => DIGEST, fallback: OWNER_STATUS_FALLBACK });
+    await ingestDefault([row(11, 'status')]);
+    expect(mockSends).toEqual([{ text: DIGEST, to: MASON }]);
+  });
+
+  it('degrades to the generic ack when no loader is published', async () => {
+    await ingestDefault([row(11, 'status')]);
+    const [line] = acks();
+    expect(mockSends).toEqual([{
+      text: formatChannelAck({ channel: 'imessage', dedupeKey: line!['receipt'] as string, status: 'accepted' }),
+      to: MASON,
+    }]);
   });
 });
