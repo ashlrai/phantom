@@ -102,7 +102,7 @@ describe('reading job roots and the CLI', () => {
     expect(await cmdHost(['load', '--json'], deps(null, out))).toBe(1);
     expect(JSON.parse(out.join(''))).toMatchObject({ state: 'unknown', groups: [] });
     expect(await cmdHost(['load', '--jsno'], deps('', out))).toBe(2);
-    expect(await cmdHost(['top'], deps('', out))).toBe(2);
+    expect(await cmdHost(['watch'], deps('', out))).toBe(2);
     expect(await cmdHost(['--help'], deps('', out))).toBe(0);
     const failing = await readHostLoadReport({ ps: () => Promise.reject(new Error('denied')), jobRoots: () => { throw new Error('denied'); }, load: () => ({ load1: null, load5: null, load15: null, cores: null, ratio: null }) });
     expect(failing).toMatchObject({ state: 'unknown', jobRoots: null });

@@ -16,6 +16,7 @@ import { DiskCard } from './DiskCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
 import { PulseCard } from './PulseCard.js';
 import { ShippedCard } from './ShippedCard.js';
+import { ThisMacCard } from './ThisMacCard.js';
 import styles from './home.module.css';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
@@ -42,6 +43,7 @@ export function HomePane({ visible }: PaneProps) {
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <ApprovalsCard visible={visible} />
     <LeaderRepliesCard visible={visible} />
+    <ThisMacCard visible={visible} className={styles.card} />
     <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>
       <p>Last hour: <Value field={home.mergedLastHour}>{String}</Value></p>
       <p>Last 24 hours: <Value field={home.merged24h}>{String}</Value></p>
