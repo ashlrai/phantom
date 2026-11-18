@@ -15,7 +15,7 @@ import { ApprovalsCard } from './ApprovalsCard.js';
 import { DiskCard } from './DiskCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
 import { PulseCard } from './PulseCard.js';
-import { ShippedCard } from './ShippedCard.js';
+import { FleetShippedCard } from './FleetShippedCard.js';
 import { ThisMacCard } from './ThisMacCard.js';
 import styles from './home.module.css';
 
@@ -66,7 +66,7 @@ export function HomePane({ visible }: PaneProps) {
     <Card title="Leader" action="Open Leader" onOpen={() => setHomeChoice('leader')}>
       <p><Value field={home.unreadLeaderReplies}>{n => n === 0 ? 'No unread replies.' : n === 1 ? '1 unread reply.' : `${n} unread replies.`}</Value></p>
     </Card>
-    <ShippedCard visible={visible} />
+    <FleetShippedCard visible={visible} />
     <DiskCard visible={visible} />
   </section>;
 }
