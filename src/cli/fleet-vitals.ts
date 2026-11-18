@@ -8,6 +8,7 @@ import { readLaunchCosts } from '../core/fleet/launch-cost.js';
 import { readLaunchVitals, type LaunchVitals } from '../core/fleet/launch-vitals.js';
 import { readEmptyCauses, topEmptyCauses, type EmptyCause } from '../core/fleet/empty-cause.js';
 import { stuckSummaryLine } from '../core/fleet/stuck-jobs.js';
+import { leaderLivenessLine, readLeaderLiveness, type LeaderLiveness } from '../core/fleet/leader-liveness-evidence.js';
 import { readStuckJobs } from './fleet-stuck.js';
 
 const number = z.number().finite();
@@ -51,6 +52,17 @@ export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now 
     stuck: { count: stuck.count, oldestAgeSeconds: stuck.oldestAgeSeconds } };
 }
 
+/**
+ * `phm fleet vitals` view: HostVitals unchanged plus independent leader evidence. Kept out of
+ * readHostVitals so that exported shape (and its exact-key contract test) stays byte-compatible.
+ * Unknown is null; a stale planner is evidence only and grants no authority.
+ */
+export type FleetVitalsView = HostVitals & { leader_liveness: LeaderLiveness };
+export async function readFleetVitalsView(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<FleetVitalsView> {
+  const [host, leader_liveness] = await Promise.all([readHostVitals(root, now), readLeaderLiveness(root, now)]);
+  return { ...host, leader_liveness };
+}
+
 const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue, first-minute launch cost, the top three causes of empty jobs in 24 hours and how many jobs are stuck. Missing readings are unknown.';
 export async function cmdFleetVitals(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
@@ -64,7 +76,7 @@ export async function cmdFleetVitals(args: string[]): Promise<number> {
     else if (args[i + 1] && !args[i + 1]!.startsWith('-')) root = args[++i]!;
     else { console.error(USAGE); return 2; }
   }
-  const report = sanitizePublicJson(await readHostVitals(root)) as HostVitals;
+  const report = sanitizePublicJson(await readFleetVitalsView(root)) as FleetVitalsView;
   if (json) console.log(JSON.stringify(report));
   else {
     console.log(`Disk growth: ${report.status}; free ${report.disk?.free_gb ?? 'unknown'} GB`);
@@ -82,6 +94,7 @@ export async function cmdFleetVitals(args: string[]): Promise<number> {
     console.log(`Empty causes (24h): ${empties.total === null ? 'unknown' : empties.top.length
       ? `${empties.top.map(c => `${c.cause} ${c.count}`).join(', ')} of ${empties.total}` : 'none'}`);
     console.log(stuckSummaryLine(report.stuck));
+    console.log(leaderLivenessLine(report.leader_liveness));
   }
   return 0;
 }
