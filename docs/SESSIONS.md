@@ -26,6 +26,16 @@ and finished sessions stay for an hour. Narrow it with `--lane <lane>`,
 `fleet.live-sessions.v1` document. The desktop Sessions pane shows the same tree.
 See [live sessions](FLEET-API.md#live-sessions).
 
+To see what one session is doing right now, run `phm sessions tail <id>`
+with the job id from the tree. It prints the session's lane, model, start and
+PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
+new lines until it finishes. Every line is redacted first. With `--json` each
+line is one object `{ts, source, text}`; the first also carries `detail`
+(lane, model, repo, tokens, PR; `null` when unknown) and
+`controls: {available, reason}`, which says whether `phm job pause|stop|move`
+can reach it. An unknown id is a plain error with exit code 2. Choosing a node
+on the desktop Compute map opens a side panel with the same log and controls.
+
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit
 `--json` for plain text). The typed `reconcileSessions` API returns
 `fleet.session-reconciliation.v1`: local runs classified as `live`, `finished`
