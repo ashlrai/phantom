@@ -105,7 +105,9 @@
     "docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md",
     "docs/MACHINE-TELEMETRY.md",
     "docs/REPO-OWNERS.md",
-    "docs/PRODUCTION-METRICS.md"
+    "docs/PRODUCTION-METRICS.md",
+    "docs/IMPACT-METRICS.md",
+    "docs/ECOSYSTEM-CHANGELOG.md"
   ],
   "bundledDependencies": [
     "@modelcontextprotocol/sdk",

@@ -13,6 +13,7 @@ import { parseVerify } from '../src/web-ui/routes/verse/fleet-board/returns-veri
 
 const T = Date.parse('2026-11-14T18:00:00.000Z');
 const HEADS: Record<number, string> = { 11: 'aaaaaaa1111111', 12: 'bbbbbbb2222222' };
+const VERIFY_PATH_LITERAL = '/api/verse/fleet/coordination-claims/returns/verify';
 
 function board(): FleetBoard {
   return {
@@ -129,10 +130,11 @@ describe('coordination returns verify route', () => {
   });
 
   it('is dispatched by the claims module ahead of the /returns match', async () => {
+    expect(PATH).toBe(VERIFY_PATH_LITERAL);
     const gh = fakeGh();
     const returns = vi.fn(async () => true);
     const claims = createFleetCoordinationClaimsApi({ read: board, returns, returnsVerify: api(gh) });
-    expect((await call(claims)).body).toMatchObject({ complete: true, authority: 'none' });
+    expect((await call(claims, 'GET', VERIFY_PATH_LITERAL)).body).toMatchObject({ complete: true, authority: 'none' });
     expect(returns).not.toHaveBeenCalled();
     // The default seam resolves the same path lazily; POST proves it without touching gh or the ledger.
     expect(await call(createFleetCoordinationClaimsApi({ read: board }), 'POST')).toMatchObject({ handled: true, status: 405 });
