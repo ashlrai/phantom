@@ -3,13 +3,14 @@ import { readGoals } from './goals.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { join } from 'node:path';
 import { runsRoot } from '../metrics/loop-collect.js';
-import { readMetricsSeries } from './metrics-series.js';
+import { readJobYield, readMetricsSeries } from './metrics-series.js';
 import { metricsReader, readMetrics } from './metrics-glance.js';
 
 /** The dispatcher rollup covers jobs launched in the last 24 hours. */
 export async function readMetricsPanel(runsDir = runsRoot(), now = Date.now()) {
-  const [goals, status, generatorYield, series, glance] = await Promise.all([readGoals(runsDir), readFleetRunsDirState({ runsDir }), readGeneratorYield(runsDir), readMetricsSeries(join(runsDir, 'metrics', 'jobs.jsonl'), now),
-    readMetrics({ now, reader: metricsReader(runsDir) })]);
+  const jobs = join(runsDir, 'metrics', 'jobs.jsonl');
+  const [goals, status, generatorYield, series, glance, jobYield] = await Promise.all([readGoals(runsDir), readFleetRunsDirState({ runsDir }), readGeneratorYield(runsDir), readMetricsSeries(jobs, now),
+    readMetrics({ now, reader: metricsReader(runsDir) }), readJobYield(jobs, 24, now)]);
   const names = new Set([...goals.lanes.map(row => row.lane), ...status.lanes.map(row => row.lane)]);
   return {
     schema: 'fleet.metrics-panel.v1' as const,
@@ -17,6 +18,8 @@ export async function readMetricsPanel(runsDir = runsRoot(), now = Date.now()) {
     /** The `phm metrics` report: the four headline numbers, lanes and spend-down. */
     glance,
     generatorYield,
+    /** The `phm jobs yield` report: which job kinds are worth a launch slot. */
+    jobYield,
     series,
     hourlyMerges: series.known ? series.hours.map(hour => hour.merged!) : null,
     lanes: [...names].sort().map(lane => {

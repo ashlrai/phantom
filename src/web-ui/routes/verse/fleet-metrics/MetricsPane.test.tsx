@@ -38,6 +38,12 @@ it('shows generator yield and missing measurements', () => {
   expect(screen.getAllByText('unknown').length).toBeGreaterThan(0);
 });
 
+it('shows the Job yield card as unknown when the server sends no report', () => {
+  render(<MetricsPane {...({ visible: true } as Parameters<typeof MetricsPane>[0])} />);
+  expect(screen.getByRole('heading', { name: 'Job yield' })).toBeTruthy();
+  expect(screen.getByText('Job yield: unknown')).toBeTruthy();
+});
+
 it('keeps unreadable history unknown and does not draw invented measurements', () => {
   state.known = false;
   render(<MetricsPane {...({ visible: true } as Parameters<typeof MetricsPane>[0])} />);

@@ -8,6 +8,9 @@
  * job id is several runs. `finish` rows pair with the job's earliest unfinished
  * run, `publish` rows with its latest run, and the job's last `outcome` row is
  * credited once, to the run that opened the PR (else the latest run).
+ *
+ * `jobYield()` reads the same tally as `phm jobs yield` (`jobs.yield.v1`): finer
+ * job kinds, precheck skips, and a keep / watch / stop verdict per kind.
  */
 
 export const YIELD_MIN_LAUNCHES = 5;
@@ -31,6 +34,77 @@ export function jobFamily(id: string): string {
   const glued = /^(.*-)?([A-Za-z]+)\d[A-Za-z0-9]*$/.exec(id);
   if (glued) return `${glued[1] ?? ''}${glued[2]!.slice(0, 5)}*`;
   return id;
+}
+
+/** Author filler ids: RQ-, a repo code in capital letters, digits, A, digits, Q8. */
+export const FILLER_ID = /^RQ-([A-Z]+)[0-9]+A[0-9]+Q8$/;
+
+/**
+ * The job kind `phm jobs yield` judges: the id minus its trailing counter. Finer than `jobFamily`,
+ * so one recut area can be stopped while another keeps running.
+ *
+ * - Filler ids (`RQ-MD3A111800Q8`) -> `one-test filler <repo>`; the repo is the launch row's, else the id's repo code.
+ * - A closing `Q8` queue stamp is dropped, with the leader's `N<day><letter>` before it:
+ *   `RQ-SLOTYIELDN16NQ8` -> `RQ-SLOTYIELD`, `RQ-RECUTDEDUPQ8` -> `RQ-RECUTDEDUP`.
+ * - A last `-<digits>` or `-N<digits>` segment is dropped: `RQ-PR-LEVERAGE-1` -> `RQ-PR-LEVERAGE`.
+ * - A glued cycle is dropped: `C<digits>` at the end (`RQ-PHX-RECUTCOREC566` -> `RQ-PHX-RECUTCORE`),
+ *   else everything from the first digit that follows a letter (`SLACKCOMPOSER498S` -> `SLACKCOMPOSER`).
+ *   A word that really ends in C before its digits loses that C; the rule cannot tell the two apart.
+ */
+export function jobKind(id: string, repo = 'unknown'): string {
+  const filler = FILLER_ID.exec(id);
+  if (filler) return `one-test filler ${repo === 'unknown' ? filler[1]!.toLowerCase() : repo}`;
+  const kind = id.replace(/(?:N\d+[A-Z]?)?Q8$/, '').replace(/-N?\d+$/, '').replace(/(?<=[A-Za-z])(?:C\d+|\d[A-Za-z0-9]*)$/, '').replace(/-+$/, '');
+  return kind || id;
+}
+
+export type JobVerdict = 'keep' | 'watch' | 'stop';
+/** Merged per launch at or above this is worth launching again. */
+export const JOB_KEEP_RATE = 0.3;
+/** Merged per launch under this, over enough launches, is a kind to stop. */
+export const JOB_STOP_RATE = 0.1;
+/** Launches that must have ended before a kind can be told to stop. */
+export const JOB_STOP_MIN_LAUNCHES = 6;
+export const JOB_STOP_FIRST_LIMIT = 5;
+
+export interface JobYieldFamily {
+  family: string;
+  /** Launch slots used in the window. */
+  launches: number;
+  /** Launches with no finish, publish or merge yet. They never count toward a stop verdict. */
+  running: number;
+  empty: number;
+  /** Precheck skip rows: the job was turned away before it took a slot. */
+  skipped: number;
+  prs: number;
+  merged: number;
+  /** Null when nothing launched (unknown, not zero). */
+  merged_per_launch: number | null;
+  verdict: JobVerdict;
+  /** The counts behind the verdict, in plain words. */
+  reason: string;
+}
+
+export interface JobYieldStop { family: string; slots: number; merged: number; reason: string }
+
+/** `known: false` means the ledger could not be read: totals are null and the lists are empty. */
+export interface JobYieldReport {
+  schema: 'jobs.yield.v1';
+  version: 1;
+  window_hours: number;
+  known: boolean;
+  launches: number | null;
+  merged: number | null;
+  empty: number | null;
+  skipped: number | null;
+  /** Launch slots that went to kinds with a stop verdict. */
+  stop_slots: number | null;
+  /** One plain sentence for a person. */
+  summary: string;
+  /** Stop first, then watch, then keep; most launches first inside each. */
+  families: JobYieldFamily[];
+  /** At most five kinds to stop, most slots used first. */
+  stop_first: JobYieldStop[];
 }
 
 export interface YieldRow {
@@ -63,7 +137,7 @@ export interface YieldReport {
 }
 
 interface Run {
-  job: string; lane: string; tier: string;
+  job: string; lane: string; tier: string; repo: string;
   finished: boolean; empty: boolean; aborted: boolean;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean;
@@ -81,6 +155,61 @@ function median(values: number[]): number | null {
 }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * keep: merged per launch at least 0.3. stop: at least 6 ended launches and merged per launch under 0.1
+ * (so no merges from 6, or 1 from 11 or more). Everything else, including a kind that never launched, is watch.
+ */
+export function jobVerdict(row: Pick<JobYieldFamily, 'launches' | 'running' | 'merged'>): JobVerdict {
+  if (row.launches <= 0) return 'watch';
+  const rate = row.merged / row.launches;
+  if (rate >= JOB_KEEP_RATE) return 'keep';
+  return row.launches - row.running >= JOB_STOP_MIN_LAUNCHES && rate < JOB_STOP_RATE ? 'stop' : 'watch';
+}
+
+function jobYieldReport(runs: Run[], skips: Map<string, { repo: string; rows: number }>, hours: number): JobYieldReport {
+  const rows = new Map<string, Omit<JobYieldFamily, 'merged_per_launch' | 'verdict' | 'reason'>>();
+  const row = (family: string) => {
+    let hit = rows.get(family);
+    if (!hit) rows.set(family, hit = { family, launches: 0, running: 0, empty: 0, skipped: 0, prs: 0, merged: 0 });
+    return hit;
+  };
+  const repos = new Map<string, string>();
+  for (const run of runs) {
+    if (run.repo !== 'unknown') repos.set(run.job, run.repo);
+    const hit = row(jobKind(run.job, run.repo));
+    hit.launches++;
+    hit.prs += run.prs.size;
+    if (run.merged) hit.merged++;
+    if (run.empty) hit.empty++;
+    if (!run.finished && !run.empty && !run.aborted && !run.merged && run.prs.size === 0) hit.running++;
+  }
+  for (const [job, skip] of skips) row(jobKind(job, skip.repo !== 'unknown' ? skip.repo : repos.get(job))).skipped += skip.rows;
+  const order: Record<JobVerdict, number> = { stop: 0, watch: 1, keep: 2 };
+  const families = [...rows.values()].map((r): JobYieldFamily => {
+    const reason = [`${r.merged} merged from ${plural(r.launches, 'launch', 'launches')}`, r.empty ? `${r.empty} empty` : '',
+      r.running ? `${r.running} still running` : '', r.skipped ? `${r.skipped} skipped before launch` : ''].filter(Boolean).join(', ');
+    return { ...r, merged_per_launch: r.launches ? r.merged / r.launches : null, verdict: jobVerdict(r), reason };
+  }).sort((a, b) => order[a.verdict] - order[b.verdict] || b.launches - a.launches
+    || (a.merged_per_launch ?? 0) - (b.merged_per_launch ?? 0) || a.family.localeCompare(b.family));
+  const stops = families.filter(r => r.verdict === 'stop');
+  const stopSlots = stops.reduce((sum, r) => sum + r.launches, 0);
+  const merged = families.reduce((sum, r) => sum + r.merged, 0);
+  const summary = !runs.length ? `No launches in the last ${plural(hours, 'hour')}`
+    : !stops.length ? `${plural(runs.length, 'launch', 'launches')}, ${merged} merged; no job kind to stop`
+    : `${stopSlots} of ${plural(runs.length, 'launch', 'launches')} went to ${plural(stops.length, 'job kind')} that ${stops.some(r => r.merged) ? 'rarely merge' : 'merged nothing'}`;
+  return {
+    schema: 'jobs.yield.v1', version: 1, window_hours: hours, known: true, launches: runs.length, merged,
+    empty: families.reduce((sum, r) => sum + r.empty, 0), skipped: families.reduce((sum, r) => sum + r.skipped, 0),
+    stop_slots: stopSlots, summary, families,
+    stop_first: stops.slice(0, JOB_STOP_FIRST_LIMIT).map(r => ({ family: r.family, slots: r.launches, merged: r.merged, reason: r.reason })),
+  };
+}
+
+export function unknownJobYield(hours: number): JobYieldReport {
+  return { schema: 'jobs.yield.v1', version: 1, window_hours: hours, known: false, launches: null, merged: null, empty: null, skipped: null,
+    stop_slots: null, summary: 'Job yield: unknown (job metrics file unreadable)', families: [], stop_first: [] };
+}
 
 export function yieldVerdict(row: Omit<YieldRow, 'verdict'>): string {
   const parts = [`${row.name}: ${plural(row.prs, 'PR')} from ${plural(row.launches, 'launch', 'launches')}`, `${row.merged} merged`, `${row.empty} empty`];
@@ -129,11 +258,22 @@ function group(runs: Run[], key: (run: Run) => string): YieldRow[] {
 }
 
 /** Incremental tally so callers can stream a large ledger line by line. */
-export function yieldTally(now: number, hours: number): { add(line: string): void; report(): YieldReport } {
+export function yieldTally(now: number, hours: number): { add(line: string): void; report(): YieldReport; jobYield(): JobYieldReport } {
   if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
   const start = now - hours * 3_600_000;
   const byJob = new Map<string, Run[]>();
   const outcomes = new Map<string, string>();
+  const skips = new Map<string, { repo: string; rows: number }>();
+  /** Credit each MERGED job once. Safe to repeat. */
+  const settle = (): Run[] => {
+    for (const [job, state] of outcomes) {
+      if (state !== 'MERGED') continue;
+      const runs = byJob.get(job)!;
+      const withPr = runs.filter(r => r.prs.size > 0);
+      (withPr[withPr.length - 1] ?? runs[runs.length - 1]!).merged = true;
+    }
+    return [...byJob.values()].flat();
+  };
   return {
     add(line: string) {
       let row: Record<string, unknown>;
@@ -151,8 +291,17 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       const runs = byJob.get(job);
       if (row.event === 'launch') {
         if (!Number.isFinite(at) || at > now) return;
-        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
+        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
         if (runs) runs.push(run); else byJob.set(job, [run]);
+        return;
+      }
+      if (row.event === 'precheck_skip') {
+        // A skip takes no slot, so it counts with or without a launch; it needs a time inside the window.
+        if (!Number.isFinite(at) || at > now) return;
+        const skip = skips.get(job) ?? { repo: 'unknown', rows: 0 };
+        if (skip.repo === 'unknown') skip.repo = word(row.repo);
+        skip.rows++;
+        skips.set(job, skip);
         return;
       }
       if (!runs) return; // launched before the window, or never seen launching
@@ -172,14 +321,9 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         outcomes.set(job, word(row.state).toUpperCase());
       }
     },
+    jobYield: () => jobYieldReport(settle(), skips, hours),
     report(): YieldReport {
-      for (const [job, state] of outcomes) {
-        if (state !== 'MERGED') continue;
-        const runs = byJob.get(job)!;
-        const withPr = runs.filter(r => r.prs.size > 0);
-        (withPr[withPr.length - 1] ?? runs[runs.length - 1]!).merged = true;
-      }
-      const runs = [...byJob.values()].flat();
+      const runs = settle();
       return {
         schema: 'fleet.yield.v1', window_hours: hours, known: true, launches: runs.length,
         families: group(runs, r => jobFamily(r.job)),
@@ -194,6 +338,13 @@ export function fleetYield(lines: Iterable<string>, now: number, hours: number):
   const tally = yieldTally(now, hours);
   for (const line of lines) tally.add(line);
   return tally.report();
+}
+
+/** `phm jobs yield`: which job kinds are worth a launch slot. Pure; the caller passes the ledger lines. */
+export function jobYield(lines: Iterable<string>, now: number, hours: number): JobYieldReport {
+  const tally = yieldTally(now, hours);
+  for (const line of lines) tally.add(line);
+  return tally.jobYield();
 }
 
 export function unknownYield(hours: number): YieldReport {

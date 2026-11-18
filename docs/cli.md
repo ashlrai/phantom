@@ -341,6 +341,7 @@ Every command, grouped by topic.
     asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
     spend [--json]                                                                              Is every pool spent before it resets or expires: used, burn, projected unused and one status word per pool, worst waste first.
     throughput [--hours 24] [--by lane|repo|tier] [--text]                                      Jobs launched, PRs published and merged, empty jobs and median publish-to-merge time per hour. JSON by default.
+    jobs yield [--since 24h] [--json]                                                           Which kinds of jobs are worth launching: keep, watch or stop per job kind, and the five to stop first.
     jobs empty [--since 24h] [--family F] [--json]                                              Explain empty jobs with family and lane suggestions.
     radar list|run|diff [--json]                                                                Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                            Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
