@@ -6,13 +6,14 @@
 import { useState, type FormEvent } from 'react';
 
 import type { BotAvatar, BotTemplateSummary } from '../../../core/agents/bot-templates.js';
+import { scrubSecrets } from '../../../core/util/scrub-secrets.js';
 import { Button } from '../../components/primitives/Button.js';
 import { Input } from '../../components/primitives/Input.js';
 import { SkeletonLine } from '../../components/primitives/Skeleton.js';
 import { StatusBadge } from '../../components/primitives/StatusBadge.js';
 import { useQuery } from '../../data/hooks.js';
 import { createBotFromTemplate } from '../../data/mutations.js';
-import { botsQuery, botTemplatesQuery } from '../../data/queries.js';
+import { botSeatsQuery, botsQuery, botTemplatesQuery } from '../../data/queries.js';
 import styles from './BotsView.module.css';
 
 const ID_PATTERN = /^[a-z][a-z0-9-]{1,23}$/;
@@ -31,6 +32,59 @@ export function Avatar({ avatar, label }: { avatar: BotAvatar; label: string }) 
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const safeText = (text: string | null) => scrubSecrets(text ?? 'unknown');
+
+function Seats() {
+  const seats = useQuery(botSeatsQuery);
+  return (
+    <section aria-label="Seats">
+      <h2 className={styles.h2}>Seats</h2>
+      {seats.status === 'loading' ? <SkeletonLine width="70%" /> : seats.status === 'error' ? (
+        <p role="alert">Seats could not be loaded.</p>
+      ) : !seats.data?.seats.length ? (
+        <p className={styles.meta}>No seats configured. Add seats in <code>~/.phantom/bots/seats.json</code> and inspect with <code>phm bots seats --json</code>.</p>
+      ) : (
+        <ul className={styles.seatGrid}>
+          {seats.data.seats.map(seat => (
+            <li key={seat.id} className={styles.card}>
+              <div className={styles.seatHead}>
+                <h3 className={styles.seatName}>{safeText(seat.displayName)}</h3>
+                <StatusBadge status={seat.state}>{safeText(seat.state)}</StatusBadge>
+              </div>
+              <p className={styles.meta}>{safeText(seat.kind)} · {safeText(seat.provider)}</p>
+              <p className={styles.blurb}>Accepts new work: {seat.acceptsNewWork ? 'yes' : 'no'}</p>
+              {seat.quota.status === 'unknown' ? (
+                <p className={styles.blurb}>Quota: unknown — {safeText(seat.quota.reason)}</p>
+              ) : (
+                <div className={styles.quota}>
+                  <p className={styles.blurb}>{seat.quota.usedPct}% used{seat.quota.status === 'exhausted' ? ' — exhausted' : ''}</p>
+                  <div role="meter" aria-label={`${safeText(seat.displayName)} quota used`} aria-valuemin={0} aria-valuemax={100}
+                    aria-valuenow={Math.min(100, Math.max(0, seat.quota.usedPct))} aria-valuetext={`${seat.quota.usedPct}% used${seat.quota.status === 'exhausted' ? ', exhausted' : ''}`}
+                    className={styles.quotaTrack} data-exhausted={seat.quota.status === 'exhausted'}>
+                    <span style={{ width: `${seat.quota.status === 'exhausted' ? 100 : Math.min(100, Math.max(0, seat.quota.usedPct))}%` }} />
+                  </div>
+                  <p className={styles.meta}>As of <time dateTime={seat.quota.asOf}>{safeText(seat.quota.asOf)}</time></p>
+                </div>
+              )}
+              <div className={styles.seatWork}>
+                <div><h4>Current claims</h4>{seat.claims.length ? <ul>{seat.claims.map(claim => <li key={claim.key}><code>{safeText(claim.key)}</code></li>)}</ul> : <p className={styles.meta}>No current claims.</p>}</div>
+                <div><h4>In-flight jobs</h4>{seat.inFlight.length ? <ul>{seat.inFlight.map(job => <li key={job.id}><code>{safeText(job.id)}</code></li>)}</ul> : <p className={styles.meta}>No in-flight jobs.</p>}</div>
+              </div>
+              <h4 className={styles.handoffHeading}>Recent handoffs</h4>
+              {seat.handoffs.length ? <ul className={styles.handoffs}>{seat.handoffs.map(handoff => (
+                <li key={handoff.handoffId}>
+                  <code>{safeText(handoff.work.ref)}</code>
+                  <p className={styles.meta}>Done: {safeText(handoff.done)} · Left: {safeText(handoff.left)}</p>
+                  <p className={styles.meta}>Branch: {safeText(handoff.branch)} · PR: {safeText(handoff.pr)}</p>
+                </li>
+              ))}</ul> : <p className={styles.meta}>No recent handoffs.</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 export function BotsView() {
   const templates = useQuery(botTemplatesQuery);
@@ -67,6 +121,8 @@ export function BotsView() {
         <h1 className={styles.title}>Bots</h1>
         <p className={styles.subtitle}>Start a new bot from a template. Nothing is sent, dispatched or switched on by creating one.</p>
       </header>
+
+      <Seats />
 
       <section aria-label="Templates">
         <h2 className={styles.h2}>Templates</h2>

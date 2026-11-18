@@ -260,7 +260,8 @@ function summarizeRow(row: Record<string, unknown>): string {
   return cleanField(parts.join(' '), MAX_SUMMARY_CHARS);
 }
 
-function ledgerEvents(text: string, job: string, max: number): { events: FleetJobActivityEventEntry[]; matched: number; clipped: boolean } {
+/** metrics/jobs.jsonl rows naming `job`, newest `max` kept. Pure; shared with runs-job-tail.ts. */
+export function parseJobLedgerEvents(text: string, job: string, max: number): { events: FleetJobActivityEventEntry[]; matched: number; clipped: boolean } {
   const matched: FleetJobActivityEventEntry[] = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -340,7 +341,7 @@ export async function getFleetJobActivity(job: string, options: FleetJobActivity
     readSource(join(runsDir, 'metrics', 'jobs.jsonl'), options.ledgerBytes ?? DEFAULT_LEDGER_BYTES, true),
   ]);
 
-  const { events, clipped: eventsClipped } = ledgerEvents(ledger.text, job, maxEvents);
+  const { events, clipped: eventsClipped } = parseJobLedgerEvents(ledger.text, job, maxEvents);
   // One extra probe row tells us whether the cap clipped real commands.
   const commandProbe = extractJobCommands(scan.lines, maxCommands + 1);
   const commandsClipped = commandProbe.length > maxCommands;

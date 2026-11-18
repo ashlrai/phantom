@@ -7,6 +7,8 @@ import { JOB_ID_RE } from '../../verse/fleet-job-log/job-id.js';
 import { formatDuration, laneStats } from './worklog-lane-stats.js';
 import type { WorklogKind, WorklogReport, WorklogRow } from '../../../../core/fleet/worklog.js';
 import styles from './WorklogView.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
+import { EmptyJobsPanel } from '../../verse/growth/EmptyJobsPanel.js';
 
 const KINDS: Record<WorklogKind, string> = { merged: 'Merged', launched: 'Launched', finished: 'Finished', empty: 'No change', leader: 'Leader', incident: 'Incidents' };
 const SOURCES: Record<keyof WorklogReport['sources'], string> = { jobs: 'Job results', events: 'Dispatch events', leader: 'Leader replies' };
@@ -81,7 +83,7 @@ export function WorklogView() {
   const visible = scoped.filter(row => !kind || row.kind === kind);
   const choices = (values: (string | null)[]) => [...new Set(values.map(v => v ?? 'unknown'))].sort();
   const chip = (value: WorklogKind | '', label: string, count: number) => <button key={value} type="button" className={styles.chip} aria-pressed={kind === value} onClick={() => setKind(value)}>{label} {count}</button>;
-  return <main className={styles.view}><h1>Work log</h1><p>What the fleet did in the last {hours} hours, newest first. Tap a job to see its detail.</p>
+  return <main className={`${styles.view} ${compact.view}`}><h1>Work log</h1><p>What the fleet did in the last {hours} hours, newest first. Tap a job to see its detail.</p>
     {error ? <p role="alert">Could not update the work log. {data ? 'Showing the last available events. ' : ''}<button type="button" onClick={refresh}>Retry</button></p> : null}
     {!data && !error && <p>Loading work log…</p>}
     {data && <>
@@ -102,9 +104,10 @@ export function WorklogView() {
         <label>Lane <select value={lane} onChange={e => setLane(e.target.value)}><option value="">All lanes</option>{choices([...rows, ...entries].map(e => e.lane)).map(v => <option key={v}>{v}</option>)}</select></label>
         <h2>By lane</h2>
         <table><thead><tr><th>Lane</th><th>Merged</th><th>Median open to merge</th><th>Unknown timing</th><th>Top model</th></tr></thead><tbody>
-          {laneStats(entries.filter(match)).map(row => <tr key={row.lane}><td><button type="button" onClick={() => setLane(row.lane)}>{row.lane}</button></td><td>{row.count}</td><td>{formatDuration(row.medianSeconds)}</td><td>{row.unknownTiming}</td><td>{row.topModel ?? 'unknown'}</td></tr>)}
+          {laneStats(entries.filter(match)).map(row => <tr key={row.lane}><td data-label="Lane"><button type="button" onClick={() => setLane(row.lane)}>{row.lane}</button></td><td data-label="Merged">{row.count}</td><td data-label="Median open to merge">{formatDuration(row.medianSeconds)}</td><td data-label="Unknown timing">{row.unknownTiming}</td><td data-label="Top model">{row.topModel ?? 'unknown'}</td></tr>)}
         </tbody></table>
       </details>
     </>}
+    <EmptyJobsPanel />
   </main>;
 }

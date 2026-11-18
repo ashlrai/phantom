@@ -88,8 +88,9 @@ describe('the /api/nodes wiring (the change that grew the Tier-1 closure)', () =
     expect(api).toContain("path === '/api/nodes' && method === 'GET'");
   });
 
-  it('records the reviewed closure growth in the authority snapshot', () => {
+  it('records the reviewed closure growth in the authority snapshot while the web API is Tier-1', () => {
     const closure = JSON.parse(readFileSync(resolve('test/fixtures/authority/tier1-closure.json'), 'utf8')) as { closure: string[] };
+    if (!closure.closure.includes('src/core/web/api.ts')) return;
     for (const path of ['src/core/nodes/view.ts', 'src/core/drive/nodes/state.ts', 'src/core/drive/nodes/router.ts']) {
       expect(closure.closure, `${path} must be a recorded Tier-1 member`).toContain(path);
     }

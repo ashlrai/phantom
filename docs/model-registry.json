@@ -10,6 +10,8 @@
   {"id": "gpt-6-luna", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
   {"id": "gpt-6.1-sol", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
   {"id": "gpt-6.1-terra", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "gpt-6.2-astra", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "gpt-6.2-sol", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
   {"id": "grok-4.7", "provider": "xai", "verified_source": "https://docs.x.ai/developers/models", "verified_at": "2026-11-17", "status": "verified"},
   {"id": "grok-4.7-build-fast", "provider": "xai", "verified_source": null, "verified_at": null, "status": "unverified"},
   {"id": "qwen2.5:72b", "provider": "qwen", "verified_source": "https://qwen.readthedocs.io/en/v2.5/run_locally/ollama.html", "verified_at": "2026-11-17", "status": "verified"},
