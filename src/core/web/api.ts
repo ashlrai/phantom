@@ -2073,8 +2073,8 @@ export async function handleApi(
       const { getFleetJobTail } = await import('../fleet/runs-job-tail.js');
       const id = getQueryParam(req.url ?? '', 'id');
       const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
-      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 120) {
-        sendJson(res, 400, { error: 'valid job id and lines (1..120) required' });
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 200) {
+        sendJson(res, 400, { error: 'valid job id and lines (1..200) required' });
         return true;
       }
       sendJson(res, 200, await getFleetJobTail(id, { lines }));

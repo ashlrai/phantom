@@ -409,6 +409,7 @@ Every command, grouped by topic.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]                      Tail the append-only audit trail; --team lists workspace actions (read-only).
     receipt list|status|show <run>|verify <run>|timeline <run> [--json]                                     Read and verify signed run receipts (same as fleet receipt); timeline lists custody spawns in the run window, value-free (read-only).
     sessions [--lane <lane>] [--repo <repo>] [--json] [--live]                                              Every agent session as one tree (leader, workers, subagents): model, repo, state, when it last spoke (quiet after 10 min) and its last message. --live shows only running ones.
+    sessions tail <id> [--follow] [--lines N] [--json]                                                      What one session is doing now: its last 200 log lines, redacted; --follow streams new ones. The same stream the map side panel shows.
     sessions reconcile [--json]                                                                             Check local runs against worker processes and job metrics: live, finished or unknown. Read only.
     lanes fit --lane <lane> [--json]                                                                        Show job kinds to send or avoid from measured PR rates.
     lanes --json                                                                                            Read dispatcher pools, slot caps and local endpoint health.

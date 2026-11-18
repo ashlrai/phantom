@@ -53,6 +53,8 @@ async function cmdJobControl(action: JobControlAction, rest: string[]): Promise<
     return 1;
   }
 }
+const sessionTailUsage = 'Usage: phm sessions tail <id> [--follow] [--lines N] [--json] [--runs-dir <abs>]';
+const sessionTailHelp = 'What one session is doing now: lane, model, start and PR, then its last N log lines (1..200, default 200), every line redacted. --follow streams new lines until it finishes or Ctrl-C. --json prints one {ts, source, text} object per line; the first also carries detail (lane, model, repo, tokens, PR) and controls (can it be paused, stopped or moved, and why not). The id is the job id `phm sessions` shows. Exit 2 when the id is unknown on this computer.';
 const text = (v: number | string | null): string => v === null ? 'unknown' : String(v);
 const money = (v: number | null): string => v === null ? 'unknown' : `$${v.toFixed(4)}`;
 
@@ -151,24 +153,30 @@ export interface JobTailDeps {
  * `phm job tail <id>` — the CLI face of fleet.job.tail.v1, the same reads the
  * desktop worker-log pane uses. Exit codes: 0 ok (running, finished or no log
  * yet), 1 unknown job or read failure, 2 bad usage.
+ *
+ * `phm sessions tail <id>` is the same stream in 'session' mode: up to 200
+ * lines (the default), an unknown id is a plain error with exit 2, and the
+ * JSON status line also carries `detail` and `controls`.
  */
-export async function cmdJobTail(args: string[], deps: JobTailDeps = {}): Promise<number> {
+export async function cmdJobTail(args: string[], deps: JobTailDeps = {}, mode: 'job' | 'session' = 'job'): Promise<number> {
   const out = deps.out ?? ((line: string) => console.log(line));
   const err = deps.err ?? ((line: string) => console.error(line));
-  const invalid = (): number => { err(usage); return 2; };
+  const session = mode === 'session';
+  const maxLines = session ? 200 : 120;
+  const invalid = (): number => { err(session ? sessionTailUsage : usage); return 2; };
   let id: string | undefined;
   let lines: number | undefined;
   let runsDir: string | undefined;
   const flags = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--help' || arg === '-h') { out(`${usage}\n${tailHelp}`); return 0; }
+    if (arg === '--help' || arg === '-h') { out(session ? `${sessionTailUsage}\n${sessionTailHelp}` : `${usage}\n${tailHelp}`); return 0; }
     if (arg.startsWith('--') && flags.has(arg)) return invalid();
     flags.add(arg);
     if (arg === '--json' || arg === '--follow') continue;
     if (arg === '--lines') {
       const n = Number(args[++i]);
-      if (!Number.isInteger(n) || n < 1 || n > 120) return invalid();
+      if (!Number.isInteger(n) || n < 1 || n > maxLines) return invalid();
       lines = n;
     } else if (arg === '--runs-dir') {
       const dir = args[++i];
@@ -185,9 +193,11 @@ export async function cmdJobTail(args: string[], deps: JobTailDeps = {}): Promis
     else out(e.source === 'log' ? e.text : `${e.source === 'event' ? `[event${e.ts ? ` ${e.ts}` : ''}]` : '»'} ${e.text}`);
   };
   try {
+    if (session) lines ??= maxLines;
     const tail = await (deps.snapshot ?? getFleetJobTail)(id, { ...(runsDir ? { runsDir } : {}), ...(lines ? { lines } : {}) });
+    if (session && tail.status === 'unknown') { err(`No session ${id} on this computer. See: phm sessions`); return 2; }
     const head = tail.message ? `${tail.headline}\n${tail.message}` : tail.headline;
-    if (json) out(JSON.stringify({ ts: tail.generatedAt, source: 'status', text: head, status: tail.status }));
+    if (json) out(JSON.stringify({ ts: tail.generatedAt, source: 'status', text: head, status: tail.status, ...(session ? { detail: tail.detail, controls: tail.controls } : {}) }));
     else out(head);
     if (tail.truncated && !json) out('… earlier lines not shown');
     for (const event of tail.events) print(event);
@@ -208,7 +218,7 @@ export async function cmdJobTail(args: string[], deps: JobTailDeps = {}): Promis
     }
     return 0;
   } catch {
-    err('error: job tail unavailable');
+    err(session ? 'error: session tail unavailable' : 'error: job tail unavailable');
     return 1;
   }
 }

@@ -232,7 +232,7 @@ export function extractJobCommands(lines: readonly string[], max: number = MAX_C
 // Ledger events — metrics/jobs.jsonl rows for this job
 // ---------------------------------------------------------------------------
 
-function rowJob(row: Record<string, unknown>): string | null {
+export function rowJob(row: Record<string, unknown>): string | null {
   for (const key of JOB_KEYS) {
     const value = row[key];
     if (typeof value === 'string' && value !== '') return value;

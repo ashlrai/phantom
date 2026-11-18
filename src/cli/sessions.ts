@@ -1,5 +1,6 @@
 /**
- * `phm sessions`: the tree of every fleet agent session (no verb), MCP gateway
+ * `phm sessions`: the tree of every fleet agent session (no verb), one session's
+ * live log (tail; cmdJobTail in job.ts), MCP gateway
  * sessions (list, revoke) and resumable agent sessions (create, show, resume,
  * terminate; list shows both kinds). Thin handler: logic lives in
  * src/core/fleet/live-sessions.ts, src/core/gateway-sessions.ts and
@@ -23,6 +24,10 @@ const USAGE = `Usage:
                                       spoke (quiet after 10 min) and its last message.
                                       Finished ones stay an hour; --live shows only running
                                       ones. Read only.
+  phm sessions tail <id> [--follow] [--lines N] [--json]
+                                      What one session is doing now: its last 200 log lines,
+                                      redacted; --follow streams new ones (one JSON object
+                                      per line with --json). Exit 2 for an unknown id.
   phm sessions list [--json]          Show gateway sessions and agent sessions
   phm sessions reconcile [--json]     Check local runs: live, finished or unknown. Read only.
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
@@ -153,6 +158,7 @@ export async function cmdSessions(args: string[]): Promise<number> {
   }
   if (more.includes('--help') || more.includes('-h')) { process.stdout.write(USAGE); return 0; }
   if (sub === 'reconcile') return cmdReconcileSessions(args.slice(1));
+  if (sub === 'tail') return (await import('./job.js')).cmdJobTail(args.slice(1), {}, 'session');
 
   if (sub === 'list' && more.length === 0) {
     const sessions = listGatewaySessions();

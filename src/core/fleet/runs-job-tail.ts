@@ -16,7 +16,8 @@ import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { describeJob, type JobTailStatus } from './job-tail-words.js';
-import { parseJobLedgerEvents } from './runs-job-activity.js';
+import { jobControlAvailability, type JobControlAvailability } from './job-control-types.js';
+import { parseJobLedgerEvents, rowJob } from './runs-job-activity.js';
 import { getFleetJobDetail, isFleetJobId, scrubJobLogLine, type FleetJobDetailV1 } from './runs-job-detail.js';
 
 export interface FleetJobTailEvent {
@@ -35,7 +36,10 @@ export interface FleetJobTailV1 {
   headline: string;
   /** Plain-words status sentence (unknown, finished with result, no log yet); null when the log speaks for itself. */
   message: string | null;
-  detail: Pick<FleetJobDetailV1, 'state' | 'lane' | 'tier' | 'model' | 'launchedAt'> & { prUrl: string | null };
+  /** `repo` and `tokens` come from this job's ledger rows; null when no row says. */
+  detail: Pick<FleetJobDetailV1, 'state' | 'lane' | 'tier' | 'model' | 'launchedAt'> & { prUrl: string | null; repo: string | null; tokens: number | null };
+  /** Whether pause, stop and move can reach this job from here, with a plain reason when not. */
+  controls: JobControlAvailability;
   events: FleetJobTailEvent[];
   truncated: boolean;
   /** Byte offsets follow mode resumes from; null when that file is absent. */
@@ -44,7 +48,7 @@ export interface FleetJobTailV1 {
 
 export interface FleetJobTailOptions {
   runsDir?: string;
-  /** Last N log lines (1..120, default 40) and at most N ledger events. */
+  /** Last N log lines (1..200, default 40) and at most N ledger events. */
   lines?: number;
   now?: () => Date;
   redact?: (line: string) => string;
@@ -57,10 +61,10 @@ export interface FollowOptions extends Omit<FleetJobTailOptions, 'lines'> {
   onEvent: (event: FleetJobTailEvent) => void;
 }
 
-const MAX_LINES = 120;
+const MAX_LINES = 200;
 const LEDGER_BYTES = 512 * 1024;
 const FOLLOW_CHUNK = 256 * 1024;
-const LOG_BYTES = 32 * 1024;
+const LOG_BYTES = 128 * 1024;
 
 const ledgerPath = (runsDir: string) => join(runsDir, 'metrics', 'jobs.jsonl');
 const resolveRunsDir = (runsDir?: string): string => {
@@ -129,6 +133,21 @@ function headline(d: FleetJobDetailV1): string {
 const ledgerEvent = (e: { at: string | null; event: string; summary: string }, redact: (l: string) => string): FleetJobTailEvent =>
   ({ ts: e.at, source: 'event', text: redact([e.event, e.summary].filter(Boolean).join(' ')) });
 
+/** Repo and worker-reported token total from this job's ledger rows; the newest row that says wins. */
+function ledgerFacts(text: string, job: string): { repo: string | null; tokens: number | null } {
+  const facts: { repo: string | null; tokens: number | null } = { repo: null, tokens: null };
+  for (const line of text.split('\n')) {
+    if (!line.includes(job)) continue;
+    let row: Record<string, unknown>;
+    try { row = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+    if (typeof row !== 'object' || row === null || rowJob(row) !== job) continue;
+    if (typeof row['repo'] === 'string' && row['repo'] !== '') facts.repo = row['repo'].slice(0, 120);
+    const tokens = row['tokens_total'];
+    if (typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= 0) facts.tokens = tokens;
+  }
+  return facts;
+}
+
 /** One snapshot: header, plain-words status, newest ledger events, then the last N log lines. */
 export async function getFleetJobTail(job: string, options: FleetJobTailOptions = {}): Promise<FleetJobTailV1> {
   if (!isFleetJobId(job)) throw new Error('invalid fleet job id');
@@ -159,6 +178,7 @@ export async function getFleetJobTail(job: string, options: FleetJobTailOptions 
   // Ledger rows alone make a job known even when its run files are gone.
   const status: JobTailStatus = words.status === 'unknown' && ledgerRows.length > 0 ? 'no-log' : words.status;
   const message = status === 'no-log' && words.status === 'unknown' ? 'No log on this machine; only ledger events are recorded.' : words.text;
+  const facts = ledgerFacts(ledgerText, job);
   return {
     schema: 'fleet.job.tail.v1',
     generatedAt: now.toISOString(),
@@ -166,7 +186,9 @@ export async function getFleetJobTail(job: string, options: FleetJobTailOptions 
     status,
     headline: redact(headline(detail)),
     message: message === null ? null : redact(message),
-    detail: { state: detail.state, lane: detail.lane, tier: detail.tier, model: detail.model, launchedAt: detail.launchedAt, prUrl: detail.publish?.prUrl ?? null },
+    detail: { state: detail.state, lane: detail.lane, tier: detail.tier, model: detail.model, launchedAt: detail.launchedAt, prUrl: detail.publish?.prUrl ?? null,
+      repo: facts.repo === null ? null : redact(facts.repo), tokens: facts.tokens },
+    controls: jobControlAvailability(status),
     events: [
       ...ledgerRows.map(e => ledgerEvent(e, redact)),
       ...detail.log.tail.map((text): FleetJobTailEvent => ({ ts: null, source: 'log', text: redact(text) })),
