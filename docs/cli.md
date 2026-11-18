@@ -496,7 +496,7 @@ Every command, grouped by topic.
     serve --allow-dispatch                                                 Enable guarded POST /api/run + web inbox approve/reject (prints session token).
     console [--port N] [--no-open]                                         Open the Phantom console at /app/ for connected coding resources. Runs use account readiness and authority; prints read + mutation tokens.
     verse [--port N] [--no-open]                                           Alias of `console` (the original name; same flags). Opens /verse/, the same page.
-    settings appearance [set]                                              Read or change the app theme, accent (hex), density and fontSize: [--json] to read, set <key> <value> [--json] to change. A running desktop or phone app applies it live.
+    settings appearance [set]                                              Read or change the app theme, accent (hex), density and font size: [--json] to read; [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] to change, --reset for defaults. A running desktop or phone app applies it live.
     pages publish <file.md|file.json> [--slug <s>] [--title <t>] [--json]  Publish a report into the loopback dashboard at /pages/<slug> (stored under ~/.ashlr/pages; nothing public).
     pages list [--json]                                                    List published report pages, newest first.
 
