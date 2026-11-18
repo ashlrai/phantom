@@ -54,3 +54,6 @@
 @media (prefers-reduced-motion: reduce) { .edge[data-pulse='true'] { animation: none; } }
 
 .edgeCard { position: absolute; left: 0; top: 0; pointer-events: none; }
+
+.count { position: absolute; transform: translate(-50%, -50%); padding: 2px var(--space-2); border: 1px solid var(--accent-500); border-radius: var(--radius-sm); background: var(--surface-raised, Canvas); color: inherit; font: inherit; cursor: pointer; }
+.count:hover, .count:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }

@@ -154,3 +154,24 @@ export function mapHeadline(map: FleetLiveMap): string {
 
 /** Nothing to draw beyond the leader. */
 export const emptyMap = (map: FleetLiveMap) => map.nodes.every(node => node.kind === 'leader');
+
+/** One count for both directions; an unknown direction makes the total unknown. */
+export function messagePairs(map: FleetLiveMap): { key: string; edge: LiveMapEdge; count: number | null }[] {
+  const pairs = new Map<string, { key: string; edge: LiveMapEdge; count: number | null }>();
+  for (const edge of map.edges) {
+    if (edge.kind !== 'messaged-in-last-15-min' || edge.from === edge.to) continue;
+    const key = JSON.stringify([edge.from, edge.to].sort());
+    const pair = pairs.get(key);
+    if (!pair) pairs.set(key, { key, edge, count: edge.messages });
+    else pair.count = pair.count === null || edge.messages === null ? null : pair.count + edge.messages;
+  }
+  return [...pairs.values()];
+}
+
+/** Bow same-row messages into the gap above the nodes; return the curve's actual midpoint. */
+export function messageCurve(a: { x: number; y: number }, b: { x: number; y: number }) {
+  const row = a.y === b.y;
+  const cx = (a.x + b.x) / 2 + (row ? 0 : 40 * (a.x <= b.x ? 1 : -1));
+  const cy = (a.y + b.y) / 2 - (row ? NODE_H + 36 : 40);
+  return { d: `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`, mid: { x: (a.x + 2 * cx + b.x) / 4, y: (a.y + 2 * cy + b.y) / 4 } };
+}
