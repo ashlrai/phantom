@@ -61,6 +61,20 @@ jobs against it. A pool with no reading gets a hatched bar and a lane with no
 target gets none, so a missing number never looks like zero. Main lists one
 mark per repository.
 
+Home's **Working now** card answers "what is each agent doing?" without
+leaving Home. It lists up to six worker sessions with repo, when each last
+spoke and its last message: quiet ones first (no output for 10 minutes), then
+the most recent, then any that failed in the last hour. Select a row to open
+that session's messages in the Worker log, where pause and stop live; **Open
+Sessions** opens the whole tree. It reads the same list as the Sessions pane
+and refreshes every 15 seconds while visible. A repo, time or message the list
+does not hold reads unknown, and a failed refresh keeps the last list and
+says it may be stale. The same list for agents:
+
+```sh
+phm sessions --json
+```
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), incidents (dispatch incidents, lane holds,
