@@ -33,6 +33,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import './helpers/local-memory.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';

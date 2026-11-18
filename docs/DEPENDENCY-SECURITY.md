@@ -43,7 +43,10 @@ CLI toolchain (oclif, tinyglobby). Each entry applies to exactly one graph.
 Every `via` advisory URL in the npm report must match an active exception, and
 a package vulnerable only through other packages (a string `via` entry) is
 excepted only when everything it depends on is excepted, including cyclic
-references. The root production graph never reads the file, so it stays
+references. The Raycast production entry is enabled only for `--omit=dev` when
+the lockfile's resolved path is `src/raycast/package-lock.json`; the audit
+label does not select it. Other production lockfiles, including root, never
+read the file, so they stay
 strict; malformed or expired exceptions fail closed on the graphs that read it,
 and unused exceptions warn in the step summary. Remove this exception when upstream ships a fix. It is not a
 general allowlist. Each audit step runs after earlier failures unless the job
