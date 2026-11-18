@@ -38,15 +38,21 @@ const whole = (value: unknown): number | null => typeof value === 'number' && Nu
 /** Pure: the newest finish per job among rows already read, with its time. Shared with `phm throughput`. */
 export function finishesIn(rows: readonly LedgerRow[]): (EmptiesFinish & { at: number })[] {
   const newest = new Map<string, EmptiesFinish & { at: number }>();
-  for (const { row, id, lane, at } of rows) {
+  const launches = new Map<string, number>();
+  for (const { row, id, lane, at } of [...rows].sort((a, b) => a.at - b.at)) {
     if (!id) continue;
+    if (row.event === 'launch') {
+      launches.set(id, at);
+      continue;
+    }
     // `applied: false` is the skip gate's dry run: the job still launched, so only its finish row counts.
     const skipped = SKIP_EVENTS.has(row.event as string) && row.applied !== false;
     const marked = [row.event, row.outcome, row.state].includes('EMPTY_DONE');
     const ended = row.event === 'finish' || (row.event === 'outcome' && typeof row.empty === 'boolean');
     if (!skipped && !marked && !ended) continue;
-    const prior = newest.get(id);
-    if (prior && prior.at > at) continue;
+    const previous = newest.get(id);
+    const launch = launches.get(id);
+    const prior = previous && (launch === undefined || launch <= previous.at) ? previous : undefined;
     const tokens = whole(row.tokens_total);
     newest.set(id, {
       id, at, skipped,
