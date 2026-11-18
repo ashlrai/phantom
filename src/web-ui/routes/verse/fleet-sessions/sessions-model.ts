@@ -4,6 +4,7 @@
  * defensive: a malformed row is dropped, a malformed field reads "unknown".
  */
 import { SESSION_FIELDS, type LiveSessionRow, type LiveSessionsV1, type SessionField } from '../../../../core/fleet/live-sessions.js';
+import { buildSessionTree, UNKNOWN_PARENT_ID, type SessionRecord, type SessionState } from '../../../../core/fleet/session-tree.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
@@ -35,13 +36,33 @@ function narrowRow(raw: unknown): LiveSessionRow | null {
   };
 }
 
+const STATES: readonly string[] = ['running', 'idle', 'done', 'failed', 'unknown'], KINDS: readonly string[] = ['leader', 'worker', 'subagent'];
+/** The tree's rows, read back as records (children of "unknown parent" keep their missing parent id). */
+function treeRecords(nodes: unknown, out: SessionRecord[] = [], depth = 0): SessionRecord[] {
+  for (const raw of Array.isArray(nodes) && depth < 8 ? nodes : []) {
+    const id = object(raw) ? text(raw.id) : null;
+    if (!object(raw) || !id || out.length >= MAX_ROWS) continue;
+    if (id !== UNKNOWN_PARENT_ID) out.push({
+      id, parentId: text(raw.parentId), kind: KINDS.includes(raw.kind as string) ? raw.kind as SessionRecord['kind'] : undefined,
+      agent: text(raw.agent) ?? 'unknown', lane: text(raw.lane) ?? 'unknown', model: text(raw.model) ?? 'unknown', repo: text(raw.repo) ?? 'unknown',
+      jobId: text(raw.jobId), state: STATES.includes(raw.state as string) ? raw.state as SessionState : 'unknown',
+      startedAt: time(raw.startedAt), lastMessageAt: time(raw.lastMessageAt), lastMessage: text(raw.lastMessage),
+    });
+    treeRecords(raw.children, out, depth + 1);
+  }
+  return out;
+}
+
 /** Null when this is not a live-sessions list. */
 export function narrowLiveSessions(raw: unknown): LiveSessionsV1 | null {
   if (!object(raw) || raw.schema !== 'fleet.live-sessions.v1' || !Array.isArray(raw.sessions)) return null;
   const sessions = raw.sessions.slice(0, MAX_ROWS).map(narrowRow).filter((row): row is LiveSessionRow => row !== null);
   const filter = object(raw.filter) ? raw.filter : {};
+  const generatedAt = time(raw.generatedAt) ?? new Date(0).toISOString();
   return {
-    schema: 'fleet.live-sessions.v1', generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(),
+    // Rebuilding the tree from its own rows re-derives every count, age and the top line, so a malformed tree cannot mislead.
+    live: raw.live === true, tree: buildSessionTree(treeRecords(object(raw.tree) ? raw.tree.roots : null), Date.parse(generatedAt)),
+    schema: 'fleet.live-sessions.v1', generatedAt,
     quietAfterMinutes: count(raw.quietAfterMinutes) ?? 10, filter: { lane: text(filter.lane), repo: text(filter.repo) },
     counts: { sessions: sessions.length, quiet: sessions.filter(row => row.quiet).length,
       lanes: new Set(sessions.map(row => row.lane)).size, otherComputers: sessions.filter(row => row.thisComputer === false).length },
@@ -54,9 +75,8 @@ export const liveSessionsQuery: QueryDef<LiveSessionsV1 | null> = {
   fetch: async signal => narrowLiveSessions(await apiGet<unknown>(LIVE_SESSIONS_API, signal)),
 };
 
-/** "3 running · 1 quiet · 2 lanes · 1 on another computer". */
+/** The tree's top line, plus quiet sessions and sessions on another computer when there are any. */
 export function sessionsHeadline(list: LiveSessionsV1): string {
-  const { sessions, quiet, lanes, otherComputers } = list.counts;
-  return [`${sessions} running`, `${quiet} quiet`, `${lanes} ${lanes === 1 ? 'lane' : 'lanes'}`,
-    ...(otherComputers ? [`${otherComputers} on another computer`] : [])].join(' · ');
+  const { quiet, otherComputers } = list.counts;
+  return [list.tree.line, ...(quiet ? [`${quiet} quiet`] : []), ...(otherComputers ? [`${otherComputers} on another computer`] : [])].join(' · ');
 }

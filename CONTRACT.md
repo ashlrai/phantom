@@ -1223,11 +1223,19 @@ seeded sessions. All reads use the existing bounded regular-file readers.
 ## Live sessions (`fleet.live-sessions.v1`)
 
 `src/core/fleet/live-sessions.ts` exports `buildLiveSessions(map, now,
-filter)` and `renderLiveSessionsText` (both pure);
-`src/core/fleet/live-sessions-read.ts` exports `readLiveSessions(options)` with
-an injectable `readMap`. `phm sessions [--lane] [--repo] [--json]` and
-`GET /api/verse/fleet/control/live-sessions` (optional `lane`, `repo`, each at
-most once; read session required) serve it. It projects the session map above;
+filter)`, `renderLiveSessionsText`, `flatTree` and `spoke` (all pure;
+`sessionsByLane` is removed); `src/core/fleet/live-sessions-read.ts` exports
+`readLiveSessions(options)` with injectable `readMap` and `readSubagents`.
+`phm sessions [--lane] [--repo] [--json] [--live]` and
+`GET /api/verse/fleet/control/live-sessions` (optional `lane`, `repo`,
+`live=1`, each at most once; read session required) serve it. The list gains
+`live` and `tree`, a `fleet.session-tree.v1` document (`version` 1) built by
+the pure `buildSessionTree(records, now)` in `src/core/fleet/session-tree.ts`
+from `sessionRecords(rows, map, subagents, now, options)`: leader, then
+workers, then subagents, running first and then most recent, with sessions
+whose parent is missing under `unknown parent`. The filter gains `live` and
+`subagents` (null means unreadable). `src/core/subagent/spawn.ts` exports
+`readSubagentRecords(options, limit)`. It projects the session map above;
 it adds no source. The session map gains `localNodeId`, and
 `fleet.sessions.v1` rows gain optional `lastOutputAt` (the `<job>.log` lstat
 mtime; absent from older servers). Rows cover launching, running, publishing

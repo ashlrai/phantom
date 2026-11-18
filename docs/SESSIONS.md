@@ -17,11 +17,13 @@ in its log.
 
 ## Running fleet sessions
 
-`phm sessions` with no verb lists every agent session running in the fleet,
-grouped by lane, with its model, repo, tier, age, last output, PR and the
-computer it runs on. A session with no output for 10 minutes is marked quiet.
-Narrow it with `--lane <lane>` or `--repo <repo>`, and add `--json` for the
-`fleet.live-sessions.v1` list. The desktop Sessions pane shows the same list.
+`phm sessions` with no verb shows every agent session in the fleet as one
+tree: the leader, then workers, then their subagents, running first. Each row
+has its model, repo, state, when it last spoke, its last message, PR and the
+computer it runs on. A session with no output for 10 minutes is marked quiet,
+and finished sessions stay for an hour. Narrow it with `--lane <lane>`,
+`--repo <repo>` or `--live` (running only), and add `--json` for the
+`fleet.live-sessions.v1` document. The desktop Sessions pane shows the same tree.
 See [live sessions](FLEET-API.md#live-sessions).
 
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit

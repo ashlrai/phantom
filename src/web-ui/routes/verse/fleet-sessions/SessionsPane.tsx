@@ -1,11 +1,13 @@
 /**
- * The Sessions pane: every running agent session in one list (`phm sessions`).
- * Grouped by lane; a session with no output for 10 minutes is highlighted as
- * quiet. Select a session to open its live log in the Worker log pane, which
- * also holds the pause and stop controls. Built only on
- * GET /api/verse/fleet/control/live-sessions; works down to 390 px wide.
+ * The Sessions pane: every agent session as one tree (`phm sessions`): leader,
+ * then workers, then their subagents, running first. Each row shows model,
+ * repo, when it last spoke and its last message; a session with no output for
+ * 10 minutes is highlighted as quiet. Select a session to open its messages in
+ * the Worker log pane, which also holds the pause and stop controls. Built only
+ * on GET /api/verse/fleet/control/live-sessions; works down to 390 px wide.
  */
-import { sessionAge, sessionsByLane, SESSION_FIELDS, type LiveSessionRow, type LiveSessionsV1 } from '../../../../core/fleet/live-sessions.js';
+import { flatTree, spoke, SESSION_FIELDS, type LiveSessionRow, type LiveSessionsV1 } from '../../../../core/fleet/live-sessions.js';
+import type { SessionNode } from '../../../../core/fleet/session-tree.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
@@ -18,51 +20,47 @@ const FIELD_WORD: Readonly<Record<(typeof SESSION_FIELDS)[number], string>> = {
   lane: 'lane', model: 'model', repo: 'repo', tier: 'tier', startedAt: 'start', lastOutputAt: 'last output', computer: 'computer',
 };
 
-function output(row: LiveSessionRow): string {
-  return row.lastOutputAgeSeconds === null ? 'output unknown' : `output ${sessionAge(row.lastOutputAgeSeconds)} ago`;
-}
-function where(row: LiveSessionRow): string {
-  return row.computer === 'unknown' ? 'computer unknown' : row.thisComputer ? 'this computer' : row.computer;
-}
-
-function SessionRow({ row, onOpen }: { row: LiveSessionRow; onOpen: (job: string) => void }) {
-  const reasons = SESSION_FIELDS.filter(field => row.unknown[field]);
-  return <li className={styles.row} data-quiet={row.quiet ? 'true' : undefined}>
-    <button type="button" className={styles.open} onClick={() => onOpen(row.job)}
-      aria-label={`Open log for ${row.job}${row.quiet ? ', quiet' : ''}`}>
-      <span className={styles.top}>
-        <strong className={styles.job}>{row.job}</strong>
-        {row.quiet && <span className={styles.quiet}>quiet</span>}
-        <span className={styles.muted}>{row.status} {sessionAge(row.ageSeconds)}</span>
-      </span>
-      <span className={styles.facts}>
-        <span>{row.repo}</span><span>{row.tier}</span><span>{row.model}</span>
-        <span data-quiet={row.quiet ? 'true' : undefined}>{output(row)}</span>
-        <span data-elsewhere={row.thisComputer === false ? 'true' : undefined}>{where(row)}</span>
-      </span>
-      {reasons.length > 0 && <span className={styles.why}>
-        {reasons.map(field => `${FIELD_WORD[field]} unknown: ${row.unknown[field]}`).join('; ')}
-      </span>}
-    </button>
-    {row.prUrl && <a className={styles.pr} href={row.prUrl} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${row.job}`}>PR</a>}
+/** One tree row. `row` is the running session's entry in `sessions[]` (quiet, computer, PR, unknown reasons), when it has one. */
+function SessionRow({ node, depth, row, onOpen }: { node: SessionNode; depth: number; row: LiveSessionRow | undefined; onOpen: (job: string) => void }) {
+  const indent = { marginLeft: `calc(${Math.min(depth, 4)} * var(--space-3))` };
+  if (node.kind === 'unknown-parent') return <li className={styles.group} style={indent}>Unknown parent <span className={styles.muted}>{node.counts.below}</span></li>;
+  const reasons = SESSION_FIELDS.filter(field => row?.unknown[field]);
+  const body = <>
+    <span className={styles.top}>
+      {node.kind === 'worker' && node.lane !== 'unknown' && <ProviderBadge of={node.lane} iconOnly size={14} />}
+      <strong className={styles.job}>{node.id}</strong>
+      {row?.quiet && <span className={styles.quiet}>quiet</span>}
+      <span className={styles.muted} data-state={node.state}>{node.state === 'unknown' ? 'state unknown' : node.state}</span>
+    </span>
+    <span className={styles.facts}>
+      <span>{node.kind}</span><span>{node.model === 'unknown' ? 'model unknown' : node.model}</span><span>{node.repo === 'unknown' ? 'repo unknown' : node.repo}</span>
+      <span data-quiet={row?.quiet ? 'true' : undefined}>{spoke(node)}</span>
+      {row && <span data-elsewhere={row.thisComputer === false ? 'true' : undefined}>{row.computer === 'unknown' ? 'computer unknown' : row.thisComputer ? 'this computer' : row.computer}</span>}
+      {node.counts.below > 0 && <span>{node.counts.running} of {node.counts.below} below running</span>}
+    </span>
+    <span className={styles.message}>{node.lastMessage ?? 'Last message unknown'}</span>
+    {reasons.length > 0 && <span className={styles.why}>
+      {reasons.map(field => `${FIELD_WORD[field]} unknown: ${row!.unknown[field]}`).join('; ')}
+    </span>}
+  </>;
+  return <li className={styles.row} style={indent} data-quiet={row?.quiet ? 'true' : undefined} data-kind={node.kind}>
+    {node.jobId === null ? <div className={styles.open} aria-label={`${node.id}, ${node.kind}`}>{body}</div>
+      : <button type="button" className={styles.open} onClick={() => onOpen(node.jobId!)}
+        aria-label={`Open messages for ${node.id}${row?.quiet ? ', quiet' : ''}`}>{body}</button>}
+    {row?.prUrl && <a className={styles.pr} href={row.prUrl} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${node.id}`}>PR</a>}
   </li>;
 }
 
 export function SessionsView({ list, onOpen }: { list: LiveSessionsV1; onOpen: (job: string) => void }) {
-  const groups = sessionsByLane(list);
+  const rows = new Map(list.sessions.map(row => [row.job, row]));
+  const tree = flatTree(list.tree.roots);
   return <section className={styles.root} aria-label="Agent sessions">
     <p className={styles.headline}>{sessionsHeadline(list)}</p>
-    {groups.length === 0 && <p className={styles.notice} role="status">No agent sessions running.</p>}
-    {groups.map(group => <section key={group.lane} className={styles.lane} aria-label={`Lane ${group.lane}`}>
-      <h3 className={styles.laneName}>
-        {group.lane !== 'unknown' && <ProviderBadge of={group.lane} iconOnly size={14} />}
-        {group.lane === 'unknown' ? 'Lane unknown' : group.lane}
-        <span className={styles.muted}>{group.sessions.length}</span>
-      </h3>
-      <ul className={styles.list}>{group.sessions.map(row => <SessionRow key={row.job} row={row} onOpen={onOpen} />)}</ul>
-    </section>)}
+    {tree.length === 0 ? <p className={styles.notice} role="status">No agent sessions running.</p>
+      : <ul className={styles.list} aria-label="Session tree">{tree.map(({ node, depth }) =>
+        <SessionRow key={node.id} node={node} depth={depth} row={node.jobId === null ? undefined : rows.get(node.jobId)} onOpen={onOpen} />)}</ul>}
     {list.gaps.length > 0 && <ul className={styles.gaps} aria-label="Unknown">{list.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
-    <p className={styles.notice}>Quiet: no output for {list.quietAfterMinutes} minutes. Same list for agents: <code>phm sessions --json</code></p>
+    <p className={styles.notice}>Quiet: no output for {list.quietAfterMinutes} minutes. Finished sessions stay for an hour. Same tree for agents: <code>phm sessions --json</code></p>
   </section>;
 }
 
