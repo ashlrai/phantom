@@ -258,6 +258,11 @@ phm apps status Notes --json
 phm apps quit Notes --json
 ```
 
+Safari is Phantom's own agent browser: `phm browser --json` lists its tabs and
+the latest screenshot, `phm browser open <url> --json`, `phm browser shot <path.png> --json`
+and `phm browser close --json` act on it, and `phm browser doctor --json` says whether
+remote automation is on. Chrome is always refused.
+
 The Fleet Host Allowed apps card and GET/POST `/api/verse/apps/control` share
 the CLI service. Allowlist entries accept `actions` and `mode: "request"` policies;
 Phantom lifecycle actions always queue to needs-you without desktop or launcher

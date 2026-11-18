@@ -42,3 +42,7 @@
 .appState { flex: 1 1 8rem; min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .appState[data-unknown='true'] { color: var(--status-unknown-fg); }
 .appRow > button { margin-left: auto; }
+/* Browser (BrowserCard): tab title over its address; the screenshot never outgrows a 390px column. */
+.tabTitle { flex: 1 1 100%; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.shot { margin: var(--space-2) 0; min-width: 0; }
+.shot img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }

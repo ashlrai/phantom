@@ -860,6 +860,15 @@ def result(j):
 def base(j):
     b = rd("%s/%s.base" % (R, j)).split()
     return b if len(b) >= 4 else None
+def published_current_attempt(j):
+    """Only a valid completion receipt for this launch releases its slot."""
+    if not re.match(r"RESULT (PR https://[^\s/]+/\S+|EMPTY)(\s|$)", result(j) or ""): return False
+    try:
+        boundary = os.path.getmtime(R + "/" + j + ".base")
+        dispatched = RUN + "/" + j + ".dispatched"
+        if os.path.exists(dispatched): boundary = max(boundary, os.path.getmtime(dispatched))
+        return os.path.getmtime(R + "/" + j + ".publish") >= boundary
+    except OSError: return False   # an unreadable receipt is not terminal evidence
 
 # ---- batching (RQ-QUEUE-BATCH-1, per-line since RQ-BATCH-SESSIONS-2): up to 10 related ready lines share one session,
 # each with its own lease (<job>.batched, O_EXCL), worktree (batch-launch.sh) and PR (the normal per-job reap).
@@ -1163,6 +1172,9 @@ for bp in glob.glob(R + "/*.base"):
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
     if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
+    # Completion wins over launch grace, lingering processes and fresh artifacts.
+    # Keep the worktree/receipts for the existing publisher and reconciliation.
+    if published_current_attempt(j): continue
     if j in alive:
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
@@ -1172,9 +1184,7 @@ for bp in glob.glob(R + "/*.base"):
     if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
-    # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
-    published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
-    if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
+    if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # no completion evidence: retain cloud jobs without a local log
         if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
         if _rc(j) is None and not result(j):
             target = drain_target(j, _job_repo(j))
@@ -1218,7 +1228,7 @@ def reap_worktrees():
         try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
         except Exception: recent = NOW
         # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
-        published = bool(re.match(r"RESULT (PR https://\S+|EMPTY)(\s|$)", result(j) or ""))
+        published = published_current_attempt(j)
         if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
             if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
             if _rc(j) is None and not result(j):

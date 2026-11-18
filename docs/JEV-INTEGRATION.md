@@ -136,6 +136,25 @@ readings as zero or claiming invoice completeness.
 | action-class | `suggestActionClass`, called by `vision/leader-advice.ts` after `enactLeaderActions` (≤ 8 actions per memo) | 0.85 | the deterministic class | advisory, escalate-only: a `memo.actionAdvice` label and a line in the memo message; asked after every class and window is decided, read by no gate, can never lower a class or approve |
 | operator-intent | exported `classifyOperatorIntent` | 0.8 | regex ladder | routing only; Jev can never introduce `approval` |
 
+## The option form: `decide({ question, options, context? })`
+
+One question, a fixed list of answers, one typed result. It is the same `decide` export with an object argument, and
+`phm decide --question <text> --options <a,b,c> [--context <file>] [--json]` is the same call. It does not use Jev: the
+router gateway picks its cheapest registry-verified model (`auto`, bulk, low difficulty), behind the usual grant, budget
+and kill switch. No model is named in code.
+
+Result, schema version 1 (additive changes only): `{ version: 1, choice, confidence, reason, model, latency_ms }`.
+`choice` is one of `options` or the literal `unknown`. The reply must be a JSON object naming a listed option with a
+confidence from 0 to 1; one invalid reply is retried once. A second invalid reply, a model that cannot tell, or no
+reachable model returns `unknown` with confidence 0 and a plain reason (`model` is `unknown` when none answered). Bad
+input (no question, no options, a repeated option, an option called `unknown`) throws `DecideInputError` before any
+model call. Each decision appends one `decision` line to the telemetry log (`metrics/events.jsonl`): choice, option
+count, confidence, latency, attempts and model, never the question, context or reason.
+
+First call site, off by default: `ASHLR_EMPTY_DECIDE=1` lets `readEmptyJobs` ask for a class when the notes and log of
+an empty job matched no rule (newest five per report, one answer kept per job). The row is marked `source: "decide"`,
+keeps a fixed reason sentence, and never queues a retry; `unknown` leaves the rule's answer in place.
+
 ## Resource choice in autonomous work
 
 Batch preparation obtains the actual selected work item, admitted candidate metadata and
