@@ -127,8 +127,9 @@ export function cleanTreeHash(cwd) {
   return hashParts([
     'clean-tree',
     blob(cwd, 'docs'),
-    blob(cwd, 'scripts/generate-docs-llms.mjs'),
-    blob(cwd, 'scripts/lib/docs-pages.mjs'),
+    blob(cwd, 'bin'),
+    blob(cwd, 'scripts'),
+    blob(cwd, '.github/tests'),
     ...policyRecords(cwd),
   ]);
 }

@@ -327,6 +327,8 @@ jobs:
           if node .github/scripts/ci-green-reuse.mjs verify --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"; then
             echo "reused a prior green generated-files result"
           else
+            node scripts/canonical-launcher-digests.mjs --check
+            node --test .github/tests/canonical-launcher-digests.test.mjs
             node scripts/generate-docs-llms.mjs
             status="$(git status --porcelain --untracked-files=normal)"
             if [ -n "$status" ]; then

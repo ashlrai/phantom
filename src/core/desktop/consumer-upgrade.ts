@@ -87,7 +87,7 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       need(before.target===join(releases,journal.current.release)&&r.installed.version===journal.current.version,'current-changed');
       a.destination=join(releases,journal.previous.release);parents(deps.home,a.destination,false);directory(a.destination);
       need(versionAt(a.destination)===journal.previous.version,'no-rollback');
-      need(regular(join(a.destination,'bin/ashlr'),65536).data.equals(regular(join(deps.packageRoot,'bin/ashlr'),65536).data),'launcher-identity');
+      need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
       need(await deps.smokeVersion(join(a.destination,'bin/ashlr'))===journal.previous.version,'smoke-failed');
       a.journal=journal;r.candidate={version:journal.previous.version,release:journal.previous.release};r.previous={version:journal.current.version,release:journal.current.release};
       const surface=verifyAuthoritySurfaceAt(a.destination,'installed',{fresh:true});if(surface.ok)touchId(r,before.target,surface.digest!);
@@ -143,7 +143,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
       fs.mkdirSync(a.destination,{mode:0o700});created=directory(a.destination);extractPinnedRuntimeArchive(archive,a.destination);await packageReady(a.destination,{pins:a.pins,manifest:a.manifest});
     } else {
       parents(deps.home,a.destination,false);need(versionAt(a.destination)===r.candidate!.version,'no-rollback');
-      need(regular(join(a.destination,'bin/ashlr'),65536).data.equals(regular(join(deps.packageRoot,'bin/ashlr'),65536).data),'launcher-identity');
+      need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
       need(canonicalJson(JSON.parse(owned(join(deps.home,'.local/share/ashlr/upgrade.json'),8192).data.toString()))===canonicalJson(a.journal),'current-changed');
     }
     try {need(await deps.smokeVersion(join(a.destination,'bin/ashlr'))===r.candidate!.version,'smoke-failed');}catch {throw new Held('smoke-failed');}

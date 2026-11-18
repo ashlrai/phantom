@@ -563,6 +563,7 @@ function rootPackageIsPortable(
     'scripts/lib/docs-pages.d.mts',
     'scripts/scorecard-history-worker.mjs',
     'scripts/local-app-transaction.mjs',
+    'scripts/canonical-launcher-digests.json',
     // Fixed host imports for builtin custody; never admit the scripts directory
     // or candidate/controller entrypoints through a wildcard declaration.
     'scripts/evaluators/preparation-verification-activity.mjs',
