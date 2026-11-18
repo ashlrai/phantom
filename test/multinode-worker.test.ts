@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn(), hostStats: vi.fn(), acquire: vi.fn(), release: vi.fn() }));
+const ports = vi.hoisted(() => ({ spawn: vi.fn(), call: vi.fn(), stat: vi.fn(), check: vi.fn(), capacity: vi.fn(), hostStats: vi.fn(), acquire: vi.fn(), release: vi.fn(),
+  resolveProviderBinary: vi.fn(), probeRunnerPacks: vi.fn() }));
 vi.mock('node:child_process', () => ({ spawn: ports.spawn, spawnSync: () => ({ status: 0 }) }));
 vi.mock('node:fs', async original => ({ ...await original<typeof import('node:fs')>(), lstatSync: ports.stat }));
 vi.mock('../src/core/drive/script-bridge.js', () => ({ checkDriveExecutable: ports.check }));
@@ -11,7 +13,8 @@ vi.mock('../src/core/drive/nodes/capacity.js', () => ({ readNodeCapacity: ports.
   nodeRamSlots: () => 4, sampleHostStats: ports.hostStats }));
 vi.mock('../src/core/drive/nodes/host-slots.js', () => ({ hostSlots: () => ({ acquire: ports.acquire }) }));
 vi.mock('../src/core/drive/nodes/provider-binary.js', async original => ({ ...await original<typeof import('../src/core/drive/nodes/provider-binary.js')>(),
-  resolveProviderBinary: (provider: string) => `/usr/local/bin/${provider}` }));
+  resolveProviderBinary: ports.resolveProviderBinary }));
+vi.mock('../src/core/drive/nodes/runner-packs.js', () => ({ probeRunnerPacks: ports.probeRunnerPacks }));
 import { runNodeWorker } from '../src/core/drive/nodes/worker.js';
 
 const config = { role: 'worker' as const, primary: 'main', backup: 'backup', owner: 'mason', node: 'worker' };
@@ -28,6 +31,8 @@ beforeEach(() => {
   ports.capacity.mockReturnValue({ slots: 1, ramBytes: 16 * 1024 ** 3, held: null });
   ports.acquire.mockImplementation(() => ({ release: ports.release }));
   ports.hostStats.mockImplementation(() => ({ sampledAtMs: Date.now(), uptimeSeconds: 1, load: [0, 0, 0], ramTotal: 16, ramUsed: 8, diskFree: 4, cores: [] }));
+  ports.resolveProviderBinary.mockImplementation((provider: string) => `/usr/local/bin/${provider}`);
+  ports.probeRunnerPacks.mockReturnValue([]);
   child = new Child();
   ports.stat.mockImplementation(() => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); });
   ports.check.mockResolvedValue(undefined);
@@ -44,7 +49,65 @@ async function start() {
   await Promise.resolve();
   return { result };
 }
+function pullJob(requires: string[], pack = 'codex-file') {
+  const route = ports.call.getMockImplementation()!;
+  ports.call.mockImplementation((...args) => {
+    if (args[1] === 'release') return { demoted: false, result: { released: true } };
+    const response = route(...args);
+    if (args[1] === 'pull') response.result.job = { id: 'j', requires, secrets: [], pack };
+    return response;
+  });
+}
 describe('multi-Mac worker lifecycle', () => {
+  it.each(['oversize', 'sha-mismatch', 'invalid-utf8'])('releases a corrupt embedded task without spawning: %s', async mode => {
+    const route = ports.call.getMockImplementation()!;
+    ports.call.mockImplementation((...args) => {
+      if (args[1] === 'release') return { demoted: false, result: { released: true } };
+      const reply = route(...args);
+      if (args[1] === 'pull') {
+        reply.result.job.pack = 'codex-file';
+        reply.result.job.task = { text: mode === 'oversize' ? 'x'.repeat(16385) : mode === 'invalid-utf8' ? '\ud800' : 'review', sha256: '0'.repeat(64) };
+        if (mode === 'oversize') reply.result.job.task.sha256 = createHash('sha256').update(reply.result.job.task.text).digest('hex');
+      }
+      return reply;
+    });
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'invalid-task', released: true });
+    expect(ports.spawn).not.toHaveBeenCalled();
+    expect(ports.call.mock.calls.some(c => c[1] === 'release')).toBe(true);
+  });
+  it('runs a bridged job when both its provider and file pack were probed', async () => {
+    ports.probeRunnerPacks.mockReturnValue(['pack:codex-file']);
+    pullJob(['codex', 'pack:codex-file']);
+    const { result } = await start();
+    const join = ports.call.mock.calls.find(c => c[1] === 'join')![2] as string[];
+    expect(join[join.indexOf('--caps') + 1]).toContain('pack:codex-file');
+    expect(ports.spawn).toHaveBeenCalledTimes(1);
+    child.stdout.write('{"resultRef":"branch:job-j"}');
+    child.emit('close', 0);
+    expect(await result).toMatchObject({ jobId: 'j', completed: true });
+  });
+  it('declines a bridged job when its required file pack was not probed', async () => {
+    pullJob(['codex', 'pack:codex-file']);
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'unsupported-job', released: true });
+    expect(ports.spawn).not.toHaveBeenCalled();
+    const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
+    expect(release).toContain('--decline');
+  });
+  it('declines a pack-only requirement without a required provider lane', async () => {
+    ports.probeRunnerPacks.mockReturnValue(['pack:codex-file']);
+    pullJob(['pack:codex-file']);
+    expect(await runNodeWorker(config, '/reviewed/runner')).toMatchObject({ held: 'unsupported-job', released: true });
+    expect(ports.spawn).not.toHaveBeenCalled();
+    const release = ports.call.mock.calls.find(c => c[1] === 'release')![2] as string[];
+    expect(release).toContain('--decline');
+  });
+  it('does not admit a pack-only node when no provider or local lane is available', async () => {
+    ports.resolveProviderBinary.mockReturnValue(null);
+    ports.probeRunnerPacks.mockReturnValue(['pack:codex-file']);
+    expect(await runNodeWorker(config, '/reviewed/runner')).toEqual({ held: 'no-local-provider-login' });
+    expect(ports.call).not.toHaveBeenCalled();
+    expect(ports.spawn).not.toHaveBeenCalled();
+  });
   it('continues fenced work when optional host telemetry cannot be collected', async () => {
     ports.hostStats.mockImplementation(() => { throw new Error('unavailable'); });
     const { result } = await start();
