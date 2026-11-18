@@ -14,7 +14,8 @@ export function planEmptyRetries(queue: string, jobs: EmptyJobResult[], receipts
   const output: string[] = [];
   const retried = new Set(lines.flatMap(line => /^\s*-\s+\S+\s+.*\bretry-empty-source=([\w.-]+)\s*$/.exec(line)?.[1] ?? []));
   for (const job of jobs) {
-    if (!['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id)) || retried.has(job.id)) continue;
+    // A class a model picked is advisory; only a rule's class may queue a retry.
+    if (job.source === 'decide' || !['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id)) || retried.has(job.id)) continue;
     if (job.outcome && ['already-implemented', 'duplicate', 'empty'].includes(job.outcome)) continue;
     const id = job.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const entries = lines.filter(line => new RegExp(`^\\s*-\\s+(?:\\S+\\s+)*${id}\\s*\\(`).test(line));

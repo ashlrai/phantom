@@ -2789,6 +2789,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'decide': {
+        // One typed decision: a question, a fixed option list, "unknown" instead of a guess (src/cli/decide.ts).
+        const { cmdDecide } = await import('./decide.js');
+        process.exitCode = await cmdDecide(rest);
+        break;
+      }
+
       case 'worklog': {
         const { cmdWorklog } = await import('./worklog.js');
         process.exitCode = await cmdWorklog(rest);
