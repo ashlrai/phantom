@@ -48,6 +48,7 @@ const claimKey = (repo: string, id: string): string => JSON.stringify([repo, id]
 export function planClaimThreadNotices(
   prev: ClaimThreadSnapshot, next: ClaimThreadSnapshot,
   bindings: readonly ClaimThreadBinding[], now: number,
+  noticeTimes?: ReadonlyMap<string, number>,
 ): ClaimThreadNotice[] {
   if (prev.state !== 'known' || next.state !== 'known' || !Number.isFinite(now)
     || !Number.isFinite(prev.asOf) || !Number.isFinite(next.asOf)
@@ -103,7 +104,7 @@ export function planClaimThreadNotices(
     seen.add(dedupeKey);
     const target = `${repo}#${pr ?? binding.pr ?? '?'}@${actualHead?.slice(0, 7) ?? 'unknown'}`;
     notices.push({ threadKey: binding.threadKey, state, dedupeKey,
-      text: `${state}: ${field(owner)} ${field(target)} claim ${field(id)}; ${field(evidence)}; as of ${new Date(now).toISOString()}` });
+      text: `${state}: ${field(owner)} ${field(target)} claim ${field(id)}; ${field(evidence)}; as of ${new Date(noticeTimes?.get(dedupeKey) ?? now).toISOString()}` });
   };
   for (const claim of after.values()) {
     const old = before.get(claimKey(claim.repo, claim.id));
