@@ -25,6 +25,24 @@ function fixture() {
 }
 
 describe('drive node leases', () => {
+  it.each(['consistent', 'session', 'leaderToken', 'expiresAt', 'jobId', 'token', 'marker'])(
+    'migrates only consistent legacy withdrawals: %s', kind => {
+      const f = fixture();
+      f.a.enqueue('legacy', { owner: 'o' });
+      f.a.withdraw('legacy', 'o');
+      const job = f.store.state.jobs[0]!;
+      delete job.producerWithdrawn;
+      if (kind === 'marker') job.producerWithdrawn = true;
+      if (kind === 'session') job.claim!.session++;
+      if (kind === 'leaderToken') job.claim!.leaderToken++;
+      if (kind === 'expiresAt') job.claim!.expiresAt++;
+      if (kind === 'jobId') job.claim!.jobId = 'other';
+      if (kind === 'token') job.claim!.token = f.store.state.sequence + 1;
+      const migrated = kind === 'consistent' || kind === 'marker';
+      expect(f.a.withdraw('legacy', 'o').state).toBe(migrated ? 'withdrawn' : 'completed');
+      expect(f.store.state.jobs[0]!.producerWithdrawn).toBe(migrated ? true : undefined);
+    });
+
   it('acquires one leader and renews without changing its fencing token', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;

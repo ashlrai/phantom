@@ -852,5 +852,5 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
   'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
-  'test/node-ready-bridge.test.ts', // spawns python3 flock holders and contrib/mac/batch_sessions.py against real temp queue dirs
+  'test/node-ready-bridge.test.ts', // concurrent real tsx bridge processes, python3 flock holders and batch_sessions.py against temp queues
 ];
