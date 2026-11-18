@@ -155,8 +155,11 @@ export function releaseClaim(team: string, actor: TeamActor, claimId: string) {
     const c = teamState(team).claims.find((x) => x.id === claimId);
     if (!c) throw new Error('No active claim with that id.');
     if (c.holder !== actor.id) throw new Error('Only the holder can release this claim.');
-    const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId });
+    const released = releaseCoordinationBySource({
+      origin: 'team', sourceId: claimId, owner: c.holder,
+    });
     if (released.status === 'unavailable') throw new Error('Claim store unavailable.');
+    if (released.status === 'stale') throw new Error('Claim lease is no longer held.');
     appendUnlocked(team, actor, 'claim.released', { claimId });
     return { released: claimId };
   });

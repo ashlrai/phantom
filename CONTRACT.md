@@ -42,7 +42,10 @@ Exports:
   refused. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
   `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
   retries held releases on replay, declines node sessions and releases bus
-  claims by source. It returns `phantom-bot-handoff-plan.v1` with `apply`, state
+  claims by source. Source releases require the current owner; seat handoffs also
+  match the captured stored lease generation. Team and board clears use owner-only
+  fencing because acquisition may normalize the requested expiry. It returns
+  `phantom-bot-handoff-plan.v1` with `apply`, state
   and handoffs; apply handoffs include `notifications: {bus, owner}` statuses.
   Durable notice receipts suppress repeated attempts; crashes before receipt
   persistence retry with stable deduplication keys. Notification exceptions are
