@@ -60,6 +60,7 @@ export interface ConsumerInstallResult {
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 const same = (a: fs.Stats, b: fs.Stats) => ['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].every(key => a[key as keyof fs.Stats] === b[key as keyof fs.Stats]);
 class Held extends Error { constructor(readonly reason: string) {super(reason);} }
+export {Held as ConsumerInstallHeld};
 function require(condition: unknown, reason: string): asserts condition {if (!condition) throw new Held(reason);}
 function directory(path: string, privateMode = true): fs.Stats {
   const s=fs.lstatSync(path);
