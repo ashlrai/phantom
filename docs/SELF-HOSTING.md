@@ -118,6 +118,13 @@ combined tool surface: [one connection for every agent](COMPANIONS.md#one-connec
 
 ## Upgrade
 
+- Release directory (`~/.local/share/ashlr/releases/<sha>`): run `phm update`.
+  It verifies the npm tarball's SHA-512 integrity and, when installed, GitHub CLI
+  attestation, smoke-tests the candidate, and swaps `current`. Running launchd
+  services are paused and restarted automatically. Failures restore changed links;
+  the previous release stays on disk. `phm update --json` returns `from`, `to`,
+  `verified`, `rolled_back`, and `log_line`; the line is appended to
+  `~/.ashlr-runs/installs.log`. `--check` leaves the installation unchanged.
 - Source checkout: `phm update` (alias `phm upgrade`) fast-forwards with
   `git pull --ff-only`, runs `npm install` and `npm run build`, then checks
   the `~/.local/bin` symlink and a `help` smoke test. It aborts on a dirty
