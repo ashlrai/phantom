@@ -50,6 +50,9 @@ class Batching(unittest.TestCase):
                             for r in metrics(self.home, 'dispatch_deferred')))
 
     def test_terminal_target_is_removed_before_batch_leases(self):
+        gh = self.home / 'stubbin/gh'
+        gh.write_text('#!/usr/bin/python3\nimport json, sys\nprint(json.dumps(dict(url=sys.argv[3], state="OPEN")))\n')
+        gh.chmod(0o755)
         # Keep two distinct actionable targets after the merged target is removed.
         for job, pr in (('RQ-Q-A', 43), ('RQ-Q-B', 42), ('RQ-Q-C', 44)):
             self.queue(job, f'{job} (pr={pr}): edit src/core/queue/store.ts')

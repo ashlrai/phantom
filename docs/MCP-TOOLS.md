@@ -217,3 +217,7 @@ Items are newest first with PR links, body-named job IDs, metrics-derived lanes 
 and open-to-merge seconds. `byRepo` counts observed merges; totals include merged count, count / 24 hours,
 and median duration among timed PRs. Empty days have zero merges and null median; incomplete GitHub reads have
 null totals and `complete: false`. No MCP tool registration is required; use the CLI or typed HTTP route.
+
+`fleet_empties` on the standalone fleet server returns the same typed report as
+`phm fleet empties`. Optional `hours` selects a trailing window (default 24,
+positive and at most 2160); paths are not accepted. See [Empty job reasons](FLEET-EMPTIES.md).
