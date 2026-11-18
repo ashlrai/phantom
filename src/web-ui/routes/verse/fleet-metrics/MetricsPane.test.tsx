@@ -29,6 +29,8 @@ it('shows the rollup, measured totals and both real hourly charts', () => {
   expect(screen.getByRole('columnheader', { name: 'phantom', hidden: true })).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'locus', hidden: true })).toBeTruthy();
   expect(screen.getByText(/Human actions are not recorded/)).toBeTruthy();
+  // The shared mock answers the releases read with the metrics payload, which is not a releases report.
+  expect(screen.getByText('Releases: unknown')).toBeTruthy();
 });
 
 it('shows generator yield and missing measurements', () => {

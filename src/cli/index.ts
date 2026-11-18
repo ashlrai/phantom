@@ -3053,6 +3053,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'releases': {
+        process.exitCode = (await import('./release.js')).cmdReleases(rest);
+        break;
+      }
+
       case 'preflight': {
         const cmdPreflight = await loadPreflightCmd();
         process.exitCode = await cmdPreflight(rest);
