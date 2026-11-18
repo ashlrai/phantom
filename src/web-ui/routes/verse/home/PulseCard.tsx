@@ -1,10 +1,12 @@
 /**
  * Home's Pulse card, first on the desktop and the phone: is the fleet doing well right now, as five numbers with a
  * trend arrow against the day before and one plain line each. Built only on `phm fleet pulse --json` (fleet.pulse.v1).
- * Read-only. An unknown number reads "unknown", never 0.
+ * Read-only. An unknown number reads "unknown", never 0. A last "Running build" row reads `phm self drift --json`
+ * (phantom.self-drift.v1): one plain sentence, with unknown facts left unknown.
  */
 import type { ReactNode } from 'react';
 import type { PulseNumber, PulseV1 } from '../../../../core/fleet/pulse.js';
+import { narrowSelfDrift, type SelfDriftV1 } from '../../../../core/release/drift-shape.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -13,6 +15,8 @@ import styles from './home.module.css';
 
 export const PULSE_PATH = '/api/verse/fleet/runs/pulse';
 export const pulseQuery: QueryDef<PulseV1> = { key: 'fleet-pulse', fetch: signal => apiGet(PULSE_PATH, signal) };
+export const DRIFT_PATH = '/api/verse/fleet/runs/drift';
+export const driftQuery: QueryDef<SelfDriftV1> = { key: 'self-drift', fetch: signal => apiGet(DRIFT_PATH, signal) };
 
 const ARROW = { up: '↑', down: '↓', flat: '→', unknown: '?' } as const;
 const minutes = (s: number) => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 360) / 10} h`;
@@ -46,6 +50,20 @@ function Row({ title, field, value, children }: { title: string; field: PulseNum
   </li>;
 }
 
+/** One sentence shared with the CLI and API. */
+function RunningBuild({ visible }: { visible: boolean }) {
+  const read = useQuery(driftQuery, { enabled: visible, freshMs: 0 });
+  const refresh = useRefetch(driftQuery);
+  usePollWhileVisible(refresh, 60_000, { enabled: visible });
+  const drift = narrowSelfDrift(read.data);
+  if (!drift && read.status !== 'error') return null;
+  return <li className={styles.pulseRow} aria-label="Running build">
+    <span className={styles.pulseLine} data-unknown={!drift || drift.behind === 'unknown' || undefined}>
+      {drift?.line ?? 'Running build: unknown (the running build could not be read).'}
+    </span>
+  </li>;
+}
+
 export function PulseCard({ visible = true }: { visible?: boolean }) {
   const read = useQuery(pulseQuery, { enabled: visible, freshMs: 0 });
   const refresh = useRefetch(pulseQuery);
@@ -66,6 +84,7 @@ export function PulseCard({ visible = true }: { visible?: boolean }) {
       <Row title="Main branches green" field={g} value={v => `${v} of ${g.total}`} />
       <Row title="Days since last release" field={r} value={String} />
       <Row title="Pools on pace" field={p} value={v => `${v} of ${p.measured}`} />
+      <RunningBuild visible={visible} />
     </ul>
   </section>;
 }
