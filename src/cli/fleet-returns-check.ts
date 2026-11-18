@@ -4,7 +4,7 @@
  * receipt stops being only the returning agent's word. Read-only: nothing is
  * written, commented, merged or dispatched, and the verdict grants no
  * authority. Exit 0 only with current receipts merged at their claimed heads;
- * 1 when coverage is truncated or any did not or could not be read (including an unreadable ledger);
+ * 1 when coverage is truncated, return messages are unparsed, or any did not or could not be read (including an unreadable ledger);
  * 2 on bad arguments. */
 import type { Gh } from '../core/autopilot/github.js';
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
@@ -46,7 +46,7 @@ export async function cmdFleetReturnsCheck(args: string[], deps: { gh?: Gh; now?
   const receipts = view.returns.filter(row => row.result === 'VERIFIED' && row.evidenceKind === 'pr');
   const check = await checkReturnPrs(view.returns, { gh: deps.gh, now, limit });
   if (json) {
-    console.log(JSON.stringify({ ...check, asOf: view.asOf, receipts, returnsState: view.state,
+    console.log(JSON.stringify({ ...check, asOf: view.asOf, receipts, returnsState: view.state, unparsed: view.unparsed,
       projectionCoverage: view.coverage,
       ...(view.state === 'unknown' ? { returnsReason: view.reason } : {}) }));
   } else {
@@ -61,6 +61,7 @@ export async function cmdFleetReturnsCheck(args: string[], deps: { gh?: Gh; now?
     }
     for (const row of receipts) console.log(`receipt temporal=${row.temporal}  ${row.repo}#${row.pr} (${row.claimId})`);
     console.log(`checked=${check.checked.length} skipped=${check.skipped} truncated=${check.truncated ? 'yes' : 'no'} as-of=${view.asOf}`);
+    if (view.unparsed > 0) console.log(`incomplete coverage: ${view.unparsed} unparsed return message(s)`);
     if (check.truncated) console.log('incomplete coverage: the limit prevented checking all eligible PR returns');
   }
   if (view.state === 'unknown') return 1;

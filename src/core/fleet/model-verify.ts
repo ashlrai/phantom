@@ -17,37 +17,41 @@ export interface ModelVerifyOptions {
   /** This machine's verification records. Default: $ASHLR_HOME/model-registry.json, or none when registryPath is set. */
   localRegistryPath?: string | null;
 }
-const ALIASES = new Set(['haiku', 'sonnet', 'opus', 'auto', 'fast', 'strong']);
+/** Launcher shorthands that are not model IDs. */
+export const MODEL_ALIASES: ReadonlySet<string> = new Set(['haiku', 'sonnet', 'opus', 'auto', 'fast', 'strong']);
 const DAY = 86_400_000;
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 /** Refuse pipes/symlinks and cap reads even if a file grows during inspection. */
-async function readJson(path: string | URL): Promise<unknown> {
+export async function readText(path: string | URL, max = 1024 * 1024): Promise<string> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const info = await file.stat(), max = 1024 * 1024;
+    const info = await file.stat();
     if (!info.isFile() || info.size > max) throw new Error('invalid source');
     const buffer = Buffer.alloc(max + 1);
     let size = 0, count: number;
     do { count = (await file.read(buffer, size, buffer.length - size, null)).bytesRead; size += count; }
     while (count && size <= max);
     if (size > max) throw new Error('source too large');
-    return JSON.parse(buffer.subarray(0, size).toString('utf8'));
+    return buffer.subarray(0, size).toString('utf8');
   } finally { await file.close(); }
+}
+const readJson = async (path: string | URL): Promise<unknown> => JSON.parse(await readText(path));
+/** The router's choices in models.json, in file order. Effort and mode rows are launcher settings, not model IDs. Throws when unreadable. */
+export async function readRouterChoices(opts: ModelVerifyOptions = {}): Promise<Array<{ key: string; model: string | null }>> {
+  const models = await readJson(join(opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'models.json'));
+  if (!object(models)) throw new Error('invalid model sources');
+  return Object.keys(models).filter(key => key !== 'effort' && !key.startsWith('effort.') && !key.startsWith('mode.'))
+    .map(key => ({ key, model: typeof models[key] === 'string' ? models[key].trim() : null }));
 }
 
 export async function verifyFleetModels(opts: ModelVerifyOptions = {}): Promise<ModelVerifyReport> {
-  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  const models = await readJson(join(root, 'models.json'));
-  if (!object(models)) throw new Error('invalid model sources');
+  const choices = await readRouterChoices(opts);
   const now = (opts.now ?? Date.now)();
   const entries = new Map((await loadVerifiedRegistry({ ...opts, now: () => now })).map(row => [row.id, row]));
   const issues: ModelVerifyIssue[] = [];
-  for (const [key, value] of Object.entries(models)) {
-    // The launcher reserves these rows for reasoning effort, not model IDs.
-    if (key === 'effort' || key.startsWith('effort.') || key.startsWith('mode.')) continue;
-    if (typeof value !== 'string' || !value.trim()) { issues.push({ key, model: null, reason: 'invalid-model' }); continue; }
-    const model = value.trim();
-    if (ALIASES.has(model)) continue;
+  for (const { key, model } of choices) {
+    if (!model) { issues.push({ key, model: null, reason: 'invalid-model' }); continue; }
+    if (MODEL_ALIASES.has(model)) continue;
     const entry = entries.get(model);
     if (!entry) issues.push({ key, model, reason: 'unregistered' });
     else if (entry.status !== 'verified') issues.push({ key, model, reason: entry.status });
@@ -203,12 +207,8 @@ export async function verifyModelRegistry(opts: ModelVerifyOptions = {}) {
   }));
   const report = { schema: 'models.verify.v1' as const, results, current_choices: [] as Array<{ key: string; model: string | null; status: ModelStatus }>, ok: false, error: null as string | null };
   try {
-    const models = await readJson(join(opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'models.json'));
-    if (!object(models)) throw new Error('Invalid choices');
-    report.current_choices = Object.keys(models).sort().filter(key => key !== 'effort' && !key.startsWith('effort.') && !key.startsWith('mode.')).map(key => {
-      const model = typeof models[key] === 'string' ? models[key].trim() : null;
-      return { key, model, status: entries.find(entry => entry.id === model)?.status ?? 'unverified' };
-    });
+    report.current_choices = (await readRouterChoices(opts)).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+      .map(({ key, model }) => ({ key, model, status: entries.find(entry => entry.id === model)?.status ?? 'unverified' }));
     report.ok = report.current_choices.every(choice => choice.status === 'verified');
   } catch { report.error = 'Cannot read or validate models.json; current router choices are unknown.'; }
   return report;

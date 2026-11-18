@@ -8,7 +8,7 @@ import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime, timezone
 from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
                              attempt_identity, empty_reason, read_attempts, with_prompt,
-                             admission_history, terminal_target)
+                             admission_history, terminal_target, merged_jobs)
 import queue_gate
 
 def semantic_dedupe(lines):
@@ -186,10 +186,9 @@ for row in ready_raw:
     if f[0] in queue_seen:
         queue_diagnostics["duplicate"] += 1; continue
     queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
-merged = set(); completed = set(); recent_outcomes = {}
-for x in rd(R + "/metrics/jobs.jsonl").splitlines():
-    try: d = json.loads(x)
-    except Exception: continue
+empty_attempts = read_attempts(R); completed = merged_jobs(empty_attempts)
+merged = {job for _, job in completed}; recent_outcomes = {}
+for d in empty_attempts:
     if not isinstance(d, dict) or d.get("launched") is False: continue
     job = d.get("job")
     stamp = d.get("ts", d.get("timestamp", d.get("at")))
@@ -203,12 +202,6 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     if isinstance(job, str) and epoch is not None and 0 <= time.time() - epoch < 24 * 3600 and (empty or success):
         previous = recent_outcomes.get(job)
         if previous is None or epoch > previous[0]: recent_outcomes[job] = (epoch, empty and not success)
-    if d.get("event") == "outcome" and d.get("state") == "MERGED" and isinstance(d.get("job"), str):
-        merged.add(d["job"])
-        repo = d.get("repo")
-        if repo is None or isinstance(repo, str):
-            # Legacy outcomes omit repo; job IDs are fleet-wide identities.
-            completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
 # A merged outcome plus the original identical task is evidence for suppressing
 # a later copy. Missing or ambiguous history never proves completion.
 completed_groups = set(); group_outcomes = {}
@@ -284,7 +277,7 @@ skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked =
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
-empty_attempts = read_attempts(R); empty_bases = {}
+empty_bases = {}
 _, terminal_prs = admission_history(empty_attempts, time.time())
 def empty_gate(j, repo, prompt):
     if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)

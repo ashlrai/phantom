@@ -945,6 +945,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
   { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
   { cmd: 'models [--json]',              desc: 'List the model registry (verified, unverified, stale) and local models.', topic: 'run' },
+  { cmd: 'models check [--json] [--diff <file>]', desc: 'Report every model the router can pick: confirmed, stale or unconfirmed (not routable).', topic: 'run' },
   { cmd: 'models verify <id> --source <url>', desc: 'Mark one model verified once its official doc page names the exact id.', topic: 'run' },
   { cmd: 'models verify [--text]',       desc: 'Show model verification status and age (JSON by default).', topic: 'run' },
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },

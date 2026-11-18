@@ -35,13 +35,17 @@ findings in its production graph, through picomatch 4.0.4. The root production
 graph is clean. These counts include dependent packages affected by the same
 advisory, rather than separate underlying advisories.
 
-The workflow has one narrow, expiring exception in
+The workflow has narrow, expiring exceptions in
 `.github/dependency-audit-exceptions.json` for `picomatch` and
-`GHSA-fc5q-39xc-vjpf` in full npm graphs. The npm report must name that exact
-package and every advisory URL in its `via` chain must match an active
-exception. Production audits using `--omit=dev` ignore the file entirely;
-malformed or expired exceptions fail closed, and unused exceptions warn in the
-step summary. Remove this exception when upstream ships a fix. It is not a
+`GHSA-fc5q-39xc-vjpf`: one for full npm graphs and one for the Raycast
+production graph, where the advisory arrives only through the `@raycast/api`
+CLI toolchain (oclif, tinyglobby). Each entry applies to exactly one graph.
+Every `via` advisory URL in the npm report must match an active exception, and
+a package vulnerable only through other packages (a string `via` entry) is
+excepted only when everything it depends on is excepted, including cyclic
+references. The root production graph never reads the file, so it stays
+strict; malformed or expired exceptions fail closed on the graphs that read it,
+and unused exceptions warn in the step summary. Remove this exception when upstream ships a fix. It is not a
 general allowlist. Each audit step runs after earlier failures unless the job
 is cancelled, so the job summary reports both npm graphs and the Cargo result
 without masking failures.
