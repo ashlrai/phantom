@@ -44,6 +44,7 @@ export const TIER1_TESTS = Object.freeze([
   'test/authority-codeowners-310b.test.ts',
   'test/authority-tier1-closure-310b.test.ts',
 ]);
+const PACKAGE_FILES_TEST = 'test/package-files-allowlist.test.ts';
 const TIER1_PATH = [
   /^\.github\/CODEOWNERS$/,
   /^src\/core\/authority\//,
@@ -180,13 +181,13 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
 
 // Bounded broader set: every Tier-1 test plus an even, deterministic spread of
 // the repository's test files, split round-robin so shards have equal counts.
-export function selectFallback({ cwd }) {
+export function selectFallback({ cwd, requiredTests = [] }) {
   const dist = distBoundFiles(cwd);
   const all = git(cwd, ['ls-files', '-z', '--', 'test']).split('\0')
     .filter((f) => TEST_FILE.test(f) && !SLOW.has(f) && (dist ? !dist.has(f) : !needsDist(cwd, f))).sort();
   const budget = FALLBACK_SHARDS * FALLBACK_TESTS_PER_SHARD;
   const step = Math.max(1, Math.ceil(all.length / budget));
-  const picked = new Set(TIER1_TESTS.filter((t) => all.includes(t)));
+  const picked = new Set([...TIER1_TESTS, ...requiredTests].filter((t) => all.includes(t)));
   for (let i = 0; i < all.length && picked.size < budget; i += step) picked.add(all[i]);
   const list = [...picked].sort();
   const shards = Array.from({ length: FALLBACK_SHARDS }, () => []);
@@ -199,7 +200,10 @@ export { changedPaths };
 export function plan({ cwd, paths, graph = null }) {
   const verdict = classifyPaths(paths);
   if (verdict.mode === 'docs') return { ...verdict, tests: [], node: [], shards: [], capped: 0 };
-  if (verdict.mode === 'fallback') return { ...verdict, ...selectFallback({ cwd }), capped: 0 };
+  if (verdict.mode === 'fallback') {
+    const requiredTests = paths.includes('package.json') ? [PACKAGE_FILES_TEST] : [];
+    return { ...verdict, ...selectFallback({ cwd, requiredTests }), capped: 0 };
+  }
   const sel = selectRelated({ cwd, paths, graph });
   if (sel.tests.length === 0 && sel.node.length === 0) {
     // Code changed but nothing maps to a test: never skip, run the bounded set.
