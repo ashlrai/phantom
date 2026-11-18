@@ -69,14 +69,24 @@ export interface HostLoadReport {
   gaps: string[];
 }
 
-const MODEL_COMMAND = /(?:^|[^a-z])(?:o?mlx|llama|ollama)/i;
+export const HOST_LOAD_MODEL_COMMAND = /(?:^|[^a-z])(?:o?mlx|llama|ollama)/i;
 const DESKTOP_APP = /\b(?:codex|claude|chatgpt|cursor|grok|phantom|chrome|docker)\b/i;
-const SYSTEM_PATH = /^\/(?:System|usr\/libexec|usr\/sbin|sbin|Library\/Apple)\//;
+export const HOST_LOAD_SYSTEM_PATH = /^\/(?:System|usr\/libexec|usr\/sbin|sbin|Library\/Apple)\//;
 const TOP_ITEMS = 5;
 const round1 = (value: number): number => Math.round(value * 10) / 10;
 /** Process names reach JSON and the UI, so keep plain characters only. */
-const plainName = (text: string): string => text.replace(/[^\w .()+-]/g, '').trim().slice(0, 64) || 'unnamed';
-const baseName = (comm: string): string => comm.slice(comm.lastIndexOf('/') + 1);
+export const plainName = (text: string): string => text.replace(/[^\w .()+-]/g, '').trim().slice(0, 64) || 'unnamed';
+export const baseName = (comm: string): string => comm.slice(comm.lastIndexOf('/') + 1);
+export interface HostPsRow { pid: number; ppid: number; cpu: number; rssKb: number; comm: string }
+/** Pure: the rows of `ps -axo pid,ppid,pcpu,rss,comm` by pid. Lines that are not a process row are skipped. */
+export function parseHostPs(psText: string | null): Map<number, HostPsRow> {
+  const rows = new Map<number, HostPsRow>();
+  for (const line of (psText ?? '').split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+(?:\.\d+)?)\s+(\d+)\s+(\S.*?)\s*$/.exec(line);
+    if (m) rows.set(Number(m[1]), { pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rssKb: Number(m[4]), comm: m[5]! });
+  }
+  return rows;
+}
 
 /**
  * Pure: groups the text of `ps -axo pid,ppid,pcpu,rss,comm` into who is loading the host. Never runs ps.
@@ -89,15 +99,11 @@ export function groupHostLoad(
   jobRoots: readonly HostLoadJobRoot[] | null,
   host: { load1: number | null; cores: number | null; now?: number } = { load1: null, cores: null },
 ): HostLoadReport {
-  type Row = { pid: number; ppid: number; cpu: number; rssKb: number; comm: string };
-  const rows = new Map<number, Row>();
-  for (const line of (psText ?? '').split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+(?:\.\d+)?)\s+(\d+)\s+(\S.*?)\s*$/.exec(line);
-    if (m) rows.set(Number(m[1]), { pid: Number(m[1]), ppid: Number(m[2]), cpu: Number(m[3]), rssKb: Number(m[4]), comm: m[5]! });
-  }
+  type Row = HostPsRow;
+  const rows = parseHostPs(psText);
   const rootJob = new Map((jobRoots ?? []).map(root => [root.pid, root.jobId]));
   const own = (row: Row): [HostLoadGroupId, string] | null => {
-    if (MODEL_COMMAND.test(baseName(row.comm))) return ['local-models', baseName(row.comm)];
+    if (HOST_LOAD_MODEL_COMMAND.test(baseName(row.comm))) return ['local-models', baseName(row.comm)];
     const app = /\/([^/]+)\.app\/Contents\//.exec(row.comm)?.[1];
     return app && DESKTOP_APP.test(app) ? ['desktop-apps', app] : null;
   };
@@ -110,7 +116,7 @@ export function groupHostLoad(
       if (job !== undefined) return ['fleet-workers', job];
       inherited ??= own(at);
     }
-    return inherited ?? [row.pid <= 1 || SYSTEM_PATH.test(row.comm) ? 'system' : 'other', baseName(row.comm)];
+    return inherited ?? [row.pid <= 1 || HOST_LOAD_SYSTEM_PATH.test(row.comm) ? 'system' : 'other', baseName(row.comm)];
   };
   const items = new Map<HostLoadGroupId, Map<string, HostLoadItem>>(HOST_LOAD_GROUPS.map(group => [group.id, new Map()]));
   for (const row of rows.values()) {
@@ -173,7 +179,7 @@ export interface HostLoadDeps {
   now?: () => number;
 }
 
-const runPs = (): Promise<string | null> => new Promise(resolve => execFile('/bin/ps', HOST_LOAD_PS_ARGS,
+export const readHostPs = (): Promise<string | null> => new Promise(resolve => execFile('/bin/ps', HOST_LOAD_PS_ARGS,
   { timeout: 5000, maxBuffer: 16 * 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } },
   (error, stdout) => resolve(error ? null : stdout)));
 
@@ -197,7 +203,7 @@ export function readHostLoadJobRoots(runsDir = process.env.ASHLR_RUNS_DIR ?? joi
 /** The one impure entry: runs ps and reads the claims, then hands both to groupHostLoad. Never throws. */
 export async function readHostLoadReport(deps: HostLoadDeps = {}): Promise<HostLoadReport> {
   let psText: string | null = null, roots: HostLoadJobRoot[] | null = null;
-  try { psText = await (deps.ps ?? runPs)(); } catch { /* Unknown process list. */ }
+  try { psText = await (deps.ps ?? readHostPs)(); } catch { /* Unknown process list. */ }
   try { roots = (deps.jobRoots ?? readHostLoadJobRoots)(); } catch { /* Unknown job roots. */ }
   const load = (deps.load ?? readHostLoad)();
   return groupHostLoad(psText, roots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
