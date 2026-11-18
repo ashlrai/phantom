@@ -11,6 +11,7 @@ import { assertMetadata } from '../src/core/connectors/profile.js';
 import { handleBotTemplates } from '../src/api/bot-templates.js';
 import { handleApi } from '../src/core/web/api.js';
 import { defaultConfig } from '../src/core/config.js';
+import * as seatRoster from '../src/core/bots/seats.js';
 
 let n = 0;
 const fresh = () => `bot-${n++}`;
@@ -105,6 +106,19 @@ async function call(method: string, url: string, body?: unknown, opts: { token?:
 }
 
 describe('bot template API', () => {
+  it('serves a read-only external seat roster without requiring dispatch or a mutation token', async () => {
+    const result = await call('GET', '/api/bots/seats', undefined, { allowDispatch: false, token: 'wrong' });
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ schema: 'phantom-bot-seats.v1', seats: [] });
+    expect((await call('POST', '/api/bots/seats', {})).status).toBe(405);
+  });
+  it('returns a value-free error when seat configuration is unavailable', async () => {
+    const read = vi.spyOn(seatRoster, 'listSeats').mockRejectedValueOnce(new Error(`sk-${'A'.repeat(32)}`));
+    try {
+      const result = await call('GET', '/api/bots/seats');
+      expect(result).toEqual({ status: 503, body: { error: 'Bot seats unavailable.' } });
+    } finally { read.mockRestore(); }
+  });
   it('lists templates and creates a bot', async () => {
     const list = await call('GET', '/api/bots/templates');
     expect(list.status).toBe(200);

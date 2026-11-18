@@ -125,7 +125,7 @@ export const BUILTIN_ENGINE_REGISTRY: Readonly<Record<string, EngineSpec>> = Obj
     autonomousArgv: ['--dangerously-bypass-approvals-and-sandbox'],
     capabilities: ['agent', 'edit', 'refactor'],
     // M260: canonical concrete model for merge-authority resolution.
-    // Must match an entry in cfg.foundry.mergeAuthority (e.g. {engine:'codex',model:'gpt-6.1-sol'}).
+    // Must match an entry in cfg.foundry.mergeAuthority (e.g. {engine:'codex',model:'gpt-6.2-sol'}).
     // Update here when the authorised Codex model changes.
     defaultModel: DEFAULT_CODEX_MODEL_ID,
   },

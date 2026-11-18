@@ -23,6 +23,8 @@ import { dropJobsQuery } from './drop-job-queries.js';
 import { waitingRows } from './drop-job-model.js';
 import { useDropJobSheetRequest } from './drop-job-sheet-store.js';
 import { fillerFirst, nextUpCaption, nextUpClasses } from './next-up-class-model.js';
+import { QueueOrderList } from './QueueOrderList.js';
+import { queueOrderQuery } from './queue-order-action.js';
 import styles from './fleet-queue.module.css';
 
 export function FleetQueuePane({ visible, host }: PaneProps) {
@@ -31,6 +33,9 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
   const holds = useQuery(laneHoldsQuery, { enabled: visible, freshMs: 0 });
   const drops = useQuery(dropJobsQuery, { enabled: visible, freshMs: 0 });
   const refetchDrops = useRefetch(dropJobsQuery);
+  const order = useQuery(queueOrderQuery, { enabled: visible, freshMs: 0 });
+  const refetchOrder = useRefetch(queueOrderQuery);
+  usePollWhileVisible(refetchOrder, 15_000, { enabled: visible });
   const [sheetOpen, setSheetOpen] = useState(false);
   const sheetRequest = useDropJobSheetRequest();
   useEffect(() => { if (sheetRequest) setSheetOpen(true); }, [sheetRequest]);
@@ -91,6 +96,10 @@ export function FleetQueuePane({ visible, host }: PaneProps) {
     {holds.status === 'error' && <p className={styles.notice} role="alert">Lane holds could not refresh.</p>}
     {read.status === 'error' && <p className={styles.notice} role="status">Queue could not refresh. Showing the last reading.</p>}
     {Object.values(data.sources).some((source) => source !== 'healthy') && <p className={styles.notice} role="status">Queue data may be incomplete.</p>}
+    {order.data && <QueueOrderList order={order.data} onOpenJob={openJob} onChanged={() => Promise.all([
+      refetchQuery(queueOrderQuery.key, () => queueOrderQuery.fetch(), true),
+      refetchQuery(opsQueueQuery.key, () => opsQueueQuery.fetch(), true),
+    ])} />}
     <section aria-label="Waiting to launch"><h3 className={styles.heading}>Waiting to launch</h3>
       {!data.stuck ? <p className={styles.message}>Waiting jobs are unavailable.</p> : <>
         {!data.stuck.eventsAvailable && <p className={styles.notice}>Dispatch events are unavailable; some jobs may have launched.</p>}
