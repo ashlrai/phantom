@@ -6,6 +6,7 @@ import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { fleetOrgTree } from '../../../../core/fleet/org-tree.js';
 import { projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
 import { buildMapEdges } from '../../../../core/fleet/map-edges.js';
+import { buildAgentsMessages } from '../../../../core/fleet/agents-messages.js';
 import type { FleetSessionsV1 } from '../../../../core/fleet/runs-sessions.js';
 import { evictAll } from '../../../data/cache.js';
 import { MessagesPane } from '../fleet-messages/MessagesPane.js';
@@ -13,7 +14,7 @@ import { showMessagePair } from '../fleet-messages/messages-pair.js';
 import { getPane, type PaneProps } from '../panes/pane-registry.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { DETAIL_PANE, MapPane, MapView } from './MapPane.js';
-import { layoutLiveMap, narrowLiveMap, narrowMapEdges, NODE_W } from './map-model.js';
+import { layoutLiveMap, narrowLiveMap, narrowMapEdges, narrowMessagePairs, NODE_W } from './map-model.js';
 import './fleet-map.pane.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = new Date(NOW).toISOString();
@@ -69,7 +70,8 @@ it('shows the empty state with every unknown spelled out', () => {
   expect(screen.getByText('jobs unknown · computers unknown · messages unknown')).toBeTruthy();
   expect(screen.getByText('Messages unknown.')).toBeTruthy();
   expect(screen.getByRole('list', { name: 'Unknown' }).textContent).toContain('Computers unknown');
-  expect(screen.getAllByRole('button')).toHaveLength(1);
+  // The leader node and the Messages switch.
+  expect(screen.getAllByRole('button')).toHaveLength(2);
 });
 
 it('opens the existing detail pane for the node clicked and polls at most every 5 seconds', async () => {
@@ -86,9 +88,9 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   fireEvent.click(screen.getByRole('button', { name: /^Open leader/ }));
   expect(openPane).toHaveBeenLastCalledWith('leader-thread');
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
-  // One read of the graph and one of its message edges; neither repeats inside the poll interval.
+  // One read each of the graph, its message edges and its message cards; none repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['live-map', 'map-edges']);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['agent-messages', 'live-map', 'map-edges']);
 });
 
 it('reads an unexpected payload as unavailable, and drops edges to nodes it does not have', async () => {
@@ -197,4 +199,58 @@ it('a message line opens the Messages pane on that pair, read from the typed mes
   fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
   await waitFor(() => expect(fetch.mock.calls.map(call => String(call[0])).some(url => url.endsWith('/api/verse/agent-bus/messages?limit=200'))).toBe(true));
   expect(screen.queryByText('leader ↔ claude · last 20 messages')).toBeNull();
+});
+
+/** `phm agents messages` (test/agents-messages.test.ts) as the map reads it: per-line counts and the last 5 summaries. */
+function pairsOf(said: Said[]) {
+  const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
+    envelope: { id: `m${i}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text } } }));
+  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', rows: rows as never }, { since: NOW - 3_600_000 }, NOW))));
+}
+
+describe('message cards, the Messages switch and reduced motion', () => {
+  const SIX: Said[] = [...CHAT, ...[1, 2, 3, 4].map((n): Said => ['leader', 'claude', 100 - n, `note ${n}`])];
+
+  it('hovering a line shows its count and last 5 summaries; an unknown read says so', () => {
+    const { container } = render(<MapView {...scene(SIX)} pairs={pairsOf(SIX)} now={NOW} onOpen={() => {}} />);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.mouseEnter(container.querySelector('[data-open-messages="messaged-in-last-15-min:leader->lane:claude"]')!);
+    const card = screen.getByRole('tooltip', { name: 'Last messages Leader (CEO) → claude' });
+    expect(card.querySelector('strong')!.textContent).toBe('Leader (CEO) → claude: 6 messages');
+    expect(within(card).getAllByRole('listitem').map(li => li.textContent)).toEqual([
+      '20 s ago · status: thanks, next the docs', '1 m ago · status: note 4', '1 m ago · status: note 3', '1 m ago · status: note 2', '1 m ago · status: note 1']);
+    fireEvent.mouseLeave(container.querySelector('[data-open-messages="messaged-in-last-15-min:leader->lane:claude"]')!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    cleanup();
+    render(<MapView {...scene(CHAT)} pairs={null} now={NOW} onOpen={() => {}} />);
+    fireEvent.focus(screen.getByRole('button', { name: /^claude → Leader \(CEO\): 1 in 15 min/ }));
+    expect(screen.getByRole('tooltip').textContent).toBe('claude → Leader (CEO): 1 messageLast messages unknown.');
+  });
+
+  it('the Messages switch is on by default and hides every message line and list when off', () => {
+    const { container } = render(<MapView {...scene(CHAT)} now={NOW} onOpen={() => {}} />);
+    const toggle = screen.getByRole('button', { name: 'Messages' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(lines(container)).toHaveLength(2);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(lines(container)).toHaveLength(0);
+    expect(container.querySelectorAll('[data-open-messages]')).toHaveLength(0);
+    expect(screen.queryByRole('region', { name: 'Messages on the map' })).toBeNull();
+    expect(container.querySelectorAll('path[data-kind="reports-to"]').length).toBeGreaterThan(0);
+    fireEvent.click(toggle);
+    expect(lines(container)).toHaveLength(2);
+  });
+
+  it('reduced motion turns the pulse off but keeps line thickness', () => {
+    const moving = render(<MapView {...scene(CHAT)} now={NOW} onOpen={() => {}} />);
+    const pulses = (root: HTMLElement) => root.querySelectorAll(':is(path, button)[data-pulse="true"]').length;
+    expect(pulses(moving.container)).toBe(2);
+    expect(screen.getByText('message in the last minute')).toBeTruthy();
+    cleanup();
+    const { container } = render(<MapView {...scene(CHAT)} now={NOW} onOpen={() => {}} reducedMotion />);
+    expect(pulses(container)).toBe(0);
+    expect(screen.queryByText('message in the last minute')).toBeNull();
+    expect(lines(container).map(path => path.style.strokeWidth)).toEqual(['1.75', '2.25']);
+  });
 });

@@ -1,10 +1,12 @@
 /**
  * The Map pane's read and 2D layout. The read is GET /api/verse/fleet/control/live-map,
  * the same fleet.live-map.v1 graph `phm map --json` prints; the layout is pure.
- * The message lines' last words come from GET /api/verse/fleet/control/map-edges (`phm map edges --json`).
+ * The message lines' last words come from GET /api/verse/fleet/control/map-edges (`phm map edges --json`),
+ * and each line's card of its last 5 messages from GET /api/verse/fleet/control/agent-messages (`phm agents messages --json`).
  */
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge, MapEdgeAgent, MapEdgeRole } from '../../../../core/fleet/map-edges.js';
+import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
@@ -79,6 +81,26 @@ export const mapEdgesQuery: QueryDef<MapEdge[] | null> = {
   fetch: async signal => narrowMapEdges(await apiGet<unknown>(MAP_EDGES_API, signal)),
 };
 
+/** Per-line weights and last summaries from agents.messages.v1, keyed `from->to` by map node id. Null when the read is something else or the bus is unknown. */
+export function narrowMessagePairs(raw: unknown): Map<string, AgentsMessagePair> | null {
+  if (!object(raw) || raw.schema !== 'agents.messages.v1' || raw.version !== 1 || !Array.isArray(raw.pairs)) return null;
+  const pairs = new Map<string, AgentsMessagePair>();
+  for (const row of raw.pairs.slice(0, MAX_EDGES)) {
+    const from = object(row) ? text(row.from) : null, to = object(row) ? text(row.to) : null, n = object(row) ? count(row.count) : null;
+    const lastAt = object(row) ? text(row.lastAt) : null;
+    if (!object(row) || !from || !to || n === null || !lastAt || !Array.isArray(row.recent)) continue;
+    const recent = row.recent.slice(0, 5).flatMap(item => object(item) && text(item.at) && text(item.summary)
+      ? [{ at: text(item.at)!, kind: (text(item.kind) ?? 'status') as AgentsMessagePair['recent'][number]['kind'], summary: text(item.summary)! }] : []);
+    pairs.set(`${from}->${to}`, { from, to, count: n, lastAt, recent });
+  }
+  return pairs;
+}
+export const AGENT_MESSAGES_API = '/api/verse/fleet/control/agent-messages';
+export const messagePairsQuery: QueryDef<Map<string, AgentsMessagePair> | null> = {
+  key: 'verse-fleet-agent-messages',
+  fetch: async signal => narrowMessagePairs(await apiGet<unknown>(AGENT_MESSAGES_API, signal)),
+};
+
 export const NODE_W = 140, NODE_H = 52;
 const COLUMN = 156, ROW = 104, PAD = 16;
 export interface PlacedNode extends LiveMapNode { x: number; y: number }
@@ -110,8 +132,12 @@ export function layoutLiveMap(map: FleetLiveMap): MapLayout {
   return { width, height: PAD * 2 + NODE_H + Math.max(0, rows.length - 1) * ROW, nodes: placed, at };
 }
 
-/** Pulse when the newest message is within the pulse window of `now`; the server's flag when no time is known. */
-export function pulsing(edge: LiveMapEdge, map: FleetLiveMap, now: number): boolean {
+/**
+ * Pulse when the newest message is within the pulse window of `now`; the server's flag when no time is known.
+ * Never under reduced motion: the line is still thicker and listed, it just does not move.
+ */
+export function pulsing(edge: LiveMapEdge, map: FleetLiveMap, now: number, reducedMotion = false): boolean {
+  if (reducedMotion) return false;
   if (!edge.lastMessageAt) return edge.pulse;
   const age = now - Date.parse(edge.lastMessageAt);
   return age <= map.pulseSeconds * 1000 && age >= -map.pulseSeconds * 1000;

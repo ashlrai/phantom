@@ -360,6 +360,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{status:ok, agent, messages[], nextCursor} | {status:ok, agent, wakes[]} | {adapters[]}',
   },
   {
+    usage: 'ashlr agents messages [--since 1h] [--limit N] [--json]',
+    description: 'Recent agent-to-agent messages from the agent bus with sender and recipient as map node ids (unknown when the map does not draw them), a 160-character summary, the thread when named, and per-line message counts with the last 5 summaries. Read only.',
+    safety: 'read',
+    jsonShape: 'agents.messages.v1 {schema, version, generatedAt, since, source, messages[{at, from, to, kind, summary, threadId?, fromName, toName}], pairs[{from, to, count, lastAt, recent[]}], matched, skipped}',
+  },
+  {
     usage: 'ashlr agents roster [--json]',
     description: 'Unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Each probe times out in about 5s and degrades to unknown. Read-only; no secrets.',
     safety: 'read',

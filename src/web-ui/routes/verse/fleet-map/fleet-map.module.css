@@ -1,4 +1,11 @@
 .root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.toolbar button { padding: 2px var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.toolbar button[aria-pressed='true'] { border-color: var(--accent-500); color: var(--text-primary); }
+.card { position: absolute; z-index: 1; width: 240px; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  background: var(--surface-raised, var(--surface-1, Canvas)); pointer-events: none; overflow-wrap: anywhere; }
+.card ol { margin: var(--space-1) 0 0; padding-left: var(--space-3); color: var(--text-secondary); }
+.card p { margin: var(--space-1) 0 0; color: var(--text-secondary); }
 .headline { margin: 0; font-family: var(--font-display); font-size: var(--text-sm-size); font-weight: 600; font-variant-numeric: tabular-nums; }
 .notice { margin: 0; color: var(--text-secondary); }
 .scroll { overflow: auto; max-width: 100%; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
