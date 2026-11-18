@@ -14,6 +14,7 @@ import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
 import { TailnetPeersCard } from './TailnetPeersCard.js';
 import { PoolReachCard } from './PoolReachCard.js';
 import { ClaimExecutionCard } from './ClaimExecutionCard.js';
+import { ClaimDriftCard } from './ClaimDriftCard.js';
 import { BridgeCheckCard } from './BridgeCheckCard.js';
 import { SurfaceOwnerCard } from './SurfaceOwnerCard.js';
 import { AppsCard } from './AppsCard.js';
@@ -120,6 +121,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <PoolReachCard visible={visible} />
         <BridgeCheckCard visible={visible} />
         <ClaimExecutionCard visible={visible} />
+        <ClaimDriftCard visible={visible} />
         <SurfaceOwnerCard visible={visible} />
         <p className={styles.muted}>Orchestrator agents: {host.orchestratorAgents ?? '—'}</p>
       </>}

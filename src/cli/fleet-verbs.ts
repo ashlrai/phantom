@@ -4,7 +4,7 @@ import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
 
 const USAGE = 'Usage: ashlr fleet verbs [--json] [--grep <word>]';
 
-function readVerbSource(verb: string): string | null {
+export function readVerbSource(verb: string): string | null {
   if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(verb)) return null;
   for (const ext of ['js', 'ts']) {
     try { return readFileSync(new URL(`./fleet-${verb}.${ext}`, import.meta.url), 'utf8'); }

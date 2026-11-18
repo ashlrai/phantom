@@ -1,6 +1,6 @@
 /**
  * The Mac apps Phantom knows by name (RQ-APPSN17VQ8): Phantom itself, the
- * Claude, Codex, ChatGPT, Cursor and Grok desktop apps, and Safari as
+ * Claude, Codex, ChatGPT, Cursor, Grok and Devin desktop apps, and Safari as
  * Phantom's own agent browser. `phm apps` and the Fleet Host "Apps" card read
  * this one report; `phm apps open|focus <name>` act on it through
  * runAppsControl (apps-control.ts), which owns feed logging, KILL/pause and
@@ -15,14 +15,18 @@
  *
  * QUIT. Only Safari, Phantom's own browser, may be quit. Every other app here
  * is the owner's GUI app and is protected: quit refuses with a plain reason,
- * whatever apps-allow.json says.
+ * whatever apps-allow.json says. Chrome, the owner's own browser, is not in
+ * the list and is never quit either (ownerBrowserQuitReason).
+ *
+ * SUGGEST. suggestApps ranks idle apps by memory for a given memory pressure.
+ * It is a pure function of the report: it never quits anything.
  */
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const KNOWN_APP_IDS = ['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'safari'] as const;
+export const KNOWN_APP_IDS = ['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'devin', 'safari'] as const;
 export type KnownAppId = (typeof KNOWN_APP_IDS)[number];
 
 export interface KnownApp {
@@ -44,6 +48,7 @@ export const KNOWN_APPS: readonly KnownApp[] = [
   { id: 'chatgpt', name: 'ChatGPT', role: 'Assistant', bundles: ['ChatGPT.app'], bundleIds: ['com.openai.chat'], quit: 'protected' },
   { id: 'cursor', name: 'Cursor', role: 'Editor', bundles: ['Cursor.app'], bundleIds: ['com.todesktop.230313mzl4w4u92'], quit: 'protected' },
   { id: 'grok', name: 'Grok', role: 'Assistant', bundles: ['Grok.app'], bundleIds: [], quit: 'protected' },
+  { id: 'devin', name: 'Devin', role: 'Coding agent', bundles: ['Devin.app'], bundleIds: ['ai.cognition.devin'], quit: 'protected' },
   { id: 'safari', name: 'Safari', role: 'Phantom’s agent browser', bundles: ['Safari.app'], bundleIds: ['com.apple.Safari'], quit: 'allowed' },
 ];
 
@@ -56,6 +61,12 @@ export function findKnownApp(target: string | null | undefined): KnownApp | unde
 
 export const protectedQuitReason = (app: KnownApp): string =>
   `${app.name} is one of your apps, and Phantom never quits your apps. Quit it yourself if you need to.`;
+
+/** Chrome is the owner's own browser: never quit, whatever name, bundle id or allowlist entry points at it. */
+export function ownerBrowserQuitReason(...targets: Array<string | null | undefined>): string | null {
+  return targets.some(t => /^(google )?chrome$|^com\.google\.chrome(\.|$)/i.test(t?.trim() ?? ''))
+    ? 'Chrome is your own browser, and Phantom never quits it. Quit it yourself if you need to.' : null;
+}
 
 // ---------------------------------------------------------------------------
 // Probe
@@ -150,6 +161,8 @@ export interface MacAppRow {
   installed: boolean | null;
   running: boolean | null;
   frontmost: boolean | null;
+  /** Pid of the app's main process; null when unknown or not running. */
+  pid: number | null;
   /** Resident memory of the app and its helper processes, in MB; null when unknown or not running. */
   memoryMb: number | null;
   path: string | null;
@@ -163,6 +176,8 @@ export interface MacAppRow {
 
 export interface MacAppsReport {
   schema: 'phm.apps/1';
+  /** Bumps only on a breaking change; new fields are additive. */
+  version: 1;
   /** `missing`: no probe on this host; `partial`: some reads failed. */
   probe: 'ok' | 'partial' | 'missing';
   reason: string | null;
@@ -188,10 +203,10 @@ export function nextAction(row: Pick<MacAppRow, 'id' | 'installed' | 'running' |
 export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: string } = {}): Promise<MacAppsReport> {
   const probe = opts.probe === undefined ? defaultMacAppsProbe() : opts.probe;
   const base = (app: KnownApp): MacAppRow => ({
-    id: app.id, name: app.name, role: app.role, installed: null, running: null, frontmost: null, memoryMb: null,
+    id: app.id, name: app.name, role: app.role, installed: null, running: null, frontmost: null, pid: null, memoryMb: null,
     path: null, bundleId: null, quit: app.quit, action: null, reason: PROBE_MISSING_REASON,
   });
-  if (!probe) return { schema: 'phm.apps/1', probe: 'missing', reason: PROBE_MISSING_REASON, apps: KNOWN_APPS.map(base) };
+  if (!probe) return { schema: 'phm.apps/1', version: 1, probe: 'missing', reason: PROBE_MISSING_REASON, apps: KNOWN_APPS.map(base) };
 
   const [procs, front] = await Promise.all([settle(() => probe.processes()), settle(() => probe.frontmost())]);
   const frontPath = front.ok && front.value ? realOr(front.value) : null;
@@ -216,12 +231,14 @@ export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: st
     const reasons = [...(procs.ok ? [] : [`running state: ${procs.reason}`]), ...(front.ok ? [] : [`frontmost: ${front.reason}`])];
     const row: MacAppRow = {
       ...base(app), installed: true, running, frontmost,
+      // The main process runs from Contents/MacOS; helpers live deeper in the bundle.
+      pid: mine && mine.length > 0 ? (mine.find(p => roots.some(r => p.path.startsWith(`${r}/Contents/MacOS/`))) ?? mine.reduce((a, b) => a.pid <= b.pid ? a : b)).pid : null,
       memoryMb: mine && mine.length > 0 ? Math.round(mine.reduce((n, p) => n + p.rssKb, 0) / 1024) : null,
       path: found.value.path, bundleId: found.value.bundleId, reason: reasons.length ? reasons.join('; ') : null,
     };
     return { ...row, action: nextAction(row) };
   }));
-  return { schema: 'phm.apps/1', probe: failures.size ? 'partial' : 'ok', reason: failures.size ? [...failures].join('; ') : null, apps };
+  return { schema: 'phm.apps/1', version: 1, probe: failures.size ? 'partial' : 'ok', reason: failures.size ? [...failures].join('; ') : null, apps };
 }
 
 const stateText = (r: MacAppRow): string => {
@@ -230,7 +247,7 @@ const stateText = (r: MacAppRow): string => {
   if (r.running === null) return 'installed, running unknown';
   if (!r.running) return 'not running';
   return [r.frontmost === true ? 'running, frontmost' : r.frontmost === null ? 'running, frontmost unknown' : 'running',
-    ...(r.memoryMb !== null ? [`${r.memoryMb} MB`] : [])].join(' · ');
+    ...(r.pid !== null ? [`pid ${r.pid}`] : []), ...(r.memoryMb !== null ? [`${r.memoryMb} MB`] : [])].join(' · ');
 };
 
 export function formatMacApps(report: MacAppsReport): string {
@@ -239,4 +256,71 @@ export function formatMacApps(report: MacAppsReport): string {
   if (report.reason) lines.push('', `Unknown: ${report.reason}`);
   lines.push('', 'Phantom never quits your apps. Only Safari, its own browser, can be quit.');
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Suggest (read-only)
+// ---------------------------------------------------------------------------
+
+export const MEMORY_PRESSURES = ['normal', 'warning', 'critical'] as const;
+export type MemoryPressureInput = (typeof MEMORY_PRESSURES)[number];
+
+export interface AppsSuggestion {
+  id: KnownAppId; name: string; pid: number | null; memoryMb: number;
+  /** The command that closes it, or null when it is the owner's app to close by hand. */
+  command: string | null;
+}
+
+export interface AppsSuggestReport {
+  schema: 'phm.apps.suggest/1';
+  version: 1;
+  /** The pressure the caller gave; `unknown` when none was given. Never measured here. */
+  pressure: MemoryPressureInput | 'unknown';
+  needMb: number | null;
+  /** Idle apps (running, not in front), biggest first. Nothing here was quit. */
+  suggestions: AppsSuggestion[];
+  totalMb: number;
+  /** Whether the suggestions cover `needMb`; null when no target was given. */
+  covers: boolean | null;
+  summary: string;
+  /** Why some app state was unknown and left out; null when all of it was read. */
+  reason: string | null;
+}
+
+/**
+ * Which idle known apps would free the most memory. Idle means running and known not to be in
+ * front; unknown state is left out, never guessed. Normal pressure with no target suggests nothing.
+ * With `needMb`, the list stops at the fewest apps that cover it.
+ */
+export function suggestApps(report: MacAppsReport, input: { pressure?: MemoryPressureInput; needMb?: number } = {}): AppsSuggestReport {
+  const needMb = input.needMb ?? null;
+  const idle = report.apps
+    .filter(a => a.id !== 'phantom' && a.running === true && a.frontmost === false && a.memoryMb !== null && a.memoryMb > 0)
+    .sort((a, b) => b.memoryMb! - a.memoryMb!);
+  const wanted = input.pressure === 'normal' && needMb === null ? [] : idle;
+  const picked: MacAppRow[] = [];
+  for (const row of wanted) {
+    if (needMb !== null && picked.reduce((n, r) => n + r.memoryMb!, 0) >= needMb) break;
+    picked.push(row);
+  }
+  const totalMb = picked.reduce((n, r) => n + r.memoryMb!, 0);
+  const covers = needMb === null ? null : totalMb >= needMb;
+  const summary = input.pressure === 'normal' && needMb === null ? 'Memory is fine. Nothing needs to close.'
+    : picked.length === 0 ? 'No idle app to close.'
+    : `Closing ${picked.map(r => r.name).join(', ')} would free about ${totalMb} MB${covers === false ? `, short of the ${needMb} MB asked for` : ''}.`;
+  return {
+    schema: 'phm.apps.suggest/1', version: 1, pressure: input.pressure ?? 'unknown', needMb,
+    suggestions: picked.map(r => ({ id: r.id, name: r.name, pid: r.pid, memoryMb: r.memoryMb!, command: r.quit === 'allowed' ? `phm apps quit ${r.id}` : null })),
+    totalMb, covers, summary, reason: report.reason,
+  };
+}
+
+export function formatAppsSuggest(report: AppsSuggestReport): string {
+  const width = Math.max(0, ...report.suggestions.map(s => s.name.length));
+  return [
+    ...report.suggestions.map(s => `${s.name.padEnd(width)}  ${s.memoryMb} MB  ${s.command ? `→ ${s.command}` : 'close it yourself'}`),
+    ...(report.suggestions.length ? [''] : []), report.summary,
+    ...(report.pressure === 'unknown' ? ['No memory pressure was given, so every idle app is listed.'] : []),
+    ...(report.reason ? [`Unknown: ${report.reason}`] : []), 'Nothing was quit.',
+  ].join('\n');
 }

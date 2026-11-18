@@ -56,6 +56,14 @@ export function OrgTreeView({ tree, now = Date.now() }: { tree: FleetOrgTree; no
       <span>{tree.leader.doing}</span>
       <small>{tree.leader.model ?? 'model unknown'} · dispatcher last tick {orgAgo(tree.leader.dispatcher.lastTick, now)}</small>
     </div>
+    <div className={styles.leader} aria-label="Leader seat">
+      <strong>Leader seat</strong>
+      <span>{tree.leaderSeat?.current.lane ?? 'unknown'} · {tree.leaderSeat?.current.model ?? 'model unknown'}</span>
+      <small>Last successful pass {orgAgo(tree.leaderSeat?.current.lastSuccessAt ?? null, now)}</small>
+      <span>{tree.leaderSeat?.pick ? `Next seat: ${tree.leaderSeat.pick.lane} · ${tree.leaderSeat.pick.model}` : tree.leaderSeat?.reason ?? 'No seat: lane health is unknown.'}</span>
+      {!!tree.leaderSeat?.fallbacks.length && <details><summary>Fallback lanes</summary><ol>{tree.leaderSeat.fallbacks.map(seat =>
+        <li key={seat.lane}>{seat.lane} · {seat.model ?? 'model unknown'} · {seat.health} · {seat.headroomPct === null ? 'headroom unknown' : `${seat.headroomPct}% left`}{seat.reason ? ` · ${seat.reason}` : ''}</li>)}</ol></details>}
+    </div>
     <button type="button" className={styles.all} onClick={() => setToggled(Object.fromEntries(tree.lanes.map(lane => [lane.lane, !allOpen])))}>{allOpen ? 'Collapse all' : 'Expand all'}</button>
     <ul className={styles.lanes}>{tree.lanes.map(lane => <Lane key={lane.lane} lane={lane} open={isOpen(lane)} jobsKnown={tree.jobsKnown} now={now}
       onToggle={() => setToggled(prev => ({ ...prev, [lane.lane]: !isOpen(lane) }))} onOpenJob={select} />)}</ul>

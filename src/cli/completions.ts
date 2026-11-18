@@ -19,7 +19,7 @@ import { makeColors, isTty } from './ui.js';
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
   'graph',
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'empties', 'throughput', 'home', 'asks', 'subagent', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'empties', 'shipped', 'throughput', 'home', 'asks', 'subagent', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -85,6 +85,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
 
 /** Subcommands per top-level command (first-position completion only). */
 const SUBCOMMANDS: Record<string, string[]> = {
+  docs: ['cli', '--agent', '--check', '--json', '--help'],
+  approvals: ['ask', 'answer', '--team', '--question', '--options', '--expires', '--by', '--json', '--help'],
   subagent: ['spawn', 'list', 'result'],
   graph: ['nodes', 'edges', 'status', '--fleet', '--seats', '--json', '--help'],
   sweep: ['report'],
@@ -108,7 +110,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   world: ['get', '--json', '--refresh', '--help'],
   chain: ['verify', '--json', '--help'],
   incident: ['report', 'receipts', '--json', '--help'],
-  apps: ['list', 'open', 'quit', 'focus', 'status', 'request', '--json', '--help'],
+  apps: ['list', 'open', 'quit', 'focus', 'status', 'suggest', 'request', '--pressure', '--need-mb', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
@@ -131,7 +133,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
   verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],
-  models: ['list', 'pull', 'start', 'inventory', 'routing', 'verify'],
+  models: ['list', 'check', 'pull', 'start', 'inventory', 'routing', 'verify'],
   gh: ['pr', 'issue', 'ci'],
   vercel: ['ls', 'logs'],
   website: ['status', 'auto', 'pause', 'off', 'request', 'run', 'prepare', 'commission'],

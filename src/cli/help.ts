@@ -227,10 +227,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'Merge: {status,jobId}; read: {v:1,jobs:[{jobId,repo,prompt}]}; complete: {status,jobId}; errors exit 1, usage exit 2',
   },
   { usage: 'phm jobs retry-empty --dry-run|--apply [--file <router-queue.md>] [--json]', description: 'Preview or queue one scoped retry per eligible empty job.', safety: 'append', jsonShape: 'jobs.retry-empty.v1 {applied,lines}' },
+  { usage: 'phm shipped [--since 7d] [--json|--md]', description: 'What shipped, in plain words: merged changes on the default branch grouped by product area (desktop app, CLI, fleet, channels, docs), with test-only and bot chore changes counted as maintenance. Reads local git history only. --md writes docs/SHIPPED.md. Unreadable history prints as unknown and exits 1.', safety: 'append', jsonShape: 'shipped.v1 {schema,version,generatedAt,since,days,source,note,total,maintenance,areas:[{id,label,count,lines:[{text,number,mergedAt}]}]}' },
   { usage: 'phm empties [--since 24h] [--text] [--metrics <file>] [--runs-dir <directory>] [--notes-dir <directory>]', description: 'Why jobs finished with no change, grouped by reason, with share of all finishes, tokens, and one next step each. Families rank by empty rate and wasted tokens; recommend suppression above 60% with at least five finishes. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'empties.v1 {since_hours,metrics_path,metrics,finishes,empties,empty_share,tokens,tokens_unknown_jobs,malformed_lines,notes_missing,top_families:[{name,count}],reasons:[{reason,label,count,share_of_finishes,tokens,tokens_unknown_jobs,lanes,prefixes,examples,next_step}],families:[{name,finishes,empties,empty_rate,wasted_tokens,tokens_unknown_jobs,recommendation}]}' },
   { usage: 'phm home [--json] [--leader-seen <time>]', description: 'Is the fleet healthy and moving, in one glance: merged PRs, median time to merge, main per repo, running jobs per lane, the resource most at risk of going unused, the last 5 work-log items, unread Leader replies and what needs you with its one-word answers. The desktop and phone Home screens show exactly this. A missing source prints as unknown with the reason.', safety: 'read', jsonShape: 'home.v1 {health,headline,mergedLastHour,merged24h,medianMergeSeconds,main,running,atRisk,worklog,unreadLeaderReplies,needsYou:[{id,shortId,kind,request,ageSeconds,answers}]}' },
   { usage: 'phm subagent spawn --parent <id> --tier fast|mid|work|frontier --task <text> [--tools a,b] [--write-scope p1,p2] [--max-tokens N] [--max-cost-class local|included|metered] [--task-class <class>] [--repo <repo>] [--dry-run|--apply] [--json] | phm subagent list --parent <id> [--json] | phm subagent result <id> [--json]', description: 'Plan bounded cross-provider children through deterministic routing. Dry-run writes nothing; apply stores a held record only, never dispatches or enqueues.', safety: 'append', jsonShape: 'subagent.spawn.v1 {ok,dry_run,applied:false,record,parent,routing,reason_codes,next_step} | subagent.list.v1 | subagent.result.v1' },
   { usage: 'phm asks [--json] | phm asks answer <id> yes|no|done [--json] | phm asks add password|2fa|device|payment <request> [--json]', description: 'Things only Mason can do (password, 2FA, device approval, payment), answered with one word. Lists open asks; answer records yes, no or done once with source and time; any other kind is refused: the fleet decides this itself.', safety: 'append', jsonShape: 'asks.v1 {asOf,ledger,count,asks:[{id,shortId,kind,request,created,ageSeconds}],fleetDecides}; answer: asks.answer.v1 {status,id,kind,answer,source,answeredAt,reason}' },
+  { usage: 'phm metrics [--hours N] [--json]', description: 'How well the self-improving loop is running, in one glance: PRs merged per hour (last 1, 6 and 24 hours), median publish-to-merge time, empty rate, per-lane jobs, merged, empty rate and merge rate, merge rate by tier and spend-down per pool. The desktop Metrics view shows exactly this. Missing or stale values are unknown (null), never zero. Exit 1 only when neither source gives a reading.', safety: 'read', jsonShape: 'metrics.glance.v1 {version,as_of,hours,sources:{jobs,status,status_as_of},headline,merged_per_hour:{last_1h,last_6h,last_24h,window},merged,median_publish_to_merge_s,empty_rate,pools_at_risk,lanes:[{name,jobs,merged,empty_rate,merge_rate,empty_high}],tiers,pools:[{pool,used_pct,hours_to_reset,projected_unused_pct,waste_risk,at_risk,reason}]}' },
   { usage: 'phm throughput [--hours 24] [--by lane|repo|tier] [--text] [--metrics <file>] [--runs-dir <directory>]', description: 'What the fleet produced hour by hour: jobs launched, PRs published, PRs merged, empty jobs and the median publish-to-merge time, with totals, a headline and whether main is green. JSON by default; unmeasured values are null. Exit 1 when the metrics file is unreadable.', safety: 'read', jsonShape: 'throughput.v1 {as_of,since,hours,by,metrics_path,metrics,malformed_lines,main,headline,totals,buckets:[{start,launched,published,merged,finished,empty,empty_rate,median_publish_to_merge_s,merge_time_unknown}],groups:[{name,totals,buckets}]}' },
   { usage: 'phm jobs empty [--since 24h] [--family F] [--json]', description: 'Explain empty jobs from log tails and publish records, with family and lane suggestions.', safety: 'read', jsonShape: 'jobs.empty.v1 {hours,total,counts,jobs,diagnosis:{jobs,families,lanes}}' },
   {
@@ -797,6 +799,7 @@ function printDocsHelp(): void {
   console.log('');
   console.log(c.bold('  ashlr docs') + c.dim(' — generated documentation surfaces'));
   console.log('');
+  console.log(`    ${c.cyan('phm docs cli [--check] [--json]')} ${c.dim('regenerate or check the CLI reference from the command registry')}`);
   console.log(`    ${c.cyan('ashlr docs --agent')}          ${c.dim('agent cheat sheet (llms.txt-style, plain text)')}`);
   console.log(`    ${c.cyan('ashlr docs --agent --json')}   ${c.dim('the same registry as JSON')}`);
   console.log(`    ${c.cyan('ashlr wire --claude-md')}      ${c.dim('CLAUDE.md snippet for agent configs')}`);
@@ -804,6 +807,10 @@ function printDocsHelp(): void {
 }
 
 export async function cmdDocs(args: string[]): Promise<number> {
+  if (args[0] === 'cli') {
+    const { cmdDocsCli, cliReferenceRows } = await import('./docs-cli.js');
+    return cmdDocsCli(args.slice(1), cliReferenceRows(HELP_ENTRIES));
+  }
   const json = args.includes('--json');
   const agent = args.includes('--agent');
 
@@ -817,8 +824,9 @@ export async function cmdDocs(args: string[]): Promise<number> {
       // --json never prints the human help: one JSON object, same exit code.
       process.stdout.write(JSON.stringify({
         ok: false,
-        error: 'ashlr docs needs a surface; pass --agent --json',
+        error: 'phm docs needs a surface; pass cli or --agent --json',
         surfaces: [
+          { command: 'phm docs cli [--check] [--json]', description: 'generate or check the CLI reference from the command registry' },
           { command: 'ashlr docs --agent', description: 'agent cheat sheet (llms.txt-style, plain text)' },
           { command: 'ashlr docs --agent --json', description: 'the same registry as JSON' },
           { command: 'ashlr wire --claude-md', description: 'CLAUDE.md snippet for agent configs' },
@@ -883,6 +891,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'caps list|validate|generate [--registry <path>] [--out <dir>] [--pin-stage] [--check] [--json]', desc: 'Capability registry: surfaces, models, hosting edges, account references and capabilities; validate it and generate pinned per-agent adapters to staging (never into live agent config dirs). See docs/CAPABILITY-REGISTRY.md.', topic: 'core' },
   { cmd: 'constitution check [--root <repo>] [--json] [paths...]', desc: 'Check constitution rule definitions and references in prompts and templates (read-only).', topic: 'core' },
   { cmd: 'tune <prepare|evaluate>', desc: 'Prepare scrub-gated local model datasets or evaluate paired evidence.', topic: 'core' },
+  { cmd: 'shipped [--since 7d] [--json|--md]', desc: 'What shipped, in plain words: merged changes grouped by product area. --md writes docs/SHIPPED.md.', topic: 'observability' },
   { cmd: 'empties [--since 24h] [--text]', desc: 'Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.', topic: 'observability' },
   { cmd: 'home [--json]', desc: 'Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.', topic: 'observability' },
   { cmd: 'subagent spawn|list|result [opts]', desc: 'Plan bounded cross-provider children; apply stores held records only, never dispatches.', topic: 'autonomy' },
@@ -932,6 +941,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'runtime run --store <absolute> -- universe <args>', desc: 'Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.', topic: 'core' },
   { cmd: 'orient [--repo <r>] [--json]', desc: 'Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).', topic: 'core' },
   { cmd: 'docs --agent [--json]',        desc: 'Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).', topic: 'core' },
+  { cmd: 'docs cli [--check] [--json]', desc: 'Regenerate docs/CLI-REFERENCE.md from the command registry; --check lists missing, removed or stale commands without writing (exit 1 on drift).', topic: 'core' },
   { cmd: 'check [--base <ref>] [--json]', desc: 'Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.', topic: 'core' },
   { cmd: 'commands [--json]',            desc: 'List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.', topic: 'core' },
   { cmd: 'completions zsh|bash',         desc: 'Print a shell completion script to stdout.', topic: 'core' },
@@ -944,6 +954,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'run show <id>',                desc: 'Print a past run in detail.', topic: 'run' },
   { cmd: 'runs [--json]',                desc: 'List past runs (newest first).', topic: 'run' },
   { cmd: 'models [--json]',              desc: 'List the model registry (verified, unverified, stale) and local models.', topic: 'run' },
+  { cmd: 'models check [--json] [--diff <file>]', desc: 'Report every model the router can pick: confirmed, stale or unconfirmed (not routable).', topic: 'run' },
   { cmd: 'models verify <id> --source <url>', desc: 'Mark one model verified once its official doc page names the exact id.', topic: 'run' },
   { cmd: 'models verify [--text]',       desc: 'Show model verification status and age (JSON by default).', topic: 'run' },
   { cmd: 'models pull <name> [--yes]',   desc: 'Explicitly pull an Ollama model (large download; confirm first).', topic: 'run' },
@@ -1057,7 +1068,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'org [--text]', desc: 'The live organization as a tree: leader, lanes with running, target, queued and pool usage, and each running job. JSON by default; unknown stays unknown.', topic: 'autonomy' },
   { cmd: 'org show|join|plan [--file <org.toml>] [--json]', desc: 'Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.', topic: 'autonomy' },
   { cmd: 'leader status|ask|org|assign [--json]', desc: 'Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.', topic: 'autonomy' },
-  { cmd: 'leader seat|inbox [--json]', desc: 'Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.', topic: 'autonomy' },
+  { cmd: 'leader seat [pick] [--json]', desc: 'Show the current leader, fallback health and headroom, or recommend the next confirmed seat. Read-only.', topic: 'autonomy' },
+  { cmd: 'leader inbox [--json]', desc: 'Inspect the durable CEO inbox/outbox; --text records a policy-checked message.', topic: 'autonomy' },
   { cmd: 'leader say|thread|answer|approve|directives', desc: 'Talk to the Leader: say something through the verified inbox writer, read your messages and its replies as one chat with received/answered state, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.', topic: 'autonomy' },
   { cmd: 'leader oversight-plist --print', desc: 'Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.', topic: 'autonomy' },
   { cmd: 'cloud launch "<task>" [--repo o/n] [--base b]', desc: 'Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder\'s GitHub origin.', topic: 'autonomy' },
@@ -1224,8 +1236,10 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'lanes fit --lane <lane> [--json]', desc: 'Show job kinds to send or avoid from measured PR rates.', topic: 'observability' },
   { cmd: 'lanes --json', desc: 'Read dispatcher pools, slot caps and local endpoint health.', topic: 'observability' },
   { cmd: 'lanes health [--json]', desc: 'Per-lane calls, error rate, p50 latency and deployed commit over 12 h; flags runs stuck past their phase timeout.', topic: 'observability' },
-  { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
-  { cmd: 'team <view|join|invite|role|link|approve|claim|release|say>', desc: 'Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.', topic: 'integrations' },
+  { cmd: 'approvals [--team <id>] [--json]', desc: 'What needs a human: decisions only Mason can make first, then pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.', topic: 'integrations' },
+  { cmd: 'approvals ask --question <text> --options yes,no [--expires <iso>] [--by <name>] [--json]', desc: 'For agents: raise one decision only Mason can make, with its own options; it is numbered and an identical open one is reused.', topic: 'integrations' },
+  { cmd: 'approvals answer <ref> <option> [--json]', desc: 'Mason only (agent processes are refused): record his answer once, with who answered, the channel and the time. It only records; nothing is paid or sent.', topic: 'integrations' },
+  { cmd: 'team <list|add|show|view|join|invite|remove|role|link|approve|deny|claim|release|say> [--json]', desc: 'Team directory and bus: pending teammate drafts, identity evidence, declared lanes and seats; membership and approvals keep their existing gates.', topic: 'integrations' },
   { cmd: 'companions [--json] [--root <dir>] [--bin-dir <dir>]', desc: 'Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.', topic: 'integrations' },
   { cmd: 'mcp install <claude|ashlrcode>', desc: 'Add the ashlr gateway to a target mcpServers config (backs up first).', topic: 'integrations' },
   { cmd: 'gh <pr|issue|ci>',             desc: 'Read GitHub open PRs, issues, or CI status for the current repo (read-only).', topic: 'integrations' },
@@ -1236,6 +1250,8 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'wire --claude-md',             desc: 'Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).', topic: 'integrations' },
   { cmd: 'notify test',                  desc: 'Send a test ping to the configured webhook(s); no-op if none are set.', topic: 'integrations' },
   { cmd: 'notify route <type> [--text]', desc: 'Preview an owner update route in JSON (default) or plain words; never sends.', topic: 'integrations' },
+  { cmd: 'notify route <update.json> [--json]', desc: 'Classify one update (decision, shipped, incident, digest, fyi) and print its delivery plan by your rules; never sends.', topic: 'integrations' },
+  { cmd: 'notify rules [--json] | rules set <type> <channel>', desc: 'Show or change which channel each update type goes to. Same JSON as GET /api/notify/rules.', topic: 'integrations' },
   { cmd: 'stack [status|list|providers|recommend|scan|doctor|add|apply]', desc: 'Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).', topic: 'integrations' },
   { cmd: 'ecosystem doctor [--json] [--deep]', desc: 'Read-only sibling-repository health scan across the ecosystem.', topic: 'integrations' },
   { cmd: 'ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]', desc: 'Render the ecosystem changelog from public sources.', topic: 'integrations' },

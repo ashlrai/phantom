@@ -2232,6 +2232,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'shipped': {
+        const { cmdShipped } = await import('./shipped.js');
+        process.exitCode = await cmdShipped(rest);
+        break;
+      }
+
       case 'subagent': {
         const { cmdSubagent } = await import('./subagent.js');
         process.exitCode = await cmdSubagent(rest);
@@ -2271,6 +2277,7 @@ async function main(): Promise<void> {
       case 'metrics': {
         if (wantsHelp(rest)) {
           printCoreUsage('metrics', 'Local metrics reports.', [
+            ['phm metrics [--hours N] [--json]', 'How well the loop is running, in one glance'],
             ['phm metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', 'Estimate idle slot-minutes'],
             ['phm metrics loop [--dry-run] [--json]', 'Self-awareness loop: throughput, loop times, cost, capacity per node'],
             ['phm metrics prod [--repo OWNER/REPO ...] [--lane NAME] [--bridge-label LABEL] [--json]', 'Read bridge PR publication evidence'],

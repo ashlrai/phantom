@@ -2285,6 +2285,32 @@ export async function handleApi(
       return true;
     }
 
+    // RQ-NOTIFYROUTEN18JQ8: the owner's update rules (same JSON as
+    // `phm notify rules --json`, schema phantom.notify.rules.v1). GET is read
+    // class; POST {type, channel} changes one rule and is gated like every
+    // dispatch mutation.
+    if (path === '/api/notify/rules' && (method === 'GET' || method === 'POST')) {
+      const rules = await import('../comms/notify-rules.js');
+      if (method === 'GET') {
+        sendJson(res, 200, rules.readNotifyRules());
+        return true;
+      }
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let b: Record<string, unknown> | null = null;
+      try { b = JSON.parse(await readBody(req, 1024)) as Record<string, unknown> | null; } catch { /* refused below */ }
+      if (!b || typeof b !== 'object' || Object.keys(b).some((k) => k !== 'type' && k !== 'channel')
+        || !rules.isNotifyRuleType(b['type']) || !rules.isNotifyChannel(b['channel'])) {
+        sendJson(res, 400, { error: 'expected {type, channel}: an update type and one of imessage, email, desktop' });
+        return true;
+      }
+      sendJson(res, 200, rules.setNotifyRule(b['type'], b['channel']));
+      return true;
+    }
+
     // POST /api/approvals/team/:id/decision {decision, team?}: the human's
     // click is the approval. Gated like every dispatch mutation (404 without
     // --allow-dispatch, token + JSON); identity is derived locally by

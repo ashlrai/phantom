@@ -12,3 +12,13 @@
 .action:disabled { opacity: 0.5; cursor: default; }
 .note { color: var(--text-secondary); }
 .bad { color: var(--status-danger, var(--text-primary)); }
+/* Models card: counts wrap and the list stacks, so nothing needs sideways scroll at 390 px. */
+.counts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-2); }
+.counts > div { flex: 1 1 5rem; min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.counts dd { margin: 0; font-size: var(--text-lg-size, 1.25rem); font-weight: 600; color: var(--text-primary); }
+.counts dt { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.counts [data-state='unconfirmed'] dd, .checkHead [data-state='unconfirmed'] { color: var(--status-danger, var(--text-primary)); }
+.checkList { list-style: none; margin: 0 0 var(--space-3); padding: 0; font-size: var(--text-xs-size); color: var(--text-secondary); }
+.checkList li { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-1) 0; border-top: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.checkHead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); }
+.checkHead strong { color: var(--text-primary); font-weight: 500; }

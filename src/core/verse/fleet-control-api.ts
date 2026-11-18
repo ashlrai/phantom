@@ -342,8 +342,8 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/ideas' || path === '/api/verse/fleet/control/ideas/queue' || path === '/api/verse/fleet/control/ideas/bets') {
     return (await import('./fleet-ideas-api.js')).handleFleetIdeasApi(ctx, req, res, path, method);
   }
-  // The Models panel: registry list (GET) and "Verify" (POST, gated in the module).
-  if (path === '/api/verse/fleet/control/models' || path === '/api/verse/fleet/control/models/verify') {
+  // The Models panel: registry list and check (GET), and "Verify" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/models' || path === '/api/verse/fleet/control/models/check' || path === '/api/verse/fleet/control/models/verify') {
     return (await import('./models-api.js')).handleModelsApi(ctx, req, res, path, method);
   }
   if (path === '/api/verse/fleet/control/merge-graph') {
@@ -375,6 +375,7 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/slack-trace') {
     return (await import('./fleet-slack-trace-api.js')).handleFleetSlackTraceApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/work-trace') return (await import('./fleet-work-trace-api.js')).handleFleetWorkTraceApi(ctx, req, res, path, method);
   if (path === '/api/verse/fleet/control/compute') {
     return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
   }

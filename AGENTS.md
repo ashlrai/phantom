@@ -240,10 +240,12 @@ displayed draft digest. Do not treat a queued job or result draft as send author
 
 ## Apps control
 
-`phm apps --json` reports Phantom, Claude, Codex, ChatGPT, Cursor, Grok and
+`phm apps --json` reports Phantom, Claude, Codex, ChatGPT, Cursor, Grok, Devin and
 Safari (installed, running, frontmost, memory; unknown with a reason), and
 `phm apps open|focus <name> --json` acts on them. Quit refuses every one of
-them except Safari. `phm apps list|open|quit|focus|status [--json]` and
+them except Safari, and refuses Chrome. `phm apps suggest --pressure warning --json`
+lists the idle apps that would free the most memory and never quits anything.
+`phm apps list|open|quit|focus|status [--json]` and
 `phm apps request open|quit|focus <app> --json` manage other desktop apps named in
 `~/.ashlr/apps-allow.json` (empty by default). Copy and paste these commands;
 see [APPS-CONTROL](docs/APPS-CONTROL.md):

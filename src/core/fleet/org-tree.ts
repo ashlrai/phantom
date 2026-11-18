@@ -9,6 +9,7 @@ import type { ProviderName } from './provider.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 import type { FleetRunsDirState } from './runs-dir-state.js';
 import type { LaneModelSnapshot } from './lane-models.js';
+import type { LeaderSeatReport } from './leader-seat.js';
 
 /** A job or lane counts as live when something happened within this window. */
 export const ORG_LIVE_WINDOW_MS = 5 * 60_000;
@@ -42,6 +43,7 @@ export interface FleetOrgTree {
   schema: 'fleet.org.v1';
   /** Bumped only when a field is removed or changes meaning; new fields do not bump it. */
   version: 1;
+  leaderSeat?: LeaderSeatReport;
   generatedAt: string | null;
   /** `state` and `doing` describe the dispatcher the leader works through; the leader's own process, provider and model are not reported. */
   leader: { label: string; status: string; provider: ProviderName; model: string | null; state: OrgState; doing: string; dispatcher: { lastTick: string | null; paused: boolean | null } };
@@ -54,6 +56,7 @@ export interface FleetOrgTree {
   sources: FleetOrgMap['sources'] & { lanes: Health; usage: Health };
 }
 export interface OrgTreeInputs {
+  leaderSeat?: LeaderSeatReport;
   /** dispatchd's lane counts and recent events (`readFleetRunsDirState`). */
   runs?: FleetRunsDirState | null;
   /** Pool usage (`readResourceLedger`). */
@@ -132,6 +135,7 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
   const total = working.reduce((sum, n) => sum + n, 0);
   const state: OrgState = paused ? 'held' : total ? 'running' : paused === false ? 'idle' : 'unknown';
   return { schema: 'fleet.org.v1', version: 1, generatedAt: map.generatedAt,
+    ...(inputs.leaderSeat ? { leaderSeat: inputs.leaderSeat } : {}),
     leader: { label: leader?.label ?? 'Leader', status: leader?.status ?? 'unknown', provider: leader?.provider ?? 'unknown', model: null, state,
       doing: state === 'held' ? 'Dispatch is paused' : state === 'running' ? `Directing ${plural(total, 'running job')} across ${plural(working.length, 'lane')}`
         : state === 'idle' ? 'No jobs running' : 'Unknown',

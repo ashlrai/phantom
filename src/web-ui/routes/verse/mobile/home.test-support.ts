@@ -1,4 +1,5 @@
-/** Fixture `phm home --json` payloads (home.v1) for the phone's Home tests: fake repos, lanes and asks only. */
+/** Fixture `phm home --json` (home.v1) and `phm approvals` (approvals.asks.v1) payloads for the phone's Home tests: fake repos, lanes and asks only. */
+import type { ApprovalsList } from '../../../../core/fleet/approvals.js';
 import type { HomeSummary } from '../../../../core/fleet/home.js';
 
 const ok = <T,>(value: T) => ({ state: 'ok' as const, value });
@@ -29,4 +30,19 @@ export function homeSummary(kind: HomeFixture): HomeSummary {
       main: unknown('The main guardian status could not be read.'), running: unknown('No fleet status has been written yet.'), needsYou: unknown('The needs-you ledger could not be read.') };
   }
   return base;
+}
+
+const approval = (n: number, question: string, ageSeconds: number | null) => ({ id: `nm-${String(n).repeat(12)}`, ref: String(n).repeat(4), number: null,
+  kind: '2fa' as const, question, options: ['yes', 'no', 'done'], askedBy: null, created: null, ageSeconds, expires: null });
+
+/** The approvals card's read for the same fixture: what needs Mason, or unknown. */
+export function approvalsList(kind: HomeFixture): ApprovalsList {
+  const base: ApprovalsList = { schema: 'approvals.asks.v1', asOf: '2026-11-17T12:00:00.000Z', ledger: 'available', count: 0, approvals: [], expired: 0 };
+  if (kind === 'unknown') return { ...base, ledger: 'unavailable' };
+  if (kind !== 'needs') return base;
+  const approvals = [
+    approval(1, 'Enter the fake 2FA code for a-very-long-example-registry-name-that-must-wrap-on-a-narrow-phone.example', 240),
+    approval(2, 'Approve the fake device', null), approval(3, 'Pay the fake invoice', 7200),
+  ];
+  return { ...base, count: approvals.length, approvals };
 }

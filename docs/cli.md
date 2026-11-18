@@ -35,7 +35,7 @@ Topic summary and discovery hints.
     memory          Memory - shared genome (memory, recall, learn, …)
     knowledge       Knowledge - portfolio RAG + graph (graph, radar, knowledge, …)
     autonomy        Autonomy - enrollment, backlog, daemon, inbox, goals (bots, subagent, metrics, …)
-    observability   Observability - cost, telemetry, audit (empties, home, asks, …)
+    observability   Observability - cost, telemetry, audit (shipped, empties, home, …)
     integrations    Integrations - MCP, GitHub, Vercel, editors (mcp, checkpoint, …)
     safety          Safety - sandboxes, invariants, activation (daemon, worktrees, …)
     web             Surfaces - TUI + web dashboard (top, tui, dash, …)
@@ -87,6 +87,7 @@ Every command, grouped by topic.
     runtime run --store <absolute> -- universe <args>                                                              Run Universe in the foreground using the verified installed candidate; operational commands require explicit absolute --root.
     orient [--repo <r>] [--json]                                                                                   Session-start context: genome hits, health, backlog, pending proposals, attention (read-only).
     docs --agent [--json]                                                                                          Agent cheat sheet: the CLI-first contract (commands, safety classes, JSON shapes).
+    docs cli [--check] [--json]                                                                                    Regenerate docs/CLI-REFERENCE.md from the command registry; --check lists missing, removed or stale commands without writing (exit 1 on drift).
     check [--base <ref>] [--json]                                                                                  Run incremental typechecks, cached lint and affected tests from a Phantom checkout; development feedback only.
     commands [--json]                                                                                              List every command: what it does, its arguments and whether it changes state. The desktop palette (Cmd+K) shows the same list.
     completions zsh|bash                                                                                           Print a shell completion script to stdout.
@@ -104,6 +105,7 @@ Every command, grouped by topic.
     run show <id>                                                         Print a past run in detail.
     runs [--json]                                                         List past runs (newest first).
     models [--json]                                                       List the model registry (verified, unverified, stale) and local models.
+    models check [--json] [--diff <file>]                                 Report every model the router can pick: confirmed, stale or unconfirmed (not routable).
     models verify <id> --source <url>                                     Mark one model verified once its official doc page names the exact id.
     models verify [--text]                                                Show model verification status and age (JSON by default).
     models pull <name> [--yes]                                            Explicitly pull an Ollama model (large download; confirm first).
@@ -230,7 +232,8 @@ Every command, grouped by topic.
     org [--text]                                                                                                                                                  The live organization as a tree: leader, lanes with running, target, queued and pool usage, and each running job. JSON by default; unknown stays unknown.
     org show|join|plan [--file <org.toml>] [--json]                                                                                                               Declarative co-founder org model: show members and lanes, opt your own machine into lanes with join, or propose queue assignments with plan. Nothing is sent on join.
     leader status|ask|org|assign [--json]                                                                                                                         Digital co-founder: world-backed status, owner ask, declarative org chart, and RQ assignment. Escalates only for secrets, money, outside sends, and owner-data destruction. KILL stops it. No new model spend.
-    leader seat|inbox [--json]                                                                                                                                    Inspect admitted model tiers and failover seats, or the durable CEO inbox/outbox; inbox --text records a policy-checked message.
+    leader seat [pick] [--json]                                                                                                                                   Show the current leader, fallback health and headroom, or recommend the next confirmed seat. Read-only.
+    leader inbox [--json]                                                                                                                                         Inspect the durable CEO inbox/outbox; --text records a policy-checked message.
     leader say|thread|answer|approve|directives                                                                                                                   Talk to the Leader: say something through the verified inbox writer, read your messages and its replies as one chat with received/answered state, answer a memo question, approve a pending action (applied only if the grant allows), add or retire standing directives.
     leader oversight-plist --print                                                                                                                                Print (never install) the nightly ai.ashlr.oversight LaunchAgent that runs `ashlr leader tick --wait` instead of the legacy Strategist; install by hand per docs/AUTHORITY.md.
     cloud launch "<task>" [--repo o/n] [--base b]                                                                                                                 Start a Claude Code cloud session that delivers a draft PR (spends Claude credits; never merges). Repo defaults to this folder's GitHub origin.
@@ -329,6 +332,7 @@ Every command, grouped by topic.
     sessions create|show|resume|terminate [sesn_id] [--json]                                                                                                      Resumable agent sessions: agent profile id and version, environment id and an append-only event log; each turn is one phm queue job. Statuses idle, running, rescheduling, terminated.
 
   Observability - cost, telemetry, audit
+    shipped [--since 7d] [--json|--md]                                                          What shipped, in plain words: merged changes grouped by product area. --md writes docs/SHIPPED.md.
     empties [--since 24h] [--text]                                                              Why jobs finished with no change: reasons, share of finishes, tokens and one next step each. JSON by default.
     home [--json]                                                                               Is the fleet healthy and moving: merges, main, running jobs, the resource at risk, the work log and unread Leader replies in one summary.
     asks [--json] | asks answer <id> yes|no|done                                                What only Mason can do (password, 2FA, device, payment) and a one-word answer for each.
@@ -410,8 +414,10 @@ Every command, grouped by topic.
     improve propose [--open-pr --repo <dir>]                                                                         Self-improvement loop: evidence-backed proposals ranked by realized leverage; --open-pr opens DRAFT PRs from an isolated worktree.
     improve register|measure|outcomes|promote|sync-backlog|discover|observe|lessons                                  Record a proposal's deterministic metric, measure it at the PR's exact merge base and head, record merges and the reverts that cancel their credit, compare proposers against the deterministic baseline, register cloud backlog PRs that declare a metric, add backlog items from member issues, a red default branch and proposals, compare cloud runs served lessons against the holdout run without them, and queue auto-merge only when checks are green and the metric improved.
     steward disk [--apply] [--json]                                                                                  Measure Codex/Claude/Phantom log roots against retention + quota; dry run unless --apply (deletes oldest eligible files only).
-    approvals [--team <id>] [--json]                                                                                 What needs a human: pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.
-    team <view|join|invite|role|link|approve|claim|release|say>                                                      Local-first team bus: presence, repo/branch/path claims, handoffs and human approval of consequential agent actions.
+    approvals [--team <id>] [--json]                                                                                 What needs a human: decisions only Mason can make first, then pending team approvals, the Security pin queue (read-only) and explicit holds; same projection as the desktop Approvals panel.
+    approvals ask --question <text> --options yes,no [--expires <iso>] [--by <name>] [--json]                        For agents: raise one decision only Mason can make, with its own options; it is numbered and an identical open one is reused.
+    approvals answer <ref> <option> [--json]                                                                         Mason only (agent processes are refused): record his answer once, with who answered, the channel and the time. It only records; nothing is paid or sent.
+    team <list|add|show|view|join|invite|remove|role|link|approve|deny|claim|release|say> [--json]                   Team directory and bus: pending teammate drafts, identity evidence, declared lanes and seats; membership and approvals keep their existing gates.
     companions [--json] [--root <dir>] [--bin-dir <dir>]                                                             Read-only Secrets/Locus/Lexicon executable identity and version inventory; no runtime readiness or activation.
     mcp install <claude|ashlrcode>                                                                                   Add the ashlr gateway to a target mcpServers config (backs up first).
     gh <pr|issue|ci>                                                                                                 Read GitHub open PRs, issues, or CI status for the current repo (read-only).
@@ -422,6 +428,8 @@ Every command, grouped by topic.
     wire --claude-md                                                                                                 Print a CLAUDE.md snippet teaching agents the CLI-first ashlr usage (read-only).
     notify test                                                                                                      Send a test ping to the configured webhook(s); no-op if none are set.
     notify route <type> [--text]                                                                                     Preview an owner update route in JSON (default) or plain words; never sends.
+    notify route <update.json> [--json]                                                                              Classify one update (decision, shipped, incident, digest, fyi) and print its delivery plan by your rules; never sends.
+    notify rules [--json] | rules set <type> <channel>                                                               Show or change which channel each update type goes to. Same JSON as GET /api/notify/rules.
     stack [status|list|providers|recommend|scan|doctor|add|apply]                                                    Ecosystem `stack` tool surface: read-only status/list/recommend, confirm-gated add/apply (real provisioning).
     ecosystem doctor [--json] [--deep]                                                                               Read-only sibling-repository health scan across the ecosystem.
     ecosystem changelog [--json] [--since <window>] [--as-of <instant>] [--root <path>] [--max-pages <n>] [--write]  Render the ecosystem changelog from public sources.
