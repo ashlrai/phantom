@@ -72,6 +72,8 @@ is not mistaken for a message nobody picked up. "Write to it" puts `@<job id>`
 in the Leader's reply box for a worker that is still running; nothing is sent
 until you send it there. "Live log" opens the worker log, where pause and
 stop live. A server without the read says so and offers the Sessions pane.
+The Leader chat opens this pane on one session: "Conversation" on a routed
+job there shows that job's conversation, and Esc returns to every session.
 
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from

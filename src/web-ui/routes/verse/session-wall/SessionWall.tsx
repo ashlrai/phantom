@@ -14,6 +14,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { clockTime } from '../leader/thread-model.js';
 import { setLeaderDraft } from '../leader-thread/leader-draft-store.js';
+import { subscribeWallSelection, takeRequestedWallSession } from './wall-selection.js';
 import { MessageMarkdown } from '../MessageMarkdown.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -196,6 +197,12 @@ function OpenConversation({ id, fallback, visible, host, onBack }: { id: string;
 export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
+  // Another surface (a routed job in the Leader chat) can ask for one conversation; it is taken once, here.
+  useEffect(() => {
+    const take = () => { const id = takeRequestedWallSession(); if (id !== null) setOpenId(id); };
+    take();
+    return subscribeWallSelection(take);
+  }, []);
   // The wall's last read stays subscribed while a conversation is open (coming back shows it at once, and the header
   // has a name to show); only the polling stops.
   const read = useQuery(sessionWallQuery, { enabled: visible, freshMs: WALL_POLL_MS });

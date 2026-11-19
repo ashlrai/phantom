@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import { takeRequestedWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { takeLeaderDraft } from '../leader-thread/leader-draft-store.js';
@@ -9,6 +9,7 @@ import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.
 import { SessionWallPane, WallView } from './SessionWall.js';
 import { aimableJob, narrowOpenThread, narrowSessionWall, routedJobs, sourcesLine, wallHeadline } from './session-wall-model.js';
 import './session-wall.pane.js';
+import { requestWallSession, takeRequestedWallSession } from './wall-selection.js';
 
 const AT = '2026-11-18T12:00:00.000Z';
 const session = (id: string, over: Record<string, unknown> = {}) => ({ id, kind: 'worker', agent: 'claude', lane: 'claude', model: 'fixture-model', repo: 'phantom',
@@ -55,7 +56,7 @@ const host = () => ({ openPane: vi.fn() });
 const card = (id: string) => screen.getByRole('button', { name: new RegExp(`^${id}, `) });
 
 let viewport: ViewportMock | null = null;
-beforeEach(() => { evictAll(); takeLeaderDraft(); takeRequestedWorkerLogJob(); });
+beforeEach(() => { evictAll(); takeLeaderDraft(); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('registers a session-independent Conversations pane beside the Leader chat', () => {
@@ -176,6 +177,36 @@ it('opens a card as the whole conversation, hands a message to the Leader box, a
   fireEvent.keyDown(open, { key: 'Escape' });
   await waitFor(() => expect(document.activeElement).toBe(card('RQ-A')));
   expect(screen.queryByRole('region', { name: 'Conversation with RQ-A' })).toBeNull();
+});
+
+it('opens the one conversation another surface asked for, once, whether the pane is already open or not', async () => {
+  const fetch = serve(() => json(threads()));
+  // Asked before the pane exists: a routed job in the Leader chat opens the pane straight onto its conversation.
+  requestWallSession('RQ-A');
+  const first = render(<SessionWallPane visible host={host() as never} />);
+  expect(screen.getByRole('region', { name: 'Conversation with RQ-A' })).toBeTruthy();
+  await screen.findByRole('list', { name: 'Conversation with RQ-A' });
+  expect(fetch.mock.calls.map(call => String(call[0])).some(url => url.includes('/session-thread?id=RQ-A'))).toBe(true);
+  expect(takeRequestedWallSession()).toBeNull();
+  // Going back shows the wall; the spent request does not reopen it.
+  fireEvent.click(screen.getByRole('button', { name: 'Back to every conversation' }));
+  expect(await screen.findByRole('button', { name: 'RQ-A, running' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Conversation with RQ-A' })).toBeNull();
+  // Asked while the wall is on screen.
+  act(() => requestWallSession('RQ-DONE'));
+  expect(screen.getByRole('region', { name: 'Conversation with RQ-DONE' })).toBeTruthy();
+  first.unmount();
+
+  // Free text is never a session id, and a session that has left the list says so instead of showing a blank.
+  requestWallSession('not an id; drop table');
+  expect(takeRequestedWallSession()).toBeNull();
+  evictAll();
+  serve(() => json(threads()), () => json({ error: 'No session RQ-OLD in the list.' }, 404));
+  requestWallSession('RQ-OLD');
+  render(<SessionWallPane visible host={host() as never} />);
+  const gone = await screen.findByRole('alert');
+  expect(gone.dataset.kind).toBe('gone');
+  expect(gone.textContent).toContain('No session RQ-OLD in the list.');
 });
 
 it('offers no message to a finished session or a helper, and sends the leader to the Leader chat', async () => {
