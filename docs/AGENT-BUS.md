@@ -392,7 +392,13 @@ Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; orphan statuses are ignored. Duplicate posts and malformed work
 bodies are refused. Legacy and unrelated bodies stay opaque. This projection is
 neither a historical ledger nor an identity check; labels grant no authority.
-HTTP work-feed endpoints remain unimplemented.
+`readBusWorkFeed({claims:true})` and `phm fleet work-feed --claims` join each
+job's declared claim keys against the live coordination table in one read:
+`claims.holds` lists every live lease blocking a job key (job, key, owner,
+lease end, origin, source id; tokens never leave the store), with
+`claims.source` of `missing`, `available` or `unavailable`. An unavailable
+claim table means holds are unknown, not absent. HTTP work-feed endpoints
+remain unimplemented.
 
 ### Bounded peer dispatch
 
