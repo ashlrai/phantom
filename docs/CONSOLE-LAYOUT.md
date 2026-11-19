@@ -119,6 +119,20 @@ asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
 
+The Capacity pane is one board of how full the lanes ran against their slot
+targets over 6, 24 (the default) or 72 hours. The headline is the share of
+target slots that were filled, and the totals under it give idle slot time,
+time on hold, time stalled (open slots with work queued) and how much of the
+window the sampler was watching. Each lane is a card with its provider mark,
+its fill, the running line over the dashed target with the first and last
+sample times and the value of the top edge, and labelled readings: the last
+sample, idle, held and, only when it happened, stalled. Lanes that stalled
+come first, then the most idle. A lane with no target says "no target", not a
+percentage. The Launch gaps strip draws the window once: filled where samples
+exist, amber where a launch gap was found, hatched where nobody was watching.
+Every figure is computed from the samples `GET /api/verse/runs-history`
+returned, so unwatched time is never counted as idle or as full.
+
 The Pools pane is one board of every resource pool, most at risk of going
 unused first. Each card has the pool's plain-words line, a bar (solid: used so
 far; lighter: where the current burn ends by reset; marker: time elapsed in
