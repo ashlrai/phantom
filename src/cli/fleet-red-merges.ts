@@ -10,10 +10,9 @@
  *
  * Never writes, never routes, never touches merge or dispatch authority.
  */
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { readJobsTail } from '../core/fleet/report-ledger.js';
 
 const usage = 'Usage: ashlr fleet red-merges [--root <dir>] [--hours <1..168>] [--json]';
 const MAX_JOBS_BYTES = 32 * 1024 * 1024;
@@ -86,32 +85,13 @@ export interface FleetRedMergesDeps {
   now?: () => number;
 }
 
-/** Bounded, no-follow read of one regular file. */
-async function readBounded(path: string, max: number): Promise<string> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > max) throw new Error('unavailable');
-    const buffer = Buffer.alloc(max + 1);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset);
-      if (!bytesRead) break;
-      offset += bytesRead;
-    }
-    if (offset > max) throw new Error('unavailable');
-    return buffer.subarray(0, offset).toString('utf8');
-  } finally { await file.close(); }
-}
-
-/** An absent metrics file reports as missing; other read failures propagate. */
+/** An absent metrics file reports as missing; other read failures propagate.
+ * The ledger is append-only, so the read keeps its newest MAX_JOBS_BYTES tail. */
 export async function readRedMergesJobs(root: string): Promise<string | null> {
-  try {
-    return await readBounded(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_BYTES);
-  } catch (error) {
-    if (['ENOENT', 'ENOTDIR'].includes(String((error as NodeJS.ErrnoException)?.code))) return null;
-    throw error;
-  }
+  const read = await readJobsTail(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_BYTES);
+  if (read.missing) return null;
+  if (read.text === null) throw new Error('unavailable');
+  return read.text;
 }
 
 /** Fold the ledger into per-hour, per-lane merges split by the checks value. */

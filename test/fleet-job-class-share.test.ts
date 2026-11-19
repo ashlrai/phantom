@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendFileSync, truncateSync, writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,6 +124,21 @@ describe('cmdFleetJobClassShare', () => {
     }
     expect(read).not.toHaveBeenCalled();
     expect(await cmdFleetJobClassShare(['--hours', '168', '--root', '/tmp', '--json'], read, now)).toBe(0);
+  });
+
+  it('reads the newest ledger tail when jobs.jsonl exceeds the read bound', async () => {
+    const path = join(root, 'metrics/jobs.jsonl');
+    writeFileSync(path, '');
+    truncateSync(path, 32 * 1024 * 1024 + 1);
+    appendFileSync(path, `\n${row('RQ-PHX-TAILBOUND', 'finish', { ts: ts('19:00'), tokens_total: 123 })}\n`);
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetJobClassShare(['--root', root, '--json'], undefined, now)).toBe(0);
+    const report = JSON.parse(String(output.mock.calls[0]![0]));
+    expect(report.malformed).toBe(0);
+    expect(report.rows).toEqual([
+      { lane: 'claude', jobs: 1, tokens: 123, author_pct: 0, drain_pct: 0, real_pct: 100 },
+      { lane: 'total', jobs: 1, tokens: 123, author_pct: 0, drain_pct: 0, real_pct: 100 },
+    ]);
   });
 
   it('reports unavailable metrics without leaking the source error', async () => {

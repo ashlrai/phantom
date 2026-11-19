@@ -173,14 +173,25 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
   return growth;
 }
 
-/** Last JOBS_TAIL_BYTES of the ledger, first partial line dropped. */
-export async function readJobsTail(path: string): Promise<{ text: string | null; truncated: boolean }> {
+export interface JobsTailRead {
+  /** Newest retained ledger bytes as text; null when absent, unsafe or unreadable. */
+  text: string | null;
+  /** True when the file exceeded maxBytes and only its tail was kept. */
+  truncated: boolean;
+  /** True when the ledger file does not exist; an existing but unreadable file is not missing. */
+  missing: boolean;
+}
+
+/** Last maxBytes of the ledger, first partial line dropped; never throws. */
+export async function readJobsTail(path: string, maxBytes = JOBS_TAIL_BYTES): Promise<JobsTailRead> {
+  const absent: JobsTailRead = { text: null, truncated: false, missing: true };
+  const failed: JobsTailRead = { text: null, truncated: false, missing: false };
   try {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = await file.stat();
-      if (!info.isFile()) return { text: null, truncated: false };
-      const start = Math.max(0, info.size - JOBS_TAIL_BYTES);
+      if (!info.isFile()) return failed;
+      const start = Math.max(0, info.size - maxBytes);
       const bytes = Buffer.alloc(info.size - start);
       let offset = 0;
       while (offset < bytes.length) {
@@ -189,9 +200,12 @@ export async function readJobsTail(path: string): Promise<{ text: string | null;
         offset += bytesRead;
       }
       const text = bytes.subarray(0, offset).toString('utf8');
-      return { text: start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text, truncated: start > 0 };
+      return { text: start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text, truncated: start > 0, missing: false };
     } finally { await file.close(); }
-  } catch { return { text: null, truncated: false }; }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? absent : failed;
+  }
 }
 
 export interface BuildReportLedgerOptions {
