@@ -162,9 +162,22 @@ reading's capture time, not the request time: a request cannot create a new usag
 observation. They use unrounded values; rounding is for output only. The hours-left
 countdown, time marker, and freshness checks still use the request time.
 
+`phm pools spenddown` is the chart view of the same rows
+([`pools-spenddown.ts`](../src/core/fleet/pools-spenddown.ts), `GET
+/api/app/pools/spenddown`, schema `pools.spenddown.v1`). Each pool has `used_frac`,
+`reset_at`, `even_pace_frac` (where a straight line from the last reset would be
+now), `projected_at_reset` (used share at reset at the current burn), a `state`
+(`on-pace`, `under`, `over`, `drained`, `unknown`) and a plain `verdict` ("on
+pace", "will leave 12% unused: add work", "drained until Fri 6 PM", "no reading").
+Fractions are 0 to 1; a pool with no current reading has `null` fractions and
+`state: "unknown"`, never zero. The desktop Spend down panel and the phone Home card
+draw only this JSON.
+
 ```sh
 phm pools
 phm pools --text
+phm pools spenddown
+phm pools spenddown --text
 ```
 
 ## Keep streams and exit codes separate

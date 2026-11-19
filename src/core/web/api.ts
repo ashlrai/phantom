@@ -2822,6 +2822,21 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/app/pools/spenddown (pools.spenddown.v1, the spend-down chart; same data as `phm pools spenddown`) ──
+    if (path === '/api/app/pools/spenddown') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const [{ readResourceLedger }, { buildPoolsView }, { buildSpendDown }, { readUsageSamples }] = await Promise.all([
+        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/pools-spenddown.js'), import('../fleet/usage-history.js'),
+      ]);
+      const now = Date.now();
+      sendJson(res, 200, buildSpendDown(buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }))));
+      return true;
+    }
+
     // ── GET /api/wb/v1/{snapshot,gh,budget} (desktop native shell reads) ────
     // Versioned loopback read surface for desktop/src-tauri fleet ops.
     // GET-only; already behind the read-session boundary like every /api/* GET.

@@ -136,8 +136,8 @@ describe('Spend down section in the Resources sidebar', () => {
   it('cannot restore an old forecast after a visibility refresh reports stale usage', async () => {
     let finishOld!: (response: Response) => void;
     let reads = 0;
-    // Only spend reads are counted; each row's usage-history chart reads separately.
-    installFetch(({ path }) => path === '/api/verse/leader/resources/usage-history' ? json({}, 404)
+    // Only spend reads are counted; the usage-history and spend-down chart reads are separate.
+    installFetch(({ path }) => path === '/api/verse/leader/resources/usage-history' || path === '/api/app/pools/spenddown' ? json({}, 404)
       : ++reads === 1 ? new Promise<Response>(resolve => { finishOld = resolve; })
         : json(spend([row({ pool: 'codex-personal', reason: 'reading stale' })])));
     const view = (visible: boolean) => <SectionVisibilityProvider visible={visible}><SpendDown /></SectionVisibilityProvider>;
