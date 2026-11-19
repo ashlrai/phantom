@@ -1,9 +1,9 @@
 import { getReleaseStatus, formatReleaseStatus, getReleases, formatReleases } from '../core/release/status.js';
 import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '../core/release/train.js';
-import { collectReleaseNotes, formatReleaseNotes, writeReleaseNotes } from '../core/release/notes.js';
+import { collectReleaseNotes, formatReleaseNotes, formatReleaseNotesMarkdown, writeReleaseNotes } from '../core/release/notes.js';
 import { execFileSync } from 'node:child_process';
 
-export const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release notes [--since <tag>] [--json] [--write]';
+export const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release notes [--since <tag-or-date>] [--json] [--markdown] [--write]';
 
 function notesCommand(args: string[]): number {
   const json = args.includes('--json');
@@ -11,7 +11,7 @@ function notesCommand(args: string[]): number {
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (!['--since', '--json', '--write'].includes(arg) || seen.has(arg) || (arg === '--since' && (!args[i + 1] || args[i + 1]!.startsWith('-')))) {
+    if (!['--since', '--json', '--markdown', '--write'].includes(arg) || seen.has(arg) || (arg === '--since' && (!args[i + 1] || args[i + 1]!.startsWith('-')))) {
       if (json) emit({ ok: false, reason: RELEASE_USAGE }, true);
       else process.stderr.write(`${RELEASE_USAGE}\n`);
       return 2;
@@ -19,12 +19,13 @@ function notesCommand(args: string[]): number {
     seen.add(arg);
     if (arg === '--since') since = args[++i];
   }
+  if (json && seen.has('--markdown')) { emit({ ok: false, reason: RELEASE_USAGE }, true); return 2; }
   try {
     const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     const notes = collectReleaseNotes(root, since);
     if (seen.has('--write')) writeReleaseNotes(root, notes);
     if (json) emit(notes, true);
-    else process.stdout.write(formatReleaseNotes(notes));
+    else process.stdout.write(seen.has('--markdown') ? formatReleaseNotesMarkdown(notes) : formatReleaseNotes(notes));
     return 0;
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Cannot generate release notes';

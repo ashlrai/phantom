@@ -18,6 +18,7 @@ import { OnboardingPanel } from '../onboarding/OnboardingPanel.js';
 import { Tag } from '../../../components/primitives/index.js';
 import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js';
 import { AboutPanel } from './AboutPanel.js';
+import { WhatsNewPanel } from './WhatsNewPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
 import { ChatSettingsPanel } from './ChatSettingsPanel.js';
 import { CommsLimitsRow } from './CommsLimitsRow.js';
@@ -60,6 +61,7 @@ export function SettingsSection() {
           <p><a href="#/settings/secrets">Phantom Secrets custody</a></p>
           <ShortcutsPanel />
           <OnboardingPanel />
+          <WhatsNewPanel />
           <AboutPanel />
         </div>
       </div>
