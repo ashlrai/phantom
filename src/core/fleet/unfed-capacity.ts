@@ -4,6 +4,8 @@
  * runnable rows wait under another lane's hint. Pure: text in, report out.
  * Counts and reason codes only; no job ids, task text or credentials.
  */
+import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
+
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
 
 /** Reason codes are short lowercase identifiers written by the dispatcher. */
@@ -25,7 +27,7 @@ export interface UnfedResource {
   /** Ready rows hinted elsewhere (or unhinted) while this resource had headroom. */
   waitingElsewhere: number;
   unfed: boolean;
-  /** Why those rows did not run here, by dispatcher reason code. Empty when the dispatcher did not say. */
+  /** Why those rows did not run here, by reason code. Empty when neither the dispatcher nor derivable market inputs say. */
   blocked: Record<string, number>;
 }
 
@@ -53,10 +55,12 @@ export interface UnfedReport {
   readOnly: true;
   /**
    * `dispatcher`: the tick's own verdict from status.json, with reason codes.
-   * `derived`: computed here from lane counts and ready.tsv hints, because the
-   * running dispatcher does not publish the block; reasons are unknown.
+   * `derived`: computed here from lane counts and ready.tsv, because the
+   * running dispatcher does not publish the block.
    */
   source: 'dispatcher' | 'derived';
+  /** True when a derived report also recomputed reason codes from market inputs (slots.json and friends). */
+  derivedReasons: boolean;
   /** Ready rows still waiting. */
   waiting: number;
   unfedLanes: string[];
@@ -87,30 +91,34 @@ function utilization(running: number, target: number): number | null {
   return target > 0 ? Math.round(Math.min(1, running / target) * 1000) / 1000 : null;
 }
 
-/** Dispatcher ready.tsv rows: job, repo, lane hint, tier, prompt[, requirements]. Parked rows are not runnable. */
-export function readyHints(readyTsv: string): { waiting: number; byLane: Map<string, number> } {
+/**
+ * Dispatcher ready.tsv rows: job, repo, lane hint, tier, prompt[, requirements].
+ * Parked rows are not runnable. The hint is each row's resolved preferred_lane
+ * (the requirements column may override the lane column), matching the
+ * dispatcher's own unfed accounting.
+ */
+export function readyHints(readyTsv: string): { waiting: number; byLane: Map<string, number>; rows: ReadyMarketRow[] } {
+  const rows = parseReadyMarketRows(readyTsv);
   const byLane = new Map<string, number>();
-  let waiting = 0;
-  for (const line of readyTsv.split('\n')) {
-    if (!line.trim() || line.startsWith('#')) continue;
-    const cols = line.split('\t');
-    if (cols.length < 5 || !cols[0] || cols[0].startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
-    waiting++;
-    const lane = (cols[2] ?? '').trim();
+  for (const row of rows) {
+    const lane = row.hint ?? '';
     byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
   }
-  return { waiting, byLane };
+  return { waiting: rows.length, byLane, rows };
 }
 
 /**
  * The current picture from queue/status.json and queue/ready.tsv ('' when absent).
- * Throws when status.json has no usable lanes map.
+ * Throws when status.json has no usable lanes map. `market` carries the
+ * dispatcher's own input files; when present and slots.json parses, a derived
+ * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string): Omit<UnfedReport, 'history'> {
+export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const hints = readyHints(readyTsv);
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
+  const ctx = published === null ? marketContext(market) : null;
   const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
   const waiting = published && count(published.waiting) ? published.waiting : hints.waiting;
   const resources: UnfedResource[] = [];
@@ -128,8 +136,17 @@ export function currentUnfed(statusJson: string, readyTsv: string): Omit<UnfedRe
     if (isRecord(entry) && count(entry.waiting_elsewhere)) {
       waitingElsewhere = entry.waiting_elsewhere;
       blocked = codes(entry.blocked);
-    } else if (!published && headroom > 0 && !held) {
-      waitingElsewhere = hints.waiting - readyHinted;
+    } else if (!published) {
+      if (headroom > 0 && !held) {
+        waitingElsewhere = hints.waiting - readyHinted;
+        if (ctx !== null) {
+          const view = marketLaneView(lane, value.running, target, held, ctx);
+          for (const row of hints.rows) {
+            if (row.hint === lane) continue;
+            for (const code of derivedRowCodes(row, lane, view)) blocked[code] = (blocked[code] ?? 0) + 1;
+          }
+        }
+      }
     }
     resources.push({
       lane, running: value.running, target, held, utilization: utilization(value.running, target), headroom,
@@ -142,6 +159,7 @@ export function currentUnfed(statusJson: string, readyTsv: string): Omit<UnfedRe
     schema: FLEET_UNFED_SCHEMA,
     readOnly: true,
     source: published ? 'dispatcher' : 'derived',
+    derivedReasons: ctx !== null,
     waiting,
     unfedLanes: unfed.map(r => r.lane),
     unfedSlots: unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0),
@@ -202,7 +220,11 @@ export function renderUnfed(report: UnfedReport): string[] {
   lines.push(report.unfedLanes.length === 0
     ? `No unfed capacity: ${report.waiting} rows waiting.`
     : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
-  if (report.source === 'derived') lines.push('Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
+  if (report.source === 'derived') {
+    lines.push(report.derivedReasons
+      ? 'Derived from lane counts, ready.tsv requirements and slots.json advertisements: the dispatcher did not publish its verdict.'
+      : 'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
+  }
   const h = report.history;
   if (!h.available) lines.push(`Last ${h.windowHours}h: no metrics/work-market.jsonl history.`);
   else if (h.lanes.length === 0) lines.push(`Last ${h.windowHours}h: no unfed ticks recorded.`);

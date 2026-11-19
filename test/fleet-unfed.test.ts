@@ -202,3 +202,59 @@ describe('renderUnfed', () => {
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.']);
   });
 });
+
+describe('derived market reasons', () => {
+  const MLANES = {
+    'codex-cmp': { running: 0, target: 2, held: false },
+    cursor: { running: 0, target: 2, held: false },
+    'codex-local': { running: 0, target: 1, held: false },
+  };
+  const mrow = (job: string, lane: string, tier: string, req?: string) =>
+    [job, 'phantom', lane, tier, `/q/prompts/${job}.md`, ...(req === undefined ? [] : [req])].join('\t');
+  const SLOTS = JSON.stringify({ 'codex-cmp': {}, cursor: { tiers: ['fast', 'work'] }, 'codex-local': {} });
+  const READY2 = [
+    mrow('RQ-F1', 'claude', 'frontier'), mrow('RQ-F2', 'claude', 'fast'),
+    mrow('RQ-F3', 'claude', 'work', '{"preferred_lane":"codex-local"}'),
+    mrow('RQ-F4', 'claude', 'mid', '{"needs":["secrets:MISSING"]}'),
+  ].join('\n');
+
+  it("recomputes blocked reason codes from the dispatcher inputs", () => {
+    const report = currentUnfed(JSON.stringify({ lanes: MLANES }), READY2, { slots: SLOTS });
+    expect(report.source).toBe('derived');
+    expect(report.derivedReasons).toBe(true);
+    const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
+    // cursor serves only fast/work and has no cost class: frontier rows are tier_unavailable,
+    // every row pays cost_class_unknown, the codex-local pin is local_execution_required,
+    // and the secrets need is missing_capability.
+    expect(byLane.cursor!.blocked).toEqual({
+      tier_unavailable: 2, cost_class_unknown: 4, local_execution_required: 1, missing_capability: 1,
+    });
+    // codex-cmp is a builtin with all tiers: only the pinned and secrets rows are truly blocked.
+    expect(byLane['codex-cmp']!.blocked).toEqual({
+      local_execution_required: 1, missing_capability: 1, deferred_after_selection: 2,
+    });
+    // codex-local is a local lane: open rows need local_opt_in_required.
+    expect(byLane['codex-local']!.blocked).toEqual({
+      local_opt_in_required: 3, tier_unavailable: 1, missing_capability: 1,
+    });
+  });
+
+  it('keeps reasons unknown when slots.json is absent or unparsable', () => {
+    for (const market of [undefined, { slots: null }, { slots: 'not json' }]) {
+      const report = currentUnfed(JSON.stringify({ lanes: MLANES }), READY2, market);
+      expect(report.derivedReasons).toBe(false);
+      expect(report.resources.every(r => Object.keys(r.blocked).length === 0)).toBe(true);
+    }
+  });
+
+  it('does not recompute reasons when the dispatcher published its verdict', () => {
+    const status = JSON.stringify({
+      lanes: MLANES,
+      unfed_capacity: { waiting: 1, lanes: { 'codex-cmp': { waiting_elsewhere: 1, blocked: { saturated: 1 } } } },
+    });
+    const report = currentUnfed(status, READY2, { slots: SLOTS });
+    expect(report.source).toBe('dispatcher');
+    expect(report.derivedReasons).toBe(false);
+    expect(report.resources.find(r => r.lane === 'codex-cmp')!.blocked).toEqual({ saturated: 1 });
+  });
+});
