@@ -26,6 +26,13 @@ export interface FleetQueueV1 {
   v: 1; generatedAt: string;
   sources: Record<'ready' | 'skips', Source>;
   total: number; ready: number; parked: number; malformed: number;
+  /**
+   * READY rows carrying no lane hint — the shared market's open rows, which
+   * any capable executor may claim. They count in `ready`/`total` like every
+   * READY row but are never attributed to a lane, so byLane/nextUp/groups
+   * cannot name them.
+   */
+  unhinted: number;
   byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
   nextUp?: Array<{ lane: string; jobs: string[] }>;
   groups: ParkedGroup[];
@@ -41,6 +48,8 @@ export interface FleetQueueV1 {
 }
 
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+/** Same lane-cell shape lane-console's parser applies before consulting requirements. */
+const LANE_CELL = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const PARKED = /^PARKED-([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
 const DEP_REASON = /^(?:DEP|DEPENDENCY)$/i;
 const GATE_LINE = /DEPENDENCY\s+GATE[:\s]+([^\n]+)/i;
@@ -268,6 +277,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   let repoColumn = -1;
   const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined; unsafeRepo: boolean }> = [];
   let dropped = 0;
+  let unhinted = 0;
   /** Private prompt paths captured from raw cells — never emitted publicly. */
   const rawDepPromptByJob = new Map<string, string>();
   for (const raw of readySource.text.split('\n')) {
@@ -288,13 +298,22 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const positional = !header || (statusColumn !== 0 && (/^READY$/i.test(first) || PARKED.test(first)));
     const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
     // Dispatcher rows are [job, repo, pool, tier, prompt], unlike the
-    // generic positional format [job, pool, tier, repo, title].
-    const dispatcher = positional && cells.length === 5 && JOB_ID.test(first) &&
+    // generic positional format [job, pool, tier, repo, title]. A lane cell
+    // that names no lane is the market's open hint only when the dialect's
+    // other guards hold, so probe those rows through the shared parser and
+    // keep the header verdict for anything else — malformed stays malformed
+    // instead of surfacing as a generic-positional row.
+    const dispatcherShape = positional && cells.length === 5 && JOB_ID.test(first) &&
       !/^READY$/i.test(first) && !PARKED.test(first) &&
       /^(?:frontier|work|mid|fast)$/.test(cells[3] ?? '');
-    const result = parseReadyTsv(dispatcher ? `id\trepo\tpool\ttier\ttitle\n${line}`
+    const openProbe = dispatcherShape && !LANE_CELL.test(cells[2] ?? '');
+    let result = parseReadyTsv(dispatcherShape && !openProbe ? `id\trepo\tpool\ttier\ttitle\n${line}`
       : positional ? input : `${header}\n${input}`);
+    if (openProbe && result.unhinted === 0) {
+      result = parseReadyTsv(`id\trepo\tpool\ttier\ttitle\n${line}`);
+    }
     dropped += result.dropped;
+    unhinted += result.unhinted;
     const row = result.rows[0];
     if (!row) continue;
     const originalState = positional
@@ -360,12 +379,13 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     }
   }
   if (malformed) readySource.state = 'degraded';
+  const readyTotal = ready + unhinted;
   const skips = parseSkips(skipsSource.text, now, opts.limit);
   if (skips.dropped) skipsSource.state = 'degraded';
   const { unmetDeps, metDeps } = await readUnmetDeps(root, depPromptByJob, opts.depDetail === true);
   return {
     v: 1, generatedAt: new Date(now).toISOString(), sources: { ready: readySource.state, skips: skipsSource.state },
-    total: ready + parked, ready, parked, malformed,
+    total: readyTotal + parked, ready: readyTotal, parked, malformed, unhinted,
     byLane: [...lanes.values()].map((counts) => ({ ...counts, otherRepos: [...counts.otherRepos].sort().slice(0, 5) })).sort((a, b) => a.lane.localeCompare(b.lane)),
     nextUp: [...nextUp.entries()].map(([lane, jobs]) => ({ lane, jobs })).sort((a, b) => a.lane.localeCompare(b.lane)),
     groups: [...groups.values()].map((group) => ({ ...group, jobs: group.jobs.sort().slice(0, 8) }))
@@ -375,7 +395,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     health: {
       schema: 'fleet.queue-health.v1', windowHours: 24,
       counts: {
-        ready: readySource.state === 'healthy' || readySource.text ? ready : null,
+        ready: readySource.state === 'healthy' || readySource.text ? readyTotal : null,
         parked: readySource.state === 'healthy' || readySource.text ? parked : null,
         skips: skipsSource.state === 'healthy' || skipsSource.text ? skips.last24h : null,
         repeatedSkipGroups: skipsSource.state === 'healthy' || skipsSource.text ? skips.repeatedSkips.length : null,
