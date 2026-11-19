@@ -2013,8 +2013,9 @@ export async function handleApi(
     // local usage readers. READ-ONLY bounded fs reads; never throws on
     // absent/degraded inputs; same no-auth read class as /api/fleet.
     if (path === '/api/fleet/lanes' && method === 'GET') {
-      const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
-      sendJson(res, 200, await getFleetLaneSnapshot());
+      const [{ getFleetLaneSnapshot }, { fleetLaneEmptyNotes }] = await Promise.all([
+        import('../fleet/lane-console.js'), import('../fleet/lane-empty-notes.js')]);
+      sendJson(res, 200, await getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes }));
       return true;
     }
 

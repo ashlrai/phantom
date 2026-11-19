@@ -46,6 +46,25 @@ export const TIER1_TESTS = Object.freeze([
   'test/authority-tier1-closure-310b.test.ts',
 ]);
 const PACKAGE_FILES_TEST = 'test/package-files-allowlist.test.ts';
+// The recorded Tier-1 authority import closure. Any member — or the snapshot
+// itself — can grow the closure the guard test protects without touching a
+// Tier-1 path, and no test file imports it, so selection names it directly.
+export const TIER1_CLOSURE_SNAPSHOT = 'test/fixtures/authority/tier1-closure.json';
+export const TIER1_CLOSURE_TEST = 'test/authority-tier1-closure-310b.test.ts';
+// Prefixes where a brand-new file becomes a closure root (the `/**` and `*`
+// entries of TIER1_SOURCE_PATTERNS in src/core/authority/protected-paths.ts;
+// src/core/authority/ itself is already a TIER1_PATH). Every existing file
+// under them is already a recorded member, so these only fire on new files —
+// exactly the diffs that can grow the closure without touching a member.
+// New exact-file roots require editing protected-paths.ts, itself Tier-1.
+const CLOSURE_ROOT_PATH = [
+  /^src\/core\/(?:memory|desktop|website|sandbox|policy|routing|improve|autopilot)\//,
+  /^src\/core\/local-eval\/memory-/,
+  /^src\/core\/daemon\/outcome-/,
+  /^src\/core\/goals\/outcome-/,
+  /^src\/core\/verse\/outcomes-/,
+  /^src\/core\/resources\/pool-commissioning/,
+];
 const TIER1_PATH = [
   /^\.github\/CODEOWNERS$/,
   /^src\/core\/authority\//,
@@ -123,6 +142,18 @@ export function domainTests(paths, existing) {
   return { tests: [...tests], node: [...node] };
 }
 
+// Members of the recorded Tier-1 closure, read from the committed snapshot.
+// An unreadable snapshot yields an empty set: the diff's own paths still
+// decide, and the full lane keeps the invariant regardless.
+export function tier1ClosureMembers(cwd) {
+  try {
+    const parsed = JSON.parse(git(cwd, ['show', `HEAD:${TIER1_CLOSURE_SNAPSHOT}`]));
+    return new Set(Array.isArray(parsed?.closure) ? parsed.closure.filter((p) => typeof p === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
 // Direct importers of a module, found without building a graph: any test file
 // whose text names the module path or an exact `/<stem>.js` specifier.
 function importersOf(cwd, path, testFiles) {
@@ -160,6 +191,14 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
   for (const p of alive) if (TEST_FILE.test(p)) add(p); // changed tests first
   const domain = domainTests(paths, existing);
   for (const t of domain.tests) add(t); // named Tier-1 tests are never capped away
+  // A diff touching a recorded closure member — the snapshot itself, or a
+  // prefix where a new file becomes a root — can grow the authority import
+  // closure without touching a Tier-1 path, and no test file imports it, so
+  // the invariant runs by name on exactly those diffs.
+  const closure = tier1ClosureMembers(cwd);
+  if (paths.some((p) => p === TIER1_CLOSURE_SNAPSHOT || closure.has(p) || CLOSURE_ROOT_PATH.some((re) => re.test(p)))) {
+    add(TIER1_CLOSURE_TEST);
+  }
   const pinned = ranked.length;
   const sources = alive.filter((p) => SOURCE_FILE.test(p) && !TEST_FILE.test(p));
   for (const p of sources) {
