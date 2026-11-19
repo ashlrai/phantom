@@ -1393,9 +1393,11 @@ for bp in glob.glob(R + "/*.base"):
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
     if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
-    # Completion wins over launch grace, lingering processes and fresh artifacts.
+    # Completion wins over launch grace, lingering processes and fresh artifacts —
+    # but not over an unfinished watchdog escalation: a current-attempt receipt
+    # keeps the slot until group absence is verified (KILL), like any live job.
     # Keep the worktree/receipts for the existing publisher and reconciliation.
-    if published_current_attempt(j): continue
+    if published_current_attempt(j) and not _maxruntime_unresolved(j): continue
     if j in alive or _maxruntime_unresolved(j):
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1

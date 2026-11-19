@@ -714,6 +714,45 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertTrue(wt.is_dir())
         self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
 
+    def test_published_receipt_keeps_slot_until_group_verified_gone(self):
+        # A current-attempt RESULT EMPTY receipt must not release the lane slot
+        # while the watchdog escalation is unresolved: the surviving worker
+        # group still holds the slot until KILL, then the receipt releases it.
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.log').write_text('work\n')
+        old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.write_ps_two(home)
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)   # tick 1: TERM both wrappers
+        marker = run / 'RQ-HUNG.maxruntime'
+        # Wrappers exit, PID2's group survives; the agent wrote its
+        # current-attempt RESULT EMPTY receipt before exiting.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): self.PID2}))
+        self.write_ps(home, include_leader=False)
+        (r / 'RQ-HUNG.publish').write_text('RESULT EMPTY\n')
+        old = time.time() - 60; os.utime(marker, (old, old))
+        result = tick(home)   # tick 2
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertTrue(wt.is_dir())
+        self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
+        # Group finally empty: KILL completes, then the receipt releases the slot.
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)   # tick 3
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 0)
+
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
         marker = run / 'RQ-HUNG.maxruntime'
