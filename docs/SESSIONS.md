@@ -32,6 +32,21 @@ says which record is missing. Its model is not recorded anywhere yet. In the
 Sessions pane, selecting the leader's row opens the Leader chat.
 See [live sessions](FLEET-API.md#live-sessions).
 
+Every row in the Sessions pane also has a **Thread** button. It opens that
+session as a conversation in the same pane: a summary assembled from the
+session's records, then what was said to it on the right, what it said and did
+on the left, and its recorded steps in the centre. A line under the
+conversation says whether activity and bus messages are shown, not recorded or
+unknown, and anything left out is listed. The reply box writes to the Leader's
+inbox, the same route as the Leader chat, with the session's job id in front
+(`@RQ-...`) so the Leader knows which session you mean. Enter sends and
+Shift+Enter adds a line. It asks for the dispatch token when none is held, and
+a refused send keeps your words and shows the reason. A session that is not
+running has no reply box. **Live log** opens the worker log, where pause and
+stop live. Escape or **Sessions** returns to the tree. The conversation is
+read from `GET /api/verse/fleet/control/session-thread` every 10 seconds; a
+server without that read says so and shows no conversation.
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
