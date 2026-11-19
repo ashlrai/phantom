@@ -1,18 +1,64 @@
-.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
-.headline { margin: 0; font-size: var(--text-sm-size); }
-.message, .footer { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
-.scroll { overflow-x: auto; }
-.table { width: 100%; border-collapse: collapse; font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
-.table th, .table td { padding: var(--space-2); text-align: right; vertical-align: top; }
-.table th:first-child { text-align: left; overflow-wrap: anywhere; }
-.table thead th { color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
-.table tbody tr { border-top: 1px solid var(--border-subtle); }
-.linkButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.linkButton:hover, .linkButton:focus-visible { text-decoration: underline; }
-.held { display: block; color: var(--text-secondary); font-weight: 400; }
-.exhaustion { display: block; font-weight: 400; color: var(--text-secondary); }
-.exhaustion[data-tone="warn"] { color: var(--status-warning-fg); }
-.exhaustion[data-tone="bad"] { color: var(--status-danger-fg); }
-.waste { font-size: var(--text-xs-size); }
-.wasteHeadline { margin: 0 0 var(--space-2); font-size: inherit; }
-.wasteList { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+/* The Supply board: headline, one line of totals, every lane's opening slots as one strip, then a card per lane. One column that wraps the same at 390 px. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow-wrap: anywhere; }
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); line-height: 1.3; }
+.meta, .message, .footer { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.meta { margin-top: calc(var(--space-2) * -1); }
+.message[data-stale] { color: var(--status-warning-fg); }
+.footer { color: var(--text-tertiary); }
+/* Every lane's opening slots end to end: a segment as wide as the lane's slots, filled by the jobs waiting for them. */
+.strip { display: flex; gap: 2px; height: 8px; }
+.segment { position: relative; flex: 1 1 0; min-width: 4px; overflow: hidden; border-radius: var(--radius-full); background: var(--status-danger-bg); }
+.segment[data-state='supplied'] { background: var(--border-subtle); }
+.segmentFill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0; color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); font-weight: var(--font-weight-medium); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.title[data-plain] { color: var(--text-primary); font-family: inherit; font-size: var(--text-sm-size); letter-spacing: normal; text-transform: none; }
+.list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.lane { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); font-size: var(--text-sm-size); }
+.line, .slots { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.name { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; font-weight: var(--font-weight-semibold); }
+.linkButton { padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.linkButton:hover { text-decoration: underline; }
+.linkButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.badge { padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--status-warning-bg); color: var(--status-warning-fg); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+/* The state mark sits before the words that say the same thing. Only a supplied lane is green; a quiet or held one is a hollow ring. */
+.state { margin-inline-start: auto; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.state::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-1); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
+.lane[data-state='supplied'] .state::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.lane[data-state='short'] .state::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.lane[data-state='short'] .state { color: var(--status-danger-fg); }
+/* One square per opening slot: filled when a job waits for it, a dashed outline when nothing does. */
+.pips { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 3px; min-width: 0; }
+.pip { box-sizing: border-box; width: 10px; height: 10px; border: 1px solid var(--accent-500); border-radius: 2px; background: var(--accent-500); transition: background-color var(--duration-slow) var(--ease-standard), border-color var(--duration-slow) var(--ease-standard); }
+.pip[data-pip='short'] { border-style: dashed; border-color: var(--status-danger-solid); background: none; }
+.lane[data-state='held'] .pip { border-color: var(--status-unknown-solid); }
+.lane[data-state='held'] .pip[data-pip='covered'] { background: var(--status-unknown-solid); }
+.track { position: relative; flex: 1 1 8rem; height: 8px; overflow: hidden; border-radius: var(--radius-full); background: var(--status-danger-bg); }
+.fill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.count { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+/* Labelled readings: as many columns as fit, each a small label over its value. */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); gap: var(--space-2) var(--space-3); margin: 0; }
+.fact { display: flex; flex-direction: column; min-width: 0; }
+.fact dt { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.fact dd { margin: 0; color: var(--text-primary); font-weight: var(--font-weight-medium); font-variant-numeric: tabular-nums; }
+.fact dd[data-short] { color: var(--status-danger-fg); }
+.notes { display: grid; gap: var(--space-1); padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.exhaustion { justify-self: start; color: var(--text-secondary); }
+.exhaustion[data-tone='warn'] { color: var(--status-warning-fg); }
+.exhaustion[data-tone='bad'] { color: var(--status-danger-fg); }
+/* Where tokens go and the waste forecast: plain rows under a rule, the lane first. */
+.rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.rows strong { color: var(--text-primary); font-weight: var(--font-weight-medium); }
+.rows button:not(.linkButton) { min-height: var(--control-h-sm); margin-inline-start: var(--space-1); padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+.rows button:not(.linkButton):hover:not(:disabled) { background: var(--bg-hover); }
+.rows button:not(.linkButton):focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.rows button:disabled { color: var(--text-tertiary); cursor: not-allowed; }
+.hint { color: var(--text-primary); }
+/* A weekly window at reset: used so far, what the current burn adds, and hatched for what is left unused. */
+.waste { display: flex; height: 6px; margin-top: var(--space-1); overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
+.wasteUsed { background: var(--accent-500); }
+.wasteBurn { background: var(--accent-500); opacity: 0.35; }
+.wasteUnused { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+.rows li[data-tone='warn'] .wasteUnused { background: repeating-linear-gradient(135deg, var(--status-warning-solid) 0 2px, transparent 2px 6px); }
+.rows li[data-tone='bad'] .wasteUnused { background: repeating-linear-gradient(135deg, var(--status-danger-solid) 0 2px, transparent 2px 6px); }
+@media (prefers-reduced-motion: reduce) { .segmentFill, .pip, .fill { transition: none; } }
