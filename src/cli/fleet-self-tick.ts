@@ -25,6 +25,7 @@ import { cmdFleetCosWork } from './fleet-cos-work.js';
 import { QueueStore } from '../core/queue/store.js';
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import { runSelfTick, type RunSelfTickOptions, type SelfTickStep, type SelfTickSteps } from '../core/fleet/self-tick.js';
+import { refreshClaudeQuotaPeriodically, refreshHeldClaudeQuota, type Probe } from '../core/fleet/claude-quota-refresh.js';
 import { readSelfTickLast } from '../core/fleet/self-tick-last.js';
 import { capSelfTickLog, selfTickLogPath } from '../core/fleet/self-tick-log-cap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
@@ -35,8 +36,9 @@ import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
-One locked pass of Phantom's self-management: reset-release first (a lane it
-frees counts as a free slot for the planner step), then lane-autohold, then
+One locked pass of Phantom's self-management: reset-release first (it first
+refreshes Claude's native weekly reading when the persisted one is older than
+30 minutes, probing once on --apply only; a lane it frees counts as a free slot for the planner step), then lane-autohold, then
 stray-stop (bounded guarded recovery), then meter-incident (deduped flat-meter
 notices), then planner-tick, then inbox-acks (sends pending same-channel acks), then owner-live
 (sends each newly-live owner channel its one-time 'Leader is live here' notice), then order-notices
@@ -88,6 +90,10 @@ interface Dependencies {
   boardNotify?: (args: string[]) => Promise<number>;
   /** recheck-record verb seam for tests; the real call is cmdFleetRecheckRecord([]). */
   recheckRecord?: () => Promise<number>;
+  /** Native claude usage probe seam; tests fake it, never a real claude spawn. */
+  claudeProbe?: Probe;
+  /** claude command-finder seam; tests pin it, never a real PATH scan. */
+  claudeFindCommand?: () => string | null;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -103,7 +109,9 @@ function summary(step: string, report: unknown): string {
     return row['mode'] === 'dry-run' ? `pending=${row['pending']}` : `outcome=${row['outcome']}`;
   }
   if (step === 'reset-release') {
-    return `released=${count(row['released'])} planned=${count(row['planned'])}`;
+    const quota = row['claudeQuota'] as Record<string, unknown> | null | undefined;
+    const quotaState = typeof quota?.['state'] === 'string' ? `  claude-quota=${quota['state']}` : '';
+    return `released=${count(row['released'])} planned=${count(row['planned'])}${quotaState}`;
   }
   if (step === 'lane-autohold') {
     const decisions = Array.isArray(row['decisions']) ? row['decisions'] : [];
@@ -208,7 +216,30 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     return { exitCode, output: captured.join('\n') };
   };
   const defaults: SelfTickSteps = {
-    'reset-release': bind(cmdFleetResetRelease, { now }),
+    // The quota refresh runs first inside this step, so the reading reset-release
+    // plans from is current. It is a sub-stage rather than a new step name so the
+    // fixed fifteen-step order and report shape stay as they are. A custom runs
+    // dir with no injected probe never scans PATH or spawns a real claude.
+    'reset-release': async (argv) => {
+      const sandboxed = deps.claudeProbe === undefined && deps.claudeFindCommand === undefined && root !== join(home, '.ashlr-runs');
+      const claudeQuota = sandboxed
+        ? { state: 'unavailable', weeklyPct: null, observedAt: null, reason: 'custom-runs-dir-no-claude-probe' }
+        : await refreshClaudeQuotaPeriodically({
+          runsDir: root, now, apply, probe: deps.claudeProbe, findCommand: deps.claudeFindCommand,
+        });
+      const held = deps.claudeProbe === undefined && deps.claudeFindCommand === undefined ? {} : {
+        refreshClaude: (o: { runsDir: string; now: () => number }) =>
+          refreshHeldClaudeQuota({ ...o, probe: deps.claudeProbe, findCommand: deps.claudeFindCommand }),
+      };
+      const run = await bind(cmdFleetResetRelease, { now, ...held })(argv);
+      try {
+        const parsed: unknown = JSON.parse(run.output);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return { ...run, output: JSON.stringify({ ...parsed, claudeQuota }) };
+        }
+      } catch { /* the verb's own output stands untouched */ }
+      return run;
+    },
     'lane-autohold': bind(cmdFleetLaneAutohold, { now: () => new Date(now()) }),
     'stray-stop': async (argv) => {
       // The default process reader is tied to the real host's canonical root.
