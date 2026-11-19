@@ -14,6 +14,13 @@ export function affectsAuthorityDrift(path) {
   return path.startsWith('src/') || path.startsWith('test/') || path.startsWith('scripts/') || path === '.github/CODEOWNERS';
 }
 
+/**
+ * Markdown paths can break operator-doc links and anchors, and any deleted
+ * path can be a link target that no longer resolves; both select the docs
+ * check. A modified non-markdown file keeps every link target in place.
+ */
+const DOC_MARKDOWN = /\.md$/i;
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -23,6 +30,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     webTypecheck: changed.some((path) => path.startsWith('src/web-ui/')),
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
+    docsCheck: changed.some((path) => DOC_MARKDOWN.test(path) || !existing.has(path)),
   };
 }
 
@@ -102,6 +110,14 @@ export function eslintPreflight(root, exists = existsSync) {
     return { ok: false, reason: 'node_modules/eslint/bin/eslint.js is absent; run npm ci to restore it' };
   }
   return { ok: false, reason: 'node_modules/eslint/lib/cli.js is absent; run npm ci to restore it' };
+}
+
+/** Preflight check that the documentation checker's markdown parser is installed. */
+export function docsCheckPreflight(root, exists = existsSync) {
+  if (exists(resolve(root, 'node_modules/marked/package.json'))) {
+    return { ok: true };
+  }
+  return { ok: false, reason: 'node_modules/marked/package.json is absent; run npm ci to restore it' };
 }
 
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
@@ -556,6 +572,16 @@ function main() {
         rmSync(overlay, { recursive: true, force: true });
       }
     }
+  }
+  if (selection.docsCheck) {
+    const docsPreflight = docsCheckPreflight(root);
+    if (!docsPreflight.ok) {
+      console.log(`SKIP docs check: ${docsPreflight.reason}; check:docs runs on CI and npm run gate`);
+    } else {
+      run('docs check', 'scripts/check-documentation.mjs');
+    }
+  } else {
+    console.log('PASS docs check skipped: no markdown change or file deletion');
   }
   const preflight = eslintPreflight(root);
   if (!preflight.ok) {
