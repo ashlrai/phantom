@@ -443,9 +443,14 @@ under existing worker gates.
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
 `--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
-nowMs, windowHours)` and `renderUnfed(report)` in
+nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)` and
+`renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
-`phm fleet unfed` (`fleet.unfed.v1`). The optional `market` carries the
+`phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
+window's `route_decision` rows to each job's latest decision and tallies
+`lane_override`s by reason and hinted-to-chosen lane; the report's
+`overrides` field carries the counts (`available`, `decided`, `overridden`,
+`byReason`, `lanes`). The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD); when slots.json parses, a derived report recomputes
 per-lane `blocked` reason codes with the same eligibility rules as
