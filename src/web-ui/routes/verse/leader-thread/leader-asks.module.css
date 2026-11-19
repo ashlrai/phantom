@@ -1,0 +1,146 @@
+/* The Leader's open questions, pinned between the conversation and the reply box. */
+.asks {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 45%;
+  margin: 0 var(--card-pad) var(--space-2);
+  border: 1px solid var(--border-default);
+  border-left: 2px solid var(--accent-500);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  animation: asks-in var(--duration-base) var(--ease-standard);
+}
+
+@keyframes asks-in {
+  from { opacity: 0; transform: translateY(var(--space-2)); }
+  to { opacity: 1; transform: none; }
+}
+
+.head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+}
+
+.toggle {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-h-xs);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The dot breathes while a question waits: the one moving thing asks for the answer. */
+.dot {
+  flex: none;
+  align-self: center;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent-500);
+  animation: asks-wait 2.4s var(--ease-standard) infinite;
+}
+
+@keyframes asks-wait {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.title {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: var(--text-2xs-size);
+  line-height: var(--text-2xs-line);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+
+.meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.steps {
+  flex: none;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.step:hover { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+
+.toggle:focus-visible,
+.step:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  padding: 0 var(--space-3) var(--space-3);
+  overflow-y: auto;
+}
+
+.hint,
+.receipt,
+.failure {
+  margin: 0;
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+.hint { color: var(--text-tertiary); }
+.receipt { color: var(--status-success-fg); }
+.failure { color: var(--status-danger-fg); overflow-wrap: anywhere; }
+
+/* Standing alone (the tray has emptied), the receipt lines up with the reply box. */
+.alone { flex: none; padding: 0 var(--card-pad) var(--space-2); }
+
+.hint kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asks,
+  .dot { animation: none; }
+}

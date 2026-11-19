@@ -45,6 +45,7 @@ import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { DeliveryReceipt } from './DeliveryReceipt.js';
+import { LeaderAsks } from './LeaderAsks.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
@@ -502,6 +503,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         {commandLines.map(line => <LineView key={line.id} line={line} />)}
       </div>
     </div>
+    {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}
+    <LeaderAsks visible={visible} readOnly={actions.readOnly} />
     {note ? <p className={styles.note} role="note">{note}</p> : null}
     <form className={styles.reply} onSubmit={onSubmit}>
       <div className={styles.replyRow}>
