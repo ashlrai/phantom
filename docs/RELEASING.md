@@ -235,7 +235,12 @@ What runs without a per-release approval:
   merge (never a rewrite) instead of enqueue: the new head's own checks
   re-verify the exact revision, which either re-greens for enqueue or goes
   red so release-please regenerates, ending the re-enqueue loop a doomed
-  merge group would otherwise repeat every cadence tick.
+  merge group would otherwise repeat every cadence tick. When that base
+  compare cannot be read or returns no recognized status, the
+  head-trails-master evidence is unknown rather than clear: the train plans
+  no write to that pull request — neither enqueue nor a blind sync — while
+  still completing the rest of the observation, and retries the compare on
+  the next tick.
 - Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
   release gate is green. The train treats that tagged SHA as the candidate
   when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
