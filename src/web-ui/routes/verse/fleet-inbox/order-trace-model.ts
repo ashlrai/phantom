@@ -1,5 +1,7 @@
 export interface OrderTraceJob {
   id: string; lane: string | null; state: 'queued' | 'launched' | 'published' | 'merged'; url: string | null;
+  /** ISO time the job ended with nothing to publish; the server sets it only on unpublished jobs. */
+  endedEmptyAt?: string;
 }
 export interface OrderTraceV1 {
   v: 1; generatedAt: string; sources: { inbox: unknown; prompts: unknown; publishes: unknown };
@@ -20,7 +22,7 @@ export function narrowOrderTrace(v: unknown): OrderTraceV1 | null {
     for (const job of order.jobs) {
       if (!record(job) || typeof job.id !== 'string' || !job.id || !nullableString(job.lane) || !nullableString(job.url)
         || (job.state !== 'queued' && job.state !== 'launched' && job.state !== 'published' && job.state !== 'merged')) return null;
-      jobs.push({ id: job.id, lane: job.lane, state: job.state, url: job.url });
+      jobs.push({ id: job.id, lane: job.lane, state: job.state, url: job.url, ...(typeof job.endedEmptyAt === 'string' ? { endedEmptyAt: job.endedEmptyAt } : {}) });
     }
     orders.push({ at: order.at, source: order.source, key: order.key, jobs });
   }
