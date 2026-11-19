@@ -952,7 +952,7 @@ readers, no provider calls, no secrets.
 
 Inputs are the existing readers' artifacts. From the router queue directory
 (`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
-`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
+`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour; lane-open rows carrying no lane hint count as `unhinted` in `sources.queue`, never guessed onto a lane),
 `queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
 (merge outcomes and transitions in the trailing hour), and `usage-readings.log`.
 The merge rate counts a GitHub PR once across repeated observations and jobs;

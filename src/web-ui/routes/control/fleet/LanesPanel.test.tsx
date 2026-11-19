@@ -18,7 +18,7 @@ const SNAPSHOT = {
   generatedAt: new Date().toISOString(),
   mergeWindowMinutes: 60,
   sources: {
-    queue: { state: 'healthy', file: 'ready.tsv', rows: 6, dropped: 0 },
+    queue: { state: 'healthy', file: 'ready.tsv', rows: 6, dropped: 0, unhinted: 0 },
     queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 8 },
     ledger: { state: 'healthy', file: 'jobs.jsonl', events: 6, dropped: 0 },
     usage: { state: 'healthy', files: ['usage-readings.log'], pools: 2, dropped: 0 },

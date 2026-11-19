@@ -144,6 +144,27 @@ describe('parseReadyTsv', () => {
     expect(rows.every(r => r.status !== 'READY')).toBe(true);
   });
 
+  it('counts lane-open dispatcher rows as unhinted instead of guessing a lane', () => {
+    // An empty lane cell is the market's open hint (work_market.requirements
+    // maps fields[2] or None). The generic positional reader used to steal
+    // these rows and surface the repo name as a lane — or drop owner/name
+    // repos outright. The requirements' preferred_lane is the only honest
+    // lane left; a row naming none is lane-open work, counted as unhinted.
+    const { rows, dropped, unhinted } = parseReadyTsv([
+      'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
+      'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
+      'RQ-OPEN-D\tphantom\t\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
+      'RQ-OPEN-E\tphantom\tnot a lane!\twork\tprompts/e.md',
+    ].join('\n'));
+    expect(dropped).toBe(0);
+    expect(unhinted).toBe(4);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
+    expect(rows.map(r => r.pool)).not.toContain('phantom');
+    expect(rows.map(r => r.pool)).not.toContain('ashlrai/phantom');
+  });
+
   it('keeps generic positional rows on the generic contract', () => {
     // A row whose third cell is not a queue tier stays on the generic
     // id/pool/tier/repo/title reading — the dialect never steals it.
@@ -414,6 +435,26 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(byLane.has('weyv')).toBe(false);
     // Parked rows (PARKED-DEP.* encodings) are not READY queue depth.
     expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 5, dropped: 0 });
+    expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
+  });
+
+  it('surfaces lane-open ready.tsv rows as unhinted, never as a lane', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), [
+      'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
+      'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
+      'RQ-LANED\tphantom\tdevin\twork\t/Users/x/prompts/d.md',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('claude')!.queueDepth).toBe(1);  // declared preferred_lane is the honest lane
+    expect(byLane.get('devin')!.queueDepth).toBe(1);
+    expect(byLane.has('phantom')).toBe(false);         // repo name, not a lane
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 2 });
     expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
   });
 
