@@ -85,12 +85,32 @@ exit code is non-zero if any of them failed.
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. If `origin/master` moved since you branched, rebase first. |
 | Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
+| Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
 | Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
 
 `SKIP eslint` or `SKIP docs check` with "run npm ci to restore it" means the
 install is incomplete; run `npm ci` and then `node scripts/verify-changed.mjs --force`.
+
+### Skipping a flaky test
+
+A test may be silenced only through the quarantine ledger,
+`queue/quarantine.tsv`. Every `.skip`, `.todo` or `x`-prefixed marker your
+diff adds needs a live row there: four tab-separated columns (`test`, `repo`,
+`lead`, `expiry`), where `test` is the file or `<file> > <full test name>` and
+`expiry` is at most seven days out. Remove the row and the marker together.
+The verifier also refuses an added `.only`, a skip on a test that was never
+running (quarantine retires a running test; it does not land a disabled one),
+and any row that no longer covers a marker. The file header and
+`scripts/check-quarantine-ledger.mjs` list every rule.
+
+`verify-changed` and `npm run gate` run this check; the hosted `Merge Gate`
+does not, so run it yourself when you skip a test:
+
+```sh
+npm run check:quarantine -- --base origin/master
+```
 
 ## 5. Push to your fork and open the pull request
 
