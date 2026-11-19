@@ -21,5 +21,7 @@
 .facts > span[data-quiet='true'] { color: var(--status-warning-fg); font-weight: 600; }
 .facts > span[data-elsewhere='true'] { font-style: italic; }
 .why { color: var(--text-tertiary, var(--text-secondary)); overflow-wrap: anywhere; }
+.thread { flex: none; align-self: center; margin-right: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; cursor: pointer; }
+.thread:hover, .thread:focus-visible { background: var(--bg-hover); }
 .pr { flex: none; align-self: center; padding: var(--space-1) var(--space-2); color: var(--accent-500); }
 .gaps { color: var(--text-secondary); }
