@@ -28,6 +28,7 @@ import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, mess
 import { useViewport } from '../shell/viewport.js';
 import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
 import { MapStage3D } from './MapStage3D.js';
+import { layoutByOrg, orgBoxLabel, readMapLayout, saveMapLayout, type MapLayoutMode } from './org-layout-model.js';
 import styles from './fleet-map.module.css';
 
 /** The existing pane that shows each kind's details. */
@@ -37,6 +38,7 @@ export const DETAIL_PANE: Readonly<Record<LiveMapNodeKind, string>> = {
 const KIND_WORD: Readonly<Record<LiveMapNodeKind, string>> = { leader: 'leader', lane: 'lane', job: 'job', computer: 'computer', resource: 'pool' };
 const nameOf = (node: LiveMapNode) => `Open ${KIND_WORD[node.kind]} ${node.label}: ${node.detail}`;
 const VIEW_OPTIONS = [{ value: '2d', label: '2D' }, { value: '3d', label: '3D' }] as const;
+const LAYOUT_OPTIONS = [{ value: 'rows', label: 'Rows' }, { value: 'org', label: 'By org' }] as const;
 const LEGEND: readonly [LiveMapEdgeKind, string][] = [
   ['reports-to', 'reports to'], ['runs-on', 'runs on'], ['uses-resource', 'uses pool'], ['messaged-in-last-15-min', 'messaged'],
 ];
@@ -56,9 +58,12 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
   const [hovered, setHovered] = useState<string | null>(null);
   const [chosen, setChosen] = useState<MapViewMode>(readMapViewMode);
   const { compact } = useViewport();
+  const [arrangement, setArrangement] = useState<MapLayoutMode>(readMapLayout);
   const mode: MapViewMode = compact ? '2d' : chosen;
+  const arrange = (next: MapLayoutMode) => { setArrangement(next); setHovered(null); saveMapLayout(next); };
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
-  const layout = layoutLiveMap(map);
+  const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
+  const layout = orgLayout ?? layoutLiveMap(map);
   const pulse = (edge: LiveMapEdge) => pulsing(edge, map, now, reducedMotion) ? 'true' : undefined;
   const counts = showMessages ? messagePairs(map) : [];
   const talk = showMessages ? map.edges.filter(edge => edge.kind === 'messaged-in-last-15-min') : [];
@@ -80,6 +85,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
     <div className={styles.toolbar} role="toolbar" aria-label="Map">
       <p className={styles.headline}>{mapHeadline(map)}</p>
       {!compact && <Segmented<MapViewMode> options={VIEW_OPTIONS} value={mode} onChange={choose} size="sm" aria-label="Map view" />}
+      {mode === '2d' && <Segmented<MapLayoutMode> options={LAYOUT_OPTIONS} value={arrangement} onChange={arrange} size="sm" aria-label="Map layout" />}
       <button type="button" aria-pressed={showMessages} onClick={() => { setShowMessages(on => !on); setHovered(null); }}>Messages</button>
     </div>
     <p className={styles.notice}>Map as of {Number.isFinite(Date.parse(map.generatedAt)) ? <time dateTime={map.generatedAt}>{map.generatedAt}</time> : 'unknown'}.</p>
@@ -89,6 +95,8 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
       card={card ? <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} anchored /> : null} />
       : <div className={styles.scroll}>
       <div className={styles.canvas} style={{ width: layout.width, height: layout.height }}>
+        {orgLayout?.boxes.map(box => <div key={box.id} className={styles.group} data-org-group={box.id}
+          style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{orgBoxLabel(box)}</span></div>)}
         <svg className={styles.edges} width={layout.width} height={layout.height} aria-hidden="true">
           {map.edges.map(edge => {
             const a = layout.at.get(edge.from), b = layout.at.get(edge.to);

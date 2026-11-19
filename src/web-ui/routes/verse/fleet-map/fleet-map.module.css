@@ -10,6 +10,8 @@
 .notice { margin: 0; color: var(--text-secondary); }
 .scroll { overflow: auto; max-width: 100%; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
 .canvas { position: relative; }
+.group { position: absolute; box-sizing: border-box; border: 1px dashed var(--border-subtle); border-radius: var(--radius-sm); }
+.group span { display: block; padding: var(--space-1) var(--space-2); color: var(--text-secondary); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .edges { position: absolute; inset: 0; pointer-events: none; }
 .edge { fill: none; stroke: var(--border-strong, var(--text-tertiary)); stroke-width: 1.25; }
 .edge[data-kind='runs-on'] { stroke-dasharray: 4 3; }
