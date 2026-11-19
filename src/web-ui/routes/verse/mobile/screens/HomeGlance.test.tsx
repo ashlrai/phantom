@@ -1,6 +1,7 @@
 /** The phone's Home on fixture `phm fleet pulse`, `phm home`, `phm approvals` and `phm shipped` payloads: empty, normal, red main, approvals, unknown; measured at 390 px. */
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { driftLine, type SelfDriftV1 } from '../../../../../core/release/drift-shape.js';
 import type { ShippedReport } from '../../../../../core/release/shipped.js';
 import { clearMutationToken, setMutationToken } from '../../../../data/auth-store.js';
 import { evictAll } from '../../../../data/cache.js';
@@ -8,7 +9,7 @@ import { resetGuard } from '../../shell/guard-store.js';
 import { mockViewport } from '../../shell/viewport.test-support.js';
 import { APPROVALS_PATH } from '../../home/ApprovalsCard.js';
 import { LEADER_REPLIES_PATH } from '../../home/LeaderRepliesCard.js';
-import { PULSE_PATH } from '../../home/PulseCard.js';
+import { DRIFT_PATH, PULSE_PATH } from '../../home/PulseCard.js';
 import { SHIPPED_PATH } from '../../home/ShippedCard.js';
 import { INTERJECT_POST_PATH } from '../../fleet/interject-request.js';
 import { approvalsList, homeSummary, pulse, type HomeFixture } from '../home.test-support.js';
@@ -25,7 +26,16 @@ const shipped = (total: number | null): ShippedReport => ({
   repo: null, headline: total ? `Today: ${total} user-facing changes across 1 repo; biggest: Add a phone Home.` : 'Nothing merged in the last 1 day.', repos: total === null ? null : 1, biggest: total ? 'Add a phone Home' : null, maintenance: total === null ? null : 0,
   areas: total ? [{ id: 'desktop', label: 'Desktop app', count: total, lines: [{ text: 'Add a phone Home.', number: 12, mergedAt: '2026-11-17T10:00:00.000Z', repo: null, prs: [12] }] }] : [],
 });
+// `phm self drift --json` for an installed build that is up to date: the Pulse card's last row.
+const DRIFT: SelfDriftV1 = {
+  schema: 'phantom.self-drift.v1', version: 1, checkedAt: '2026-11-17T12:00:00.000Z', installed: { version: '3.1.0', revision: 'unknown' },
+  latestRelease: { tag: 'v3.1.0', at: '2026-11-17T10:00:00.000Z' }, master: { revision: 'unknown', at: 'unknown' }, behindReleases: 0,
+  behindCommits: 'unknown', oldestUnshippedMergeAt: 'unknown', liveFeatures: [], missingFeatures: [], unknownFeatures: [], features: [],
+  line: driftLine({ behindReleases: 0, missingFeatures: [], unknownFeatures: [] }),
+};
 const mac = (kind: HomeFixture, more: Record<string, unknown> = {}) => stubFetch({
+  // The unknown fixture leaves the drift read unanswered, so the build is unknown there too.
+  ...(kind === 'unknown' ? {} : { [`GET ${DRIFT_PATH}`]: DRIFT }),
   [`GET ${HOME_PATH}`]: homeSummary(kind), [`GET ${PULSE_PATH}`]: pulse(kind), [`GET ${APPROVALS_PATH}`]: approvalsList(kind),
   [`GET ${SHIPPED_PATH}`]: shipped(kind === 'unknown' ? null : kind === 'quiet' ? 0 : 3), ...INBOX, ...more });
 const health = () => screen.findByRole('status', { name: 'Fleet health' });
@@ -46,7 +56,9 @@ describe('phone Home', () => {
     const today = within(await screen.findByRole('region', { name: 'Shipped today' }));
     expect(today.getByText(shippedLine)).toBeInTheDocument();
     const pulseCard = within(await screen.findByRole('region', { name: 'Pulse' }));
-    expect(pulseCard.getAllByRole('listitem')).toHaveLength(5);
+    // The five pulse numbers, then the running build.
+    expect(pulseCard.getAllByRole('listitem')).toHaveLength(6);
+    expect(within(pulseCard.getByRole('listitem', { name: 'Running build' })).getByText('3.1.0')).toBeInTheDocument();
     expect(pulseCard.queryAllByText('unknown')).toHaveLength(kind === 'quiet' ? 5 : 0);
     // Top to bottom: the four tiles, the pulse, health, approvals (or their empty note), pools, the message box, what shipped today.
     const parts = [screen.getByRole('region', { name: 'Fleet at a glance' }), screen.getByRole('region', { name: 'Pulse' }), await health(), screen.getByText('Nothing needs you'), screen.getByRole('region', { name: 'Pools' }), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
@@ -126,6 +138,7 @@ describe('phone Home', () => {
     expect(await screen.findByText('Unknown: the needs-you ledger could not be read.')).toBeInTheDocument();
     expect(await screen.findByText('Unknown: No git history could be read here.')).toBeInTheDocument();
     expect(screen.queryByText(/\b0\b/)).not.toBeInTheDocument();
+    expect(await screen.findByText('Unknown: the running build could not be read.')).toBeInTheDocument();
     // A main nobody could read is not green, and a lane with no target still counts as running.
     const partly = { ...homeSummary('busy'), main: { state: 'ok' as const, value: [{ repo: 'locus', state: 'unknown' as const }] }, running: { state: 'ok' as const, value: [{ lane: 'grok', running: 2, target: null }] } };
     expect(healthLine(partly)).toEqual({ text: '7 merged in the last hour · 1 lane running · main unknown', tone: 'unknown' });

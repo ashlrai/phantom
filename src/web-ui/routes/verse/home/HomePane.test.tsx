@@ -43,7 +43,8 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
     expect(screen.getByText(HEALTHY.headline).getAttribute('data-health')).toBe('healthy');
     const cards = [...view.container.querySelectorAll('section section')];
     expect(cards.map(node => node.getAttribute('aria-label'))).toEqual(CARDS);
-    for (const node of cards) expect(node.querySelectorAll('button')).toHaveLength(node.getAttribute('aria-label') === 'Pools' ? 8 : 1);
+    // Pools is a bar of eight pool tiles above its one action.
+    for (const node of cards) expect(node.querySelectorAll('button')).toHaveLength(node.getAttribute('aria-label') === 'Pools' ? 9 : 1);
     for (const [name, text] of [['Merged PRs', /Last hour: 2/], ['Merged PRs', /Last 24 hours: 31/], ['Merged PRs', /Median time to merge: 6 minutes/], ['Main', 'locus: red'],
       ['Running jobs', 'claude: 3 of 8'], ['Running jobs', 'grok: 1'], ['Most at risk of going unused', 'claude. 50.0% will expire unused in 10.0h at current burn.'],
       ['Leader', '2 unread replies.']] as const) expect(card(name).getByText(text)).toBeTruthy();
@@ -54,19 +55,19 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
     expect(screen.getByText('Unknown: The job metrics file could not be read.', { selector: 'p' })).toBeTruthy();
     for (const name of CARDS.filter(name => name !== 'Pools')) expect(card(name).getAllByText(/^Unknown: .+\.$/).length).toBeGreaterThan(0);
     expect(card('Main').getByText('Unknown: The main guardian status could not be read.')).toBeTruthy();
-    expect(screen.getAllByRole('button')).toHaveLength(14);
+    expect(screen.getAllByRole('button')).toHaveLength(15);
   });
   it('says so before the summary arrives and when it cannot be read', () => {
     show(undefined, width);
     expect(screen.getByText('Reading fleet health…')).toBeTruthy(); cleanup();
     show({ error: 'nope' }, width);
     expect(screen.getByText('Fleet health: unknown (the summary could not be read).')).toBeTruthy();
-    expect(screen.queryAllByRole('button')).toHaveLength(8);
+    expect(screen.queryAllByRole('button')).toHaveLength(9);
   });
 });
 it('each action opens the existing detailed view', () => {
   show(HEALTHY);
-  for (const [name, action, paneId] of [['Merged PRs', 'Open Throughput', 'fleet-throughput'], ['Running jobs', 'Open Lanes', 'fleet-lanes'], ['Most at risk of going unused', 'Open Usage', 'fleet-usage']] as const) {
+  for (const [name, action, paneId] of [['Pools', 'Open Pools', 'fleet-pools'], ['Merged PRs', 'Open Throughput', 'fleet-throughput'], ['Running jobs', 'Open Lanes', 'fleet-lanes'], ['Most at risk of going unused', 'Open Usage', 'fleet-usage']] as const) {
     fireEvent.click(card(name).getByRole('button', { name: action }));
     expect(state.openDockPane).toHaveBeenLastCalledWith(paneId);
     expect(getVerseUiState().section).toBe('chat');

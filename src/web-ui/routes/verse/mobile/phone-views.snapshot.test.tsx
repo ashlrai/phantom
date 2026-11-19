@@ -56,7 +56,9 @@ it('390px usage panel', async () => {
 });
 
 it('390px approve and held-lane decisions', async () => {
-  stubFetch({ 'GET /api/verse/fleet/control/holds': {
+  // No open asks (`phm asks`), so the asks card is absent and the screen starts at its filter.
+  stubFetch({ 'GET /api/verse/agent-bus/needs-mason/asks/batch': { schema: 'asks.batch.v1', count: 0, asks: [], ledger: 'available' },
+    'GET /api/verse/fleet/control/holds': {
     v: 1, generatedAt: '2026-11-04T12:00:00Z', sourceState: 'healthy',
     lanes: [{ lane: 'codex-personal', target: 0, floor: 0, ceiling: 8, held: true,
       heldReason: 'usage limit', heldUntil: null, lastChange: null, changedBy: 'autobackoff' }],
