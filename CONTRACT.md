@@ -1325,7 +1325,8 @@ was not asked for), `owner` is the Leader inbox, handed to the leader's and
 every worker's thread and to no helper's, and `orders` is the order trace
 (`OrderTraceV1`), handed to the leader's thread and to every worker's that has
 a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
-`buildSessionThread`, so its session, summary, sources and gaps equal the
+`buildSessionThread`, so its session, summary, sources, gaps and `reply`
+(its last key, the `SessionThreadReply` of `session-reply.ts`) equal the
 single-session thread for the same records.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,

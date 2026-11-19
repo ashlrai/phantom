@@ -600,8 +600,9 @@ replies are read once, and the recorded activity once for each job shown.
   exactly as the session thread gives them, `messages[]` (the newest 3
   messages of that thread, oldest of them first, each with the session thread's
   fields plus `truncated`, true when `text` was cut at 400 characters),
-  `messageCount` (how many messages the whole thread holds), and that thread's
-  own `sources` and `gaps[]`.
+  `messageCount` (how many messages the whole thread holds), that thread's
+  own `sources` and `gaps[]`, and `reply` (`to`, `mention`, `hint`): where
+  words written to that session go, the same answer the session thread gives.
 - What Mason wrote is part of each thread, as in the session thread: the
   leader's holds every Leader inbox message, a worker's the ones naming it as
   `@<job>` (kind `owner`), and a helper's none. A worker's summary says how
