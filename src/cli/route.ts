@@ -1,6 +1,6 @@
 import { explainRoutes } from '../core/queue/route-explain.js';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { open, constants } from 'node:fs/promises';
 
 async function routeInput(file: string, limit = 32 * 1024): Promise<unknown> {
@@ -91,12 +91,44 @@ async function routeFit(args: string[]): Promise<number> {
   }
 }
 
+const OUTCOMES_USAGE = 'Usage: phm route outcomes [--lane <lane>] [--root <directory>] [--json]';
+
+/** Read-only per-job outcome records folded from <runs>/metrics/jobs.jsonl. */
+async function routeOutcomes(args: string[]): Promise<number> {
+  let lane: string | undefined, root: string | undefined, json = false;
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (seen.has(arg) || !['--lane', '--root', '--json'].includes(arg)) {
+      console.error(OUTCOMES_USAGE); return 2;
+    }
+    seen.add(arg);
+    if (arg === '--json') { json = true; continue; }
+    const value = args[++i];
+    if (!value || value.startsWith('--')) { console.error(OUTCOMES_USAGE); return 2; }
+    if (arg === '--lane') lane = value; else root = value;
+  }
+  if (root !== undefined && !isAbsolute(root)) { console.error(OUTCOMES_USAGE); return 2; }
+  try {
+    const { readRouterOutcomes } = await import('../core/router/outcomes.js');
+    const report = await readRouterOutcomes({
+      ...(root === undefined ? {} : { runsDir: root }),
+      ...(lane === undefined ? {} : { lane }),
+    });
+    console.log(json ? JSON.stringify(report) : JSON.stringify(report, null, 2));
+    return 0;
+  } catch {
+    console.error(JSON.stringify({ error: 'Route outcomes ledger unavailable' })); return 1;
+  }
+}
+
 export async function cmdRoute(args: string[]): Promise<number> {
   if (args[0] === 'failover') return routeFailover(args.slice(1));
   if (args[0] === 'decide') return routeDecide(args.slice(1));
   if (args[0] === 'fit') return routeFit(args.slice(1));
+  if (args[0] === 'outcomes') return routeOutcomes(args.slice(1));
   if (args[0] !== 'explain' || args.slice(1).some(a => a !== '--json') || args.length > 2) {
-    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
+    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json | phm route outcomes [--lane <lane>] [--root <directory>] [--json]');
     return 2;
   }
   const report = await explainRoutes();

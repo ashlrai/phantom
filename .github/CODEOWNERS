@@ -648,6 +648,7 @@
 /test/leader-store-cas-310.test.ts @masonwyatt23
 /test/leader-thread-314.test.ts @masonwyatt23
 /test/leader-thread-input-retry-oct31.test.ts @masonwyatt23
+/test/leader-thread-merge.test.ts @masonwyatt23
 /test/leader-thread-routes-314.test.ts @masonwyatt23
 /test/learn-eval-gate.test.ts @masonwyatt23
 /test/learn-experiments-310b.test.ts @masonwyatt23

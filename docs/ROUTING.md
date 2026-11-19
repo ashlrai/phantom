@@ -294,3 +294,23 @@ no bottleneck. Assignments include reset, remaining allowance and burn pace;
 unknown evidence is null, never invented capacity.
 Zero remaining or stale allowance excludes a lane unless positive credits remain.
 Positive allowance with a future reset is `reset-pressure` even when burn pace is zero.
+
+## Job outcome records
+
+`phm route outcomes [--lane <lane>] [--root <directory>] [--json]` folds
+`<runs>/metrics/jobs.jsonl` into one `router.outcome.v1` record per job:
+lane, model, tier, work class, merge state, CI first pass, review findings,
+cost and wall time. `--root` defaults to `$ASHLR_RUNS_DIR`, then
+`~/.ashlr-runs`; `--lane` keeps only records whose lane matches exactly.
+
+The fold is read-only and evidence-bound: a PR URL attaches to a job only
+through an unambiguous claim, fields the ledger never recorded stay `null`,
+and `passk` is always `null` (the pass^k join is not part of this slice).
+The report's `state` is `read` only when the ledger was fully read;
+`missing`, `unreadable`, `not-file` and `too-large` all return zero outcomes
+so an unknown ledger is never mistaken for an empty one. `malformed_rows`,
+`unattached_rows` and `ambiguous_urls` count evidence that could not be
+attached. Exit 0 for a report, 2 for usage errors.
+
+These records are the outcome-signal input for router tuning proposals; the
+command itself changes no routing, weights or launch behavior.
