@@ -1002,9 +1002,9 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
         // Additive: where the leader runs and where it moves next. A failed read leaves it out (unknown), never the card.
         let seat: LeaderStateV1['seat'];
         try {
-          const { readLeaderSeat, pickSeat, leaderSeatLine } = await import('../fleet/leader-seat.js');
+          const { readLeaderSeat, pickSeat, leaderSeatLine, leaderChip } = await import('../fleet/leader-seat.js');
           const report = await (hooks.leaderSeat ?? readLeaderSeat)();
-          seat = { ...pickSeat(report), line: leaderSeatLine(report) };
+          seat = { ...pickSeat(report), line: leaderSeatLine(report), chip: leaderChip(report) };
         } catch { seat = undefined; }
         sendJson(res, 200, seat ? { ...state, seat } : state);
         return true;
