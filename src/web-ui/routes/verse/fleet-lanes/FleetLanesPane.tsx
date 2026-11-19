@@ -24,6 +24,8 @@ import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import { postStrayStop } from './stray-stop.js';
 import { readFailureReason } from '../../../data/client.js';
 import { straySlotsQuery } from './stray-slots-queries.js';
+import { laneOutcomeLine } from './lane-outcomes-model.js';
+import { laneOutcomesQuery } from './lane-outcomes-queries.js';
 import { takeRequestedLane, useRequestedLane } from './lane-focus-request.js';
 import { LanePauseButton } from './LanePauseButton.js';
 import { LaneHoldReleaseButton } from './LaneHoldReleaseButton.js';
@@ -75,6 +77,9 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
   // Strays are sticky host state, not tick-level data: 30 s is fresh enough
   // for a finished job's leftover processes without hammering ps/lsof.
   usePollWhileVisible(refetchStrays, 30_000, { enabled: visible && !!data, refreshOnShow: false });
+  // Yield per lane over the last day: finished jobs by what they produced, never by exit code. Same data: `phm fleet outcomes --lane <lane> --json`.
+  const outcomes = useQuery(laneOutcomesQuery, { enabled: active && !!data });
+  usePollWhileVisible(useRefetch(laneOutcomesQuery), 60_000, { enabled: visible && !!data, refreshOnShow: false });
   const straysTotalsLine = strayTotalsLine(strayTotals(strays.data));
   const workers = data ? workerRows(data) : [];
   const requested = useRequestedLane();
@@ -119,6 +124,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
           <p className={styles.burn}>{burnLine(burnTotals(data))}</p>
           {cards.length === 0 ? <p className={styles.muted}>No lanes reported.</p> : <ul className={styles.list}>
             {cards.map((lane) => {
+              const outcomeLine = laneOutcomeLine(lane.lane, outcomes.data);
               const laneStrays = strayLine(lane.lane, strays.data);
               const rows = strayRows(lane.lane, strays.data);
               const claudeDown = lane.state === 'down';
@@ -147,6 +153,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
                   <p className={styles.muted}>{[`${Math.max(0, lane.target - lane.running)} slots idle`, claude.reason, claude.sinceText].filter(Boolean).join(' · ')}</p>
                   <p className={styles.muted}>{claudeLaneFix()} <Button size="sm" onClick={() => { void copyText(claudeLaneFix().replace('Run on this Mac: ', '')).then((ok) => setCopyState(ok ? 'copied' : 'failed')); }}>{copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}</Button></p>
                 </> : null}
+                {outcomeLine ? <p className={styles.muted} data-lane-outcomes>{outcomeLine}</p> : null}
                 {lane.held ? <p className={styles.muted}>Held: {(lane.heldReason ?? 'reason not reported').replace(/_/g, ' ')}</p> : null}
                 {laneStrays ? <p className={styles.muted}>{laneStrays}</p> : null}
                 {rows.map(row => <p className={styles.muted} key={`${row.job}:${row.pid}`}>
