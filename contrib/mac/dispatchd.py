@@ -850,6 +850,19 @@ def _kill_leaders(leaders, sig, job, expected=None):
             signalled.append((pid, start_time))
         except OSError: pass
     return signalled
+
+def _maxruntime_identity_alive(identity):
+    pid, start_time = identity
+    try:
+        os.getpgid(pid)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    try: current_start = read_process_start_time(pid)
+    except Exception: current_start = None
+    return not current_start or current_start == start_time
+
 def _maxruntime_identities(marker):
     identities = set()
     try:
@@ -873,7 +886,10 @@ def _write_maxruntime_identities(marker, identities):
         for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
             f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
 def job_watchdog():
-    for j, leaders in sorted(job_leaders.items()):
+    jobs = set(job_leaders)
+    jobs.update(os.path.basename(path)[:-len(".maxruntime")] for path in glob.glob(RUN + "/*.maxruntime"))
+    for j in sorted(jobs):
+        leaders = job_leaders.get(j, set())
         if not JID.match(j) or j in reaping or j in publishing: continue
         try:
             ln = rd(RUN + "/" + j + ".line").strip().split("\t")
@@ -885,16 +901,26 @@ def job_watchdog():
             mk = RUN + "/" + j + ".maxruntime"
             if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
                 if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
-                    _kill_leaders(leaders, signal.SIGKILL, j, expected=_maxruntime_identities(mk))
-                    with open(mk, "a") as f: f.write("KILL\n")
-                    ev("REAP TIMEOUT %s SIGKILL" % j)
+                    expected = _maxruntime_identities(mk)
+                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=expected)
+                    if signalled:
+                        with open(mk, "a") as f: f.write("KILL\n")
+                        ev("REAP TIMEOUT %s SIGKILL" % j)
+                    elif any(_maxruntime_identity_alive(identity) for identity in expected):
+                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
+                    else:
+                        with open(mk, "a") as f: f.write("KILL\n")
+                        ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
                 continue
             if age < limit: continue
             if not os.path.exists(RUN + "/" + j + ".rc"):
                 t = "%s/%s.rc.tmp.%d" % (RUN, j, os.getpid()); open(t, "w").write("124\n"); os.replace(t, RUN + "/" + j + ".rc")
             ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
             term_identities = _kill_leaders(leaders, signal.SIGTERM, j)
-            _write_maxruntime_identities(mk, term_identities)
+            if term_identities:
+                _write_maxruntime_identities(mk, term_identities)
+            else:
+                ev("REAP TIMEOUT %s identity-unknown retry" % j)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
 job_watchdog()
 

@@ -291,17 +291,30 @@ class MaxRuntimeTests(unittest.TestCase):
             '    with (home / "killpg.jsonl").open("a") as f:\n'
             '        f.write(json.dumps({"pid": pid, "signal": sig}) + "\\n")\n'
             'os.killpg = fake_killpg\n'
-            'os.getpgid = lambda pid: pid\n'
+            'def fake_getpgid(pid):\n'
+            '    try:\n'
+            '        group = json.loads((home / "mock-pgids.json").read_text()).get(str(pid), pid)\n'
+            '    except Exception:\n'
+            '        group = pid\n'
+            '    if group is None:\n'
+            '        raise ProcessLookupError(3, "no such process")\n'
+            '    return group\n'
+            'os.getpgid = fake_getpgid\n'
             'def fake_start_time(pid):\n'
             '    try:\n'
             '        return json.loads((home / "mock-start-times.json").read_text()).get(str(pid))\n'
             '    except Exception:\n'
             '        return None\n'
             'process_snapshot.read_start_time = fake_start_time\n')
+        (home / 'mock-pgids.json').write_text('{}')
 
-    def write_ps(self, home, start_time=START_TIME, lane='codex-cmp'):
-        inventory = f'{self.PID} {start_time} /bin/bash' if start_time else f'{self.PID} /bin/bash'
-        command = f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work'
+    def write_ps(self, home, start_time=START_TIME, lane='codex-cmp', include_leader=True):
+        if include_leader:
+            inventory = f'{self.PID} {start_time} /bin/bash' if start_time else f'{self.PID} /bin/bash'
+            command = f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work'
+        else:
+            inventory = '1000 /usr/bin/idle'
+            command = ''
         (home / 'stubbin' / 'ps').write_text(
             '#!/bin/bash\n'
             'if [ "$1" = "-axo" ]; then\n'
@@ -378,7 +391,45 @@ class MaxRuntimeTests(unittest.TestCase):
             with self.subTest(snapshot_start=snapshot_start, current_start=current_start):
                 home, run = self.hung(7300, snapshot_start=snapshot_start, current_start=current_start)
                 self.assertEqual(self.killpg_calls(home), [])
+                self.assertFalse((run / 'RQ-HUNG.maxruntime').exists())
                 self.assertIn('REAP TIMEOUT RQ-HUNG skip identity-mismatch', events(home))
+
+    def test_sigterm_retries_after_unknown_identity_is_found_by_next_scan(self):
+        home, run = self.hung(7300, snapshot_start=None)
+        marker = run / 'RQ-HUNG.maxruntime'
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.killpg_calls(home), [])
+        self.assertIn('REAP TIMEOUT RQ-HUNG identity-unknown retry', events(home))
+
+        self.mock_watchdog(home, self.START_TIME)
+        self.write_ps(home, self.START_TIME)
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        self.assertEqual([json.loads(line) for line in marker.read_text().splitlines()],
+                         [{'pid': self.PID, 'start': self.START_TIME}])
+
+    def test_unverifiable_identity_does_not_mark_sigkill_escalated(self):
+        home, run = self.hung(7300)
+        marker = run / 'RQ-HUNG.maxruntime'
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.mock_watchdog(home, None)
+        self.write_ps(home, self.START_TIME)
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        self.assertNotIn('KILL', marker.read_text().splitlines())
+        self.assertIn('REAP TIMEOUT RQ-HUNG identity-unknown retry', events(home))
+
+    def test_gone_group_marks_sigkill_escalation_complete(self):
+        home, run = self.hung(7300)
+        marker = run / 'RQ-HUNG.maxruntime'
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.mock_watchdog(home, self.START_TIME)
+        self.write_ps(home, include_leader=False)
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None}))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+        self.assertIn('REAP TIMEOUT RQ-HUNG escalation-complete group-gone', events(home))
 
     def test_reused_pid_is_not_killed_during_escalation(self):
         home, run = self.hung(7300)
