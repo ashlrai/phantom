@@ -46,8 +46,13 @@ To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
 the tree. It prints a short summary (what the session is, its state, commands
 seen, files changed, latest step), then the brief it was given, its recorded
-steps, what it ran and changed, its notes, the agent bus messages about it and
-its last message. Lines starting `>` were said to the session, `<` is the
+steps, what it ran and changed, its notes, the agent bus messages about it,
+what you wrote to it and its last message. For a worker, "what you wrote" is
+every message in the Leader inbox that names it as `@<job id>`; for the
+leader it is every message you sent, placed between the leader's replies in
+time order. A message aimed at a worker goes to the leader, and nothing
+records the worker reading it, so its label says "Mason to the Leader, aimed
+at" the job. Lines starting `>` were said to the session, `<` is the
 session speaking and `-` is a recorded step. The summary is assembled from the
 records, not written by a model. `--json` prints `fleet.session-thread.v1`;
 an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).

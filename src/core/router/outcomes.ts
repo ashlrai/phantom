@@ -3,10 +3,13 @@ import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
+
 // Read-only recorded job outcomes from <runs>/metrics/jobs.jsonl. Recovered from the
 // router-outcome slice of #6794 (head f9e484e87ec2). Scope is deliberately bounded:
-// no routing, ranking, tuning, weights, or network. `passk` is omitted (always null);
-// the pass^k lane-score join is not recovered here.
+// no routing, ranking, tuning, weights, or network. `passk` joins each outcome's
+// (lane, model) to the published eval.lane-scores.v1 projection — advisory evidence
+// only; a missing, degraded or ambiguous score leaves passk null.
 
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
 export const ROUTER_OUTCOME_LEDGER_RELATIVE = join('metrics', 'jobs.jsonl');
@@ -24,8 +27,8 @@ export interface RouterOutcome {
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
   cost_usd: number | null;
   wall_s: number | null;
-  /** Always null in this slice: the pass^k score join was not recovered (see header). */
-  passk: null;
+  /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
+  passk: number | null;
 }
 
 export type LedgerReadState = 'read' | 'missing' | 'unreadable' | 'not-file' | 'too-large';
@@ -84,8 +87,13 @@ export interface RouterOutcomeFold {
   ambiguous_urls: number;
 }
 
+export interface RouterOutcomeFoldOptions {
+  /** Resolve the advisory pass^k score for a (lane, model) pair; absent or null stays null. */
+  passkFor?: (lane: string, model: string) => number | null;
+}
+
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
-export function foldRouterOutcomes(text: string): RouterOutcomeFold {
+export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions = {}): RouterOutcomeFold {
   const rows: Row[] = [];
   let malformed = 0;
   for (const line of text.split('\n')) {
@@ -142,6 +150,13 @@ export function foldRouterOutcomes(text: string): RouterOutcomeFold {
     }
     outcomes.set(j, o);
   }
+  if (opts.passkFor) {
+    for (const o of outcomes.values()) {
+      if (o.lane === null || o.model === null) continue;
+      const score = opts.passkFor(o.lane, o.model);
+      o.passk = typeof score === 'number' && Number.isFinite(score) ? score : null;
+    }
+  }
   return {
     outcomes: [...outcomes.values()],
     malformed_rows: malformed,
@@ -154,21 +169,47 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
   path: string;
+  /** Health of the eval.lane-scores.v1 projection behind `passk`; 'missing' or 'degraded' means every passk is null. */
+  eval_state: LaneScoresRead['state'];
+}
+
+/**
+ * Index lane-score rows by (lane, model). A duplicated pair is ambiguous and resolves
+ * to null; rows whose passPowK is itself null stay null. Absent or unhealthy
+ * projections yield no lookup at all.
+ */
+function laneScoreLookup(read: LaneScoresRead): ((lane: string, model: string) => number | null) | undefined {
+  if (read.state !== 'healthy' || !read.scores) return undefined;
+  const index = new Map<string, number | null>();
+  const ambiguous = new Set<string>();
+  for (const row of read.scores.lanes) {
+    const key = JSON.stringify([row.lane, row.model]);
+    if (ambiguous.has(key) || index.has(key)) { index.delete(key); ambiguous.add(key); continue; }
+    index.set(key, row.passPowK);
+  }
+  return (lane, model) => {
+    const key = JSON.stringify([lane, model]);
+    return ambiguous.has(key) ? null : index.get(key) ?? null;
+  };
 }
 
 /**
  * Reads <runsDir>/metrics/jobs.jsonl. `runsDir` defaults to ASHLR_RUNS_DIR, then ~/.ashlr-runs,
- * and must be absolute when given. A missing or unreadable ledger yields state != 'read' with
- * no outcomes, so callers can tell unknown input from a successfully read empty ledger.
+ * and must be absolute when given. `ashlarDir` is the ASHLR root holding
+ * eval/passk/lane-scores.json (default ASHLR_HOME, then ~/.ashlr). A missing or
+ * unreadable ledger yields state != 'read' with no outcomes, so callers can tell
+ * unknown input from a successfully read empty ledger.
  */
-export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string } = {}): Promise<RouterOutcomeRead> {
+export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string; ashlarDir?: string } = {}): Promise<RouterOutcomeRead> {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
+  if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
+  const laneScores = readLaneScores({ rootDir: opts.ashlarDir });
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const read = await readLedgerFile(path);
   const empty: RouterOutcomeFold = { outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0 };
-  if (read.state !== 'read') return { ...empty, state: read.state, path };
-  const folded = foldRouterOutcomes(read.text);
+  if (read.state !== 'read') return { ...empty, state: read.state, path, eval_state: laneScores.state };
+  const folded = foldRouterOutcomes(read.text, { passkFor: laneScoreLookup(laneScores) });
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
-  return { ...folded, outcomes, state: 'read', path };
+  return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state };
 }

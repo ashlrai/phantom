@@ -1,0 +1,2 @@
+fatal: shallow file has changed since we read it
+RESULT ABORT default-fetch

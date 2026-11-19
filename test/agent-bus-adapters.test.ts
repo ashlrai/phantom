@@ -45,7 +45,13 @@ describe('channel adapter registry', () => {
     const listed = listChannelRegistry();
     expect(listed.map(row => row.id)).toEqual(['bus', 'slack', 'imessage', 'email', 'telegram', 'handoff']);
     expect(listed.filter(row => row.adapterRegistered).map(row => row.id)).toEqual(['bus', 'handoff']);
-    expect(listed.find(row => row.id === 'email')).toMatchObject({ adapterRegistered: false, healthy: false });
+    expect(listed.find(row => row.id === 'email')).toMatchObject({ adapterRegistered: false, healthy: 'unknown' });
+    // A scoped root reports that store's health: missing is usable, unreadable is down.
+    expect(listChannelRegistry({ root }).find(row => row.id === 'bus')?.healthy).toBe(true);
+    const corrupt = temp();
+    mkdirSync(join(corrupt, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(corrupt, 'bus-inbox', 'messages.json'), 'not json');
+    expect(listChannelRegistry({ root: corrupt }).find(row => row.id === 'bus')?.healthy).toBe(false);
     const bus = await probeRegisteredChannel('bus', { root });
     const handoff = await probeHandoffChannel({ root });
     expect(bus).toMatchObject({ dryRun: false, status: 'sent' });

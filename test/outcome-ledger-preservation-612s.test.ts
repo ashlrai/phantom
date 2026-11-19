@@ -26,6 +26,23 @@ function runsDir(ledger?: string): string {
 
 const ledgerPath = (root: string) => join(root, 'metrics', 'jobs.jsonl');
 
+function ashlarDir(scores?: unknown): string {
+  const root = mkdtempSync(join(tmpdir(), 'ledger-612s-eval-'));
+  roots.push(root);
+  if (scores !== undefined) {
+    mkdirSync(join(root, 'eval', 'passk'), { recursive: true });
+    writeFileSync(join(root, 'eval', 'passk', 'lane-scores.json'), typeof scores === 'string' ? scores : JSON.stringify(scores));
+  }
+  return root;
+}
+
+const laneScores = (lanes: unknown[]) => ({
+  schema: 'eval.lane-scores.v1', generatedAt: '2026-11-19T00:00:00Z', reportId: 'r1', k: 3, trials: 9, lanes,
+});
+const scoreRow = (lane: string, model: string, passPowK: number | null) => ({
+  lane, model, tasks: 3, trials: 9, passes: 6, pass1: 2 / 3, ci95: null, passAtK: 0.9, passPowK,
+});
+
 describe('router outcome ledger (612S preservation)', () => {
   it('folds mixed valid and malformed rows and tolerates blanks', () => {
     const text = [
@@ -166,5 +183,66 @@ describe('router outcome ledger (612S preservation)', () => {
 
   it('requires an absolute runs directory', async () => {
     await expect(readRouterOutcomes({ runsDir: 'relative/runs' })).rejects.toThrow(RangeError);
+  });
+});
+
+describe('router outcome pass^k join', () => {
+  it('fold resolves passk only through an exact lane+model match', () => {
+    const fold = foldRouterOutcomes(
+      [
+        '{"job":"A","lane":"l1","model":"m1"}',
+        '{"job":"B","lane":"l1"}',
+        '{"job":"C","model":"m1"}',
+        '{"job":"D","lane":"l2","model":"m2"}',
+        '{"job":"E","lane":"l1","model":"m1"}',
+      ].join('\n'),
+      { passkFor: (lane, model) => (lane === 'l1' && model === 'm1' ? 0.5 : lane === 'l2' ? Number.NaN : null) },
+    );
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('A')?.passk).toBe(0.5);
+    expect(byId.get('E')?.passk).toBe(0.5);
+    // Non-finite resolver output and unmatched pairs stay null, never fabricated.
+    expect(byId.get('D')?.passk).toBeNull();
+    expect(byId.get('B')?.passk).toBeNull();
+    expect(byId.get('C')?.passk).toBeNull();
+  });
+
+  it('attaches the lane+model pass^k score from a healthy projection', async () => {
+    const root = runsDir('{"job":"J1","lane":"devin","model":"swe-2","phase":"MERGED"}\n{"job":"J2","lane":"devin","model":"other","phase":"MERGED"}\n');
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlarDir(laneScores([scoreRow('devin', 'swe-2', 0.42)])) });
+    expect(result.eval_state).toBe('healthy');
+    expect(result.outcomes.find(o => o.job_id === 'J1')?.passk).toBe(0.42);
+    expect(result.outcomes.find(o => o.job_id === 'J2')?.passk).toBeNull();
+  });
+
+  it('leaves passk null and reports eval_state when the projection is missing or degraded', async () => {
+    const root = runsDir('{"job":"J1","lane":"devin","model":"swe-2"}\n');
+    const missing = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlarDir() });
+    expect(missing).toMatchObject({ state: 'read', eval_state: 'missing' });
+    expect(missing.outcomes[0]?.passk).toBeNull();
+
+    const degraded = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlarDir('{not json') });
+    expect(degraded).toMatchObject({ state: 'read', eval_state: 'degraded' });
+    expect(degraded.outcomes[0]?.passk).toBeNull();
+  });
+
+  it('refuses a duplicated lane+model pair but keeps unambiguous rows', async () => {
+    const root = runsDir('{"job":"J1","lane":"devin","model":"swe-2"}\n{"job":"J2","lane":"claude","model":"opus"}\n');
+    const evalRoot = ashlarDir(laneScores([scoreRow('devin', 'swe-2', 0.4), scoreRow('devin', 'swe-2', 0.9), scoreRow('claude', 'opus', 0.7)]));
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: evalRoot });
+    expect(result.eval_state).toBe('healthy');
+    expect(result.outcomes.find(o => o.job_id === 'J1')?.passk).toBeNull();
+    expect(result.outcomes.find(o => o.job_id === 'J2')?.passk).toBe(0.7);
+  });
+
+  it('keeps passk null when the matched row has no pass^k value', async () => {
+    const root = runsDir('{"job":"J1","lane":"devin","model":"swe-2"}\n');
+    const result = await readRouterOutcomes({ runsDir: root, ashlarDir: ashlarDir(laneScores([scoreRow('devin', 'swe-2', null)])) });
+    expect(result.eval_state).toBe('healthy');
+    expect(result.outcomes[0]?.passk).toBeNull();
+  });
+
+  it('requires an absolute ashlarDir when given', async () => {
+    await expect(readRouterOutcomes({ runsDir: runsDir(''), ashlarDir: 'relative/ashlr' })).rejects.toThrow(RangeError);
   });
 });

@@ -47,7 +47,10 @@ Each run persists under `~/.ashlr/eval/passk/` (`ASHLR_HOME` honored):
 - `latest.json` — atomic pointer to the newest report; the next run's
   regression baseline unless `--baseline` overrides it.
 - `lane-scores.json` — the `eval.lane-scores.v1` projection
-  `ashlr router rank` surfaces as advisory evidence per pool.
+  `ashlr router rank` surfaces as advisory evidence per pool. The
+  `router.outcome.v1` job-outcome fold (`src/core/router/outcomes.ts`)
+  also joins each outcome's `(lane, model)` to this projection for its
+  `passk` field; missing, degraded or duplicated pairs stay `null`.
 - `alerts.jsonl` — bounded (500-line) regression journal appended on
   publish.
 

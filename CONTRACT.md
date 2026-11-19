@@ -288,6 +288,18 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})` and
+`readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
+`router.outcome.v1` records folded from `metrics/jobs.jsonl`. `passk` is the
+lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
+projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
+it is `null` whenever the ledger lacks lane/model, the projection is
+missing or degraded, the pair is duplicated, or the row's own pass^k is
+null — unknown stays null, never estimated. `RouterOutcomeRead.eval_state`
+reports the projection health (`healthy`/`missing`/`degraded`) so callers
+can distinguish absent eval evidence from a real score. The fold is
+read-only and advisory: it never routes, ranks, tunes or writes.
+
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
 following). Its `lanes` map contains `posture`, `postureReason`, nullable
@@ -437,7 +449,12 @@ nowMs, windowHours)` and `renderUnfed(report)` in
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD); when slots.json parses, a derived report recomputes
 per-lane `blocked` reason codes with the same eligibility rules as
-`contrib/mac/work_market.py`, reported as `derivedReasons: true`.
+`contrib/mac/work_market.py`, reported as `derivedReasons: true`. Reports also
+carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
+tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
+`paused`/`admission` verdict for a derived report (where it replaces the
+per-lane codes) or back out of the published `blocked` codes for a
+dispatcher one.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
@@ -1293,14 +1310,19 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 
 `src/core/fleet/session-thread.ts` exports the pure
 `buildSessionThread(list, id, parts, now)`, `renderSessionThreadText(thread)`,
-`sessionBusMessages(session, messages)`, `SESSION_ID_RE`, the `THREAD_*_SHOWN`
-limits and the types `SessionThreadV1`, `SessionThreadSession`,
-`SessionThreadMessage`, `SessionThreadParts`, `SessionThreadState` and
-`SessionThreadSource`. `parts` is `{sessionsRead, activity?, bus, replies?}`:
-null means that read failed, absent means it was not asked for.
+`sessionBusMessages(session, messages)`,
+`sessionOwnerMessages(session, entries)`, `SESSION_ID_RE`, the
+`THREAD_*_SHOWN` limits, `THREAD_OWNER_WINDOW` and the types
+`SessionThreadV1`, `SessionThreadSession`, `SessionThreadMessage`,
+`SessionThreadParts`, `SessionThreadOwnerRead`, `SessionThreadState` and
+`SessionThreadSource`. `parts` is
+`{sessionsRead, activity?, bus, owner?, replies?}`: null means that read
+failed, absent means it was not asked for. `owner` is the Leader inbox as
+`readInboxEntries` returns it. Additive: messages gain the kind `owner` (key
+`owner:<id>`) and `sources` gains `owner`; no field was removed.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
-`readBus` and `readReplies`; each read is guarded on its own and the result is
+`readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
 sanitized like the session list. `src/cli/sessions.ts` exports
 `cmdSessionThread(args, read)` for `phm sessions thread <id> [--json]` (exit 0
 read, 1 list unreadable, 2 usage or unknown id).
@@ -1378,7 +1400,8 @@ answer 503.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. Omitted post providers fall back
+retryable/invalid with receipt count and `asOf`. `runtimeProvider(identity)` is the exported newest-runtime provider
+lookup both the feed hints and `announceWork` share. Omitted post providers fall back
 to the sender identity's newest registered runtime in the agent registry beside
 the bus store (`resolveAgent` over handle, `agent:<handle>`, stable id and
 aliases), and `ownerKeyFor` falls back to that identity's stable id so statuses
@@ -1422,10 +1445,20 @@ no execution authority; the token returns only to its acquirer.
 with a `reason`); they never throw for bad input or storage faults.
 
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
-`sendHandoff` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
+`announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
+`DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
+TTL; its provider is the explicit input or the sender identity's newest
+runtime provider (`runtimeProvider`), and it refuses `conflict` when the live
+feed already shows the job id. `updateWorkStatus(WorkStatusInput)` posts a
+v2 `work.status` only for a job the feed shows, and only from the identity
+that announced it (resolved through any of its labels). Both read
+`readBusWorkFeed` before appending and propagate a refused, retryable,
+invalid or unavailable feed as a refusal — they never post unchecked and never
+dispatch, claim or execute.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
