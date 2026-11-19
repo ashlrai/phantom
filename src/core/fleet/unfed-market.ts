@@ -231,6 +231,11 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
         spec = value;
       } catch { invalid++; continue; }
     } else {
+      // Spec-less rows are validated like work_market.requirements first: the
+      // lane column defaults to preferred_lane, so a non-empty cell that is
+      // not a lane id rejects the row before its router-queue envelope is read.
+      const laneCell = cols[2] ?? '';
+      if (laneCell !== '' && !MARKET_PREF.test(laneCell)) { invalid++; continue; }
       const attrs = envelopeAttrs(routerQueue, job);
       if (attrs !== null) {
         const env = envelopeSpec(attrs);

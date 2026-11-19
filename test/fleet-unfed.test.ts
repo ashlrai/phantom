@@ -556,6 +556,28 @@ describe('ready row validation', () => {
     expect(hints.invalid).toBe(1);
   });
 
+  it('rejects an envelope row whose lane column is not a lane id', () => {
+    // dispatchd runs work_market.requirements on the raw row before the
+    // envelope replaces the spec: the lane column defaults to preferred_lane
+    // and must be a lane id or empty, or the row is invalid — never open supply.
+    const routerQueue = [
+      '- READY RQ-BADLANE (P1, pool=codex-cmp): valid envelope',
+      '- READY RQ-OPENLANE (P1, pool=claude): envelope supplies the hint',
+    ].join('\n');
+    const ready = [
+      vrow('RQ-BADLANE', 'NOT_A_LANE'),
+      vrow('RQ-OPENLANE', ''),
+      'RQ-RAWOPEN\tphantom\t\twork\t/q/prompts/RQ-RAWOPEN.md',
+    ].join('\n');
+    const hints = readyHints(ready, routerQueue);
+    expect(hints.waiting).toBe(2);
+    expect(hints.invalid).toBe(1);
+    // An empty lane cell stays open: the envelope's pool= hint applies, and a
+    // spec-less row with no envelope line stays unhinted.
+    expect(hints.rows[0]).toMatchObject({ hint: 'claude' });
+    expect(hints.rows[1]).toMatchObject({ hint: null });
+  });
+
   it('keeps the row repo through the envelope like the dispatcher re-parse', () => {
     const routerQueue = '- READY RQ-ENV (P1): open envelope row';
     const ready = vrow('RQ-ENV', 'codex-cmp');
