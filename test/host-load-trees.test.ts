@@ -20,10 +20,18 @@ describe('attributeProcessTrees', () => {
     ], [job('one', 10)]);
     expect(by(trees, 'job one')).toEqual({
       name: 'job one', fleet: true, cpuPercent: 227, memoryMb: 5, descendants: 4,
-      topCommands: [{ command: 'tsgo --noEmit', cpuPercent: 150 }, { command: 'npm run typecheck', cpuPercent: 50 }, { command: 'vitest run', cpuPercent: 20 }],
+      topCommands: [{ command: 'tsgo', cpuPercent: 150 }, { command: 'npm (typecheck)', cpuPercent: 50 }, { command: 'vitest', cpuPercent: 20 }],
     });
     expect(trees).toMatchObject({ fleetCpuPercent: 227, totalCpuPercent: 228, fleetShare: 0.996 });
     expect(trees.summary).toBe("The fleet's own jobs and their children use 100% of CPU; the top tree is job one (tsgo).");
+  });
+
+  it('never shows argv: only the program name and a fixed work word', () => {
+    const trees = attributeProcessTrees([
+      row(10, 1, 2, 'worker run'), row(11, 10, 50, '/usr/local/bin/node /tmp/job/vitest run --password=hunter2 --out /secret/place'),
+    ], [job('one', 10)]);
+    expect(by(trees, 'job one').topCommands).toEqual([{ command: 'node (vitest)', cpuPercent: 50 }]);
+    expect(JSON.stringify(trees)).not.toMatch(/hunter2|secret|place/);
   });
 
   it('puts an orphan, and everything else outside a root, under unattributed', () => {

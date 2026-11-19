@@ -100,7 +100,12 @@ export interface HostLoadTrees {
 export const UNATTRIBUTED = 'unattributed';
 const NAMED_APPS = ['Codex', 'Claude', 'ChatGPT', 'Cursor', 'Grok', 'Chrome', 'Docker'];
 const WORK_WORDS = /\b(typecheck|tsgo|tsc|vitest|jest|eslint|lint|build|test|install)\b/i;
-const shortCommand = (command: string): string => command.replace(/\s+/g, ' ').trim().slice(0, 80);
+/** Never the full command line: argv can hold secrets. Only the program name, plus a fixed work word ("npm (typecheck)") when one is present. */
+const shortCommand = (command: string): string => {
+  const program = plainName(baseName(command.trim().split(/\s+/)[0] ?? ''));
+  const work = WORK_WORDS.exec(command)?.[1]?.toLowerCase();
+  return work && work !== program.toLowerCase() ? `${program} (${work})` : program;
+};
 /** "typecheck", "vitest" ... when the command names the work; otherwise the program name. */
 const workWord = (command: string): string =>
   WORK_WORDS.exec(command)?.[1]?.toLowerCase() ?? plainName(baseName(command.trim().split(/\s+/)[0] ?? ''));
