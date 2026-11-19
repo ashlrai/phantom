@@ -7,7 +7,7 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, shouldWake,
+  announceWork, busBodySummary, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, shouldWake,
   updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
@@ -15,6 +15,7 @@ import {
   attachBusCliSession, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
 } from '../src/core/agents/bus-cli-adapters.js';
+import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { subscribeGroup } from '../src/core/fleet/bus-group.js';
 import { busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
@@ -407,5 +408,83 @@ describe('CLI session adapters', () => {
     expect(bounded.length).toBeLessThanOrEqual(32 * 1024);
     expect(bounded).toMatch(/more messages not shown/);
     expect(() => frameBusInbox('gemini' as never, [])).toThrow();
+  });
+
+  it('summarizes v2 bodies as typed one-liners and never emits coordination secrets', () => {
+    const token = 'f'.repeat(64);
+    expect(busBodySummary(null)).toBeNull();
+    expect(busBodySummary('x')).toBeNull();
+    expect(busBodySummary([1])).toBeNull();
+    expect(busBodySummary({ kind: 'note' })).toBeNull();
+    expect(busBodySummary({ kind: 'mystery', foo: 1 })).toBeNull();
+    expect(busBodySummary({ kind: 'note', text: 'hello' })).toBe('hello');
+    expect(busBodySummary({ kind: 'context', text: 'observed' })).toBe('observed');
+    expect(busBodySummary({ kind: 'worker-handoff', taskId: 'RQ-X-1', prompt: 'do it' })).toBe('handoff task RQ-X-1: do it');
+    expect(busBodySummary({ kind: 'work.post', jobId: 'RQ-F-1', title: 'Fix the bus', repo: 'ashlrai/phantom' }))
+      .toBe('work.post RQ-F-1: Fix the bus (ashlrai/phantom)');
+    expect(busBodySummary({ kind: 'work.status', jobId: 'RQ-F-1', status: 'running', detail: 'line1\nline2' }))
+      .toBe('work.status RQ-F-1: running — line1 line2');
+    expect(busBodySummary({ kind: 'work.status', status: 'done' })).toBe('work.status: done');
+    expect(busBodySummary({ kind: 'work.result', jobId: 'RQ-F-1', outcome: 'failed', reason: 'timeout' }))
+      .toBe('work.result RQ-F-1: failed — timeout');
+    expect(busBodySummary({ kind: 'work.claim', op: 'acquire', jobId: 'RQ-F-1', claimKey: 'repo:a/b', owner: 'x', leaseMs: 1 }))
+      .toBe('work.claim RQ-F-1: acquire repo:a/b');
+    expect(busBodySummary({ kind: 'work.claim', op: 'renew', claimKey: 'repo:a/b', token, leaseMs: 1 }))
+      .toBe('work.claim: renew repo:a/b');
+    expect(busBodySummary({ kind: 'work.release', claimKey: 'repo:a/b', token, outcome: 'completed' }))
+      .toBe('work.release repo:a/b: completed');
+    expect(busBodySummary({ kind: 'wake', target: 'nova', reason: 'job finished', jobId: 'RQ-F-1' }))
+      .toBe('wake nova (RQ-F-1): job finished');
+    expect(busBodySummary({ kind: 'wake', reason: 'hi' })).toBe('wake: hi');
+    expect(busBodySummary({ kind: 'wake' })).toBeNull();
+    // Secret-bearing kinds never fall back to a raw render, even malformed.
+    expect(busBodySummary({ kind: 'work.claim', token })).toBe('work.claim');
+    expect(busBodySummary({ kind: 'work.release', token })).toBe('work.release');
+    expect(busBodySummary({ kind: 'work.result', queueId: 'peer-work-x', receiptId: 'pw-y' })).toBe('work.result');
+    // Credential-shaped detail is scrubbed; claim tokens never appear.
+    expect(busBodySummary({ kind: 'work.status', jobId: 'J', status: 'blocked', detail: `token ghp_${'b'.repeat(36)}` }))
+      .not.toContain('ghp_');
+    expect(busBodySummary({ kind: 'work.claim', op: 'renew', claimKey: 'k', token }))
+      .not.toContain(token);
+  });
+
+  it('frames v2 work, wake and context inbox bodies as typed summaries without coordination secrets', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const token = 'f'.repeat(64);
+    const queueId = `peer-work-${'a'.repeat(32)}`;
+    const receiptId = `pw-${'b'.repeat(32)}`;
+    const post = (id: string, body: BusJsonValue) => {
+      expect(appendBusInbox({ id, from: 'agent:atlas', to: 'agent:nova', priority: 'P2', ttl: 60_000, body }, options).status).toBe('posted');
+    };
+    post('v2-post', { kind: 'work.post', jobId: 'RQ-F-1', title: 'Fix the bus', repo: 'ashlrai/phantom',
+      provider: 'claude', claimKeys: ['repo:ashlrai/phantom'] });
+    post('v2-status', { kind: 'work.status', jobId: 'RQ-F-1', status: 'blocked', detail: 'waiting on review' });
+    post('v2-result', { kind: 'work.result', jobId: 'RQ-F-1', claimKey: 'repo:ashlrai/phantom',
+      queueId, receiptId, outcome: 'complete', reason: 'merged' });
+    post('v2-claim', { kind: 'work.claim', op: 'acquire', jobId: 'RQ-F-1', claimKey: 'repo:ashlrai/phantom',
+      owner: 'agent:nova', leaseMs: 60_000 });
+    post('v2-renew', { kind: 'work.claim', op: 'renew', claimKey: 'repo:ashlrai/phantom', token, leaseMs: 60_000 });
+    post('v2-release', { kind: 'work.release', claimKey: 'repo:ashlrai/phantom', token, outcome: 'completed' });
+    post('v2-wake', { kind: 'wake', target: 'nova', reason: 'job finished', jobId: 'RQ-F-1' });
+    post('v2-context', { kind: 'context', text: 'mesh observation note' });
+    post('v2-mystery', { kind: 'mystery', foo: 1 });
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    const framed = frameBusInbox('claude', inbox.messages);
+    expect(framed).toContain('work.post RQ-F-1: Fix the bus (ashlrai/phantom)');
+    expect(framed).toContain('work.status RQ-F-1: blocked — waiting on review');
+    expect(framed).toContain('work.result RQ-F-1: complete — merged');
+    expect(framed).toContain('work.claim RQ-F-1: acquire repo:ashlrai/phantom');
+    expect(framed).toContain('work.claim: renew repo:ashlrai/phantom');
+    expect(framed).toContain('work.release repo:ashlrai/phantom: completed');
+    expect(framed).toContain('wake nova (RQ-F-1): job finished');
+    expect(framed).toContain('mesh observation note');
+    expect(framed).toContain('"kind":"mystery"');
+    expect(framed).not.toContain(queueId);
+    expect(framed).not.toContain(receiptId);
+    expect(framed).not.toContain(token);
+    expect(framed).not.toContain('"claimKeys"');
+    expect(framed).not.toContain('"queueId"');
   });
 });

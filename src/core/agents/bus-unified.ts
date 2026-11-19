@@ -355,6 +355,106 @@ export interface InboxMessage {
 export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number } |
   { status: 'invalid' | 'unknown-agent' | 'unavailable' | 'retryable'; reason: string };
 
+const BUS_BODY_SUMMARY_MAX = 200;
+
+/** Scrub and flatten one untrusted field into single-line summary text. */
+function busSummaryField(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const busSummaryClip = (value: string): string =>
+  value.length > BUS_BODY_SUMMARY_MAX ? `${value.slice(0, BUS_BODY_SUMMARY_MAX - 1)}…` : value;
+
+/**
+ * A one-line read of a bus body for inbox surfaces, or null when the body has
+ * no typed content worth summarizing (the caller keeps its own fallback, for
+ * example a raw JSON render). `note`, `context` and `worker-handoff` return
+ * their message text, which may span lines; the other v2 kinds compose a
+ * single scrubbed line as `<kind> <subject>: <payload>` — jobId, claimKey or
+ * wake target lead, outcome/detail/reason trail. Claim tokens and
+ * `work.result` queueId/receiptId never appear: they are private coordination
+ * data, not message content, so those three kinds return at least their kind
+ * literal rather than ever falling back to a raw render.
+ */
+export function busBodySummary(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  const str = (key: string): string | null => {
+    const value = record[key];
+    return typeof value === 'string' && value.trim() ? value : null;
+  };
+  /** Scrubbed, single-line field for composed summaries; null when absent or empty after cleaning. */
+  const field = (key: string): string | null => {
+    const value = str(key);
+    if (value === null) return null;
+    const cleaned = busSummaryField(value);
+    return cleaned === '' ? null : cleaned;
+  };
+  const parts = (...values: (string | null)[]): string | null => {
+    const kept = values.filter((value): value is string => value !== null);
+    return kept.length === 0 ? null : busSummaryClip(kept.join(' '));
+  };
+  /** `a — b` when both sides exist, else whichever does; the status/outcome + detail/reason pairing. */
+  const pair = (head: string | null, tail: string | null): string | null =>
+    head === null ? tail : tail === null ? head : `${head} — ${tail}`;
+  const composed = (head: string, detail: string | null): string =>
+    busSummaryClip(detail === null ? head : `${head}: ${detail}`);
+  switch (str('kind')) {
+    case 'note':
+    case 'context': {
+      const bodyText = str('text');
+      return bodyText === null ? null : scrubSecrets(bodyText);
+    }
+    case 'worker-handoff': {
+      const prompt = str('prompt');
+      if (prompt === null) return null;
+      const taskId = field('taskId');
+      return `handoff task${taskId === null ? '' : ` ${taskId}`}: ${scrubSecrets(prompt)}`;
+    }
+    case 'work.post': {
+      const jobId = field('jobId'), title = field('title'), repo = field('repo');
+      if (jobId === null && title === null && repo === null) return null;
+      const head = jobId === null ? 'work.post' : `work.post ${jobId}`;
+      return composed(head, parts(title, repo === null ? null : `(${repo})`));
+    }
+    case 'work.status': {
+      const jobId = field('jobId');
+      const state = pair(field('status'), field('detail'));
+      if (jobId === null && state === null) return null;
+      return composed(jobId === null ? 'work.status' : `work.status ${jobId}`, state);
+    }
+    case 'work.result': {
+      const jobId = field('jobId');
+      const outcome = pair(field('outcome'), field('reason'));
+      // queueId/receiptId are private dispatch-journal data: never let this kind
+      // fall back to a raw render, even when every field is unreadable.
+      if (jobId === null && outcome === null) return 'work.result';
+      return composed(jobId === null ? 'work.result' : `work.result ${jobId}`, outcome);
+    }
+    case 'work.claim': {
+      const jobId = field('jobId'), action = parts(field('op'), field('claimKey'));
+      // The fencing token is a bearer capability: this kind never falls back
+      // to a raw render, even when every field is unreadable.
+      if (jobId === null && action === null) return 'work.claim';
+      return composed(jobId === null ? 'work.claim' : `work.claim ${jobId}`, action);
+    }
+    case 'work.release': {
+      const claimKey = field('claimKey'), outcome = field('outcome');
+      if (claimKey === null && outcome === null) return 'work.release';
+      return composed(claimKey === null ? 'work.release' : `work.release ${claimKey}`, outcome);
+    }
+    case 'wake': {
+      const target = field('target'), reason = field('reason'), jobId = field('jobId');
+      const head = parts('wake', target, jobId === null ? null : `(${jobId})`);
+      if (head === 'wake' && reason === null) return null;
+      return composed(head ?? 'wake', reason);
+    }
+    default:
+      return null;
+  }
+}
+
 interface Addressing { identity: AgentIdentity; labels: Set<string>; channels: Map<string, string> }
 
 function addressing(reg: AgentRegistry, ref: string): Addressing | undefined {
