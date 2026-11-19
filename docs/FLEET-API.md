@@ -676,6 +676,15 @@ messages Mason wrote in the Leader inbox and, for the leader,
 - `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
   `owner`, `replies`, `orders` (`available`, `none` when the read answered with nothing for this
   session, or `unavailable`). `gaps[]` says in plain words what is missing.
+- `reply`: where a message written to this session goes, so every client
+  aims it the same way. `to` is `leader` (the Leader inbox as it is), `job`
+  (the Leader inbox with `mention`, `@<job id>`, in front) or `none`.
+  `mention` is null unless `to` is `job`. `hint` is one sentence saying
+  where the message goes or why none can be sent. Only a running or quiet
+  worker whose job id fits the `@RQ-...` mention syntax gets `job`; a
+  finished session, a helper without a job and an unknown id get `none`. No
+  route writes to a worker directly: the inbox belongs to the leader, and
+  the write is `POST /api/verse/leader/inbox`.
 
 Each read fails on its own, so a thread with an unreadable bus still shows the
 rest. The route answers 404 for an id the list does not hold (finished

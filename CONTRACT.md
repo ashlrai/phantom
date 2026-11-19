@@ -1354,6 +1354,13 @@ from `readOrderTrace`), messages gain the kinds `order` and `routing` (keys
 `order:<id>`, `routing:<id>`), `sources` gains `orders`, the module exports
 `THREAD_ORDERS_SHOWN` and `THREAD_ROUTED_SHOWN`, and `readSessionThread`
 takes an injectable `readOrders`.
+Reply (additive): the document gains a last top-level key
+`reply: {to: 'leader' | 'job' | 'none', mention: string | null, hint: string}`,
+built by the pure `sessionReply(session | null)` that the new import-free
+`src/core/fleet/session-reply.ts` exports with `SessionThreadReply`,
+`SessionReplySubject` and `AIMABLE_JOB_RE`; `session-thread.ts` re-exports
+`sessionReply` and `SessionThreadReply`, and `renderSessionThreadText` gains
+a "To write to it" line.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
