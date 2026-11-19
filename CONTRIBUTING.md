@@ -2,6 +2,24 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+Coding agents build most of Phantom, with the human owner as a passive board
+member. Humans and agents contribute the same way, and the rules agents follow
+are in [AGENTS.md](AGENTS.md) ("Working in this repository").
+
+## First contribution
+
+The short path, with or without a coding agent:
+
+1. Have your agent read [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md) and this file.
+2. Clone `ashlrai/phantom` as `origin`, add your fork as a second remote, run `npm ci` ([Setup](#setup)).
+3. Make one focused change on a topic branch, following the [conventions](#conventions).
+4. Run `node scripts/verify-changed.mjs` once in the foreground, plus the affected tests and docs checks.
+5. Push to your fork and open a pull request against `master`; `Merge Gate` is the one required check ([Pull requests and merging](#pull-requests-and-merging)).
+
+[Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md) walks through each
+step, including the CI jobs behind `Merge Gate` and how auto-merge works for a
+fork.
+
 ---
 
 ## Prerequisites
@@ -21,9 +39,18 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+git clone https://github.com/ashlrai/phantom.git
+cd phantom
+git remote add fork https://github.com/<you>/phantom.git
+git switch -c <topic-branch>
+npm ci                    # one checkout; also CI and release packaging
+# npm run install:worktree  # several trusted local worktrees; requires pnpm 10.28.2
 ```
+
+Keep `origin` pointing at `ashlrai/phantom`: `node scripts/verify-changed.mjs`
+diffs against `origin/master`. Use `npm run install:worktree` only when you run
+several agents in parallel worktrees on one machine; see
+[Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees).
 
 Run focused verification locally while developing. Pull requests and default-branch
 pushes run the repository's CI and Dependency Audit workflows. Check the actual
@@ -350,6 +377,37 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
+
+---
+
+## Pull requests and merging
+
+- Push your topic branch to your fork and open the pull request against
+  `master` (`gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>`).
+  Nobody pushes directly to `master`; fleet agents push to forks too.
+- Fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md): what
+  changed, the exact commands you ran, and anything you skipped.
+- If you added or renamed a document, run `npm run docs:sync` and commit the
+  result; the hosted "Check generated files" job fails on a stale tree.
+- `Merge Gate` is the single required check. On a pull request it aggregates
+  the secret scans, lane classification, generated-file check and the fast gate
+  (type check plus the tests your diff selects). The full backend, Windows and
+  macOS suites run on scheduled `master` runs instead. Read the actual check
+  run for your commit; GitHub may ask a maintainer to approve workflow runs for
+  a first-time contributor.
+- The repository merges through GitHub's merge queue with auto-merge. From a
+  fork you cannot arm it yourself; a maintainer or fleet agent does, and the
+  pull request then merges once `Merge Gate` passes in the queue.
+- Paths listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) (CI config,
+  manifests and lockfiles, build and test infrastructure, authority and memory
+  code) also wait for the owner's review. Check with
+  `grep -n "<path>" .github/CODEOWNERS` before you start, and never edit that
+  file by hand: `npm run authority:regen` generates it.
+- If `master` moves and your branch conflicts, rebase onto `origin/master`,
+  rerun your checks and push again.
+
+See [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)
+for the job-by-job table and the full protected-path list.
 
 ---
 
