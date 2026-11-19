@@ -115,7 +115,7 @@ describe('buildFleetLiveMap', () => {
     const b = buildFleetLiveMap({ now: NOW, usage: { ...usage, lanes: [...usage.lanes].reverse() }, org: org([session('RQ-B', 'claude'), session('RQ-A', 'claude')], [...receipts].reverse()),
       computers: computers([computer('node-b', { jobsRunning: ['RQ-B'] }), computer('node-a', { isSelf: true })]) });
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
-    expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps']);
+    expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps', 'orgLayout']);
     expect(a.nodes.every(node => Object.keys(node).join() === 'id,kind,level,label,provider,status,detail,live')).toBe(true);
     expect(a.edges.every(row => Object.keys(row).join() === 'id,kind,from,to,messages,lastMessageAt,pulse')).toBe(true);
     expect(a.nodes.map(node => node.level)).toEqual([...a.nodes.map(node => node.level)].sort((x, y) => x - y));
