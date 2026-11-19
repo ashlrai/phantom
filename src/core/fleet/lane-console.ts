@@ -69,6 +69,7 @@ import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
+import { laneHealthFor, type LaneHealth } from './lane-badge.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,8 @@ export interface FleetLaneView {
   liveJobs: number | null;
   /** Unique merged PRs (or legacy job-level merges) in the trailing window per hour. */
   mergesPerHour: number | null;
+  /** Jobs launched in the trailing window (jobs.jsonl `launch` events, one per job); null without launch events. */
+  startsInWindow: number | null;
   credit: FleetLaneCreditView;
   /** The lane's slot target from a healthy lane-targets read; null when it has no row or holds were not healthy. */
   slotTarget: number | null;
@@ -130,6 +133,8 @@ export interface FleetLaneView {
     by: 'autobackoff' | 'manual' | null;
     since: string | null;
   } | null;
+  /** One verdict: ok | held | starved | wasteful | drained, with a plain reason (lane-badge.ts). */
+  health: LaneHealth;
 }
 
 export interface FleetLaneSnapshot {
@@ -541,6 +546,8 @@ export interface LaneLedgerEvent {
   at: string | null;
   pr: string | null;
   merge: boolean;
+  /** A `launch` event: the job was started. */
+  launch?: boolean;
 }
 
 function prIdentity(value: string | null): string | null {
@@ -583,7 +590,7 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       (transition !== null && MERGE_WORDS.has(transition.toLowerCase())) ||
       (eventName !== null && MERGE_WORDS.has(eventName.toLowerCase())) ||
       row['landed'] === true || row['merged'] === true;
-    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge });
+    events.push({ job, pool, at, pr: prIdentity(pick('prUrl', 'pr')), merge, launch: eventName?.toLowerCase() === 'launch' });
   }
   return { events, dropped };
 }
@@ -872,6 +879,19 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   }
   sawMergeEvidence = sawMergeEvidence || sawReadyLand || mergeCounts.size > 0;
 
+  // Starts = distinct jobs launched in the window, for the wasteful verdict.
+  const startJobs = new Map<string, Set<string>>();
+  for (const event of ledgerEvents) {
+    const at = eventTimestamp(event.at);
+    if (!event.launch || at === null || at > now.getTime() || at < cutoff) continue;
+    const pool = event.pool ?? (event.job ? queueState?.jobPool.get(event.job) ?? readyPoolOf(queueRows, event.job) : undefined);
+    if (!pool) continue;
+    const jobs = startJobs.get(pool) ?? new Set<string>();
+    jobs.add(event.job ?? String(at));
+    startJobs.set(pool, jobs);
+  }
+  const sawLaunch = startJobs.size > 0;
+
   const readyCounts = new Map<string, number>();
   const liveFromTsv = new Map<string, number>();
   for (const row of queueRows) {
@@ -899,7 +919,9 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
     } : null;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
+    const startsInWindow = sawLaunch ? startJobs.get(lane)?.size ?? 0 : null;
+    // Placeholder verdict; replaced once the starved read below has run.
+    return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null }, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.
@@ -920,6 +942,26 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     held: view.hold?.held === true,
     drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
   })), parseStarvedState(stateText).since, now.getTime());
+
+  for (const view of views) {
+    const row = starved.lanes[view.lane];
+    view.health = laneHealthFor({
+      lane: view.lane,
+      remainingPct: view.credit.remainingPct,
+      held: view.hold?.held === true,
+      heldReason: view.hold?.reason ?? null,
+      slotTarget: view.slotTarget,
+      starved: row?.starved === true,
+      freeSlots: row?.free_slots ?? null,
+      readyRows: view.queueDepth,
+      starvedSince: row?.starved_since ?? null,
+      starts: view.startsInWindow,
+      // Merges are per hour over the window; convert back to a count.
+      merged: view.mergesPerHour === null ? null : Math.round(view.mergesPerHour * (mergeWindowMs / 3_600_000)),
+      windowMinutes: Math.round(mergeWindowMs / 60_000),
+      liveJobs: view.liveJobs,
+    }, now.getTime());
+  }
 
   return {
     schema: 'fleet.lanes.v1',
