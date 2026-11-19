@@ -34,14 +34,14 @@ const STOP = new Set(('a an the and or but with without for to of in on at by fr
   'one two can will able').split(/\s+/));
 const KIND_WORDS: Record<string, BetsCheckKind> = { cli: 'cli', command: 'cli', commands: 'cli', pane: 'pane', panel: 'pane', ui: 'pane', api: 'api', route: 'api', routes: 'api', doc: 'doc', docs: 'doc' };
 
-function stem(w: string): string {
+export function stem(w: string): string {
   if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
   if (w.length > 5 && w.endsWith('ing')) return w.slice(0, -3);
   if (w.length > 4 && w.endsWith('ed')) return w.slice(0, -2);
   if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
   return w;
 }
-const words = (s: string): string[] => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+export const words = (s: string): string[] => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
 /** The goal's main words (stemmed, deduplicated) and which kinds of thing it names. */
 export function goalTerms(goal: string): { terms: string[]; kinds: BetsCheckKind[] } {
@@ -56,7 +56,7 @@ export function goalTerms(goal: string): { terms: string[]; kinds: BetsCheckKind
   return { terms, kinds };
 }
 
-const hits = (tokens: string[], term: string): boolean => tokens.some(t => t.startsWith(term) || (t.length >= 4 && term.startsWith(t)));
+export const hits = (tokens: string[], term: string): boolean => tokens.some(t => t.startsWith(term) || (t.length >= 4 && term.startsWith(t)));
 const KIND_ORDER: Record<BetsCheckKind, number> = { cli: 0, api: 1, pane: 2, doc: 3 };
 
 /** Rank every item by how many goal terms it covers (name counts triple) and decide the verdict. Pure. */
