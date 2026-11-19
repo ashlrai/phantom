@@ -1470,6 +1470,12 @@ tree already reads. `OrgTreeJob` gains `tier`, `ageSeconds` and `goal`;
 exported. Lane `doing` for idle and held lanes now names the reason. Additive;
 `version` stays 1.
 
+**Org health and message times (RQ-ORGMAPN20QQ8).** `fleet.org.v1` lanes gain
+`health` (`LaneHealth | null`, the lane badge from `getFleetLaneSnapshot`; null
+when that read had no verdict) and each `messages[]` row gains optional `lastAt`
+(ISO, newest message on the line). `OrgTreeInputs.laneHealth` and
+`FleetOrgReaders.laneHealth` are new. Additive; `version` stays 1.
+
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 
 `src/core/fleet/dynconfig.ts` exports `createConfigReader`, `sharedConfigReader`,
