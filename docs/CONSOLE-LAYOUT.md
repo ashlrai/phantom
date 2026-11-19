@@ -219,6 +219,28 @@ unknown. Main recoveries and incident closures have no recorded time, so only
 red and opened are shown. Empty reads
 show “Nothing new yet.”
 
+The resource boards are one surface. Pools, Usage, Router, Models, Lanes,
+Capacity and Supply each open with the same row of names across the top, in
+that order: what the fleet has, where work is sent, how the lanes are running.
+The board on screen is marked. Choosing another name puts that board in the
+same dock tab, so looking across them does not pile up tabs; a board that
+already has a tab of its own is brought forward instead. The row is one Tab
+stop: Left and Right move along it, Home and End jump to the ends, and `[` and
+`]` step to the previous and next board from anywhere in the board except a
+text field. The row stays in view while the board scrolls. It lists only the
+boards this build has, and it is not drawn while the dock is tiled as the agent
+workspace.
+
+Two names in the row carry a live reading, so the row says where to look
+before a board is opened. Pools shows how many pools are behind their window,
+or how many have no current reading when none is behind, counted from the
+`phm pools` view. Lanes shows how many lanes are held, or slots running over
+slots asked for (`5/6`) when none is held, counted from `phm fleet runs`. Each
+is the same read its board draws from, refreshed every 30 seconds while the
+row is on screen, and the board's own headline is the name's tooltip. A read
+that has not answered or last failed shows no reading: the name stands alone,
+never a zero. The other boards have no reading in the row yet.
+
 The phone Home screen brings the fleet glance, links to active sessions,
 Needs you approvals and the comms inbox, the leader order box, and the recent
 merge list together. These links open the existing screens and preserve their
