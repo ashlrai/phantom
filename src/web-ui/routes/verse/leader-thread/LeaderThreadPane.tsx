@@ -49,6 +49,7 @@ import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
+import { LeaderPresence } from './LeaderPresence.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
 import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
 import { subscribeLeaderDraft, takeLeaderDraft } from './leader-draft-store.js';
@@ -520,6 +521,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       </div> : null}
       {failure ? <p className={styles.replyFailure} role="alert">{failure}</p> : null}
     </form>
+    {/* Under the reply box: when the Leader last read the inbox and when it reads next. */}
+    <LeaderPresence visible={visible} />
     <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}
       reason="Messaging the Leader requires the dispatch token." tokenHelp="the mutation token ashlr verse printed" />
     {actions.dialogs}
