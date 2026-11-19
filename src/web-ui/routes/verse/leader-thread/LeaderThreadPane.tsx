@@ -45,6 +45,7 @@ import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { DeliveryReceipt } from './DeliveryReceipt.js';
+import { AsksCard } from '../mobile/AsksCard.js';
 import { LeaderAsks } from './LeaderAsks.js';
 import { openLeaderAsks } from './leader-asks-model.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
@@ -485,6 +486,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
 
   return <div className={styles.root}>
     <ActionStatus actions={actions} />
+    {/* The ask ledger at the very top: the open things only Mason can answer, one tap each (same card as the phone). */}
+    <AsksCard />
     <section className={styles.overview} aria-label="Leader overview">
       <h2>Engineering leader</h2>
       {summary.lines.length ? <ul className={styles.summary} aria-label="CEO summary">{summary.lines.map((line, index) => <li key={index}>{line}</li>)}</ul>

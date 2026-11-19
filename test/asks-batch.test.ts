@@ -114,11 +114,13 @@ describe('answerOwnerAsk', () => {
     expect(deps.writes.map(w => w[0]).sort()).toEqual(['nm-1', 'nm-2']);
   });
 
-  it('says an unknown id is unknown and short answers are not stored', async () => {
+  it('says an unknown id is unknown, and a verified owner short answer is recorded through the ask\'s own check', async () => {
     const deps = fake([ask({ id: 'nm-s', kind: 'short-value' })]);
     expect((await answerOwnerAsk({ askId: 'nm-zz', answer: 'yes', sender: owner }, deps)).status).toBe('unknown');
-    expect((await answerOwnerAsk({ askId: 'nm-s', answer: '42', sender: owner }, deps)).status).toBe('unavailable');
+    expect((await answerOwnerAsk({ askId: 'nm-s', answer: '42', sender: stranger }, deps)).status).toBe('refused');
     expect(deps.writes).toEqual([]);
+    expect((await answerOwnerAsk({ askId: 'nm-s', answer: '42', sender: owner }, deps)).status).toBe('answered');
+    expect(deps.writes).toEqual([['nm-s', '42']]);
   });
 });
 

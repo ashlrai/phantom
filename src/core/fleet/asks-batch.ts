@@ -10,7 +10,7 @@
  */
 import type { OwnerChannel } from '../comms/leader-mailbox.js';
 import { fixedOwnerConfigDir, loadOwnerThreadSettings, ownerAllowed, type OwnerThreadSettings } from '../comms/owner-channel.js';
-import { answerAsk, listAsks, type Ask, type AskAnswerResult, type AskKind, type AsksList, type AsksOptions } from './asks.js';
+import { answerAsk, ASK_REPLIES, listAsks, type Ask, type AskAnswerResult, type AskKind, type AsksList, type AsksOptions } from './asks.js';
 
 export type AskResponseKind = 'yes-no' | 'pick-one' | 'short-value';
 /** The four limits only Mason may cross. null = the ask does not say. */
@@ -88,12 +88,18 @@ export function buildAskBatch(open: readonly OpenAsk[], ledger: AskBatch['ledger
 const FROM_KIND: Record<AskKind, Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens'>> = {
   payment: { kind: 'yes-no', hardLimit: 'money', whatHappens: LIMIT_LINE.money },
   outreach: { kind: 'yes-no', hardLimit: 'outside-send', whatHappens: LIMIT_LINE['outside-send'] },
-  password: { kind: 'pick-one', choices: ['done', 'later'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
-  '2fa': { kind: 'pick-one', choices: ['done', 'later'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
-  device: { kind: 'pick-one', choices: ['done', 'later'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
+  password: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
+  '2fa': { kind: 'pick-one', choices: ASK_REPLIES['2fa'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
+  device: { kind: 'pick-one', choices: ASK_REPLIES.device, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
+  // A usage answer is a number, so it is a short value; it is a reading, not a limit.
+  usage: { kind: 'short-value', hardLimit: null, whatHappens: 'Recorded as your latest reading, with the time you said it.' },
+  // Money is a hard limit, but this answer only records the decision; nothing is spent by it.
+  approval: { kind: 'yes-no', hardLimit: 'money', whatHappens: 'Recorded as your decision. Nothing is spent by this answer.' },
 };
 
-export const openAskOf = (ask: Ask): OpenAsk => ({ id: ask.id, question: ask.request, askedAt: ask.created, ...FROM_KIND[ask.kind] });
+export const openAskOf = (ask: Ask): OpenAsk => ({
+  id: ask.id, question: ask.request, askedAt: ask.created, ...FROM_KIND[ask.kind], ...(ask.unblocks ? { whatHappens: ask.unblocks } : {}),
+});
 
 /** The batch Mason sees: the open ledger asks through buildAskBatch. Never throws. */
 export function listAskBatch(options: AsksOptions = {}, list: (o: AsksOptions) => AsksList = listAsks): AskBatch {
@@ -142,7 +148,7 @@ export interface OwnerAnswerDeps {
   settings?: OwnerThreadSettings;
   batch?: () => AskBatch;
   /** Record one ledger id. Default is answerAsk with source cli, the same writer every surface uses. */
-  record?: (id: string, answer: string) => Promise<AskAnswerResult>;
+  record?: (id: string, answer: string, channel: string) => Promise<AskAnswerResult>;
   options?: AsksOptions;
 }
 
@@ -166,25 +172,26 @@ export async function answerOwnerAsk(input: { askId: string; answer: string; sen
   }
   const batch = (deps.batch ?? (() => listAskBatch(deps.options)))();
   const ask = batch.asks.find(item => item.ids.includes(askId));
-  const record = deps.record ?? ((id, value) => answerAsk(id, value, 'cli', deps.options));
+  // The ledger names the real channel; the bus source is the closest surface it knows.
+  const record = deps.record ?? ((id, value, channel) => answerAsk(id, value, channel === 'telegram' ? 'telegram' : channel === 'email' ? 'email' : 'cli',
+    { ...deps.options, channel }));
   if (!ask) {
     // Not open any more: the ledger can still say whether it was answered the same way.
-    const known = await record(askId, answer.toLowerCase());
+    const known = await record(askId, answer.toLowerCase(), sender.channel);
     if (known.status === 'already-answered') return repeat(askId, answer.toLowerCase(), known.answer);
     return out('unknown', null, null, batch.ledger === 'unavailable' ? 'Asks are unknown right now.' : 'No open ask has that id.');
   }
-  if (ask.kind === 'short-value') {
-    return out('unavailable', ask.id, null, 'Short answers are not stored yet. Nothing was recorded.');
-  }
   const value = answer.toLowerCase();
-  if (!ask.choices.includes(value)) return out('invalid', ask.id, null, `Answer ${ask.choices.join(' or ')}.`);
+  // A short value (a percent) is validated by the ask's own kind inside answerAsk, which says what it wants.
+  if (ask.kind !== 'short-value' && !ask.choices.includes(value)) return out('invalid', ask.id, null, `Answer ${ask.choices.join(' or ')}.`);
   let last: AskAnswerResult | null = null;
   for (const id of ask.ids) {
-    last = await record(id, value);
+    last = await record(id, value, sender.channel);
+    if (last.status === 'invalid') return out('invalid', ask.id, null, last.reason ?? 'That is not an answer this ask accepts.');
     if (last.status === 'already-answered') return repeat(ask.id, value, last.answer);
     if (last.status !== 'answered') return out('unavailable', ask.id, null, last.reason ?? 'The answer could not be recorded; try again.');
   }
-  return out('answered', ask.id, value, `Got it: ${value}.`);
+  return out('answered', ask.id, last?.answer ?? value, `Got it: ${last?.answer ?? value}.`);
 }
 
 const repeat = (id: string, answer: string, first: string | null): OwnerAnswerResult =>
