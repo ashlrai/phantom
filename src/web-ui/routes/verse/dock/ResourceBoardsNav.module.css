@@ -1,0 +1,86 @@
+/* The switcher above every resource board: one quiet row of names that stays put while the board scrolls under it.
+   The board on screen is marked by weight and an accent rule, never by colour alone. */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+/* A narrow dock scrolls the row sideways; the scrollbar would cost a third of the row's height. */
+.list {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar { display: none; }
+.item { display: flex; flex: none; align-items: center; }
+/* A hairline where one question ends and the next begins (has / routes / runs). */
+.item[data-group-start] { margin-inline-start: var(--space-2); padding-inline-start: var(--space-2); background: linear-gradient(var(--border-default), var(--border-default)) left center / 1px 40% no-repeat; }
+.link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(var(--control-h-sm) + var(--space-2));
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm-size);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+.link:hover { color: var(--text-primary); }
+/* Drawn inside the button: the row clips anything outside it. */
+.link:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.link::after {
+  content: '';
+  position: absolute;
+  inset-inline: var(--space-2);
+  bottom: 0;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--accent-500);
+  transform: scaleX(0);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+.link[aria-current='page'] { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+/* The live reading beside a name: a plain figure, or a tinted one that also says its reason in words. */
+.reading {
+  margin-inline-start: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs-size);
+  font-weight: var(--font-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+.reading[data-tone='attention'] { background: var(--status-warning-bg); color: var(--status-warning-fg); }
+.link[aria-current='page']::after { transform: scaleX(1); }
+.keys { display: inline-flex; flex: none; align-items: center; gap: 2px; color: var(--text-secondary); }
+.keys kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs-size);
+}
+/* The hint is for a keyboard; a phone-width dock gives the row to the names. */
+:global([data-console-layout='compact']) .keys { display: none; }
+@media (prefers-reduced-motion: reduce) { .link, .link::after { transition: none; } }
