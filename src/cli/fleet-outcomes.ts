@@ -1,4 +1,4 @@
-/** Read-only outcome learning: stats, improvement jobs, and the next assignment. */
+/** Read-only outcomes: what each finished job produced (--lane), plus outcome learning stats, improvement jobs, and the next assignment. */
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -15,14 +15,18 @@ import {
   type ResourceOffer,
 } from '../core/routing/outcome-learning.js';
 
-const usage = `Usage: phm fleet outcomes [--events <file>] [--json]
+const usage = `Usage: phm fleet outcomes --lane <lane|all> [--hours 24] [--json]
+       phm fleet outcomes [--events <file>] [--json]
        phm fleet outcomes route --repo <repo> --type <jobType> [--priority critical|normal] [--job <id>] [--offers <file>] [--events <file>] [--json]
 
 --events <file>  Dispatch event log. Default: ~/.ashlr-runs/queue/dispatch-events.log
 --offers <file>  JSON array of resources that can take the job. Without it, every resource in the log is treated as free.
 --json           One JSON object on stdout.
 
-Prints merge rate, time to merge, usage, and breakage for each resource, model, job type, and repo, plus improvement jobs for recurring failures. route adds the assignment and a plain-language reason. The log is the memory; there is no routing setting to tune.`;
+--lane <lane>   What each finished job in the last --hours (default 24) produced: merged, pr open, pr closed, empty or failed. The exit code never decides alone: a job that exited 1 but whose PR merged is merged. Shows the top 3 plain-words reasons for empty and failed, from the end of each job log. JSON schema: fleet.job-outcomes.v1.
+--runs-dir <dir> and --jobs <file> point that report at another runs folder or jobs ledger.
+
+Without --lane, prints merge rate, time to merge, usage, and breakage for each resource, model, job type, and repo, plus improvement jobs for recurring failures. route adds the assignment and a plain-language reason. The log is the memory; there is no routing setting to tune.`;
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -138,11 +142,41 @@ function payload(view: OutcomeLearningView, route: LearnedRoute | null): Outcome
   return { ...view, route };
 }
 
+const JOB_FLAGS = new Set(['--lane', '--hours', '--runs-dir', '--jobs']);
+
+/** `--lane <lane|all> [--hours N] [--runs-dir d] [--jobs f] [--json]`: what each finished job produced. */
+async function cmdJobOutcomes(args: string[]): Promise<number> {
+  const seen = new Map<string, string | true>();
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (seen.has(arg)) { process.stderr.write(`${usage}\n`); return 2; }
+    if (arg === '--json') { seen.set(arg, true); continue; }
+    const value = args[i + 1];
+    if (!JOB_FLAGS.has(arg) || value === undefined || value.startsWith('--')) { process.stderr.write(`${usage}\n`); return 2; }
+    seen.set(arg, value);
+    i += 1;
+  }
+  const hoursText = seen.get('--hours');
+  const hours = hoursText === undefined ? 24 : /^\d+(?:\.\d+)?$/.test(String(hoursText)) ? Number(hoursText) : NaN;
+  const lane = seen.get('--lane');
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 2160 || (lane !== undefined && lane === true)) { process.stderr.write(`${usage}\n`); return 2; }
+  const { readJobOutcomes, jobOutcomesText } = await import('../core/fleet/job-outcomes.js');
+  const report = await readJobOutcomes({
+    hours,
+    ...(typeof lane === 'string' && lane !== 'all' ? { lane } : {}),
+    ...(typeof seen.get('--runs-dir') === 'string' ? { runsDir: seen.get('--runs-dir') as string } : {}),
+    ...(typeof seen.get('--jobs') === 'string' ? { jobsPath: seen.get('--jobs') as string } : {}),
+  });
+  process.stdout.write(seen.has('--json') ? `${JSON.stringify(report)}\n` : `${jobOutcomesText(report).join('\n')}\n`);
+  return report.known ? 0 : 1;
+}
+
 export async function cmdFleetOutcomes(args: string[]): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     process.stdout.write(`${usage}\n`);
     return 0;
   }
+  if (args.some(arg => JOB_FLAGS.has(arg))) return cmdJobOutcomes(args);
   const parsed = parseArgs(args);
   if (!parsed) {
     process.stderr.write(`${usage}\n`);

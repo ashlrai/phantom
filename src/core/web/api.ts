@@ -1901,6 +1901,17 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/outcomes' && method === 'GET') {
+      // What each finished job produced (fleet.job-outcomes.v1), the report `phm fleet outcomes --lane <lane> --json` prints.
+      const hoursText = getQueryParam(req.url ?? '', 'hours') ?? '';
+      const hours = hoursText ? Number(hoursText) : 24;
+      if (!/^\d*\.?\d*$/.test(hoursText) || !Number.isFinite(hours) || hours <= 0 || hours > 2160) { sendJson(res, 400, { error: 'Use hours from 1 to 2160.' }); return true; }
+      const lane = getQueryParam(req.url ?? '', 'lane');
+      const { readJobOutcomes } = await import('../fleet/job-outcomes.js');
+      sendJson(res, 200, await readJobOutcomes({ hours, ...(lane && lane !== 'all' ? { lane } : {}) }));
+      return true;
+    }
+
     if (path === '/api/fleet/worklog' && method === 'GET') {
       // The numbers per hour and per day (fleet.worklog.v1), the report `phm fleet worklog --json` prints.
       const { readFleetWorklog, worklogOptions } = await import('../fleet/worklog-numbers.js');
