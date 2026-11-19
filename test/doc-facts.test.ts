@@ -33,6 +33,17 @@ const DOCS = [
   'docs/MISSION-OS.md',
   'docs/README.md',
   'docs/SELF-HOSTING.md',
+  // Guides the start-here sections of README.md and docs/README.md send
+  // agents to next.
+  'docs/QUICKSTART.md',
+  'docs/add-a-computer.md',
+  'docs/AGENT-NETWORK.md',
+  'docs/AGENT-TOOLCHAIN.md',
+  'docs/COMPANIONS.md',
+  'docs/ECOSYSTEM-ONBOARDING.md',
+  'docs/AUTOMATIC-OUTCOMES.md',
+  'docs/AUTONOMY-SETUP.md',
+  'docs/SUBAGENTS.md',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
@@ -139,10 +150,10 @@ describe('agent docs name only real CLI commands, verbs and flags', () => {
   it('keeps documented npm scripts aligned with package.json', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     const bad: string[] = [];
-    for (const file of ['README.md', 'AGENTS.md', 'CLAUDE.md', 'docs/ECOSYSTEM-MAP.md']) {
+    for (const file of DOCS) {
       const lines = readFileSync(join(ROOT, file), 'utf8').split('\n');
       lines.forEach((line, i) => {
-        for (const match of line.matchAll(/\bnpm run ([a-z][a-z0-9:-]*)/g)) {
+        for (const match of line.matchAll(/\bnpm run ([a-z][a-zA-Z0-9:-]*)/g)) {
           if (!Object.hasOwn(pkg.scripts, match[1]!)) bad.push(`${file}:${i + 1}: npm run ${match[1]}`);
         }
       });
