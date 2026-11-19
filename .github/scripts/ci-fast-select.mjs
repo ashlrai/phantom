@@ -71,6 +71,10 @@ const TIER1_PATH = [
   /^test\/authority-[^/]*310b[^/]*\.test\.ts$/,
   /^\.github\/tests\/secret-shape\//,
 ];
+// The three files test/cli-registry-drift.test.ts diffs against each other:
+// the dispatch switch it parses as text, plus the two registries it imports.
+const CLI_REGISTRY_TEST = 'test/cli-registry-drift.test.ts';
+const CLI_REGISTRY_PATH = /^src\/cli\/(?:index|completions|help)\.ts$/;
 
 // Slow lanes stay out of the derived and fallback sets: real-io suites spawn git,
 // npm and daemons (a 34-file related run measured over two minutes locally) and
@@ -134,6 +138,12 @@ export function domainTests(paths, existing) {
   const node = new Set();
   if (paths.some((p) => TIER1_PATH.some((re) => re.test(p)))) for (const t of TIER1_TESTS) tests.add(t);
   if (paths.includes('.github/workflows/ci.yml') && existing.has('test/m30.ci.test.ts')) tests.add('test/m30.ci.test.ts');
+  // The CLI registry anti-drift suite parses src/cli/index.ts's dispatch
+  // switch as text — deliberately no import edge — so a diff that only
+  // touches the switch gives related selection nothing to follow. Name it
+  // for the whole registry surface it guards; an unregistered dispatch once
+  // reached master and held every release-gate run red for hours.
+  if (paths.some((p) => CLI_REGISTRY_PATH.test(p)) && existing.has(CLI_REGISTRY_TEST)) tests.add(CLI_REGISTRY_TEST);
   for (const p of paths) {
     const m = /^\.github\/(?:scripts\/([^/]+)\.mjs|tests\/([^/]+)\.test\.mjs)$/.exec(p);
     const stem = m?.[1] ?? m?.[2];
