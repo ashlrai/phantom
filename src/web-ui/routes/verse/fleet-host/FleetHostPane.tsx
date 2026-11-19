@@ -24,6 +24,7 @@ import { MacAppsCard } from './MacAppsCard.js';
 import { BrowserCard } from './BrowserCard.js';
 import { HostLoadCard } from './HostLoadCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
+import { DiskPlanCard } from './DiskPlanCard.js';
 import { DiskRunwayCard } from './DiskRunwayCard.js';
 import { hostView } from './fleet-host-model.js';
 import { plannerRows, plannerTell } from './planners-model.js';
@@ -118,6 +119,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <MemoryGuardCard visible={visible} />
         <DiskForecastCard visible={visible} />
         <DiskRunwayCard visible={visible} />
+        <DiskPlanCard visible={visible} />
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
         <RuntimeIdentityCard visible={visible} />
