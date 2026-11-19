@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cmdBets } from '../src/cli/bets.js';
 import { agentDocsText } from '../src/cli/help.js';
-import { checkGoal, goalTerms, helpItems, isBetsCheckReport, readApiRoutes, readDocHeadings, readPanes, type BetsCheckSources } from '../src/core/fleet/bets-check.js';
+import { checkGoal, goalFromPrompt, goalTerms, helpItems, isBetsCheckReport, readApiRoutes, readDocHeadings, readPanes, type BetsCheckSources } from '../src/core/fleet/bets-check.js';
 
 const sources = (): BetsCheckSources => ({
   cli: helpItems([
@@ -87,5 +87,46 @@ describe('bets check', () => {
 
   it('the agent cheat sheet tells job runners to check first', () => {
     expect(agentDocsText()).toContain('phm bets check');
+  });
+
+  describe('--gate and --from-prompt', () => {
+    const prompt = (task: string): string => `Job X.\n\nTask from the queue, verbatim:\n\nRQ-X (P1, pool=claude, size<=200): ${task} Acceptance: tests pass.\n\nRules: be kind.\n`;
+    const run = async (args: string[]): Promise<{ code: number; text: string; err: string }> => {
+      const lines: string[] = [], errs: string[] = [];
+      const code = await cmdBets(['check', ...args], { out: l => lines.push(l), err: l => errs.push(l) });
+      return { code, text: lines.join('\n'), err: errs.join('\n') };
+    };
+    const withPrompt = async (task: string, extra: string[]): Promise<{ code: number; text: string; err: string }> => {
+      const dir = mkdtempSync(join(tmpdir(), 'bets-gate-'));
+      try { writeFileSync(join(dir, 'p.txt'), prompt(task)); return await run(['--from-prompt', join(dir, 'p.txt'), ...extra]); }
+      finally { rmSync(dir, { recursive: true, force: true }); }
+    };
+
+    it('extracts the goal between the closing parenthesis and Acceptance', () => {
+      expect(goalFromPrompt(prompt('Lane tool capability matrix.'))).toBe('Lane tool capability matrix.');
+      expect(goalFromPrompt('no marker here')).toBeNull();
+    });
+    it('exits 0 for new, 2 for partial, 3 for exists, with the code in --json', async () => {
+      const fresh = await run(['xyzzy plugh frobnitz', '--gate', '--json']);
+      expect(fresh.code).toBe(0);
+      expect(JSON.parse(fresh.text)).toMatchObject({ schema: 'bets.check.v1', verdict: 'new', exitCode: 0 });
+      const part = await run(['doctor for zebra llama choirs', '--gate', '--json']);
+      expect(part.code).toBe(2);
+      expect(JSON.parse(part.text)).toMatchObject({ verdict: 'partial', exitCode: 2 });
+      const done = await run(['lane-by-tool capability matrix CLI and pane', '--gate', '--json']);
+      expect(done.code).toBe(3);
+      expect(JSON.parse(done.text)).toMatchObject({ verdict: 'exists', exitCode: 3 });
+    });
+    it('reads a queue prompt in one step', async () => {
+      const r = await withPrompt('Merge latency diagnosis with conflict recut.', ['--gate', '--json']);
+      expect(r.code).toBe(3);
+      expect(JSON.parse(r.text).goal).toBe('Merge latency diagnosis with conflict recut.');
+      expect((await withPrompt('Xyzzy plugh frobnitz.', ['--gate'])).code).toBe(0);
+    });
+    it('exits 1 on errors in gate mode and never gates without --gate', async () => {
+      expect((await run(['--from-prompt', '/nonexistent/prompt.txt', '--gate'])).code).toBe(1);
+      expect((await run(['--gate'])).code).toBe(1);
+      expect((await run(['doctor for zebra llama choirs'])).code).toBe(0);
+    });
   });
 });

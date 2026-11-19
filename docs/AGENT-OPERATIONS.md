@@ -11,6 +11,13 @@ either name.
 
 ## 1. Working on this repository
 
+**Step 0 for every queued job.** Before reading anything else, run
+`phm bets check --from-prompt <prompt-file> --gate --json`. It is offline, calls no model and
+is read-only. Exit 0 means new: go ahead. Exit 2 means partial: build only the `suggestedDelta`.
+Exit 3 means exists: stop and finish with a short note naming the matches. Exit 1 means the
+check itself failed (unreadable file or no task found): say so and continue normally.
+The JSON carries `schema: "bets.check.v1"`, the verdict and `exitCode`.
+
 `ashlr router rank --tier frontier --routes routes.json --slots codex-cmp=2 --json`
 returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget reset.
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
