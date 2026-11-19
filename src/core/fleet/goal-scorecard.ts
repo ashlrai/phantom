@@ -95,6 +95,8 @@ export interface FleetGoal {
   parts: { name: string; value: number }[];
   /** Desktop pane that shows the underlying evidence. */
   evidencePane: string;
+  /** The next planned step linked to this goal (`GoalScorecardInput.nextSteps`); null when none is linked. */
+  next: string | null;
 }
 export interface GoalScorecard {
   schema: 'fleet.goal-scorecard.v3';
@@ -103,6 +105,8 @@ export interface GoalScorecard {
   /** Lines in metrics/jobs.jsonl or growth-releases.jsonl that could not be read; they are skipped. */
   malformedLines: number;
   targets: GoalTargets;
+  /** One plain sentence: is the fleet heading where it should. */
+  endState: string;
   /** Behind first, then unknown, then on track; ties keep their natural order. */
   goals: FleetGoal[];
 }
@@ -228,8 +232,20 @@ function goal(d: Draft): FleetGoal {
     current: d.current, currentText: d.current === null ? 'unknown' : d.currentText,
     trend: trend7d.direction !== 'unknown' ? trend7d.direction : trend24h.direction, trend24h, trend7d,
     updated_at: d.updated_at, source: d.source, status, statusText: statusText(status, reason), reason,
-    parts: d.parts ?? [], evidencePane: d.evidencePane,
+    parts: d.parts ?? [], evidencePane: d.evidencePane, next: null,
   };
+}
+
+/** The one-line end state for the top of the Goals views: counts only, no guessing about goals without a reading. */
+export function goalsEndState(goals: readonly Pick<FleetGoal, 'status' | 'title'>[]): string {
+  if (!goals.length) return 'No fleet goals yet.';
+  const behind = goals.filter(g => g.status === 'behind');
+  const known = goals.filter(g => g.status !== 'unknown').length;
+  if (!known) return 'No goal has a reading yet, so where the fleet is heading is unknown.';
+  const unknown = goals.length - known;
+  const tail = unknown ? ` ${unknown} ${unknown === 1 ? 'has' : 'have'} no reading yet.` : '';
+  if (!behind.length) return `On track on ${known === goals.length ? 'every goal' : `${known} of ${goals.length} goals`}.${tail}`;
+  return `Behind on ${behind.length} of ${goals.length} goals: ${behind.slice(0, 3).map(g => g.title).join(', ')}${behind.length > 3 ? ` and ${behind.length - 3} more` : ''}.${tail}`;
 }
 
 const STATUS_RANK: Record<GoalStatus, number> = { behind: 0, unknown: 1, 'on-track': 2 };
@@ -255,6 +271,8 @@ export interface GoalScorecardInput {
   /** growth-releases.jsonl lines; null when the file could not be read. */
   releaseLines: readonly string[] | null;
   targets?: Partial<GoalTargets>;
+  /** Next planned step by goal id; a goal with no entry has none linked. */
+  nextSteps?: Readonly<Record<string, string>>;
 }
 
 export function buildGoalScorecard(input: GoalScorecardInput): GoalScorecard {
@@ -384,7 +402,8 @@ export function buildGoalScorecard(input: GoalScorecardInput): GoalScorecard {
       ok: 'On pace to use the pool before it resets.', short: 'On pace to leave part of the pool unused.',
     }));
   }
-  return { schema: 'fleet.goal-scorecard.v3', version: GOAL_SCORECARD_VERSION, generatedAt: new Date(now).toISOString(), malformedLines, targets: T, goals: orderGoals(goals) };
+  const ordered = orderGoals(goals.map(g => ({ ...g, next: input.nextSteps?.[g.id]?.trim() || null })));
+  return { schema: 'fleet.goal-scorecard.v3', version: GOAL_SCORECARD_VERSION, generatedAt: new Date(now).toISOString(), malformedLines, targets: T, endState: goalsEndState(ordered), goals: ordered };
 }
 
 export interface ReadGoalScorecardOptions {
@@ -392,6 +411,8 @@ export interface ReadGoalScorecardOptions {
   /** The injectable readers: tests pass fixtures, production reads the runs dir. */
   readLines?: YieldLineReader;
   readStatus?: (path: string) => Promise<unknown>;
+  /** Next planned step by goal id, when a caller has one linked. */
+  nextSteps?: Readonly<Record<string, string>>;
   readMains?: (root: string, now: number) => Promise<FleetMainHealthV1 | null>;
   readReleaseLines?: (path: string) => Promise<readonly string[] | null>;
 }
@@ -409,7 +430,7 @@ export async function readGoalScorecard(opts: ReadGoalScorecardOptions = {}): Pr
     (opts.readMains ?? ((runsDir, at) => readFleetMainHealth({ runsDir, now: () => at })))(root, now).catch(() => null),
     (opts.readReleaseLines ?? readGrowthJsonl)(join(root, 'metrics', 'growth-releases.jsonl')).catch(() => null),
   ]);
-  return buildGoalScorecard({ now, jobs: tally.report(known), status, mains, releaseLines, ...(opts.targets ? { targets: opts.targets } : {}) });
+  return buildGoalScorecard({ now, jobs: tally.report(known), status, mains, releaseLines, ...(opts.targets ? { targets: opts.targets } : {}), ...(opts.nextSteps ? { nextSteps: opts.nextSteps } : {}) });
 }
 
 /** The trend mark people see; agents read `trend`. */
@@ -419,13 +440,14 @@ const TREND_WORDS: Record<TrendDirection, string> = { up: 'rising', down: 'falli
 /** Plain text for people: one block per goal, behind first. */
 export function renderGoalScorecard(card: GoalScorecard): string {
   if (!card.goals.length) return 'No goals yet.';
-  const lines = card.goals.flatMap(g => [
+  const lines = [card.endState, ...card.goals.flatMap(g => [
     `${g.title}: ${g.statusText}`,
     `  Now ${g.currentText} ${TREND_MARK[g.trend]} · target ${g.targetText} · 24 h ${TREND_WORDS[g.trend24h.direction]} · 7 d ${TREND_WORDS[g.trend7d.direction]}`,
     `  Why it matters: ${g.why}`,
     ...(g.status === 'unknown' ? [] : [`  ${g.reason}`]),
+    ...(g.next ? [`  Next: ${g.next}`] : []),
     `  As of ${g.updated_at ?? 'unknown'} from ${g.source}.`,
-  ]);
+  ])];
   if (card.malformedLines) lines.push(`${card.malformedLines} unreadable metrics line${card.malformedLines === 1 ? ' was' : 's were'} skipped.`);
   return lines.join('\n');
 }
