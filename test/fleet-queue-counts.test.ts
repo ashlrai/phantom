@@ -37,10 +37,10 @@ it('counts ready, parked, running and last-hour merges per lane', async () => {
   ].join('\n'));
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([
-    { lane: 'codex', ready: 1, parked: 0, running: 1, merges: 1, oldestWaitSeconds: null },
-    { lane: 'devin', ready: 2, parked: 1, running: 1, merges: 2, oldestWaitSeconds: null },
+    { lane: 'codex', ready: 1, parked: 0, running: 1, merges: 1, oldestWaitSeconds: null, blockedReasons: [], stale: 0 },
+    { lane: 'devin', ready: 2, parked: 1, running: 1, merges: 2, oldestWaitSeconds: null, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 },
   ]);
-  expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3 });
+  expect(report.totals).toEqual({ ready: 3, parked: 1, running: 2, merges: 3, blockedReasons: [{ reason: 'DEP', count: 1 }], stale: 0 });
 });
 
 it('ignores merge events with missing or invalid timestamps', async () => {
@@ -68,10 +68,13 @@ it('counts a duplicated merge event once, by PR then by job', async () => {
 it('reports unknown (null), not zero, when sources are absent', async () => {
   const report = await getLaneQueueCounts({ runsDir: root, now });
   expect(report.lanes).toEqual([]);
-  expect(report.totals).toEqual({ ready: null, parked: null, running: null, merges: null });
+  expect(report.totals).toEqual({ ready: null, parked: null, running: null, merges: null, blockedReasons: [], stale: null });
+  expect(report.sources).toEqual({ ready: 'missing', running: 'missing', ledger: 'missing' });
+  expect(report.notes.length).toBeGreaterThanOrEqual(3);
+  expect(report.notes.join(' ')).toContain('queue/ready.tsv not found');
   await writeFile(join(queueDir, 'jobs.jsonl'), merge('m-1', 'devin', minutesAgo(3)));
   const [devin] = (await getLaneQueueCounts({ runsDir: root, now })).lanes;
-  expect(devin).toEqual({ lane: 'devin', ready: null, parked: null, running: null, merges: 1, oldestWaitSeconds: null });
+  expect(devin).toEqual({ lane: 'devin', ready: null, parked: null, running: null, merges: 1, oldestWaitSeconds: null, blockedReasons: [], stale: null });
 });
 
 it('includes parked jobs in the oldest wait and refuses incomplete or ambiguous metrics', async () => {
@@ -189,6 +192,8 @@ it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   expect(log.mock.calls.map(c => String(c[0]))).toEqual([
     'devin  ready 1  parked 0  running 0  oldest wait unknown  merges in last hour unknown',
     'total  ready 1  parked 0  running 0  merges in last hour unknown',
+    'note: merge ledger (jobs.jsonl) not found: merges are unknown.',
+    'note: metrics/jobs.jsonl not found: oldest waits are unknown.',
   ]);
   expect(await cmdFleetQueueCounts(['--root', root, '--json'])).toBe(0);
   expect(JSON.parse(String(log.mock.calls.at(-1)![0])).schema).toBe('fleet.queue-counts.v1');
@@ -196,4 +201,62 @@ it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   expect(await cmdFleetQueueCounts(['--bogus'])).toBe(2);
   expect(err).toHaveBeenCalled();
   expect(FLEET_SUBCOMMAND_LOADERS['queue-counts']).toBeTypeOf('function');
+});
+
+it('reports a healthy empty queue as zeros with no notes', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), '');
+  await writeFile(join(queueDir, 'jobs.jsonl'), '');
+  await writeFile(join(queueDir, 'queue.v1.json'), JSON.stringify({ v: 1, jobs: [] }));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.lanes).toEqual([]);
+  expect(report.sources.ready).toBe('healthy');
+  expect(report.totals).toMatchObject({ ready: 0, parked: 0, blockedReasons: [], stale: 0 });
+});
+
+it('groups blocked jobs by reason per lane, biggest first', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    row('PARKED-DEP.devin', 'a-1', 'devin'), row('PARKED-HOLD.devin', 'a-2', 'devin'), row('PARKED-HOLD.devin', 'a-3', 'devin'),
+    row('PARKED-DEP.codex', 'c-1', 'codex'), row('READY', 'c-2', 'codex'),
+  ].join('\n'));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  const byLane = Object.fromEntries(report.lanes.map(l => [l.lane, l.blockedReasons]));
+  expect(byLane.devin).toEqual([{ reason: 'HOLD', count: 2 }, { reason: 'DEP', count: 1 }]);
+  expect(byLane.codex).toEqual([{ reason: 'DEP', count: 1 }]);
+  expect(report.totals.blockedReasons).toEqual([{ reason: 'DEP', count: 2 }, { reason: 'HOLD', count: 2 }]);
+});
+
+it('flags stale parked rows whose dependency gates are all merged', async () => {
+  await mkdir(join(queueDir, 'prompts'));
+  await mkdir(join(root, 'metrics'));
+  const done = join(queueDir, 'prompts', 'done.md');
+  const open = join(queueDir, 'prompts', 'open.md');
+  await writeFile(done, 'DEPENDENCY GATE: RQ-DONE\n');
+  await writeFile(open, 'DEPENDENCY GATE: RQ-OPEN\n');
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    `PARKED-DEP.devin\tRQ-STALE\tdevin\twork\tphantom\t${done}`,
+    `PARKED-DEP.devin\tRQ-WAIT\tdevin\twork\tphantom\t${open}`,
+  ].join('\n'));
+  await writeFile(join(root, 'metrics', 'jobs.jsonl'), JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-DONE' }));
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  const devin = report.lanes.find(l => l.lane === 'devin');
+  expect(devin).toMatchObject({ parked: 2, stale: 1 });
+  expect(report.totals.stale).toBe(1);
+});
+
+it('marks a malformed queue as degraded and keeps counts null-safe', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), `${row('READY', 'a-1', 'devin')}\nthis is not a row`);
+  await writeFile(join(queueDir, 'jobs.jsonl'), 'not json');
+  const report = await getLaneQueueCounts({ runsDir: root, now });
+  expect(report.sources.ready).toBe('degraded');
+  expect(report.sources.ledger).toBe('degraded');
+  expect(report.notes.some(n => n.includes('unreadable or has malformed rows'))).toBe(true);
+});
+
+it('prints blocked reasons and notes in text output', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), row('PARKED-HOLD.devin', 'a-1', 'devin'));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleetQueueCounts(['--root', root])).toBe(0);
+  const out = log.mock.calls.map(c => String(c[0]));
+  expect(out[0]).toContain('parked 1  blocked by HOLD 1');
+  expect(out.some(l => l.startsWith('note: '))).toBe(true);
 });
