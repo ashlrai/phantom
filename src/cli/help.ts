@@ -610,6 +610,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm agentnet channels propose <name> [--apply] [--json]', description: 'Preview a private collaboration channel draft; --apply records it locally. Never creates a Slack channel.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },
   { usage: 'phm agentnet identity register <callsign> [--json]', description: 'Record a stable callsign profile draft; never provisions credentials or grants a session binding.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },
   {
+    usage: 'phm channels reply-state <request-id> [--json]',
+    description: 'The one state read before any fleet reply about a work item: RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED with its as-of time and source, computed from the bus inbox and claim records. No record means RECEIVED, no owner yet. A repeat request in the same thread resolves to the first request id. Read-only. Exit 0 report, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'ReplyState {schema:"phantom.channels.reply-state.v1", requestId, id, duplicateOf, state, owner, claim, evidence, missing, asOf, source, records, text}',
+  },
+  {
     usage: 'phm channels slack status [--json]',
     description: 'Offline Slack-bridge rollup: agent-network.toml parse state, bridge and workspace ids, phm_ reference names (never values), journal counts and the next step. No socket, API call or credential IO. Exit 0 report, 2 bad usage.',
     safety: 'read',
