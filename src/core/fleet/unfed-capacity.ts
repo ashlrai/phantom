@@ -4,7 +4,7 @@
  * runnable rows wait under another lane's hint. Pure: text in, report out.
  * Counts and reason codes only; no job ids, task text or credentials.
  */
-import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
+import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
 
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
 
@@ -99,8 +99,18 @@ export interface UnfedReport {
    * normally or no verdict exists.
    */
   fleetStop: FleetStopCode | null;
-  /** Ready rows still waiting. */
+  /** Ready rows still waiting (market-evaluated rows; see invalidRows). */
   waiting: number;
+  /**
+   * Ready rows the work market cannot evaluate — a malformed job id, tier or
+   * requirements spec, including a router-queue envelope that fails
+   * validation. They never launch; a market-evaluated tick excludes them from
+   * `waiting`, exactly like the dispatcher's `_waiting` set. On an
+   * admission-stopped tick the dispatcher counts them anyway (its stopped
+   * `_waiting` never parses requirements), so they can appear in `waiting`
+   * while still being listed here.
+   */
+  invalidRows: number;
   unfedLanes: string[];
   /** Slots that could be filled now: sum of min(headroom, waiting rows) over unfed lanes. */
   unfedSlots: number;
@@ -134,17 +144,21 @@ function utilization(running: number, target: number): number | null {
 /**
  * Dispatcher ready.tsv rows: job, repo, lane hint, tier, prompt[, requirements].
  * Parked rows are not runnable. The hint is each row's resolved preferred_lane
- * (the requirements column may override the lane column), matching the
- * dispatcher's own unfed accounting.
+ * (the requirements column — or the router-queue.md envelope for a spec-less
+ * row — may override the lane column), matching the dispatcher's own unfed
+ * accounting. Rows the market would reject (bad job id, tier or spec) are
+ * counted in `invalid` and left out of waiting/byLane/rows, like the
+ * dispatcher's `_waiting` set.
  */
-export function readyHints(readyTsv: string): { waiting: number; byLane: Map<string, number>; rows: ReadyMarketRow[] } {
-  const rows = parseReadyMarketRows(readyTsv);
+export function readyHints(readyTsv: string, routerQueue?: string | null):
+  { waiting: number; byLane: Map<string, number>; rows: ReadyMarketRow[]; invalid: number } {
+  const { rows, invalid } = parseReadyMarketRows(readyTsv, routerQueue);
   const byLane = new Map<string, number>();
   for (const row of rows) {
     const lane = row.hint ?? '';
     byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
   }
-  return { waiting: rows.length, byLane, rows };
+  return { waiting: rows.length, byLane, rows, invalid };
 }
 
 /**
@@ -194,10 +208,15 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
 export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
-  const hints = readyHints(readyTsv);
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
   const stop = published === null ? fleetStopVerdict(data) : null;
+  // An admission-stopped tick never ran the market: the dispatcher's own
+  // _waiting then counts every JID+tier-valid row by its raw lane column.
+  const strict = readyHints(readyTsv, market?.routerQueue);
+  const hints = published === null && stop === 'admission_stopped'
+    ? { ...stoppedReadyHints(readyTsv), rows: strict.rows, invalid: strict.invalid }
+    : strict;
   const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
   const waiting = published && count(published.waiting) ? published.waiting : hints.waiting;
   const resources: UnfedResource[] = [];
@@ -246,6 +265,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     derivedReasons: ctx !== null,
     fleetStop: stop ?? publishedFleetStop(resources),
     waiting,
+    invalidRows: strict.invalid,
     unfedLanes: unfed.map(r => r.lane),
     unfedSlots: unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0),
     resources,
@@ -365,6 +385,9 @@ export function renderUnfed(report: UnfedReport): string[] {
   lines.push(report.unfedLanes.length === 0
     ? `No unfed capacity: ${report.waiting} rows waiting.`
     : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+  if (report.invalidRows > 0) {
+    lines.push(`${report.invalidRows} ready row(s) fail work-market validation (job id, tier or requirements) and can never launch; fix or drop them.`);
+  }
   if (report.fleetStop !== null) {
     lines.push(report.fleetStop === 'admission_stopped'
       ? 'Fleet admission stopped (pause, disk guard or load gate): the market was not evaluated this tick.'
