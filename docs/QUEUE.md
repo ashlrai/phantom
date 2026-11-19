@@ -724,6 +724,18 @@ when a lane has been starved for 30 minutes, at most once per lane every 6 hours
 and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The
 router queue is never written.
 
+Each lane in the `fleet.lanes.v1` read also carries one `health` verdict:
+`{ state, reason, number }` with `state` one of `ok`, `held`, `starved`, `wasteful`
+or `drained` and a one-line reason that starts with the state, for example
+`starved: 5 free slots, 0 ready rows for 40 min`. When two apply the order is
+drained, held, starved, wasteful. A lane is wasteful when it started 5 or more jobs
+(distinct `launch` events in `jobs.jsonl`, new `startsInWindow` field) in the merge
+window and fewer than 1 PR per 5 starts merged. The schema id stays `fleet.lanes.v1`:
+`health` and `startsInWindow` are additive. `fleet.live-map.v1` lane nodes carry the
+same `health`, which the 2D map, the 3D map and the desktop lane card show as a
+colored badge with the reason as its tooltip; `phm fleet lanes` prints a line for
+each lane that is not ok.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename

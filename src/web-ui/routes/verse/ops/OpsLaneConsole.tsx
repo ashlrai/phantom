@@ -8,6 +8,7 @@
 import { useRefetch, useQuery } from '../../../data/hooks.js';
 import { fleetLanesQuery } from '../../../data/queries.js';
 import { readFailureReason } from '../../../data/client.js';
+import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { SkeletonRow } from '../../../components/primitives/Skeleton.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
@@ -22,6 +23,7 @@ function LaneRow({ lane, starved }: { lane: FleetLaneView; starved?: StarvedLane
     <div className={styles.row}>
       <p className={styles.rowTitle}>
         <strong>{lane.lane}</strong>
+        <LaneHealthBadge health={lane.health} />
         {laneChipText(lane).map((chip) => (
           <span key={chip.text} className={styles.chip} data-tone={chip.tone}>{chip.text}</span>
         ))}

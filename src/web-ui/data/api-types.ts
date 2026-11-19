@@ -119,7 +119,13 @@ export type { VerifiedCompletionReport } from '../../core/fleet/agent-activity.j
 import type { FleetLaneSnapshot as CoreFleetLaneSnapshot, FleetLaneView as CoreFleetLaneView } from '../../core/fleet/lane-console.js';
 export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 /** `slotTarget` is optional here so a response from an older server still type-checks. */
-export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
+export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget' | 'health' | 'startsInWindow'> & {
+  slotTarget?: number | null;
+  /** Absent from an older server. */
+  health?: CoreFleetLaneView['health'];
+  startsInWindow?: number | null;
+};
+export type { LaneHealth, LaneHealthState } from '../../core/fleet/lane-badge.js';
 export type { StarvedLane } from '../../core/fleet/lane-starved.js';
 /** `starved` is optional here so a response from an older server still type-checks. */
 export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes' | 'starved'> & { lanes: FleetLaneView[]; starved?: CoreFleetLaneSnapshot['starved'] };
