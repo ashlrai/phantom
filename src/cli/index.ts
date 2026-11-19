@@ -3481,6 +3481,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'plan': {
+        const { cmdPlan } = await import('./plan.js');
+        process.exitCode = await cmdPlan(rest);
+        break;
+      }
+
       case 'bets': {
         const { cmdBets } = await import('./bets.js');
         process.exitCode = await cmdBets(rest);
