@@ -540,7 +540,12 @@ Run `phm release notes` inside a repository for Markdown since its latest
 reachable stable version tag, or choose `--since v3.30.35`. It reads the current
 branch's mainline, including squash and ordinary GitHub PR merges. Fetch history
 and tags first when the requested range is unavailable. No network calls occur.
-`--json` returns `phantom.release-notes.v1` with `since`, `head`, `summary` and
+`--since` also takes a date (`2026-11-01`). `--markdown` prints the reader's
+version: a three-sentence summary, then short lists under plain headings (New
+in the app, Phone, Fleet and speed, Fixes, Docs, Under the hood), with test and
+recovery work as one count. The app's Settings shows the same notes through
+`GET /api/verse/app/whats-new`. `--json` returns `phantom.release-notes.v1`
+with `since`, `head`, `summary`, `headline`, `sections` and
 ordered `groups` (New, Improved, Fixed, Internal); entries carry text, PRs and
 commit SHAs. Direct commits without a PR retain their short SHA in Markdown.
 Opaque subjects use touched files as context, without inferring user benefits.
