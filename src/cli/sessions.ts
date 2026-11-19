@@ -1,6 +1,6 @@
 /**
  * `phm sessions`: the tree of every fleet agent session (no verb), one session's
- * live log (tail; cmdJobTail in job.ts), MCP gateway
+ * live log (tail; cmdJobTail in job.ts), one session as a conversation (thread), MCP gateway
  * sessions (list, revoke) and resumable agent sessions (create, show, resume,
  * terminate; list shows both kinds). Thin handler: logic lives in
  * src/core/fleet/live-sessions.ts, src/core/gateway-sessions.ts and
@@ -15,6 +15,8 @@ import {
 import { renderLiveSessionsText, SESSION_FILTER_RE } from '../core/fleet/live-sessions.js';
 import { readLiveSessions } from '../core/fleet/live-sessions-read.js';
 import { getFleetSessions } from '../core/fleet/runs-sessions.js';
+import { renderSessionThreadText, SESSION_ID_RE, type SessionThreadV1 } from '../core/fleet/session-thread.js';
+import { readSessionThread } from '../core/fleet/session-thread-read.js';
 import { reconcileSessions, renderSessionReconciliation } from '../core/fleet/session-reconciliation.js';
 
 const USAGE = `Usage:
@@ -28,6 +30,11 @@ const USAGE = `Usage:
                                       What one session is doing now: its last 200 log lines,
                                       redacted; --follow streams new ones (one JSON object
                                       per line with --json). Exit 2 for an unknown id.
+  phm sessions thread <id> [--json]   One session as a conversation: a summary, then its brief,
+                                      recorded steps, commands, changed files, notes, the bus
+                                      messages about it and its last message. The id is
+                                      leader, a job id or a subagent id. Read only; exit 2
+                                      for an unknown id.
   phm sessions list [--json]          Show gateway sessions and agent sessions
   phm sessions reconcile [--json]     Check local runs: live, finished or unknown. Read only.
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
@@ -136,6 +143,28 @@ export async function cmdLiveSessions(args: string[], read: typeof readLiveSessi
   return 0;
 }
 
+/** `phm sessions thread <id> [--json]`: one session as a conversation. Exit 0 read, 1 sessions unreadable, 2 usage or unknown id. */
+export async function cmdSessionThread(args: string[], read: (id: string) => Promise<SessionThreadV1> = id => readSessionThread(id)): Promise<number> {
+  let values: { json?: boolean }, positionals: string[];
+  try {
+    ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true, options: { json: { type: 'boolean' } } }));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${USAGE}`);
+    return 2;
+  }
+  const id = positionals[0];
+  if (positionals.length !== 1 || id === undefined || !SESSION_ID_RE.test(id)) {
+    process.stderr.write('Usage: phm sessions thread <id> [--json]. The id is leader, a job id or a subagent id from `phm sessions`.\n');
+    return 2;
+  }
+  const thread = await read(id);
+  if (thread.session) { console.log(values.json ? JSON.stringify(thread, null, 2) : renderSessionThreadText(thread)); return 0; }
+  const unreadable = thread.sources.sessions === 'unavailable';
+  if (values.json) console.log(JSON.stringify(thread, null, 2));
+  else process.stderr.write(`${thread.gaps.join('\n')}${unreadable ? '' : '\nSee every session: phm sessions'}\n`);
+  return unreadable ? 1 : 2;
+}
+
 export async function cmdReconcileSessions(args: string[], read: typeof getFleetSessions = getFleetSessions): Promise<number> {
   let values;
   try {
@@ -158,6 +187,7 @@ export async function cmdSessions(args: string[]): Promise<number> {
   }
   if (more.includes('--help') || more.includes('-h')) { process.stdout.write(USAGE); return 0; }
   if (sub === 'reconcile') return cmdReconcileSessions(args.slice(1));
+  if (sub === 'thread') return cmdSessionThread(args.slice(1));
   if (sub === 'tail') return (await import('./job.js')).cmdJobTail(args.slice(1), {}, 'session');
 
   if (sub === 'list' && more.length === 0) {

@@ -1275,6 +1275,28 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 10 minutes without output and null when that time is unknown.
 `throttledLiveMap` is now generic over its value type.
 
+## Session thread (`fleet.session-thread.v1`)
+
+`src/core/fleet/session-thread.ts` exports the pure
+`buildSessionThread(list, id, parts, now)`, `renderSessionThreadText(thread)`,
+`sessionBusMessages(session, messages)`, `SESSION_ID_RE`, the `THREAD_*_SHOWN`
+limits and the types `SessionThreadV1`, `SessionThreadSession`,
+`SessionThreadMessage`, `SessionThreadParts`, `SessionThreadState` and
+`SessionThreadSource`. `parts` is `{sessionsRead, activity?, bus, replies?}`:
+null means that read failed, absent means it was not asked for.
+`src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
+options)` with injectable `readMap`, `readSubagents`, `readActivity`,
+`readBus` and `readReplies`; each read is guarded on its own and the result is
+sanitized like the session list. `src/cli/sessions.ts` exports
+`cmdSessionThread(args, read)` for `phm sessions thread <id> [--json]` (exit 0
+read, 1 list unreadable, 2 usage or unknown id).
+`src/core/verse/fleet-session-thread-api.ts` exports
+`createFleetSessionThreadApi(read)`, `defaultSessionThreadRead()`,
+`handleFleetSessionThreadApi` and `SESSION_THREAD_PATH` for
+`GET /api/verse/fleet/control/session-thread?id=<id>` (read session required;
+200, 400, 401, 404, 405, 503). It adds no source and writes nothing. Fields
+are listed in `docs/FLEET-API.md`.
+
 **Org tree states (RQ-ORGVIEWN18BQ8).** `fleet.org.v1` gains `version: 1` and,
 on the leader, every lane and every job, `state` (`OrgState`: `running`,
 `idle`, `held`, `done`, `unknown`) and `doing` (plain words). The leader gains

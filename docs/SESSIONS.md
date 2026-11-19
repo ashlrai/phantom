@@ -36,6 +36,16 @@ line is one object `{ts, source, text}`; the first also carries `detail`
 can reach it. An unknown id is a plain error with exit code 2. Choosing a node
 on the desktop Compute map opens a side panel with the same log and controls.
 
+To read one session as a conversation instead of a log, run
+`phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
+the tree. It prints a short summary (what the session is, its state, commands
+seen, files changed, latest step), then the brief it was given, its recorded
+steps, what it ran and changed, its notes, the agent bus messages about it and
+its last message. Lines starting `>` were said to the session, `<` is the
+session speaking and `-` is a recorded step. The summary is assembled from the
+records, not written by a model. `--json` prints `fleet.session-thread.v1`;
+an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
+
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit
 `--json` for plain text). The typed `reconcileSessions` API returns
 `fleet.session-reconciliation.v1`: local runs classified as `live`, `finished`

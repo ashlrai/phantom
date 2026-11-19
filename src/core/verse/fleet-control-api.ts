@@ -366,6 +366,10 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/live-sessions') {
     return (await import('./fleet-live-sessions-api.js')).handleFleetLiveSessionsApi(ctx, req, res, path, method);
   }
+  // One session as a conversation, behind `phm sessions thread <id>`.
+  if (path === '/api/verse/fleet/control/session-thread') {
+    return (await import('./fleet-session-thread-api.js')).handleFleetSessionThreadApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/claim-notices') {
     return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);
   }
