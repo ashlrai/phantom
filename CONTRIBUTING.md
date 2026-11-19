@@ -2,6 +2,11 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+**First pull request?** Follow [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md):
+clone, install, verify once, push to your fork, and let auto-merge land it after
+`Merge Gate` passes. Humans and coding agents use the same path; agents also
+follow [AGENTS.md](AGENTS.md). This page holds the full conventions behind it.
+
 ---
 
 ## Prerequisites
@@ -21,12 +26,20 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+git clone https://github.com/ashlrai/phantom.git && cd phantom
+npm ci                    # one checkout; also what CI and release packaging use
+npm run install:worktree  # instead of npm ci for several trusted local worktrees; requires pnpm 10.28.2
 ```
 
+Keep `origin` pointing at `ashlrai/phantom` and push to your fork as a second
+remote: `node scripts/verify-changed.mjs` diffs against `origin/master`. Read
+[shared installs](#shared-installs-for-trusted-local-worktrees) before using
+`install:worktree`.
+
 Run focused verification locally while developing. Pull requests and default-branch
-pushes run the repository's CI and Dependency Audit workflows. Check the actual
+pushes run the repository's CI and Dependency Audit workflows; `Merge Gate` is
+the single required check on a pull request (its jobs are listed under
+[What CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)). Check the actual
 run for your commit; workflow source alone is not evidence that it passed.
 Dependency changes must keep the
 affected manifest and lockfile consistent, including separately packaged Raycast
@@ -346,7 +359,8 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 ## Commit style
 
 - Keep commits focused and atomic; one logical change per commit.
-- Use a concise, imperative subject line (e.g. `add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Use a [Conventional Commits](https://www.conventionalcommits.org/) subject, `type(scope): imperative summary` (e.g. `feat(genome): add embedding rerank fallback`), with a body explaining the "why" when it is not obvious. release-please builds the changelog from these types (`feat`, `fix`, `docs` and the others in `release-please-config.json`).
+- Pull requests are squash-merged, so give the pull request title the same form; it becomes the commit subject on `master`.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
