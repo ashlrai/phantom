@@ -3,16 +3,21 @@ import { MACHINE_MAX_AGE_MS } from '../../../core/fabric/resource-view.js';
 import { useQuery, useRefetch, useRefresh } from '../../data/hooks.js';
 import { usePollWhileVisible } from '../verse/shell/section-visibility.js';
 import { ProviderCards, resourceViewQuery } from '../resources/ProviderCards.js';
+import { modelCheckQuery } from '../verse/models/ModelsCard.js';
 import styles from './ResourcePanel.module.css';
 
 const pct = (value: number | null) => value === null ? 'unknown' : `${value.toFixed(1)}%`;
 const date = (value: string | null) => value === null ? 'unknown' : new Date(value).toLocaleString();
+/** Verified = confirmed by provider docs in the last 14 days; stale and unconfirmed both count as unverified. */
+const modelsText = (report: { registry: string; counts?: { confirmed: number; stale: number; unconfirmed: number } } | undefined) =>
+  !report?.counts || report.registry !== 'ok' ? 'unknown' : `${report.counts.confirmed} verified, ${report.counts.stale + report.counts.unconfirmed} unverified`;
 
 /** Both fleet surfaces read the same file projection; no client-side quota or admission math. */
 export function ResourcePanel() {
   const [, expireControllerMemory] = useState(0);
   const query = useQuery(resourceViewQuery);
   const refresh = useRefetch(resourceViewQuery);
+  const models = useQuery(modelCheckQuery, { freshMs: 60_000 });
   const manualRefresh = useRefresh(resourceViewQuery);
   usePollWhileVisible(refresh, 4_000);
   const view = query.data;
@@ -51,6 +56,7 @@ export function ResourcePanel() {
           <div><dt>Disk free</dt><dd>{pct(view.machine.diskFreePct)}</dd></div>
           <div><dt>Machine admission</dt><dd>{view.machine.admission}</dd></div>
           <div><dt>Local models</dt><dd>{view.localModels.count ?? 'unknown'}</dd></div>
+          <div><dt>Models</dt><dd>{modelsText(models.data)}<small>Verified means provider docs named the model in the last 14 days. Run phm models check.</small></dd></div>
         </dl>
         <p className={styles.note}>Pace above 1x exhausts the pool before its reset. Estimates use observed burn; admission controls still apply.</p>
       </>}
