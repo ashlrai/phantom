@@ -2,7 +2,7 @@
 
 <!-- fresh:begin example-version-pin -->
 ```sh
-npx --package=@ashlr/phantom@3.30.41 phm --version
+npx --package=@ashlr/phantom@3.30.42 phm --version
 ```
 <!-- fresh:end -->
 
