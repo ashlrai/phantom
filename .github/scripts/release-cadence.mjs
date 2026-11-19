@@ -140,6 +140,94 @@ function judgeRequiredChecks(names, runs) {
   return pending ? 'pending' : 'green';
 }
 
+const RELEASE_PR_BRANCH_PREFIX = 'release-please--';
+const RELEASE_PR_BRANCH_SCAN_CAP = 10;
+
+/**
+ * Open release-please pull requests on this repository. Branch discovery uses
+ * the git matching-refs prefix — the same `release-please--*` shape the
+ * release train already keys on — then each candidate branch is looked up
+ * through the head filter, so the probe reads a handful of small responses
+ * instead of paging the fleet's entire open-PR list (hundreds of PRs,
+ * megabytes per page) on every cadence wake. An inventory that cannot be
+ * fully read proves nothing and returns null rather than asserting — the
+ * freeze below is a heuristic, never a reason to fail the cadence job.
+ */
+async function openReleasePrs(read, base, repository) {
+  const refs = await read(`${base}/git/matching-refs/heads/${RELEASE_PR_BRANCH_PREFIX}`);
+  if (!Array.isArray(refs)) return null;
+  const owner = repository.split('/')[0];
+  const branches = [];
+  for (const ref of refs) {
+    const name = typeof ref?.ref === 'string' && ref.ref.startsWith(`refs/heads/${RELEASE_PR_BRANCH_PREFIX}`)
+      ? ref.ref.slice('refs/heads/'.length) : null;
+    if (name !== null && !branches.includes(name)) branches.push(name);
+    if (branches.length > RELEASE_PR_BRANCH_SCAN_CAP) return null;
+  }
+  const found = [];
+  for (const branch of branches) {
+    const pulls = await read(`${base}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=100`);
+    if (!Array.isArray(pulls) || pulls.length === 100) return null;
+    for (const pr of pulls) {
+      const head = pr?.head;
+      if (head?.repo?.full_name !== repository || head?.ref !== branch) continue;
+      if (pr?.base?.ref !== 'master') continue;
+      if (typeof pr?.title !== 'string' || !/^chore\([^)]+\): release \d+\.\d+\.\d+/.test(pr.title)) continue;
+      if (!SHA.test(head?.sha ?? '') || !Number.isSafeInteger(pr?.number) || pr.number <= 0) continue;
+      found.push({ number: pr.number, sha: head.sha });
+    }
+  }
+  return found;
+}
+
+/**
+ * Whether an open release PR's head is still owned by verification. Every
+ * release-please update force-pushes the branch and restarts its required
+ * checks on a new SHA; while merges land faster than CI finishes, the head
+ * never survives long enough for checks to complete and the release starves
+ * (observed: one release PR force-pushed 34 times in 3.5 hours). Freezing
+ * updates — never the merge — lets the PR's own required checks reach a
+ * verdict on a stable head; the release train still enqueues the green head
+ * independently, so this gates release-please updates only.
+ *
+ * Only positive evidence freezes: a decisively red verdict, an unreadable
+ * check inventory, a conflicting PR (whose needed heal is the rebase update
+ * itself), or a head whose required contexts have not all reported yet all
+ * leave updates allowed — a context that never reports must not wedge the
+ * freeze, and a head whose CI never triggered still needs its push.
+ */
+async function releasePrChecksInFlight(read, base, repository, requiredNames) {
+  let prs = null;
+  try {
+    prs = await openReleasePrs(read, base, repository);
+  } catch (error) {
+    if (error instanceof MetadataRateLimitError || error instanceof MetadataTransientError) throw error;
+    return false;
+  }
+  if (!prs || prs.length === 0) return false;
+  const verdicts = await Promise.all(prs.map(async ({ number, sha }) => {
+    try {
+      const detail = await read(`${base}/pulls/${number}`);
+      if (detail?.number !== number || detail?.mergeable === false || detail?.base?.ref !== 'master') return false;
+      const headSha = SHA.test(detail?.head?.sha ?? '') ? detail.head.sha : sha;
+      const [names, runs] = await Promise.all([requiredNames(), checkRunsOnSha(read, base, headSha)]);
+      if (runs === 'unknown') return false;
+      const verdict = judgeRequiredChecks(names, runs);
+      if (verdict === 'green') return true;
+      // Pending freezes only once every required context has a check-run row
+      // on this head: all of CI has reported and is still settling. A missing
+      // context means its checks may never have triggered — allow the update
+      // that can start them.
+      return verdict === 'pending'
+        && names.every(name => runs.some(run => run.appId === ACTIONS_APP_ID && run.name === name));
+    } catch (error) {
+      if (error instanceof MetadataRateLimitError || error instanceof MetadataTransientError) throw error;
+      return false;
+    }
+  }));
+  return verdicts.some(Boolean);
+}
+
 /**
  * How many times the plan re-evaluates when its observed snapshot is
  * invalidated mid-check — a version bump, a non-fast-forward move, or a
@@ -285,6 +373,16 @@ export async function planReleaseCadence({ repository, minutes = 30, now = Date.
   // invalidating past the attempt bound still refuses.
   let requiredNamesPromise = null;
   const requiredNames = () => (requiredNamesPromise ??= requiredCheckNames(read, base));
+  // An open release PR whose required checks are still running — or already
+  // green and awaiting the train's enqueue — must keep a stable head: every
+  // due run makes release-please force-push the branch and restart CI on a
+  // new SHA, so during merge bursts the head never survives long enough for
+  // checks to finish and every release starves. Hold updates until the
+  // head's required verdict is decisively red; this gates release-please
+  // updates only — the train's own enqueue path is unaffected.
+  if (await releasePrChecksInFlight(read, base, repository, requiredNames)) {
+    return { due: false, reason: 'release-pr-checks-in-flight' };
+  }
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const plan = await planAtLiveTip({ base, repository, minutes, now, read, requiredNames });
     if (plan !== null) return plan;

@@ -19,6 +19,7 @@ function fixture(overrides = {}) {
     repository: repo, head_branch: 'master', event: 'push', status: 'completed', conclusion: 'success' };
   const data = {
     '': repo, '/branches/master': { commit: { sha: revision } },
+    '/git/matching-refs/heads/release-please--': [],
     '/rules/branches/master': [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate' }] } }],
     // Default required-check evidence on the fixture run SHA is red, so a
     // non-success run conclusion keeps failing closed unless a test opts in.
@@ -51,6 +52,21 @@ function repin(f, sha) {
       f.data[`${key.slice(0, -revision.length)}${sha}`] = f.data[key];
     }
   }
+}
+
+const RELEASE_PR_BRANCH = 'release-please--branches--master--components--phantom';
+const releasePrHeadKey = branch => `/pulls?state=open&head=${encodeURIComponent(`ashlrai:${branch}`)}&per_page=100`;
+// An open release-please PR discovered through matching-refs plus the head
+// filter, with its detail read. Returns the listed head sha for check-run
+// fixtures.
+function openReleasePr(f, { number = 7251, sha = '7'.repeat(40), mergeable = true,
+  title = 'chore(master): release 3.30.2', branch = RELEASE_PR_BRANCH,
+  repoFullName = 'ashlrai/phantom', detailSha, baseRef = 'master' } = {}) {
+  f.data['/git/matching-refs/heads/release-please--'] = [{ ref: `refs/heads/${branch}` }];
+  const head = { ref: branch, sha, repo: { full_name: repoFullName } };
+  f.data[releasePrHeadKey(branch)] = [{ number, title, head, base: { ref: baseRef } }];
+  f.data[`/pulls/${number}`] = { number, mergeable, base: { ref: baseRef }, head: { ...head, sha: detailSha ?? sha } };
+  return sha;
 }
 
 test('cadence validator honors configured values', () => {
@@ -367,6 +383,142 @@ test('a settled re-run failure does not override an earlier required-check succe
     { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
   ] };
   assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+});
+
+test('an open release PR with in-flight required checks freezes updates before any tip read', async () => {
+  const f = fixture();
+  const head = openReleasePr(f);
+  f.data[CHECK_RUNS_KEY(head)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+  ] };
+  const reads = [];
+  const read = async path => { reads.push(path); return f.read(path); };
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read }),
+    { due: false, reason: 'release-pr-checks-in-flight' });
+  assert.ok(!reads.some(path => path.includes('/contents/package.json')), 'frozen plan must not evaluate tip state');
+});
+
+test('green release PR checks stay frozen for the train enqueue; only decisive red releases updates', async () => {
+  const green = fixture();
+  const greenHead = openReleasePr(green);
+  green.data[CHECK_RUNS_KEY(greenHead)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(green.input), { due: false, reason: 'release-pr-checks-in-flight' });
+
+  const red = fixture();
+  const redHead = openReleasePr(red);
+  red.data[CHECK_RUNS_KEY(redHead)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(red.input)).due, true);
+});
+
+test('a pending verdict freezes only once every required context has reported on the head', async () => {
+  const f = fixture();
+  const head = openReleasePr(f);
+  f.data['/rules/branches/master'] = [{ type: 'required_status_checks', parameters: { required_status_checks: [
+    { context: 'Merge Gate' }, { context: 'Fast gate' } ] } }];
+  // Merge Gate reported and is running; Fast gate has no check-run row yet —
+  // its CI may never have triggered, so the update that can start it stays
+  // allowed instead of wedging the freeze on a context that never reports.
+  f.data[CHECK_RUNS_KEY(head)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  // Once every required context has a row, the same pending verdict freezes.
+  f.data[CHECK_RUNS_KEY(head)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+    { name: 'Fast gate', status: 'queued', conclusion: null, app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'release-pr-checks-in-flight' });
+});
+
+test('a release PR head whose CI never reported, or reported no required context, is not frozen', async () => {
+  const quiet = fixture();
+  const quietHead = openReleasePr(quiet);
+  quiet.data[CHECK_RUNS_KEY(quietHead)] = { total_count: 0, check_runs: [] };
+  assert.equal((await planReleaseCadence(quiet.input)).due, true);
+
+  const unreported = fixture();
+  const unreportedHead = openReleasePr(unreported);
+  unreported.data[CHECK_RUNS_KEY(unreportedHead)] = { total_count: 1, check_runs: [
+    { name: 'advisory-only', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(unreported.input)).due, true);
+
+  const unreadable = fixture();
+  const unreadableHead = openReleasePr(unreadable);
+  unreadable.data[CHECK_RUNS_KEY(unreadableHead)] = { total_count: 3, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(unreadable.input)).due, true);
+});
+
+test('a conflicting or non-release pull request never freezes the cadence', async () => {
+  const conflicting = fixture();
+  const conflictHead = openReleasePr(conflicting, { mergeable: false });
+  conflicting.data[CHECK_RUNS_KEY(conflictHead)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(conflicting.input)).due, true);
+
+  const f = fixture();
+  f.data['/git/matching-refs/heads/release-please--'] = [{ ref: `refs/heads/${RELEASE_PR_BRANCH}` }];
+  f.data[releasePrHeadKey(RELEASE_PR_BRANCH)] = [
+    { number: 1, title: 'feat: unrelated work', head: { ref: RELEASE_PR_BRANCH, sha: revision, repo: { full_name: 'ashlrai/phantom' } }, base: { ref: 'master' } },
+    { number: 2, title: 'chore(master): release 3.30.2', head: { ref: RELEASE_PR_BRANCH, sha: revision, repo: { full_name: 'someone/fork' } }, base: { ref: 'master' } },
+    { number: 3, title: 'chore(master): release 3.30.2', head: { ref: RELEASE_PR_BRANCH, sha: 'not-a-sha', repo: { full_name: 'ashlrai/phantom' } }, base: { ref: 'master' } },
+    { number: 4, title: 'chore(master): release 3.30.2', head: { ref: RELEASE_PR_BRANCH, sha: revision, repo: { full_name: 'ashlrai/phantom' } }, base: { ref: 'dev' } },
+  ];
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+});
+
+test('release PR discovery scans every release-please branch and prefers the fresher detail head', async () => {
+  const f = fixture();
+  const notesBranch = `${RELEASE_PR_BRANCH}--release-notes`;
+  f.data['/git/matching-refs/heads/release-please--'] = [
+    { ref: `refs/heads/${RELEASE_PR_BRANCH}` }, { ref: `refs/heads/${notesBranch}` }, { ref: 'refs/heads/release-please--' },
+  ];
+  f.data[releasePrHeadKey(RELEASE_PR_BRANCH)] = [];
+  f.data[releasePrHeadKey(notesBranch)] = [{ number: 7251, title: 'chore(master): release 3.30.2',
+    head: { ref: notesBranch, sha: '6'.repeat(40), repo: { full_name: 'ashlrai/phantom' } }, base: { ref: 'master' } }];
+  f.data[releasePrHeadKey('release-please--')] = [];
+  const detail = '5'.repeat(40);
+  f.data['/pulls/7251'] = { number: 7251, mergeable: true, base: { ref: 'master' },
+    head: { ref: notesBranch, sha: detail, repo: { full_name: 'ashlrai/phantom' } } };
+  f.data[CHECK_RUNS_KEY(detail)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'release-pr-checks-in-flight' });
+});
+
+test('an unreadable release-PR inventory never blocks the cadence plan', async () => {
+  const malformed = fixture();
+  malformed.data['/git/matching-refs/heads/release-please--'] = { unexpected: true };
+  assert.equal((await planReleaseCadence(malformed.input)).due, true);
+  const g = fixture();
+  // More candidate branches than the scan bound: the freeze cannot prove anything.
+  g.data['/git/matching-refs/heads/release-please--'] = Array.from({ length: 11 }, (_, i) => ({ ref: `refs/heads/release-please--b${i}` }));
+  assert.equal((await planReleaseCadence(g.input)).due, true);
+  const h = fixture();
+  h.data['/git/matching-refs/heads/release-please--'] = [{ ref: `refs/heads/${RELEASE_PR_BRANCH}` }];
+  h.data[releasePrHeadKey(RELEASE_PR_BRANCH)] = { unexpected: true };
+  assert.equal((await planReleaseCadence(h.input)).due, true);
+});
+
+test('rate limits inside the freeze probe still defer the whole plan', async () => {
+  const f = fixture();
+  let calls = 0;
+  const read = createPublicMetadataReader({ now: () => 0, sleep: async () => {},
+    fetchImpl: async () => {
+      calls++;
+      if (calls === 1) return { status: 200, text: async () => JSON.stringify(repo) };
+      return { status: 429, headers: { get: () => '0' } };
+    } });
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...f.input, read }),
+    { due: false, reason: 'metadata-rate-limited' });
+  assert.equal(calls, 2);
 });
 
 test('failed, running, absent, foreign and ambiguous CI evidence fails closed', async () => {
