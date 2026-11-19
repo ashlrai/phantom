@@ -4,15 +4,17 @@
  */
 import { readFileSync } from 'node:fs';
 import { checkGoal, GATE_EXIT, goalFromPrompt, goalTerms, helpItems, readApiRoutes, readDocHeadings, readPanes, type BetsCheckReport } from '../core/fleet/bets-check.js';
+import { DEFAULT_PROPOSE_COUNT, gatherCandidates, MAX_PROPOSE_COUNT, proposeBets, proposeLines, readRepoName } from '../core/fleet/bets-propose.js';
 import { explainBetLines, nextBetsLines, readNextBets, type BetReaders } from '../core/fleet/next-bets.js';
 import { BetInputError, type Bet, type BetDirection } from '../core/metrics/bets.js';
 import { killBet, launchBet, readBets, scoreCycle } from '../core/metrics/bets-store.js';
 import { defaultLoopReaders, type LoopReaders } from '../core/metrics/loop-collect.js';
 import { LOOP_METRIC_KEYS } from '../core/metrics/loop.js';
 
-export const BETS_USAGE = `Usage: phm bets <check|suggest|explain|list|launch|score|kill> [--json]
+export const BETS_USAGE = `Usage: phm bets <check|propose|suggest|explain|list|launch|score|kill> [--json]
   phm bets check "<goal text>" [--json]
   phm bets check --from-prompt <file> [--gate] [--json]
+  phm bets propose [--lane <lane>] [--count <n>] [--json]
   phm bets suggest [--json] [--limit N]
   phm bets explain <id> [--json]
   phm bets list [--json]
@@ -24,6 +26,10 @@ check looks the goal up in this checkout's CLI help, API routes, web-ui panes an
 exists with up to 10 matches and one suggested delta line (schema bets.check.v1). Read-only and offline: run it before queuing work.
 --from-prompt reads a queue prompt file: the goal is the task after the closing parenthesis on the line after "verbatim:", up to "Acceptance:".
 --gate turns the verdict into the exit code: 0 new (go), 2 partial (build only the gap), 3 exists (stop, finish with a note), 1 error; with --json the code also shows as "exitCode".
+propose lets a lane ask for its own next work: it gathers candidates from this checkout's backlog (TODO/FIXME comments,
+open roadmap items, skipped tests, commands no docs page names), runs each through check, drops what already exists and ranks
+the rest: user-facing first, smallest size next. Each row has an id, repo, size, goal and an Acceptance line (schema bets.propose.v1;
+defaults --lane claude --count ${DEFAULT_PROPOSE_COUNT}, at most ${MAX_PROPOSE_COUNT}). Read-only: it never writes a queue file.
 Ledger: $ASHLR_RUNS_DIR or ~/.ashlr-runs, file metrics/bets.jsonl (append-only).
 Metric keys: ${LOOP_METRIC_KEYS.join(', ')}.
 score runs one kill-fast cycle: kept when a bet job merged and the metric moved, killed when over budget without
@@ -98,6 +104,18 @@ export async function cmdBets(argv: string[], deps: BetsCliDeps = {}): Promise<n
         const exitCode = GATE_EXIT[report.verdict];
         out(json ? JSON.stringify(gate ? { ...report, exitCode } : report, null, 2) : checkLines(report).join('\n'));
         return gate ? exitCode : 0;
+      }
+      case 'propose': {
+        const f = flags(rest, ['--lane', '--count']);
+        const count = f?.has('--count') ? num(f.get('--count')) : DEFAULT_PROPOSE_COUNT;
+        const lane = f?.get('--lane') ?? 'claude';
+        if (!f || !Number.isInteger(count) || count! < 1 || count! > MAX_PROPOSE_COUNT || !/^[a-z][a-z0-9-]{0,30}$/.test(lane)) return usage();
+        const { HELP_ENTRIES } = await import('./help.js');
+        const root = deps.root ?? process.cwd();
+        const entries = HELP_ENTRIES.map(e => ({ cmd: e.cmd, desc: e.desc }));
+        const report = proposeBets(gatherCandidates(root, entries), { cli: helpItems(entries), api: readApiRoutes(root), pane: readPanes(root), doc: readDocHeadings(root) }, { lane, repo: readRepoName(root), count: count! });
+        out(f.has('--json') ? JSON.stringify(report, null, 2) : proposeLines(report).join('\n'));
+        return 0;
       }
       case 'suggest': {
         const f = flags(rest, ['--limit']);
