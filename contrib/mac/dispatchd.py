@@ -881,6 +881,19 @@ def _maxruntime_escalated(marker):
     try:
         with open(marker) as f: return "KILL" in {line.strip() for line in f}
     except OSError: return True
+def _maxruntime_done_identities(marker):
+    done = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return done
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("done") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            done.add((pid, start_time))
+    return done
 def _write_maxruntime_identities(marker, identities):
     with open(marker, "w") as f:
         for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
@@ -902,15 +915,22 @@ def job_watchdog():
             if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
                 if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
                     expected = _maxruntime_identities(mk)
-                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=expected)
+                    done = _maxruntime_done_identities(mk)
+                    pending = [identity for identity in sorted(expected) if identity not in done]
+                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=set(pending)) if pending else []
                     if signalled:
-                        with open(mk, "a") as f: f.write("KILL\n")
+                        with open(mk, "a") as f:
+                            for pid, start_time in signalled:
+                                f.write(json.dumps({"pid": pid, "start": start_time, "done": True}, separators=(",", ":")) + "\n")
+                        done.update(signalled)
                         ev("REAP TIMEOUT %s SIGKILL" % j)
-                    elif any(_maxruntime_identity_alive(identity) for identity in expected):
-                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
-                    else:
+                    unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
+                    if not unresolved:
                         with open(mk, "a") as f: f.write("KILL\n")
-                        ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
+                        if not signalled:
+                            ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
+                    else:
+                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
                 continue
             if age < limit: continue
             if not os.path.exists(RUN + "/" + j + ".rc"):
