@@ -1321,7 +1321,12 @@ Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
 This is a pure retained-snapshot projection, not a historical ledger or identity
 check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
-No HTTP feed endpoint is provided by this foundation.
+`readBusWorkFeed` (`src/core/agents/bus-work-feed-read.ts`) is the bounded
+read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
+(`src/core/verse/agent-bus-api.ts`, read session required, no parameters)
+serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
+200 with the projection's own status, `unavailable`/`retryable`/`invalid`
+answer 503.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

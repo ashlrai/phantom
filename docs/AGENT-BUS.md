@@ -392,7 +392,14 @@ Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; orphan statuses are ignored. Duplicate posts and malformed work
 bodies are refused. Legacy and unrelated bodies stay opaque. This projection is
 neither a historical ledger nor an identity check; labels grant no authority.
-HTTP work-feed endpoints remain unimplemented.
+
+`phm fleet work-feed --json` and GET `/api/verse/agent-bus/work-feed` serve the
+same `BusWorkFeedReadResult` as `{v:1, status, jobs?, receipts, asOf}`. The
+endpoint needs a current read session, takes no parameters, and answers 200
+for `ok` and `refused` — the projection's own status and reason stay in the
+body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
+missing store reads as an empty `ok` feed. Status filtering stays client-side;
+a missing provider stays a refusal, never a fabricated owner.
 
 ### Bounded peer dispatch
 
@@ -478,7 +485,8 @@ a read-only view of queue prompt files and can be merged onto that board with
 `claimBoard()`. `phm agents roster` reads this table through `readRosterClaims`.
 A message-id lease is shown under its bus message id, so a roster session and
 a bus claim still share one lease.
-HTTP work-feed endpoints are not implemented against this contract yet.
+GET `/api/verse/agent-bus/work-feed` serves the work-feed projection over
+HTTP (read session required; `ok`/`refused` answer 200, storage faults 503).
 
 ### Message links in Fleet
 
