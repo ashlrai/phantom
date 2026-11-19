@@ -342,6 +342,21 @@ implementation escalates only for an explicit implementation bottleneck.
 `explainRoutes(root, nowSeconds)` adds nullable `pairing` from the optional
 `queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
 
+# Outcome-driven router weight proposals
+
+`src/core/router/tune.ts` exports `tuneRouterWeights({runsDir?, minSample?,
+maxShift?, apply?, now?})` returning `router.tune.report.v1`. It folds
+`metrics/jobs.jsonl` through the `router.outcome.v1` reader and joins
+`work-market.v1` `route_decision` rows by job for `work_class`/`chosen_lane`
+fallback only. Outcomes group into `(work_class, lane)` cohorts; a cohort with
+fewer than `minSample` resolved outcomes, or a zero/unmeasurable pool merge
+rate, is refused with a status and `weight: null`, never guessed. Proposed
+weights are the cohort merge rate over the work-class pool merge rate clamped
+to `1 ± maxShift` (defaults 5 and 0.1). `apply` appends deduplicated
+`router.weights.v1` rows to `metrics/router-weights.jsonl` (0600); the journal
+is advisory and no router consumes it. `phm router tune` is the thin
+dispatcher. See [docs/router/tune.md](docs/router/tune.md).
+
 # Phantom — shared core contract (M1/M2 baseline)
 
 Resource-live sources accept optional `usage.liveSources` configuration (see
