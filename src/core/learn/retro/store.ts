@@ -28,7 +28,7 @@ import { join } from 'node:path';
 import { scrubPrivateText } from '../../util/scrub.js';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
 import { writePrivateFileAtomicallyAsync } from '../../util/private-file-write.js';
-import type { NightlyState } from './nightly-types.js';
+import type { NightlyLesson, NightlyPrior, NightlyProposal, NightlyState } from './nightly-types.js';
 import {
   KNOWLEDGE_EVIDENCE_MAX,
   KNOWLEDGE_NOTE_MAX_CHARS,
@@ -170,6 +170,106 @@ export async function updateNightlyState(
     });
     return 'completed';
   } finally { releaseLocalStoreLock(lock); }
+}
+
+// ---------------------------------------------------------------------------
+// Nightly report (read-only projection of retro-proposals.json)
+// ---------------------------------------------------------------------------
+
+export const NIGHTLY_REPORT_SCHEMA = 'learn.nightly-report.v1';
+/** Per-section item cap; counts always report the exact retained totals. */
+export const NIGHTLY_REPORT_LIST_LIMIT = 200;
+
+export interface NightlyReportCounts {
+  jobs: number;
+  reviews: number;
+  priors: number;
+  lessons: number;
+  proposals: number;
+}
+
+/**
+ * Read-side fold of the nightly ONE-TEAM state for `phm improve nightly`.
+ * 'read' is the only state with trustworthy content: 'missing' means no
+ * completed nightly state exists (first run); 'unreadable' means the file was
+ * unsafe, corrupt, oversized or changed during read. Counts and items stay
+ * null/empty unless state==='read' — unknown stays unknown, never zero-filled.
+ * Proposals remain advisory; this report never writes, attests or dispatches.
+ */
+export interface NightlyReport {
+  schema: typeof NIGHTLY_REPORT_SCHEMA;
+  state: 'read' | 'missing' | 'unreadable';
+  /** Absolute path of the state file this report was folded from. */
+  path: string;
+  /** UTC night (YYYY-MM-DD) the retained state completed; null unless state==='read'. */
+  completedNight: string | null;
+  /** Exact retained row counts per section; null unless state==='read'. */
+  counts: NightlyReportCounts | null;
+  /** Items per section are capped at `limit`; compare against counts for the exact total. */
+  limit: number;
+  /** Advisory Beta posteriors per (repo, arm). */
+  priors: NightlyPrior[];
+  /** Pending lessons awaiting a proposal or human review. */
+  lessons: NightlyLesson[];
+  /** Proposed improvement jobs; advisory only. */
+  proposals: NightlyProposal[];
+}
+
+function nightlyReportLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return NIGHTLY_REPORT_LIST_LIMIT;
+  return Math.max(1, Math.min(Math.floor(limit), NIGHTLY_REPORT_LIST_LIMIT));
+}
+
+function unreadNightlyReport(state: 'missing' | 'unreadable', path: string, limit: number): NightlyReport {
+  return {
+    schema: NIGHTLY_REPORT_SCHEMA,
+    state,
+    path,
+    completedNight: null,
+    counts: null,
+    limit: nightlyReportLimit(limit),
+    priors: [],
+    lessons: [],
+    proposals: [],
+  };
+}
+
+/** Pure fold of a validated NightlyState into the report shape. */
+export function buildNightlyReport(state: NightlyState, limit = NIGHTLY_REPORT_LIST_LIMIT): NightlyReport {
+  const cap = nightlyReportLimit(limit);
+  return {
+    schema: NIGHTLY_REPORT_SCHEMA,
+    state: 'read',
+    path: nightlyProposalsPath(),
+    completedNight: state.completedNight,
+    counts: {
+      jobs: state.jobs.length,
+      reviews: state.reviews.length,
+      priors: state.priors.length,
+      lessons: state.lessons.length,
+      proposals: state.proposals.length,
+    },
+    limit: cap,
+    priors: state.priors.slice(0, cap),
+    lessons: state.lessons.slice(0, cap),
+    proposals: state.proposals.slice(0, cap),
+  };
+}
+
+/**
+ * Read and fold the nightly state. Missing output reports state='missing';
+ * unsafe, corrupt or raced output reports state='unreadable' — never throws,
+ * so a degraded private file cannot take down the caller.
+ */
+export async function readNightlyReport(limit = NIGHTLY_REPORT_LIST_LIMIT): Promise<NightlyReport> {
+  const path = nightlyProposalsPath();
+  let state: NightlyState | null;
+  try {
+    state = await readNightlyState();
+  } catch (error) {
+    return unreadNightlyReport((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable', path, limit);
+  }
+  return state === null ? unreadNightlyReport('missing', path, limit) : buildNightlyReport(state, limit);
 }
 
 // ---------------------------------------------------------------------------
