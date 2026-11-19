@@ -465,6 +465,16 @@ same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
 the same read with a current read session. The default window is the last 15
 minutes, the same as the map.
 
+#### Recent bus messages
+
+`phm bus recent [--since 5m] [--json]` lists agent-to-agent messages, newest
+first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
+summary}]}`. `from` and `to` are routing labels and `summary` is one plain
+line of at most 100 characters (the scrubbed summary, never the message
+body). An empty bus prints "No messages yet."; `messages` is null when the bus
+could not be read. The Fleet map pulses the same lines, and clicking a line
+opens its messages.
+
 #### Message graph
 
 `phm fleet message-graph [--json] [--since 10m]` shows the same messages as

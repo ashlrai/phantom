@@ -2918,7 +2918,10 @@ async function main(): Promise<void> {
         // and `phm fleet bus ...` are the shared task board.
         const mailboxVerb = rest[0] === 'send' || rest[0] === 'inbox' || rest[0] === 'ack' ||
           (rest[0] === '--json' && (rest[1] === 'send' || rest[1] === 'inbox' || rest[1] === 'ack'));
-        if (mailboxVerb) {
+        if (rest[0] === 'recent') {
+          const { cmdBusRecent } = await import('./bus-recent.js');
+          process.exitCode = await cmdBusRecent(rest.slice(1));
+        } else if (mailboxVerb) {
           const { cmdBus } = await import('./bus.js');
           process.exitCode = await cmdBus(rest);
         } else {

@@ -77,6 +77,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ok:true,messages:BusEnvelope[],hasMore} or {ok:false,error:{code,message}}',
   },
   {
+    usage: 'phm bus recent [--since 5m] --json',
+    description: 'Agent-to-agent messages from the last 5 minutes (or --since 10m, 2h, 1d), newest first, each with a plain summary of at most 100 characters; "No messages yet." when none. Read-only. Exit 0 read, 1 bus unreadable, 2 usage.',
+    safety: 'read',
+    jsonShape: 'bus.recent.v1 {schema,as_of,messages:[{at,from,to,kind,summary}]|null}',
+  },
+  {
     usage: 'phm bus ack <id> --to <label> --json',
     description: 'Append an idempotent local mailbox acknowledgment after checking the stored recipient. Same-user routing labels are not authenticated identities. Exit 0 acknowledged/replayed, 1 operational refusal or missing message, 2 usage.',
     safety: 'append',
@@ -1159,6 +1165,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'agents roster [--json]', desc: 'Unified live session roster. One probe per source, about 5s each, unknown on timeout or an unverified command. Read-only.', topic: 'autonomy' },
   { cmd: 'agents mesh status [--json]', desc: 'Flat agent mesh: direct addresses, lanes, last-seen and current tasks. Read-only.', topic: 'autonomy' },
   { cmd: 'bus thread|task <verb> [--peer <id>] [--json]', desc: 'Shared task board: local threads plus task claim, handoff, renew and release tied to fenced fleet queue claims. Cooperative labels only; no execution authority.', topic: 'autonomy' },
+  { cmd: 'bus recent [--since 5m] [--json]', desc: 'Who messaged whom lately: agent-to-agent messages from the last 5 minutes, newest first, with a plain summary of at most 100 characters. The Fleet map pulses the same lines. Read only.', topic: 'autonomy' },
   { cmd: 'bus send|inbox|ack [--json]', desc: 'Durable local message mailbox: send JSON, read a recipient inbox and acknowledge messages; separate from the task board. `phm bus send --help` for options.', topic: 'autonomy' },
   { cmd: 'metrics merges', desc: 'Show hourly merges and median open-to-merge time by lane for the last 24 hours.', topic: 'autonomy' },
   { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
