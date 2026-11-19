@@ -417,8 +417,12 @@ bindings supplies enabled state, peer allowlist, repository allowlist, tier ceil
 and exact permitted paths. See [Agent Bus dispatch](docs/AGENT-BUS.md#bounded-peer-dispatch).
 Results contain status, dryRun, bounded results, and a cursor on success.
 Only authenticated admission receipts qualify; labels and peer status messages
-cannot authorize claims or prove completion. No shell, engine, merge or spending
-is invoked. Queue task strings remain untrusted data under existing worker gates.
+cannot authorize claims or prove completion. `readPeerInbox` admits a
+`work.result` envelope only when the private journal proves this host published
+that exact outcome body to the caller's callsign (latest sent outcome per
+receipt) and reports `workResults: missing|available|unavailable`. No shell,
+engine, merge or spending is invoked. Queue task strings remain untrusted data
+under existing worker gates.
 
 `QueueJob` (RQ-SHARED-QUEUE-1) carries the optional market requirements
 `max_tier` (tier ceiling; `tier` and `min_tier` may not exceed it), `data_class`

@@ -9,12 +9,13 @@ import { configuredSlackCall, readSlackDeliveryPolicy } from '../agents/slack-le
 import { evaluateSlackAudience } from '../agents/slack-audience.js';
 import { deliverSlackEnvelope, observeSlackAudience, type SlackCall } from '../agents/slack-transport.js';
 import { parseSlackThreadRef } from '../agents/slack-network.js';
-import { appendBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { appendBusInbox, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { appendNeedsMasonLine } from '../fleet/needs-mason-append.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { agentnetPaths, authenticatePeer, callsignSchema, readPeerBindings, readPeerJson, type PeerSession } from './slack-identities.js';
+import { readWorkDispatchJournal, workDispatchResultBody, type WorkDispatchReceipt } from './work-dispatch-journal.js';
 
 export const PEER_MAX_HOPS = 8, PEER_PAIR_LIMIT = 6, PEER_WINDOW_MS = 60_000;
 const idSchema = z.string().regex(/^peer-[a-f0-9-]{36}(?![\s\S])/);
@@ -136,20 +137,39 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
   finally { releaseLocalStoreLock(lock); }
 }
 
+const WORK_RESULT_ID = /^(pw-[a-f0-9]{32})-(reserved|admitted|complete|failed)$/;
+/** work.result replies bypass the admission ledger; only the private dispatch
+ * journal proves this host published that outcome to this callsign, with the
+ * exact body it wrote. Only the latest sent outcome per receipt is admitted;
+ * earlier per-outcome replies stay bus-local history. */
+function admittedWorkResult(original: NonNullable<BusInboxReceipt['originalEnvelope']>,
+  callsign: string, receipts: ReadonlyMap<string, WorkDispatchReceipt>): boolean {
+  if (original.to !== callsign) return false;
+  const match = WORK_RESULT_ID.exec(original.id);
+  if (!match) return false;
+  const receipt = receipts.get(match[1]!);
+  if (!receipt || receipt.peer !== callsign || receipt.sent !== match[2] ||
+      receipt.outcome !== match[2] || original.from !== receipt.consumer) return false;
+  return JSON.stringify(original.body) === JSON.stringify(workDispatchResultBody(receipt));
+}
+
 /** Raw bus labels are never identities. Only matching private admission receipts are peers. */
 export function readPeerInbox(session: PeerSession, after = 0, options: PeerBusOptions = {}) {
   const paths = { ...agentnetPaths(), ...options }, now = (options.now ?? Date.now)();
   const peer = authenticatePeer(readPeerBindings(paths.bindings), session, now);
   const file = join(paths.busRoot, 'agentnet', 'coordination.json');
   const rows = existsSync(file) ? z.array(rowSchema).max(1024).parse(readPeerJson(file, paths.busRoot)) : [];
+  const journal = readWorkDispatchJournal(paths.busRoot);
+  const dispatched = new Map(journal.receipts.map(receipt => [receipt.receiptId, receipt]));
   const page = listBusInboxAfter(after, 100, { root: paths.busRoot, now: () => now, includeOriginalEnvelope: true });
-  if (page.status !== 'ok') return page;
+  if (page.status !== 'ok') return { ...page, workResults: journal.status };
   const messages = page.messages.filter(receipt => {
     const original = receipt.originalEnvelope;
-    return original !== undefined && rows.some(row => row.id === original.id &&
+    return original !== undefined && (rows.some(row => row.id === original.id &&
       row.target === peer.callsign && row.at <= now && now - row.at < 86_400_000 &&
       receipt.receivedAt === row.at &&
-      row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex'));
+      row.digest === createHash('sha256').update(JSON.stringify(original)).digest('hex')) ||
+      admittedWorkResult(original, peer.callsign, dispatched));
   }).map(({ cursor, receivedAt, envelope }) => ({ cursor, receivedAt, envelope }));
-  return { ...page, messages };
+  return { ...page, messages, workResults: journal.status };
 }

@@ -468,9 +468,12 @@ It reserves before admission and recovers a committed claim after a crash.
 At 512 receipts it refuses new work rather than forgetting dedupe history.
 
 `work.result` replies use stable per-receipt/per-outcome bus IDs so retries do
-not multiply replies. Read them through the durable bus cursor API. They carry
-no claim token. Queue DONE/BLOCKED with a finished matching claim produces
-complete/failed, including when the feed cursor has advanced; peer work.status
+not multiply replies. `phm agentnet peers read` admits only the journal's latest
+sent outcome per receipt to the addressed callsign, with an exact body match;
+earlier outcomes stay bus-local. The raw durable bus cursor API still shows
+every retained reply. They carry no claim token. Queue DONE/BLOCKED with a
+finished matching claim produces complete/failed, including when the feed
+cursor has advanced; peer work.status
 does not prove completion. Uncertain reservations remain visible and retryable.
 Comms-disabled or revoked peers receive no sends. Results stay on the local bus;
 Slack delivery is not part of this consumer.

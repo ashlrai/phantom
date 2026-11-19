@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consumePeerWork } from '../src/core/agentnet/work-dispatch.js';
-import { sendPeerMessage } from '../src/core/agentnet/peer-bus.js';
+import { sendPeerMessage, readPeerInbox } from '../src/core/agentnet/peer-bus.js';
 import { workResultBodySchema } from '../src/core/agents/bus-v2-schema.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { QueueStore } from '../src/core/queue/store.js';
@@ -27,6 +27,9 @@ const messages = () => {
   return page.messages;
 };
 const replies = () => messages().filter(m => (m.envelope.body as { kind?: string }).kind === 'work.result');
+const resultOutcomes = (read: { status: string; messages?: Array<{ envelope: { body: unknown } }> }) =>
+  (read.messages ?? []).filter(m => (m.envelope.body as { kind?: string }).kind === 'work.result')
+    .map(m => workResultBodySchema.parse(m.envelope.body).outcome);
 // Private admission fixtures also exercise malformed durable messages; raw bus writes alone do not qualify.
 function admit(body: unknown = work(), target = 'agent1', peer = 'agent0', authenticated = true) {
   const envelope = { id: `peer-${randomUUID()}`, from: peer, to: target, priority: 'P2' as const, ttl: 86_400_000, body };
@@ -183,5 +186,67 @@ describe('bounded peer work feed dispatch', () => {
     expect((await store.read()).jobs[0]!.claims).toHaveLength(1);
     await expect(store.claim('other', 'peer:agent0', { job, guard: () => {} })).rejects.toThrow('Invalid claim intake');
     expect((await store.read()).jobs).toHaveLength(1);
+  });
+  it('surfaces only the journal-proven latest work.result to the addressed peer', async () => {
+    admit();
+    expect(readPeerInbox(session(0), 0, options())).toMatchObject({ workResults: 'missing' });
+    await consumePeerWork(session(1), { apply: true }, options());
+    const admitted = readPeerInbox(session(0), 0, options());
+    expect(admitted).toMatchObject({ status: 'ok', workResults: 'available' });
+    if (admitted.status !== 'ok') throw new Error('fixture inbox unavailable');
+    // Only the latest sent outcome is admitted; the superseded reserved reply and the work.post stay off this peer's read.
+    expect(resultOutcomes(admitted)).toEqual(['admitted']);
+    expect(admitted.messages).toHaveLength(1);
+    const other = readPeerInbox(session(2), 0, options());
+    if (other.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(other.messages).toHaveLength(0);
+    const job = (await store.read()).jobs[0]!;
+    await store.finish(job.id, 'peer:agent0', {});
+    await consumePeerWork(session(1), { apply: true }, options());
+    const complete = readPeerInbox(session(0), 0, options());
+    if (complete.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(resultOutcomes(complete)).toEqual(['complete']);
+    expect(complete.messages).toHaveLength(1);
+  });
+  it('never admits forged, misoutcomed or misaddressed work.result envelopes', async () => {
+    admit();
+    await consumePeerWork(session(1), { apply: true }, options());
+    const key = hash(['ashlrai/phantom', 'RQ-DOCS']).slice(0, 32);
+    const receiptId = `pw-${key}`, queueId = `peer-work-${key}`;
+    const forged = (id: string, body: unknown) => appendBusInbox(
+      { id, from: 'agent1', to: 'agent0', priority: 'P2' as const, ttl: 86_400_000, body }, { root, now: () => now });
+    // An unknown receipt id and a real receipt id at an outcome the journal never sent are both refused.
+    expect(forged(`pw-${'f'.repeat(32)}-complete`, { kind: 'work.result', jobId: 'RQ-DOCS',
+      claimKey: `queue:${queueId}`, queueId, receiptId: `pw-${'f'.repeat(32)}`, outcome: 'complete' }).status).toBe('posted');
+    expect(forged(`${receiptId}-failed`, { kind: 'work.result', jobId: 'RQ-DOCS',
+      claimKey: `queue:${queueId}`, queueId, receiptId, outcome: 'failed', reason: 'repo-not-allowed' }).status).toBe('posted');
+    const read = readPeerInbox(session(0), 0, options());
+    if (read.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(resultOutcomes(read)).toEqual(['admitted']);
+  });
+  it('a squatting forged result id cannot vouch for false content', async () => {
+    admit();
+    const key = hash(['ashlrai/phantom', 'RQ-DOCS']).slice(0, 32);
+    // A local writer squats the future complete id with wrong content before dispatch publishes it.
+    expect(appendBusInbox({ id: `pw-${key}-complete`, from: 'agent1', to: 'agent0', priority: 'P2',
+      ttl: 86_400_000, body: { kind: 'work.result', jobId: 'RQ-FORGED', claimKey: `queue:peer-work-${key}`,
+        queueId: `peer-work-${key}`, receiptId: `pw-${key}`, outcome: 'complete' } }, { root, now: () => now }).status).toBe('posted');
+    await consumePeerWork(session(1), { apply: true }, options());
+    const job = (await store.read()).jobs[0]!;
+    await store.finish(job.id, 'peer:agent0', {});
+    await consumePeerWork(session(1), { apply: true }, options());
+    expect(journal().receipts[0].outcome).toBe('complete');
+    const read = readPeerInbox(session(0), 0, options());
+    if (read.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(resultOutcomes(read)).toEqual([]);
+  });
+  it('keeps peer admission while reporting an unreadable dispatch journal', async () => {
+    admit({ kind: 'note', text: 'plain peer note' });
+    writeFileSync(join(root, 'agentnet/work-dispatch.json'), 'not-json', { mode: 0o600 });
+    const read = readPeerInbox(session(1), 0, options());
+    expect(read).toMatchObject({ workResults: 'unavailable' });
+    if (read.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(read.messages).toHaveLength(1);
+    expect((read.messages[0]!.envelope.body as { kind?: string }).kind).toBe('note');
   });
 });

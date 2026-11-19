@@ -152,8 +152,12 @@ describe('orchestration integration with an explicit supervisor fixture', () => 
     await consumePeerWork(session(1), { apply: true }, options);
     expect(results().map(r => r.outcome)).toEqual(['reserved', 'admitted', 'complete']);
     expect(results().every(r => r.jobId === work().jobId && r.queueId === queueId)).toBe(true);
-    // Known missing return edge: result envelopes have no peer admission receipts.
-    expect(readPeerInbox(session(0), 0, options).messages).toEqual([]);
+    // The dispatch journal admits the latest work.result outcome to the posting peer.
+    const returned = readPeerInbox(session(0), 0, options);
+    if (returned.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(returned.workResults).toBe('available');
+    expect(returned.messages).toHaveLength(1);
+    expect(workResultBodySchema.parse(returned.messages[0]!.envelope.body).outcome).toBe('complete');
 
     const output = join(root, 'results'), log = join(root, 'checker.log');
     writeFileSync(log, checked.stdout + checked.stderr);
