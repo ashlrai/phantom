@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; contents?: Record<string, string>; contentsMiss?: 'error' } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -24,11 +24,24 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       else value = Array.from({ length: options.count ?? 2 }, (_, i) => ({ number: i + 1, headRefOid: head, headRefName: 'feature', files: [{ path: options.touched ?? 'docs/README.md' }] }));
     } else if (endpoint.includes('/branches/')) value = { commit: { sha: master } };
     else if (endpoint.includes('/compare/')) value = { status: 'ahead' };
-    else if (endpoint.includes('/contents/')) value = { encoding: 'base64', content: Buffer.from(options.imports ?? "import { it } from 'vitest';").toString('base64') };
+    else if (endpoint.includes('/contents/')) {
+      if (options.contents) {
+        const path = endpoint.split('/contents/')[1]!.split('?')[0]!;
+        const source = options.contents[path];
+        if (source === undefined) {
+          if (options.contentsMiss === 'error') return { ok: false, stdout: '', stderr: 'HTTP 500: Internal Server Error' };
+          return { ok: false, stdout: '', stderr: 'HTTP 404: Not Found' };
+        }
+        value = { encoding: 'base64', content: Buffer.from(source).toString('base64') };
+      } else {
+        value = { encoding: 'base64', content: Buffer.from(options.imports ?? "import { it } from 'vitest';").toString('base64') };
+      }
+    }
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? 'pass' : 'shared')}`);
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.web ? 'web-shared' : 'shared';
+      return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
       value = { total_count: 1, jobs: [{ id: isMaster ? 10 : 20, conclusion: isMaster && options.pass ? 'success' : 'failure', head_sha: isMaster ? master : head }] };
@@ -75,6 +88,58 @@ describe('CI baseline evidence', () => {
   it('does not infer independence with unresolved imports', async () => {
     const report = await analyzeCiBaseline('owner/repo', github({ imports: "import helper from '#helper';" }).gh);
     expect(report.groups[0]?.classification).toBe('unknown');
+  });
+  it('parses Vitest project labels and web-ui suite paths', () => {
+    const failures = parseBaselineFailures([
+      'FAIL  |unit| test/example.test.ts > owner status > reports delivery',
+      'AssertionError: expected 1 to be 2',
+      'FAIL  |console| src/web-ui/design/tokens.test.tsx > tokens > exposes accent',
+      'FAIL src/core/not-a-suite.ts > ignored',
+      'FAIL  |unit| test/example.ts > ignored suffix',
+      'FAIL  |unit| test/other.test.ts',
+    ].join('\n'));
+    expect(failures.map(f => f.file)).toEqual(['test/example.test.ts', 'src/web-ui/design/tokens.test.tsx']);
+    expect(failures[0]).toMatchObject({ names: 'owner status > reports delivery' });
+    expect(failures[0]?.excerpt).toContain('AssertionError: expected 1 to be 2');
+    expect(failures[1]?.names).toBe('tokens > exposes accent');
+  });
+  it('resolves bundler-style imports across the dependency closure', async () => {
+    const contents = {
+      'test/example.test.ts': "import './helper.js';\nimport './format';\nimport './panes';\nimport './data.json';\nimport './theme.css';\nimport raw from './snippet.ts?raw';",
+      'test/helper.ts': 'export const helper = 1;',
+      'test/format.tsx': 'export const format = 1;',
+      'test/panes/index.ts': 'export const panes = 1;',
+      'test/data.json': '{}',
+      'test/theme.css': 'body {}',
+      'test/snippet.ts': 'export const snippet = 1;',
+    };
+    const untouched = await analyzeCiBaseline('owner/repo', github({ contents }).gh);
+    expect(untouched.groups[0]?.classification).toBe('shared-baseline');
+    for (const dep of ['test/helper.ts', 'test/format.tsx', 'test/panes/index.ts', 'test/data.json', 'test/theme.css', 'test/snippet.ts']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ contents, touched: dep }).gh);
+      expect(report.groups[0]?.action, dep).toBe('pr-caused');
+    }
+  });
+  it('fails closed when a dependency probe errors instead of 404ing', async () => {
+    const contents = { 'test/example.test.ts': "import './helper.js';" };
+    const report = await analyzeCiBaseline('owner/repo', github({ contents, contentsMiss: 'error' }).gh);
+    expect(report.groups[0]?.classification).toBe('unknown');
+  });
+  it('groups web-ui suite failures and resolves bundler imports', async () => {
+    const contents = {
+      'src/web-ui/design/tokens.test.tsx': "import { palette } from './palette.js';\nimport sheet from '../global.css';",
+      'src/web-ui/design/palette.ts': "import './palette-extra';",
+      'src/web-ui/design/palette-extra.tsx': 'export const extra = 1;',
+      'src/web-ui/global.css': 'body {}',
+    };
+    const report = await analyzeCiBaseline('owner/repo', github({ web: true, contents }).gh);
+    expect(report.groups[0]).toMatchObject({ file: 'src/web-ui/design/tokens.test.tsx', classification: 'shared-baseline', action: 'queue-master-fix' });
+    for (const dep of ['src/web-ui/design/palette.ts', 'src/web-ui/design/palette-extra.tsx', 'src/web-ui/global.css']) {
+      const caused = await analyzeCiBaseline('owner/repo', github({ web: true, contents, touched: dep }).gh);
+      expect(caused.groups[0]?.action, dep).toBe('pr-caused');
+    }
+    const flake = await analyzeCiBaseline('owner/repo', github({ web: true, contents, count: 1, pass: true }).gh);
+    expect(flake.groups[0]?.action).toBe('rerun-failed');
   });
   it('handles empty PR lists, invalid repositories, and empty logs', async () => {
     expect((await analyzeCiBaseline('owner/repo', github({ count: 0 }).gh)).groups).toEqual([]);

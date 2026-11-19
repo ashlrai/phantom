@@ -1,0 +1,2 @@
+FAIL  |console| src/web-ui/design/tokens.test.tsx > tokens > exposes accent
+AssertionError: expected '#fff' to be '#000'
