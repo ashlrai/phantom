@@ -435,6 +435,21 @@ adaptive.json, HOLD); when slots.json parses, a derived report recomputes
 per-lane `blocked` reason codes with the same eligibility rules as
 `contrib/mac/work_market.py`, reported as `derivedReasons: true`.
 
+`src/core/fleet/adaptive-signals.ts` exports `ADAPTIVE_SCHEMA`
+(`fleet.adaptive.v1`), `ADAPTIVE_FRESH_SECONDS` (300, the market's freshness
+bound), `adaptiveSignals(lines, now, hours)`, `readAdaptiveSignals(path, hours,
+now, read?)`, `unknownAdaptive(hours, now?)` and the `AdaptiveReport`,
+`AdaptiveLaneReport`, `AdaptiveLaneSignal`, `AdaptivePublish` types backing
+`phm fleet adaptive` (`fleet.adaptive.v1` report). The module is pure: ledger
+lines in, report out; the CLI owns the `queue/adaptive.json` write. Per lane it
+reports launch/finish/empty/merged counts plus the published signals —
+`empty_rate` over finished runs, `yield_rate` merged over launches (the
+`fleet.yield` `merged_per_launch` definition), `model_latency_s` the median
+`model_s` on in-window finish rows and `backoff` always null (an eligibility
+exclusion outcome statistics may not set). Unmeasured signals are null, an
+unreadable ledger is `known: false` with `publish: null`, and `publish` is the
+exact `{ts, lanes}` object `--apply` writes atomically.
+
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
 The optional synchronous host guard runs under that lock; an existing ID or an

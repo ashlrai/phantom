@@ -226,10 +226,19 @@ latency and stable executor order. Recent finish events supply empty-rate and
 fallback. Audit `latency_source` distinguishes a model phase from total session
 time; it never labels total time as model-only latency. An optional `queue/adaptive.json` projection may
 supply `{ts,lanes:{"lane-name":{empty_rate,yield_rate,model_latency_s,backoff}}}`;
-only observations at most 300 seconds old are used. Missing measurements stay
-null in audit data. Advisory observations cannot advertise capabilities, change
-a target, clear a hold or enable spending. Unknown model mappings do not invent
-a price. Cost classes come from host executor metadata.
+only observations at most 300 seconds old are used. `phm fleet adaptive [--apply]`
+computes it from `metrics/jobs.jsonl` over `--window` hours (default 24, max 168):
+`yield_rate` is merged runs over launches — the `fleet.yield` merged-per-launch
+definition, which has no finish-event fallback and stays neutral until published —
+`empty_rate` is finished-empty runs over finished runs, `model_latency_s` is the
+median `model_s` on finish rows (null while none report one; `wall_s` is never
+relabelled as model latency), and `backoff` stays null because it is an
+eligibility exclusion only host slot evidence or an operator hold may set. The
+file must be republished within 300 seconds or the market ignores it; `--apply`
+atomically replaces it and a dry run prints the same projection. Missing
+measurements stay null in audit data. Advisory observations cannot advertise
+capabilities, change a target, clear a hold or enable spending. Unknown model
+mappings do not invent a price. Cost classes come from host executor metadata.
 
 ## Routing receipts and JSON audit
 
