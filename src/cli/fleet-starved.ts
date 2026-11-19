@@ -41,6 +41,8 @@ export interface FleetStarvedView {
   starved_lanes: FleetStarvedIdleLane[] | null;
   /** READY rows waiting on a held or drained pool that a starved lane could run instead. */
   waiting_elsewhere: number;
+  /** Lane-open READY rows — open supply any lane may claim; null when the lanes read failed. */
+  open_rows: number | null;
 }
 
 export type FleetStarvedReader = (path: string) => Promise<string>;
@@ -79,12 +81,12 @@ function admitReason(value: unknown): string | null {
 }
 
 /** Starved lanes (free slots, no ready rows) from the lanes read, biggest gap first. */
-export function idleStarved(read: StarvedRead | null): Pick<FleetStarvedView, 'starved_lanes' | 'waiting_elsewhere'> {
-  if (read === null) return { starved_lanes: null, waiting_elsewhere: 0 };
+export function idleStarved(read: StarvedRead | null): Pick<FleetStarvedView, 'starved_lanes' | 'waiting_elsewhere' | 'open_rows'> {
+  if (read === null) return { starved_lanes: null, waiting_elsewhere: 0, open_rows: null };
   const starved_lanes = Object.entries(read.lanes)
     .flatMap(([lane, row]) => row.starved && row.line !== null ? [{ ...row, lane: plain(lane), line: plain(row.line) }] : [])
     .sort((a, b) => (b.free_slots ?? 0) - (a.free_slots ?? 0) || a.lane.localeCompare(b.lane));
-  return { starved_lanes, waiting_elsewhere: read.waiting_elsewhere };
+  return { starved_lanes, waiting_elsewhere: read.waiting_elsewhere, open_rows: read.open_rows ?? null };
 }
 
 /** Project only the lanes with queued work plus the admission verdict. Never copies the rest of the status file. */

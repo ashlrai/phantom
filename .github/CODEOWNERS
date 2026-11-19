@@ -328,6 +328,7 @@
 /test/cloud-timeline.test.ts @masonwyatt23
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/codex-session-usage.test.ts @masonwyatt23
+/test/coding-cli-offline-policy-replay-recovery-648s.test.ts @masonwyatt23
 /test/comms-agent-send-policy.test.ts @masonwyatt23
 /test/comms-send-policy-typefix-s133.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23

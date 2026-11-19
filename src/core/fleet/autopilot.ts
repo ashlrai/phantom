@@ -298,10 +298,13 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
     });
   }
 
-  // missing-restock: free slots with no launchable supply at all.
+  // missing-restock: free slots with no launchable supply at all. Lane-open
+  // READY rows are open supply the market may place on any lane, so a
+  // positive unhinted count keeps a free lane from reading as missing restock.
+  const openSupply = state.queue?.unhinted ?? 0;
   for (const lane of lanes) {
     const waiting = lane.ready ?? lane.queued;
-    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0) continue;
+    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0 || openSupply > 0) continue;
     gaps.push({
       kind: 'missing-restock', lane: lane.lane,
       severity: 50 + Math.min(lane.freeSlots * 2, 20),
