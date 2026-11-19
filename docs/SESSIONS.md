@@ -42,6 +42,17 @@ line is one object `{ts, source, text}`; the first also carries `detail`
 can reach it. An unknown id is a plain error with exit code 2. Choosing a node
 on the desktop Compute map opens a side panel with the same log and controls.
 
+To see what every session is saying on one screen, run `phm sessions threads`.
+It prints a count by state, then a few lines per session, leader first: the
+summary and its newest three messages, each on one line, with a note of how
+many earlier ones there are. What you wrote counts: the leader's lines include
+your Leader inbox messages, and a worker's the ones you aimed at it with
+`@<job>`. `--lane`, `--repo` and `--live` narrow it the same way they narrow
+the tree. It shows up to 40 sessions and says how many it left out. `--json`
+prints `fleet.session-threads.v1`; when the session list cannot be read it
+says so and exits 1 instead of printing an empty list. See
+[session threads](FLEET-API.md#session-threads).
+
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
 the tree. It prints a short summary (what the session is, its state, commands

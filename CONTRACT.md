@@ -1306,6 +1306,35 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 10 minutes without output and null when that time is unknown.
 `throttledLiveMap` is now generic over its value type.
 
+## Session threads (`fleet.session-threads.v1`)
+
+`src/core/fleet/session-threads.ts` exports the pure
+`buildSessionThreads(list, parts, now)`, `renderSessionThreadsText(read)`,
+`threadSessions(list)`, the limits `THREADS_MAX` (40 sessions),
+`THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
+and the types `SessionThreadsV1`, `SessionThreadsEntry`,
+`SessionThreadsMessage` and `SessionThreadsParts`. `parts` is
+`{sessionsRead, bus, activity, replies?, owner?}`, where `activity` maps a job
+id to its activity read (null when that read failed, no key when it was not
+asked for) and `owner` is the Leader inbox, handed to the leader's and every
+worker's thread and to no helper's. Each entry is built by
+`buildSessionThread`, so its session, summary, sources and gaps equal the
+single-session thread for the same records.
+`src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
+with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
+`readLeader`, `readActivity`, `readBus`, `readOwner` and `readReplies`; the
+list, the bus, the Leader inbox and the leader's replies are read once and
+each shown job's activity once.
+`src/cli/sessions.ts` exports `cmdSessionThreads(args, read)` for
+`phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]` (exit
+0 read, 1 list unreadable, 2 usage).
+`src/core/verse/fleet-session-threads-api.ts` exports
+`createFleetSessionThreadsApi(read)`, `defaultSessionThreadsRead()`,
+`handleFleetSessionThreadsApi` and `SESSION_THREADS_PATH` for
+`GET /api/verse/fleet/control/session-threads` (read session required; 200,
+400, 401, 405, 503). It adds no source and writes nothing. Fields are listed
+in `docs/FLEET-API.md`.
+
 ## Session thread (`fleet.session-thread.v1`)
 
 `src/core/fleet/session-thread.ts` exports the pure
