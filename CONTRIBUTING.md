@@ -25,6 +25,10 @@ npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
 # CI and release packaging: npm ci
 ```
 
+A first-time contributor with a single checkout can use plain `npm ci`; no pnpm
+is needed. [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md) walks
+through clone, fork remote, checks and pull request in order.
+
 Run focused verification locally while developing. Pull requests and default-branch
 pushes run the repository's CI and Dependency Audit workflows. Check the actual
 run for your commit; workflow source alone is not evidence that it passed.
@@ -59,7 +63,7 @@ To install the CLI while developing:
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
-| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master and run one type check; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). It does not replace the hosted `Merge Gate` check. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
@@ -72,7 +76,7 @@ For explicit Bun-compatible test inventories, see the standalone
 [Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
 is separate from these scripts.
 
-Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite, so the full CI check remains the merge gate. A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
+Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite. The hosted `Merge Gate` check stays required: on a pull request it runs secret scans, the generated-files check and a typecheck plus affected tests, while the full suites run on the six-hour scheduled `master` run and failures there are fixed forward (see [what CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires)). A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
 
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
