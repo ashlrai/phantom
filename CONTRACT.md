@@ -470,8 +470,12 @@ validator for shared bounded, printable, secret-free queue prompt validation.
 
 `PeerRequest.work?: z.infer<typeof workPostBodySchema>` is accepted only for a
 directed task; its authenticated bus body is `work.post`, with the same enrollment
-and audience checks. The CLI adds `phm agentnet peers post <to> <work-post-json>`
-and `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
+and audience checks. The send verifies the shared work feed first: provider must
+be named or resolvable through the sender callsign's registered runtime, the job
+id must be unannounced, and an unreadable feed refuses — so a peer proposal
+cannot post the body that would poison the projection for every reader. The CLI
+adds `phm agentnet peers post <to> <work-post-json>` and
+`phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
 Dispatch is a read-only preview unless apply is exactly true. Results use only
 the local bus and its current comms/participant allowlist, never a Slack send.
 

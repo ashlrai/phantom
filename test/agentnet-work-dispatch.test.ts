@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consumePeerWork } from '../src/core/agentnet/work-dispatch.js';
-import { sendPeerMessage, readPeerInbox } from '../src/core/agentnet/peer-bus.js';
+import { sendPeerMessage, readPeerInbox, type PeerBusOptions } from '../src/core/agentnet/peer-bus.js';
 import { workResultBodySchema } from '../src/core/agents/bus-v2-schema.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
+import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { QueueStore } from '../src/core/queue/store.js';
 import { cmdAgentnet } from '../src/cli/agentnet.js';
@@ -15,12 +17,21 @@ const session = (n = 0) => ({ lane: `lane-${n}`, sessionId: `session-${n}`, toke
 const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const options = () => ({ bindings: join(root, 'bindings.json'), busRoot: root, runsDir: root, now: () => now });
 const work = () => ({ kind: 'work.post' as const, jobId: 'RQ-DOCS', title: 'Fix spelling', repo: 'ashlrai/phantom',
-  claimKeys: ['queue:RQ-DOCS', 'path:ashlrai/phantom:docs/AGENT-BUS.md'],
+  claimKeys: ['queue:RQ-DOCS', 'path:ashlrai/phantom:docs/AGENT-BUS.md'], provider: 'devin',
   dispatch: { tier: 'fast' as const, scope: 'Fix spelling in the bus guide.', acceptance: 'Documentation links pass.' } });
 const policy = () => ({ version: 1, enabled: true, peers: ['agent0', 'agent1', 'agent2'],
   repositories: [{ repo: 'ashlrai/phantom', tierCeiling: 'mid', paths: ['docs/AGENT-BUS.md'] }] });
 const write = (name: string, value: unknown) => writeFileSync(join(root, name), JSON.stringify(value), { mode: 0o600 });
 const journal = () => JSON.parse(readFileSync(join(root, 'agentnet/work-dispatch.json'), 'utf8'));
+const peerSlack = (): Pick<PeerBusOptions, 'readPolicy' | 'call'> => ({
+  readPolicy: () => ({ config: { bridgeId: 'slack', teamId: 'TTEAM', ownUserId: 'UAGENT0', ownBotId: 'BAGENT0',
+    botTokenRef: 'phm_TEST_TOKEN', map: [{ topic: 'mesh', channel: 'CMESH' }] }, confirmedByMason: false,
+  teamIdentities: [0, 1, 2].map(n => ({ channel: 'slack' as const, id: `UAGENT${n}` })) }),
+  call: async (method, args) => method === 'conversations.info'
+    ? { channel: { id: 'CMESH', is_channel: true, is_shared: false, is_ext_shared: false, is_pending_ext_shared: false, context_team_id: 'TTEAM' } }
+    : method === 'conversations.members' ? { members: ['UAGENT0', 'UAGENT1', 'UAGENT2'] }
+      : { user: { id: args?.user, team_id: 'TTEAM', is_bot: true } },
+});
 const messages = () => {
   const page = listBusInboxAfter(0, 100, { root, now: () => now });
   if (page.status !== 'ok') throw new Error('fixture bus unavailable');
@@ -59,15 +70,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(root, { recur
 
 describe('bounded peer work feed dispatch', () => {
   it('posts through authenticated peer admission, previews without writes, then exclusively claims and replies', async () => {
-    const posted = await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: work() }, session(), {
-      ...options(), readPolicy: () => ({ config: { bridgeId: 'slack', teamId: 'TTEAM', ownUserId: 'UAGENT0', ownBotId: 'BAGENT0',
-        botTokenRef: 'phm_TEST_TOKEN', map: [{ topic: 'mesh', channel: 'CMESH' }] }, confirmedByMason: false,
-      teamIdentities: [0, 1, 2].map(n => ({ channel: 'slack' as const, id: `UAGENT${n}` })) }),
-      call: async (method, args) => method === 'conversations.info'
-        ? { channel: { id: 'CMESH', is_channel: true, is_shared: false, is_ext_shared: false, is_pending_ext_shared: false, context_team_id: 'TTEAM' } }
-        : method === 'conversations.members' ? { members: ['UAGENT0', 'UAGENT1', 'UAGENT2'] }
-          : { user: { id: args?.user, team_id: 'TTEAM', is_bot: true } },
-    });
+    const posted = await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: work() }, session(),
+      { ...options(), ...peerSlack() });
     expect(posted.status).toBe('drafted');
     expect(await consumePeerWork(session(1), {}, options())).toMatchObject({ dryRun: true, results: [{ status: 'proposed' }] });
     expect(existsSync(store.path)).toBe(false); expect(existsSync(join(root, 'agentnet/work-dispatch.json'))).toBe(false);
@@ -76,6 +80,35 @@ describe('bounded peer work feed dispatch', () => {
     expect(replies().map(m => workResultBodySchema.parse(m.envelope.body).outcome)).toEqual(['reserved', 'admitted']);
     expect(replies().every(m => m.envelope.to === 'agent0')).toBe(true);
     expect(JSON.stringify(journal())).not.toContain(work().dispatch.scope);
+  });
+  it('refuses work proposals the shared feed cannot attribute or deduplicate', async () => {
+    const { provider: _provider, ...providerless } = work();
+    // No provider and no registered runtime for the callsign: the feed would refuse missing-provider.
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: providerless }, session(), options()))
+      .toMatchObject({ status: 'refused', reason: 'work-provider-required' });
+    expect(messages()).toHaveLength(0);
+    // A registered callsign runtime is the provider hint the feed resolves.
+    expect(registerAgentIdentity({ handle: 'agent0', runtime: { cli: 'codex', provider: 'codex-cmp', model: null } },
+      { root, now: () => now }).status).toBe('created');
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: providerless }, session(),
+      { ...options(), ...peerSlack() })).toMatchObject({ status: 'drafted' });
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'ok',
+      jobs: [{ id: 'RQ-DOCS', owner: 'agent0', provider: 'codex-cmp' }] });
+    // The same job id cannot be announced twice: the feed would refuse duplicate-job.
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: work() }, session(), options()))
+      .toMatchObject({ status: 'refused', reason: 'work-job-exists' });
+    expect(messages()).toHaveLength(1);
+  });
+  it('refuses work proposals while the feed projection is refused, but not peer mail', async () => {
+    // A raw bus write bypasses the peer guard and poisons the shared projection.
+    expect(appendBusInbox({ id: `peer-${randomUUID()}`, from: 'ghost', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b',
+        claimKeys: ['repo:a/b'] } }, { root, now: () => now }).status).toBe('posted');
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'refused', reason: 'missing-provider' });
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: work() }, session(), options()))
+      .toMatchObject({ status: 'refused', reason: 'work-feed-refused' });
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'query', text: 'ping' }, session(),
+      { ...options(), ...peerSlack() })).toMatchObject({ status: 'drafted' });
   });
   it('deduplicates replays and competing consumers across different message ids', async () => {
     admit(); admit(work(), 'agent2');

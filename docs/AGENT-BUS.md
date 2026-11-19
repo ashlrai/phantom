@@ -503,11 +503,20 @@ Both callsigns must also be allowed `bus` identities in `agent-network.toml`;
 and result sends. Current identity, policy and send gates are rechecked under
 the queue lock. The message cannot choose policy files, commands, lanes or credentials.
 
+A work proposal joins the shared work-feed projection, which refuses its whole
+read on an unattributable provider or a duplicate job id until the receipt
+expires. `peers post` therefore verifies the live feed before appending: the
+body must carry `provider` (or the sender callsign must resolve to a registered
+identity runtime, the same hint the feed uses), the `jobId` must not already be
+announced, and an unreadable feed refuses the send. Refusals are
+`work-provider-required`, `work-job-exists` and `work-feed-<status>`.
+
 Example work body (JSON data, never shell input):
 
 ```json
 {"kind":"work.post","jobId":"RQ-DOCS","title":"Fix spelling","repo":"ashlrai/phantom",
  "claimKeys":["queue:RQ-DOCS","path:ashlrai/phantom:docs/AGENT-BUS.md"],
+ "provider":"codex-cmp",
  "dispatch":{"tier":"fast","scope":"Fix spelling in the bus guide.","acceptance":"Documentation links pass."}}
 ```
 
