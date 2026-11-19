@@ -23,9 +23,16 @@ first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
 `summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
 counted in `skipped`, never fatal. It reads the same store; it is not a
-second bus. v2 `work.*` bodies summarize their typed fields — `work.status`
-as `status: detail`, `work.result` and `work.release` as `outcome: reason`,
-`work.claim` as `op claimKey` — and messages about one `jobId` share a
+second bus. The `work.*` operation bodies keep their terse field formats —
+`work.status` as `status: detail`, `work.result` and `work.release` as
+`outcome: reason`, `work.claim` as `op claimKey` — while `work.post` and
+every other body kind the bus knows (`note`, `context`, `worker-handoff`,
+`interjection`, `owner-thread`, `wake`, `peer.*`, `group.*`,
+`slack-coordination`, and the channel, leader, cos, incident and fleet-ops
+notices) summarize through the same one-line composer the inbox `--frame`
+uses (`<kind> <labels>: <detail>`), so a bare kind name never stands in for
+a readable payload; bodies the composer does not know keep the plain text
+or kind-name fallback. Messages about one `jobId` share a
 `job:<jobId>` conversation; a claim or release that names only a `claimKey`
 joins the newest `work.post` in the read listing that key. Slack-bridge
 `slack-coordination` notices summarize as `slack-coordination <type> <mode>:
