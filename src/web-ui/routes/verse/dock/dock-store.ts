@@ -170,6 +170,21 @@ export function withPaneOpen(state: DockState, requested: DockPaneId): DockState
   return { ...state, open: true, tabs, active: pane, splitWith: splitWith === pane ? null : splitWith };
 }
 
+/**
+ * Put `requested` where `from` is: same tab position, same half of a split. This is how a family of panes that
+ * read as one surface (the resource boards) changes view without growing a tab per view. A pane that already has
+ * its own tab is brought forward instead and `from` keeps its tab; an unknown `from` opens `requested` normally.
+ */
+export function withPaneSwapped(state: DockState, from: DockPaneId, requested: DockPaneId): DockState {
+  const to = normalizePaneId(requested);
+  if (to === null || to === from) return state;
+  const index = state.tabs.indexOf(from);
+  if (index < 0 || state.tabs.includes(to)) return withPaneOpen(state, to);
+  const tabs = [...state.tabs];
+  tabs[index] = to;
+  return { ...state, open: true, tabs, active: state.active === from ? to : state.active, splitWith: state.splitWith === from ? to : state.splitWith };
+}
+
 /** Open the registered fleet panes in preference order, preserving other tabs. */
 export function withFleetWorkspace(state: DockState, available: readonly DockPaneId[]): DockState {
   const fleet = [...new Set(available)];
@@ -289,6 +304,11 @@ export function withChatSwitch(state: DockState, from: string | null, to: string
 
 export function openDockPane(pane: DockPaneId): void {
   setState(withPaneOpen(current().state, pane));
+}
+
+export function swapDockPane(from: DockPaneId, to: DockPaneId): void {
+  const next = withPaneSwapped(current().state, from, to);
+  if (next !== current().state) setState(next);
 }
 
 export function openFleetWorkspace(available: readonly DockPaneId[]): void {
