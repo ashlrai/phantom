@@ -703,6 +703,20 @@ is below its target while the admission reason starts with `at_cap`, then one li
 with the admission running, cap and reason. It exits 1 when any lane has 10 or
 more jobs queued and none running.
 
+It also names a lane that has free slots and nothing ready to run on them, the
+reverse case: `claude: 8 free slots, 0 ready rows for 42 min; next step: add work
+for claude`. Those lines come first, followed by the count of READY rows waiting on
+a held or drained pool that a starved lane could run instead. `--json` adds
+`starved_lanes` and `waiting_elsewhere` under the `fleet.starved.v1` schema, and the
+command exits 1 when a lane is starved. The same data is the `starved` object of the
+`fleet.lanes.v1` read (`phm fleet lanes --json`, `GET /api/fleet/lanes`): per lane
+`free_slots` (floor minus running, 0 when held), `ready_rows` and `starved_since`. A
+held lane is waiting, not starved, and a lane at its floor is full. The desktop lane
+card (Ops, Lanes on this Mac) shows the same line. The Leader posts one chat notice
+when a lane has been starved for 30 minutes, at most once per lane every 6 hours,
+and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The
+router queue is never written.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename

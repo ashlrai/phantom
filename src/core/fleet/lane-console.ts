@@ -69,6 +69,7 @@ import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
+import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.lanes.v1 wire shape.
@@ -150,6 +151,8 @@ export interface FleetLaneSnapshot {
     budgets: { state: 'healthy' | 'unavailable' };
   };
   lanes: FleetLaneView[];
+  /** Lanes with free slots and nothing ready to run on them (lane-starved.ts). */
+  starved: StarvedRead;
 }
 
 export interface FleetLaneConsoleOptions {
@@ -163,6 +166,8 @@ export interface FleetLaneConsoleOptions {
   now?: () => Date;
   /** Trailing window for mergesPerHour. Default 60 minutes. */
   mergeWindowMs?: number;
+  /** Where the Leader remembers when a lane first looked starved. Default `~/.ashlr/vision/leader`. */
+  starvedStateDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -901,6 +906,18 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     return score(b) - score(a) || a.lane.localeCompare(b.lane);
   });
 
+  // Starved = free slots and no ready rows. A held lane is waiting, not starved; a drained one cannot run what it is given.
+  let stateText: string | null = null;
+  try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
+  const starved = readStarved(views.map(view => ({
+    lane: view.lane,
+    floor: holds.get(view.lane)?.floor ?? null,
+    running: view.liveJobs,
+    ready: view.queueDepth,
+    held: view.hold?.held === true,
+    drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
+  })), parseStarvedState(stateText).since, now.getTime());
+
   return {
     schema: 'fleet.lanes.v1',
     generatedAt: now.toISOString(),
@@ -909,6 +926,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     notes,
     sources,
     lanes: views,
+    starved,
   };
 }
 
