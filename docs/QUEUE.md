@@ -307,7 +307,14 @@ carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
 `queue/slots.json` also parses it recomputes the same eligibility reason codes
 the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
-reasons stay unknown.
+reasons stay unknown. Independently of `source`, `fleetStop` names the
+tick's fleet-wide stop in the dispatcher's own codes — `admission_stopped`
+when the PAUSE file, disk guard or load gate kept the market from running,
+`global_admission` when the launch budget or fleet cap was spent — or `null`
+when the market ran normally. For a derived report the verdict comes from
+status.json's own `paused` and `admission` fields and replaces the per-lane
+codes, which were never the binding constraint; for a dispatcher report it is
+read back from the published `blocked` codes.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
 is read-only: no writes, no child processes, no network.
 
