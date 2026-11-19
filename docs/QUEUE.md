@@ -812,6 +812,15 @@ event falls between the windows counts as missing evidence, never as a
 shorter wait. Without `--json`, the same command prints a plain-language
 report. Use `--root /path` to inspect a different runs directory.
 
+Blocked jobs are the parked ones. Each lane has `blockedReasons`
+(`[{ reason, count }]`, biggest first, e.g. `DEP` or `HOLD`) and `stale`, the
+parked dependency jobs whose gates all show MERGED but were never unparked
+(capped at 50 per run). `totals` carries the same two fields across lanes. The
+top-level `sources` (`ready`, `running`, `ledger`: `healthy`, `missing` or
+`degraded`) and plain-words `notes` say which file made a count `null`, so an
+empty queue (zeros, no notes) is never confused with unavailable data
+(`null`, with a note).
+
 ## Incident pipeline
 
 `phm incident report --kind error --repo ashlrai/phantom --message "<text>"` turns a
