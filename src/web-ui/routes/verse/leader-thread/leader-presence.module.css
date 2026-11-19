@@ -1,0 +1,90 @@
+/* Leader presence: the quiet line under the reply box. The hairline is the pass interval filling up. */
+.presence {
+  flex: none;
+  background: var(--bg-surface);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  --presence-tone: var(--accent-500);
+}
+
+.presence[data-state='late'] { --presence-tone: var(--status-warning-fg); }
+.presence[data-state='stalled'] { --presence-tone: var(--status-danger-fg); }
+.presence[data-state='unknown'],
+.presence[data-state='reading'] { --presence-tone: var(--status-unknown-fg); }
+
+.meter {
+  block-size: 2px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  block-size: 100%;
+  background: var(--presence-tone);
+  transition: inline-size var(--duration-slow) var(--ease-standard), background-color var(--duration-base) var(--ease-standard);
+}
+
+/* A full bar that is still waiting breathes: the pass is owed, and the bar says so without a word. */
+.presence[data-state='late'] .fill,
+.presence[data-state='stalled'] .fill { animation: presence-owed 2.4s var(--ease-standard) infinite; }
+
+@keyframes presence-owed {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--control-h-xs);
+  margin: 0;
+  padding: var(--space-1) var(--card-pad) var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--presence-tone);
+}
+
+.presence[data-state='unknown'] .dot,
+.presence[data-state='reading'] .dot {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--presence-tone);
+}
+
+.headline { color: var(--text-secondary); }
+.presence[data-state='late'] .headline { color: var(--status-warning-fg); }
+.presence[data-state='stalled'] .headline { color: var(--status-danger-fg); font-weight: 600; }
+.presence[data-state='unknown'] .headline { color: var(--status-unknown-fg); }
+
+.detail { min-width: 0; overflow-wrap: anywhere; }
+.detail[data-waiting='true'] { color: var(--text-primary); }
+
+.open {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-xs);
+  margin-left: auto;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.open:hover { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+.open:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fill { transition: none; animation: none; }
+}
