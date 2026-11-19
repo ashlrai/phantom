@@ -8,14 +8,23 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
-import { acquireCoordination, renewCoordination, settleCoordination } from './claim-store.js';
-import { workClaimBodySchema, workReleaseBodySchema } from './bus-v2-schema.js';
+import { acquireCoordination, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationView } from './claim-store.js';
+import { parseClaimKey, workClaimBodySchema, workReleaseBodySchema } from './bus-v2-schema.js';
 
 export interface BusClaimOptions {
   /** Coordination store root; defaults to the shared fleet root. */
   root?: string;
   /** Injectable clock for tests; defaults to Date.now(). */
   now?: number;
+}
+
+export interface BusClaimsListOptions {
+  /** Coordination store root; defaults to the shared fleet root. */
+  root?: string;
+  /** Injectable clock for tests; defaults to Date.now(). */
+  now?: number;
+  /** When set, only live claims that would block an acquire of this key. */
+  key?: string;
 }
 
 export type BusClaimResult =
@@ -124,4 +133,28 @@ export function busClaimExitCode(result: BusClaimResult): number {
 /** Fresh operation id for CLI callers that do not pass --id. */
 export function newBusClaimOpId(): string {
   return `busclaim-${randomUUID()}`;
+}
+
+/**
+ * Read-side companion to `executeBusClaimBody`: the live coordination claims
+ * every bus participant shares, before it acquires or checks overlap. `source`
+ * keeps the store state honest — `missing` is a verified-empty table,
+ * `unavailable` means holds are unknown, not free. Expired rows are not holds.
+ * Fencing tokens never leave the store. With `key`, the list narrows through
+ * the same overlap rule an acquire applies, so it previews current blockers.
+ */
+export type BusClaimsListResult =
+  | { status: 'ok'; source: 'missing' | 'available'; claims: CoordinationView[]; asOf: string }
+  | { status: 'invalid' | 'unavailable'; asOf: string };
+
+export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsListResult {
+  const now = options.now ?? Date.now();
+  const asOf = new Date(now).toISOString();
+  const key = options.key;
+  if (key !== undefined && parseClaimKey(key) === undefined) return { status: 'invalid', asOf };
+  const listed = listCoordination(options.root, now);
+  if (listed.source === 'unavailable') return { status: 'unavailable', asOf };
+  const live = listed.claims.filter(row => row.live);
+  return { status: 'ok', source: listed.source,
+    claims: key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key)), asOf };
 }

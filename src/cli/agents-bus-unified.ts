@@ -8,9 +8,10 @@ import {
   announceWork, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, updateWorkStatus,
   type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
-import { WORK_STATUSES } from '../core/agents/bus-v2-schema.js';
+import { WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
+import { formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
-import { busClaimExitCode, executeBusClaimBody, newBusClaimOpId, type BusClaimResult } from '../core/agents/bus-claims.js';
+import { busClaimExitCode, executeBusClaimBody, listBusClaims, newBusClaimOpId, type BusClaimResult } from '../core/agents/bus-claims.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
@@ -29,22 +30,25 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
+ashlr agents bus claim list [--key <claimKey>]
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
     [--provider <p>] [--tier <fast|mid|work|frontier> --scope <text> --acceptance <text>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--claims]
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
-wakes, P1 and handoffs wake by default. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
+wakes, P1 and handoffs wake by default. work feed and claim list are read-only
+and need no identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail']);
 const MULTI = new Set(['--alias', '--member', '--claim']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims']);
 
 class UsageError extends Error {}
 
@@ -210,6 +214,18 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
       return 0;
     }
+    if (verb === 'work' && sub === 'feed') {
+      noExtra(2);
+      const status = one('--status');
+      if (status !== undefined && !(WORK_STATUSES as readonly string[]).includes(status)) {
+        throw new UsageError(`--status must be one of ${WORK_STATUSES.join(', ')}.`);
+      }
+      const result = projectBusWorkFeedView(
+        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') }),
+        status as WorkJob['status'] | undefined);
+      out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
+      return result.status === 'ok' ? 0 : 1;
+    }
     if (verb === 'work' && (sub === 'post' || sub === 'status')) {
       noExtra(2);
       const from = actor('--from');
@@ -240,6 +256,22 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     }
     if (verb === 'claim') {
       noExtra(2);
+      if (sub === 'list') {
+        const result = listBusClaims({ root: options.root, key: one('--key') });
+        if (result.status === 'invalid') {
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:)');
+          return 2;
+        }
+        if (result.status !== 'ok') {
+          out(json ? JSON.stringify(result) : `${result.status} claims=unknown as-of=${result.asOf}`);
+          return 1;
+        }
+        out(json ? JSON.stringify(result) : [
+          ...result.claims.map(row => `${row.key} owner=${row.owner} origin=${row.origin} until=${new Date(row.leaseUntil).toISOString()} source=${row.sourceId}`),
+          `claims=${result.claims.length} source=${result.source} as-of=${result.asOf}`,
+        ].join('\n'));
+        return 0;
+      }
       const claimKey = required('--key');
       const leaseMsRaw = one('--lease-ms');
       const leaseMs = leaseMsRaw === undefined ? undefined : integer(leaseMsRaw, '--lease-ms');
@@ -255,7 +287,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       } else if (sub === 'release') {
         body = { kind: 'work.release', claimKey, token: required('--token'), outcome: required('--outcome') };
       } else {
-        throw new UsageError('claim requires acquire, renew or release.');
+        throw new UsageError('claim requires acquire, renew, release or list.');
       }
       const result: BusClaimResult = executeBusClaimBody(body, one('--id') ?? newBusClaimOpId(), { root: options.root })
         ?? { v: 2, status: 'invalid' };

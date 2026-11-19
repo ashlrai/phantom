@@ -1456,9 +1456,12 @@ blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 the table is unavailable. Holds cap at 1024 with `truncated` set.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
-structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
-a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
-fabricated count.
+structural overlap rule. `projectBusWorkFeedView(result, status?)` applies the
+client-side status filter, newest-first order and per-job hold regrouping, and
+`formatBusWorkFeed(result)` renders the shared human lines; both feed CLIs use
+them. `phm fleet work-feed [--claims]` and `phm agents bus work feed
+[--status] [--claims]` print the same projection — hold lines plus a `claims=`
+footer — and non-ok reads print `jobs=unknown` rather than a fabricated count.
 
 `src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
 `BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result
@@ -1468,6 +1471,13 @@ token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
 are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
 undefined for non-claim bodies so opaque mail still appends),
 `BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
+`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`) is the read-side
+companion: it returns the live coordination claims as `CoordinationView` rows
+(fencing tokens never leave the store) with `source` of `missing` (verified
+empty), `available` or `unavailable` (holds unknown, not free), plus `asOf`.
+A malformed `key` answers `invalid`; a set `key` narrows the list through the
+same `coordinationRowBlocks` overlap rule an acquire applies, previewing the
+claims that would block it. `phm agents bus claim list [--key]` prints it.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
 with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of

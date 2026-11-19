@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeBusClaimBody, type BusClaimResult } from '../src/core/agents/bus-claims.js';
+import { executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
 import { listCoordination } from '../src/core/agents/claim-store.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import { handleAgentBusApi } from '../src/core/verse/agent-bus-api.js';
@@ -114,6 +114,49 @@ describe('executeBusClaimBody', () => {
       expect(executeBusClaimBody(body, 'op-bad', { root, now: NOW })).toEqual({ v: 2, status: 'invalid' });
     }
     expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+});
+
+describe('listBusClaims', () => {
+  it('reports a verified-empty store as missing, then lists live claims without tokens', () => {
+    const root = tempDir('v2claim-list-');
+    expect(listBusClaims({ root, now: NOW })).toEqual({ status: 'ok', source: 'missing', claims: [], asOf: new Date(NOW).toISOString() });
+    const token = tokenOf(acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root));
+    const listed = listBusClaims({ root, now: NOW });
+    expect(listed.status).toBe('ok');
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    expect(listed.source).toBe('available');
+    expect(listed.claims).toHaveLength(1);
+    expect(listed.claims[0]).toMatchObject({ origin: 'resource', key: 'repo:ashlrai/phantom', owner: 'dot-main', live: true });
+    expect(JSON.stringify(listed)).not.toContain(token);
+    // Expired leases are not holds; the store stays readable.
+    expect(listBusClaims({ root, now: NOW + 600_001 })).toMatchObject({ status: 'ok', source: 'available', claims: [] });
+  });
+
+  it('narrows to claims that would block an acquire of the given key', () => {
+    const root = tempDir('v2claim-list-');
+    acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    acquire('queue:RQ-OTHER', 'other-seat', 600_000, 'op-2', root);
+    const blocked = listBusClaims({ root, now: NOW, key: 'path:ashlrai/phantom:src/**' });
+    expect(blocked).toMatchObject({ status: 'ok' });
+    if (blocked.status !== 'ok') throw new Error('expected ok');
+    expect(blocked.claims.map(row => row.key)).toEqual(['repo:ashlrai/phantom']);
+    expect(listBusClaims({ root, now: NOW, key: 'queue:RQ-FREE' })).toMatchObject({ status: 'ok', claims: [] });
+    // Repo claims do not cover PRs; a pr claim blocks only its own number.
+    expect(listBusClaims({ root, now: NOW, key: 'pr:ashlrai/phantom#7' })).toMatchObject({ status: 'ok', claims: [] });
+    acquire('pr:ashlrai/phantom#7', 'pr-seat', 600_000, 'op-3', root);
+    expect(listBusClaims({ root, now: NOW, key: 'pr:ashlrai/phantom#7' })).toMatchObject({ status: 'ok', claims: [{ key: 'pr:ashlrai/phantom#7' }] });
+    expect(listBusClaims({ root, now: NOW, key: 'pr:ashlrai/phantom#8' })).toMatchObject({ status: 'ok', claims: [] });
+    // A malformed key is invalid, never a silent empty list.
+    expect(listBusClaims({ root, now: NOW, key: 'bogus' })).toMatchObject({ status: 'invalid' });
+  });
+
+  it('keeps an unreadable table unavailable rather than zero', () => {
+    const root = tempDir('v2claim-list-');
+    acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    expect(listBusClaims({ root, now: NOW })).toEqual({ status: 'unavailable', asOf: new Date(NOW).toISOString() });
+    expect(listBusClaims({ root, now: NOW, key: 'repo:ashlrai/phantom' })).toMatchObject({ status: 'unavailable' });
   });
 });
 

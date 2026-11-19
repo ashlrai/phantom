@@ -132,3 +132,47 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
   }
   return { ...ok, claims: { source: listed.source, holds, truncated } };
 }
+
+/**
+ * Client-side `--status` filter and newest-first ordering shared by the feed
+ * CLIs. With claims, holds regroup under the jobs still shown so a filtered
+ * view never lists a hold for a hidden job. Non-ok results pass through
+ * untouched; nothing is fabricated for a refused or unavailable read.
+ */
+export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: WorkJob['status']): BusWorkFeedReadResult {
+  if (result.status !== 'ok') return result;
+  const jobs = result.jobs
+    .filter(job => status === undefined || job.status === status)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
+  if (result.claims !== undefined) {
+    const byJob = new Map<string, BusWorkFeedHold[]>();
+    for (const hold of result.claims.holds) {
+      const list = byJob.get(hold.jobId) ?? [];
+      list.push(hold);
+      byJob.set(hold.jobId, list);
+    }
+    view.claims = { ...result.claims, holds: jobs.flatMap(job => byJob.get(job.id) ?? []) };
+  }
+  return view;
+}
+
+/** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */
+export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
+  const lines: string[] = [];
+  if (result.status === 'ok') {
+    for (const job of result.jobs) {
+      lines.push(`${job.id} ${job.status} owner=${job.owner} provider=${job.provider} repo=${job.repo} updated=${new Date(job.updatedAt).toISOString()}`);
+    }
+    if (result.claims) {
+      for (const hold of result.claims.holds) {
+        lines.push(`held ${hold.jobId} ${hold.claimKey} owner=${hold.owner} until=${new Date(hold.leaseUntil).toISOString()}`);
+      }
+    }
+  }
+  const feed = result.status === 'refused' ? `refused:${result.reason}` : result.status;
+  const claimsNote = result.status === 'ok' && result.claims
+    ? ` claims=${result.claims.source}${result.claims.truncated ? ':truncated' : ''}` : '';
+  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed} as-of=${result.asOf}${claimsNote}`);
+  return lines;
+}
