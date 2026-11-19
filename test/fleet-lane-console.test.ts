@@ -104,6 +104,57 @@ describe('parseReadyTsv', () => {
     expect(rows[0]!.pool).toBe('devin');
     expect(dropped).toBe(3);
   });
+
+  it('reads the dispatcherd job/repo/lane/tier/prompt dialect natively', () => {
+    // The live dispatcher's ready.tsv order is job, repo, lane hint, tier,
+    // prompt-path — not the generic export's id/pool/tier/repo/title. Repo
+    // names must never surface as lanes.
+    const { rows, dropped } = parseReadyTsv([
+      'RQ-PHX-A\tphantom\tclaude\tmid\t/Users/x/prompts/a.md',
+      'RQ-PHX-B\tweyv\tcodex-personal\twork\t/Users/x/prompts/b.md\t{"preferred_lane":"codex-personal"}',
+      'RQ-PHX-C\tphantom\tclaude\tbet:frontier\tprompts/c.md',
+    ].join('\n'));
+    expect(dropped).toBe(0);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ id: 'RQ-PHX-A', status: 'READY', pool: 'claude', tier: 'mid', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'RQ-PHX-B', status: 'READY', pool: 'codex-personal', tier: 'work', repo: 'weyv' });
+    expect(rows[1]!.title).toBe('/Users/x/prompts/b.md'); // requirements cell is not title text
+    expect(rows[2]).toMatchObject({ id: 'RQ-PHX-C', status: 'READY', pool: 'claude', tier: 'bet:frontier', repo: 'phantom' });
+    expect(rows.map(r => r.pool)).not.toContain('phantom');
+    expect(rows.map(r => r.pool)).not.toContain('weyv');
+  });
+
+  it('reads both PARKED encodings of the dispatcher dialect', () => {
+    const { rows, dropped } = parseReadyTsv([
+      // Lane-column parked: job repo PARKED-<reason>.<lane> tier prompt.
+      'RQ-PARK-A\tphantom\tPARKED-DEP.claude\twork\t/Users/x/prompts/a.md',
+      'RQ-PARK-B\tphantom\tPARKED-BYHAND.codex-local\tmid\tprompts/b.md',
+      // Status-first parked: PARKED-<reason>.<lane> job lane tier repo prompt [requirements].
+      'PARKED-DEP.codex-personal\tRQ-PARK-C\tcodex-personal\twork\tphantom\t/Users/x/prompts/c.md\t{"needs":["git"]}',
+      // Dotted spelling seen in older queue exports.
+      'RQ-PARK-D\tphantom\tPARKED.devin\twork\t/fake/prompt',
+    ].join('\n'));
+    expect(dropped).toBe(0);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toMatchObject({ id: 'RQ-PARK-A', status: 'PARKED-DEP.CLAUDE', pool: 'claude', tier: 'work', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'RQ-PARK-B', status: 'PARKED-BYHAND.CODEX-LOCAL', pool: 'codex-local', tier: 'mid' });
+    expect(rows[2]).toMatchObject({ id: 'RQ-PARK-C', status: 'PARKED-DEP.CODEX-PERSONAL', pool: 'codex-personal', tier: 'work', repo: 'phantom' });
+    expect(rows[3]).toMatchObject({ id: 'RQ-PARK-D', status: 'PARKED.DEVIN', pool: 'devin', tier: 'work' });
+    // Parked rows are not READY — they cannot inflate queue depth.
+    expect(rows.every(r => r.status !== 'READY')).toBe(true);
+  });
+
+  it('keeps generic positional rows on the generic contract', () => {
+    // A row whose third cell is not a queue tier stays on the generic
+    // id/pool/tier/repo/title reading — the dialect never steals it.
+    const { rows, dropped } = parseReadyTsv(
+      'RQ-2\tcodex-cmp\twork\tphantom\tP2 another job\n' +
+      'FAKE-DEAD-01\tdevin\tmid\tfake/repo\tFake deferred job\n',
+    );
+    expect(dropped).toBe(0);
+    expect(rows[0]).toMatchObject({ id: 'RQ-2', status: 'READY', pool: 'codex-cmp', tier: 'work', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'FAKE-DEAD-01', status: 'READY', pool: 'devin', tier: 'mid', repo: 'fake/repo' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -337,6 +388,33 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(byLane.get('devin')!.queueDepth).toBe(2);   // queue.v1 fallback
     expect(byLane.get('devin')!.liveJobs).toBe(0);
     expect(byLane.get('claude')!.liveJobs).toBe(1);
+  });
+
+  it('attributes dispatcher-dialect queue rows to their lane, not their repo', async () => {
+    // Live ready.tsv rows are job<TAB>repo<TAB>lane<TAB>tier<TAB>prompt —
+    // the lane is the third cell, the repo the second. Before the dialect
+    // was parsed natively, repo names surfaced as lanes and real lanes
+    // reported depth 0.
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), [
+      'RQ-PHX-NODETASKRECOVER615S\tphantom\tclaude\tmid\t/Users/x/prompts/a.md',
+      'RQ-PHX-PLAN-01\tphantom\tclaude\twork\t/Users/x/prompts/b.md\t{"preferred_lane":"claude"}',
+      'RQ-WEYV-COLOR-1\tweyv\tcodex-personal\twork\t/Users/x/prompts/c.md',
+      'RQ-PARK-A\tphantom\tPARKED-DEP.claude\twork\t/Users/x/prompts/d.md',
+      'PARKED-DEP.codex-personal\tRQ-PARK-B\tcodex-personal\tmid\tphantom\t/Users/x/prompts/e.md',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('claude')!.queueDepth).toBe(2);
+    expect(byLane.get('codex-personal')!.queueDepth).toBe(1);
+    expect(byLane.has('phantom')).toBe(false);   // repo name, not a lane
+    expect(byLane.has('weyv')).toBe(false);
+    // Parked rows (PARKED-DEP.* encodings) are not READY queue depth.
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 5, dropped: 0 });
+    expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
   });
 
   it('marks a present-but-corrupt file degraded and still projects its rows', async () => {
