@@ -4,7 +4,7 @@ import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
-import { fleetComputeQuery, fleetMessageGraphQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
+import { fleetComputeQuery, fleetMessageGraphQuery, fleetNodesPlanQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
 import { age, bytes, cpuPercent, elapsed, fresh, number, prLink } from './fleet-map-model.js';
 import styles from './FleetMap.module.css';
 
@@ -43,6 +43,8 @@ export function FleetMap() {
   const compute = useQuery(fleetComputeQuery, { enabled: started, freshMs: 0 });
   const sessions = useQuery(fleetSessionMapQuery, { enabled: started, freshMs: 0 });
   const messages = useQuery(fleetMessageGraphQuery, { enabled: started, freshMs: 0 });
+  // Badges are a plan, not a live reading: read once and again after 30 s, not on the 4 s tick (the read runs tailscale).
+  const badges = useQuery(fleetNodesPlanQuery, { enabled: started, freshMs: 30_000 }).data ?? null;
   const refreshCompute = useRefetch(fleetComputeQuery), refreshSessions = useRefetch(fleetSessionMapQuery), refreshMessages = useRefetch(fleetMessageGraphQuery);
   const [params, setParams] = useSearchParams();
   const [samples, setSamples] = useState(new Map<string, { stats: ComputeNode['stats']; cpu: number | null }>());
@@ -99,7 +101,10 @@ export function FleetMap() {
       const measured = n.state === 'ready' && fresh(n.heartbeatAt, now) && n.slots != null;
       const heat = measured && n.slots! > 0 ? n.jobs.length / n.slots! : null;
       return <section key={n.id} className={styles.node} data-capacity={measured ? 'measured' : 'unknown'} aria-label={`Machine ${n.id}`} style={{ '--heat': `${heat === null ? 0 : Math.min(1, heat) * 24}%` } as CSSProperties}>
-        <div className={styles.header}><h3><button type="button" className={styles.nodeButton} onClick={() => select('mapNode', n.id)}>{n.id}</button></h3><span>{n.local ? 'local · ' : ''}{n.state}</span></div>
+        <div className={styles.header}><h3><button type="button" className={styles.nodeButton} onClick={() => select('mapNode', n.id)}>{n.id}</button></h3><span>{n.local ? 'local · ' : ''}{n.state}</span>{(() => {
+          const badge = badges?.find(b => b.name.toLowerCase() === n.id.toLowerCase());
+          return badge ? <span className={styles.badge} data-online={String(badge.online)} title={badge.why} aria-label={`Plan: ${badge.online === true ? 'online' : badge.online === false ? 'offline' : 'online unknown'}, ${badge.slots === 'unknown' ? 'slots unknown' : `${badge.slots} suggested ${badge.slots === 1 ? 'slot' : 'slots'}`}`}><span className={styles.dot} aria-hidden="true" />{badge.slots === 'unknown' ? '? slots' : `${badge.slots} ${badge.slots === 1 ? 'slot' : 'slots'}`}</span> : null;
+        })()}</div>
         <NodeMetrics node={n} cpu={samples.get(n.id)?.cpu ?? null} now={now} />
         <p className={styles.caption}>Telemetry {age(n.stats ? new Date(n.stats.sampledAtMs).toISOString() : null, now)}</p>
         {heat === null ? <p className={styles.caption}>{measured && n.slots === 0 ? 'Measured ceiling 0 · utilization undefined' : 'Capacity unknown'}</p> :
