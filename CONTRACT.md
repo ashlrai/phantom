@@ -1293,14 +1293,19 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 
 `src/core/fleet/session-thread.ts` exports the pure
 `buildSessionThread(list, id, parts, now)`, `renderSessionThreadText(thread)`,
-`sessionBusMessages(session, messages)`, `SESSION_ID_RE`, the `THREAD_*_SHOWN`
-limits and the types `SessionThreadV1`, `SessionThreadSession`,
-`SessionThreadMessage`, `SessionThreadParts`, `SessionThreadState` and
-`SessionThreadSource`. `parts` is `{sessionsRead, activity?, bus, replies?}`:
-null means that read failed, absent means it was not asked for.
+`sessionBusMessages(session, messages)`,
+`sessionOwnerMessages(session, entries)`, `SESSION_ID_RE`, the
+`THREAD_*_SHOWN` limits, `THREAD_OWNER_WINDOW` and the types
+`SessionThreadV1`, `SessionThreadSession`, `SessionThreadMessage`,
+`SessionThreadParts`, `SessionThreadOwnerRead`, `SessionThreadState` and
+`SessionThreadSource`. `parts` is
+`{sessionsRead, activity?, bus, owner?, replies?}`: null means that read
+failed, absent means it was not asked for. `owner` is the Leader inbox as
+`readInboxEntries` returns it. Additive: messages gain the kind `owner` (key
+`owner:<id>`) and `sources` gains `owner`; no field was removed.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
-`readBus` and `readReplies`; each read is guarded on its own and the result is
+`readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
 sanitized like the session list. `src/cli/sessions.ts` exports
 `cmdSessionThread(args, read)` for `phm sessions thread <id> [--json]` (exit 0
 read, 1 list unreadable, 2 usage or unknown id).
