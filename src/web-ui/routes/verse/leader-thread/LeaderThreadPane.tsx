@@ -57,6 +57,7 @@ import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
 import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
 import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
+import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -252,7 +253,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   }, [laneTargets.data]);
 
   const read = thread.data;
-  const messages = read?.value?.messages ?? NO_MESSAGES;
+  const { messages, control: earlier } = useEarlierMessages(read?.value?.messages ?? NO_MESSAGES);
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
   const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
   const laneItems = useMemo(() => laneEventItems(laneEvents), [laneEvents]);
@@ -497,6 +498,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       }}>
       <div className={leaderStyles.logInner}>
         {ownerRead.paused ? <p className={leaderStyles.system}>Owner channels paused</p> : null}
+        <EarlierMessages control={earlier} />
         {body}
         {merged.hiddenNoise > 0 ? <p className={styles.note}>{merged.hiddenNoise} stray command {merged.hiddenNoise === 1 ? 'line' : 'lines'} hidden</p> : null}
         {commandLines.map(line => <LineView key={line.id} line={line} />)}
