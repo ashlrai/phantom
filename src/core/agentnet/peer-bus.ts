@@ -4,6 +4,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { workPostBodySchema } from '../agents/bus-v2-schema.js';
+import { readBusWorkFeed, runtimeProvider } from '../agents/bus-work-feed-read.js';
+import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { localWriteGate } from '../agents/send-gate.js';
 import { configuredSlackCall, readSlackDeliveryPolicy } from '../agents/slack-leader.js';
 import { evaluateSlackAudience } from '../agents/slack-audience.js';
@@ -51,6 +53,22 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     const peers = readPeerBindings(paths.bindings), sender = authenticatePeer(peers, session, now), request = parsed.data;
     const recipient = request.toAgent ? peers.find(p => p.callsign === request.toAgent && p.expiresAt > now) : undefined;
     if (request.toAgent && (!recipient || recipient.teamId !== sender.teamId || recipient.callsign === sender.callsign)) return { status: 'refused', reason: 'unknown-peer' };
+    // A work.post joins the shared feed projection, which refuses its whole
+    // read on an unattributable provider or a duplicate job id — the same
+    // poison announceWork guards against. Verify against the live feed first.
+    const work = request.work;
+    if (work !== undefined) {
+      if (work.provider === undefined) {
+        const registry = readAgentRegistry({ root: paths.busRoot });
+        const identity = registry.status === 'ok' ? resolveAgent(registry.registry, sender.callsign) : undefined;
+        if (identity === undefined || runtimeProvider(identity) === undefined) {
+          return { status: 'refused', reason: 'work-provider-required' };
+        }
+      }
+      const feed = readBusWorkFeed({ root: paths.busRoot, now: () => now });
+      if (feed.status !== 'ok') return { status: 'refused', reason: `work-feed-${feed.status}` };
+      if (feed.jobs.some(job => job.id === work.jobId)) return { status: 'refused', reason: 'work-job-exists' };
+    }
     const policyReader = options.readPolicy ?? (() => {
       const base = readSlackDeliveryPolicy();
       return base && { ...base, config: { ...base.config, ownUserId: sender.userId, ownBotId: sender.botId } };
