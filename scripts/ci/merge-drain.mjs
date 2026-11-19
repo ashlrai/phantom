@@ -8,7 +8,11 @@
 // already inside the existing GitHub merge queue, and each compare-and-swap
 // update-branch request lets that same auto-merge grant re-enter the queue
 // once checks go green. Conflicts are reported with the same RQ recut
-// handoff and are never closed, merged, or force-updated by this pass.
+// handoff and are never closed, merged, or force-updated by this pass. The
+// recut ask is keyed by source head, so a retried drain re-emits the same id
+// (no duplicate recuts) and the recut re-enables auto-merge so it lands
+// through the protected queue with required checks intact. A PR that merged or
+// closed while the drain ran is reported as 'merged'/'closed', never recut.
 //
 //   node scripts/ci/merge-drain.mjs <owner/repo> [--limit N] [--batch N]
 //                                   [--concurrency N] [--retries N]
@@ -31,10 +35,13 @@ const backoff = (attempt) => Math.min(250 * 2 ** attempt, 4_000);
 // Cheap scope check usable on pull-list rows (which carry no auto_merge or
 // mergeable fields): the batch drain pre-filters with this before paying for
 // a per-PR read.
-function bridgeScope(pr, repo) {
-  return pr.state === 'open' && pr.draft === false &&
-    pr.base?.repo?.full_name === repo && pr.head?.repo?.full_name === repo &&
+function bridgeScopeRefs(pr, repo) {
+  return pr.base?.repo?.full_name === repo && pr.head?.repo?.full_name === repo &&
     pr.base?.ref === 'master' && /^codex-bridge\/[A-Za-z0-9_-]+$/.test(pr.head?.ref ?? '');
+}
+
+function bridgeScope(pr, repo) {
+  return pr.state === 'open' && pr.draft === false && bridgeScopeRefs(pr, repo);
 }
 
 function eligible(pr, repo) {
@@ -54,7 +61,8 @@ function recut(repo, number, pr) {
         `(expected source head ${pr.head.sha}) through the existing RQ recut path. ` +
         'Re-read the source and existing replacements before acting; a changed source head cancels this request. ' +
         'Reuse a pending recut instead of creating another. Recut on current master, preserve the intended change, ' +
-        'and run affected tests and required checks. Leave merging to the protected merge queue. ' +
+        'and run affected tests and required checks. Open the recut with squash auto-merge enabled and leave merging ' +
+        'to the protected merge queue; if the source already merged or an equivalent replacement landed, stop with a note. ' +
         'Apply CLOSE-STALE C1-C6 before closing anything superseded; if those criteria are unavailable, ' +
         'leave the original open. No admin bypass, force-push to ashlrai branches, or ruleset changes.',
     },
@@ -95,6 +103,11 @@ async function drainOne(repo, number, ctx) {
     const pr = await observed(ctx, `repos/${repo}/pulls/${number}`);
     if (pr === null || typeof pr !== 'object') {
       return { number, status: 'failed', reason: 'observe' };
+    }
+    // Merged or closed between the list read and this observation (or while an
+    // update-branch call was failing): nothing left to refresh or recut.
+    if (pr.state === 'closed' && bridgeScopeRefs(pr, repo)) {
+      return { number, status: pr.merged === true || Boolean(pr.merged_at) ? 'merged' : 'closed' };
     }
     if (!eligible(pr, repo)) return { number, status: 'skipped' };
     const sha = pr.head?.sha ?? '';
