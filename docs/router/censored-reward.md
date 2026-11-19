@@ -3,7 +3,15 @@
 ## What happens today
 
 The log-based learner (`src/core/routing/outcome-learning.ts`) is what `phm fleet outcomes`
-and `phm select` read. The contextual bandit in `src/core/routing/bandit.ts` is a separate
+and `phm select` read. Its input is no longer only the text dispatch log:
+`src/core/fleet/jobs-outcome-events.ts` folds the append-only
+`metrics/jobs.jsonl` ledger into the same ASSIGN/OUTCOME vocabulary —
+`launch`/`batch_claim` rows become assignments, terminal `MERGED`/`CLOSED`
+rows become outcomes, and launches with no terminal evidence stay pending, so
+the censor below now judges real stranded work. Outcome rows may omit
+`usage`; the attempt still counts and cheapness evidence comes only from
+attempts carrying a usage reading (`usageSamples`: reported outcomes plus
+censored charges), never from a zero fill. The contextual bandit in `src/core/routing/bandit.ts` is a separate
 store: `recordOutcome` (`bandit.ts:281`) has no caller in this tree, and
 `outcome-learning.ts` only borrows the samplers from it (`outcome-learning.ts:15`). The
 `impact / allowanceSpent` reward (`bandit.ts:237-249`) is therefore not what steers fleet

@@ -199,11 +199,16 @@ are written. `task` stays untrusted prompt data on each emitted job.
 prints, for each resource, model, job type, and repo, the merge rate, time to
 merge, usage, and breakage rate. It also lists improvement jobs for recurring
 failures. `phm fleet outcomes route` adds the next assignment and a
-plain-language reason. The same types are exported from
-`src/core/routing/outcome-learning.ts` for the desktop app. There is no
-routing setting to tune: the log is the memory. Critical jobs are never held
-for an exhausted resource, and allowance that resets soon is still spent when
-that resource can finish the job.
+plain-language reason. The fleet's jobs ledger (`metrics/jobs.jsonl`, with
+`work-market.jsonl` route decisions for work-class fallbacks) is folded in as
+equal evidence: launches become assignments, terminal MERGED/CLOSED rows
+become outcomes, and unresolved launches stay pending for the censor — the
+`--json` `sources` block reports each ledger's read state. `phm select` and
+the fleet context pack read the same combined stream. The same types are
+exported from `src/core/routing/outcome-learning.ts` for the desktop app.
+There is no routing setting to tune: the log is the memory. Critical jobs are
+never held for an exhausted resource, and allowance that resets soon is still
+spent when that resource can finish the job.
 
 ### Selector
 

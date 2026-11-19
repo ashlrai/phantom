@@ -7,18 +7,34 @@ setting for the weights, the exploration rate, or the failure threshold.
 
 `learnOutcomes` reads a dispatch event log. A finished job is an `ASSIGN` or
 `LAUNCH` (with resource, model, job type, and repo) followed by an `OUTCOME`
-(`merged`, `closed`, `dirty`, or `fixup`, plus usage, optional minutes, and
-`breakage=0|1`). The same facts may arrive as JSON lines. Legacy
-`LAUNCH job repo lane tier` rows are ignored. For each
+(`merged`, `closed`, `dirty`, or `fixup`, plus optional usage, optional
+minutes, and `breakage=0|1`). The same facts may arrive as JSON lines. Legacy
+`LAUNCH job repo lane tier` rows are ignored. An `OUTCOME` may omit `usage`:
+the attempt still counts, its usage stays unknown (`usageSamples` does not
+grow, `meanUsage` stays `null` when no attempt reported), and a present but
+unreadable `usage` value is malformed. For each
 (resource, model, job type, repo) the view reports merge rate, time to merge,
-usage, and breakage rate.
+usage (`usage` is the sum over attempts carrying a reading, `usageSamples`
+how many — reported outcomes plus censored charges — and `meanUsage` their
+mean or `null`), and breakage rate.
+
+The fleet's real evidence is the append-only `metrics/jobs.jsonl` ledger, not
+the text dispatch log. `src/core/fleet/jobs-outcome-events.ts` folds that
+ledger (and `work-market.jsonl` route decisions for `work_class` fallbacks)
+into the same event vocabulary: `launch`/`batch_claim` rows form assigns,
+terminal `MERGED`/`CLOSED` rows form outcomes, and launches with no terminal
+evidence stay pending for the censor. `phm fleet outcomes`, `phm select`, and
+the fleet context pack all read the combined stream; `--json` output carries
+a `sources` block naming each ledger's read state and the bridge counts.
 
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a
 Gamma cheapness posterior. Success is a merge that did not break main.
-Cheapness is the inverse of usage, so the draw favors the cheapest resource
-that ships. A cold resource still wins some draws; that is the exploration.
+Cheapness is the inverse of usage over the attempts that reported it, so the
+draw favors the cheapest resource that ships; attempts with unknown usage
+count toward success but not toward cheapness evidence. A cold resource
+still wins some draws; that is the exploration.
 
 When a resource's observed time to merge is longer than the time left before
 its allowance resets, it cannot take the job. Among resources that can finish,
