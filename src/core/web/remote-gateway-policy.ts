@@ -58,6 +58,7 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/fleet/live/queue',
   '/api/verse/fleet/live/drop-jobs',
   '/api/verse/agent-bus',
+  '/api/verse/agent-bus/needs-mason/asks/batch',
   '/api/verse/fleet/control/switches',
   '/api/verse/fleet/control/lanes',
   '/api/verse/fleet/control/holds',
@@ -138,6 +139,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
       || path === '/api/verse/fleet/live' || path === '/api/verse/fleet/live/drop-jobs'
       || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
       || path === '/api/verse/fleet/control/holds'
+      // An answer can release money or a send outside the team: it always asks again on the phone.
+      || path === '/api/verse/agent-bus/needs-mason/asks/answer'
       || path === '/api/verse/leader') return { kind: 'write', path, stepUp: true };
     const inbox = /^\/api\/inbox\/([^/]+)\/(approve|reject)$/.exec(path);
     if (inbox && PROPOSAL_ID.test(inbox[1]!)) return { kind: 'write', path, stepUp: true };
@@ -270,6 +273,9 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/fleet/live/drop-jobs') return keys(body, ['id', 'lane', 'tier', 'body'])
     && validateDropJob({ id: body.id, lane: body.lane, tier: body.tier, body: body.body }).ok;
   if (path === '/api/verse/agent-bus') return validateBusEnvelope(body).ok;
+  // Shape only: the asks route checks the id and that the answer is one of that ask's own choices.
+  if (path === '/api/verse/agent-bus/needs-mason/asks/answer') return keys(body, ['id', 'answer'])
+    && boundedText(body.id, 64) && boundedText(body.answer, 80);
   if (path === '/api/verse/leader') return (keys(body, ['action', 'actionId'])
     && body.action === 'veto' && boundedText(body.actionId, 128))
     || (keys(body, ['action', 'itemId']) && body.action === 'dismiss' && boundedText(body.itemId, 256));

@@ -14,6 +14,7 @@
  * Address labels are routing data, not authenticated sender or recipient identities.
  * sendJson sanitizes returned data, so HTTP output is not necessarily byte-identical
  * to the stored envelope. No caller may choose the storage root or clock.
+ * GET .../needs-mason/asks/batch is `phm asks list --json` (asks.batch.v1, the phone card);
  * GET .../needs-mason/asks is `phm asks --json` (asks.v1); POST .../needs-mason/asks/answer
  * takes {id, answer: yes|no|done} and records it once with source desktop (asks.answer.v1).
  * GET .../needs-mason/approvals is the `phm approvals` asks list (approvals.asks.v1); POST
@@ -32,6 +33,7 @@ import { CHANNEL_ACK_TIMEOUT_MS } from '../fleet/channel-envelope.js';
 import { listNeedsMason, type NeedsMasonResolveResult } from '../fleet/needs-mason-resolve.js';
 import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { answerAsk, listAsks, type AskAnswerResult } from '../fleet/asks.js';
+import { listAskBatch, type AskBatch } from '../fleet/asks-batch.js';
 import { answerApproval, listApprovals, type ApprovalAnswerResult } from '../fleet/approvals.js';
 import { OPERATOR_SENDER_ID } from '../fleet/channel-envelope.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
@@ -44,6 +46,7 @@ const WORK_FEED = `${PATH}/work-feed`;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
+const ASKS_BATCH = `${ASKS}/batch`;
 const APPROVALS = `${NEEDS_MASON}/approvals`;
 const APPROVALS_ANSWER = `${APPROVALS}/answer`;
 type NeedsMasonApiResult = NeedsMasonResolveResult & { inbox?: 'appended' | 'skipped' | 'failed' };
@@ -59,7 +62,7 @@ export interface AgentBusApiDeps {
     list: typeof listNeedsMason;
     resolve: (input: unknown) => NeedsMasonApiResult | Promise<NeedsMasonApiResult>;
   };
-  asks?: { list: typeof listAsks; answer: (id: unknown, answer: unknown) => Promise<AskAnswerResult> };
+  asks?: { batch?: () => AskBatch; list: typeof listAsks; answer: (id: unknown, answer: unknown) => Promise<AskAnswerResult> };
   approvals?: { list: typeof listApprovals; answer: typeof answerApproval };
 }
 const APPROVAL_STATUS_HTTP: Record<ApprovalAnswerResult['status'], number> = {
@@ -73,7 +76,7 @@ const ASK_STATUS_HTTP: Record<AskAnswerResult['status'], number> = {
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== WORK_FEED && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_ANSWER && path !== APPROVALS && path !== APPROVALS_ANSWER) return false;
+    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== WORK_FEED && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_BATCH && path !== ASKS_ANSWER && path !== APPROVALS && path !== APPROVALS_ANSWER) return false;
     if (method !== (path === NEEDS_MASON_RESOLVE || path === ASKS_ANSWER || path === APPROVALS_ANSWER ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
@@ -111,6 +114,9 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
       } else if (path === ASKS) {
         // 200 even when the ledger is unreadable: asks.v1 says ledger: unavailable, so the card can show unknown.
         sendJson(res, 200, (deps.asks?.list ?? listAsks)());
+      } else if (path === ASKS_BATCH) {
+        // The phone card: oldest first, duplicates merged (asks.batch.v1). 200 even when the ledger is unreadable (ledger: unavailable).
+        sendJson(res, 200, (deps.asks?.batch ?? listAskBatch)());
       } else if (path === ASKS_ANSWER) {
         let raw: string;
         try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
