@@ -692,6 +692,28 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
 
+    def test_unreadable_marker_fails_closed_for_slot_and_reap(self):
+        # An existing but unreadable marker must never count as escalated:
+        # slot accounting and the reaper fail closed (job stays live).
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.log').write_text('work\n')
+        old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        marker = run / 'RQ-HUNG.maxruntime'
+        marker.write_text(json.dumps({'pid': 424242, 'start': 'x'}) + '\n')
+        os.chmod(marker, 0)
+        self.addCleanup(os.chmod, marker, 0o644)
+        self.write_ps(home, include_leader=False)
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertTrue(wt.is_dir())
+        self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
+
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
         marker = run / 'RQ-HUNG.maxruntime'

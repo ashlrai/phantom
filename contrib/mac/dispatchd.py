@@ -909,12 +909,18 @@ def _maxruntime_escalated(marker):
         with open(marker) as f: return "KILL" in {line.strip() for line in f}
     except OSError: return True
 def _maxruntime_unresolved(j):
-    """True while a timed-out job's watchdog escalation is unfinished (marker
-    without KILL): a surviving group may still hold work, so slot accounting
-    and the reaper must treat the job as live until absence is verified."""
+    """True while a timed-out job's watchdog escalation is unfinished: slot
+    accounting and the reaper must treat the job as live until group absence
+    is verified. Fails closed: an existing but unreadable marker is unresolved,
+    never escalated."""
     mk = RUN + "/" + j + ".maxruntime"
-    if not os.path.exists(mk): return False
-    return not _maxruntime_escalated(mk)
+    try:
+        with open(mk) as f: escalated = "KILL" in {line.strip() for line in f}
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return not escalated
 def _maxruntime_done_identities(marker):
     done = set()
     try:
