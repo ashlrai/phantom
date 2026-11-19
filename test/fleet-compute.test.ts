@@ -48,6 +48,17 @@ it('binds local identity only through explicit pool config; merges freshest regi
   expect(view.sources.witness).toBe('loaded');
   expect(view.nodes[0]!.jobs).toEqual([]); // a newer witness completion wins a tied heartbeat
 });
+it('frees claims fenced by an expired node record, matching the router\'s actionableClaim', async () => {
+  const f = await fixture();
+  // The fixture record is already expired; its claim is not. The router frees
+  // that claim's capacity at once, so the projection must not show it held.
+  f.state.jobs = [{ id: 'RQ-FENCED', owner: 'team', state: 'running',
+    claim: { nodeId: 'muse', session: 1, token: 1, leaderToken: 1, jobId: 'RQ-FENCED', expiresAt: now + 500 } }];
+  await writeFile(join(f.root, 'nodes', 'nodes.json'), JSON.stringify(f.state));
+  const view = await readFleetCompute(f.options);
+  expect(view.nodes.find(n => n.id === 'muse')).toMatchObject({ state: 'offline', jobs: [] });
+  expect(view.pool?.claims).toBe(0);
+});
 it('rejects symlinked/corrupt sources and telemetry with extra fields without leaking values', async () => {
   const f = await fixture();
   f.state.nodes[0]!.hostStats = { ...stats, credential: 'private fixture' } as HostStats;
