@@ -203,6 +203,13 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
   }
   if (path === '/api/fleet/job'
     && exactParams(params, { id: isFleetJobIdParam })) return { kind: 'read', path };
+  // The job window: same redacted facts and log lines as /api/fleet/job, plus
+  // a numeric tail cursor so the phone fetches only newer lines.
+  if (path === '/api/fleet/job/window') {
+    const after = (v: string): boolean => /^[0-9]{1,15}(?![\s\S])/.test(v);
+    if (exactParams(params, { id: isFleetJobIdParam, lines: FLEET_READ_LIMIT })
+      || exactParams(params, { id: isFleetJobIdParam, lines: FLEET_READ_LIMIT, after })) return { kind: 'read', path };
+  }
   if (path === '/api/verse/checkpoints'
     && exactParams(params, { chatId: (v) => CHECKPOINT_ID.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints/diff') {

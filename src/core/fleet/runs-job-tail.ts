@@ -74,7 +74,7 @@ const resolveRunsDir = (runsDir?: string): string => {
 };
 
 /** One descriptor supplies both the size and the bytes. Null offset selects a tail window. */
-async function readWindow(path: string, offset: number | null, max: number) {
+export async function readWindow(path: string, offset: number | null, max: number) {
   const fh = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const st = await fh.stat();
@@ -196,6 +196,59 @@ export async function getFleetJobTail(job: string, options: FleetJobTailOptions 
     truncated: detail.log.truncated || clipped,
     cursor: { log: log?.next ?? null, ledger: ledger ? ledger.from + ledgerEnd : null },
   };
+}
+
+export interface FleetJobLogRead {
+  /** Redacted whole lines, oldest first. */
+  lines: string[];
+  /** Byte offset just past the last whole line returned; pass back as `after`. Null when there is no live log. */
+  cursor: number | null;
+  /** Earlier lines exist that are not in `lines` (snapshot reads only). */
+  truncated: boolean;
+  /** Whole lines past `cursor` did not fit this read; ask again right away. */
+  more: boolean;
+}
+
+/**
+ * Whole log lines for one job (fleet.job.window.v1's tail cursor).
+ *
+ * - `after` null: the last `lines` lines. `final` false (a running job) holds
+ *   back an unfinished last line so the cursor never splits a line.
+ * - `after` n: only whole lines written after byte n, oldest first, at most
+ *   `lines` of them (`more` says when to ask again). A log shorter than n was
+ *   replaced, so reading restarts at 0.
+ *
+ * Every line passes `redact` (default scrubJobLogLine). Never throws on fs
+ * input: a missing or unreadable log reads as no lines and a null cursor.
+ */
+export async function readFleetJobLog(job: string, options: { runsDir?: string; after?: number | null; lines?: number; final?: boolean; redact?: (line: string) => string } = {}): Promise<FleetJobLogRead> {
+  if (!isFleetJobId(job)) throw new Error('invalid fleet job id');
+  const runsDir = resolveRunsDir(options.runsDir);
+  const max = Math.max(1, Math.min(MAX_LINES, Math.floor(options.lines ?? 40)));
+  const redact = options.redact ?? scrubJobLogLine;
+  const after = options.after ?? null;
+  const window = await readWindow(join(runsDir, `${job}.log`), after, after === null ? LOG_BYTES : FOLLOW_CHUNK).catch(() => null);
+  if (!window) return { lines: [], cursor: null, truncated: false, more: false };
+  const skip = after === null && window.from > 0 ? window.data.indexOf(0x0a) + 1 : 0;
+  const lastNewline = window.data.lastIndexOf(0x0a);
+  const keepPartial = after === null && options.final === true;
+  const end = keepPartial ? window.data.length : lastNewline + 1;
+  if (after === null && window.from > 0 && skip === 0) return { lines: [], cursor: window.next, truncated: true, more: false };
+  const text = end > skip ? window.data.toString('utf8', skip, end) : '';
+  const all = text === '' ? [] : text.split('\n');
+  if (all.at(-1) === '') all.pop();
+  if (after === null) {
+    return { lines: all.slice(-max).map(redact), cursor: window.from + end, truncated: window.from > 0 || all.length > max, more: false };
+  }
+  // A single line longer than the read window can never complete inside it: skip past it.
+  if (all.length === 0 && lastNewline === -1 && !window.drained && window.data.length >= FOLLOW_CHUNK) {
+    return { lines: [redact('Log line omitted: exceeds the read limit.')], cursor: window.next, truncated: false, more: true };
+  }
+  if (all.length <= max) return { lines: all.map(redact), cursor: window.from + end, truncated: false, more: !window.drained && end > 0 };
+  // Cut on the max-th newline byte, not on decoded text, so the cursor stays exact.
+  let cut = -1;
+  for (let n = 0; n < max; n++) cut = window.data.indexOf(0x0a, cut + 1);
+  return { lines: all.slice(0, max).map(redact), cursor: window.from + cut + 1, truncated: false, more: true };
 }
 
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {

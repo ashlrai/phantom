@@ -2136,6 +2136,24 @@ export async function handleApi(
       return true;
     }
 
+    // fleet.job.window.v1 — one job as one window (`phm job show`): plain
+    // state line and reason, facts with null for unknown, redacted log lines
+    // and a tail cursor. `after=<cursor>` returns only lines written since.
+    if (path === '/api/fleet/job/window' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobWindow } = await import('../fleet/runs-job-window.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      const rawAfter = getQueryParam(req.url ?? '', 'after');
+      const after = rawAfter === undefined ? null : /^\d{1,15}$/.test(rawAfter) ? Number(rawAfter) : NaN;
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 200 || Number.isNaN(after)) {
+        sendJson(res, 400, { error: 'valid job id, lines (1..200) and after (a cursor) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobWindow(id, { lines, after }));
+      return true;
+    }
+
     if (path === '/api/fleet/job/cost' && method === 'GET') {
       const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
       const { getFleetJobCost } = await import('../fleet/runs-job-cost.js');

@@ -410,6 +410,7 @@ Every command, grouped by topic.
     job pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json]                                    Steer one fleet job: pause, resume, stop, or move it to another lane. Returns a receipt: requested, applied, refused or unknown.
     job cost <id> [--json]                                                                                  Per-model-call cost breakdown for one fleet job: tokens in/out, model and cost (or 'unknown').
     job tail <id> [--lines N] [--follow] [--json]                                                           What a fleet job is doing now: status, lane, model, start and PR, then its redacted last log lines; --follow streams new ones.
+    job show <id> [--tail N] [--follow] [--json]                                                            One window into a fleet job: state in plain words, lane, model, repo, tier, start, finish, PR, then its redacted last log lines; --follow streams new ones.
     telemetry [status]                                                                                      M19: endpoint+PAT configured (bool), sink mode, local JSONL count, governance.
     telemetry test                                                                                          Emit a synthetic metadata-only test span; report sink+ok.
     audit [N] [--team <id>] [--json] [--action <verb>] [--result <r>] [--since <when>]                      Tail the append-only audit trail; --team lists workspace actions (read-only).

@@ -25,6 +25,7 @@ import { jobStopEligible } from './job-stop-action.js';
 import { JobControls } from './JobControls.js';
 import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
 import { JobActivity } from './JobActivity.js';
+import { JobWindowCard } from './JobWindowCard.js';
 import styles from './worker-log.module.css';
 
 const EMPTY_LINES: string[] = [];
@@ -148,6 +149,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     {valid && <JobActivity job={job} enabled={active} pollMs={pollMs(detail.data)} />}
     {valid && detail.data === null && <p>The job detail API has not landed in this build yet.</p>}
     {valid && detail.status === 'error' && <p role="status">Job detail could not refresh.</p>}
+    {valid && <JobWindowCard job={job} detail={detail.data} enabled={active} pollMs={pollMs(detail.data)} />}
     {valid && detail.data && <>
       <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
         {' '}<StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
