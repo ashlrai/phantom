@@ -437,7 +437,8 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>]` is the read
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--jobs]` is
+the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
 would block an acquire through the same overlap rule, or by `--owner` to one
@@ -446,7 +447,10 @@ identity registry, falling back to the exact owner label when the ref does
 not resolve or the registry is unreadable (the JSON `owner` field reports the
 `ref`, resolved `identity` or null, and `registry` state). A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
-zero.
+zero. With `--jobs` each claim also names the announced work-feed jobs its
+keys block (`{id, owner, status}` — the reverse of `work feed --claims`), and
+the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
+`jobs` absent so blocked work stays unknown, never an empty list.
 
 Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
