@@ -97,6 +97,20 @@ reply box. "Live log" opens the worker log, where pause and stop live. A server 
 The Leader chat opens this pane on one session: "Conversation" on a routed
 job there shows that job's conversation, and Esc returns to every session.
 
+While a conversation is open, a pane at least 720 px wide keeps every session
+listed on the left: its id, when it last spoke, its state and the newest line
+said. Click a row to read that conversation without going back to the cards.
+J and K move to the next and previous conversation from anywhere except a
+text field. In the list, Up, Down, Home and End move between rows, Enter opens
+one and Esc returns to the cards. A narrower pane shows the conversation
+alone, and J and K still work.
+
+A card or row shows "3 new" when the session holds three more messages than
+when you last had it open, or than when the pane first showed it. The marks
+last until the console window is reloaded. They are counted from each
+conversation's message total, and the read keeps only the newest part of a
+long conversation, so a session whose total has stopped growing shows no mark.
+
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
 the tree. It prints a short summary (what the session is, its state, commands

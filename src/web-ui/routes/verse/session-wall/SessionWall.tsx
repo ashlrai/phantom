@@ -7,7 +7,9 @@
  * done by it on the left, recorded steps in the centre, and a reply box that
  * writes through the Leader's inbox, aimed `@RQ-…` at a running worker.
  * Arrow keys (or J and K) move between cards, Enter opens, R opens with the
- * cursor in the reply box, Esc comes back.
+ * cursor in the reply box, Esc comes back. While a conversation is open and
+ * the pane is wide enough, the other sessions stay listed beside it
+ * (SessionRail.tsx) and J and K step to the next and previous conversation.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -19,6 +21,8 @@ import { sessionThreadQuery, THREAD_POLL_MS } from '../fleet-sessions/session-th
 import { clockTime } from '../leader/thread-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { railStep, SessionRail } from './SessionRail.js';
+import { noteWallSeen, unseenCount } from './wall-seen.js';
 import { subscribeWallSelection, takeRequestedWallSession } from './wall-selection.js';
 import { replyLine, sessionWallQuery, stateCounts, STATE_WORD, WALL_POLL_MS, WALL_STATES, wallFailure, wallHeadline,
   type SessionWallRead, type WallEntry, type WallFailure, type WallSession, type WallState } from './session-wall-model.js';
@@ -27,16 +31,17 @@ import styles from './session-wall.module.css';
 const spoke = (session: WallSession) => (session.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(session.lastMessageAgeSeconds)} ago`);
 
 /** One session on the wall. The card is a single button, so its text stays plain; the opened conversation renders markdown. */
-function Card({ entry, onOpen }: { entry: WallEntry; onOpen: (id: string) => void }) {
-  const { session } = entry, summaryId = useId();
+function Card({ entry, fresh, onOpen }: { entry: WallEntry; fresh: number; onOpen: (id: string) => void }) {
+  const { session } = entry, summaryId = useId(), freshId = useId();
   const earlier = entry.messageCount - entry.messages.length;
   return <li className={styles.card} data-state={session.state}>
     <button type="button" className={styles.open} data-card={session.id} onClick={() => onOpen(session.id)}
-      aria-label={`${session.id}, ${STATE_WORD[session.state]}`} aria-describedby={summaryId}>
+      aria-label={`${session.id}, ${STATE_WORD[session.state]}`} aria-describedby={fresh > 0 ? `${freshId} ${summaryId}` : summaryId}>
       <span className={styles.top}>
         {session.kind === 'worker' && session.lane !== 'unknown' && <ProviderBadge of={session.lane} iconOnly size={14} />}
         <strong className={styles.id}>{session.id}</strong>
         <span className={styles.state} data-state={session.state}>{STATE_WORD[session.state]}</span>
+        {fresh > 0 && <span id={freshId} className={styles.fresh}>{fresh} new</span>}
         <span className={styles.muted}>{spoke(session)}</span>
       </span>
       <span className={styles.facts}>
@@ -98,7 +103,7 @@ export function WallView({ read, onOpen, focusId = null }: { read: SessionWallRe
     {read.entries.length === 0
       ? <p className={styles.empty} role="status">{read.total ? 'The list holds sessions, but none came back as a conversation.' : 'No agent sessions right now. Each one appears here as the fleet starts it.'}</p>
       : <ul ref={list} className={styles.wall} aria-label="Conversations" onKeyDown={onKeyDown}>
-        {shown.map(entry => <Card key={entry.session.id} entry={entry} onOpen={onOpen} />)}
+        {shown.map(entry => <Card key={entry.session.id} entry={entry} fresh={unseenCount(entry, null)} onOpen={onOpen} />)}
       </ul>}
     {read.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{read.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
     <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
@@ -139,13 +144,32 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
     take();
     return subscribeWallSelection(take);
   }, []);
-  // The wall's last read stays subscribed while a conversation is open (coming back shows it at once); only the polling stops.
+  // The wall's read keeps polling while a conversation is open: it is the list beside it, and coming back shows it at once.
   const read = useQuery(sessionWallQuery, { enabled: visible, freshMs: WALL_POLL_MS });
   const refetch = useRefetch(sessionWallQuery);
-  usePollWhileVisible(refetch, WALL_POLL_MS, { enabled: visible && open === null });
+  usePollWhileVisible(refetch, WALL_POLL_MS, { enabled: visible });
   const wall = read.data ?? null;
+  const openId = open?.id ?? null;
+  // After each read is drawn: first sight of a session is its starting count, and the open conversation counts as read.
+  useEffect(() => { if (wall) noteWallSeen(wall.entries, openId); }, [wall, openId]);
   if (open !== null) {
-    return <OpenConversation id={open.id} toReply={open.toReply} visible={visible} host={host} onBack={() => { setFocusId(open.id); setOpen(null); }} />;
+    const close = () => { setFocusId(open.id); setOpen(null); };
+    // J and K step through the conversations from anywhere but a text field or the unlock dialog.
+    const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || (event.key !== 'j' && event.key !== 'k')) return;
+      if (event.target instanceof Element && event.target.closest('textarea, input, select, [role="dialog"]')) return;
+      const to = railStep(wall, open.id, event.key === 'j' ? 1 : -1);
+      if (to === null) return;
+      event.preventDefault();
+      setOpen({ id: to, toReply: false });
+    };
+    return <div className={styles.split} onKeyDown={onKeyDown}>
+      <div className={styles.columns}>
+        <SessionRail read={wall} failed={read.error != null} openId={open.id} onPick={id => setOpen({ id, toReply: false })} onClose={close} />
+        {/* Keyed by session, so a line sent to one conversation never shows in the next. */}
+        <OpenConversation key={open.id} id={open.id} toReply={open.toReply} visible={visible} host={host} onBack={close} />
+      </div>
+    </div>;
   }
   const failure = read.error ? wallFailure(read.error) : null;
   if (wall) {
