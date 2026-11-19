@@ -1901,6 +1901,15 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/worklog' && method === 'GET') {
+      // The numbers per hour and per day (fleet.worklog.v1), the report `phm fleet worklog --json` prints.
+      const { readFleetWorklog, worklogOptions } = await import('../fleet/worklog-numbers.js');
+      const options = worklogOptions(getQueryParam(req.url ?? '', 'hours') || undefined, getQueryParam(req.url ?? '', 'by') || undefined);
+      if (!options) { sendJson(res, 400, { error: 'Use hours from 1 to 168 and by=hour or by=day.' }); return true; }
+      sendJson(res, 200, sanitizePublicJson(await readFleetWorklog(options)));
+      return true;
+    }
+
     if (path === '/api/log' && method === 'GET') {
       // One row per job (joblog.v1), the report `phm log --json` prints.
       const { readJobLog } = await import('../fleet/job-log.js');
