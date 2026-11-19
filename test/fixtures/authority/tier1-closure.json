@@ -259,6 +259,8 @@
     "src/core/agents/adapters/handoff.ts",
     "src/core/agents/bus-identity.ts",
     "src/core/agents/bus-v2-schema.ts",
+    "src/core/agents/bus-work-feed-read.ts",
+    "src/core/agents/bus-work-feed.ts",
     "src/core/agents/channel-policy.ts",
     "src/core/agents/channel-registry.ts",
     "src/core/agents/chat-owner-ingress.ts",

@@ -13,10 +13,15 @@
  *               (`phm drafts list --status pending`), act: show/approve/reject.
  *   bus         live `kind:'work'` envelopes in the local bus inbox with no
  *               live claim row — an expired lease is free again and counts as
- *               unclaimed — act: `phm fleet bus-claim acquire`. When the claims
- *               table itself cannot be read the section reports 'degraded' and
- *               still lists candidates rather than hiding possibly unclaimed
- *               work.
+ *               unclaimed — act: `phm fleet bus-claim acquire`. The same
+ *               section also lists open agent-bus v2 work-feed jobs (queued or
+ *               rescheduled `work.post` announcements with at least one claim
+ *               key not fully held), read through the same projection
+ *               `phm agents bus work feed` serves — act:
+ *               `phm agents bus claim acquire`. When the claims table itself
+ *               cannot be read the section reports 'degraded' and still lists
+ *               candidates rather than hiding possibly unclaimed work; a
+ *               refused or unreadable feed degrades it the same way.
  *   gmail       one item per inbox in the saved Gmail archive plan whose unread
  *               count is over its target (`phm fleet gmail-archive-plan`). A
  *               read of the saved plan only: no mail is read, moved or deleted.
@@ -37,9 +42,12 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
+import type { WorkJob } from '../agents/bus-v2-schema.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
+import type { BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
@@ -104,6 +112,7 @@ export interface UnifiedInboxOptions {
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
+  readFeed?: typeof readBusWorkFeed;
   readGmailPlans?: typeof readGmailArchivePlanLatest;
   readLinkedIn?: typeof readLinkedInDrop;
 }
@@ -178,6 +187,74 @@ function isWorkReceipt(receipt: BusInboxReceipt): boolean {
   return body !== null && typeof body === 'object' && !Array.isArray(body) && body.kind === 'work';
 }
 
+/** Announcement metadata for a v2 work job, read off its live `work.post` receipt. */
+interface BusFeedPost {
+  title: string | null;
+  priority: BusPriority;
+  receivedAt: number;
+  expiresAt: number;
+}
+
+/** Statuses that still mean "open for a worker"; running/idle/blocked are progress reports, the rest are terminal. */
+const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
+
+/**
+ * Open v2 work-feed jobs with claimable scope, from the same read-only
+ * projection `phm agents bus work feed` serves. A job counts as pending while
+ * it is queued or rescheduled, declares at least one claim key, and — when the
+ * coordination table is readable — at least one of those keys has no live hold.
+ * Unknown holds list candidates under 'degraded' rather than hiding them. A
+ * refused, retryable or unreadable feed degrades the section; it never
+ * invents jobs.
+ */
+function busFeedJobItems(options: UnifiedInboxOptions, now: number,
+  posts: ReadonlyMap<string, BusFeedPost>): { state: 'ok' | 'degraded' | 'unavailable'; items: Omit<UnifiedInboxItem, 'priority'>[] } {
+  let feed: BusWorkFeedReadResult;
+  try { feed = (options.readFeed ?? readBusWorkFeed)({ root: options.busRoot, claims: true, now: () => now }); }
+  catch { return { state: 'unavailable', items: [] }; }
+  if (feed.status === 'unavailable') return { state: 'unavailable', items: [] };
+  if (feed.status !== 'ok') return { state: 'degraded', items: [] };
+
+  const holdsKnown = feed.claims?.source !== 'unavailable';
+  const heldKeys = new Map<string, Set<string>>();
+  if (feed.claims) {
+    for (const hold of feed.claims.holds) {
+      const set = heldKeys.get(hold.jobId) ?? new Set<string>();
+      set.add(hold.claimKey);
+      heldKeys.set(hold.jobId, set);
+    }
+  }
+
+  const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  for (const job of feed.jobs) {
+    if (!BUS_FEED_OPEN_STATUSES.has(job.status) || job.claimKeys.length === 0) continue;
+    const held = heldKeys.get(job.id);
+    const freeKeys = holdsKnown ? job.claimKeys.filter(key => !held?.has(key)) : job.claimKeys;
+    if (freeKeys.length === 0) continue;
+    const claimKey = freeKeys.find(key => key.startsWith('queue:')) ?? freeKeys[0]!;
+    const post = posts.get(job.id);
+    const title = post?.title ? oneLine(post.title, TITLE_MAX) : '';
+    const heldCount = held?.size ?? 0;
+    items.push({
+      id: `bus-feed:${job.id}`,
+      source: 'bus',
+      kind: 'bus-work',
+      severity: post?.priority === 'P0' ? 'high' : post?.priority === 'P1' ? 'warn' : 'info',
+      blocking: false,
+      title: title || `bus work ${job.id}`,
+      detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+        (holdsKnown ? ` · ${heldCount}/${job.claimKeys.length} claim keys held` : ' · claim holds unknown'), DETAIL_MAX),
+      since: iso(post?.receivedAt ?? job.updatedAt),
+      expiresAt: post ? iso(post.expiresAt) : null,
+      act: [
+        `phm agents bus claim acquire --key ${claimKey} --owner <label> --lease-ms ${SUGGESTED_LEASE_MS}`,
+        'phm agents bus work feed --claims',
+      ],
+    });
+  }
+  return { state: holdsKnown ? 'ok' : 'degraded', items };
+}
+
 function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] } {
   const bus: BusInboxOptions = { root: options.busRoot, now: options.now };
   let inspection: BusInboxInspection;
@@ -193,6 +270,7 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
 
   const list = options.listBus ?? listBusInboxAfter;
   const items: Omit<UnifiedInboxItem, 'priority'>[] = [];
+  const feedPosts = new Map<string, BusFeedPost>();
   let state: UnifiedInboxSourceState = claims.source === 'unavailable' ? 'degraded' : 'healthy';
   let after = 0;
   // Same paging bound the work loop accepts: the store retains at most
@@ -202,10 +280,23 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
     try { result = list(after, BUS_INBOX_MAX_READ, bus); } catch { result = { status: 'unavailable' }; }
     if (result.status !== 'ok') { state = result.status === 'retryable' ? 'degraded' : 'unavailable'; break; }
     for (const receipt of result.messages) {
-      if (!isWorkReceipt(receipt) || taken(receipt)) continue;
       const { envelope } = receipt;
-      const text = envelope.body !== null && typeof envelope.body === 'object' && !Array.isArray(envelope.body) && typeof envelope.body.text === 'string'
-        ? envelope.body.text : '';
+      const body = envelope.body;
+      if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+        const record = body as Record<string, unknown>;
+        if (record.kind === 'work.post' && typeof record.jobId === 'string' && !feedPosts.has(record.jobId)) {
+          feedPosts.set(record.jobId, {
+            title: typeof record.title === 'string' ? record.title : null,
+            priority: envelope.priority,
+            receivedAt: receipt.receivedAt,
+            // The reader decrements ttl to what remains; expiry is a real deadline.
+            expiresAt: now + envelope.ttl,
+          });
+        }
+      }
+      if (!isWorkReceipt(receipt) || taken(receipt)) continue;
+      const text = body !== null && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string'
+        ? body.text : '';
       items.push({
         id: `bus:${envelope.id}`,
         source: 'bus',
@@ -224,6 +315,10 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
     if (result.nextCursor <= after) { state = 'degraded'; break; }
     after = result.nextCursor;
   }
+  const feed = busFeedJobItems(options, now, feedPosts);
+  items.push(...feed.items);
+  if (feed.state === 'unavailable') state = 'unavailable';
+  else if (feed.state === 'degraded' && state === 'healthy') state = 'degraded';
   return { report: { state, pending: items.length }, items };
 }
 
