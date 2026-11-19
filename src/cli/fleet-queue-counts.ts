@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { getLaneQueueCounts } from '../core/fleet/queue-counts.js';
 
-const usage = 'Usage: phm fleet queue-counts [--root <abs>] [--json]\nPer lane: ready, parked, running, oldest wait and merges in the last hour. Wait includes ready and parked jobs; unknown means missing or ambiguous evidence. Reads <root>/queue and <root>/metrics/jobs.jsonl (default ~/.ashlr-runs). Read-only.';
+const usage = 'Usage: phm fleet queue-counts [--root <abs>] [--json]\nPer lane: ready, parked, running, oldest wait and merges in the last hour. Wait includes ready and parked jobs and restarts at each re-arrival; unknown means missing evidence, such as a silent requeue. Reads <root>/queue and <root>/metrics/jobs.jsonl (default ~/.ashlr-runs). Read-only.';
 
 export async function cmdFleetQueueCounts(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }

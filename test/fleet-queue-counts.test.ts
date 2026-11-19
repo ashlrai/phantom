@@ -83,8 +83,10 @@ it('includes parked jobs in the oldest wait and refuses incomplete or ambiguous 
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
   await writeFile(path, [queued('a-1', 5), queued('a-2', 30)].join('\n'));
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1800);
+  // Repeat sightings of one uninterrupted dwell keep the earliest arrival;
+  // they are not conflicting evidence.
   await writeFile(path, [queued('a-1', 5), queued('a-2', 30), queued('a-2', 20)].join('\n'));
-  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1800);
 });
 
 it('reads the enqueue spelling dispatchd writes, not only the queued alias', async () => {
@@ -94,6 +96,52 @@ it('reads the enqueue spelling dispatchd writes, not only the queued alias', asy
   const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', repo: 'ashlrai/phantom', lane: 'devin', tier: 'work', ts: minutesAgo(minutes) });
   await writeFile(path, [enqueued('a-1', 45), enqueued('a-2', 10)].join('\n'));
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(2700);
+});
+
+it('measures wait from re-arrival, not the first-ever enqueue', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin'), row('READY', 'a-3', 'devin')].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', ts: minutesAgo(minutes) });
+  const departed = (job: string, minutes: number) => JSON.stringify({ job, event: 'launch', ts: minutesAgo(minutes) });
+  // dispatchd emits enqueue once per job, so a-1's wait restarted at its
+  // launch_failed retry 10 minutes ago — not its 90-minute-old enqueue.
+  await writeFile(path, [
+    enqueued('a-1', 90), departed('a-1', 80),
+    JSON.stringify({ job: 'a-1', event: 'launch_failed', action: 'retry', ts: minutesAgo(10) }),
+    enqueued('a-2', 45), departed('a-2', 40),
+    // a-2 requeued silently (deferred launch): no re-arrival row exists, so
+    // its wait is unknown and the lane reports null rather than 45 minutes.
+    enqueued('a-3', 20),
+  ].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
+  // With the silently requeued job gone, the oldest wait is a-3's 20-minute
+  // dwell; a-1's retry restarted its own clock only 10 minutes ago.
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-3', 'devin')].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(1200);
+});
+
+it('counts batch departures and retried member outcomes as queue marks', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', ts: minutesAgo(minutes) });
+  await writeFile(path, [
+    enqueued('a-1', 120),
+    JSON.stringify({ job: 'a-1', event: 'batch_claim', batch: 'B-1', ts: minutesAgo(100) }),
+    // A failed member goes back to ready.tsv at its task_outcome stamp.
+    JSON.stringify({ job: 'a-1', event: 'task_outcome', batch: 'B-1', outcome: 'failed', ts: minutesAgo(15) }),
+    enqueued('a-2', 30),
+    JSON.stringify({ job: 'a-2', event: 'batch_claim', batch: 'B-2', ts: minutesAgo(25) }),
+    // done hands the member off to its own publish; it is not a re-arrival.
+    JSON.stringify({ job: 'a-2', event: 'task_outcome', batch: 'B-2', outcome: 'done', ts: minutesAgo(20) }),
+  ].join('\n'));
+  const counts = await getLaneQueueCounts({ runsDir: root, now });
+  // a-1 waits since its failed member outcome; a-2's last mark is a
+  // departure, so its wait is unknown and the lane reports null.
+  expect(counts.lanes[0]!.oldestWaitSeconds).toBeNull();
+  await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(900);
 });
 
 it('keeps oldest waits honest across both ends of an oversized ledger', async () => {
