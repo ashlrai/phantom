@@ -584,3 +584,53 @@ it('records retry_requested observations through the append and --record paths',
     await expect(recordMergeEvent(path, { ...ev(3, 'retry_failed', 500), at: undefined })).rejects.toThrow();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+const waitOf = async (rows: unknown[], stalledAfter?: number) =>
+  (await fleetMergeLatency(reader(...rows), now, 24, stalledAfter)).pr_stages!.map(p => p.wait);
+
+it('reports per-stage timestamps, elapsed time and the next automatic action for queued, required-check wait and merged PRs', async () => {
+  const [queued, checks, merged] = await waitOf([
+    ev(1, 'opened', 900), ev(1, 'queued', 600),
+    ev(2, 'opened', 900), ev(2, 'queued', 800), ev(2, 'check_observed', 700, { required: true, conclusion: 'pending' }),
+    ev(3, 'opened', 900), ev(3, 'queued', 800), ev(3, 'checks_passed', 300), ev(3, 'merged', 100),
+  ]);
+  expect(queued).toMatchObject({ state: 'queued', elapsed_s: 900, stage_waiting_s: 600, stalled: false,
+    stage_times: { opened_at: ago(900), queued_at: ago(600), checks_passed_at: null, merged_at: null },
+    next: { action: 'merge_queue', automatic: true } });
+  expect(checks).toMatchObject({ state: 'required_checks', stage_waiting_s: 700, stalled: false, next: { action: 'required_checks', automatic: true } });
+  expect(checks.next.note).toContain('none are skipped');
+  expect(merged).toMatchObject({ state: 'merged', elapsed_s: 800, stage_waiting_s: null, stalled: false,
+    stage_times: { checks_passed_at: ago(300), merged_at: ago(100) }, next: { action: 'none', automatic: false } });
+  expect(merged.diagnosis).toBe('Merged after 13m.');
+});
+
+it('diagnoses a stalled required-check wait and keeps unmeasurable waits unknown', async () => {
+  const [stalled, notQueued, reversed] = await waitOf([
+    ev(1, 'opened', 9000), ev(1, 'queued', 8000), ev(1, 'check_observed', 7500, { required: true, conclusion: 'failure' }),
+    ev(2, 'opened', 500),
+    ev(3, 'opened', 100), ev(3, 'queued', 200), ev(3, 'merged', 50),
+  ], 3600);
+  expect(stalled).toMatchObject({ state: 'required_checks', stage_waiting_s: 7500, stalled: true });
+  expect(stalled.diagnosis).toContain('past the 1h 0m stall limit. Inspect pending or failed required checks; keep them enabled.');
+  expect(notQueued).toMatchObject({ state: 'not_queued', stage_waiting_s: 500, stalled: false, next: { action: 'enqueue', automatic: true } });
+  expect(reversed).toMatchObject({ state: 'merged', elapsed_s: null });
+  const [untimed] = await waitOf([ev(4, 'opened', 100), ev(4, 'merged', 10, { at: undefined })]);
+  expect(untimed).toMatchObject({ state: 'merged', elapsed_s: null, stage_times: { merged_at: null } });
+});
+
+it('names merge-retry when an auto-merge drop is retryable', async () => {
+  const [w] = await waitOf([ev(1, 'opened', 900), ev(1, 'queued', 800), ev(1, 'auto_merge_enabled', 700),
+    ev(1, 'blocked', 650, { reason: 'queue' }), ev(1, 'auto_merge_disabled', 600)]);
+  expect(w.next).toMatchObject({ action: 'merge_retry', automatic: true });
+});
+
+it('prints the typed wait diagnosis in JSON and plain words without changing the ledger', async () => {
+  const rows = [ev(1, 'opened', 900), ev(1, 'queued', 600), ev(2, 'opened', 900), ev(2, 'queued', 800), ev(2, 'checks_passed', 300), ev(2, 'merged', 100)];
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetMergeLatency(['--json'], { read: reader(...rows), now })).toBe(0);
+  const json = JSON.parse(log.mock.calls[0]![0] as string);
+  expect(json.pr_stages.map((p: { wait: { state: string } }) => p.wait.state)).toEqual(['queued', 'merged']);
+  const text = formatMergeLatency(await fleetMergeLatency(reader(...rows), now));
+  expect(text).toContain('PR is in the merge queue for 10m.');
+  expect(text).toContain('Next (automatic): The merge queue merges it after its merge-group checks pass.');
+});
