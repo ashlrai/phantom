@@ -166,10 +166,11 @@ The Release PR workflow and the release train both wake every 5 minutes.
 `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
 1440 minutes, and defaults to 5. The train does not raise that value.
 The cadence check evaluates the live master tip rather than the SHA that
-woke the workflow, and a merge landing mid-check re-verifies at the new
-tip a bounded number of times instead of starving the release; green
-evidence is the newest decisive completed master push CI run on the tip
-or a bounded ancestor, and the release PR's own required checks remain
+woke the workflow, reads its independent tip-pinned inputs concurrently to
+keep the still-tip window small, and a merge landing mid-check re-verifies
+at the new tip a bounded number of times instead of starving the release;
+green evidence is the newest decisive completed master push CI run on the
+tip or a bounded ancestor, and the release PR's own required checks remain
 the merge gate for the exact head that ships. It requests a patch bump,
 then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
