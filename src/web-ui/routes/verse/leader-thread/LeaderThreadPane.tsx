@@ -60,6 +60,8 @@ import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './s
 import { OrderRouting } from './OrderRouting.js';
 import { inboxAtForLine, lineRouting, routingInFlight, type LineRouting } from './thread-routing-model.js';
 import { requestWallSession } from '../session-wall/wall-selection.js';
+import { useComposerAssist } from './ComposerAssist.js';
+import { recallable } from './composer-assist-model.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -417,7 +419,12 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     void send();
   }
 
+  // Typing @ lists the running sessions to aim at; Up in an empty box recalls what Mason already said here.
+  const sentTexts = useMemo(() => recallable(merged.lines.filter(line => line.who === 'mason' && line.source !== 'system' && !line.quiet).map(line => line.text)), [merged.lines]);
+  const assist = useComposerAssist({ draft, setDraft, inputRef, enabled: visible && !actions.readOnly, sent: sentTexts });
+
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (assist.onKeyDown(event)) return;
     if (event.key === 'Tab' && !event.shiftKey) {
       const completed = completeCommand(draft);
       if (completed !== null) { event.preventDefault(); setDraft(completed); }
@@ -525,9 +532,10 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     </div>
     {note ? <p className={styles.note} role="note">{note}</p> : null}
     <form className={styles.reply} onSubmit={onSubmit}>
+      {assist.panel}
       <div className={styles.replyRow}>
         <textarea ref={inputRef} aria-label="Reply to the Leader" placeholder="Reply to the Leader…" value={draft} maxLength={6000}
-          disabled={sending || actions.readOnly} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
+          disabled={sending || actions.readOnly} {...assist.inputProps} onKeyDown={onKeyDown} />
         <button type="submit" className={styles.send} disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
       </div>
       {hints.length ? <ul className={styles.note} aria-label="Composer commands">
