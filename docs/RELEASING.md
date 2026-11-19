@@ -73,7 +73,7 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   commit to `published_at` in
   [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
   The committed file is the baseline; each weekly run uploads a fresh copy.
-- On manual dispatch with `release_gate=true` (release-prep.yml once per master SHA, and Auto-tag on a tag): reuse a
+- On manual dispatch with `release_gate=true` (release-prep.yml once per owed version while a run is outstanding, and Auto-tag on a tag): reuse a
   completed successful **push** CI run for the exact master SHA. After both
   release-gate jobs succeed on master, CI dispatches Auto-tag with that run's
   `GITHUB_SHA` (a `GITHUB_TOKEN` dispatch does not emit a `workflow_run` event);
@@ -232,11 +232,21 @@ What runs without a per-release approval:
   `package.json` carries at the master SHA is already tagged **and** its
   GitHub release is published — the same nothing-to-do proof Auto-tag's
   version step uses (`git/ref/tags/v<version>` plus `releases/tags/v<version>`,
-  which 404s drafts). Per-SHA release-gate runs therefore exist only while a
+  which 404s drafts). Release-gate runs therefore exist only while a
   version is owed: from its bump merge until tag + published release. A tag
   whose release is still a draft, or whose release leg never ran, stays a
   candidate so Auto-tag's heal path keeps its evidence; any failed or
-  incomplete read also fails open to dispatching.
+  incomplete read also fails open to dispatching. Because each dispatch
+  pins the master SHA that was tip at dispatch time and the release-gate
+  concurrency group is serial, the decide step also treats any unfinished
+  `workflow_dispatch` CI run on master — created within the last three
+  hours — as release-gate work already outstanding and dispatches nothing
+  further. During a merge burst this keeps at most one release-gate run
+  queued or running per owed version instead of one per moved tip; the
+  outstanding run's SHA is still tagged through Auto-tag's exact-SHA
+  dispatch when it completes. A stale or unreadable dispatch timestamp
+  fails open to dispatching, so a zombie queued run cannot gate releases
+  forever.
 - Only the release-please PR changes the release version. The `Quick
   typecheck` job refuses a pull request that changes the `package.json`
   version or `.release-please-manifest.json` unless its head is a
