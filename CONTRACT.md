@@ -1267,7 +1267,21 @@ workers, then subagents, running first and then most recent, with sessions
 whose parent is missing under `unknown parent`. The filter gains `live` and
 `subagents` (null means unreadable). `src/core/subagent/spawn.ts` exports
 `readSubagentRecords(options, limit)`. It projects the session map above;
-it adds no source. The session map gains `localNodeId`, and
+the only source it adds is the leader's own files, for the leader row.
+The filter takes an optional `leader` (`LeaderSessionFacts` from
+`session-tree.ts`: `lastPassAt`, `lastReplyAt`, `lastReply`, each null when
+unknown; null or absent when unread), and `sessionRecords` takes the same as
+`options.leader`. The pure `leaderRecord(facts, now)` builds the row: `idle`
+while the newest plan-log pass is at most `LEADER_PASS_FRESH_MINUTES` (120)
+old (`leaderPassFresh`), otherwise `unknown`; `lastMessage` is the newest
+reply to the owner on one line, at most `LEADER_REPLY_EXCERPT_CHARS` (240);
+lane, model and start stay unknown. With facts and no lane or repo filter the
+leader is listed even when no worker is. `leaderGaps(facts, now)` in
+`live-sessions.ts` words what the row could not show; with no fact it is the
+single line older readers print. `readLiveSessions` gains an injectable
+`readLeader`, defaulting to `readLeaderSessionFacts(options)` in
+`live-sessions-read.ts` (plan-log heading time and `leader.replies.v1`,
+bounded tails, never throws); the HTTP route reads it at most once per 15 s. The session map gains `localNodeId`, and
 `fleet.sessions.v1` rows gain optional `lastOutputAt` (the `<job>.log` lstat
 mtime; absent from older servers). Rows cover launching, running, publishing
 and claim-only (`unknown`) sessions. Unknown text fields read `unknown`, unknown
