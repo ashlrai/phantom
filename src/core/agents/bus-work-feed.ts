@@ -13,15 +13,20 @@ export type WorkFeedResult =
 /** Resolves a sender label to a provider when the post and participants do not name one. */
 export type WorkFeedProviderFor = (from: string) => Participant['provider'] | undefined;
 
+/** Resolves a sender label to a canonical owner key when the registry knows it. */
+export type WorkFeedOwnerKeyFor = (from: string) => string | undefined;
+
 /**
  * Project one retained snapshot in cursor order (at most 1024 receipts).
  * This is not a historical ledger: orphan statuses are ignored. A provider must
  * come from the post, explicit participant metadata or the injected resolver —
- * never a guessed label. No journal writes, claims, dispatch, authentication or
- * external calls occur.
+ * never a guessed label. Statuses update jobs owned by the same sender label,
+ * or by any label the injected `ownerKeyFor` resolver maps to the same key;
+ * labels it cannot resolve still require exact label equality. No journal
+ * writes, claims, dispatch, authentication or external calls occur.
  */
 export function projectBusWorkFeed(receipts: readonly unknown[], participants: readonly Participant[] = [],
-  providerFor?: WorkFeedProviderFor): WorkFeedResult {
+  providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor): WorkFeedResult {
   if (receipts.length > 1024) return { status: 'refused', reason: 'invalid-receipts' };
   const providers = new Map<string, Participant['provider']>();
   for (const input of participants) {
@@ -31,6 +36,14 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
     }
     providers.set(participant.data.participantId, participant.data.provider);
   }
+  const ownerKeys = new Map<string, string | undefined>();
+  const ownerKey = ownerKeyFor === undefined ? undefined : (label: string): string | undefined => {
+    if (!ownerKeys.has(label)) {
+      const key = ownerKeyFor(label);
+      ownerKeys.set(label, typeof key === 'string' && key.length > 0 ? key : undefined);
+    }
+    return ownerKeys.get(label);
+  };
   const jobs = new Map<string, WorkJob>();
   let cursor = 0;
   for (const input of receipts) {
@@ -64,7 +77,13 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
       if (!status.success) return { status: 'refused', reason: 'invalid-body' };
       const job = jobs.get(status.data.jobId);
       if (!job) continue;
-      if (job.owner !== from) return { status: 'refused', reason: 'owner-mismatch' };
+      if (job.owner !== from) {
+        const postKey = ownerKey?.(job.owner);
+        const fromKey = ownerKey?.(from);
+        if (postKey === undefined || postKey !== fromKey) {
+          return { status: 'refused', reason: 'owner-mismatch' };
+        }
+      }
       // Cursor order wins even when receipt clocks move backwards.
       jobs.set(job.id, { ...job, status: status.data.status, updatedAt: row.receivedAt });
     }

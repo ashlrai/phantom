@@ -92,4 +92,22 @@ describe('retained v2 work projection', () => {
     expect(projectBusWorkFeed([receipt(post), { ...receipt({ kind: 'work.status', jobId: 'job', status: 'done' }, 10), receivedAt: 1 }]))
       .toMatchObject({ status: 'ok', feed: { jobs: [{ status: 'done', updatedAt: 1 }] } });
   });
+  it('matches status owners through ownerKeyFor only when both labels resolve to one key', () => {
+    const keys: Record<string, string> = { 'agent:bot': 'agt_one', 'bot-alias': 'agt_one', 'agent:other': 'agt_two' };
+    const ownerKeyFor = (from: string) => keys[from];
+    const status = (cursor: number, from: string) => receipt({ kind: 'work.status', jobId: 'job', status: 'running' }, cursor, from);
+    // Sibling labels of one identity update the job; owner stays the posting label.
+    expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')], [], undefined, ownerKeyFor))
+      .toMatchObject({ status: 'ok', feed: { jobs: [{ owner: 'agent:bot', status: 'running' }] } });
+    // Different identities, and labels the resolver cannot place, still refuse.
+    for (const from of ['agent:other', 'stranger']) {
+      expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, from)], [], undefined, ownerKeyFor))
+        .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+    }
+    // Empty keys never match, and without a resolver labels must be identical.
+    expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')], [], undefined, () => ''))
+      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+    expect(projectBusWorkFeed([receipt(post, 1, 'agent:bot'), status(2, 'bot-alias')]))
+      .toEqual({ status: 'refused', reason: 'owner-mismatch' });
+  });
 });
