@@ -37,6 +37,10 @@ while hidden. Unavailable readings stay labeled rather than showing an empty
 fleet as healthy. The menu uses the `open-fleet` desktop command; no extra
 listener, browser window or token handoff is needed.
 
+Press ⌘⌥A (or **Agent threads** in the Leader conversation) to read every
+agent session as a conversation, with a summary from its records; see
+[Console layout](docs/CONSOLE-LAYOUT.md).
+
 Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append to
 `~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
 [Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).

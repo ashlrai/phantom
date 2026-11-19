@@ -27,7 +27,7 @@ describe('sectionForPane', () => {
   });
 
   it('places the named panes', () => {
-    expect(['leader-thread', 'leader-journal'].map(sectionForPane)).toEqual(['chat', 'chat']);
+    expect(['leader-thread', 'leader-journal', 'agent-threads'].map(sectionForPane)).toEqual(['chat', 'chat', 'chat']);
     expect(['feed', 'fleet-events', 'fleet-timeline', 'fleet-bus'].map(sectionForPane)).toEqual(['feed', 'feed', 'feed', 'feed']);
     expect([sectionForPane('ideas'), sectionForPane('goals'), sectionForPane('library')]).toEqual(['ideas', 'goals', 'library']);
     expect(sectionForPane('fleet-queue')).toBe('fleet');

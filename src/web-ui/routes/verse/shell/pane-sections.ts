@@ -16,7 +16,7 @@ export const PANE_SECTIONS = [
 export type PaneSectionId = (typeof PANE_SECTIONS)[number]['id'];
 
 const SECTION_BY_PANE: Readonly<Record<string, PaneSectionId>> = {
-  'leader-thread': 'chat', 'leader-journal': 'chat',
+  'leader-thread': 'chat', 'leader-journal': 'chat', 'agent-threads': 'chat',
   feed: 'feed', 'fleet-events': 'feed', 'fleet-timeline': 'feed', 'fleet-bus': 'feed',
   ideas: 'ideas',
   goals: 'goals',

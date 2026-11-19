@@ -4,6 +4,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 
 | Id | Title | Chord | Source file |
 | --- | --- | --- | --- |
+| `agent-threads` | Agent threads | `mod+alt+a` | `src/web-ui/routes/verse/agent-threads/agent-threads.pane.tsx` |
 | `channels` | Channels | none | `src/web-ui/routes/verse/channels/channels.pane.tsx` |
 | `checks` | Checks | — | `src/web-ui/routes/verse/agents/checks.pane.tsx` |
 | `company` | Company | none | `src/web-ui/routes/verse/company/company.pane.tsx` |

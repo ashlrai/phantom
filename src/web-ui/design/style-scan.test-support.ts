@@ -73,6 +73,8 @@ export const NEW_310_UI_PATHS: readonly string[] = [
   'routes/verse/chat/NoticeSlot.module.css',
   // 3.15: the Terminal panel (tabs, splits, command blocks, the Agent tab).
   'routes/verse/terminal',
+  // Agent threads: every session as a conversation.
+  'routes/verse/agent-threads',
   'components/charts/ForestPlot.tsx',
   'components/charts/ForestPlot.module.css',
   'components/charts/MatrixHeatmap.tsx',
