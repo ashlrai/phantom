@@ -663,9 +663,13 @@ change batches related ready tasks into one agent session. See
 [adaptive concurrency and batching](../contrib/mac/README.md#adaptive-concurrency-and-batching).
 
 `ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
-and says why each lane is waiting: held, at target, blocked by the global cap, or ok.
-It does not probe the host or launch work. It exits 1 when any lane is blocked by
-the global cap with 5 or more jobs queued. Other waits are `ashlr fleet lane-idle`.
+and says why each lane is waiting: held, at target, admission closed (the
+dispatcher is not admitting — load gate tripped or paused), blocked by the global
+cap, or ok. `global.closed` is the fleet verdict (cap, gate or pause) and
+`global.non_cap_closed` marks a block the cap cannot explain. It does not probe
+the host or launch work. It exits 1 when any lane is admission closed or blocked
+by the global cap with 5 or more jobs queued. Other waits are
+`ashlr fleet lane-idle`.
 
 `ashlr fleet lane-share [--json]` reads the same file and prints each lane's share
 of the fleet: one line per lane with running of target and queued, marked `starved`

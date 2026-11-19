@@ -20,15 +20,23 @@ afterEach(async () => {
 
 const lane = (running: number, target: number, queued: number, held = false) => ({ running, target, queued, held, note: SECRET });
 
-function status(patch: { running?: number; cap?: number; load1?: number; reason?: string | null; lanes?: Record<string, unknown> } = {}) {
+function status(patch: {
+  running?: number; cap?: number; load1?: number; reason?: string | null;
+  lanes?: Record<string, unknown>;
+  gate_reason?: string | null; admit?: boolean; decision?: string; paused?: string | null;
+} = {}) {
   return {
     schema: 'dispatchd.status.v1',
     unrelated: SECRET,
+    paused: patch.paused ?? null,
     admission: {
       cap: patch.cap ?? 8,
       running: patch.running ?? 8,
       load1: patch.load1 ?? 12.5,
       reason: patch.reason === undefined ? 'at_cap running 8 >= cap 8' : patch.reason,
+      ...(patch.gate_reason !== undefined ? { gate_reason: patch.gate_reason } : {}),
+      ...(patch.admit !== undefined ? { admit: patch.admit } : {}),
+      ...(patch.decision !== undefined ? { decision: patch.decision } : {}),
       warnings: [SECRET],
     },
     lanes: patch.lanes ?? {},
@@ -99,6 +107,67 @@ describe('explainFleetAdmission', () => {
     expect(report.global.at_cap).toBe(true);
     expect(report.status).toBe('red');
   });
+
+  it('marks lanes admission closed when the load gate shuts admission under the cap', () => {
+    const report = explainFleetAdmission(status({
+      running: 3, cap: 8, reason: 'loadavg 1m 14.2 > max 12.0',
+      gate_reason: 'loadavg 1m 14.2 > max 12.0', admit: false, decision: 'stop',
+      lanes: { codex: lane(1, 3, 6), devin: lane(2, 2, 1), idle: lane(0, 2, 0) },
+    }));
+    expect(report.global).toMatchObject({ at_cap: false, closed: true, non_cap_closed: true });
+    expect(report.lanes.map(row => [row.lane, row.reason, row.status])).toEqual([
+      ['codex', 'admission closed', 'red'],
+      ['devin', 'at target', 'ok'],
+      ['idle', 'ok', 'ok'],
+    ]);
+    expect(report.status).toBe('red');
+  });
+
+  it('marks lanes admission closed on a pause even without gate fields', () => {
+    const report = explainFleetAdmission(status({
+      running: 3, cap: 8, reason: 'paused', paused: 'operator hold',
+      lanes: { codex: lane(1, 3, 5) },
+    }));
+    expect(report.global).toMatchObject({ closed: true, non_cap_closed: true });
+    expect(report.lanes[0]).toMatchObject({ reason: 'admission closed', status: 'red' });
+  });
+
+  it('derives a non-cap block from a stop verdict while under the cap', () => {
+    const report = explainFleetAdmission(status({
+      running: 3, cap: 8, reason: 'disk below floor', admit: false, decision: 'stop',
+      lanes: { codex: lane(1, 3, 5) },
+    }));
+    expect(report.global.non_cap_closed).toBe(true);
+    expect(report.lanes[0]!.reason).toBe('admission closed');
+  });
+
+  it('lets admission closed outrank the cap when the gate and the cap are both shut', () => {
+    const report = explainFleetAdmission(status({
+      running: 8, cap: 8, reason: 'loadavg 1m 14.2 > max 12.0; at_cap running 8 >= cap 8',
+      gate_reason: 'loadavg 1m 14.2 > max 12.0', admit: false, decision: 'stop',
+      lanes: { codex: lane(1, 3, 6) },
+    }));
+    expect(report.global).toMatchObject({ at_cap: true, closed: true, non_cap_closed: true });
+    expect(report.lanes[0]).toMatchObject({ reason: 'admission closed', status: 'red' });
+  });
+
+  it('keeps the cap reason when the cap is the only block', () => {
+    const report = explainFleetAdmission(status({
+      running: 8, cap: 8, reason: 'at_cap running 8 >= cap 8', admit: false, decision: 'stop',
+      lanes: { codex: lane(1, 3, 6) },
+    }));
+    expect(report.global).toMatchObject({ at_cap: true, closed: true, non_cap_closed: false });
+    expect(report.lanes[0]).toMatchObject({ reason: 'blocked by the global cap', status: 'red' });
+  });
+
+  it('does not call an idle lane blocked while admission is closed', () => {
+    const report = explainFleetAdmission(status({
+      running: 3, cap: 8, reason: 'paused', paused: 'operator hold',
+      lanes: { codex: lane(0, 3, 0), held: lane(0, 3, 9, true) },
+    }));
+    expect(report.lanes.map(row => row.reason)).toEqual(['ok', 'held']);
+    expect(report.status).toBe('ok');
+  });
 });
 
 describe('ashlr fleet admission', () => {
@@ -121,7 +190,7 @@ describe('ashlr fleet admission', () => {
       schema: FLEET_ADMISSION_SCHEMA,
       readOnly: true,
       status: 'red',
-      global: { cap: 8, running: 8, load1: 3.25, admit_reason: 'at_cap running 8 >= cap 8', at_cap: true },
+      global: { cap: 8, running: 8, load1: 3.25, admit_reason: 'at_cap running 8 >= cap 8', at_cap: true, closed: true, non_cap_closed: false },
       lanes: [
         { lane: 'codex', running: 1, target: 4, queued: 6, held: false, reason: 'blocked by the global cap', status: 'red' },
         { lane: 'devin', running: 2, target: 2, queued: 1, held: false, reason: 'at target', status: 'ok' },
@@ -148,6 +217,18 @@ describe('ashlr fleet admission', () => {
     expect(printed).toContain('Admission: red');
     expect(printed).toContain('Global cap 8, running 8 (at the cap), load 12.5, admit reason: at_cap running 8 >= cap 8');
     expect(printed).toContain('red codex: blocked by the global cap. Running 1 of 3. Queued 5. Held no.');
+  });
+
+  it('prints the admission-closed marker and exits 1 on a gated fleet', async () => {
+    const { code, printed } = await run(status({
+      running: 3, cap: 8, reason: 'loadavg 1m 14.2 > max 12.0',
+      gate_reason: 'loadavg 1m 14.2 > max 12.0', admit: false, decision: 'stop',
+      lanes: { codex: lane(1, 3, 6) },
+    }), []);
+    expect(code).toBe(1);
+    expect(printed).toContain('Admission: red');
+    expect(printed).toContain('under the cap), admission closed, load 12.5');
+    expect(printed).toContain('red codex: admission closed. Running 1 of 3. Queued 6. Held no.');
   });
 
   it('accepts an empty lane map and a missing admit reason', async () => {
