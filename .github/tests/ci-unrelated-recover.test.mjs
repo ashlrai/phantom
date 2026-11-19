@@ -284,3 +284,17 @@ test('an unreadable ruleset performs no recovery', async () => {
     assert.equal(calls.some((call) => call.args.includes('PUT') || call.args.includes('POST')), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the sparse checkout includes every file the tests read', () => {
+  const workflow = readFileSync(new URL('../workflows/unrelated-pr-recover.yml', import.meta.url), 'utf8');
+  const block = workflow.match(/sparse-checkout: \|\n((?: {12}\S.*\n)+)/);
+  assert.ok(block, 'sparse-checkout block');
+  const listed = block[1].split('\n').map((line) => line.trim()).filter(Boolean);
+  for (const file of [
+    '.github/scripts/ci-unrelated-recover.mjs',
+    '.github/tests/ci-unrelated-recover.test.mjs',
+    '.github/workflows/unrelated-pr-recover.yml',
+  ]) {
+    assert.ok(listed.includes(file), `${file} missing from sparse-checkout`);
+  }
+});
