@@ -128,9 +128,13 @@ export interface SessionThreadProps {
   onBack: () => void;
   /** Opens the session's live log (pause and stop live there); given only for a session with a job. */
   onOpenLog?: (job: string) => void;
+  /** Where Back and Esc return to, in words, when the conversation is opened from somewhere other than the Sessions pane. */
+  backTo?: { label: string; text: string };
 }
 
-export function SessionThread({ id, visible, onBack, onOpenLog }: SessionThreadProps) {
+const BACK_TO_SESSIONS = { label: 'Back to all sessions', text: '← Sessions' };
+
+export function SessionThread({ id, visible, onBack, onOpenLog, backTo = BACK_TO_SESSIONS }: SessionThreadProps) {
   const def = useMemo(() => sessionThreadQuery(id), [id]);
   const read = useQuery(def, { enabled: visible, freshMs: THREAD_POLL_MS });
   const refetch = useRefetch(def);
@@ -156,7 +160,7 @@ export function SessionThread({ id, visible, onBack, onOpenLog }: SessionThreadP
   };
   return <section ref={root} className={styles.root} tabIndex={-1} aria-label={`Session ${id}`} onKeyDown={onKeyDown}>
     <header className={styles.header}>
-      <button type="button" className={styles.back} onClick={onBack} aria-label="Back to all sessions" title="Back to all sessions (Esc)">← Sessions</button>
+      <button type="button" className={styles.back} onClick={onBack} aria-label={backTo.label} title={`${backTo.label} (Esc)`}>{backTo.text}</button>
       {session?.kind === 'worker' && session.lane !== 'unknown' && <ProviderBadge of={session.lane} iconOnly size={14} />}
       <strong className={styles.id}>{id}</strong>
       {session && <span className={styles.state} data-state={session.state}>{STATE_WORD[session.state]}</span>}
