@@ -255,6 +255,21 @@ that announced it, under any of its labels. A refused, retryable, invalid or
 unavailable feed refuses the send rather than posting a receipt that would
 poison the projection. Neither verb dispatches, claims or executes anything;
 the bodies remain untrusted contract data until a consumer admits them.
+
+**Claim-holder wakes.** When a `work.status` reaches a terminal state
+(`done`, `failed` or `terminated`), the send also queues one routing-only wake
+hint per distinct live claim owner whose coordination keys overlap the job's
+declared claim keys — the same overlap rule `claim acquire` uses — so a worker
+holding `queue:`/`path:`/`repo:`/`pr:` scope learns the job ended instead of
+waiting out its lease. The poster's own identity is skipped, labels of one
+identity collapse to a single hint, and the fan-out is capped at 32 hints per
+status; hint ids are a deterministic hash of the status envelope and holder,
+so reposting the same status dedupes rather than re-waking. `--no-wake` opts
+out of this fan-out as well as the message's own hint, and non-terminal
+statuses never fan out. The result's `claimHoldersWoken` counts the hints
+present after the call — absent when the fan-out did not run, `null` when the
+live claim table could not be read (unknown holders are never reported as
+none), and a hint that cannot be written is best-effort, never a failed send.
 `phm agents bus work feed [--status <s>] [--claims]` reads the same projection
 back — jobs newest-first, optionally filtered and joined with the live
 coordination holds — so the whole post/status/feed loop stays on this surface

@@ -11,6 +11,7 @@ import {
   sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
+import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import {
   attachBusCliSession, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
@@ -469,6 +470,93 @@ describe('v2 work announcements and statuses on the one bus store', () => {
     writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
     expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-7' }, options))
       .toMatchObject({ status: 'unavailable' });
+  });
+});
+
+describe('terminal work.status wakes live claim holders', () => {
+  const announceFor = (jobId: string) => ({ jobId, title: `job ${jobId}`, repo: 'ashlrai/phantom',
+    claimKeys: [`queue:${jobId}`, 'path:ashlrai/phantom:src/**'] });
+
+  function ready(): UnifiedBusOptions & { clock: { now: number } } {
+    const options = setup();
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', aliases: ['nova-lane'] }, options);
+    register(options, 'orion');
+    return options;
+  }
+
+  function hold(options: UnifiedBusOptions & { clock: { now: number } }, key: string, owner: string,
+    leaseMs = 600_000): void {
+    const at = options.now!();
+    const result = acquireCoordination({ root: options.root, origin: 'resource', key, owner,
+      leaseMs, leaseUntil: at + leaseMs, sourceId: `test:${key}`, now: at });
+    expect(result.status).toBe('acquired');
+  }
+
+  it('wakes each distinct live claim holder once and reports the count', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    hold(options, 'path:ashlrai/phantom:src/core/**', 'nova-lane');
+    hold(options, 'path:ashlrai/phantom:src/cli/**', 'agent:atlas');
+    hold(options, 'queue:RQ-H-9', 'agent:orion');
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-done' }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // nova's two labels are one identity: a single hint under the first-seen label.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
+      wakes: [{ id: expect.stringMatching(/^wh-[a-f0-9]{32}$/), from: 'agent:atlas', to: 'agent:nova' }] });
+    // A claim on an unrelated key is not a holder of this job.
+    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ wakes: [] });
+    // The status poster's own overlapping claim stays silent, as does its P2 default wake.
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ wakes: [] });
+    // A reposted status dedupes the holder hints instead of doubling them.
+    const repost = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-done' }, options);
+    expect(repost).toMatchObject({ status: 'duplicate', claimHoldersWoken: 1 });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ to: 'agent:nova' }] });
+  });
+
+  it('fans out only for terminal statuses and honors --no-wake', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    const running = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'running', id: 'w-h-run' }, options);
+    expect(running).toMatchObject({ status: 'posted' });
+    expect('claimHoldersWoken' in running).toBe(false);
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [] });
+    const muted = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-muted', wake: false }, options);
+    expect(muted).toMatchObject({ status: 'posted', wake: 'not-requested' });
+    expect('claimHoldersWoken' in muted).toBe(false);
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [] });
+    // A different terminal status still fans out.
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-2') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-2', 'agent:nova');
+    const failed = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-2', status: 'failed', id: 'w-h-fail' }, options);
+    expect(failed).toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ to: 'agent:nova' }] });
+  });
+
+  it('counts only live holders and reports unknown when claims are unreadable', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    // No coordination rows at all is a verified-empty holder set, not unknown.
+    const empty = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'terminated', id: 'w-h-none' }, options);
+    expect(empty).toMatchObject({ status: 'posted', claimHoldersWoken: 0 });
+    // A claim whose lease already lapsed is not a live holder.
+    hold(options, 'queue:RQ-H-1', 'agent:nova', 1_000);
+    options.clock.now += 2_000;
+    const expired = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-exp' }, options);
+    expect(expired).toMatchObject({ status: 'posted', claimHoldersWoken: 0 });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [] });
+  });
+
+  it('reports claim-holders unknown when the coordination table is unreadable', async () => {
+    const options = ready();
+    expect(await announceWork({ from: 'atlas', ...announceFor('RQ-H-1') }, options)).toMatchObject({ status: 'posted' });
+    hold(options, 'queue:RQ-H-1', 'agent:nova');
+    writeFileSync(join(options.root!, 'coordination', 'claims.json'), '{broken', { mode: 0o600 });
+    const done = await updateWorkStatus({ from: 'atlas', jobId: 'RQ-H-1', status: 'done', id: 'w-h-bad' }, options);
+    expect(done).toMatchObject({ status: 'posted', claimHoldersWoken: null });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [] });
   });
 });
 

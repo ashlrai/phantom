@@ -15,18 +15,19 @@ import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type Owner
  *   handoff  to `agent:<handle>`                channel `handoff`, body `worker-handoff`
  *   wake     to `agent:<handle>`                channel `bus`,   body `wake`
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxOptions, type BusInboxPost } from '../fleet/bus-inbox.js';
 import { BUS_PRIORITIES, type BusEnvelope, type BusPriority } from '../fleet/bus-envelope.js';
 import { groupAddress } from '../fleet/bus-group.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
-import { busWakeQueueEnqueue, readBusWakes, type BusWakeRow } from '../fleet/bus-wake-queue.js';
+import { busWakeQueueEnqueue, enqueueBusWake, readBusWakes, type BusWakeRow } from '../fleet/bus-wake-queue.js';
 import { isFleetJobId } from '../fleet/runs-job-detail.js';
 import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
+import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { BUS_V2_TEXT_MAX, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
   type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
@@ -57,7 +58,13 @@ export interface UnifiedBusOptions extends BusInboxOptions, AgentRegistryOptions
 
 export type WakeOutcome = 'not-requested' | BusWakeResult['wake'];
 export type UnifiedSendResult =
-  | { status: 'posted' | 'duplicate'; id: string; cursor: number; to: string; wake: WakeOutcome }
+  | { status: 'posted' | 'duplicate'; id: string; cursor: number; to: string; wake: WakeOutcome;
+      /**
+       * Terminal `work.status` only: distinct live claim-holder wake hints
+       * recorded for the job's keys. Absent when the fan-out did not run;
+       * null when the live claim set could not be read (unknown, not none).
+       */
+      claimHoldersWoken?: number | null }
   | { status: 'invalid' | 'unknown-sender' | 'unknown-recipient' | 'not-member' | 'refused' |
       'unavailable' | 'retryable' | 'full' | 'conflict'; reason: string };
 
@@ -352,6 +359,57 @@ export async function announceWork(input: WorkAnnouncementInput, options: Unifie
   }, shouldWake(base.priority, input.wake), options);
 }
 
+/** Feed statuses that end a job's claimable life; claim holders are told it ended, not just that it moved. */
+const WORK_TERMINAL_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['done', 'failed', 'terminated']);
+
+/** Bound one status's holder fan-out; the wake queue is a hint buffer, not a broadcast channel. */
+const CLAIM_HOLDER_WAKE_MAX = 32;
+
+/** Deterministic per (status envelope, holder) so a reposted status dedupes instead of re-waking.
+ * 32 hex chars stay under the wake id's secret-scrub thresholds (a longer digest reads as key material). */
+function claimHolderWakeId(envelopeId: string, owner: string): string {
+  return `wh-${createHash('sha256').update(`${envelopeId}\n${owner}`).digest('hex').slice(0, 32)}`;
+}
+
+/**
+ * Post-accept fan-out for a terminal `work.status`: one routing-only wake hint
+ * per distinct live claim owner whose keys overlap the job's declared claim
+ * keys, so a worker holding `queue:`/`path:`/`repo:` scope learns the job ended
+ * instead of waiting out its lease. Owners resolving to the status poster's own
+ * identity are skipped — it posted the status itself — and labels of one
+ * identity collapse to a single hint. The count is hints present after the
+ * call (queued or already recorded); an enqueue that fails is best-effort and
+ * never fails the posted status. Null means the live claim set could not be
+ * read: unknown holders are never reported as none.
+ */
+function signalWorkClaimHolders(job: WorkJob, sender: AgentIdentity, registry: AgentRegistry,
+  envelopeId: string, options: UnifiedBusOptions): number | null {
+  if (job.claimKeys.length === 0) return 0;
+  const listed = listCoordination(options.root, (options.now ?? Date.now)());
+  // 'missing' is a verified-empty claim table: zero holders, not unknown.
+  if (listed.source === 'unavailable') return null;
+  const byHolder = new Map<string, string>();
+  for (const row of listed.claims) {
+    if (!row.live || !job.claimKeys.some(key => coordinationRowBlocks(row, key))) continue;
+    const identity = resolveAgent(registry, row.owner);
+    if (identity?.id === sender.id) continue;
+    const holder = identity?.id ?? `label:${row.owner}`;
+    if (!byHolder.has(holder)) byHolder.set(holder, row.owner);
+    if (byHolder.size >= CLAIM_HOLDER_WAKE_MAX) break;
+  }
+  const from = `${AGENT_ADDRESS_PREFIX}${sender.handle}`;
+  let recorded = 0;
+  for (const owner of byHolder.values()) {
+    try {
+      // 'queued' and 'duplicate' both leave the hint present; only a throw means absent.
+      enqueueBusWake({ kind: 'bus.send', id: claimHolderWakeId(envelopeId, owner), from, to: owner },
+        { root: options.runsRoot, now: options.now });
+      recorded += 1;
+    } catch { /* A hint that cannot be written never fails the posted status. */ }
+  }
+  return recorded;
+}
+
 /**
  * Post a v2 `work.status` for a job the feed shows. Only the identity that
  * announced the job may move it — the same owner rule the projection enforces —
@@ -378,11 +436,23 @@ export async function updateWorkStatus(input: WorkStatusInput, options: UnifiedB
   if (resolveAgent(reg, job.owner)?.id !== sender.id) {
     return refuse('refused', 'Only the identity that announced the job may post its status.');
   }
-  return post({
+  const sent = await post({
     id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to,
     priority: base.priority, ttl: base.ttl, body: body.data,
     ...metadata(sender, 'bus', `work:${body.data.jobId}`),
   }, shouldWake(base.priority, input.wake), options);
+  // A terminal status also hints every live claim holder on the job's keys;
+  // --no-wake opts out of that fan-out as well as the message's own hint. A
+  // fan-out fault leaves holder state unknown — it never fails the posted send.
+  if ((sent.status !== 'posted' && sent.status !== 'duplicate') ||
+      input.wake === false || !WORK_TERMINAL_STATUSES.has(body.data.status)) return sent;
+  let claimHoldersWoken: number | null;
+  try {
+    claimHoldersWoken = signalWorkClaimHolders(job, sender, reg, sent.id, options);
+  } catch {
+    claimHoldersWoken = null;
+  }
+  return { ...sent, claimHoldersWoken };
 }
 
 export type InboxKind = 'dm' | 'channel' | 'handoff' | 'legacy';
