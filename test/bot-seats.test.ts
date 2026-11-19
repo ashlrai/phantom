@@ -6,6 +6,7 @@ import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, seatMayCla
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
 import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
@@ -147,6 +148,41 @@ it('keeps a successor lease when a seat handoff releases its stale snapshot', as
   expect(listCoordination(root, clock).claims).toContainEqual(expect.objectContaining({
     sourceId, owner: 'successor', leaseUntil: now + 20_001, live: true,
   }));
+});
+it('counts and hands off claims held under every label of the seat identity', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  expect(registerAgentIdentity({ handle: 'helper', aliases: ['helper-bot'] }, { root: fleetRoot, now: () => now }).status).toBe('created');
+  const own = (key: string, owner: string, sourceId: string) =>
+    acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId, leaseMs: 10000, leaseUntil: now + 10000, now }).status;
+  expect(own('pr:o/r#20', 'helper', 'label-one')).toBe('acquired');
+  expect(own('pr:o/r#21', 'helper-bot', 'label-two')).toBe('acquired');
+  expect(own('pr:o/r#22', stableAgentId('helper'), 'label-three')).toBe('acquired');
+  expect(own('pr:o/r#23', 'other-agent', 'label-four')).toBe('acquired');
+  const opts: SeatOptions = { ...o, readQuota: async () => exhausted,
+    ownerNotice: async () => undefined, busPost: async () => undefined };
+  const listed = await listSeats(opts);
+  expect(listed.seats[0]!.claims.map(c => c.owner).sort())
+    .toEqual(['helper', 'helper-bot', stableAgentId('helper')].sort());
+  const applied = await applySeatHandoff('helper', opts);
+  expect(applied.handoffs.map(h => h.work.ref).sort()).toEqual(['pr:o/r#20', 'pr:o/r#21', 'pr:o/r#22']);
+  expect(listCoordination(fleetRoot, now).claims.filter(c => c.live).map(c => c.owner)).toEqual(['other-agent']);
+});
+it('keeps exact-label claim matching when the identity registry is unreadable', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  registerAgentIdentity({ handle: 'helper', aliases: ['helper-bot'] }, { root: fleetRoot, now: () => now });
+  const own = (key: string, owner: string, sourceId: string) =>
+    acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId, leaseMs: 10000, leaseUntil: now + 10000, now }).status;
+  expect(own('pr:o/r#30', 'helper', 'exact-label')).toBe('acquired');
+  expect(own('pr:o/r#31', 'helper-bot', 'alias-label')).toBe('acquired');
+  await writeFile(join(fleetRoot, 'agent-identities', 'registry.json'), '{not json', { mode: 0o600 });
+  const opts: SeatOptions = { ...o, readQuota: async () => exhausted,
+    ownerNotice: async () => undefined, busPost: async () => undefined };
+  const listed = await listSeats(opts);
+  expect(listed.seats[0]!.claims.map(c => c.owner)).toEqual(['helper']);
+  const plan = await planSeatHandoff('helper', opts);
+  expect(plan.handoffs.map(h => h.work.ref)).toEqual(['pr:o/r#30']);
 });
 it('CLI emits empty roster and dry-run/apply JSON; refuses active or unknown seats', async () => {
   const o = await fixture();
