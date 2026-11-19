@@ -51,6 +51,94 @@ export const GREEN_EVIDENCE_MAX_AHEAD = 100;
 const DECISIVE_RED = new Set(['failure', 'timed_out']);
 const decisiveVerdict = run => run.status === 'completed'
   && (run.conclusion === 'success' || DECISIVE_RED.has(run.conclusion));
+const ACTIONS_APP_ID = 15368;
+
+/**
+ * Required status-check contexts on master, unioned from the branch ruleset
+ * and classic branch protection — the same authority the release train
+ * enforces and the merge queue applies. Both are repository configuration,
+ * not tip state, so the plan reads them lazily, once, and only when a
+ * decisive run's whole-run conclusion needs re-judging.
+ */
+async function requiredCheckNames(read, base) {
+  const [branch, rules] = await Promise.all([
+    read(`${base}/branches/master`),
+    read(`${base}/rules/branches/master`),
+  ]);
+  const names = new Set();
+  const protection = branch?.protection?.required_status_checks?.contexts;
+  const collect = context => {
+    if (typeof context === 'string' && context.length > 0 && context.length <= 128 && !context.includes('\n')) names.add(context);
+  };
+  if (Array.isArray(protection)) for (const context of protection) collect(context);
+  if (Array.isArray(rules)) {
+    for (const rule of rules) {
+      if (rule?.type !== 'required_status_checks') continue;
+      const checks = rule?.parameters?.required_status_checks;
+      if (!Array.isArray(checks)) continue;
+      for (const check of checks) collect(check?.context);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Latest Actions check runs on one SHA. Any inventory inconsistency is
+ * 'unknown', never green — the same bound the release train's required-CI
+ * read applies.
+ */
+async function checkRunsOnSha(read, base, sha) {
+  const runs = [];
+  let total = null;
+  for (let page = 1; page <= 10; page += 1) {
+    const listed = await read(`${base}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`);
+    const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+    const pageTotal = listed && Number.isInteger(listed.total_count) ? listed.total_count : null;
+    if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) return 'unknown';
+    for (const row of batch) {
+      const item = row && typeof row === 'object' ? row : {};
+      const app = item.app && typeof item.app === 'object' ? item.app : {};
+      runs.push({
+        name: typeof item.name === 'string' ? item.name : '',
+        status: typeof item.status === 'string' ? item.status : '',
+        conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
+        appId: Number(app.id),
+      });
+    }
+    if (batch.length < 100) break;
+  }
+  if (total === null || total !== runs.length || runs.length > 1000) return 'unknown';
+  return runs;
+}
+
+/**
+ * Same verdict the release train's judgeRequiredChecks reaches: every
+ * required context needs a completed success with no unsettled re-run; a
+ * completed non-success and no success is red; anything missing, running
+ * or unreadable is pending or unknown — never green.
+ */
+function judgeRequiredChecks(names, runs) {
+  const required = [...new Set(names)];
+  if (required.length === 0) return 'unknown';
+  let pending = false;
+  for (const name of required) {
+    const matched = runs.filter(run => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (matched.length === 0) { pending = true; continue; }
+    let seenSuccess = false, seenIncomplete = false, seenFailure = false;
+    for (const run of matched) {
+      if (run.status !== 'completed') seenIncomplete = true;
+      else if (run.conclusion === 'success') seenSuccess = true;
+      else seenFailure = true;
+    }
+    if (seenIncomplete) pending = true;
+    else if (seenSuccess) continue;
+    else if (seenFailure) return 'red';
+    else pending = true;
+  }
+  return pending ? 'pending' : 'green';
+}
 
 /**
  * How many times the plan re-evaluates when master moves mid-check. Merge
@@ -66,7 +154,7 @@ export const CADENCE_MAX_ATTEMPTS = 3;
  * then re-runs the whole pass at the live tip instead of demanding the
  * world stand still for the check.
  */
-async function planAtLiveTip({ base, repository, minutes, now, read }) {
+async function planAtLiveTip({ base, repository, minutes, now, read, requiredNames }) {
   const tip = (await read(`${base}/branches/master`)).commit?.sha;
   assert.match(tip ?? '', SHA);
   const content = response => {
@@ -122,7 +210,20 @@ async function planAtLiveTip({ base, repository, minutes, now, read }) {
     assert.ok(Number.isSafeInteger(run.id) && run.id > 0 && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
   }
   const latest = runs.filter(decisiveVerdict).sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)[0];
-  if (!latest || latest.conclusion !== 'success') return { due: false, reason: 'push-ci-not-green' };
+  if (!latest) return { due: false, reason: 'push-ci-not-green' };
+  // A completed run can conclude failure on an advisory job while every
+  // required check — the merge queue's actual authority — stayed green
+  // (authority-drift is deliberately off Merge Gate needs). Re-judge the
+  // required contexts on the run's SHA instead of trusting the whole-run
+  // conclusion; all-green runs keep the cheap path with no extra reads.
+  if (latest.conclusion !== 'success') {
+    const [names, runsOnSha] = await Promise.all([
+      requiredNames(),
+      checkRunsOnSha(read, base, latest.head_sha),
+    ]);
+    const verdict = runsOnSha === 'unknown' ? 'unknown' : judgeRequiredChecks(names, runsOnSha);
+    if (verdict !== 'green') return { due: false, reason: 'push-ci-not-green' };
+  }
   if (latest.head_sha !== tip) {
     const green = await read(`${base}/compare/${latest.head_sha}...${tip}`);
     if (green.status !== 'ahead' || !Number.isSafeInteger(green.ahead_by)
@@ -148,8 +249,10 @@ export async function planReleaseCadence({ repository, minutes = 30, now = Date.
   // finishes, and pinning the decision to a stale SHA starves every release.
   // Movement mid-check re-verifies at the new tip, bounded by attempts; only
   // a tip that keeps moving past the bound still refuses.
+  let requiredNamesPromise = null;
+  const requiredNames = () => (requiredNamesPromise ??= requiredCheckNames(read, base));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const plan = await planAtLiveTip({ base, repository, minutes, now, read });
+    const plan = await planAtLiveTip({ base, repository, minutes, now, read, requiredNames });
     if (plan !== null) return plan;
   }
   return { due: false, reason: 'master-moved' };
