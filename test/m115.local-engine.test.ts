@@ -34,6 +34,7 @@
 
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from 'vitest';
 import type { AshlrConfig, WorkItem, WorkSource } from '../src/core/types.js';
+import './helpers/local-memory.js';
 import {
   BUILTIN_ENGINE_REGISTRY,
   resolveEngineRegistry,
