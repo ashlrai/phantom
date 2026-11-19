@@ -180,6 +180,7 @@ describe('ashlr fleet starved', () => {
       ],
       starved_lanes: [],
       waiting_elsewhere: 0,
+      open_rows: null,
     });
   });
 

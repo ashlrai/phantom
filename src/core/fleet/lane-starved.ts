@@ -48,6 +48,12 @@ export interface StarvedRead {
   lanes: Record<string, StarvedLane>;
   /** READY rows waiting on a held or drained pool that a starved lane could run instead (0 when no lane is starved). */
   waiting_elsewhere: number;
+  /**
+   * Lane-open READY rows — supply the shared market may place on any lane,
+   * so a positive count keeps a free lane from reading as starved. Null when
+   * the caller cannot say (the queue read did not report it).
+   */
+  open_rows: number | null;
 }
 
 export interface StarvedState {
@@ -72,12 +78,20 @@ export function starvedLine(lane: string, row: Pick<StarvedLane, 'free_slots' | 
   return `${lane}: ${plural(row.free_slots ?? 0, 'free slot', 'free slots')}, ${plural(row.ready_rows ?? 0, 'ready row', 'ready rows')}${age}; next step: add work for ${lane}`;
 }
 
-export function readStarved(inputs: readonly StarvedInput[], since: Readonly<Record<string, string>>, nowMs: number): StarvedRead {
+export function readStarved(
+  inputs: readonly StarvedInput[],
+  since: Readonly<Record<string, string>>,
+  nowMs: number,
+  openRows: number | null = null,
+): StarvedRead {
   const lanes: Record<string, StarvedLane> = {};
   let waiting = 0;
+  // Lane-open READY rows are open supply: the market may place them on any
+  // lane, so a positive count means no lane is out of work.
+  const open = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows > 0;
   for (const input of inputs) {
     const free = input.floor === null || input.running === null ? null : input.held ? 0 : Math.max(0, input.floor - input.running);
-    const starved = free !== null && free > 0 && input.ready === 0 && !input.held && !input.drained;
+    const starved = free !== null && free > 0 && input.ready === 0 && !open && !input.held && !input.drained;
     const recorded = since[input.lane];
     const at = starved && recorded !== undefined && Date.parse(recorded) <= nowMs ? recorded : null;
     const row: StarvedLane = { free_slots: free, ready_rows: input.ready, starved, starved_since: at, line: null };
@@ -86,7 +100,8 @@ export function readStarved(inputs: readonly StarvedInput[], since: Readonly<Rec
     if ((input.held || input.drained) && input.ready !== null) waiting += input.ready;
   }
   const any = Object.values(lanes).some(row => row.starved);
-  return { lanes, waiting_elsewhere: any ? waiting : 0 };
+  const openCount = typeof openRows === 'number' && Number.isSafeInteger(openRows) && openRows >= 0 ? openRows : null;
+  return { lanes, waiting_elsewhere: any ? waiting : 0, open_rows: openCount };
 }
 
 export function parseStarvedState(text: string | null): StarvedState {

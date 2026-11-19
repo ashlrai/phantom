@@ -463,6 +463,7 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(byLane.get('devin')!.queueDepth).toBe(1);
     expect(byLane.has('phantom')).toBe(false);         // repo name, not a lane
     expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 2 });
+    expect(snapshot.starved.open_rows).toBe(2);
     expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
   });
 

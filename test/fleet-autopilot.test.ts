@@ -48,7 +48,7 @@ const admission = (
 const queueView = (patch: Partial<FleetQueueV1> = {}): FleetQueueV1 => ({
   v: 1, generatedAt: '2026-11-07T00:00:00.000Z',
   sources: { ready: 'healthy', skips: 'healthy' },
-  total: 0, ready: 0, parked: 0, malformed: 0,
+  total: 0, ready: 0, parked: 0, malformed: 0, unhinted: 0,
   byLane: [], nextUp: [], groups: [], unmetDeps: [], metDeps: [], skips: [], skipsLast24h: 0,
   ...patch,
 });
@@ -165,6 +165,18 @@ describe('planFleetAutopilot', () => {
     }));
     expect(report.topGap?.kind).toBe('missing-restock');
     expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 3, lane: 'devin' });
+  });
+
+  it('does not propose restock while lane-open rows wait as open supply', () => {
+    // Unhinted READY rows are launchable supply the market may place on any
+    // lane — a free lane is fed-pending, not missing restock.
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 3, 0)], 18, 0),
+      queue: queueView({ ready: 2, total: 2, unhinted: 2 }),
+      slots: slotsView([slotLane('devin', 3)]),
+    }));
+    expect(report.gaps.every((g) => g.kind !== 'missing-restock')).toBe(true);
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
   });
 
   it('proposes rebase jobs for uncovered conflicting PRs, capped', () => {
