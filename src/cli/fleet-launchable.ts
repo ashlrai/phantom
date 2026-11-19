@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { FILLER_ID } from './fleet-lane-starve.js';
+import { FILLER_ID, isParkedReadyRow } from '../core/fleet/lane-starve.js';
 
 const SCHEMA = 'fleet.launchable.v1';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -62,7 +62,7 @@ export async function cmdFleetLaunchable(args: string[]): Promise<number> {
       const lane = cols[2]?.trim() ?? '';
       const prompt = cols[4]?.trim() ?? '';
       const entry = lanes.get(lane);
-      if (!id || !entry || lane.startsWith('PARKED') || !prompt || excluded.has(id) || (hold && FILLER_ID.test(id))) continue;
+      if (!id || !entry || isParkedReadyRow(cols) || !prompt || excluded.has(id) || (hold && FILLER_ID.test(id))) continue;
       if (await exists(prompt, true)) entry.launchable++;
     }
     const rows = [...lanes.values()].sort((a, b) => a.lane.localeCompare(b.lane));
