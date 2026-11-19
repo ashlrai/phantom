@@ -2,7 +2,8 @@
  * `phm bets list|launch|score|kill [--json]`: the bets lane ledger (RQ-BETS-LANE-1). Logic lives in core/metrics.
  * `phm bets suggest|explain`: read-only next-job suggestions; logic lives in core/fleet/next-bets.
  */
-import { checkGoal, goalTerms, helpItems, readApiRoutes, readDocHeadings, readPanes, type BetsCheckReport } from '../core/fleet/bets-check.js';
+import { readFileSync } from 'node:fs';
+import { checkGoal, GATE_EXIT, goalFromPrompt, goalTerms, helpItems, readApiRoutes, readDocHeadings, readPanes, type BetsCheckReport } from '../core/fleet/bets-check.js';
 import { explainBetLines, nextBetsLines, readNextBets, type BetReaders } from '../core/fleet/next-bets.js';
 import { BetInputError, type Bet, type BetDirection } from '../core/metrics/bets.js';
 import { killBet, launchBet, readBets, scoreCycle } from '../core/metrics/bets-store.js';
@@ -11,6 +12,7 @@ import { LOOP_METRIC_KEYS } from '../core/metrics/loop.js';
 
 export const BETS_USAGE = `Usage: phm bets <check|suggest|explain|list|launch|score|kill> [--json]
   phm bets check "<goal text>" [--json]
+  phm bets check --from-prompt <file> [--gate] [--json]
   phm bets suggest [--json] [--limit N]
   phm bets explain <id> [--json]
   phm bets list [--json]
@@ -20,6 +22,8 @@ export const BETS_USAGE = `Usage: phm bets <check|suggest|explain|list|launch|sc
   phm bets kill <RQ-BET-id> --reason <text> [--json]
 check looks the goal up in this checkout's CLI help, API routes, web-ui panes and docs headings and says new, partial or
 exists with up to 10 matches and one suggested delta line (schema bets.check.v1). Read-only and offline: run it before queuing work.
+--from-prompt reads a queue prompt file: the goal is the task after the closing parenthesis on the line after "verbatim:", up to "Acceptance:".
+--gate turns the verdict into the exit code: 0 new (go), 2 partial (build only the gap), 3 exists (stop, finish with a note), 1 error; with --json the code also shows as "exitCode".
 Ledger: $ASHLR_RUNS_DIR or ~/.ashlr-runs, file metrics/bets.jsonl (append-only).
 Metric keys: ${LOOP_METRIC_KEYS.join(', ')}.
 score runs one kill-fast cycle: kept when a bet job merged and the metric moved, killed when over budget without
@@ -71,16 +75,29 @@ export async function cmdBets(argv: string[], deps: BetsCliDeps = {}): Promise<n
   try {
     switch (verb) {
       case 'check': {
-        const json = rest.includes('--json');
-        const goal = rest.filter(a => a !== '--json').join(' ').trim();
-        if (!goal || rest.some(a => a.startsWith('--') && a !== '--json')) return usage();
+        const gate = rest.includes('--gate'), json = rest.includes('--json');
+        const fail = (msg: string): number => { err(msg); return gate ? 1 : 2; };
+        const fromAt = rest.indexOf('--from-prompt');
+        let goal: string | null;
+        if (fromAt >= 0) {
+          const file = rest[fromAt + 1];
+          if (!file || file.startsWith('--') || rest.some((a, i) => i !== fromAt && i !== fromAt + 1 && a !== '--gate' && a !== '--json')) return fail(BETS_USAGE);
+          let text: string;
+          try { text = readFileSync(file, 'utf8'); } catch { return fail(`Cannot read the prompt file ${JSON.stringify(file)}.`); }
+          goal = goalFromPrompt(text);
+          if (!goal) return fail('No task found: the prompt needs a line after "verbatim:" like "<id> (<tags>): <task>".');
+        } else {
+          goal = rest.filter(a => a !== '--json' && a !== '--gate').join(' ').trim();
+          if (!goal || rest.some(a => a.startsWith('--') && a !== '--json' && a !== '--gate')) return fail(BETS_USAGE);
+        }
         const { searchHelpEntries } = await import('./help.js');
         const entries = new Map<string, { cmd: string; desc: string }>();
         for (const term of goalTerms(goal).terms) for (const e of searchHelpEntries(term)) entries.set(e.cmd, e);
         const root = deps.root ?? process.cwd();
         const report = checkGoal(goal, { cli: helpItems([...entries.values()]), api: readApiRoutes(root), pane: readPanes(root), doc: readDocHeadings(root) });
-        out(json ? JSON.stringify(report, null, 2) : checkLines(report).join('\n'));
-        return 0;
+        const exitCode = GATE_EXIT[report.verdict];
+        out(json ? JSON.stringify(gate ? { ...report, exitCode } : report, null, 2) : checkLines(report).join('\n'));
+        return gate ? exitCode : 0;
       }
       case 'suggest': {
         const f = flags(rest, ['--limit']);

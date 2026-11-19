@@ -89,6 +89,22 @@ export function checkGoal(goal: string, sources: BetsCheckSources): BetsCheckRep
   return { schema: BETS_CHECK_SCHEMA, goal, terms, verdict, matches, suggestedDelta };
 }
 
+/** Gate exit codes for `phm bets check --gate`: 0 new (go), 2 partial (build only the gap), 3 exists (stop), 1 error. */
+export const GATE_EXIT: Record<BetsCheckVerdict, 0 | 2 | 3> = { new: 0, partial: 2, exists: 3 };
+
+/**
+ * The goal inside a queue prompt: the first non-empty line after "verbatim:" is `<id> (<tags>): <task>`; the goal is
+ * the task text after the closing parenthesis, up to "Acceptance:". Null when the prompt has no such line.
+ */
+export function goalFromPrompt(text: string): string | null {
+  const after = /verbatim:[ \t]*\r?\n?/i.exec(text);
+  if (!after) return null;
+  const line = text.slice(after.index + after[0].length).split(/\r?\n/).find(l => l.trim()) ?? '';
+  const task = line.replace(/^\s*[^\s(]*\s*\([^)]*\)\s*:?\s*/, '');
+  const goal = task.split(/Acceptance:/i)[0]!.trim();
+  return goal || null;
+}
+
 /** Structural check of a report against bets.check.v1 (used by tests and agents that want to validate before trusting). */
 export function isBetsCheckReport(v: unknown): v is BetsCheckReport {
   if (!v || typeof v !== 'object') return false;
