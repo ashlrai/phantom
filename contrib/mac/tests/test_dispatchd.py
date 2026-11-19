@@ -490,6 +490,45 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
         self.assertEqual(events(home).count('REAP TIMEOUT RQ-HUNG SIGKILL'), 2)
 
+    def test_partial_sigterm_retries_unrecorded_group_after_identity_recovers(self):
+        # Only one of two live groups verifies on the first TERM tick: it is
+        # recorded as termed while the other stays pending in the marker. Once
+        # the pending identity recovers, a later tick TERM's and records it;
+        # escalation then covers both groups before the job-wide KILL lands.
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: None})
+        self.write_ps_two(home)
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)
+        marker = run / 'RQ-HUNG.maxruntime'
+        rows = [json.loads(line) for line in marker.read_text().splitlines()]
+        self.assertEqual([row['pid'] for row in rows if row.get('pending')], [self.PID2])
+        self.assertEqual([row['pid'] for row in rows if not row.get('pending')], [self.PID])
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        # Tick 2: the pending identity recovers; it is TERM'd and recorded.
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [
+            {'pid': self.PID, 'signal': signal.SIGTERM},
+            {'pid': self.PID2, 'signal': signal.SIGTERM},
+        ])
+        rows = [json.loads(line) for line in marker.read_text().splitlines()]
+        self.assertEqual(sorted(row['pid'] for row in rows if not row.get('pending')),
+                         sorted([self.PID, self.PID2]))
+        self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
+        # Tick 3 past grace: both termed groups escalate and KILL lands only
+        # after both are done.
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home)[-2:], [
+            {'pid': self.PID, 'signal': signal.SIGKILL},
+            {'pid': self.PID2, 'signal': signal.SIGKILL},
+        ])
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
         marker = run / 'RQ-HUNG.maxruntime'

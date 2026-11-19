@@ -873,6 +873,7 @@ def _maxruntime_identities(marker):
         try: row = json.loads(line)
         except (TypeError, ValueError): continue
         if not isinstance(row, dict): continue
+        if row.get("pending") is True: continue
         pid, start_time = row.get("pid"), row.get("start")
         if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
             identities.add((pid, start_time))
@@ -894,10 +895,31 @@ def _maxruntime_done_identities(marker):
         if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
             done.add((pid, start_time))
     return done
-def _write_maxruntime_identities(marker, identities):
+def _maxruntime_pending_identities(marker):
+    """TERM candidates the first pass could not verify; a later non-pending
+    row for the same identity supersedes them."""
+    pending, termed = set(), set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return pending
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
+                and isinstance(start_time, str) and start_time):
+            continue
+        if row.get("pending") is True: pending.add((pid, start_time))
+        elif row.get("done") is not True: termed.add((pid, start_time))
+    return pending - termed
+def _write_maxruntime_identities(marker, identities, pending=()):
     with open(marker, "w") as f:
         for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
             f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+        for pid, start_time in sorted(pending, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time, "pending": True}, separators=(",", ":")) + "\n")
 def job_watchdog():
     jobs = set(job_leaders)
     jobs.update(os.path.basename(path)[:-len(".maxruntime")] for path in glob.glob(RUN + "/*.maxruntime"))
@@ -913,6 +935,18 @@ def job_watchdog():
             age = NOW - os.path.getmtime(src)
             mk = RUN + "/" + j + ".maxruntime"
             if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
+                if not _maxruntime_escalated(mk):
+                    # Candidates the first TERM could not verify stay pending
+                    # in the marker; retry them each tick so a recovered
+                    # identity is TERM'd and recorded before escalation ends.
+                    pending_ids = sorted(_maxruntime_pending_identities(mk))
+                    if pending_ids:
+                        termed_now = _kill_leaders(pending_ids, signal.SIGTERM, j)
+                        if termed_now:
+                            with open(mk, "a") as f:
+                                for pid, start_time in sorted(termed_now):
+                                    f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+                            ev("REAP TIMEOUT %s SIGTERM retry" % j)
                 if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
                     expected = _maxruntime_identities(mk)
                     done = _maxruntime_done_identities(mk)
@@ -925,6 +959,7 @@ def job_watchdog():
                         done.update(signalled)
                         ev("REAP TIMEOUT %s SIGKILL" % j)
                     unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
+                    unresolved += [identity for identity in _maxruntime_pending_identities(mk) if _maxruntime_identity_alive(identity)]
                     if not unresolved:
                         with open(mk, "a") as f: f.write("KILL\n")
                         if not signalled:
@@ -938,7 +973,10 @@ def job_watchdog():
             ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
             term_identities = _kill_leaders(leaders, signal.SIGTERM, j)
             if term_identities:
-                _write_maxruntime_identities(mk, term_identities)
+                termed_set = set(term_identities)
+                pending = [identity for identity in leaders
+                           if identity not in termed_set and isinstance(identity[1], str) and identity[1]]
+                _write_maxruntime_identities(mk, term_identities, pending)
             else:
                 ev("REAP TIMEOUT %s identity-unknown retry" % j)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
