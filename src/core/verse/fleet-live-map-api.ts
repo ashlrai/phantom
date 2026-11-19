@@ -14,17 +14,23 @@
  * GET /api/verse/fleet/control/agent-messages[?since=1h&limit=50] is
  * `phm agents messages --json` (agents.messages.v1): the recent messages with
  * map node ids and per-line counts and last 5 summaries, for the map's cards.
+ *
+ * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1] is
+ * `phm agents conversations --json` (agents.conversations.v1): threads by reply
+ * chain with their state, for the map's thread lines and the Conversations panel.
  */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { buildFleetLiveMap, LIVE_MAP_WINDOW_MINUTES, type FleetLiveMap } from '../fleet/live-map.js';
 import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges } from '../fleet/map-edges.js';
 import { readAgentsMessages } from '../fleet/agents-messages.js';
+import { readAgentConversations } from '../fleet/agent-conversations.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 
 export const LIVE_MAP_PATH = '/api/verse/fleet/control/live-map';
 export const MAP_EDGES_PATH = '/api/verse/fleet/control/map-edges';
 export const AGENT_MESSAGES_PATH = '/api/verse/fleet/control/agent-messages';
+export const AGENT_CONVERSATIONS_PATH = '/api/verse/fleet/control/agent-conversations';
 export const LIVE_MAP_MIN_INTERVAL_MS = 5_000;
 
 /** Build the graph from the shared reads. Each source fails on its own into "unknown". */
@@ -53,15 +59,28 @@ export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock
 }
 
 export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap()),
-  edges: (since: string) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages): ApiModule {
+  edges: (since: string) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
+  conversations: typeof readAgentConversations = readAgentConversations): ApiModule {
   const defaultEdges = throttledLiveMap(async () => edges(MAP_EDGES_DEFAULT_SINCE));
   return async (ctx, req, res, path, method) => {
-    if (path !== LIVE_MAP_PATH && path !== MAP_EDGES_PATH && path !== AGENT_MESSAGES_PATH) return false;
+    if (path !== LIVE_MAP_PATH && path !== MAP_EDGES_PATH && path !== AGENT_MESSAGES_PATH && path !== AGENT_CONVERSATIONS_PATH) return false;
     if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
     if (!ctx.readSession || !Number.isFinite(ctx.readSession.expiresAt) || ctx.readSession.expiresAt <= Date.now()) {
       sendJson(res, 401, { error: 'A current read session is required.' }); return true;
     }
     const params = new URL(req.url ?? path, 'http://localhost').searchParams;
+    if (path === AGENT_CONVERSATIONS_PATH) {
+      const waiting = params.get('waiting'), agent = params.get('agent');
+      if ([...params.keys()].some(key => key !== 'agent' && key !== 'waiting') || params.getAll('agent').length > 1 || params.getAll('waiting').length > 1
+        || (waiting !== null && waiting !== '1' && waiting !== '0') || agent === '') {
+        sendJson(res, 400, { error: 'Use agent (a name) and waiting (1) only, once each.' }); return true;
+      }
+      try {
+        const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1' });
+        sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+      } catch { sendJson(res, 503, { error: 'Agent conversations unavailable.' }); }
+      return true;
+    }
     if (path === AGENT_MESSAGES_PATH) {
       if ([...params.keys()].some(key => key !== 'since' && key !== 'limit') || params.getAll('since').length > 1 || params.getAll('limit').length > 1) {
         sendJson(res, 400, { error: 'Use since and limit only, once each.' }); return true;

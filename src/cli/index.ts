@@ -3382,6 +3382,11 @@ async function main(): Promise<void> {
           process.exitCode = await runAgentsMessagesCli(rest.slice(1));
           break;
         }
+        if (rest[0] === 'conversations') {
+          const { runAgentsConversationsCli } = await import('./agents-conversations.js');
+          process.exitCode = await runAgentsConversationsCli(rest.slice(1));
+          break;
+        }
         if (rest[0] === 'roster') {
           const cmdRoster = await loadAgentsRosterCmd();
           process.exitCode = await cmdRoster(rest.slice(1));
