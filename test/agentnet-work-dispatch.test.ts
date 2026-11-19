@@ -110,6 +110,64 @@ describe('bounded peer work feed dispatch', () => {
     expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'query', text: 'ping' }, session(),
       { ...options(), ...peerSlack() })).toMatchObject({ status: 'drafted' });
   });
+  it('admits owner work.status on the peer path and refuses foreign, unknown or malformed updates', async () => {
+    const opts = { ...options(), ...peerSlack() };
+    const status = (jobId: string, value: string, extra: Record<string, unknown> = {}) =>
+      ({ kind: 'work.status' as const, jobId, status: value, ...extra });
+    // Schema and audience rules still bind: a bad status value or a channel target never parses.
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Status',
+      work: status('RQ-DOCS', 'bogus') }, session(), opts)).toMatchObject({ status: 'refused', reason: 'invalid-peer-message' });
+    expect(await sendPeerMessage({ channel: 'CMESH', kind: 'task', text: 'Status',
+      work: status('RQ-DOCS', 'running') }, session(), opts)).toMatchObject({ status: 'refused', reason: 'invalid-peer-message' });
+    // A status naming no announced job refuses before any write.
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Status',
+      work: status('RQ-DOCS', 'running') }, session(), opts))
+      .toMatchObject({ status: 'refused', reason: 'work-job-unknown' });
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: work() }, session(), opts))
+      .toMatchObject({ status: 'drafted' });
+    // Only the announcing callsign may move the job; peers cannot forge progress.
+    for (const n of [1, 2]) {
+      expect(await sendPeerMessage({ toAgent: 'agent0', kind: 'task', text: 'Status',
+        work: status('RQ-DOCS', 'done') }, session(n), opts))
+        .toMatchObject({ status: 'refused', reason: 'work-status-not-owner' });
+    }
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-DOCS', status: 'queued' }] });
+    // The owner reports progress; the addressed peer's read admits the status envelope.
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Status update',
+      work: status('RQ-DOCS', 'running', { detail: 'Claimed.' }) }, session(), opts))
+      .toMatchObject({ status: 'drafted' });
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-DOCS', status: 'running' }] });
+    const inbox = readPeerInbox(session(1), 0, options());
+    if (inbox.status !== 'ok') throw new Error('fixture inbox unavailable');
+    expect(inbox.messages.map(m => (m.envelope.body as { kind?: string }).kind)).toContain('work.status');
+  });
+  it('refuses peer work.status while the shared feed projection is refused', async () => {
+    // A raw foreign status already poisons the projection; peer sends must not add to it.
+    expect(appendBusInbox({ id: `peer-${randomUUID()}`, from: 'agent0', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: { kind: 'work.post', jobId: 'RQ-DOCS', title: 'x', repo: 'ashlrai/phantom',
+        claimKeys: ['queue:RQ-DOCS'], provider: 'devin' } }, { root, now: () => now }).status).toBe('posted');
+    expect(appendBusInbox({ id: `peer-${randomUUID()}`, from: 'agent2', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: { kind: 'work.status', jobId: 'RQ-DOCS', status: 'done' } }, { root, now: () => now }).status).toBe('posted');
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'refused', reason: 'owner-mismatch' });
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Status',
+      work: { kind: 'work.status', jobId: 'RQ-DOCS', status: 'running' } }, session(), { ...options(), ...peerSlack() }))
+      .toMatchObject({ status: 'refused', reason: 'work-feed-refused' });
+  });
+  it('closes the peer work lifecycle: dispatch result then owner work.status done', async () => {
+    const opts = { ...options(), ...peerSlack() };
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Proposed work', work: work() }, session(), opts))
+      .toMatchObject({ status: 'drafted' });
+    expect(await consumePeerWork(session(1), { apply: true }, options())).toMatchObject({ results: [{ status: 'admitted' }] });
+    const job = (await store.read()).jobs[0]!;
+    await store.finish(job.id, 'peer:agent0', {});
+    await consumePeerWork(session(1), { apply: true }, options());
+    // work.result proves queue completion; the owner's status still moves the feed job.
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-DOCS', status: 'queued' }] });
+    expect(await sendPeerMessage({ toAgent: 'agent1', kind: 'task', text: 'Status update',
+      work: { kind: 'work.status', jobId: 'RQ-DOCS', status: 'done' } }, session(), opts))
+      .toMatchObject({ status: 'drafted' });
+    expect(readBusWorkFeed({ root, now: () => now })).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-DOCS', status: 'done' }] });
+  });
   it('deduplicates replays and competing consumers across different message ids', async () => {
     admit(); admit(work(), 'agent2');
     await Promise.all([1, 2].map(n => consumePeerWork(session(n), { apply: true }, options())));
