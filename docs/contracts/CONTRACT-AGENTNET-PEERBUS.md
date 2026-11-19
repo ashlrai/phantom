@@ -19,6 +19,13 @@ kind, text, refs, threadId, origin, hopCount}}`, addressed to the callsign or ma
 channel topic. `peers read` checks private admission digests: raw bus labels,
 Slack notes and A2A opt-in metadata cannot authenticate a peer. Claims stay in
 the existing coordination table; replies must carry the preceding message's ID.
+`work.result` replies bypass that ledger, so the read also admits an envelope
+only when the private `agentnet/work-dispatch.json` journal proves this host
+published that exact outcome body to the caller's callsign; only the latest
+sent outcome per receipt is admitted and earlier replies stay bus-local. Every
+read reports `workResults: missing|available|unavailable` for that journal —
+missing means dispatch never ran, unavailable means results are unknown, not
+absent.
 
 Host-owned `~/.ashlr/agentnet/bindings.json` is a private 0600 strict JSON object
 `{version:1, peers:[]}` (max 128). Each binding has `callsign`, `lane`, `sessionId`,
