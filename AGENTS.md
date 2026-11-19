@@ -64,7 +64,7 @@ Synced from the Ashlr Fleet Constitution v3.0 (Nov 1, 2026). This overrides any 
 ## Working in this repository
 - Node `>=22.15.0`. Install trusted local worktrees with `npm run install:worktree` (pnpm 10.28.2, shared same-volume store; CI/releases keep `npm ci`), build with `npm run build`, run the CLI from source with `npm run dev -- <command>`.
 - Backend tests: `npm test` for all backend suites, or `npm run test:ci -- test/<file>.test.ts` for affected suites with the hermetic runner. Run tests with a temporary HOME, for example `HOME=$(mktemp -d) npm run test:ci -- test/agents-md-audit.test.ts`.
-- Before a PR: automated workers run `node scripts/verify-changed.mjs` once, in the foreground; do not poll it. Repeat runs on an unchanged tree exit early (`SKIP verify-changed`); pass `--force` to rerun. This replaces worker runs of full `npm run typecheck` and `npm run lint`. Humans may still use `npm run lint` and `npm run typecheck`. Also run `npm run check:docs` and the affected tests (`npm run test:ci -- test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together. Its import graph cannot select tests that read changed files as text; run those test files explicitly. Merge Gate stays the full check; local checks do not replace required hosted CI.
+- Before a PR: automated workers run `node scripts/verify-changed.mjs` once, in the foreground; do not poll it. Repeat runs on an unchanged tree exit early (`SKIP verify-changed`); pass `--force` to rerun. This replaces worker runs of full `npm run typecheck` and `npm run lint`. Humans may still use `npm run lint` and `npm run typecheck`. Also run `npm run check:docs` and the affected tests (`npm run test:ci -- test/<file>.test.ts`, `npm run test:web` for `src/web-ui`). `npm run gate` runs build, static checks and related tests together. Its import graph plus a grep for text-reading tests covers docs, configs and data files; run any reader it still misses explicitly. Merge Gate stays the full check; local checks do not replace required hosted CI.
 - When authority drift fails, run `npm run authority:regen` and list each new Tier-1 root in the PR body for CODEOWNERS review.
 - Shared work market (RQ-SHARED-QUEUE-1): jobs carry `needs`, `min_tier`, `max_tier`, `max_cost_class`, `data_class`, `work_class`, `exclusive`, priority and impact; `pool`/`lane` are `preferred_lane` hints. Dispatch selects a capable, healthy executor with quota and capacity, ranking resource posture (burn, balanced, preserve) ahead of the hint; a claim that leaves its hint records `lane_override` in `metrics/jobs.jsonl`. `phm fleet unfed --json` reports per-resource utilization and lanes left with free slots while rows waited elsewhere. An unknown hint is open; explicit local execution stays local. Inspect `metrics/work-market.jsonl` for `work-market.v1` reason codes and `phm route explain --json` for hysteresis receipts. Source changes require Security review and re-pin before `contrib/mac/install.sh`; never install over the live pinned dispatcher. See [queue market](docs/QUEUE.md).
 - Queue tiers: router-queue `tier=` must be `frontier`, `work`, `mid` or `fast`. `queuegen` and `router-lint` refuse any other value (`standard` means `work`), because dispatchd skips unknown tiers silently. See [docs/QUEUE.md](docs/QUEUE.md#tier-values).
@@ -101,7 +101,7 @@ API projection. Mirror prep publishes observations every minute; each repo has
 a three-minute prep deadline. See [lane freshness](docs/FLEET-LANE-FRESHNESS.md).
 
 Leader board: every Leader tick records a `fleet.leader-board.v1` state at
-`~/.ashlr-runs/coordination/leader-board.json` — lanes, queue depth by tier,
+`~/.ashlr-runs/coordination/leader-board.json`: lanes, queue depth by tier,
 merges in the last hour, the conflicting-PR count trend (RQ-REBASE rows in
 ready.tsv are the local proxy for GitHub-conflicting PRs) and open
 needs-Mason items. Read that JSON file directly; all inputs are local files,
@@ -206,7 +206,7 @@ Fleet autopilot (RQ-SWE3-AUTOPILOT-1): `phm fleet autopilot --once --json` runs
 one bounded read-only planning cycle: it reads queue/slots/admission state,
 computes lane utilization vs targets, picks the single highest-leverage gap
 (uncovered conflicting PRs, a starved lane, stale parked deps, missing
-restock) and emits one proposed action — `enqueue` N jobs of a type,
+restock) and emits one proposed action: `enqueue` N jobs of a type,
 `hold-lane`, or `no-op`. `--repo <owner/name>` repeats to include the
 read-only `gh pr list` rebase-coverage read. It never mutates; the proposal
 is advisory for the leader loop.

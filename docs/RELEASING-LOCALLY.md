@@ -197,9 +197,14 @@ or a script edit does not widen the run; a dependency change in either file, or 
 file, runs that suite in full. Logs, the eslint cache and vitest JSON reports go to `.ashlr-gate/` (gitignored).
 `--json` prints a machine-readable result instead of the table.
 
-The import graph cannot see a test that reads a changed file as text instead of importing it.
-Known dependencies are listed in `scripts/gate-text-reads.json`; add an entry when
-introducing a text-reading test. The gate validates mapped test paths before running.
+The import graph cannot see a test that reads a changed file as text instead of importing it,
+so the gate greps the test trees for each changed path: every test file naming the
+repo-relative path runs, plus a bare basename when it adds few enough readers to be a
+reliable signal, plus the corpus guards that walk a whole tree (`CORPUS_GUARDS` in
+`scripts/gate.mjs`: the docs link guards, the pane/design walkers and the schema registry).
+Curated entries in `scripts/gate-text-reads.json` still cover readers neither finds; add an
+entry when introducing a text-reading test the grep cannot see (for example a path built
+from segments). The gate validates mapped test paths before running.
 The web smoke set explicitly includes the existing density, UI-scale, style-token,
 micro-label-font and theme-contrast modules because they read stylesheet/token files.
 These fast design contracts run alongside the shell checks even when related selection

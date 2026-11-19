@@ -31,8 +31,13 @@
  *     vitest itself would do);
  *   - otherwise → tests whose import graph reaches a changed file, plus the smoke set
  *     (scripts/gate-smoke.json), which always runs.
- * Explicit mappings cover known tests that read files as text. `gate:full` covers
- * other dependencies that the import graph and the map cannot see.
+ * Tests that read a changed file as text have no import edge, so the gate finds
+ * them by grep instead: discoverTextReads adds every test file naming the
+ * changed path (full repo-relative path, then a basename that adds few enough
+ * readers to be a reliable signal), corpusGuardTests adds the suites that walk
+ * a whole tree, and scripts/gate-text-reads.json keeps curated entries for
+ * readers neither finds. package.json and package-lock.json stay on the
+ * dependency-key path above. `gate:full` covers what even this cannot see.
  *
  * Known failures (scripts/gate-known-failures.json) supply diagnostic reasons only.
  * Every failing file, unhandled error, missing JSON report, or non-zero Vitest exit
@@ -157,15 +162,17 @@ export const SUITE_TRIGGERS = Object.freeze({
 /**
  * Pure: what each suite runs.
  * @param {{ full: boolean, changed: string[], dependencyKeys: string[], lockfileChanged?: boolean,
- *   smoke: {backend: string[], web: string[]} }} input
+ *   smoke: {backend: string[], web: string[]}, textReads?: Record<string, string[]>,
+ *   guards?: string[] }} input
  *   `changed` are repo-relative POSIX paths; `dependencyKeys` / `lockfileChanged` come from
- *   packageDependencyChanges / lockfileDependencyChanged.
+ *   packageDependencyChanges / lockfileDependencyChanged. `guards` are corpus-guard test
+ *   files (see corpusGuardTests) that run in every mode, like the smoke set.
  * @returns {{ backend: SuitePlan, web: SuitePlan }} where SuitePlan is
  *   `{ mode: 'full' | 'related' | 'smoke', reason: string, files: string[] }`. `smoke` means
  *   nothing importable changed, so only the smoke files run, without walking the import graph
  *   of every test (the fixed cost of `vitest related`, ~40 s).
  */
-export function planTests({ full, changed, dependencyKeys, lockfileChanged = false, smoke, textReads = {} }) {
+export function planTests({ full, changed, dependencyKeys, lockfileChanged = false, smoke, textReads = {}, guards = [] }) {
   const plan = {};
   for (const suite of ['backend', 'web']) {
     let reason = null;
@@ -183,17 +190,20 @@ export function planTests({ full, changed, dependencyKeys, lockfileChanged = fal
     // package.json and the lockfile are dropped here: their dependency content was already
     // compared above, and anything else in them (version, scripts, files) cannot change what
     // a test imports — but vitest would rerun everything for any package.json edit.
-    const mapped = changed.flatMap((file) => textReads[file] ?? [])
-      .filter((file) => suite === 'backend' ? file.startsWith('test/') : file.startsWith('src/web-ui/'));
+    const inSuite = (file) => suite === 'backend' ? file.startsWith('test/') : file.startsWith('src/web-ui/');
+    const mapped = changed.flatMap((file) => textReads[file] ?? []).filter(inSuite);
+    const guardFiles = guards.filter(inSuite);
     const related = [...changed
       .filter((file) => !['package.json', 'package-lock.json'].includes(basename(file)))
       .filter(isModuleCandidate), ...mapped];
+    const extra = guardFiles.length ? ` + ${guardFiles.length} guard` : '';
     if (related.length === 0) {
-      plan[suite] = { mode: 'smoke', reason: `no importable change; ${smoke[suite].length} smoke`, files: [...smoke[suite]].sort() };
+      const files = [...new Set([...smoke[suite], ...guardFiles])].sort();
+      plan[suite] = { mode: 'smoke', reason: `no importable change; ${smoke[suite].length} smoke${extra}`, files };
       continue;
     }
-    const files = [...new Set([...related, ...smoke[suite]])].sort();
-    plan[suite] = { mode: 'related', reason: `${related.length} changed file(s) + ${smoke[suite].length} smoke`, files };
+    const files = [...new Set([...related, ...smoke[suite], ...guardFiles])].sort();
+    plan[suite] = { mode: 'related', reason: `${related.length} changed file(s) + ${smoke[suite].length} smoke${extra}`, files };
   }
   return plan;
 }
@@ -327,6 +337,128 @@ export function loadTextReads(data = loadJson('scripts/gate-text-reads.json')) {
 
 export function loadKnownFailures(data = loadJson('scripts/gate-known-failures.json')) {
   return new Map(data.files.map((entry) => [entry.file, entry.reason]));
+}
+
+// ---------------------------------------------------------------------------
+// Text-reader discovery
+// ---------------------------------------------------------------------------
+
+/** Directories git grep searches for test files that name a changed path as text. */
+const TEXT_READER_DIRS = Object.freeze(['test', 'src/web-ui']);
+
+/** The same shape loadTextReads validates: backend test/*.test.ts, web *.test.[jt]sx. */
+const TEXT_READER_FILE = /^(?:test\/.*\.test\.ts|src\/web-ui\/.*\.test\.[jt]sx?)$/;
+
+/**
+ * A basename only counts as a reader signal when it adds at most this many tests beyond the
+ * full-path hits; generic names (index.ts, types.ts, jobs.json) would otherwise pull in
+ * hundreds of unrelated suites.
+ */
+export const MAX_BASENAME_EXTRA_READERS = 25;
+
+export function isTextReaderTest(file) {
+  return TEXT_READER_FILE.test(file);
+}
+
+/**
+ * Corpus guards: tests that validate a whole tree rather than a named file, so no
+ * per-file grep can find them. Each matcher maps a changed repo path to the test
+ * files that walk the tree it belongs to.
+ */
+export const CORPUS_GUARDS = Object.freeze([
+  // docs-repo-links walks docs/**/*.md plus each top-level *.md.
+  { test: 'test/docs-repo-links.test.ts', match: (file) => /^(?:docs\/.+\.md|[^/]+\.md)$/.test(file) },
+  // docs-fleet-links walks docs/fleet/*.md.
+  { test: 'test/docs-fleet-links.test.ts', match: (file) => /^docs\/fleet\/[^/]+\.md$/.test(file) },
+  // docs-panes validates docs/PANES.md against every verse pane source.
+  { test: 'test/docs-panes.test.ts', match: (file) => file === 'docs/PANES.md' || /^src\/web-ui\/routes\/verse\//.test(file) },
+  // schemas/registry.test.ts walks schemas/.
+  { test: 'test/schemas/registry.test.ts', match: (file) => /^schemas\//.test(file) },
+  // The web suites walk the verse and design trees for structure and styles.
+  { test: 'src/web-ui/routes/verse/shell/pane-sections.test.ts', match: (file) => /^src\/web-ui\/routes\/verse\//.test(file) },
+  { test: 'src/web-ui/routes/verse/shell/section-modules.test.ts', match: (file) => /^src\/web-ui\/routes\/verse\/sections\//.test(file) },
+  { test: 'src/web-ui/routes/verse/mobile/mobile-overflow.test.ts', match: (file) => /^src\/web-ui\/routes\/verse\/mobile\//.test(file) },
+  { test: 'src/web-ui/design/font-ranges.test.ts', match: (file) => /^src\/web-ui\/design\//.test(file) },
+  { test: 'src/web-ui/design/subset-glyphs.test.ts', match: (file) => /^src\/web-ui\/design\//.test(file) },
+]);
+
+/** The corpus-guard test files a change set calls for, deduplicated and sorted. */
+export function corpusGuardTests(changed) {
+  const guards = new Set();
+  for (const file of changed) {
+    for (const guard of CORPUS_GUARDS) {
+      if (guard.match(file)) guards.add(guard.test);
+    }
+  }
+  return [...guards].sort();
+}
+
+/**
+ * Test files containing any of `needles`, searched as fixed strings over the
+ * working tree (tracked and untracked). git grep exits 1 on no match; every
+ * failure degrades to no discovery rather than failing the gate.
+ */
+function defaultTextReaderGrep(needles) {
+  const res = spawnSync('git', ['grep', '-l', '-F', '--untracked', ...needles.flatMap((n) => ['-e', n]), '--', ...TEXT_READER_DIRS], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (res.status !== 0) {
+    if (res.status !== 1 && res.status != null) console.warn(`gate: text-reader discovery unavailable (git grep exit ${res.status})`);
+    return [];
+  }
+  return res.stdout.split('\n').filter(Boolean);
+}
+
+/**
+ * Tests that read a changed file as text rather than importing it. For each
+ * changed path, grep finds test files naming its repo-relative path; the bare
+ * basename is added only when it contributes few extra readers, since generic
+ * names would pull in unrelated suites. `grep`/`read` are injectable for tests.
+ * @returns {Record<string, string[]>} changed path → sorted test files.
+ */
+export function discoverTextReads(changed, deps = {}) {
+  const grep = deps.grep ?? defaultTextReaderGrep;
+  const read = deps.read ?? ((file) => readFileSync(join(repoRoot, file), 'utf8'));
+  const needles = new Set();
+  for (const file of changed) {
+    if (!file) continue;
+    needles.add(file);
+    const base = basename(file);
+    if (base !== file) needles.add(base);
+  }
+  if (needles.size === 0) return {};
+  const candidates = [...new Set(grep([...needles]))].filter(isTextReaderTest).sort();
+  const hits = new Map();
+  for (const candidate of candidates) {
+    let text;
+    try {
+      text = read(candidate);
+    } catch {
+      continue;
+    }
+    for (const needle of needles) {
+      if (!text.includes(needle)) continue;
+      let set = hits.get(needle);
+      if (!set) hits.set(needle, (set = new Set()));
+      set.add(candidate);
+    }
+  }
+  const discovered = {};
+  for (const file of changed) {
+    if (!file) continue;
+    const readers = new Set(hits.get(file) ?? []);
+    const base = basename(file);
+    if (base !== file) {
+      const extra = [...(hits.get(base) ?? [])].filter((test) => !readers.has(test));
+      if (extra.length <= MAX_BASENAME_EXTRA_READERS) {
+        for (const test of extra) readers.add(test);
+      }
+    }
+    if (readers.size > 0) discovered[file] = [...readers].sort();
+  }
+  return discovered;
 }
 
 /** Run one command, streaming stdout+stderr into .ashlr-gate/<name>.log. */
@@ -494,17 +626,28 @@ async function main() {
   let known;
   let textReads;
   let changes = { mergeBase: null, changed: [], dependencyKeys: [], lockfileChanged: false };
+  let guards = [];
   const baseRef = args.base ?? DEFAULT_BASE_REF;
   try {
     smoke = loadSmoke();
     known = loadKnownFailures();
     textReads = loadTextReads();
-    if (!args.full) changes = resolveChanges(baseRef);
+    if (!args.full) {
+      changes = resolveChanges(baseRef);
+      // vitest related sees import edges only; tests that read files as text are
+      // found by grep instead. package.json and the lockfile stay on the
+      // dependency-key path: a version or script edit cannot change what a test imports.
+      const discoverable = changes.changed.filter((file) => !['package.json', 'package-lock.json'].includes(basename(file)));
+      for (const [file, tests] of Object.entries(discoverTextReads(discoverable))) {
+        textReads[file] = [...new Set([...(textReads[file] ?? []), ...tests])].sort();
+      }
+      guards = corpusGuardTests(changes.changed);
+    }
   } catch (err) {
     console.error(`gate: ${err.message}`);
     return 2;
   }
-  const plan = planTests({ ...changes, full: args.full, smoke, textReads });
+  const plan = planTests({ ...changes, full: args.full, smoke, textReads, guards });
   say(args.full
     ? 'gate:full — every backend and web test'
     : `gate — base ${baseRef} @ ${changes.mergeBase.slice(0, 10)}, ${changes.changed.length} changed file(s); backend ${plan.backend.mode}, web ${plan.web.mode}`);
