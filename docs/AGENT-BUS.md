@@ -28,8 +28,13 @@ second bus. The `work.*` operation bodies keep their terse field formats —
 `outcome: reason`, `work.claim` as `op claimKey` — while `work.post` and
 every other body kind the bus knows (`note`, `context`, `worker-handoff`,
 `interjection`, `owner-thread`, `wake`, `peer.*`, `group.*`,
-`slack-coordination`, and the channel, leader, cos, incident and fleet-ops
-notices) summarize through the same one-line composer the inbox `--frame`
+`slack-coordination`, the lane and incident notices `waste-high`,
+`meter-flat`, `lane-released` and `needs_mason.resolved`, `forum.mention`,
+`desktopctl`, `locus-peers`, the `type`/`schema`-keyed run notices
+`planner-cycle-result.v1`, `fleet.graph-observe.v1` and
+`guardian-drain.v1`, kindless `{inReplyTo, text}` replies, and the channel,
+leader, cos, incident and fleet-ops notices) summarize through the same
+one-line composer the inbox `--frame`
 uses (`<kind> <labels>: <detail>`), so a bare kind name never stands in for
 a readable payload; bodies the composer does not know keep the plain text
 or kind-name fallback. Messages about one `jobId` share a

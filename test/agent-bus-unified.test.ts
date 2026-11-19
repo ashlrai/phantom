@@ -764,6 +764,58 @@ describe('CLI session adapters', () => {
     expect(busBodySummary(deep)).toContain('group.message');
   });
 
+  it('summarizes the remaining first-party bus body kinds as one-liners', () => {
+    expect(busBodySummary({ kind: 'waste-high', lane: 'claude', projectedUnusedPct: 41, hoursToReset: 9,
+      text: 'claude: 41% projected unused at reset in 9 h' }))
+      .toBe('waste-high: claude: 41% projected unused at reset in 9 h');
+    expect(busBodySummary({ kind: 'meter-flat', provider: 'codex', running: 2, observedMinutes: 62,
+      firstUsedPercent: 10, lastUsedPercent: 10, text: 'codex meter flat 62 min at 10% while 2 jobs run' }))
+      .toBe('meter-flat: codex meter flat 62 min at 10% while 2 jobs run');
+    expect(busBodySummary({ kind: 'lane-released', lane: 'claude', at: 't', by: 'fleet', reason: 'reset passed',
+      usedPct: 3, text: 'claude released: reset passed' }))
+      .toBe('lane-released: claude released: reset passed');
+    expect(busBodySummary({ kind: 'needs_mason.resolved', itemId: 'N-7', source: 'desktop', item: 'ship it?',
+      reply: 'yes ship', answeredBy: 'mason', resolvedAt: 't' }))
+      .toBe('needs_mason.resolved N-7: yes ship');
+    expect(busBodySummary({ kind: 'needs_mason.resolved', itemId: 'N-7', item: 'ship it?' }))
+      .toBe('needs_mason.resolved N-7: ship it?');
+    expect(busBodySummary({ kind: 'needs_mason.resolved', reply: 'confirmed' }))
+      .toBe('needs_mason.resolved: confirmed');
+    expect(busBodySummary({ type: 'forum.mention', channelId: 'goals', threadId: 't1', postId: 'p1', excerpt: 'ping @nova' }))
+      .toBe('forum.mention goals: ping @nova');
+    expect(busBodySummary({ kind: 'desktopctl', phase: 'result', action: 'run', resource: 'claude', outcome: 'done', detail: 'opened' }))
+      .toBe('desktopctl result run claude: done — opened');
+    expect(busBodySummary({ kind: 'desktopctl', phase: 'start', action: 'status', resource: 'browser' }))
+      .toBe('desktopctl start status browser');
+    expect(busBodySummary({ schema: 'planner-cycle-result.v1', runId: 'cycle-1', verdict: 'productive',
+      execution: { outcome: 'completed', provider: 'claude', exitCode: 0 },
+      evidence: { state: 'productive', counts: { ingested: 1, pending: 0, rejected: 0 }, attribution: 'observational' } }))
+      .toBe('planner-cycle-result cycle-1 productive: completed claude exit 0 evidence productive');
+    expect(busBodySummary({ schema: 'fleet.graph-observe.v1', runId: 'g-1', status: 'complete',
+      nodes: [{ id: 'a', status: 'complete', exitCode: 0 }, { id: 'b', status: 'failed', exitCode: 1 }] }))
+      .toBe('fleet.graph-observe g-1 complete: 2 nodes');
+    expect(busBodySummary({ schema: 'fleet.graph-observe.v1', runId: 'g-1', status: 'running', nodes: [] }))
+      .toBe('fleet.graph-observe g-1 running: 0 nodes');
+    expect(busBodySummary({ schema: 'guardian-drain.v1', record: 'attempt', sequence: 2, outcome: 'verified' }))
+      .toBe('guardian-drain attempt 2: verified');
+    expect(busBodySummary({ schema: 'guardian-drain.v1', record: 'summary', sequence: 5, termination: 'drained',
+      attempts: 5, verified: 3, refused: 1 }))
+      .toBe('guardian-drain summary 5: drained 5 attempts 3 verified 1 refused');
+    expect(busBodySummary({ source: 'locus-peers', trust: 'untrusted', sessionId: 'sess-1', data: { blob: 'x'.repeat(9000) } }))
+      .toBe('locus-peers sess-1: untrusted');
+    expect(busBodySummary({ inReplyTo: 'req-1', text: 'the reply text' })).toBe('the reply text');
+    // Unknown type/schema discriminators still fall back, never guessed.
+    expect(busBodySummary({ type: 'mystery', foo: 1 })).toBeNull();
+    expect(busBodySummary({ schema: 'mystery.v1', foo: 1 })).toBeNull();
+    // Secret-shaped payloads stay scrubbed and opaque peer data is never read.
+    expect(busBodySummary({ kind: 'needs_mason.resolved', itemId: 'N-1', reply: `token ghp_${'b'.repeat(36)}` })).not.toContain('ghp_');
+    expect(busBodySummary({ source: 'locus-peers', trust: 'untrusted', sessionId: 's', data: `ghp_${'b'.repeat(36)}` }))
+      .not.toContain('ghp_');
+    expect(busBodySummary({ schema: 'planner-cycle-result.v1', runId: 'c', verdict: 'failed',
+      execution: { outcome: 'threw', provider: null, exitCode: null }, evidence: { state: 'unknown' } }))
+      .toBe('planner-cycle-result c failed: threw evidence unknown');
+  });
+
   it('frames notice bodies as one-liners and bounds raw fallback renders', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
