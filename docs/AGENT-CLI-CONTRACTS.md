@@ -46,9 +46,12 @@ For finite reads, start at cursor 0, process a page, then persist its
 continue while it advances, including when the filtered `messages` array is
 empty. An unchanged cursor means caught up for that snapshot, not that no future
 messages will arrive. The limit (1–100, default 50) counts live records scanned
-before filters; expired records advance the cursor without counting. Filters
-are exact, case-sensitive, and combined. A cursor beyond the retained end is
-invalid; do not silently reset it and replay work.
+before filters; expired records advance the cursor without counting. `--to`,
+`--from` and `--exclude-from` match the literal routing label or any other
+label of the same registered agent identity (an unresolvable label or
+unreadable registry keeps exact matching); `--id`, `--in-reply-to` and
+`--priority` stay exact and case-sensitive. All filters combine. A cursor
+beyond the retained end is invalid; do not silently reset it and replay work.
 
 Watch emits one JSON object per line for each successful poll, even empty ones,
 and resumes from that page's `nextCursor`. It silently retries `retryable` at

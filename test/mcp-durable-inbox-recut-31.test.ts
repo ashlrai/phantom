@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { createFleetServer, type FleetReaders } from '../src/mcp/fleet-server.js';
 import { readFleetBusInbox } from '../src/mcp/fleet-inbox.js';
 import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
@@ -144,6 +145,21 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(recipientOnly.parsed).map(row => row.envelope.id)).toEqual(['w1', 'w2']);
     const wrongCase = await callInbox(client, { to: 'Worker' });
     expect(wrongCase.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 3 });
+  });
+
+  it('matches to/from filters under every label of one registered identity', async () => {
+    expect(registerAgentIdentity({ handle: 'worker', aliases: ['w-ops'] }, { root: fleetRoot() }).status).toBe('created');
+    expect(registerAgentIdentity({ handle: 'bot' }, { root: fleetRoot() }).status).toBe('created');
+    expect(post('a1', { to: 'agent:worker', from: 'agent:bot' }).status).toBe('posted');
+    expect(post('a2', { to: 'w-ops', from: 'bot' }).status).toBe('posted');
+    expect(post('a3', { to: 'other', from: 'agent:bot' }).status).toBe('posted');
+    const client = await connect();
+    const recipient = await callInbox(client, { to: 'worker' });
+    expect(rows(recipient.parsed).map(row => row.envelope.id)).toEqual(['a1', 'a2']);
+    const sender = await callInbox(client, { from: 'agent:bot' });
+    expect(rows(sender.parsed).map(row => row.envelope.id)).toEqual(['a1', 'a2', 'a3']);
+    const combined = await callInbox(client, { to: 'agent:worker', from: 'bot' });
+    expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['a1', 'a2']);
   });
 
   it('advances nextCursor through empty filtered pages without replay', async () => {

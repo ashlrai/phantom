@@ -11,6 +11,7 @@ import { busStatusExitCode } from './comms-bus-exit.js';
 import { cmdCommsBusClaim, COMMS_BUS_CLAIM_HELP } from './comms-bus-claim.js';
 import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/adapters/codex-peers.js';
 import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
+import { agentAddressMatcher, agentIdentityKeys } from '../core/agents/bus-identity.js';
 
 const HELP = `phm comms bus group read <room> <topic> <cursor>
 phm comms bus group presence <room> <topic>
@@ -39,8 +40,8 @@ Its version:1 receipt includes accepted {id,cursor,status}, failure {index,statu
 unattempted IDs and complete. Appends are sequential, not atomic; durable messages are never rolled back.
 Retry the suffix starting at failure.index; exact replay dedupes, changed content with the same ID conflicts.
 No internal retries, TTL renewal, skipped failures or external publication. Exit 0 complete, 1 storage/transport, 2 invalid.
-Address filters are exact and case-sensitive; routing labels do not confer authenticated identity.
---exclude-from omits envelopes with that sender routing label.
+--to, --from and --exclude-from match the literal routing label or any other label of the same registered agent identity (handle, agent: address, stable id or alias), resolved once when the read starts; an unresolvable label or unreadable registry keeps exact matching; routing labels do not confer authenticated identity.
+--exclude-from omits envelopes with that sender routing label or any other label of the same registered identity.
 ID filters match envelope IDs exactly and case-sensitively; IDs are transport data, not authentication.
 --in-reply-to matches an object's own string body.inReplyTo exactly and case-sensitively.
 This is an application convention, not an envelope field or authenticated identity.
@@ -100,6 +101,27 @@ export interface CommsBusDependencies {
 }
 
 type BusFilters = { id?: string; inReplyTo?: string; to?: string; from?: string; excludeFrom?: string; priority?: string; kind?: string; topic?: string };
+
+/** Resolved address predicates; each is present exactly when its filter is. */
+type BusAddressMatchers = { to?: (value: string) => boolean; from?: (value: string) => boolean; excludeFrom?: (value: string) => boolean };
+
+/**
+ * Address filters resolve once per read/watch through the agent identity
+ * registry beside the bus store: a filter naming any label of a registered
+ * identity matches every label of that identity, the same read `bus next`,
+ * `bus-follow`, `bus-request` and `handoff-receive` use. An unresolvable
+ * filter label and an unreadable registry keep exact-label matching, so
+ * unknown identity state never widens a page.
+ */
+function busAddressMatchers(filters: BusFilters, options: BusInboxOptions): BusAddressMatchers {
+  const matchers: BusAddressMatchers = {};
+  if (filters.to === undefined && filters.from === undefined && filters.excludeFrom === undefined) return matchers;
+  const identityOf = agentIdentityKeys({ root: options.root });
+  if (filters.to !== undefined) matchers.to = agentAddressMatcher(identityOf, filters.to);
+  if (filters.from !== undefined) matchers.from = agentAddressMatcher(identityOf, filters.from);
+  if (filters.excludeFrom !== undefined) matchers.excludeFrom = agentAddressMatcher(identityOf, filters.excludeFrom);
+  return matchers;
+}
 
 function composeReply(values: Map<string, string>, options: BusInboxOptions, deps: CommsBusDependencies): BusInboxPost {
   const parentId = values.get('--reply-to')!, id = values.get('--id')!, from = values.get('--from')!;
@@ -201,15 +223,15 @@ async function postBatch(args: string[], options: BusInboxOptions, deps: CommsBu
   return receipt.complete ? 0 : receipt.status === 'invalid' ? 2 : 1;
 }
 
-function filterPage(page: BusInboxPage, filters: BusFilters): BusInboxPage {
+function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddressMatchers): BusInboxPage {
   if (page.status !== 'ok' || Object.values(filters).every(value => value === undefined)) return page;
   return { ...page, messages: page.messages.filter(({ envelope }) =>
     (filters.id === undefined || envelope.id === filters.id) &&
     (filters.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
       !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') && envelope.body.inReplyTo === filters.inReplyTo) &&
-    (filters.to === undefined || envelope.to === filters.to) &&
-    (filters.from === undefined || envelope.from === filters.from) &&
-    (filters.excludeFrom === undefined || envelope.from !== filters.excludeFrom) &&
+    (addresses.to === undefined || addresses.to(envelope.to)) &&
+    (addresses.from === undefined || addresses.from(envelope.from)) &&
+    (addresses.excludeFrom === undefined || !addresses.excludeFrom(envelope.from)) &&
     (filters.priority === undefined || envelope.priority === filters.priority) &&
     (filters.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
     (filters.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? ''))) };
@@ -243,7 +265,7 @@ function deliver(json: string, deps: CommsBusDependencies, checkpoint?: ReturnTy
   });
 }
 
-async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
+async function watch(after: number, limit: number, interval: number, maxPages: number | undefined, timeout: number | undefined, filters: BusFilters, addresses: BusAddressMatchers, options: BusInboxOptions, deps: CommsBusDependencies, checkpoint: ReturnType<typeof openBusCheckpoint> | undefined, untilReply: boolean): Promise<number> {
   const controller = new AbortController(), stop = (): void => controller.abort();
   const list = deps.list ?? listBusInboxAfter;
   const deliverPage = (json: string): void | Promise<boolean> => {
@@ -272,7 +294,7 @@ async function watch(after: number, limit: number, interval: number, maxPages: n
       }
       if (expired()) break;
       if (page.status === 'ok') {
-        const filtered = filterPage(page, filters);
+        const filtered = filterPage(page, filters, addresses);
         if (untilReply && filtered.status === 'ok' && filtered.messages.length === 0) {
           // Unrelated page: advance the scan position without emitting output.
           checkpoint?.save(page.nextCursor);
@@ -424,7 +446,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
       if (timeout !== undefined && (timeout < 1 || timeout > 3600000)) return invalid();
       const untilReply = values.has('--until-reply');
       if (untilReply && (filters.inReplyTo === undefined || timeout === undefined || maxPages !== undefined)) return invalid();
-      return await watch(after, limit, interval, maxPages, timeout, filters, options, deps, checkpoint, untilReply);
+      return await watch(after, limit, interval, maxPages, timeout, filters, busAddressMatchers(filters, options), options, deps, checkpoint, untilReply);
     }
     let result;
     if (verb === 'post') {
@@ -442,7 +464,7 @@ export async function cmdCommsBus(args: string[], options: BusInboxOptions = {},
         const parsed = text === null ? null : parseBusEnvelope(text);
         result = parsed?.ok ? appendBusInbox(parsed.value, options) : { status: 'invalid' };
       }
-    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters);
+    } else result = filterPage((deps.list ?? listBusInboxAfter)(after, limit, options), filters, busAddressMatchers(filters, options));
     await deliver(JSON.stringify(result), deps, checkpoint);
     if (result.status === 'ok' && verb === 'read') checkpoint?.save((result as BusInboxPage & { status: 'ok' }).nextCursor);
     return busStatusExitCode(result.status);
