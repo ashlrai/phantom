@@ -186,6 +186,14 @@ no model and requires no new credentials. Rotating source files is safe after
 a successful run because normalized observations remain in the proposal file.
 Corrupt output fails closed instead of resetting that history.
 
+`phm improve nightly [--json] [--limit <1-200>]` reads that file back
+(read-only, `learn.nightly-report.v1`): the completed UTC night, exact retained
+counts for jobs, reviews, priors, lessons and proposals, and up to `--limit`
+items per section. A missing file reports `state: "missing"` (no completed
+run yet); unsafe, corrupt or raced output reports `state: "unreadable"` with
+unknown counts — never zero-filled. The report writes nothing and dispatches
+nothing; proposals remain advisory until a human or a gated flow acts on them.
+
 ## 5. Roadmap
 
 * Proposals implement code (agent run in the worktree) and register their own
