@@ -124,16 +124,38 @@ describe('drive node leases', () => {
     expect(f.a.claim(leader, f.bob, 'job')!.token).toBeGreaterThan(claim.token);
   });
 
-  it('a declining release is keyed by session, bounded, and does not duplicate', () => {
+  it('a declining release fences that session out of claim; another session still can', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
     f.a.enqueue('job', { owner: 'o' });
     const c1 = f.a.claim(leader, f.bob, 'job')!;
     expect(f.a.release(c1, true)).toBe(true);
     expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending', declined: [f.bob.session] });
-    const c2 = f.a.claim(leader, f.bob, 'job')!;
+    // claim applies the same fence pull does: the declined session is never re-offered the job.
+    expect(f.a.claim(leader, f.bob, 'job')).toBeNull();
+    // A different session still can; its own decline appends, keyed by session.
+    const c2 = f.a.claim(leader, f.alice, 'job')!;
     expect(f.a.release(c2, true)).toBe(true);
-    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session]);
+    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session, f.alice.session]);
+  });
+
+  it('claim applies the routing capability fences: caps and gh auth', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('needs-codex', { owner: 'o', requires: ['codex'] });
+    f.a.enqueue('needs-gh', { owner: 'o', requires: ['gh'] });
+    // alice and bob advertise no caps and report no auth.
+    expect(f.a.claim(leader, f.bob, 'needs-codex')).toBeNull();
+    expect(f.a.claim(leader, f.bob, 'needs-gh')).toBeNull();
+    const worker = f.b.join('worker', { owners: ['o'], caps: ['codex', 'gh'] })!;
+    f.b.heartbeat(worker, { auth: 'ok' });
+    expect(f.a.claim(leader, worker, 'needs-codex')!.jobId).toBe('needs-codex');
+    // gh work also needs the auth heartbeat; the cap alone is not enough.
+    const noauth = f.a.join('noauth', { owners: ['o'], caps: ['gh'] })!;
+    f.a.heartbeat(noauth);
+    expect(f.a.claim(leader, noauth, 'needs-gh')).toBeNull();
+    f.a.heartbeat(noauth, { auth: 'ok' });
+    expect(f.a.claim(leader, noauth, 'needs-gh')!.jobId).toBe('needs-gh');
   });
 
   it('does not re-route a released job to the session that declined it', () => {

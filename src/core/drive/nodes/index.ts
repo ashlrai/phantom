@@ -1,6 +1,6 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
-import { actionableClaim, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
+import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
@@ -304,6 +304,10 @@ export class DriveNodes implements QueueV1 {
       stored.expiresAt > now && this.liveNode(state, stored, now);
   }
 
+  /** Leader-side assignment under the live lease. Applies the same execution
+   * fences as `pull` — a declined session, missing caps or absent `gh` auth is
+   * refused — so a claim can never hand a job to a node routing would reject.
+   * Owner scope stays the leader's deliberate choice. */
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null {
     return this.transaction((state, now) => {
       const current = this.liveLeader(state, now);
@@ -317,6 +321,7 @@ export class DriveNodes implements QueueV1 {
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
+      if (jobBlockers(node, job).length > 0) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
       job.executionHostId = node.capacity?.hostId;
