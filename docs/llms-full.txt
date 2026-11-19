@@ -179,7 +179,9 @@ npm run check:docs
 npx vitest run test/doc-facts.test.ts
 ```
 
-Tests are hermetic: never touch the real home directory or real model endpoints. `src/cli/` handlers stay thin and logic lives in `src/core/`. Changing an exported signature means updating `CONTRACT.md` in the same change. Full conventions: [CONTRIBUTING.md](../CONTRIBUTING.md), [AGENT-OPERATIONS.md](AGENT-OPERATIONS.md) and the repository's `CLAUDE.md`.
+Tests are hermetic: never touch the real home directory or real model endpoints. `src/cli/` handlers stay thin and logic lives in `src/core/`. Changing an exported signature means updating `CONTRACT.md` in the same change.
+
+Outside contributors keep `ashlrai/phantom` as `origin`, push the branch to their own fork and open the pull request against `master`; `Merge Gate` is the one required check. [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md) walks through clone to auto-merge. Full conventions: [CONTRIBUTING.md](../CONTRIBUTING.md), [AGENT-OPERATIONS.md](AGENT-OPERATIONS.md) and the repository's `CLAUDE.md`.
 
 ## Optional cloud handoff
 
