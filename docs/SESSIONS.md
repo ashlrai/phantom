@@ -57,6 +57,20 @@ session speaking and `-` is a recorded step. The summary is assembled from the
 records, not written by a model. `--json` prints `fleet.session-thread.v1`;
 an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
 
+The console's Conversations pane puts every session on one screen. Each
+session is a card: its id, state and when it last spoke, the summary, and its
+newest messages, with what was said to it on the right and what it said on the
+left. The pane makes one request for all of them
+(`GET /api/verse/fleet/control/session-threads`) and asks again every 10
+seconds while it is on screen. The buttons above the cards show only the
+sessions in one state. Arrow keys or J and K move between cards, Enter opens
+one and Esc comes back to the same card. An opened card shows that session's
+whole conversation and names what each source held, so an empty conversation
+is not mistaken for a quiet session. "Write to it" puts `@<job id>` in the
+Leader's reply box for a worker that is still running; nothing is sent until
+you send it there. "Live log" opens the worker log, where pause and stop
+live. A server without the read says so and offers the Sessions pane.
+
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit
 `--json` for plain text). The typed `reconcileSessions` API returns
 `fleet.session-reconciliation.v1`: local runs classified as `live`, `finished`
