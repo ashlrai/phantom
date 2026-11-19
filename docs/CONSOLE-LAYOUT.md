@@ -75,6 +75,27 @@ says it may be stale. The same list for agents:
 phm sessions --json
 ```
 
+**Agent threads** (⌘⌥A, or the **Agent threads** button in the Leader
+conversation) shows every agent session as a conversation on one screen. The
+list has one row per session: the leader first, then quiet sessions, running
+ones and any that failed in the last hour, each with its state, when it last
+spoke and its last message. Select a row to read its thread: a short summary,
+then the brief it was given, its recorded steps, the commands it ran, the files
+it changed, its notes, the bus messages about it and the last thing it said.
+The leader's thread shows its newest replies and opens the Leader conversation.
+The summary is assembled from those records, not written by a model, and a fact
+no record holds reads unknown. J/K or the arrow keys move between threads,
+Enter opens the session's full log in the Worker log (where pause, stop and
+steer live) and `/` filters the list. The pane is read-only; it reads the
+sessions list, each job's recorded activity and the bus messages, and in a
+narrow column it shows the list or the open thread, one at a time. The same
+reads for agents:
+
+```sh
+phm sessions --json
+phm messages
+```
+
 Home's Merged PRs card opens the Throughput pane. It leads with the report's
 headline and a Delivery flow chart: jobs launched, PRs published and PRs merged
 in the window, each with its exact count and its share of the step before. The

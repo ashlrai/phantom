@@ -99,6 +99,7 @@ const FILES = [
   'routes/verse/command/surface.module.css',
   'routes/verse/fleet/fleet.module.css',
   'routes/verse/mind/mind.module.css',
+  'routes/verse/agent-threads/agent-threads.module.css',
   'components/primitives/Button.module.css',
   'components/primitives/Input.module.css',
   'components/primitives/Select.module.css',
