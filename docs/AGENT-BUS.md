@@ -185,8 +185,14 @@ run. The check still only proves the envelope's addressee; routing labels are
 never authenticated identities.
 
 Channel posts are refused unless the sender is a member
-(`phm agents bus channel create|join|leave`). Because channel addresses are
-bus-group addresses, existing `subscribeGroup` readers see the same posts.
+(`phm agents bus channel create|join|leave`). `phm agents bus channel list
+[--agent <handle>]` is the read side: it prints every registry channel with
+its member handles, creator and creation time, or only the channels one
+resolved identity belongs to. A missing registry is a verified-empty list
+(`source: missing`), an unreadable one is `unavailable` — never an empty
+list — and membership is a routing label set (who may post), not proof of
+presence or authority. Because channel addresses are bus-group addresses,
+existing `subscribeGroup` readers see the same posts.
 
 **Priority wake.** P0 always wakes and cannot be turned off. P1 and handoffs
 wake by default (`--no-wake` opts out); P2 and P3 wake only with `--wake`. A

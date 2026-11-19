@@ -832,3 +832,38 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   return { status: 'ok', agent: target.identity.handle, wakes: wakes.wakes.filter(wake =>
     target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))) };
 }
+
+export interface ChannelListEntry {
+  name: string;
+  createdBy: string;
+  createdAt: number;
+  /** Member handles in join order; routing labels, not authenticated principals. */
+  members: string[];
+}
+export type ChannelList =
+  | { status: 'ok'; source: 'missing' | 'available'; agent: string | null; channels: ChannelListEntry[] } |
+  { status: 'unknown-agent' | 'unavailable'; reason: string };
+
+/**
+ * Channel discovery for the unified bus: every registry channel, or only the
+ * channels one resolved identity belongs to. A missing registry is a
+ * verified-empty list (`source: 'missing'`), never an error; an unreadable one
+ * is `unavailable`, not empty. Membership says who may post — it is not proof
+ * of presence, attention or authority.
+ */
+export function listBusChannels(agent: string | undefined, options: UnifiedBusOptions = {}): ChannelList {
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  let handle: string | null = null;
+  if (agent !== undefined) {
+    const identity = resolveAgent(read.registry, agent);
+    if (!identity) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
+    handle = identity.handle;
+  }
+  const channels = read.registry.channels
+    .filter(channel => handle === null || channel.members.includes(handle))
+    .map(channel => ({ name: channel.name, createdBy: channel.createdBy, createdAt: channel.createdAt,
+      members: [...channel.members] }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { status: 'ok', source: read.source, agent: handle, channels };
+}
