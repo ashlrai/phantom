@@ -51,7 +51,8 @@ Exports:
   persistence retry with stable deduplication keys. Notification exceptions are
   value-free statuses, not post-release exceptions.
 - `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
-  unified bus DMs or owner notices; unknown seats/secret-shaped text are refused.
+  unified bus DMs under the seat's fleet root and clock, or owner notices;
+  unknown seats/secret-shaped text are refused.
 
 `SeatOptions` injects home, runs, clock, quota reader, node store, node-release
 port, owner-thread options, owner notice and bus post. Default coordination and

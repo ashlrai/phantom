@@ -314,5 +314,8 @@ export async function sendSeatMessage(input: { from: string; to: string; text: s
     if (o.ownerOptions) return postOwnerNotice(notice, o.ownerOptions);
     return { status: 'refused', reason: 'owner-thread-not-configured' };
   }
-  return sendDirectMessage({ ...input, from: sender.participantId }, { runsRoot: runs(o) });
+  // The DM resolves identities and appends through the same fleet root and
+  // clock the seat's claims and handoff notices use; runsRoot only places the
+  // wake hint queue.
+  return sendDirectMessage({ ...input, from: sender.participantId }, { root: fleet(o), runsRoot: runs(o), now: o.now });
 }

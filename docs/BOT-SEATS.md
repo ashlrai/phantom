@@ -138,8 +138,11 @@ Direct messaging still requires the existing bus identities/aliases and channel
 membership; the seat projection does not silently register them.
 
 `sendSeatMessage` sends to another configured participant through the unified
-bus, or to the owner through an injected/configured owner thread. Unknown seats
-and secret-shaped text are refused. Provider adapter messaging is separate.
+bus, or to the owner through an injected/configured owner thread. A seat-to-seat
+message resolves the bus identity registry and appends under the same fleet root
+(`<home>/.ashlr/fleet`) and clock the seat's claims and handoff notices use;
+`runsRoot` places only the wake hint queue. Unknown seats and secret-shaped
+text are refused. Provider adapter messaging is separate.
 
 The console's `/bots` Seats section reads `GET /api/bots/seats`: display name,
 kind/provider, state, admission, quota evidence, current claims/jobs and recent

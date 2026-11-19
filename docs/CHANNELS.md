@@ -220,7 +220,9 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
 — unresolved `NEEDS-MASON.md` items, unanswered allowlisted teammate texts,
-outbound drafts awaiting approval, live bus `kind:"work"` envelopes with no
+outbound drafts awaiting approval, live bus envelopes whose body the claim
+contract accepts (`isClaimableWork`: a `kind:"work"` body or a protocol-v1
+transport `task` body) with no
 live claim (a live coordination-table row on the envelope's `queue:<id>` key
 counts as held, since the message-id claim consults that same table), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
