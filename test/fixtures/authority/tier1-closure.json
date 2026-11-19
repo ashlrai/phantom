@@ -610,6 +610,7 @@
     "src/core/fleet/lane-dead-signal.ts",
     "src/core/fleet/lane-lock.ts",
     "src/core/fleet/lane-models.ts",
+    "src/core/fleet/lane-starved.ts",
     "src/core/fleet/leader-board.ts",
     "src/core/fleet/leader-facts.ts",
     "src/core/fleet/leader-journal.ts",
