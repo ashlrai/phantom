@@ -1015,6 +1015,19 @@ the secret itself in the request. Any other kind is refused: the fleet decides
 this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
 own private chat. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
 
+Two kinds carry more than a word. A `usage` ask (`phm asks add usage "<question>"
+--subject grok-ultra --unblocks "<what it frees>"`) takes a percent: `phm asks
+answer <id> 40` stores a usage reading with `source: mason` and its own time in
+the append-only `asks-ledger.jsonl` beside NEEDS-MASON.md, and a reply like
+"forty" is refused with a plain hint and records nothing. `phm asks usage
+[<pool>] --json` (`asks.usage.v1`) hands the newest reading and its age to the
+usage reader and spend guard, which keep their own freshness limit. An
+`approval` ask takes yes or no and stores an approval record only: no spending
+and no billing call. Every answer appends one `asks.ledger.v1` line (kind,
+subject, reply, channel, source, time) after its `needs_mason.resolved` event.
+The open asks show first on the phone home and in the desktop Leader chat, one
+tap per allowed reply.
+
 `phm approvals` puts every decision only Mason can make first: those asks plus
 an agent's own questions with their own options. An agent raises one with
 `phm approvals ask --question "<one line>" --options "use it,not now"` and may
