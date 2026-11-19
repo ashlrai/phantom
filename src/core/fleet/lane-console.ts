@@ -238,7 +238,7 @@ function isQueueTier(cell: string): boolean {
   return QUEUE_TIERS.has(tier) || tier.startsWith('bet:');
 }
 /** PARKED-<reason>[.<lane>] lane marker; also accepts the dotted PARKED.<lane> spelling. */
-const PARKED_MARKER = /^PARKED(?:-[A-Za-z0-9_-]+)?(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
+export const PARKED_MARKER = /^PARKED(?:-[A-Za-z0-9_-]+)?(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
 /** The prompt cell is a path or at least a filename with an extension. */
 function promptCell(cell: string): boolean {
   return cell.includes('/') || /\.[a-z][a-z0-9]{0,9}$/i.test(cell);

@@ -51,6 +51,27 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(0);
     expect(report().lanes[0].launchable).toBe(4);
   });
+  it('measures free slots against launch headroom and skips parked rows', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({
+      shed: { target: 8, running: 4, effective_target: 3 },
+      room: { target: 8, running: 2, effective_target: 5 },
+      held: { target: 4, running: 0, held: true },
+    });
+    writeFileSync(join(queue, 'ready.tsv'), [
+      row('one', 'shed', prompt), row('two', 'shed', prompt), row('three', 'shed', prompt),
+      row('four', 'room', prompt), row('five', 'room', prompt), row('six', 'room', prompt),
+      `PARKED-BUDGET\tRQ-P1\troom\twork\t${prompt}\tignored`,
+      `RQ-LP1\trepo\tPARKED-DEBT.room\twork\t${prompt}`,
+    ].join('\n'));
+    expect(await cmdFleetLaunchable(['--json'])).toBe(0);
+    expect(report().lanes).toEqual([
+      { lane: 'held', running: 0, target: 4, free: 0, launchable: 0 },
+      { lane: 'room', running: 2, target: 8, free: 3, launchable: 3 },
+      { lane: 'shed', running: 4, target: 8, free: 0, launchable: 3 },
+    ]);
+  });
   it('handles absent optional files and clamps negative free slots', async () => {
     status({ idle: { target: 2, running: 0 }, full: { target: 1, running: 2 } });
     expect(await cmdFleetLaunchable([])).toBe(1);
@@ -62,6 +83,10 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(2);
     expect(report().error).toMatch(/Cannot read/);
     status({ bad: { target: '2', running: 0 } });
+    expect(await cmdFleetLaunchable(['--json'])).toBe(2);
+    status({ bad: { target: 2, running: 0, effective_target: 'x' } });
+    expect(await cmdFleetLaunchable(['--json'])).toBe(2);
+    status({ bad: { target: 2, running: 0, held: 'yes' } });
     expect(await cmdFleetLaunchable(['--json'])).toBe(2);
     expect(await cmdFleetLaunchable(['--bad'])).toBe(2);
     expect(await cmdFleetLaunchable(['--help'])).toBe(0);

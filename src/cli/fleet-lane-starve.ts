@@ -1,6 +1,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { laneLaunchHeadroom } from '../core/fleet/lane-launch-target.js';
+import { PARKED_MARKER } from '../core/fleet/lane-console.js';
 
 export const FLEET_LANE_STARVE_SCHEMA = 'fleet.lane-starve.v1';
 
@@ -28,7 +30,7 @@ export interface LaneStarveReport {
 }
 
 const USAGE = `Usage: ashlr fleet lane-starve [--json]
-List lanes running below target with work queued, and split each lane's queue/ready.tsv rows into filler and real. Says when queue/FILLER_HOLD exists. Read-only.
+List lanes that could launch more work — running below their launch target (shed-aware) and not held — with jobs queued, and split each lane's queue/ready.tsv rows into filler and real. Says when queue/FILLER_HOLD exists. Read-only.
 Reads ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Exit 1 when any lane is starved.`;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -46,17 +48,21 @@ export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedL
     const cols = line.split('\t');
     const id = cols[0]?.trim() ?? '';
     const lane = cols[2]?.trim();
-    if (!id || !lane) continue;
+    if (!id || !lane || PARKED_MARKER.test(id) || PARKED_MARKER.test(lane)) continue;
     const entry = split.get(lane) ?? { filler: 0, real: 0 };
     entry[FILLER_ID.test(id) ? 'filler' : 'real']++;
     split.set(lane, entry);
   }
   const out: StarvedLane[] = [];
   for (const [lane, value] of Object.entries(data.lanes)) {
-    if (!isRecord(value) || !count(value.running) || !count(value.target) || !count(value.queued)) {
+    if (!isRecord(value) || !count(value.running) || !count(value.target) || !count(value.queued)
+      || (value.held !== undefined && value.held !== null && typeof value.held !== 'boolean')
+      || (value.effective_target !== undefined && value.effective_target !== null && !count(value.effective_target))) {
       throw new Error('invalid lane');
     }
-    if (value.running >= value.target || value.queued === 0) continue;
+    const held = value.held === true;
+    const effectiveTarget = typeof value.effective_target === 'number' ? value.effective_target : null;
+    if (laneLaunchHeadroom({ held, running: value.running, target: value.target, effectiveTarget }) === 0 || value.queued === 0) continue;
     const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
     out.push({ lane, running: value.running, target: value.target, queued: value.queued, ready: filler + real, filler, real });
   }

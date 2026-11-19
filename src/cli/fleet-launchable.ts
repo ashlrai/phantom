@@ -2,11 +2,13 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { FILLER_ID } from './fleet-lane-starve.js';
+import { laneLaunchHeadroom } from '../core/fleet/lane-launch-target.js';
+import { PARKED_MARKER } from '../core/fleet/lane-console.js';
 
 const SCHEMA = 'fleet.launchable.v1';
 const MAX_BYTES = 8 * 1024 * 1024;
 const USAGE = `Usage: ashlr fleet launchable [--json]
-Count ready jobs that can start per lane and compare them with free slots.
+Count ready jobs that can start per lane and compare them with launch headroom — free slots the lane can launch into now (shed-aware target minus running; held lanes have none).
 Reads ~/.ashlr-runs/queue (override with ASHLR_RUNS_DIR). Exit 1 if any lane has more free slots than launchable jobs.`;
 
 type Lane = { lane: string; running: number; target: number; free: number; launchable: number };
@@ -48,8 +50,16 @@ export async function cmdFleetLaunchable(args: string[]): Promise<number> {
     if (!record(status) || !record(status.lanes)) throw new Error('Invalid status');
     const lanes = new Map<string, Lane>();
     for (const [lane, value] of Object.entries(status.lanes)) {
-      if (!record(value) || !count(value.running) || !count(value.target)) throw new Error('Invalid lane');
-      lanes.set(lane, { lane, running: value.running, target: value.target, free: Math.max(0, value.target - value.running), launchable: 0 });
+      if (!record(value) || !count(value.running) || !count(value.target)
+        || (value.held !== undefined && value.held !== null && typeof value.held !== 'boolean')
+        || (value.effective_target !== undefined && value.effective_target !== null && !count(value.effective_target))) throw new Error('Invalid lane');
+      const held = value.held === true;
+      const effectiveTarget = typeof value.effective_target === 'number' ? value.effective_target : null;
+      lanes.set(lane, {
+        lane, running: value.running, target: value.target,
+        free: laneLaunchHeadroom({ held, running: value.running, target: value.target, effectiveTarget }),
+        launchable: 0,
+      });
     }
     const excluded = new Set(skipped.split('\n').flatMap(line => {
       const cols = line.split('\t');
@@ -62,7 +72,7 @@ export async function cmdFleetLaunchable(args: string[]): Promise<number> {
       const lane = cols[2]?.trim() ?? '';
       const prompt = cols[4]?.trim() ?? '';
       const entry = lanes.get(lane);
-      if (!id || !entry || lane.startsWith('PARKED') || !prompt || excluded.has(id) || (hold && FILLER_ID.test(id))) continue;
+      if (!id || !entry || lane.startsWith('PARKED') || PARKED_MARKER.test(id) || !prompt || excluded.has(id) || (hold && FILLER_ID.test(id))) continue;
       if (await exists(prompt, true)) entry.launchable++;
     }
     const rows = [...lanes.values()].sort((a, b) => a.lane.localeCompare(b.lane));

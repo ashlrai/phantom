@@ -54,8 +54,38 @@ describe('findStarvedLanes', () => {
       { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 3, filler: 2, real: 1 },
     ]);
   });
-  it('rejects malformed status', () => {
+  it('measures starvation against the launch target and skips held lanes', () => {
+    const status = JSON.stringify({ lanes: {
+      shedFull: { running: 4, target: 8, effective_target: 3, queued: 5 },
+      shedRoom: { running: 2, target: 8, effective_target: 5, queued: 5 },
+      held: { running: 0, target: 4, held: true, queued: 5 },
+      plain: { running: 1, target: 3, queued: 2 },
+    } });
+    expect(findStarvedLanes(status, '')).toEqual([
+      { lane: 'plain', running: 1, target: 3, queued: 2, ready: 0, filler: 0, real: 0 },
+      { lane: 'shedRoom', running: 2, target: 8, queued: 5, ready: 0, filler: 0, real: 0 },
+    ]);
+  });
+  it('does not count parked ready rows as supply', () => {
+    const status = JSON.stringify({ lanes: { claude: { running: 0, target: 2, queued: 3 } } });
+    const ready = [
+      'RQ-REAL\tp1\tclaude',
+      'PARKED-BUDGET\tRQ-P1\tclaude\twork\trepo\tprompt',
+      'RQ-LP1\trepo\tPARKED-DEBT.claude\twork\tprompt',
+    ].join('\n');
+    expect(findStarvedLanes(status, ready)).toEqual([
+      { lane: 'claude', running: 0, target: 2, queued: 3, ready: 1, filler: 0, real: 1 },
+    ]);
+  });
+  it('rejects malformed status, held and effective_target', () => {
     expect(() => findStarvedLanes('{"lanes":{"a":{"running":"1"}}}', '')).toThrow();
+    for (const lane of [
+      { running: 0, target: 2, queued: 1, held: 'yes' },
+      { running: 0, target: 2, queued: 1, effective_target: -1 },
+      { running: 0, target: 2, queued: 1, effective_target: 'x' },
+    ]) {
+      expect(() => findStarvedLanes(JSON.stringify({ lanes: { a: lane } }), '')).toThrow('invalid lane');
+    }
   });
 });
 
