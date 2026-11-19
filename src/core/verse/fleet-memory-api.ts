@@ -6,6 +6,8 @@ import { memoryView, type FleetMemoryView } from '../fleet/memory-view.js';
 import { readEngineAdmission, type EngineAdmissionView } from '../fleet/engine-admission-view.js';
 import { diskForecast } from '../fleet/disk-forecast.js';
 import { readHostLoadReport, type HostLoadReport } from '../fleet/host-load.js';
+import { readDiskPlan } from '../../cli/disk.js';
+import type { DiskPlanReportV1 } from '../disk-maint/removal-plan.js';
 import { readHostTopReport, type HostTopReport } from '../fleet/host-top.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { readSource } from '../fleet/runs-parked-queue.js';
@@ -17,6 +19,8 @@ export const VERSE_FLEET_DISK_FORECAST_PATH = '/api/verse/fleet/memory/disk-fore
 export const VERSE_FLEET_HOST_LOAD_PATH = '/api/verse/fleet/memory/host-load';
 /** What is using this Mac, by bucket, with one suggestion: the same host.top.v1 report `phm host top --json` prints. */
 export const VERSE_FLEET_HOST_TOP_PATH = '/api/verse/fleet/memory/host-top';
+/** Where the disk is going and which finished job folders are safe to remove: the same disk.plan.v1 `phm disk --plan --json` prints. Reads only. */
+export const VERSE_FLEET_DISK_PLAN_PATH = '/api/verse/fleet/memory/disk-plan';
 export const VERSE_FLEET_MEMORY_PATH = '/api/verse/fleet/memory';
 export interface FleetMemoryResponseV1 {
   v: 1;
@@ -35,6 +39,8 @@ export interface FleetMemoryApiDeps {
   readHostLoad?: (opts?: { byTree?: boolean }) => Promise<HostLoadReport>;
   /** Reads ps, vm_stat, swap, pressure and the app in front; injected in tests. */
   readHostTop?: () => Promise<HostTopReport>;
+  /** Scans job folders and the free-disk trend; injected in tests. */
+  readDiskPlan?: () => Promise<DiskPlanReportV1>;
   now?: () => number;
 }
 
@@ -67,6 +73,12 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
       if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
       sendJson(res, 200, sanitizePublicJson(await (deps.readHostLoad ?? readHostLoadReport)(
         { byTree: new URL(_req.url ?? '', 'http://local').searchParams.get('by') === 'tree' })));
+      return true;
+    }
+    if (path === VERSE_FLEET_DISK_PLAN_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
+      try { sendJson(res, 200, sanitizePublicJson(await (deps.readDiskPlan ?? readDiskPlan)())); }
+      catch { sendJson(res, 503, { v: 1, error: 'disk plan unavailable' }); }
       return true;
     }
     if (path === VERSE_FLEET_HOST_TOP_PATH) {
