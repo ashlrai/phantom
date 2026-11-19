@@ -93,6 +93,20 @@ the slot target, and how long ago the reading was taken and by which reader.
 Claude's per-model weekly windows sit under its card. A credits pool shows its
 balance and no bar. The line under the headline names the next reset, and the
 switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
+
+The Capacity pane is one board of how full the lanes ran against their slot
+targets over 6, 24 (the default) or 72 hours. The headline is the share of
+target slots that were filled, and the totals under it give idle slot time,
+time on hold, time stalled (open slots with work queued) and how much of the
+window the sampler was watching. Each lane is a card with its provider mark,
+its fill, the running line over the dashed target with the first and last
+sample times and the value of the top edge, and labelled readings: the last
+sample, idle, held and, only when it happened, stalled. Lanes that stalled
+come first, then the most idle. A lane with no target says "no target", not a
+percentage. The Launch gaps strip draws the window once: filled where samples
+exist, amber where a launch gap was found, hatched where nobody was watching.
+Every figure is computed from the samples `GET /api/verse/runs-history`
+returned, so unwatched time is never counted as idle or as full.
 Every value is read from `pools.v1`; one it does not hold reads unknown, never
 zero. The same rows for agents:
 
