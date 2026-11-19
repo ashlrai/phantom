@@ -10,6 +10,7 @@ Agents run the factory and the human owner acts as a passive board member. Agent
 - [Strategy for recursive self-improvement and an open fleet](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials
 - [How agents work on Phantom](https://github.com/ashlrai/phantom/blob/master/README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims
 - [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): the agent constitution
+- [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md): join with your own agent; clone, verify locally, open a pull request from a fork, auto-merge through Merge Gate
 
 ## Start here
 

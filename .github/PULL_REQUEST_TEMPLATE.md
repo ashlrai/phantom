@@ -1,5 +1,7 @@
 <!-- Thanks for contributing to Phantom! Humans and coding agents use the same
-     path: see CONTRIBUTING.md and AGENTS.md ("Working in this repository"). -->
+     path: see CONTRIBUTING.md and AGENTS.md ("Working in this repository").
+     First pull request? docs/CONTRIBUTE-WITH-AN-AGENT.md walks it from fork
+     to auto-merge. -->
 
 ## What & why
 
