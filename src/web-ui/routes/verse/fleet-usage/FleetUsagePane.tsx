@@ -1,15 +1,19 @@
 /**
  * routes/verse/fleet-usage/FleetUsagePane.tsx — the dock Usage pane.
  *
- * One dense row per provider account (Claude, Codex, Grok) rendering exactly
- * the windows the provider reported — minus Claude's retired 5-hour window,
+ * A board of provider accounts (Claude, Codex, Grok): a headline counting
+ * where they stand, the next reset, then one card per account with its brand
+ * mark, plan and exactly the windows the provider reported, each reset as a
+ * countdown and a local time — minus Claude's retired 5-hour window,
  * which Anthropic lifted; the row carries one note saying the weekly window
  * is the whole story — plus the fleet snapshot's own Codex personal figure
  * and a tokens-per-lane table. Accounts and the zero-waste meter audit poll
  * every 60 s and the live fleet snapshot every 10 s, only while the pane is
  * on top; unavailable reads degrade to notices.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
+import { resolveBrand } from '../../../../core/brand/registry.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { formatDecimalMetric, formatMetric } from '../../../components/charts/format-metric.js';
 import { copyText } from '../../../components/primitives/clipboard.js';
 import { Button, SkeletonLine } from '../../../components/primitives/index.js';
@@ -42,17 +46,23 @@ import {
 } from './usage-pane-model.js';
 import { ObserveSlice } from '../fleet-observe/ObserveFacts.js';
 import { spendDown, type SpendDownItem } from './spend-down-model.js';
+import { accountStanding, laneSharePct, laneTotals, nextAccountReset, resetLocalTime, usageHeadline } from './usage-board-model.js';
 import styles from './fleet-usage.module.css';
 import compact from '../../../components/layout/compact-view.module.css';
 
 const ACCOUNTS_POLL_MS = 60_000;
 const RUNS_POLL_MS = 10_000;
 
-const STATE_FALLBACK: Record<UsageRow['state'], string> = {
+const STATE_WORD: Record<UsageRow['state'], string> = {
   checking: 'checking…',
   observed: '',
   'signed-out': 'signed out',
   unavailable: 'unavailable',
+};
+
+const sampledTime = (iso: string | null): string | null => {
+  const ms = iso === null ? NaN : Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
 };
 
 const SPEND_DOWN_MAX_SHOWN = 4;
@@ -76,14 +86,16 @@ const toneFor = (pct: number | null): 'ok' | 'warn' | 'danger' =>
  * One provider-reported window as a thin meter. A flagged limit is a flag,
  * not a measurement: it renders a full danger bar labelled "limit reached"
  * and announces no percentage — the same rule the Usage section's
- * WindowMeter follows. An unmeasured reading is an empty track and "—",
- * never a bar that could be misread.
+ * WindowMeter follows. An unmeasured reading is a hatched track and "—",
+ * never an empty bar that could be misread as nothing used. A reset the
+ * provider gave as an instant also shows as a local clock time.
  */
 function WindowMeter({ account, window: w, nowMs }: { account: string; window: UsageWindowRow; nowMs: number }) {
   const name = `${account} ${w.label}`;
   const reset = w.resetDescription ?? formatReset(w.resetsAt, nowMs);
   const pct = w.measured ? w.usedPercent : null;
   const value = w.limitReached ? 'limit reached' : usedPercentText(pct);
+  const resetAt = w.resetDescription === null ? resetLocalTime(w.resetsAt, nowMs) : null;
   return (
     <li className={styles.window}>
       <span className={styles.windowLabel}>{w.label}</span>
@@ -100,6 +112,7 @@ function WindowMeter({ account, window: w, nowMs }: { account: string; window: U
         <span
           className={styles.track}
           data-tone={toneFor(pct)}
+          data-unknown={pct === null || undefined}
           role="meter"
           aria-label={`${name} used`}
           aria-valuemin={0}
@@ -111,7 +124,10 @@ function WindowMeter({ account, window: w, nowMs }: { account: string; window: U
         </span>
       )}
       <span className={w.limitReached ? styles.flag : styles.pct}>{value}</span>
-      <span className={styles.reset}>{reset}</span>
+      <span className={styles.reset}>
+        {reset}
+        {resetAt !== null && w.resetsAt !== null ? <time className={styles.resetAt} dateTime={w.resetsAt}>{resetAt}</time> : null}
+      </span>
     </li>
   );
 }
@@ -181,15 +197,22 @@ function AccountFacts({ row, nowMs }: { row: UsageRow; nowMs: number }) {
 function AccountRow({ row, nowMs, incident }: { row: UsageRow; nowMs: number; incident: ReturnType<typeof claudeIdle> }) {
   const planType = row.planType ?? null;
   const hasFacts = row.observedAt != null || row.credits != null || row.reconnectCommand != null;
+  const standing = accountStanding(row);
   return (
-    <li className={styles.row}>
-      <span className={styles.account} title={row.label}>
-        {row.label}
-        {planType !== null ? ` · ${planType}` : ''}
-      </span>
+    <li className={styles.row} data-standing={standing}>
+      <div className={styles.head}>
+        <BrandMark brand={row.provider} size={16} />
+        <span className={styles.account}>
+          {row.label}
+          {planType !== null ? ` · ${planType}` : ''}
+        </span>
+        {/* The state word sits by the name; the provider's own reason, when it gave one, goes below. */}
+        {row.state !== 'observed' ? <span className={styles.tag} data-standing={standing}>{STATE_WORD[row.state]}</span> : null}
+        {standing === 'no-reading' ? <span className={styles.tag} data-standing={standing}>no reading</span> : null}
+      </div>
       {row.state !== 'observed' ? (
         <ul className={styles.windows}>
-          <li className={styles.reason}>{row.reason ?? STATE_FALLBACK[row.state]}</li>
+          {row.reason !== null ? <li className={styles.reason}>{row.reason}</li> : null}
           {row.note !== null ? <li className={styles.asOf}>{row.note}</li> : null}
           <AccountFacts row={row} nowMs={nowMs} />
           {incident && <li className={styles.incident} data-tone={incident.tone}><span className={styles.verdict}>Incident</span> {incident.text}</li>}
@@ -236,6 +259,11 @@ export function FleetUsagePane({ visible }: PaneProps) {
   const runsMissing = runsRead.data === null || (runsRead.error instanceof ApiError && runsRead.error.status === 404);
   const auditLanes = new Map(auditRead.data?.lanes.map(lane => [lane.lane, lane]));
 
+  const headline = usageHeadline(rows);
+  const next = nextAccountReset(rows, nowMs);
+  const sampled = sampledTime(snapshot?.sampledAt ?? null);
+  const totals = laneTotals(lanes);
+
   const hasContent = rows.length > 0 || personal !== null || lanes.length > 0;
   const waiting = read === undefined || (runsRead.data === undefined && runsRead.error === undefined);
 
@@ -251,6 +279,18 @@ export function FleetUsagePane({ visible }: PaneProps) {
       {snapshot?.collectorNote && <p className={styles.notice} role="status">{snapshot.collectorNote}</p>}
       {read?.available && snapshot === null && (
         <p className={styles.notice} role="status">Provider accounts answered in a shape this build cannot read.</p>
+      )}
+
+      {headline !== null && (
+        <>
+          <p className={styles.headline}>{headline}</p>
+          <p className={styles.meta}>
+            {next !== null
+              ? `Next reset: ${next.account}, ${next.window}, ${formatReset(next.resetsAt, nowMs).replace(/^resets /, '')}.`
+              : 'Next reset: no account gave one as a date and time.'}
+            {sampled !== null ? ` Accounts read ${sampled}.` : ''}
+          </p>
+        </>
       )}
 
       <ObserveSlice visible={visible} part="usage" />
@@ -269,7 +309,11 @@ export function FleetUsagePane({ visible }: PaneProps) {
           })}
           {personal !== null && (
             <li className={styles.row}>
-              <span className={styles.account}>Codex personal</span>
+              <div className={styles.head}>
+                <BrandMark brand="codex" size={16} />
+                <span className={styles.account}>Codex personal</span>
+                <span className={styles.tag}>fleet reading</span>
+              </div>
               <ul className={styles.windows}>
                 <WindowMeter
                   account="Codex personal"
@@ -329,18 +373,28 @@ export function FleetUsagePane({ visible }: PaneProps) {
       {lanes.length > 0 && (
         <section className={styles.laneSection} aria-labelledby="fleet-usage-lane-title">
           <h3 id="fleet-usage-lane-title" className={styles.title}>Tokens last hour</h3>
+          <p className={styles.meta}>
+            {totals.total === null
+              ? 'No lane reported a token figure.'
+              : `${formatTokens(totals.total)} across ${totals.read} ${totals.read === 1 ? 'lane' : 'lanes'}${totals.unread > 0 ? `; ${totals.unread} with no reading` : ''}. Bars are each lane against the busiest.`}
+          </p>
           <table className={styles.table}>
             <thead>
               <tr><th scope="col">Lane</th><th scope="col" className={styles.num}>Running</th><th scope="col" className={styles.num}>Tokens</th></tr>
             </thead>
             <tbody>
-              {lanes.map((lane) => (
-                <tr key={lane.lane}>
-                  <td data-label="Lane">{lane.lane}</td>
+              {lanes.map((lane) => {
+                const share = laneSharePct(lane, lanes);
+                return (
+                <tr key={lane.lane} className={styles.laneRow}
+                  style={share === null ? undefined : { '--share': `${share}%` } as CSSProperties}>
+                  {/* A mark only for a lane named after a known brand: a monogram per lane would be noise. */}
+                  <td data-label="Lane">{resolveBrand(lane.lane) ? <BrandMark brand={lane.lane} size={12} className={styles.laneMark} /> : null}{lane.lane}</td>
                   <td data-label="Running" className={styles.num}>{lane.running === null && lane.target === null ? '—' : `${lane.running ?? '—'}/${lane.target ?? '—'}`}</td>
                   <td data-label="Tokens" className={styles.num}>{formatTokens(lane.tokensLastHour)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </section>
