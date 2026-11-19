@@ -115,13 +115,48 @@ when these jobs succeed:
 | Secret scan (diff) | A second secret scan over the diff. |
 | Classify | Picks the lane (site, docs or full) for the change. |
 | Check generated files | Regenerated docs indexes and launcher digests match what you committed. |
-| Fast gate (typecheck + affected tests) | Type check plus the tests your diff selects; docs-only diffs run no tests. |
+| Fast gate (typecheck + affected tests) | Type check plus a bounded set of tests selected from your diff (below). |
 
-Quick typecheck also runs but is advisory. The full backend, Windows and macOS
+Quick typecheck and `Check authority drift (hermetic)` also run but are
+advisory. The full backend, Windows and macOS
 suites do not run on pull requests; they run on the six-hour scheduled
 `master` run, and failures there are fixed forward. Read the actual check run
 for your commit; a workflow file is not evidence that it passed. GitHub may
 ask a maintainer to approve workflow runs for a first-time contributor.
+
+### Which tests the fast gate runs
+
+`.github/scripts/ci-fast-select.mjs` picks the tests from the changed paths,
+and the fast gate never skips tests silently:
+
+- **Docs-only diff** (every path is under `docs/` or ends in `.md`):
+  `test/docs-repo-links.test.ts` plus each test whose source names a changed
+  file, up to 25. If none names one, it runs the fallback set.
+- **Code diff**: changed test files, tests whose name matches a changed file,
+  and tests that import a changed module directly, up to 25. Touching
+  `.github/CODEOWNERS` or `src/core/authority/` always adds the two
+  `test/authority-*-310b.test.ts` suites, and a changed
+  `.github/scripts/<name>.mjs` adds its `.github/tests/<name>.test.mjs`.
+- **Fallback**: a change to `package.json`, a `tsconfig*.json`, a Vite or
+  Vitest config, `test/setup/`, `test/config/` or `scripts/test-ci*.mjs`, a
+  diff that maps to no test (a `src/web-ui/`-only change, for example), or a
+  selection error runs an even spread of up to 120 backend tests across the
+  repository that always includes the two authority suites.
+
+Tests that need the built `dist/`, and the slow real-I/O and serial suites
+picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request
+gate, so run it yourself whenever you touch markdown.
+
+To see the plan for your branch, commit and run:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)" ASHLR_CI_BASE_SHA="$(git rev-parse origin/master)" \
+  ASHLR_CI_HEAD_SHA="$(git rev-parse HEAD)" node .github/scripts/ci-fast-select.mjs
+```
+
+It prints the mode and test counts and writes the list to
+`$RUNNER_TEMP/fast-gate-plan.json`. Run those files with
+`npm run test:ci -- <files>` before you push.
 
 ## 7. Auto-merge
 
