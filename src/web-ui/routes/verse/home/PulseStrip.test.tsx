@@ -1,10 +1,10 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PulseLanesV1 } from '../../../../core/fleet/pulse-lanes.js';
-import { PulseStrip, stripTiles } from './PulseStrip.js';
+import { PulseStrip, alertsOf, stripTiles } from './PulseStrip.js';
 
-const state = vi.hoisted(() => ({ read: { status: 'success', data: undefined as unknown } }));
-vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state.read, useRefetch: () => vi.fn() }));
+const state = vi.hoisted(() => ({ read: { status: 'success', data: undefined as unknown }, alerts: { status: 'success', data: undefined as unknown } }));
+vi.mock('../../../data/hooks.js', () => ({ useQuery: (q: { key: string }) => q.key === 'fleet-pulse-alerts' ? state.alerts : state.read, useRefetch: () => vi.fn() }));
 
 const hours = (f: (i: number) => number | null) => Array.from({ length: 24 }, (_, i) => f(i));
 const BUSY: PulseLanesV1 = {
@@ -13,7 +13,7 @@ const BUSY: PulseLanesV1 = {
     series: { merged_per_h: Array.from({ length: 24 }, (_, i) => i % 5), median_open_to_merge_s: hours(i => i % 2 ? null : 600), empty_rate: hours(() => 0.2) } },
 };
 const UNREADABLE: PulseLanesV1 = { ...BUSY, totals: { running: null, capacity: null, merged: null, finished: null, merged_per_h: null, median_open_to_merge_s: null, empty_rate: null, series: { merged_per_h: [], median_open_to_merge_s: [], empty_rate: [] } } };
-afterEach(() => { cleanup(); state.read = { status: 'success', data: undefined }; });
+afterEach(() => { cleanup(); state.read = { status: 'success', data: undefined }; state.alerts = { status: 'success', data: undefined }; });
 const tile = (name: string) => within(screen.getByRole('listitem', { name }));
 
 describe('Pulse strip', () => {
@@ -55,5 +55,32 @@ describe('Pulse strip', () => {
     state.read = { status: 'error', data: undefined };
     render(<PulseStrip />);
     expect(screen.getByText('Unknown: the throughput numbers could not be read.')).toBeTruthy();
+  });
+});
+
+describe('Pulse alerts row', () => {
+  const alerts = (list: unknown[], unknown: string[] = []) => ({ schema: 'fleet.pulse.alerts.v1', v: 1, as_of: '2026-11-17T12:00:00.000Z', alerts: list, unknown });
+  const stalled = { kind: 'stalled', lane: 'fleet', since: '2026-11-17T11:00:00.000Z', detail: 'No job has started and no PR has merged for 60 minutes.', fix_hint: 'Check that the dispatcher is running.' };
+
+  it('draws one red line per alert under the strip, with its fix', () => {
+    state.read = { status: 'success', data: BUSY };
+    state.alerts = { status: 'success', data: alerts([stalled]) };
+    render(<PulseStrip />);
+    const row = within(screen.getByRole('alert'));
+    expect(row.getByText('No job has started and no PR has merged for 60 minutes.')).toBeTruthy();
+    expect(row.getByText('Check that the dispatcher is running.')).toBeTruthy();
+  });
+
+  it('draws nothing for a quiet fleet or an unrelated payload, and says what could not be checked', () => {
+    state.read = { status: 'success', data: BUSY };
+    state.alerts = { status: 'success', data: alerts([]) };
+    render(<PulseStrip />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(alertsOf({ schema: 'something.else' })).toBeNull();
+    cleanup();
+    state.alerts = { status: 'success', data: alerts([], ['Starved: the lane snapshot could not be read.']) };
+    render(<PulseStrip />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText(/Not checked: Starved: the lane snapshot could not be read\./)).toBeTruthy();
   });
 });

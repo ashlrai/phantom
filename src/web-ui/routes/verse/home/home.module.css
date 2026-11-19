@@ -45,4 +45,6 @@
 .tile { flex: 1 1 8rem; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-2); border-radius: var(--radius-md); background: var(--bg-surface-raised); }
 .tileTitle { color: var(--text-secondary); font-size: var(--text-xs-size); }
 .tileValue { color: var(--text-primary); font-size: var(--text-xl-size); font-weight: var(--font-weight-semibold); }
+.alerts { margin-top: var(--space-2); }
+.alertList { margin: 0; padding: var(--space-2); list-style: none; display: flex; flex-direction: column; gap: 2px; border-radius: var(--radius-md); border-left: 3px solid var(--status-danger-solid); background: var(--status-danger-bg); color: var(--status-danger-fg); font-size: var(--text-sm-size, 0.875rem); }
 .tileNote { color: var(--text-secondary); font-size: var(--text-xs-size); }
