@@ -38,6 +38,13 @@ describe('LeaderChatList', () => {
     expect(items[2]!.style.alignSelf).toBe('flex-start');
   });
 
+  it('puts a small channel badge on every message, also at phone width (390 px)', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    render(<div style={{ width: 390 }}><LeaderChatList chat={chat} nowMs={NOW} /></div>);
+    expect(screen.getAllByTestId('channel-badge').map(badge => badge.textContent)).toEqual(['desktop', 'phone', 'outbox', 'phone', 'phone']);
+    expect(screen.getAllByRole('listitem').at(-1)).toHaveTextContent('Undated');
+  });
+
   it('fits a narrow phone: bubbles wrap long words inside a percentage width', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 });
     const long = { ...chat, messages: [{ ...chat.messages[3]!, text: 'x'.repeat(400) }] };
