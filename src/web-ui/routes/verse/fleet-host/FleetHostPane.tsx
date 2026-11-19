@@ -20,6 +20,7 @@ import { SurfaceOwnerCard } from './SurfaceOwnerCard.js';
 import { AppsCard } from './AppsCard.js';
 import { DiskForecastCard } from './DiskForecastCard.js';
 import { AllowedAppsCard } from './AllowedAppsCard.js';
+import { AppActionsCard } from './AppActionsCard.js';
 import { MacAppsCard } from './MacAppsCard.js';
 import { BrowserCard } from './BrowserCard.js';
 import { HostLoadCard } from './HostLoadCard.js';
@@ -73,6 +74,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
     </header>
     <MacAppsCard visible={visible} />
     <AllowedAppsCard visible={visible} />
+    <AppActionsCard visible={visible} />
     <BrowserCard visible={visible} />
     {data === null ? <p className={styles.muted}>The fleet runs API has not landed in this build yet.</p>
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>

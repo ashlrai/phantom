@@ -61,6 +61,39 @@ are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/1"`)
 has one row per app in a fixed order; GET `/api/verse/apps/mac` returns it.
 Every `phm apps` JSON answer carries `version: 1`; new fields are additive.
 
+## Action log
+
+`phm apps log` lists what Phantom did to your apps: every open, focus, quit
+and restart on record in the feed, newest first, each with its outcome and the
+reason that was logged. Refusals are in the list too. The Fleet Host **App
+actions** card shows the same list in plain sentences; **Needs a look** keeps
+only the actions that were refused, failed, are waiting on you or have no
+known result. The card reads only: it has no button that acts on an app.
+
+```sh
+phm apps log
+phm apps log --limit 200 --json
+```
+
+JSON is `schema: "phm.apps.actions/1"`: `actions` (each with `at`, `action`,
+`app`, `outcome`, `detail`), `total`, `counts` by outcome, `lookups`, `source`,
+`skipped` and `truncated`. It lists 50 actions unless `--limit` asks for more,
+at most 200. GET `/api/verse/apps/actions` (optional `?limit=`) returns the
+same report to a local peer and writes nothing.
+
+The log adds no record of its own. It reads the two feed lines every
+operation already writes, the intent and the result:
+
+- An intent with no result line is `outcome: "no-result"`. Phantom does not
+  guess how it ended.
+- A feed that cannot be read gives `source: "unavailable"` with `total: null`,
+  and `phm apps log` exits 1. That is unknown, not zero.
+- `list` and `status` only read, so they are counted in `lookups` and not
+  listed. Dry runs are never logged.
+- The feed keeps a line for up to seven days, so older actions are not shown.
+- Agent browser actions (`phm browser`) are logged separately and are not in
+  this list.
+
 ## Browser (Safari)
 
 Safari is Phantom's own agent browser. `phm browser` drives it and nothing
