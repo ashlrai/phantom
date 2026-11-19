@@ -474,13 +474,18 @@ under existing worker gates.
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
 `--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
-nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)` and
+nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)`,
+`foldClaimOverrides(jsonl, nowMs, windowHours, truncated?)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
 `phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
 `overrides` field carries the counts (`available`, `decided`, `overridden`,
+`byReason`, `lanes`). `foldClaimOverrides` tallies the window's jobs.jsonl
+`claim`/`batch_claim` events — launches that actually left their hinted
+lane, including `batch_session` moves decisions never record — into the
+report's `claims` field (`available`, `truncated`, `claimed`, `overridden`,
 `byReason`, `lanes`). The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
