@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdFleetUnfed } from '../src/cli/fleet-unfed.js';
-import { currentUnfed, foldMarketOverrides, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldMarketOverrides, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -194,6 +194,64 @@ describe('foldMarketOverrides', () => {
   });
 });
 
+describe('foldClaimOverrides', () => {
+  const now = 1_800_000_000_000;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  // dispatchd stamps jobs.jsonl rows with local time and a %z offset; ISO with Z parses the same way.
+  const claim = (job: string, ts: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ event: 'claim', job, repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
+  const batchClaim = (job: string, ts: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ event: 'batch_claim', job, batch: 'B-1', repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
+
+  it('tallies claim launches that left their hinted lane, batch_session included', () => {
+    const journal = [
+      claim('RQ-A', iso(now - 100_000)),
+      claim('RQ-B', iso(now - 90_000), { lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
+      claim('RQ-B', iso(now - 80_000), { lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
+      batchClaim('RQ-C', iso(now - 70_000), { lane_hint: 'devin', lane_override: 'batch_session' }),
+      batchClaim('RQ-D', iso(now - 60_000), { lane_hint: null, lane_override: 'resource_fit' }),
+      // Out-of-window, future, missing-ts, malformed and non-claim rows never count.
+      claim('RQ-E', iso(now - 25 * 3_600_000)),
+      claim('RQ-F', iso(now + 3_600_000)),
+      claim('RQ-G', 'not a date'),
+      claim('', iso(now - 50_000), { lane_hint: 'claude', lane_override: 'resource_fit' }),
+      claim('RQ-H', iso(now - 50_000), { lane: 'bad lane!', lane_hint: 'claude', lane_override: 'resource_fit' }),
+      JSON.stringify({ event: 'finish', job: 'RQ-I', lane: 'claude', ts: iso(now - 40_000), lane_hint: 'devin', lane_override: 'batch_session' }),
+      '{"event":"claim" broken',
+      // lane_override without a recorded lane_hint, or with a malformed one, cannot name its origin.
+      claim('RQ-J', iso(now - 30_000), { lane_override: 'resource_fit' }),
+      claim('RQ-K', iso(now - 30_000), { lane_hint: 'bad lane!', lane_override: 'resource_fit' }),
+      // An invalid override code is not counted.
+      claim('RQ-L', iso(now - 20_000), { lane_hint: 'devin', lane_override: 'NOT_A_CODE' }),
+    ].join('\n');
+    expect(foldClaimOverrides(journal, now, 24)).toEqual({
+      available: true, truncated: false,
+      claimed: 8, // RQ-A, RQ-B x2, RQ-C, RQ-D, RQ-J, RQ-K, RQ-L — events, not distinct jobs
+      overridden: 4, // RQ-B x2, RQ-C, RQ-D
+      byReason: { preferred_lane_fallback: 2, batch_session: 1, resource_fit: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', claims: 2 },
+        { from: null, to: 'claude', reason: 'resource_fit', claims: 1 },
+        { from: 'devin', to: 'claude', reason: 'batch_session', claims: 1 },
+      ],
+    });
+  });
+
+  it('reads the dispatchd %z timestamp form', () => {
+    const journal = claim('RQ-A', '2026-11-20T14:23:45-0500', { lane_hint: 'devin', lane_override: 'batch_session' });
+    const at = Date.parse('2026-11-20T19:23:45.000Z');
+    expect(foldClaimOverrides(journal, at + 60_000, 24).overridden).toBe(1);
+    expect(foldClaimOverrides(journal, at - 25 * 3_600_000, 24).claimed).toBe(0);
+  });
+
+  it('marks a tail-truncated ledger as a lower bound', () => {
+    const journal = claim('RQ-A', iso(now - 1000));
+    expect(foldClaimOverrides(journal, now, 24, true)).toMatchObject({ available: true, truncated: true, claimed: 1 });
+    expect(foldClaimOverrides(null, now, 24, true)).toEqual({ available: false, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
+    expect(foldClaimOverrides('', now, 24)).toEqual({ available: true, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
+  });
+});
+
 describe('phm fleet unfed', () => {
   it('is registered as a fleet verb', async () => {
     const mod = await FLEET_SUBCOMMAND_LOADERS.unfed!();
@@ -234,6 +292,13 @@ describe('phm fleet unfed', () => {
       decisionRow('RQ-M2', t - 400),
       decisionRow('RQ-M1', t - 100, null),
     ].join('\n') + '\n');
+    const claimTs = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+    writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), [
+      JSON.stringify({ event: 'claim', job: 'RQ-J1', repo: 'phantom', lane: 'claude', tier: 'work', ts: claimTs(50_000) }),
+      JSON.stringify({ event: 'batch_claim', job: 'RQ-J2', batch: 'B-1', repo: 'phantom', lane: 'claude', tier: 'work', ts: claimTs(40_000), lane_hint: 'devin', lane_override: 'batch_session' }),
+      JSON.stringify({ event: 'claim', job: 'RQ-J3', repo: 'phantom', lane: 'codex-cmp', tier: 'work', ts: claimTs(30_000), lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
+      JSON.stringify({ event: 'claim', job: 'RQ-J4', repo: 'phantom', lane: 'devin', tier: 'work', ts: claimTs(3_700_000) }),
+    ].join('\n') + '\n');
     const json = await run(['--json', '--window', '1']);
     expect(json.code).toBe(1);
     const report = JSON.parse(json.lines[0]!);
@@ -250,6 +315,15 @@ describe('phm fleet unfed', () => {
       byReason: { preferred_lane_fallback: 1 },
       lanes: [{ from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', jobs: 1 }],
     });
+    // Claims count launch events in the window: RQ-J4 is outside it, RQ-J1 ran on-hint.
+    expect(report.claims).toEqual({
+      available: true, truncated: false, claimed: 3, overridden: 2,
+      byReason: { batch_session: 1, preferred_lane_fallback: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'preferred_lane_fallback', claims: 1 },
+        { from: 'devin', to: 'claude', reason: 'batch_session', claims: 1 },
+      ],
+    });
     vi.restoreAllMocks();
     const text = await run([]);
     expect(text.code).toBe(1);
@@ -262,6 +336,11 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('Last 24h: 2 job(s) decided, 1 left their hinted lane.');
     expect(body).toContain('override reasons: preferred_lane_fallback 1');
     expect(body).toContain('codex-personal -> claude (preferred_lane_fallback): 1 job(s)');
+    // The text run uses the default 24h window, so RQ-J4 (62 min old) counts as a claim too.
+    expect(body).toContain('Last 24h: 4 claim(s) launched, 2 left their hinted lane.');
+    expect(body).toContain('claim override reasons: batch_session 1, preferred_lane_fallback 1');
+    expect(body).toContain('codex-personal -> codex-cmp (preferred_lane_fallback): 1 claim(s)');
+    expect(body).toContain('devin -> claude (batch_session): 1 claim(s)');
   });
 
   it('exits 0 with no unfed capacity and no history file', async () => {
@@ -305,7 +384,7 @@ describe('status freshness', () => {
     ...(lastTick === undefined ? {} : { last_tick: lastTick }),
   });
   const render = (report: ReturnType<typeof currentUnfed>) =>
-    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24) });
+    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24) });
 
   it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
     const tick = new Date(NOW - 30_000).toISOString();
@@ -348,10 +427,10 @@ describe('status freshness', () => {
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
-      'Last 24h: no route decisions recorded.']);
+      'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);
   });
 });
 

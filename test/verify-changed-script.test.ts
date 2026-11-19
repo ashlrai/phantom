@@ -13,12 +13,13 @@ describe('changed verification selection', () => {
       authorityDrift: true,
       fleetRegistry: false,
       docsCheck: true,
+      quarantineCheck: false,
     });
   });
 
   it('excludes deleted files from lint while retaining deleted web paths for typecheck', () => {
     expect(selectChangedFiles(['src/gone.ts', 'src/web-ui/old screen.tsx'], [])).toEqual({
-      lintFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true,
+      lintFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false,
     });
   });
 
@@ -50,7 +51,7 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['notes.md'], ['notes.md']).lintFiles).toEqual([]);
     const paths = ['a.js', 'b.cjs', 'c.mjs', 'd.ts', 'e.cts', 'f.mts', 'g.tsx', 'h.jsx'];
     expect(selectChangedFiles(paths, paths).lintFiles).toEqual(paths);
-    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false });
+    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false });
   });
 
   it('selects the docs check for markdown changes and deletions, not modified code', () => {
@@ -59,6 +60,27 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['src/core/x.ts'], ['src/core/x.ts']).docsCheck).toBe(false);
     expect(selectChangedFiles(['src/gone.ts'], []).docsCheck).toBe(true);
     expect(selectChangedFiles(['docs/gone.md'], []).docsCheck).toBe(true);
+  });
+
+  it('selects the quarantine ledger check for test files and the ledger, including deletions', () => {
+    for (const path of [
+      'test/flaky.test.ts', 'test/nested/dir/suite.test.tsx', 'src/web-ui/x.spec.ts',
+      'test/component.test.jsx', 'queue/quarantine.tsv',
+    ]) {
+      expect(selectChangedFiles([path], [path]).quarantineCheck).toBe(true);
+    }
+    // A deleted test file can stale a ledger row, so deletions still select.
+    expect(selectChangedFiles(['test/gone.test.ts'], []).quarantineCheck).toBe(true);
+    expect(selectChangedFiles(['queue/quarantine.tsv'], []).quarantineCheck).toBe(true);
+  });
+
+  it('skips the quarantine ledger check for non-test paths and near misses', () => {
+    for (const path of [
+      'src/core/x.ts', 'docs/guide.md', 'test/helper.ts', 'test/fixtures/data.json',
+      'queue/quarantine.tsv.bak', 'test/foo.test.ts.snap', 'latest/test.ts', 'contest/x.ts',
+    ]) {
+      expect(selectChangedFiles([path], [path]).quarantineCheck).toBe(false);
+    }
   });
 });
 

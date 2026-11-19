@@ -51,22 +51,112 @@ export const GREEN_EVIDENCE_MAX_AHEAD = 100;
 const DECISIVE_RED = new Set(['failure', 'timed_out']);
 const decisiveVerdict = run => run.status === 'completed'
   && (run.conclusion === 'success' || DECISIVE_RED.has(run.conclusion));
+const ACTIONS_APP_ID = 15368;
 
 /**
- * How many times the plan re-evaluates when master moves mid-check. Merge
- * bursts make a still tip rare; each pass re-reads every input pinned to
- * one observed tip, so the bound caps read spend rather than safety, and
+ * Required status-check contexts on master, unioned from the branch ruleset
+ * and classic branch protection — the same authority the release train
+ * enforces and the merge queue applies. Both are repository configuration,
+ * not tip state, so the plan reads them lazily, once, and only when a
+ * decisive run's whole-run conclusion needs re-judging.
+ */
+async function requiredCheckNames(read, base) {
+  const [branch, rules] = await Promise.all([
+    read(`${base}/branches/master`),
+    read(`${base}/rules/branches/master`),
+  ]);
+  const names = new Set();
+  const protection = branch?.protection?.required_status_checks?.contexts;
+  const collect = context => {
+    if (typeof context === 'string' && context.length > 0 && context.length <= 128 && !context.includes('\n')) names.add(context);
+  };
+  if (Array.isArray(protection)) for (const context of protection) collect(context);
+  if (Array.isArray(rules)) {
+    for (const rule of rules) {
+      if (rule?.type !== 'required_status_checks') continue;
+      const checks = rule?.parameters?.required_status_checks;
+      if (!Array.isArray(checks)) continue;
+      for (const check of checks) collect(check?.context);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Latest Actions check runs on one SHA. Any inventory inconsistency is
+ * 'unknown', never green — the same bound the release train's required-CI
+ * read applies.
+ */
+async function checkRunsOnSha(read, base, sha) {
+  const runs = [];
+  let total = null;
+  for (let page = 1; page <= 10; page += 1) {
+    const listed = await read(`${base}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100&page=${page}`);
+    const batch = listed && Array.isArray(listed.check_runs) ? listed.check_runs : null;
+    const pageTotal = listed && Number.isInteger(listed.total_count) ? listed.total_count : null;
+    if (!batch || pageTotal === null || pageTotal < 0) return 'unknown';
+    if (total === null) total = pageTotal;
+    else if (pageTotal !== total) return 'unknown';
+    for (const row of batch) {
+      const item = row && typeof row === 'object' ? row : {};
+      const app = item.app && typeof item.app === 'object' ? item.app : {};
+      runs.push({
+        name: typeof item.name === 'string' ? item.name : '',
+        status: typeof item.status === 'string' ? item.status : '',
+        conclusion: typeof item.conclusion === 'string' ? item.conclusion : null,
+        appId: Number(app.id),
+      });
+    }
+    if (batch.length < 100) break;
+  }
+  if (total === null || total !== runs.length || runs.length > 1000) return 'unknown';
+  return runs;
+}
+
+/**
+ * Same verdict the release train's judgeRequiredChecks reaches: every
+ * required context needs a completed success with no unsettled re-run; a
+ * completed non-success and no success is red; anything missing, running
+ * or unreadable is pending or unknown — never green.
+ */
+function judgeRequiredChecks(names, runs) {
+  const required = [...new Set(names)];
+  if (required.length === 0) return 'unknown';
+  let pending = false;
+  for (const name of required) {
+    const matched = runs.filter(run => run.appId === ACTIONS_APP_ID && run.name === name);
+    if (matched.length === 0) { pending = true; continue; }
+    let seenSuccess = false, seenIncomplete = false, seenFailure = false;
+    for (const run of matched) {
+      if (run.status !== 'completed') seenIncomplete = true;
+      else if (run.conclusion === 'success') seenSuccess = true;
+      else seenFailure = true;
+    }
+    if (seenIncomplete) pending = true;
+    else if (seenSuccess) continue;
+    else if (seenFailure) return 'red';
+    else pending = true;
+  }
+  return pending ? 'pending' : 'green';
+}
+
+/**
+ * How many times the plan re-evaluates when its observed snapshot is
+ * invalidated mid-check — a version bump, a non-fast-forward move, or a
+ * tip that keeps changing past the moved-window bound. Ordinary
+ * merge-burst movement is absorbed by the moved-tip verification inside a
+ * pass, so the bound caps genuinely unstable reads rather than safety, and
  * exhausting it simply waits for the next scheduled wake.
  */
 export const CADENCE_MAX_ATTEMPTS = 3;
 
 /**
  * One evaluation pass pinned to a single observed master tip. Returns the
- * plan, or null when the closing re-read sees a newer tip — the caller
- * then re-runs the whole pass at the live tip instead of demanding the
- * world stand still for the check.
+ * plan, or null when the closing re-read shows the snapshot no longer
+ * describes live master — the caller then re-runs the whole pass at the
+ * live tip instead of demanding the world stand still for the check.
  */
-async function planAtLiveTip({ base, repository, minutes, now, read }) {
+async function planAtLiveTip({ base, repository, minutes, now, read, requiredNames }) {
   const tip = (await read(`${base}/branches/master`)).commit?.sha;
   assert.match(tip ?? '', SHA);
   const content = response => {
@@ -92,7 +182,13 @@ async function planAtLiveTip({ base, repository, minutes, now, read }) {
   if (tag === null) return { due: false, reason: 'current-version-awaits-tag' };
   assert.equal(tag.ref, `refs/tags/v${pkg.version}`);
   const tagSha = await peeledCommit(read, base, tag.object);
-  if (tagSha === tip) return { due: false, reason: 'no-new-commits' };
+  if (tagSha === tip) {
+    // The tagged commit being the tip means no new work landed yet — unless
+    // master moved during this pass, in which case the live tip may already
+    // carry commits the tag does not and the caller re-evaluates there.
+    const live = (await read(`${base}/branches/master`)).commit?.sha;
+    return live === tip ? { due: false, reason: 'no-new-commits' } : null;
+  }
   // The tagged commit's timestamp and the tip distance are independent once
   // the tag sha is known; read them in the same round.
   const [tagged, compare] = await Promise.all([
@@ -122,19 +218,58 @@ async function planAtLiveTip({ base, repository, minutes, now, read }) {
     assert.ok(Number.isSafeInteger(run.id) && run.id > 0 && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
   }
   const latest = runs.filter(decisiveVerdict).sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)[0];
-  if (!latest || latest.conclusion !== 'success') return { due: false, reason: 'push-ci-not-green' };
+  if (!latest) return { due: false, reason: 'push-ci-not-green' };
+  // A completed run can conclude failure on an advisory job while every
+  // required check — the merge queue's actual authority — stayed green
+  // (authority-drift is deliberately off Merge Gate needs). Re-judge the
+  // required contexts on the run's SHA instead of trusting the whole-run
+  // conclusion; all-green runs keep the cheap path with no extra reads.
+  if (latest.conclusion !== 'success') {
+    const [names, runsOnSha] = await Promise.all([
+      requiredNames(),
+      checkRunsOnSha(read, base, latest.head_sha),
+    ]);
+    const verdict = runsOnSha === 'unknown' ? 'unknown' : judgeRequiredChecks(names, runsOnSha);
+    if (verdict !== 'green') return { due: false, reason: 'push-ci-not-green' };
+  }
+  let evidenceAhead = 0;
   if (latest.head_sha !== tip) {
     const green = await read(`${base}/compare/${latest.head_sha}...${tip}`);
     if (green.status !== 'ahead' || !Number.isSafeInteger(green.ahead_by)
       || green.ahead_by < 1 || green.ahead_by > GREEN_EVIDENCE_MAX_AHEAD) {
       return { due: false, reason: 'push-ci-stale' };
     }
+    evidenceAhead = green.ahead_by;
   }
-  // Re-read before opening a PR: a newer tip means this pass evaluated a
-  // moving target, so the caller re-verifies at the live tip rather than
-  // demanding the world stand still for the check.
-  if ((await read(`${base}/branches/master`)).commit?.sha !== tip) return null;
-  return { due: true, reason: 'green-master-cadence-due', version, revision: tip, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+  // Re-read before opening a PR. A moved tip does not by itself invalidate
+  // the pass: every input was pinned to `tip`, and master only fast-forwards
+  // through the merge queue, so the evaluated tip remaining a bounded
+  // ancestor of the live tip keeps the same green-evidence window. The
+  // version carriers are re-read at the live tip — a release merge landing
+  // mid-check changes them and forces a fresh pass at the new tip — and the
+  // evidence distance grows by exactly the moved window, never past the
+  // bound. Only a snapshot that genuinely changed hands back to the caller.
+  const live = (await read(`${base}/branches/master`)).commit?.sha;
+  if (live === tip) {
+    return { due: true, reason: 'green-master-cadence-due', version, revision: tip, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+  }
+  if (!SHA.test(live ?? '')) return null;
+  const move = await read(`${base}/compare/${tip}...${live}`);
+  const movedOk = move?.status === 'ahead' && Number.isSafeInteger(move.ahead_by)
+    && move.ahead_by >= 1 && move.ahead_by <= GREEN_EVIDENCE_MAX_AHEAD;
+  if (!movedOk) return null;
+  if (evidenceAhead + move.ahead_by > GREEN_EVIDENCE_MAX_AHEAD) {
+    return { due: false, reason: 'push-ci-stale' };
+  }
+  const [pkgLiveResponse, manifestLiveResponse] = await Promise.all([
+    read(`${base}/contents/package.json?ref=${live}`),
+    read(`${base}/contents/.release-please-manifest.json?ref=${live}`),
+  ]);
+  const pkgLive = content(pkgLiveResponse);
+  const manifestLive = content(manifestLiveResponse);
+  if (pkgLive?.name !== '@ashlr/phantom' || pkgLive.version !== pkg.version) return null;
+  assert.equal(manifestLive?.['.'], pkgLive.version, 'source and release-please manifest differ');
+  return { due: true, reason: 'green-master-cadence-due', version, revision: live, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
 }
 
 export async function planReleaseCadence({ repository, minutes = 30, now = Date.now(), read, attempts = CADENCE_MAX_ATTEMPTS }) {
@@ -146,10 +281,12 @@ export async function planReleaseCadence({ repository, minutes = 30, now = Date.
   // The plan always evaluates the live master tip, never the SHA a workflow
   // happened to start on: during merge bursts the tip moves before the check
   // finishes, and pinning the decision to a stale SHA starves every release.
-  // Movement mid-check re-verifies at the new tip, bounded by attempts; only
-  // a tip that keeps moving past the bound still refuses.
+  // Ordinary movement is absorbed inside a pass; only a snapshot that keeps
+  // invalidating past the attempt bound still refuses.
+  let requiredNamesPromise = null;
+  const requiredNames = () => (requiredNamesPromise ??= requiredCheckNames(read, base));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const plan = await planAtLiveTip({ base, repository, minutes, now, read });
+    const plan = await planAtLiveTip({ base, repository, minutes, now, read, requiredNames });
     if (plan !== null) return plan;
   }
   return { due: false, reason: 'master-moved' };
@@ -180,7 +317,9 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
   let firstTransient;
   const remaining = () => {
     const ms = Math.floor(deadline - now());
-    assert.ok(ms > 0, `release metadata read deadline exhausted${firstTransient ? `; first transient ${firstTransient}` : ''}`);
+    // An exhausted budget is an availability signal, not a malformed read:
+    // defer cleanly so a slow merge burst cannot fail the whole job.
+    if (ms <= 0) throw new MetadataTransientError(`release metadata read deadline exhausted${firstTransient ? `; first transient ${firstTransient}` : ''}`);
     return ms;
   };
   return async endpoint => {
@@ -214,7 +353,7 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
           throw new MetadataTransientError(message);
         }
         const delay = attempt * 250;
-        assert.ok(remaining() > delay, `release metadata read deadline exhausted; first transient ${firstTransient}`);
+        if (remaining() <= delay) throw new MetadataTransientError(`release metadata read deadline exhausted; first transient ${firstTransient}`);
         await sleep(delay);
         continue;
       }

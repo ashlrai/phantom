@@ -23,14 +23,25 @@ first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
 `summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
 counted in `skipped`, never fatal. It reads the same store; it is not a
-second bus. v2 `work.*` bodies summarize their typed fields — `work.status`
-as `status: detail`, `work.result` and `work.release` as `outcome: reason`,
-`work.claim` as `op claimKey` — and messages about one `jobId` share a
+second bus. The `work.*` operation bodies keep their terse field formats —
+`work.status` as `status: detail`, `work.result` and `work.release` as
+`outcome: reason`, `work.claim` as `op claimKey` — while `work.post` and
+every other body kind the bus knows (`note`, `context`, `worker-handoff`,
+`interjection`, `owner-thread`, `wake`, `peer.*`, `group.*`,
+`slack-coordination`, and the channel, leader, cos, incident and fleet-ops
+notices) summarize through the same one-line composer the inbox `--frame`
+uses (`<kind> <labels>: <detail>`), so a bare kind name never stands in for
+a readable payload; bodies the composer does not know keep the plain text
+or kind-name fallback. Messages about one `jobId` share a
 `job:<jobId>` conversation; a claim or release that names only a `claimKey`
 joins the newest `work.post` in the read listing that key. Slack-bridge
 `slack-coordination` notices summarize as `slack-coordination <type> <mode>:
 <text>` and classify by their declared `messageType` — `request` reads as
 ask, `reply` as reply — so peer requests surface as waiting conversations.
+Declared `refs` on a `note` or `context` body (for example `RQ-…` or
+`owner/repo#123`) join the message's `job`/`pr` links ahead of prose
+mentions; senders set them with repeatable `--ref` on `bus dm` and
+`channel post`.
 Claim tokens and
 dispatch ids never appear in a summary. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
@@ -418,6 +429,8 @@ desktop source does not prevent CLI or teammate observations.
 these shared projections to every enrolled, authenticated peer, independent of
 lane or role. Private inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
+Repeatable `--ref <ref>` on `dm` and `channel post` records v2 `refs` on the
+`note` body.
 
 `body.kind` is one of:
 

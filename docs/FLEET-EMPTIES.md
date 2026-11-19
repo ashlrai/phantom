@@ -19,6 +19,14 @@ a job id to select its family. `--since` accepts positive hours up to 8760.
 The Work log's **Why jobs end empty** section reads the same report through
 `GET /api/fleet/empty-jobs` (24 hours, all families), also shown on Fleet.
 
+`phm jobs empty --lane zai --json` also carries `final` (schema `jobs.empty-final.v1`): the
+final log message of each empty job read as one reason from a fixed list (already-shipped,
+no-change-needed, repo-rule, blocked-dependency, tool-missing, usage-out, timeout, unknown),
+counts per lane and reason, and the five newest examples per reason. The CLI quotes the matched
+sentence (scrubbed, at most 200 characters); the web report leaves it null. A log with no final
+message reads as unknown. The lane health badge tooltip names the lane's top reason. Plain pattern
+rules in `src/core/fleet/empty-final-reason.ts`; no model calls.
+
 This extends the existing empty-job report, using the `phm empties` newest-finish
 reader and the slot-yield family normalizer (`jobFamily`). The latter strips cycle numbers
 and groups generated recuts by kind: RECUTCOREC541 and RECUTCOREC544 are RECUT*.

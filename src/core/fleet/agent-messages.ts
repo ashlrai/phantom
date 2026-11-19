@@ -7,6 +7,7 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { PROVIDERS } from '../agents/bus-v2-schema.js';
+import { busBodySummary } from '../agents/bus-unified.js';
 import { agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
@@ -124,7 +125,9 @@ export function classify(envelope: BusInboxReceipt['envelope'], body: Body | nul
 const JOB = /\b((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})\b/;
 const PR = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#|\/pull\/)([1-9][0-9]{0,8})\b|(?:^|[\s(])#([1-9][0-9]{0,8})\b/;
 function related(body: Body | null, text: string, jobId: string | null): { job: string | null; pr: string | null } {
-  const fields = body ? [body.rq, body.taskId, body.jobId, jobId, body.job, ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : [])] : [jobId];
+  const fields = body ? [body.rq, body.taskId, body.jobId, jobId, body.job,
+    ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : []),
+    ...(Array.isArray(body.refs) ? body.refs : [])] : [jobId];
   const haystack = [...fields.filter((v): v is string => typeof v === 'string'), text].join(' ');
   const job = JOB.exec(haystack)?.[1] ?? null;
   const pr = PR.exec(haystack);
@@ -170,7 +173,11 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
   return sorted.map(row => {
     const { envelope } = row, body = record(envelope.body);
     const jobId = jobIdOf(body, jobByClaim);
-    const raw = workText(body) ?? bodyText(body) ?? str(body?.kind) ?? (typeof envelope.body === 'string' ? envelope.body : null);
+    // work.* operations keep their terse field formats; every other kind the
+    // bus knows summarizes through the same one-line composer the inbox frame
+    // uses, so `phm messages`, conversations and the map never show a bare
+    // kind name where the frame would show the payload.
+    const raw = workText(body) ?? busBodySummary(body) ?? bodyText(body) ?? str(body?.kind) ?? (typeof envelope.body === 'string' ? envelope.body : null);
     const summary = raw ? clip(oneLine(raw)) : '';
     const from = agentName(envelope.from), to = agentName(envelope.to);
     return {

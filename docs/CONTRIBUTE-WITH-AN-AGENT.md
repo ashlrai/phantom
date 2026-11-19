@@ -55,7 +55,7 @@ Run the CLI from source with `npm run dev -- --help`.
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
@@ -70,6 +70,27 @@ list each new Tier-1 root in the pull request body.
 
 If you added or renamed a document, run `npm run docs:sync` and commit what it
 regenerates; the hosted generated-files check fails on a stale tree.
+
+### Reading `verify-changed` output
+
+`verify-changed` prints one `PASS`, `SKIP`, `WARN` or `FAIL` line per step.
+The first four steps stop the run when they fail; the rest all run and the
+exit code is non-zero if any of them failed.
+
+| Step | Runs when | If it fails |
+| --- | --- | --- |
+| File selection | Always | `origin/master` must exist and share history with your branch: `git fetch origin master`, or `git fetch --unshallow origin` in a shallow clone. |
+| Empty test check | Always | Every new test file needs at least one test. |
+| Fleet registry | A `src/cli/fleet-*.ts` file changed | Run `node scripts/gen-fleet-registry.mjs` and commit the result. |
+| Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. If `origin/master` moved since you branched, rebase first. |
+| Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
+| ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
+| Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
+| Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
+| Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
+
+`SKIP eslint` or `SKIP docs check` with "run npm ci to restore it" means the
+install is incomplete; run `npm ci` and then `node scripts/verify-changed.mjs --force`.
 
 ## 5. Push to your fork and open the pull request
 

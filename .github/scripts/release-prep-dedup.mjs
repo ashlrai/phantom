@@ -19,8 +19,19 @@ export const SMOKE = 'Desktop release smoke';
 export const SUITES = 'Release suites (build + signing path)';
 const SHA = /^[a-f0-9]{40}$/;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+// A release-gate dispatch pins the master sha that was tip at dispatch time.
+// The release-gate concurrency group is serial and never cancels, so during a
+// merge burst per-sha dedup alone queues one stale-sha run per merge for the
+// whole owed-version window. Any unfinished workflow_dispatch on master —
+// release prep's event; Auto-tag dispatches on tag refs and manual dispatches
+// are rare — already covers the owed version: its sha is tagged through
+// Auto-tag's exact-SHA dispatch when the run completes. The age bound keeps a
+// zombie queued run from gating every later dispatch forever; it sits above
+// the longest honest queue-plus-run window (a 90-minute job ceiling behind one
+// serial predecessor).
+export const RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS = 3 * 60 * 60_000;
 
-export function releasePrepDecision({ checks, runs }) {
+export function releasePrepDecision({ checks, runs, dispatchRuns = [], now = Date.now() }) {
   assert.ok(Array.isArray(checks) && Array.isArray(runs), 'missing release prep inventory');
   const named = (name) => checks.filter((row) => row?.name === name && row?.appId === ACTIONS_APP_ID);
   const success = (rows) => rows.some((row) => row.status === 'completed' && row.conclusion === 'success');
@@ -33,6 +44,12 @@ export function releasePrepDecision({ checks, runs }) {
     && (row.event === 'workflow_dispatch' || row.event === 'schedule')
     && row.status !== 'completed');
   if (inflight.length > 0) return { dispatch: false, reason: 'release-run-in-flight' };
+  const outstanding = dispatchRuns.filter((row) => {
+    if (row?.path !== '.github/workflows/ci.yml' || row.event !== 'workflow_dispatch' || row.status === 'completed') return false;
+    const age = now - row.createdAt;
+    return Number.isFinite(row.createdAt) && age >= -60_000 && age <= RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS;
+  });
+  if (outstanding.length > 0) return { dispatch: false, reason: 'release-run-in-flight' };
   return { dispatch: true, reason: 'needed' };
 }
 
@@ -122,13 +139,17 @@ export function masterReleaseSettled(repo, sha, read = githubJson) {
   return release !== null && release !== undefined;
 }
 
-export function readReleasePrep(repo, sha, read = githubJson) {
+export function readReleasePrep(repo, sha, read = githubJson, now = Date.now()) {
   assert.equal(repo, 'ashlrai/phantom');
   assert.match(sha, SHA);
   const checks = read(`repos/${repo}/commits/${sha}/check-runs?filter=latest&app_id=${ACTIONS_APP_ID}&per_page=100`);
   assert.ok(Array.isArray(checks.check_runs), 'missing check runs');
   const runs = read(`repos/${repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=20`);
   assert.ok(Array.isArray(runs.workflow_runs), 'missing workflow runs');
+  // Master-wide dispatch inventory for cross-sha coalescing: a release-gate
+  // run outstanding on any recent master sha already covers the owed version.
+  const dispatches = read(`repos/${repo}/actions/workflows/ci.yml/runs?event=workflow_dispatch&branch=master&per_page=50`);
+  assert.ok(Array.isArray(dispatches.workflow_runs), 'missing dispatch inventory');
   return releasePrepDecision({
     checks: checks.check_runs.map((row) => ({
       name: row.name, status: row.status, conclusion: row.conclusion ?? null, appId: row.app?.id,
@@ -136,12 +157,16 @@ export function readReleasePrep(repo, sha, read = githubJson) {
     runs: runs.workflow_runs.map((row) => ({
       path: row.path, event: row.event, status: row.status,
     })),
+    dispatchRuns: dispatches.workflow_runs.map((row) => ({
+      path: row.path, event: row.event, status: row.status, createdAt: Date.parse(row.created_at),
+    })),
+    now,
   });
 }
 
-export function releasePrepPlan(repo, sha, read = githubJson) {
+export function releasePrepPlan(repo, sha, read = githubJson, now = Date.now()) {
   if (masterReleaseSettled(repo, sha, read)) return { dispatch: false, reason: 'release-settled' };
-  return readReleasePrep(repo, sha, read);
+  return readReleasePrep(repo, sha, read, now);
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

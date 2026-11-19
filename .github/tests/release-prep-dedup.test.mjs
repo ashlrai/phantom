@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import test from 'node:test';
-import { ACTIONS_APP_ID, SMOKE, SUITES, masterReleaseSettled, releasePrepDecision, releasePrepPlan } from '../scripts/release-prep-dedup.mjs';
+import { ACTIONS_APP_ID, SMOKE, SUITES, RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS, masterReleaseSettled, releasePrepDecision, releasePrepPlan } from '../scripts/release-prep-dedup.mjs';
 
 const check = (name, status, conclusion, appId = ACTIONS_APP_ID) => ({ name, status, conclusion, appId });
 const run = (event, status, path = '.github/workflows/ci.yml') => ({ path, event, status });
+const NOW = Date.parse('2026-11-19T12:00:00Z');
+const dispatchRun = (status, ageMs = 60_000, event = 'workflow_dispatch', path = '.github/workflows/ci.yml') =>
+  ({ path, event, status, createdAt: NOW - ageMs });
 
 test('dispatches when this sha has no smoke or suites yet', () => {
   assert.deepEqual(releasePrepDecision({ checks: [], runs: [] }), { dispatch: true, reason: 'needed' });
@@ -37,6 +40,54 @@ test('ignores a same-named check from another app', () => {
     check(SUITES, 'completed', 'success', 1),
   ];
   assert.equal(releasePrepDecision({ checks, runs: [] }).reason, 'needed');
+});
+
+test('an unfinished master dispatch on any sha already covers the owed version', () => {
+  for (const status of ['queued', 'in_progress', 'waiting', 'requested', 'pending']) {
+    assert.equal(releasePrepDecision({ checks: [], runs: [], dispatchRuns: [dispatchRun(status)], now: NOW }).reason,
+      'release-run-in-flight');
+  }
+  // Completed dispatches, scheduled full runs and foreign paths never block:
+  // only an unfinished workflow_dispatch on master is release-gate work.
+  for (const row of [
+    dispatchRun('completed'),
+    dispatchRun('in_progress', 60_000, 'schedule'),
+    dispatchRun('queued', 60_000, 'workflow_dispatch', '.github/workflows/other.yml'),
+    { path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'queued' },
+  ]) {
+    assert.equal(releasePrepDecision({ checks: [], runs: [], dispatchRuns: [row], now: NOW }).reason, 'needed');
+  }
+});
+
+test('a stale or future-dated unfinished dispatch cannot gate later decisions forever', () => {
+  assert.equal(RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS, 3 * 60 * 60_000);
+  assert.equal(releasePrepDecision({
+    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS + 1)], now: NOW,
+  }).reason, 'needed');
+  assert.equal(releasePrepDecision({
+    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS)], now: NOW,
+  }).reason, 'release-run-in-flight');
+  // Sixty seconds of clock skew still counts as in flight; beyond that or a
+  // missing timestamp fails open to dispatching, matching prior behavior.
+  assert.equal(releasePrepDecision({
+    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', -60_000)], now: NOW,
+  }).reason, 'release-run-in-flight');
+  assert.equal(releasePrepDecision({
+    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', -120_000)], now: NOW,
+  }).reason, 'needed');
+});
+
+test('sha-local evidence still decides before the cross-sha dispatch check', () => {
+  const blocking = [dispatchRun('in_progress')];
+  assert.equal(releasePrepDecision({
+    checks: [check(SMOKE, 'completed', 'success'), check(SUITES, 'completed', 'success')], runs: [], dispatchRuns: blocking, now: NOW,
+  }).reason, 'already-green');
+  assert.equal(releasePrepDecision({
+    checks: [check(SMOKE, 'in_progress', null)], runs: [], dispatchRuns: blocking, now: NOW,
+  }).reason, 'checks-in-progress');
+  assert.equal(releasePrepDecision({
+    checks: [], runs: [run('workflow_dispatch', 'queued')], dispatchRuns: blocking, now: NOW,
+  }).reason, 'release-run-in-flight');
 });
 
 const SHA40 = 'b'.repeat(40);

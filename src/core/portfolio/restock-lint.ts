@@ -159,6 +159,12 @@ function parseLine(line: string): ParsedLine {
   return { kind: 'malformed', jobId: id };
 }
 
+/** One READY line split into id, attrs and task; null when it is not a well-formed READY line. Shared with `phm plan check`. */
+export function parseReadyLine(line: string): { jobId: string; attrs: string; task: string } | null {
+  const parsed = parseLine(line);
+  return parsed.kind === 'ready' ? { jobId: parsed.jobId, attrs: parsed.attrs, task: parsed.task } : null;
+}
+
 /** Per-line status evidence: first restocker-class job id token per status line wins. */
 function documentStatuses(text: string): Map<string, string> {
   const status = new Map<string, string>();

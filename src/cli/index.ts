@@ -468,6 +468,12 @@ const loadPagesCmd = lazyCmd(
   'pages command requires src/cli/pages.ts.',
 );
 
+const loadPublishCmd = lazyCmd(
+  () => import('./publish.js' as unknown as string),
+  (m) => m.cmdPublish as Cmd,
+  'publish command requires src/cli/publish.ts.',
+);
+
 // ─── M14 command loader ────────────────────────────────────────────
 
 const loadServeCmd = lazyCmd(
@@ -2668,6 +2674,13 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'publish': {
+        // Finish a half-done publish: open the PR for a pushed fork branch.
+        const cmdPublish = await loadPublishCmd();
+        process.exitCode = await cmdPublish(rest);
+        break;
+      }
+
       case 'serve': {
         const cmdServe = await loadServeCmd();
         process.exitCode = await cmdServe(rest);
@@ -3465,6 +3478,12 @@ async function main(): Promise<void> {
       case 'wb': {
         const { cmdWb } = await import('./wb.js');
         process.exitCode = await cmdWb(rest);
+        break;
+      }
+
+      case 'plan': {
+        const { cmdPlan } = await import('./plan.js');
+        process.exitCode = await cmdPlan(rest);
         break;
       }
 

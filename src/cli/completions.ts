@@ -19,7 +19,7 @@ import { makeColors, isTty } from './ui.js';
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
   'graph',
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'home', 'asks', 'outbox', 'needs-you', 'subagent', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'home', 'asks', 'needs-you', 'subagent', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'browser', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -58,7 +58,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   // Shared task board: `bus` is the same as `fleet bus`.
   'bus',
   // Dispatched by index.ts but missing here (caught by cli-registry-drift).
-  'worktrees', 'drive', 'bets', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
+  'worktrees', 'drive', 'bets', 'plan', 'budget', 'capacity', 'top', 'sessions', 'checkpoint',
   // Stigmergic coordination markers (RQ-SWE5-STIGMERGY).
   'trail',
   // Estate cards and daily CI metrics (RQ-ESTATES, RQ-CIMETRICS).
@@ -81,6 +81,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'constitution', 'wb', 'caps',
   // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
   'pages',
+  'publish',
   // The typed command catalog the desktop palette also lists (RQ-CMDPALN17TQ8).
   'commands',
 ];
@@ -129,7 +130,8 @@ const SUBCOMMANDS: Record<string, string[]> = {
   admission: ['explain', '--json', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
-  bets: ['check', 'list', 'launch', 'score', 'kill', 'help'],
+  plan: ['check', 'dup', 'help'],
+  bets: ['check', 'propose', 'list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
@@ -202,6 +204,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   plugins: ['init', 'list', 'info', 'enable', 'disable'],
   skills: ['list', 'audit'],
   pages: ['publish', 'list', '--json', '--help'],
+  publish: ['resume', 'orphans', '--branch', '--repo', '--json', '--help'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
   'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],

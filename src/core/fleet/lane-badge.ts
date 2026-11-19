@@ -40,6 +40,8 @@ export interface LaneHealth {
   reason: string;
   /** The number behind the reason; null for ok when nothing is known. */
   number: number | null;
+  /** Optional: the lane's top EMPTY reason in the last 24 h, e.g. "top empty reason: already-shipped (3 of 5 empty jobs)". Shown in the tooltip. */
+  emptyNote?: string;
 }
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -47,6 +49,11 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 function minutesText(ms: number): string {
   const minutes = Math.floor(Math.max(0, ms) / 60_000);
   return minutes < 1 ? 'under a minute' : minutes < 120 ? `${minutes} min` : `${Math.floor(minutes / 60)} h`;
+}
+
+/** Plain tooltip note for a lane's top EMPTY reason; null when there is nothing to say or the reason is unknown. */
+export function emptyNoteFor(top: string, count: number, total: number): string | null {
+  return total > 0 && top !== 'unknown' ? `top empty reason: ${top} (${count} of ${plural(total, 'empty job', 'empty jobs')})` : null;
 }
 
 export function isWasteful(starts: number | null, merged: number | null): boolean {
@@ -83,5 +90,6 @@ export function narrowLaneHealth(raw: unknown): LaneHealth | undefined {
   const state = LANE_HEALTH_STATES.find(s => s === row.state);
   if (!state || typeof row.reason !== 'string' || row.reason === '') return undefined;
   const number = typeof row.number === 'number' && Number.isFinite(row.number) ? row.number : null;
-  return { state, reason: row.reason.slice(0, 200), number };
+  const emptyNote = typeof row.emptyNote === 'string' && row.emptyNote !== '' ? row.emptyNote.slice(0, 120) : undefined;
+  return { state, reason: row.reason.slice(0, 200), number, ...(emptyNote ? { emptyNote } : {}) };
 }

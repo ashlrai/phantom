@@ -51,7 +51,7 @@ describe('phm messages projection', () => {
     expect(read(root, { agent: 'grok-3' }).messages.map(m => m.id)).toEqual(['m3', 'm2']);
     expect(read(root, { since: T0 + 1_500 }).messages.map(m => m.id)).toEqual(['m3']);
     expect(read(root, { limit: 1 })).toMatchObject({ matched: 3, messages: [{ id: 'm3' }] });
-    expect(formatAgentMessagesText(read(root))).toContain('handoff claude-1 (claude) → codex-local-2 (codex-local): Take over the parser fix  [RQ-CHAINA1]');
+    expect(formatAgentMessagesText(read(root))).toContain('handoff claude-1 (claude) → codex-local-2 (codex-local): handoff task RQ-CHAINA1: Take over the parser fix  [RQ-CHAINA1]');
   });
 
   it('matches --agent and --with through the identity registry, never widening without it', () => {
@@ -141,7 +141,7 @@ describe('phm messages projection', () => {
       body: { kind: 'work.release', claimKey: 'repo:ashlrai/phantom', token: 'f'.repeat(64), outcome: 'released' } });
     const result = read(root);
     const byId = new Map(result.messages.map(m => [m.id, m]));
-    expect(byId.get('w1')).toMatchObject({ kind: 'ask', summary: 'Fix the parser', job: 'RQ-PEER1', conversation: 'job:RQ-PEER1' });
+    expect(byId.get('w1')).toMatchObject({ kind: 'ask', summary: 'work.post RQ-PEER1: Fix the parser (ashlrai/phantom)', job: 'RQ-PEER1', conversation: 'job:RQ-PEER1' });
     expect(byId.get('w2')).toMatchObject({ kind: 'reply', summary: 'admitted', conversation: 'job:RQ-PEER1', job: 'RQ-PEER1' });
     expect(byId.get('w3')).toMatchObject({ kind: 'blocker', summary: 'failed: repo-not-allowed', conversation: 'job:RQ-PEER1', job: 'RQ-PEER1' });
     expect(byId.get('w4')).toMatchObject({ kind: 'blocker', summary: 'blocked: waiting on review', conversation: 'job:RQ-PEER1' });
@@ -155,6 +155,18 @@ describe('phm messages projection', () => {
     expect(out).not.toContain('e'.repeat(64));
     expect(out).not.toContain('f'.repeat(64));
     expect(out).not.toContain('pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  });
+
+  it('reads job and pr links from declared note refs ahead of prose mentions', () => {
+    const root = store();
+    post(root, T0, { id: 'r1', from: 'a', to: 'b',
+      body: { kind: 'note', text: 'unrelated mention of RQ-PROSE-1 and ashlrai/phantom#99',
+        refs: ['RQ-REF-1', 'pr:ashlrai/phantom#42'] } });
+    post(root, T0 + 1_000, { id: 'r2', from: 'a', to: 'b', body: { kind: 'note', text: 'no refs here' } });
+    const result = read(root);
+    const byId = new Map(result.messages.map(m => [m.id, m]));
+    expect(byId.get('r1')).toMatchObject({ job: 'RQ-REF-1', pr: 'ashlrai/phantom#42' });
+    expect(byId.get('r2')).toMatchObject({ job: null, pr: null });
   });
 
   it('keeps unknown work fields honest: no jobId means no job thread, malformed falls back', () => {
@@ -187,12 +199,32 @@ describe('phm messages projection', () => {
     const byId = new Map(result.messages.map(m => [m.id, m]));
     // The declared type wins over text shape and local reply hints: a request
     // asks even when threaded, a reply answers even without inReplyTo.
-    expect(byId.get('s1')).toMatchObject({ kind: 'ask', summary: 'can you pick up the review?' });
+    expect(byId.get('s1')).toMatchObject({ kind: 'ask', summary: 'slack-coordination request peer: can you pick up the review?' });
     expect(byId.get('s2')).toMatchObject({ kind: 'ask' });
-    expect(byId.get('s3')).toMatchObject({ kind: 'reply', summary: 'done, PR is up' });
+    expect(byId.get('s3')).toMatchObject({ kind: 'reply', summary: 'slack-coordination reply peer: done, PR is up' });
     // Unmapped types keep the existing heuristics: inReplyTo still reads as a reply.
     expect(byId.get('s4')).toMatchObject({ kind: 'reply' });
     expect(byId.get('s5')).toMatchObject({ kind: 'status' });
+  });
+
+  it('summarizes channel, notice and wake bodies with the same composer as the inbox frame', () => {
+    const root = store();
+    post(root, T0, { id: 'c1', from: 'mason', to: 'leaders',
+      body: { kind: 'interjection', channel: 'telegram', text: 'how is the fleet?', receivedAt: T0, dedupeKey: 'd1' } });
+    post(root, T0 + 1_000, { id: 'c2', from: 'agent:claude-1', to: 'leaders',
+      body: { kind: 'owner-thread', threadId: 't-9', channel: 'imessage', redacted: true } });
+    post(root, T0 + 2_000, { id: 'c3', from: 'desktop', to: 'agent:claude-1',
+      body: { kind: 'desktop.intent', verb: 'click', app: 'Slack', window: 'compose', chars: 42 } });
+    post(root, T0 + 3_000, { id: 'c4', from: 'agent:peer-a', to: 'agent:claude-1',
+      body: { kind: 'wake', target: 'agent:claude-1', jobId: 'RQ-WAKE9', reason: 'the feed has work for you' } });
+    // A kind the composer does not know keeps the legacy text fallback.
+    post(root, T0 + 4_000, { id: 'c5', from: 'a', to: 'b', body: { kind: 'unlisted-kind', text: 'plain words' } });
+    const byId = new Map(read(root).messages.map(m => [m.id, m]));
+    expect(byId.get('c1')).toMatchObject({ summary: 'interjection telegram: how is the fleet?', kind: 'ask' });
+    expect(byId.get('c2')).toMatchObject({ summary: 'owner-thread imessage: redacted' });
+    expect(byId.get('c3')).toMatchObject({ summary: 'desktop.intent click Slack: compose 42 chars' });
+    expect(byId.get('c4')).toMatchObject({ summary: 'wake agent:claude-1 (RQ-WAKE9): the feed has work for you', job: 'RQ-WAKE9', conversation: 'job:RQ-WAKE9' });
+    expect(byId.get('c5')).toMatchObject({ summary: 'plain words' });
   });
 
   it('validates flags and reads relative --since', () => {

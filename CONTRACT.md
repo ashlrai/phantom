@@ -474,13 +474,18 @@ under existing worker gates.
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
 `--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
-nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)` and
+nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)`,
+`foldClaimOverrides(jsonl, nowMs, windowHours, truncated?)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
 `phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
 window's `route_decision` rows to each job's latest decision and tallies
 `lane_override`s by reason and hinted-to-chosen lane; the report's
 `overrides` field carries the counts (`available`, `decided`, `overridden`,
+`byReason`, `lanes`). `foldClaimOverrides` tallies the window's jobs.jsonl
+`claim`/`batch_claim` events — launches that actually left their hinted
+lane, including `batch_session` moves decisions never record — into the
+report's `claims` field (`available`, `truncated`, `claimed`, `overridden`,
 `byReason`, `lanes`). The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
@@ -1258,7 +1263,9 @@ See [node runner](docs/NODES.md#reference-runner-security-review-before-installa
 The fold turns `router.outcome.v1` records into the `{provider: {attempts,
 merged}}` tallies `planAutoscaleRoutes` consumes: one record is one attempt
 only when its merge verdict is known (`merged` true or false); `merged: null`
-is excluded from both sides, never counted as a failure. `readRouteLaneOutcomes`
+is excluded from both sides, never counted as a failure. A merge recorded as
+reverted (`reverted: true`) counts as an attempt but not as a held merge,
+matching `proposeRouterWeights`. `readRouteLaneOutcomes`
 wraps the bounded `readRouterOutcomes` ledger read: 'read' carries the tallies,
 'missing' is an absent journal with empty tallies, and 'unreadable'/'not-file'
 report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
@@ -1469,6 +1476,12 @@ tree already reads. `OrgTreeJob` gains `tier`, `ageSeconds` and `goal`;
 `FleetMapNode` gains optional `tier` and `goal`. `ORG_PLANNER_QUIET_MS` is
 exported. Lane `doing` for idle and held lanes now names the reason. Additive;
 `version` stays 1.
+
+**Org health and message times (RQ-ORGMAPN20QQ8).** `fleet.org.v1` lanes gain
+`health` (`LaneHealth | null`, the lane badge from `getFleetLaneSnapshot`; null
+when that read had no verdict) and each `messages[]` row gains optional `lastAt`
+(ISO, newest message on the line). `OrgTreeInputs.laneHealth` and
+`FleetOrgReaders.laneHealth` are new. Additive; `version` stays 1.
 
 ## Runtime-dynamic fleet config (RQ-DYNCONFIG-1)
 

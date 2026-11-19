@@ -9,9 +9,10 @@ import styles from './LaneHealthBadge.module.css';
 
 export function LaneHealthBadge({ health }: { health?: LaneHealth | null }) {
   if (!health) return null;
+  const tip = health.emptyNote ? `${health.reason}. ${health.emptyNote}` : health.reason;
   return (
     <span className={styles.badge} data-state={health.state} data-testid="lane-health" role="img"
-      title={health.reason} aria-label={health.reason}>
+      title={tip} aria-label={tip}>
       {health.state}
     </span>
   );

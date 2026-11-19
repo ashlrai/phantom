@@ -18,6 +18,12 @@ Exit 3 means exists: stop and finish with a short note naming the matches. Exit 
 check itself failed (unreadable file or no task found): say so and continue normally.
 The JSON carries `schema: "bets.check.v1"`, the verdict and `exitCode`.
 
+**Out of work?** Run `phm bets propose --lane <lane> --count <n> --json` to get your own next jobs.
+It reads this checkout's backlog (TODO and FIXME comments, open roadmap items, skipped tests, commands
+no docs page names), drops anything `bets check` says already exists, and ranks the rest: user-facing
+first, smallest size next. Each row has an `id`, `repo`, `size`, `goal` and an `Acceptance:` line
+(`schema: "bets.propose.v1"`). It is read-only and never writes a queue file.
+
 `ashlr router rank --tier frontier --routes routes.json --slots codex-cmp=2 --json`
 returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget reset.
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
@@ -36,7 +42,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, and runs the docs link check when the diff touches markdown or deletes files |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, and the quarantine-ledger check when test files or `queue/quarantine.tsv` change |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |

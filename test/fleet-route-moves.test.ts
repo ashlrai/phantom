@@ -2,7 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cmdFleetRouteMoves, routeMoves } from '../src/cli/fleet-route-moves.js';
+import { routeMoves, readRouteMoves } from '../src/core/fleet/route-moves.js';
+import { cmdFleetRouteMoves } from '../src/cli/fleet-route-moves.js';
 
 const stamp = (date: Date) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -25,6 +26,20 @@ describe('fleet route moves', () => {
     expect(report.tiers).toEqual([{ tier: 'fast', moves: 0, refused: 1 }, { tier: 'mid', moves: 12, refused: 0 }]);
     expect(report.latest.map(e => e.id)).toEqual(Array.from({ length: 10 }, (_, i) => `job${i}`));
     expect(routeMoves(lines.join('\n'), 0.001, now).moves).toBe(4);
+  });
+  it('streams the log into the same fold, including a final line without a newline', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'route-moves-stream-'));
+    try {
+      const text = [row(now - 1000, 'ROUTE job a -> b (tier work)'),
+        'not a route line',
+        row(now - 2000, 'ROUTE_REFUSED job c -> d (tier fast not accepted)')].join('\n');
+      const path = join(root, 'dispatch-events.log');
+      await writeFile(path, `${text}\n${row(now - 3000, 'ROUTE job e -> f (tier mid)')}`);
+      const streamed = await readRouteMoves(path, 6, now);
+      expect(streamed).toEqual(routeMoves(`${text}\n${row(now - 3000, 'ROUTE job e -> f (tier mid)')}\n`, 6, now));
+      expect(streamed.moves).toBe(2); expect(streamed.refused).toBe(1);
+      await expect(readRouteMoves(join(root, 'missing.log'), 6, now)).rejects.toThrow();
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('reads the overridden root, supports JSON and validates arguments', async () => {
     const root = await mkdtemp(join(tmpdir(), 'route-moves-'));

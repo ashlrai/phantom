@@ -306,7 +306,15 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane.
+hinted-to-chosen lane. The same window's `claim` and `batch_claim` rows in
+`metrics/jobs.jsonl` fold into `claims`: launches that actually left their
+hinted lane, counted as events — a re-launched attempt is another real
+launch — by `lane_override` reason and by hinted-to-launched lane. This is
+the launch record the decision fold cannot see: `batch_session` moves a
+combined session makes after each member's own decision appear here and
+nowhere in `overrides`, and a decision overridden on paper but deferred
+before launch never counts. `claims.truncated` is true when the ledger
+exceeded the retained tail, so those counts are a lower bound.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
@@ -780,16 +788,19 @@ Add `--json` for `{ v, failed, groups: [{ error, count, samples, jobs }] }`, or
 # Lane queue counts
 
 Run `phm fleet queue-counts --json` for ready, parked and running counts and
-the oldest wait per lane. `oldestWaitSeconds` covers ready and parked jobs,
-using `enqueue` (or `queued`) arrival timestamps in
-`~/.ashlr-runs/metrics/jobs.jsonl`. It is `null` when there are no waiting
-jobs, the queue or metrics are unavailable, or any waiting job has missing
-or conflicting enqueue timestamps. The command reads up to 2 MiB at each
-end of the metrics ledger — the oldest events near the head and the newest
-at the tail — so a job whose arrival event falls between the windows counts
-as missing evidence, never as a shorter wait. Without `--json`, the same
-command prints a plain-language report. Use `--root /path` to inspect a
-different runs directory.
+the oldest wait per lane. `oldestWaitSeconds` covers ready and parked jobs and
+measures each job's current queue dwell in `~/.ashlr-runs/metrics/jobs.jsonl`:
+`enqueue`/`queued` rows, `launch_failed` retries and retried `task_outcome`
+rows are arrivals, while `claim`, `batch_claim` and `launch` end a dwell, so a
+re-queued job's wait restarts at its re-arrival rather than its first-ever
+enqueue. It is `null` when there are no waiting jobs, the queue or metrics are
+unavailable, or any waiting job's arrival is unevidenced — including silent
+requeues (deferred launches, released batches) that leave no ledger row. The
+command reads up to 2 MiB at each end of the metrics ledger — the oldest
+events near the head and the newest at the tail — so a job whose arrival
+event falls between the windows counts as missing evidence, never as a
+shorter wait. Without `--json`, the same command prints a plain-language
+report. Use `--root /path` to inspect a different runs directory.
 
 ## Incident pipeline
 

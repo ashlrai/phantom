@@ -10,6 +10,7 @@ import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
 const revision = 'a'.repeat(40), tagged = 'b'.repeat(40);
 const RUNS_KEY = '/actions/workflows/ci.yml/runs?event=push&branch=master&status=completed&per_page=100';
+const CHECK_RUNS_KEY = (sha, page = 1) => `/commits/${sha}/check-runs?filter=latest&app_id=15368&per_page=100&page=${page}`;
 const repo = { full_name: 'ashlrai/phantom', id: 1263526319, node_id: 'R_kgDOS0_hrw',
   owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
 const now = Date.parse('2026-11-05T04:00:00Z');
@@ -18,6 +19,10 @@ function fixture(overrides = {}) {
     repository: repo, head_branch: 'master', event: 'push', status: 'completed', conclusion: 'success' };
   const data = {
     '': repo, '/branches/master': { commit: { sha: revision } },
+    '/rules/branches/master': [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate' }] } }],
+    // Default required-check evidence on the fixture run SHA is red, so a
+    // non-success run conclusion keeps failing closed unless a test opts in.
+    [CHECK_RUNS_KEY(revision)]: { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } }] },
     [`/contents/package.json?ref=${revision}`]: { encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.1' })).toString('base64') },
     [`/contents/.release-please-manifest.json?ref=${revision}`]: { encoding: 'base64', content: Buffer.from('{".":"3.30.1"}').toString('base64') },
     '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'commit', sha: tagged } },
@@ -108,17 +113,19 @@ test('the live master tip is evaluated, not the SHA that woke the workflow', asy
     { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision: tip, ciRunId: 123, ciRunAttempt: 1 });
 });
 
-test('a mid-check master move re-verifies at the new tip instead of refusing', async () => {
+test('a bounded fast-forward move mid-check is absorbed at the live tip', async () => {
   const first = 'e'.repeat(40), second = '8'.repeat(40);
   const f = fixture();
   repin(f, first);
   repin(f, second);
   // The newest decisive verdict sits on the fixture run sha, a bounded
-  // ancestor of both candidate tips.
+  // ancestor of both candidate tips; the evaluated tip stays a bounded
+  // ancestor of the live tip, so the pass verifies the move in place.
   f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: 2 };
   f.data[`/compare/${revision}...${second}`] = { status: 'ahead', ahead_by: 3 };
-  // Branch reads: attempt one evaluates `first` then sees `second` move;
-  // attempt two evaluates `second` and finds it still the tip.
+  f.data[`/compare/${first}...${second}`] = { status: 'ahead', ahead_by: 1 };
+  // Branch reads: the pass evaluates `first`, the closing re-read sees
+  // `second`, and the moved-tip verification accepts it without a retry.
   const tips = [first, second, second, second];
   let branchReads = 0;
   const read = path => path.endsWith('/branches/master')
@@ -128,7 +135,7 @@ test('a mid-check master move re-verifies at the new tip instead of refusing', a
     { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision: second, ciRunId: 123, ciRunAttempt: 1 });
 });
 
-test('master movement past the attempt bound still refuses, and the bound is validated', async () => {
+test('master movement that invalidates the snapshot still refuses, and the bound is validated', async () => {
   assert.equal(CADENCE_MAX_ATTEMPTS, 3);
   const first = 'e'.repeat(40), second = '8'.repeat(40), third = '9'.repeat(40);
   const f = fixture();
@@ -136,6 +143,10 @@ test('master movement past the attempt bound still refuses, and the bound is val
   repin(f, second);
   f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: 2 };
   f.data[`/compare/${revision}...${second}`] = { status: 'ahead', ahead_by: 3 };
+  // Every observed move diverges: the evaluated tip is no longer history,
+  // so each pass hands back for a fresh evaluation at the live tip.
+  f.data[`/compare/${first}...${second}`] = { status: 'diverged' };
+  f.data[`/compare/${second}...${third}`] = { status: 'diverged' };
   // Each pass ends on a newer tip: first to second, second to third.
   const movingRead = () => {
     const tips = [first, second, second, third];
@@ -145,10 +156,72 @@ test('master movement past the attempt bound still refuses, and the bound is val
       : f.read(path);
   };
   assert.deepEqual(await planReleaseCadence({ ...f.input, read: movingRead(), attempts: 2 }), { due: false, reason: 'master-moved' });
-  // A single pass keeps the pre-retry refusal: movement still blocks.
+  // A single pass keeps the pre-retry refusal: an invalidated snapshot still blocks.
   assert.deepEqual(await planReleaseCadence({ ...f.input, read: movingRead(), attempts: 1 }), { due: false, reason: 'master-moved' });
   await assert.rejects(planReleaseCadence({ ...f.input, read: f.read, attempts: 0 }), /attempt bound/);
   await assert.rejects(planReleaseCadence({ ...f.input, read: f.read, attempts: 11 }), /attempt bound/);
+});
+
+test('a version bump landing mid-check re-evaluates at the live tip', async () => {
+  const first = 'e'.repeat(40), second = '8'.repeat(40);
+  const f = fixture();
+  repin(f, first);
+  repin(f, second);
+  // Master merged the release PR mid-check: package.json at the live tip
+  // carries the new version, so the pass cannot ship the stale one.
+  f.data[`/contents/package.json?ref=${second}`] = { encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.2' })).toString('base64') };
+  f.data[`/contents/.release-please-manifest.json?ref=${second}`] = { encoding: 'base64', content: Buffer.from('{".":"3.30.2"}').toString('base64') };
+  f.data['/git/ref/tags/v3.30.2'] = null;
+  f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: 2 };
+  f.data[`/compare/${first}...${second}`] = { status: 'ahead', ahead_by: 1 };
+  const tips = [first, second, second, second, second];
+  let branchReads = 0;
+  const read = path => path.endsWith('/branches/master')
+    ? { commit: { sha: tips[Math.min(branchReads++, tips.length - 1)] } }
+    : f.read(path);
+  // Attempt one hands back on the version change; attempt two evaluates the
+  // live tip, finds v3.30.2 still awaiting its tag, and defers correctly.
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read }), { due: false, reason: 'current-version-awaits-tag' });
+});
+
+test('moved-tip verification keeps the green-evidence window bounded', async () => {
+  const first = 'e'.repeat(40), second = '8'.repeat(40);
+  const f = fixture();
+  repin(f, first);
+  repin(f, second);
+  f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: GREEN_EVIDENCE_MAX_AHEAD - 1 };
+  f.data[`/compare/${first}...${second}`] = { status: 'ahead', ahead_by: 2 };
+  const tips = [first, second];
+  let branchReads = 0;
+  const read = path => path.endsWith('/branches/master')
+    ? { commit: { sha: tips[Math.min(branchReads++, tips.length - 1)] } }
+    : f.read(path);
+  // 99 commits of evidence distance plus a 2-commit move exceeds the bound.
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read }), { due: false, reason: 'push-ci-stale' });
+  f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: GREEN_EVIDENCE_MAX_AHEAD - 2 };
+  branchReads = 0;
+  assert.equal((await planReleaseCadence({ ...f.input, read })).due, true);
+});
+
+test('a tag that is the tip re-checks before declaring no new commits', async () => {
+  const first = 'e'.repeat(40), second = '8'.repeat(40);
+  const f = fixture({
+    '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'commit', sha: first } },
+    [`/commits/${first}`]: { commit: { committer: { date: '2026-11-05T03:20:00Z' } } },
+  });
+  repin(f, first);
+  repin(f, second);
+  f.data[`/compare/${first}...${second}`] = { status: 'ahead', ahead_by: 1 };
+  f.data[`/compare/${revision}...${second}`] = { status: 'ahead', ahead_by: 3 };
+  const tips = [first, second, second, second, second];
+  let branchReads = 0;
+  const read = path => path.endsWith('/branches/master')
+    ? { commit: { sha: tips[Math.min(branchReads++, tips.length - 1)] } }
+    : f.read(path);
+  // Pass one sees tagSha === tip but master already moved; pass two finds
+  // real commits past the tag and goes due at the live tip.
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read }),
+    { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision: second, ciRunId: 123, ciRunAttempt: 1 });
 });
 
 test('independent pinned inputs are read in parallel so the still-tip window stays small', async () => {
@@ -209,6 +282,93 @@ test('green evidence must cover the live tip within a bounded commit window', as
   assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-stale' });
 });
 
+test('a whole-run failure still counts when the required checks on its SHA are green', async () => {
+  const f = fixture();
+  // authority-drift is advisory and off Merge Gate needs: the run concludes
+  // failure while the only required context stays green.
+  f.run.conclusion = 'failure';
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+    { name: 'Check authority drift (hermetic)', status: 'completed', conclusion: 'failure', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input),
+    { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision, ciRunId: 123, ciRunAttempt: 1 });
+  const timedOut = fixture();
+  timedOut.run.conclusion = 'timed_out';
+  timedOut.data[CHECK_RUNS_KEY(revision)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(timedOut.input)).due, true);
+});
+
+test('required-check evidence fails closed on pending, red, foreign-app, empty and inconsistent inventories', async () => {
+  const green = { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } };
+  for (const inventory of [
+    { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } }] },
+    { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } }] },
+    { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 1 } }] },
+    { total_count: 0, check_runs: [] },
+    { total_count: 2, check_runs: [green] },
+    { total_count: 1 },
+  ]) {
+    const f = fixture();
+    f.run.conclusion = 'failure';
+    f.data[CHECK_RUNS_KEY(revision)] = inventory;
+    assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+  }
+});
+
+test('an empty required-check set or missing names can never prove green evidence', async () => {
+  const f = fixture();
+  f.run.conclusion = 'failure';
+  f.data['/rules/branches/master'] = [];
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+});
+
+test('branch protection contexts count when the ruleset lists no required checks', async () => {
+  const f = fixture();
+  f.data['/branches/master'] = { commit: { sha: revision }, protection: { required_status_checks: { contexts: ['Merge Gate'] } } };
+  f.data['/rules/branches/master'] = [];
+  f.run.conclusion = 'failure';
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+});
+
+test('required-check evidence pages through the full check-run inventory', async () => {
+  const f = fixture();
+  f.run.conclusion = 'failure';
+  const filler = Array.from({ length: 100 }, (_, i) => ({ name: `advisory-${i}`, status: 'completed', conclusion: 'success', app: { id: 15368 } }));
+  f.data[CHECK_RUNS_KEY(revision, 1)] = { total_count: 101, check_runs: filler };
+  f.data[CHECK_RUNS_KEY(revision, 2)] = { total_count: 101, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  f.data[CHECK_RUNS_KEY(revision, 2)] = { total_count: 102, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+});
+
+test('a settled re-run failure does not override an earlier required-check success, but an unsettled one does', async () => {
+  const f = fixture();
+  f.run.conclusion = 'failure';
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+    { name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+    { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+});
+
 test('failed, running, absent, foreign and ambiguous CI evidence fails closed', async () => {
   for (const conclusion of ['failure', 'timed_out', 'cancelled', 'skipped', 'neutral', null]) {
     const f = fixture(); f.run.conclusion = conclusion;
@@ -230,6 +390,7 @@ test('a newer failed run cannot inherit an older success; tip rechecked before e
   f.data[RUNS_KEY] = { total_count: 2, workflow_runs: [f.run, { ...f.run, id: 124, conclusion: 'failure' }] };
   assert.equal((await planReleaseCadence(f.input)).due, false);
   const g = fixture(); let branches = 0;
+  g.data[`/compare/${revision}...${tagged}`] = { status: 'diverged' };
   const read = path => path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : g.read(path);
   assert.deepEqual(await planReleaseCadence({ ...g.input, read, attempts: 1 }), { due: false, reason: 'master-moved' });
 });
@@ -314,6 +475,23 @@ test('exhausted timeouts defer the release without granting eligibility', async 
   assert.match(reports[1], /timeout.*after 3 read attempts.*deferring/);
   const gateway = metadataReaderFixture([{ status: 503 }, { status: 502 }, { status: 504 }]);
   assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...fixture().input, read: gateway.read }),
+    { due: false, reason: 'metadata-unavailable' });
+});
+
+test('a plan that outruns the shared read budget defers instead of failing the job', async () => {
+  const f = fixture();
+  let clock = 0;
+  const reports = [];
+  const read = createPublicMetadataReader({ now: () => clock, sleep: async ms => { clock += ms; },
+    report: message => reports.push(message),
+    fetchImpl: async url => {
+      clock += 4_000;
+      const data = await f.read(url.slice('https://api.github.com/'.length));
+      return { status: 200, text: async () => JSON.stringify(data) };
+    } });
+  // Eight reads at four seconds each exhaust the thirty-second budget
+  // mid-plan; the whole plan defers rather than failing the workflow job.
+  assert.deepEqual(await planReleaseCadenceWhenAvailable({ ...f.input, read }),
     { due: false, reason: 'metadata-unavailable' });
 });
 
@@ -404,6 +582,7 @@ test('a recovered metadata read still passes every cadence identity and fresh-ti
   await assert.rejects(planReleaseCadence({ ...f.input, read: badIdentity.read }));
   assert.equal(badIdentity.calls.length, 1);
   const g = fixture(); let branches = 0;
+  g.data[`/compare/${revision}...${tagged}`] = { status: 'diverged' };
   const movedRead = createPublicMetadataReader({ now: () => 0, fetchImpl: async url => {
     const path = url.slice('https://api.github.com/'.length);
     const data = path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : await g.read(path);
