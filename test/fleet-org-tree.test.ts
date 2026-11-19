@@ -99,7 +99,20 @@ describe('fleetOrgTree', () => {
     expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'planners', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
     expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
     expect(find(tree, 'claude').jobs.map(job => job.id)).toEqual(['RQ-C', 'RQ-A']);
-    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3 }, { from: 'Leader (CEO)', to: 'devin', count: 1 }]);
+    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3, lastAt: '1970-01-01T00:00:00.001Z' }, { from: 'Leader (CEO)', to: 'devin', count: 1, lastAt: '1970-01-01T00:00:00.002Z' }]);
+  });
+});
+
+describe('fleetOrgTree health and message times', () => {
+  it('carries each lane health badge, null for a lane with no reading, and the last message time', () => {
+    const edges = { source: 'available', edges: [{ from: { address: 'leader', provider: null }, to: { address: 'claude', provider: null }, messages: 2, messagesLastHour: 2, lastAt: Date.parse('2026-11-17T11:55:00Z') }] } as unknown as Parameters<typeof fleetOrgMap>[1]['messages'];
+    const tree = fleetOrgTree(map([session('RQ-A', 'claude')], edges), { runs: runs([lane('claude', 1, 8, 0)]),
+      laneHealth: [{ lane: 'claude', health: { state: 'starved', reason: 'starved: 5 free slots', number: 5 } }, { lane: 'devin' }] });
+    expect(find(tree, 'claude').health).toEqual({ state: 'starved', reason: 'starved: 5 free slots', number: 5 });
+    expect(find(tree, 'devin').health).toBeNull();
+    expect(find(tree, 'zai').health).toBeNull();
+    expect(fleetOrgTree(map([]), {}).lanes.every(row => row.health === null)).toBe(true);
+    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 2, lastAt: '2026-11-17T11:55:00.000Z' }]);
   });
 });
 
