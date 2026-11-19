@@ -64,6 +64,8 @@ export interface BetsProposeReport {
   /** Candidates gathered, and how many the check dropped because the thing already exists. */
   gathered: number;
   droppedExisting: number;
+  /** Goals the check dropped because the thing already exists (so a caller can say why). */
+  droppedGoals?: string[];
   proposals: BetsProposal[];
 }
 
@@ -120,6 +122,7 @@ export function proposeBets(
   const seen = new Set<string>();
   const kept: Omit<BetsProposal, 'rank'>[] = [];
   let gathered = 0, droppedExisting = 0;
+  const droppedGoals: string[] = [];
   for (const c of candidates) {
     const key = `${c.source}|${clean(c.title).toLowerCase()}`;
     if (seen.has(key)) continue;
@@ -129,7 +132,7 @@ export function proposeBets(
     // A docs gap is judged against docs headings only: the command's own help row would always match it.
     const lookup: BetsCheckSources = c.source === 'cli' ? { cli: [], api: [], pane: [], doc: sources.doc } : sources;
     const check = checkGoal(title, lookup);
-    if (check.verdict === 'exists') { droppedExisting++; continue; }
+    if (check.verdict === 'exists') { droppedExisting++; droppedGoals.push(title); continue; }
     const size = SIZE[c.source];
     const score = (USER_FACING[c.source] ? 1000 : 0) + (200 - size) + (check.verdict === 'new' ? 5 : 0);
     const text = describe({ ...c, title });
@@ -151,7 +154,7 @@ export function proposeBets(
     ids.add(id);
     return { rank: i + 1, ...p, id };
   });
-  return { schema: BETS_PROPOSE_SCHEMA, readOnly: true, lane: opts.lane, repo: opts.repo, count: opts.count, scoreRule: BETS_PROPOSE_SCORE_RULE, gathered, droppedExisting, proposals };
+  return { schema: BETS_PROPOSE_SCHEMA, readOnly: true, lane: opts.lane, repo: opts.repo, count: opts.count, scoreRule: BETS_PROPOSE_SCORE_RULE, gathered, droppedExisting, droppedGoals, proposals };
 }
 
 /** Structural check of a report against bets.propose.v1. */
