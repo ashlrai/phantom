@@ -312,7 +312,14 @@ carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
 `queue/slots.json` also parses it recomputes the same eligibility reason codes
 the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
-reasons stay unknown. Independently of `source`, `fleetStop` names the
+reasons stay unknown. Ready rows are validated exactly like the dispatcher's
+`work_market.requirements`: a malformed job id, tier or requirements spec —
+including a spec-less row whose `queue/router-queue.md` `(attrs)` envelope
+fails validation — never reaches the market, so the report counts it in
+`invalidRows` and excludes it from `waiting` and the unfed math, matching the
+dispatcher's `_waiting` set (on an admission-stopped tick the dispatcher
+counts every JID+tier-valid row by its raw lane column instead, and the
+derived report follows that). Independently of `source`, `fleetStop` names the
 tick's fleet-wide stop in the dispatcher's own codes — `admission_stopped`
 when the PAUSE file, disk guard or load gate kept the market from running,
 `global_admission` when the launch budget or fleet cap was spent — or `null`

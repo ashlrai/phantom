@@ -452,10 +452,17 @@ window's `route_decision` rows to each job's latest decision and tallies
 `overrides` field carries the counts (`available`, `decided`, `overridden`,
 `byReason`, `lanes`). The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
-adaptive.json, HOLD); when slots.json parses, a derived report recomputes
-per-lane `blocked` reason codes with the same eligibility rules as
-`contrib/mac/work_market.py`, reported as `derivedReasons: true`. Reports also
-carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
+adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
+report recomputes per-lane `blocked` reason codes with the same eligibility
+rules as `contrib/mac/work_market.py`, reported as `derivedReasons: true`.
+Ready rows are validated exactly like `work_market.requirements` — a malformed
+job id, tier or requirements spec (including a spec-less row whose
+router-queue.md `(attrs)` envelope fails `from_envelope`) is rejected before
+the market sees it, so it is counted in the report's `invalidRows` and left
+out of `waiting`/unfed math like the dispatcher's `_waiting` set; on an
+admission-stopped tick the dispatcher counts every JID+tier-valid row by its
+raw lane column instead, and the derived report follows that relaxed set.
+Reports also carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
 tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
 `paused`/`admission` verdict for a derived report (where it replaces the
 per-lane codes) or back out of the published `blocked` codes for a

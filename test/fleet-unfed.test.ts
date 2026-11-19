@@ -336,6 +336,90 @@ describe('derived market reasons', () => {
   });
 });
 
+describe('ready row validation', () => {
+  const VLANES = {
+    a: { running: 0, target: 2, held: false },
+    b: { running: 0, target: 2, held: false },
+  };
+  const vrow = (job: string, lane: string, tier = 'work', req?: string, repo = 'phantom') =>
+    [job, repo, lane, tier, `/q/prompts/${job}.md`, ...(req === undefined ? [] : [req])].join('\t');
+
+  it('rejects rows the dispatcher drops before the market sees them', () => {
+    const ready = [
+      vrow('RQ-OK', 'a'),
+      vrow('RQ-BADKEY', 'a', 'work', '{"preferred_lane":"a","bogus":1}'),
+      vrow('RQ-BADPREF', 'a', 'work', '{"preferred_lane":"NOT_A_LANE"}'),
+      vrow('RQ-BADNEEDS', 'a', 'work', '{"needs":"git"}'),
+      vrow('RQ-BADNEEDSCAP', 'a', 'work', '{"needs":["git","Bad_Cap"]}'),
+      vrow('RQ-BADTIERORD', 'a', 'work', '{"min_tier":"work","max_tier":"fast"}'),
+      vrow('RQ-BADREPO', 'other', 'a', 'work', '{"repo":"phantom"}'),
+      vrow('RQ-NULLSPEC', 'a', 'work', 'null'),
+      vrow('RQ-ARRSPEC', 'a', 'work', '[1,2]'),
+      vrow('RQ BAD JOB', 'a'),
+      vrow('RQ-BADTIER', 'a', 'bogus-tier'),
+      vrow('RQ-BADREPOP', 'a', 'work', undefined, 'a/b'),
+      vrow('RQ-BADLANECOL', 'NOT_A_LANE'),
+      'RQ-SHORT\ta\tb',
+    ].join('\n');
+    const hints = readyHints(ready);
+    expect(hints.waiting).toBe(1);
+    expect(hints.invalid).toBe(12);
+    expect(Object.fromEntries(hints.byLane)).toEqual({ a: 1 });
+    const report = currentUnfed(JSON.stringify({ lanes: VLANES }), ready);
+    expect(report.waiting).toBe(1);
+    expect(report.invalidRows).toBe(12);
+    // Only the valid row waits, hinted at a: b still sees one row elsewhere.
+    expect(report.resources.find(r => r.lane === 'b')).toMatchObject({ waitingElsewhere: 1, unfed: true });
+    expect(report.resources.find(r => r.lane === 'a')).toMatchObject({ readyHinted: 1, waitingElsewhere: 0, unfed: false });
+  });
+
+  it('resolves spec-less rows from the router-queue.md envelope like the dispatcher', () => {
+    const routerQueue = [
+      '- READY RQ-ENV (P1, pool=codex-personal, needs=git|secrets:DEPLOY_KEY, tier=mid): do the thing',
+      '- CLAIMED 03:17 dispatchd worker RQ-ENV2 (lane=claude, exclusive=true, impact=2): other',
+      '- READY RQ-SPEC (P1, pool=claude): conflicting envelope the spec column overrides',
+    ].join('\n');
+    const ready = [
+      vrow('RQ-ENV', 'codex-cmp'),
+      vrow('RQ-ENV2', 'codex-cmp'),
+      vrow('RQ-PLAIN', 'codex-cmp'),
+      vrow('RQ-SPEC', 'codex-cmp', 'work', '{"preferred_lane":"devin"}'),
+    ].join('\n');
+    const hints = readyHints(ready, routerQueue);
+    expect(hints.waiting).toBe(4);
+    expect(hints.invalid).toBe(0);
+    // pool=/lane= attrs beat the lane column; an embedded spec column beats the envelope.
+    expect(hints.rows[0]).toMatchObject({ hint: 'codex-personal', needs: ['git', 'secrets:DEPLOY_KEY'] });
+    expect(hints.rows[1]).toMatchObject({ hint: 'claude' });
+    expect(hints.rows[2]).toMatchObject({ hint: 'codex-cmp', needs: [] });
+    expect(hints.rows[3]).toMatchObject({ hint: 'devin' });
+  });
+
+  it('rejects a row whose envelope fails validation', () => {
+    const routerQueue = '- READY RQ-BADENV (P1, pool=codex-cmp, exclusive=maybe): x';
+    const hints = readyHints(vrow('RQ-BADENV', 'codex-cmp'), routerQueue);
+    expect(hints.waiting).toBe(0);
+    expect(hints.invalid).toBe(1);
+  });
+
+  it('counts every JID+tier-valid row by raw lane column when admission stopped', () => {
+    const status = JSON.stringify({ lanes: VLANES, paused: 'hold' });
+    const ready = [
+      vrow('RQ-OK', 'a'),
+      vrow('RQ-BADSPEC', 'a', 'work', '{"bogus":1}'),
+      vrow('RQ-BADTIER', 'a', 'bogus-tier'),
+    ].join('\n');
+    const report = currentUnfed(status, ready);
+    expect(report.fleetStop).toBe('admission_stopped');
+    // The stopped _waiting never parses requirements: the bad spec still waits,
+    // hinted by its raw lane column; the bad tier row does not.
+    expect(report.waiting).toBe(2);
+    expect(report.invalidRows).toBe(2);
+    expect(report.resources.find(r => r.lane === 'a')).toMatchObject({ readyHinted: 2, waitingElsewhere: 0, unfed: false });
+    expect(report.resources.find(r => r.lane === 'b')).toMatchObject({ waitingElsewhere: 2, unfed: true, blocked: { admission_stopped: 2 } });
+  });
+});
+
 describe('fleet stop verdicts', () => {
   const STOP_LANES = { a: { running: 0, target: 2, held: false }, b: { running: 1, target: 1, held: false } };
   const TWO_WAITING = [row('RQ-A', 'b'), row('RQ-B', 'b')].join('\n');
