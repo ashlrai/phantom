@@ -48,6 +48,7 @@ Usage:
   phm leader ask "<text>" [--json]
   phm leader org [--json]
   phm leader assign --rq <RQ-KEY> --owner <role> --summary "<text>" [--due YYYY-MM-DD] [--status assigned|in_progress|blocked|done|proposed] [--outcome "<text>"] [--json]
+  phm leader seat --pick  print only the lane and model to launch the leader on now (exit 3: none)
   phm leader seat [pick] [--json]  where the leader runs now and where it moves next (read-only; exit 3: no seat)
   phm leader seat --tier elite|workhorse|fast|local [--json]  inspect legacy task-tier admission
   phm leader inbox [--json] [--limit n] [--text "message"]
@@ -631,10 +632,17 @@ async function runOfficeCli(sub: 'status' | 'ask' | 'org' | 'assign', args: stri
 async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number> {
   const json = flag(args, '--json');
   if (sub === 'seat' && !args.includes('--tier')) {
+    const onlyPick = flag(args, '--pick');
     if (args.length > 1 || (args.length === 1 && args[0] !== 'pick')) { console.error(USAGE); return 2; }
-    const { readLeaderSeat, leaderSeatText } = await import('../core/fleet/leader-seat.js');
+    const { readLeaderSeat, leaderSeatText, launcherSeat } = await import('../core/fleet/leader-seat.js');
     const { sanitizePublicJson } = await import('../core/util/public-json.js');
     const result = await readLeaderSeat();
+    if (onlyPick) {
+      const chosen = launcherSeat(result);
+      if (!chosen) { console.error(result.fallback_reason ?? result.reason ?? 'No seat available.'); return 3; }
+      console.log(sanitizePublicJson(`${chosen.lane} ${chosen.model}`));
+      return 0;
+    }
     console.log(json ? JSON.stringify(sanitizePublicJson(result), null, 2) : sanitizePublicJson(leaderSeatText(result, args[0] === 'pick')));
     return result.pick ? 0 : 3;
   }

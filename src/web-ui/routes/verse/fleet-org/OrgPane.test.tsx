@@ -93,3 +93,22 @@ it('Machines row says "Only this Mac." with one computer', async () => {
   render(<OrgPane {...props} />);
   expect(await within(await screen.findByRole('region', { name: 'Machines' })).findByText('Only this Mac.')).toBeTruthy();
 });
+
+it('shows the Leader chip with the model and warns above 95%', async () => {
+  const state = (used: number) => ({ v: 1, timeline: [], actions: [], hitRate: {}, seat: { ok: true, line: 'x',
+    chip: { model: 'Opus 5.5', lane: 'claude', used_pct: used, reset_at: '2026-11-21T00:00:00Z', warn: used > 95 } } });
+  stub({ '/api/verse/leader': state(40), [MAP]: orgMap() });
+  render(<OrgPane {...props} />);
+  expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('Leader: Opus 5.5 on claude · 40% used');
+  expect(screen.getByRole('status', { name: 'Leader' })).not.toHaveTextContent('nearly full');
+  cleanup(); evictAll();
+  stub({ '/api/verse/leader': state(99), [MAP]: orgMap() });
+  render(<OrgPane {...props} />);
+  expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('plan nearly full, resets 2026-11-21T00:00:00Z');
+});
+
+it('shows the Leader chip as unknown when the leader read is down', async () => {
+  stub({ [MAP]: orgMap() });
+  render(<OrgPane {...props} />);
+  expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('Leader: unknown');
+});

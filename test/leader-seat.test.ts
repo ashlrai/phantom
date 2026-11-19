@@ -62,7 +62,7 @@ describe('leader seat fixtures', () => {
     const s = status(); Reflect.deleteProperty(s, 'leader');
     Object.values(s.lanes).forEach(l => { Reflect.deleteProperty(l, 'health'); l.running = 1; });
     const report = await readLeaderSeat(await fixture(s));
-    expect(report.current).toEqual({ lane: null, model: null, lastSuccessAt: null }); expect(report.pick).toBeNull();
+    expect(report.current).toEqual({ lane: null, model: null, lastSuccessAt: null, used_pct: null, reset_at: null }); expect(report.pick).toBeNull();
     expect(leaderSeatText(report)).toContain('Leader seat: unknown · model unknown');
   });
   it('expires status, quota and timing independently; held and exhausted lanes cannot win', async () => {
@@ -107,6 +107,39 @@ describe('leader seat pick, rate limits and dry-run', () => {
       registry: async () => ['claude-opus-5-5', 'gpt-6.1-sol', 'gemini-3-pro'].map(id => entry(id, !unconfirmed.includes(id))),
       failures: async () => failures, now });
   }
+
+  describe('seat report for launchers (RQ-LEADERSEATN20SQ8)', () => {
+    const { launcherSeat, leaderChip } = seat;
+    it('healthy seat keeps the leader and reports its usage and reset', async () => {
+      const report = await read();
+      expect(report).toMatchObject({ healthy: true, current: { lane: 'claude', used_pct: 20, reset_at: reset } });
+      expect(launcherSeat(report)).toEqual({ lane: 'claude', model: 'claude-opus-5-5' });
+      expect(leaderChip(report)).toEqual({ model: 'Opus 5.5', lane: 'claude', used_pct: 20, reset_at: reset, warn: false });
+    });
+    it('drained seat moves to two fallbacks, soonest reset first', async () => {
+      const s = status(); s.budget.claude = budget(100);
+      s.budget['codex-personal'] = { weekly_used_pct: 40, observed_at: AT, reset_at: '2026-11-23T00:00:00Z' };
+      s.budget.gemini = { weekly_used_pct: 60, observed_at: AT, reset_at: '2026-11-19T00:00:00Z' };
+      const report = await read(s);
+      expect(report.healthy).toBe(false);
+      expect(report.fallback?.map(f => [f.lane, f.used_pct, f.reset_at])).toEqual([['gemini', 60, '2026-11-19T00:00:00Z'], ['codex-personal', 40, '2026-11-23T00:00:00Z']]);
+      expect(report.fallback_reason).toBeNull();
+      expect(launcherSeat(report)).toEqual({ lane: 'gemini', model: 'gemini-3-pro' });
+      expect(leaderChip(report).warn).toBe(true);
+    });
+    it('no usable fallback says so plainly and picks nothing', async () => {
+      const s = status(); for (const name of Object.keys(s.lanes)) s.budget[name] = budget(100);
+      const report = await read(s);
+      expect(report.fallback).toEqual([]);
+      expect(report.fallback_reason).toBe('No other plan has usage left.');
+      expect(launcherSeat(report)).toBeNull();
+      expect(leaderSeatText(report)).toContain('No other plan has usage left.');
+    });
+    it('lanes with no usage reading are skipped, not guessed', async () => {
+      const s = status(); s.budget.claude = budget(100); delete s.budget.gemini;
+      expect((await read(s)).fallback?.map(f => f.lane)).toEqual(['codex-personal']);
+    });
+  });
 
   describe('pickSeat', () => {
     it('primary healthy: keeps the leader on the pool with the most runway and names the fallback', async () => {
@@ -214,6 +247,15 @@ describe('leader seat pick, rate limits and dry-run', () => {
       expect((await cli(['seat'], report)).code).toBe(3);
       const shown = await cli(['seat'], await read());
       expect(shown.code).toBe(0); expect(shown.out.split('\n')[0]).toBe('Leader: Opus 5.5 on Claude, next: GPT-6.1 Sol on Codex');
+    });
+    it('--pick prints only the lane and model; exit 3 when nothing is usable', async () => {
+      expect(await cli(['seat', '--pick'], await read())).toEqual({ code: 0, out: 'claude claude-opus-5-5' });
+      const s = status(); s.budget.claude = budget(100);
+      expect(await cli(['seat', '--pick'], await read(s))).toEqual({ code: 0, out: 'codex-personal gpt-6.1-sol' });
+      for (const name of Object.keys(s.lanes)) s.budget[name] = budget(100);
+      expect((await cli(['seat', '--pick'], await read(s))).code).toBe(3);
+      const json = JSON.parse((await cli(['seat', '--json'], await read())).out);
+      expect(json).toMatchObject({ schema: 'leader.seat.v1', healthy: true });
     });
     it('refuses a real run, a missing prompt file and other seats', async () => {
       const file = await promptFile(), report = await read();
