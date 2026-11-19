@@ -109,7 +109,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   }
   let command: string | undefined;
   let commandIndex = -1;
-  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs', '--lane', '--min']);
+  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs', '--lane', '--min', '--runs-dir']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--') { command = args[i + 1]; commandIndex = i + 1; break; }

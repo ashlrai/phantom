@@ -1313,6 +1313,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'queue top|lane|drop <id> [<lane>] [--dry-run] [--json]', desc: 'Steer one queued job: move it to the front, to another lane, or out of the queue (kept in queue/dropped.tsv).', topic: 'autonomy' },
   { cmd: 'queue supersede [--json] [--apply]', desc: 'List queued jobs that a newer cycle of the same job replaces; --apply archives them.', topic: 'autonomy' },
   { cmd: 'queue autofill --lane <lane> [--min <n>] [--apply] [--json]', desc: 'Keep a lane fed: when it has fewer than --min ready jobs (default its slot target), draft the gap from bets propose, skip anything already shipped or queued, and with --apply add the rest as READY jobs. Dry run by default; says "Lane is full." when nothing is needed.', topic: 'autonomy' },
+  { cmd: 'queue autofill --status [--json]', desc: 'Show whether self-tick autofill is on, the last runs, and how many bets are left this hour (4 per lane, 12 in all). Turn it off with fleet config set autofill.off 1.', topic: 'autonomy' },
   { cmd: 'queue dedupe [--file <router-queue.md>] [--apply] [--json]', desc: 'Find repeated READY jobs; preview by default, or mark repeats superseded with --apply.', topic: 'autonomy' },
   { cmd: 'queue wait [--events <file>] [--json]', desc: 'Show the oldest recorded queued PR and why it is waiting; required checks stay enforced.', topic: 'observability' },
   { cmd: 'queue stats [--json] [--window <seconds>]', desc: 'Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.', topic: 'observability' },
