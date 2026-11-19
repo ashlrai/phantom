@@ -34,6 +34,19 @@ it('counts calls, error rate and latency over the window, unknown when unmeasure
   expect(laneHealthLine(computeLaneHealth(snap([], null)).lanes[0]!)).toContain('commit unknown');
 });
 
+it('counts only runs started inside the window: a future stamp is not a call', () => {
+  const future = new Date(NOW + 30 * 60_000).toISOString();
+  const h = computeLaneHealth(snap([
+    run({ id: 'in', startedAt: at(10), endedAt: at(5), outcome: 'merged', phase: 'watching' }),
+    run({ id: 'edge', startedAt: new Date(NOW).toISOString(), phase: 'producing' }),
+    run({ id: 'future', startedAt: future, endedAt: future, outcome: 'failed', phase: 'producing' }),
+  ]));
+  const codex = h.lanes.find((l) => l.lane === 'codex')!;
+  expect(codex.calls).toBe(2);
+  expect(codex.errorRate).toBe(0);
+  expect(codex.latencyP50Ms).toBe(5 * 60_000);
+});
+
 it('flags a run past its phase timeout with phase age, not one within it or one that waits by design', () => {
   const h = computeLaneHealth(snap([
     run({ id: 'hung', phaseStartedAt: at(47) }),
