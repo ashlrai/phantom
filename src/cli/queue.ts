@@ -9,6 +9,7 @@ const HELP = `Usage: phm queue [--json]
        phm queue wait [--events <file>] [--json]
        phm queue batches [--runs <directory>] [--json]
        phm queue stats [--json] [--window <seconds>]
+       phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
        phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
@@ -18,6 +19,9 @@ const HELP = `Usage: phm queue [--json]
 
 stats: sliding windows over the local visit journal (~/.ashlr/queue/visits.jsonl).
   Windows default to 1h, 24h and 7d. Rates per second; wait in seconds.
+
+visits-sync: fold metrics/jobs.jsonl and router-queue.md into that journal
+  (dry run unless --apply). See docs/QUEUE-STATS.md for the station mapping.
 
 report: read local JSON/JSONL station visits: {station, arrivedAt, startedAt?, completedAt?}.
   Timestamps must be ISO with timezone. JSON may also be {start,end,events:[...]}.
@@ -136,6 +140,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   }
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);
+  if (args[0] === 'visits-sync') return (await import('./queue-visits-sync.js')).cmdQueueVisitsSync(args.slice(1));
   console.error(HELP);
   return 2;
 }
