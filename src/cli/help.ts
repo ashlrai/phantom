@@ -955,7 +955,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'recut plan [--json] [--prs <dirty-landed.json>] [<area>...]', desc: 'Per recut area, emit or skip this cycle with one plain reason. Writes nothing.', topic: 'observability' },
   { cmd: 'recut prompt <job-id> --lane <lane> --tier <tier>', desc: 'Print a recut prompt from stdin with the standard task line first.', topic: 'observability' },
   { cmd: 'jobs state <id> [--json]', desc: 'Show whether a job is running or done, with the evidence.', topic: 'observability' },
-  { cmd: 'jobs empty [--since 24h] [--family F] [--json]', desc: 'Explain empty jobs with family and lane suggestions.', topic: 'observability' },
+  { cmd: 'jobs empty [--since 24h] [--family F] [--lane L] [--json]', desc: 'Why jobs ended empty, per lane and reason, with example sentences.', topic: 'observability' },
   { cmd: 'jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json]', desc: 'Who queued the jobs that started, per hour over the last 6 hours.', topic: 'observability' },
   { cmd: 'jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]', desc: 'Why jobs ended empty, ranked by recorded wasted tokens.', topic: 'observability' },
   { cmd: 'metrics idle --status <snapshot.json> --jobs <jobs.jsonl> [--json]', desc: 'Estimate idle slot-minutes and flag long-running jobs from local snapshots.', topic: 'autonomy' },
