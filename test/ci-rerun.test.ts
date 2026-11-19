@@ -105,4 +105,43 @@ describe('resident CI reruns', () => {
     expect((await runCiRerunMaintenance(opts)).repos['org/repo']?.errors).toEqual(['analysis unavailable']);
     expect(gh).not.toHaveBeenCalled();
   });
+  it('stamps the failing test on attempt rows and queues a recurring flake after three heads', async () => {
+    const { opts, report } = setup();
+    const heads = ['a'.repeat(40), 'c'.repeat(40), 'd'.repeat(40)];
+    for (const [i, head] of heads.entries()) {
+      report.groups[0]!.runs[0]!.head = head;
+      report.groups[0]!.runs[0]!.runId = 123 + i;
+      const status = await runCiRerunMaintenance(opts);
+      expect(status.repos['org/repo']?.recurringFlakes).toBe(i === 2 ? 1 : 0);
+      expect(status.repos['org/repo']?.flakeFixesQueued).toBe(i === 2 ? 1 : 0);
+    }
+    const journal = readFileSync(opts.journalPath!, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const attempts = journal.filter((row: { outcome: string }) => row.outcome === 'attempt');
+    expect(attempts).toHaveLength(3);
+    expect(attempts.every((row: { test?: string }) => row.test === 'test/a.test.ts > a')).toBe(true);
+    const queue = readFileSync(opts.queueFile!, 'utf8');
+    expect(queue).toContain('- READY RQ-CIFLAKE-');
+    expect(queue).toContain('test/a.test.ts > a');
+    expect(queue).toContain('3 distinct heads');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.recurringFlakes).toHaveLength(1);
+    expect(read.recurringFlakes[0]).toMatchObject({ repo: 'org/repo', attempts: 3 });
+    expect(read.recurringFlakes[0]!.heads).toEqual([...heads].sort());
+  });
+  it('reports recurring flakes without queueing them while authority or KILL blocks writes', async () => {
+    const { opts, report } = setup();
+    opts.autonomyEffective = () => false;
+    for (const [i, head] of ['a'.repeat(40), 'c'.repeat(40), 'd'.repeat(40)].entries()) {
+      report.groups[0]!.runs[0]!.head = head;
+      report.groups[0]!.runs[0]!.runId = 200 + i;
+      const status = await runCiRerunMaintenance(opts);
+      expect(status.repos['org/repo']?.recurringFlakes).toBe(i === 2 ? 1 : 0);
+    }
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.queueBlocked).toBe('autonomy-off');
+    expect(status.repos['org/repo']?.flakeFixesQueued).toBe(0);
+    let queue = '';
+    try { queue = readFileSync(opts.queueFile!, 'utf8'); } catch { /* absent */ }
+    expect(queue).not.toContain('RQ-CIFLAKE-');
+  });
 });

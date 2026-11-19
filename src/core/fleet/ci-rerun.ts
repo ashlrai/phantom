@@ -6,10 +6,11 @@ import { ashlrHome } from '../cloud/store.js';
 import { displaySurfaceTarget, evaluateStandingAuthority } from '../authority/effective-config.js';
 import { readKillSwitch } from '../sandbox/policy.js';
 import { analyzeCiBaseline, enqueueBaselineFixes } from './ci-baseline.js';
+import { enqueueFlakeFixes, JOURNAL_TEST_MAX, recurringFlakes } from './ci-flakes.js';
 import { defaultCiGh } from './ci-failure-groups.js';
 
-type Entry = { at: string; repo: string; head: string; runId: number; pr: number; outcome: 'attempt' | 'ok' | 'failed' };
-type RepoStatus = { groups: number; attempted: number; ok: number; failed: number; skippedDuplicate: number; skippedCap: number; queued: number; queueBlocked: string | null; errors: string[] };
+type Entry = { at: string; repo: string; head: string; runId: number; pr: number; outcome: 'attempt' | 'ok' | 'failed'; test?: string };
+type RepoStatus = { groups: number; attempted: number; ok: number; failed: number; skippedDuplicate: number; skippedCap: number; queued: number; flakeFixesQueued: number; recurringFlakes: number; queueBlocked: string | null; errors: string[] };
 export interface CiRerunOptions {
   repos: string[];
   signal: AbortSignal;
@@ -48,7 +49,7 @@ export function readCiReruns(path = ciRerunPaths().journalPath, now = Date.now()
     } finally { closeSync(fd); }
   } catch { /* absent journal */ }
   const attempts = entries.filter(e => e.outcome === 'attempt');
-  return { entries, recent: entries.slice(-100), counts: { attempted: attempts.length, ok: entries.filter(e => e.outcome === 'ok').length, failed: entries.filter(e => e.outcome === 'failed').length }, lastHour: attempts.filter(e => Date.parse(e.at) > now - 3_600_000).length };
+  return { entries, recent: entries.slice(-100), counts: { attempted: attempts.length, ok: entries.filter(e => e.outcome === 'ok').length, failed: entries.filter(e => e.outcome === 'failed').length }, lastHour: attempts.filter(e => Date.parse(e.at) > now - 3_600_000).length, recurringFlakes: recurringFlakes(entries, { nowMs: now }) };
 }
 
 export function readCiRerunStatus(path = ciRerunPaths().statusPath): { lastRunAt: string; status: string; repos: Record<string, RepoStatus> } | null {
@@ -83,7 +84,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
   try {
     for (const repo of opts.repos) {
       opts.signal.throwIfAborted();
-      const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, queueBlocked: null, errors: [] };
+      const s: RepoStatus = { groups: 0, attempted: 0, ok: 0, failed: 0, skippedDuplicate: 0, skippedCap: 0, queued: 0, flakeFixesQueued: 0, recurringFlakes: 0, queueBlocked: null, errors: [] };
       status.repos[repo] = s;
       try {
         const report = await (opts.analyzer ?? analyzeCiBaseline)(repo, gh);
@@ -99,6 +100,7 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
             const cap = opts.maxPerHour ?? 10;
             if (!Number.isFinite(cap) || journal.filter(e => e.outcome === 'attempt' && Date.parse(e.at) > now() - 3_600_000).length >= Math.max(0, cap)) { s.skippedCap++; continue; }
             const entry: Entry = { at: new Date(now()).toISOString(), repo, ...run, outcome: 'attempt' };
+            if (typeof group.testId === 'string' && group.testId) entry.test = group.testId.slice(0, JOURNAL_TEST_MAX);
             append(entry);
             s.attempted++;
             let ok = false;
@@ -109,11 +111,18 @@ export async function runCiRerunMaintenance(opts: CiRerunOptions) {
           }
         }
         opts.signal.throwIfAborted();
-        if (report.groups.some(g => g.classification === 'shared-baseline')) {
+        const flakes = recurringFlakes(journal.filter(e => e.repo === repo), { nowMs: now() });
+        s.recurringFlakes = flakes.length;
+        const sharedBaseline = report.groups.some(g => g.classification === 'shared-baseline');
+        if (sharedBaseline || flakes.length > 0) {
+          const queuePath = opts.queueFile ?? join(homedir(), '.ashlr-runs/queue/router-queue.md');
           const authority = (opts.autonomyEffective ?? (() => evaluateStandingAuthority({ mode: 'cached', surface: displaySurfaceTarget() }).effectiveSwitch !== 'off'))();
           const killOff = (opts.killOff ?? (() => readKillSwitch().state === 'inactive'))();
           if (!authority || !killOff) s.queueBlocked = [!authority ? 'autonomy-off' : '', !killOff ? 'kill-on-or-unknown' : ''].filter(Boolean).join(',');
-          else s.queued = enqueueBaselineFixes(report, opts.queueFile ?? join(homedir(), '.ashlr-runs/queue/router-queue.md')).length;
+          else {
+            if (sharedBaseline) s.queued = enqueueBaselineFixes(report, queuePath).length;
+            s.flakeFixesQueued = enqueueFlakeFixes(flakes, queuePath).length;
+          }
         }
       } catch (error) {
         if (opts.signal.aborted) throw error;
