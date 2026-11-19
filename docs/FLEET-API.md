@@ -285,6 +285,17 @@ same idempotency key the recut loop uses; anything else is `needs_person`.
 This only reads the supplied file; required checks stay in place and nothing
 is merged or requeued.
 
+`phm fleet queue-latency --live [--repos phantom,lexicon] [--json]` skips the
+snapshot: it reads open PRs itself through the shared GitHub reader (default:
+the seven ashlrai repos), runs the same attribution and ends with one line such
+as `41 open PRs: 30 waiting on checks, 8 conflicting (8 recuts planned), 3 behind`.
+Add `--recover` to preview recuts for conflicting `ashlrai/phantom` heads through
+`phm fleet merge-recover` (dry run); `--recover --apply` queues them with
+merge-recover's keyed, budget-bounded retries and its pinned
+`gh pr merge --auto --match-head-commit` submit. Agents get the same data under
+`live` in the `--json` report. Without `gh` installed and signed in, `--live`
+exits 2 with a plain message.
+
 Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
