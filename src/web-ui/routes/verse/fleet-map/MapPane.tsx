@@ -4,6 +4,8 @@
  * pulses when a message crossed it in the last minute and is thicker the more
  * messages it carried. Select any node to open the pane that already shows its
  * details, or a message line to open its last 20 messages in the Messages pane.
+ * A thicker line over a pair that talked in a thread in the last 10 minutes (thicker with more messages) carries a marker
+ * when a reply is awaited; selecting it opens that thread in the Conversations panel beside the map (`phm agents conversations`).
  * Hovering a message line (or its row in the list) shows a card of its last 5
  * messages (`phm agents messages`). The Messages switch hides every message
  * line; reduced motion keeps the lines but stops the pulse.
@@ -15,6 +17,8 @@ import { messageLineWidth, type FleetLiveMap, type LiveMapEdge, type LiveMapEdge
 import type { MapEdge } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
 import { useState } from 'react';
+import { ConversationsPanel } from './ConversationsPanel.js';
+import { conversationsQuery, threadLines, type Conversation } from './conversations-model.js';
 import { prefersReducedMotion } from '../../../components/charts/motion.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
@@ -50,10 +54,13 @@ interface MapViewProps {
   onOpenMessages?: (pair: MessagePair) => void;
   /** `phm agents messages`: count and last 5 summaries per line, keyed `from->to` by node id. Null or absent: the card says unknown. */
   pairs?: Map<string, AgentsMessagePair> | null;
+  /** `phm agents conversations`: threads for the panel and the thread lines. Null when the bus is unknown; absent while loading. */
+  conversations?: Conversation[] | null;
   /** No pulse animation; lines keep their thickness. */
   reducedMotion?: boolean;
 }
-export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pairs, reducedMotion = false }: MapViewProps) {
+export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, reducedMotion = false }: MapViewProps) {
+  const [selectedThread, setSelectedThread] = useState<string | null>(null);
   const [showMessages, setShowMessages] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
   const [chosen, setChosen] = useState<MapViewMode>(readMapViewMode);
@@ -81,7 +88,8 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
   const drawn = new Set(talk.map(edge => `${edge.from}->${edge.to}`));
   const offMap = showMessages ? (edges ?? []).filter(edge => !drawn.has(`${edge.from.node}->${edge.to.node}`)) : [];
   const card = talk.find(edge => edge.id === hovered);
-  return <section className={styles.root} aria-label="Fleet map">
+  const threads = showMessages && mode === '2d' ? threadLines(conversations ?? null, now, new Set(layout.at.keys())) : [];
+  return <div className={styles.withPanel}><section className={styles.root} aria-label="Fleet map">
     <div className={styles.toolbar} role="toolbar" aria-label="Map">
       <p className={styles.headline}>{mapHeadline(map)}</p>
       {!compact && <Segmented<MapViewMode> options={VIEW_OPTIONS} value={mode} onChange={choose} size="sm" aria-label="Map view" />}
@@ -110,6 +118,24 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
             </g>;
           })}
         </svg>
+        {threads.length > 0 && <svg className={styles.edges} width={layout.width} height={layout.height} aria-label="Thread lines">
+          {threads.map(line => {
+            const a = layout.at.get(line.a), b = layout.at.get(line.b);
+            if (!a || !b) return null;
+            const chosen = line.threadId === selectedThread;
+            return <g key={line.key}>
+              <path d={messageCurve(a, b).d} className={styles.threadLine} data-thread-line={line.key} data-selected={chosen ? 'true' : undefined} style={{ strokeWidth: messageLineWidth(line.count) + 1 }} />
+              <path d={messageCurve(a, b).d} className={styles.hit} onClick={() => setSelectedThread(line.threadId)}><title>{label(line.a)} and {label(line.b)}: {line.count} message{line.count === 1 ? '' : 's'}. Open thread</title></path>
+            </g>;
+          })}
+        </svg>}
+        {threads.filter(line => line.waiting).map(line => {
+          const a = layout.at.get(line.a), b = layout.at.get(line.b);
+          if (!a || !b) return null;
+          const { mid } = messageCurve(a, b);
+          return <button key={line.key} type="button" className={styles.waiting} style={{ left: mid.x, top: mid.y - 16 }} data-waiting-line={line.key}
+            aria-label={`Waiting for a reply between ${label(line.a)} and ${label(line.b)}. Open thread`} onClick={() => setSelectedThread(line.threadId)}>…</button>;
+        })}
         {counts.map(pair => {
           const a = layout.at.get(pair.edge.from), b = layout.at.get(pair.edge.to);
           if (!a || !b) return null;
@@ -149,7 +175,9 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
     </section>}
     {map.gaps.length > 0 && <ul className={styles.gaps} aria-label="Unknown">{map.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
     <p className={styles.notice}>Same graph for agents: <code>phm map --json</code>, <code>phm map edges --json</code> and <code>phm agents messages --json</code></p>
-  </section>;
+  </section>
+    <ConversationsPanel conversations={conversations} now={now} selectedId={selectedThread} onSelect={setSelectedThread} />
+  </div>;
 }
 
 /** A message line's last 5 messages, beside the middle of the line. */
@@ -171,7 +199,9 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
   const refetchEdges = useRefetch(mapEdgesQuery);
   const pairs = useQuery(messagePairsQuery, { enabled: visible, freshMs: MAP_POLL_MS });
   const refetchPairs = useRefetch(messagePairsQuery);
-  usePollWhileVisible(() => { refetch(); refetchEdges(); refetchPairs(); }, MAP_POLL_MS, { enabled: visible });
+  const threads = useQuery(conversationsQuery, { enabled: visible, freshMs: MAP_POLL_MS });
+  const refetchThreads = useRefetch(conversationsQuery);
+  usePollWhileVisible(() => { refetch(); refetchEdges(); refetchPairs(); refetchThreads(); }, MAP_POLL_MS, { enabled: visible });
   const openMessages = (pair: MessagePair) => { showMessagePair(pair); host.openPane('fleet-messages'); };
   const open = (node: LiveMapNode) => {
     if (node.kind === 'job') requestWorkerLogJob(node.label);
@@ -185,6 +215,6 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
       {edges.error ? ' · refresh failed; cached summaries may be stale' : ''}. Message cards as of {pairs.updatedAt === null ? 'unknown' : <time dateTime={new Date(pairs.updatedAt).toISOString()}>{new Date(pairs.updatedAt).toISOString()}</time>}
       {pairs.error ? ' · refresh failed; cached cards may be stale' : ''}.</p>
     <MapView map={read.data} now={Date.now()} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
-      pairs={pairs.data} reducedMotion={prefersReducedMotion()} />
+      pairs={pairs.data} conversations={threads.data} reducedMotion={prefersReducedMotion()} />
   </>;
 }

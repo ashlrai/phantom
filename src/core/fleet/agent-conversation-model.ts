@@ -1,0 +1,129 @@
+/**
+ * Pure thread model for agent-to-agent messages (no bus, no Node imports, so the
+ * web UI can share it). See agent-conversations.ts for the bus read.
+ */
+import type { AgentMessageKind } from './agent-messages.js';
+
+export const CONVERSATION_STATES = ['waiting', 'answered', 'blocked', 'done'] as const;
+export type ConversationState = typeof CONVERSATION_STATES[number];
+/** A line on the map shows for talk this recent. */
+export const CONVERSATION_LINE_WINDOW_MS = 10 * 60_000;
+export const UNKNOWN_AGENT = 'unknown agent';
+/** What a person reads for each state. */
+export const CONVERSATION_STATE_WORDS: Readonly<Record<ConversationState, string>> = {
+  waiting: 'waiting for reply', answered: 'answered', blocked: 'blocked', done: 'done',
+};
+
+/** One bus message as the projection needs it. `to` may be an agent or a topic. */
+export interface ConversationMessage {
+  id: string;
+  from: string;
+  to: string;
+  kind: AgentMessageKind;
+  /** One scrubbed line. */
+  subject: string;
+  /** Epoch ms. */
+  at: number;
+  replyTo: string | null;
+  /** What the sender said about the work itself, when it said. */
+  state: 'blocked' | 'done' | null;
+  /** Provider lane when a label proves it (the bus knows it), else null. */
+  lane?: string | null;
+}
+
+export interface ConversationAgent { name: string; label: string; known: boolean; node: string | null }
+/** Key order is the JSON contract. */
+export interface ConversationItem { id: string; at: string; from: string; to: string; kind: AgentMessageKind; subject: string }
+/** Two agents that exchanged messages in this thread, for the map's line. */
+export interface ConversationLink { a: string; b: string; count: number; lastAt: string }
+export interface Conversation {
+  id: string;
+  participants: ConversationAgent[];
+  subject: string;
+  messageCount: number;
+  lastAt: string;
+  state: ConversationState;
+  /** `state` in plain words. */
+  stateText: string;
+  /** Present only while waiting: who has to answer, since when, for how long. */
+  waiting: { on: string; since: string; ms: number } | null;
+  links: ConversationLink[];
+  /** Oldest first. */
+  messages: ConversationItem[];
+}
+export interface AgentConversations {
+  schema: 'agents.conversations.v1';
+  version: 1;
+  generatedAt: string;
+  source: 'available' | 'missing' | 'unavailable';
+  /** Longest-waiting thread first, then newest first. Null when the bus could not be read (unknown, not zero). */
+  conversations: Conversation[] | null;
+  waiting: number | null;
+  skipped: number;
+}
+export interface ConversationQuery { agent?: string; waitingOnly?: boolean }
+
+/** Whether a routing label is a known agent (the leader, a lane, a job, a lane's numbered agent; a topic is not) and its map node. */
+export type PlaceAgent = (name: string, lane: string | null) => { known: boolean; node: string | null };
+
+/** Pure: messages in, threads out. The same messages and clock always give the same JSON. `place` says whether a label is a known agent and which map node it is. */
+export function groupConversations(messages: readonly ConversationMessage[], now: number, place: PlaceAgent): Conversation[] {
+  const byId = new Map<string, ConversationMessage>();
+  for (const m of messages) if (!byId.has(m.id)) byId.set(m.id, m);
+  const rootOf = (m: ConversationMessage): string => {
+    let at = m;
+    // A reply to a message not on the bus, or a loop, ends the walk: that message starts the thread.
+    for (let hops = 0; hops < 1000 && at.replyTo && at.replyTo !== at.id && byId.has(at.replyTo); hops++) at = byId.get(at.replyTo)!;
+    return at.id;
+  };
+  const threads = new Map<string, ConversationMessage[]>();
+  for (const m of byId.values()) {
+    const root = rootOf(m);
+    threads.set(root, [...(threads.get(root) ?? []), m]);
+  }
+  const lanes = new Map<string, string | null>();
+  for (const m of byId.values()) if (m.lane) lanes.set(m.from, m.lane);
+  const who = (name: string): ConversationAgent => {
+    const at = place(name, lanes.get(name) ?? null);
+    return { name, label: at.known ? name : UNKNOWN_AGENT, known: at.known, node: at.node };
+  };
+  const out: Conversation[] = [];
+  for (const [id, list] of threads) {
+    const items = [...list].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
+    const last = items[items.length - 1]!;
+    const names = [...new Set(items.flatMap(m => [m.from, m.to]))];
+    const wantsReply = last.kind === 'ask' || last.kind === 'handoff';
+    const state: ConversationState = last.kind === 'blocker' || last.state === 'blocked' ? 'blocked'
+      : last.state === 'done' ? 'done' : wantsReply ? 'waiting'
+      : last.kind === 'reply' || items.some(m => m.kind === 'ask' || m.kind === 'handoff') ? 'answered' : 'done';
+    const links = new Map<string, ConversationLink>();
+    for (const m of items) {
+      const [a, b] = [m.from, m.to].sort() as [string, string], key = `${a}\u0000${b}`, link = links.get(key);
+      if (link) { link.count++; link.lastAt = new Date(m.at).toISOString(); } else links.set(key, { a, b, count: 1, lastAt: new Date(m.at).toISOString() });
+    }
+    out.push({
+      id, participants: names.map(who), subject: last.subject, messageCount: items.length, lastAt: new Date(last.at).toISOString(),
+      state, stateText: CONVERSATION_STATE_WORDS[state],
+      waiting: state === 'waiting' ? { on: last.to, since: new Date(last.at).toISOString(), ms: Math.max(0, now - last.at) } : null,
+      links: [...links.values()],
+      messages: items.map(m => ({ id: m.id, at: new Date(m.at).toISOString(), from: m.from, to: m.to, kind: m.kind, subject: m.subject })),
+    });
+  }
+  return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
+}
+
+/** One agent (by name) and/or waiting threads only. */
+export function filterConversations(list: readonly Conversation[], query: ConversationQuery): Conversation[] {
+  const agent = query.agent?.toLowerCase();
+  return list.filter(c => (!agent || c.participants.some(p => p.name.toLowerCase() === agent)) && (!query.waitingOnly || c.state === 'waiting'));
+}
+
+/** `3m`, `2h 5m`, `1d 4h`: one plain duration. */
+export function plainAge(ms: number): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 1) return 'under 1m';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+

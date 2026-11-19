@@ -375,6 +375,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'agents.messages.v1 {schema, version, generatedAt, since, source, messages[{at, from, to, kind, summary, threadId?, fromName, toName}], pairs[{from, to, count, lastAt, recent[]}], matched, skipped}',
   },
   {
+    usage: 'ashlr agents conversations [--agent <name>] [--waiting] [--json]',
+    description: 'Agent-to-agent messages grouped into threads by reply chain: participants, latest subject, message count, last activity and one state (waiting for reply, answered, blocked or done). Longest-waiting first. An agent no label proves reads "unknown agent". Read only.',
+    safety: 'read',
+    jsonShape: 'agents.conversations.v1 {schema, version, generatedAt, source, conversations[{id, participants[], subject, messageCount, lastAt, state, stateText, waiting, links[], messages[]}], waiting, skipped}',
+  },
+  {
     usage: 'ashlr agents roster [--json]',
     description: 'Unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Each probe times out in about 5s and degrades to unknown. Read-only; no secrets.',
     safety: 'read',

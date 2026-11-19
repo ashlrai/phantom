@@ -488,6 +488,25 @@ two agents (`phm messages --agent <a> --with <b> --limit 20`). Agents that
 talk but are not drawn are listed under the map with their role. The 3D
 compute scene draws its message lines at the same thickness.
 
+#### Agent conversations
+
+`phm agents conversations [--agent <name>] [--waiting] [--json]` groups the
+same bus read into threads by reply chain, longest-waiting first and then
+newest first. `--json` prints `agents.conversations.v1` (`version` 1), and
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
+serves the same read with a current read session.
+
+- `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;
+  an agent no label proves has `label` "unknown agent"), `subject` (the latest,
+  scrubbed), `messageCount`, `lastAt`, `state` (`waiting`, `answered`,
+  `blocked` or `done`), `stateText`, `waiting` (`on`, `since`, `ms`; only while
+  waiting for a reply), `links[]` (the pairs that talked) and `messages[]`.
+- A reply to a message that is not on the bus starts its own thread. `null`
+  conversations mean the bus could not be read, not that nothing was said.
+- The Map pane draws a thicker line over each pair that talked in the last 10
+  minutes, with a marker while a reply is awaited; selecting it opens the thread
+  in the Conversations panel beside the map.
+
 #### Agent messages
 
 `phm agents messages [--since 1h] [--limit N] [--json]` lists recent

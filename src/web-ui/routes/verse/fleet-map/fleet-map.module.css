@@ -62,3 +62,21 @@
 
 .count { position: absolute; transform: translate(-50%, -50%); padding: 2px var(--space-2); border: 1px solid var(--accent-500); border-radius: var(--radius-sm); background: var(--surface-raised, Canvas); color: inherit; font: inherit; cursor: pointer; }
 .count:hover, .count:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+
+/* Conversations panel and thread lines: beside the map on a wide pane, stacked below it on a phone. */
+.withPanel { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-start; }
+.withPanel > :first-child { flex: 1 1 420px; min-width: 0; }
+.conversations { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); max-width: 100%; }
+.panelTitle { margin: 0; font-family: var(--font-display); font-size: var(--text-sm-size); font-weight: 600; }
+.threads { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.threads > li { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.threads > li[data-pinned='true'] { border-color: var(--accent-500); }
+.threads > li[data-state='blocked'] { border-color: var(--status-danger-solid); }
+.threads > li > button { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: var(--space-2); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.threads > li > button:hover, .threads > li > button:focus-visible { color: var(--accent-500); }
+.subject { color: var(--text-secondary); }
+.thread { margin: 0; padding: 0 var(--space-2) var(--space-2) var(--space-4); color: var(--text-secondary); overflow-wrap: anywhere; }
+.threadLine { fill: none; stroke: var(--accent-500); stroke-linecap: round; opacity: 0.7; }
+.threadLine[data-selected='true'] { opacity: 1; }
+.waiting { position: absolute; transform: translate(-50%, -50%); padding: 0 var(--space-1); border: 1px solid var(--status-danger-solid); border-radius: var(--radius-sm);
+  background: var(--surface-raised, var(--surface-1, Canvas)); color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
