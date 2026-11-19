@@ -228,7 +228,14 @@ What runs without a per-release approval:
   tags. A green open release PR for the next patch is still enqueued only
   after its required checks are green and its queue state is observed; an
   already-queued PR is never re-enqueued. The Release PR workflow independently
-  checks green master, cadence and version carriers.
+  checks green master, cadence and version carriers. When the merge queue's
+  newest event for that PR is a removal that postdates the head commit and
+  the head trails master, the green head checks are stale evidence the queue
+  already rejected, so the train plans a head-pinned `updatePullRequestBranch`
+  merge (never a rewrite) instead of enqueue: the new head's own checks
+  re-verify the exact revision, which either re-greens for enqueue or goes
+  red so release-please regenerates, ending the re-enqueue loop a doomed
+  merge group would otherwise repeat every cadence tick.
 - Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
   release gate is green. The train treats that tagged SHA as the candidate
   when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same

@@ -225,7 +225,20 @@ export interface TrainObservation {
   } | null;
   skippedTags?: { tag: string; reason: string }[];
   releases: ReleaseRow[];
-  openReleasePr: { number: number; nodeId: string; version: string; headSha: string; headRef: string; mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean } | null;
+  openReleasePr: {
+    number: number; nodeId: string; version: string; headSha: string; headRef: string;
+    mergeable: string; state: 'OPEN' | 'MERGED'; queued: boolean;
+    /** Latest merge-queue removal time when it is the newest queue event and the PR is not queued. */
+    queueEjectedAt?: string | null;
+    /** committedDate of the PR head commit; null when the queue read did not return it. */
+    headCommittedAt?: string | null;
+    /**
+     * True when an unaddressed merge-queue ejection left stale-green head
+     * checks and the head trails master: re-enqueueing would retry evidence
+     * the queue already rejected, so the plan syncs the branch first.
+     */
+    branchSyncDue?: boolean;
+  } | null;
   pullChecks: { pending: number; failing: number } | null;
   /** Required CI on `head.sha`. Green is the only value that may dispatch a build. */
   candidateCi: CandidateCi;
@@ -284,10 +297,16 @@ export interface TrainState {
 }
 
 export const ENQUEUE_PULL_REQUEST = 'mutation($pullRequestId:ID!){enqueuePullRequest(input:{pullRequestId:$pullRequestId}){mergeQueueEntry{position state}}}';
+/**
+ * MERGE method only: a base merge commit on top of the head, never a rewrite
+ * or force-push. expectedHeadOid pins the exact observed head so a head that
+ * moved since the read is refused instead of synced blind.
+ */
+export const UPDATE_PULL_REQUEST_BRANCH = 'mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$pullRequestId,expectedHeadOid:$expectedHeadOid,updateMethod:MERGE}){pullRequest{id headRefOid}}}';
 const PULL_NODE = /^PR_[A-Za-z0-9_-]+$/;
 export type ReleaseWrite =
   | { method: 'PATCH'; path: string; body: { name: string; body: string; draft: true; prerelease: false } }
-  | { method: 'POST'; path: 'graphql'; body: { query: string; variables: { pullRequestId: string } } }
+  | { method: 'POST'; path: 'graphql'; body: { query: string; variables: { pullRequestId: string; expectedHeadOid?: string } } }
   | { method: 'POST'; path: string; body: { ref: string; inputs: Record<string, string | boolean> } };
 
 export interface TrainPlan { state: TrainState; writes: ReleaseWrite[]; exitCode: 0 | 1 }
@@ -348,6 +367,17 @@ export function mergeStageDone(state: string | null | undefined): boolean {
 export function enqueueReleasePullRequest(nodeId: string): ReleaseWrite {
   if (!PULL_NODE.test(nodeId)) throw new Error('refusing release enqueue');
   return { method: 'POST', path: 'graphql', body: { query: ENQUEUE_PULL_REQUEST, variables: { pullRequestId: nodeId } } };
+}
+
+/**
+ * Refresh an ejected release-please head against current master. Planned only
+ * for an unaddressed merge-queue ejection on a head that trails master; the
+ * new merge commit makes pull_request checks re-verify the exact head, which
+ * either re-greens for enqueue or goes red so release-please regenerates.
+ */
+export function syncReleasePullRequest(nodeId: string, headOid: string): ReleaseWrite {
+  if (!PULL_NODE.test(nodeId) || !SHA.test(headOid)) throw new Error('refusing release branch sync');
+  return { method: 'POST', path: 'graphql', body: { query: UPDATE_PULL_REQUEST_BRANCH, variables: { pullRequestId: nodeId, expectedHeadOid: headOid } } };
 }
 
 /** Configured release cadence in minutes. Valid values are 1 through 1440, with no hourly floor. */
@@ -542,9 +572,17 @@ export function assertReleaseWrite(write: ReleaseWrite): void {
     return;
   }
   if (write.path === 'graphql') {
-    const body = write.body as { query?: string; variables?: { pullRequestId?: string } };
-    if (body.query !== ENQUEUE_PULL_REQUEST || !PULL_NODE.test(body.variables?.pullRequestId ?? '')) throw new Error('refusing release enqueue');
-    return;
+    const body = write.body as { query?: string; variables?: { pullRequestId?: string; expectedHeadOid?: string } };
+    if (!PULL_NODE.test(body.variables?.pullRequestId ?? '')) throw new Error('refusing release pull request write');
+    if (body.query === ENQUEUE_PULL_REQUEST) {
+      if (body.variables?.expectedHeadOid !== undefined) throw new Error('refusing release enqueue');
+      return;
+    }
+    if (body.query === UPDATE_PULL_REQUEST_BRANCH) {
+      if (!SHA.test(body.variables?.expectedHeadOid ?? '')) throw new Error('refusing release branch sync');
+      return;
+    }
+    throw new Error('refusing release write');
   }
   if (dispatch.test(write.path)) {
     const body = write.body as { ref?: string; inputs?: Record<string, string | boolean> };
@@ -585,8 +623,8 @@ function fixForward(input: TrainObservation, candidate: { name: string; sha: str
   let releasePr: string;
   const ready = readyReleasePr(pr, input.pullChecks, successor);
   if (ready) {
-    if (cadenceDue) writes.push(enqueueReleasePullRequest(ready.nodeId));
-    releasePr = cadenceDue ? 'release-pr-enqueued' : 'release-cadence-wait';
+    if (cadenceDue) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
+    releasePr = !cadenceDue ? 'release-cadence-wait' : ready.branchSyncDue ? 'release-pr-syncing' : 'release-pr-enqueued';
   } else if (pr && pr.state === 'OPEN' && pr.version === successor) {
     releasePr = pr.queued ? 'release-pr-queued' : 'release-pr-checks-pending';
   } else if (cadenceDue) {
@@ -701,7 +739,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const checks = input.pullChecks;
   if (fixForwardDue(input, headTag)) return fixForward(input, headTag, expected, cadenceDue);
   const ready = cadenceDue ? readyReleasePr(pr, checks, expected) : null;
-  if (ready) writes.push(enqueueReleasePullRequest(ready.nodeId));
+  if (ready) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
 
   const row = input.releases.find((release) => release.tag_name === headTag.name) ?? null;
   const names = row?.assets.map((asset) => asset.name) ?? [];
@@ -929,25 +967,59 @@ async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, 
   return null;
 }
 
+export interface ReleasePrQueueState {
+  queued: boolean;
+  /**
+   * createdAt of the newest merge-queue removal, only when it is the latest
+   * queue event and the PR is not currently queued. A removal means the merge
+   * group rejected this head against a newer base; the head's own required
+   * checks can stay green because they verified an older merge.
+   */
+  ejectedAt: string | null;
+  /** committedDate of the PR head commit; null when the read did not return it. */
+  headCommittedAt: string | null;
+}
+
+const RELEASE_PR_QUEUED = 'query($id:ID!){node(id:$id){... on PullRequest{isInMergeQueue}}}';
+const RELEASE_PR_EJECTION = 'query($id:ID!){node(id:$id){... on PullRequest{headRef{target{... on Commit{committedDate}}} timelineItems(last:20,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt}}}}}}';
+
+function graphqlNode(call: (method: string, path: string, body?: unknown) => string, query: string, nodeId: string): Record<string, unknown> | null {
+  const payload: unknown = JSON.parse(call('POST', 'graphql', { query, variables: { id: nodeId } }));
+  const errors = record(payload)?.errors;
+  if (Array.isArray(errors) && errors.length > 0) throw new Error('release queue state unavailable');
+  return record(record(record(payload)?.data)?.node);
+}
+
 /**
  * Merge-queue membership is GraphQL-only; REST pull reads never expose it.
  * enqueuePullRequest rejects an already-queued PR, so the plan must observe
- * the entry instead of planning a write that can only fail.
+ * the entry instead of planning a write that can only fail. Membership stays
+ * on the minimal proven query; the ejection detail is a second best-effort
+ * read whose failure degrades to ordinary enqueue evidence, never to a
+ * stalled observation.
  */
-export async function releasePrMergeQueued(
+export async function releasePrMergeQueueState(
   nodeId: string,
   call: (method: string, path: string, body?: unknown) => string = gh,
-): Promise<boolean> {
+): Promise<ReleasePrQueueState> {
   if (!PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
-  const payload: unknown = JSON.parse(call('POST', 'graphql', {
-    query: 'query($id:ID!){node(id:$id){... on PullRequest{isInMergeQueue}}}',
-    variables: { id: nodeId },
-  }));
-  const errors = record(payload)?.errors;
-  if (Array.isArray(errors) && errors.length > 0) throw new Error('release queue state unavailable');
-  const node = record(record(record(payload)?.data)?.node);
+  const node = graphqlNode(call, RELEASE_PR_QUEUED, nodeId);
   if (typeof node?.isInMergeQueue !== 'boolean') throw new Error('release queue state unavailable');
-  return node.isInMergeQueue;
+  if (node.isInMergeQueue) return { queued: true, ejectedAt: null, headCommittedAt: null };
+  let ejectedAt: string | null = null;
+  let headCommittedAt: string | null = null;
+  try {
+    const detail = graphqlNode(call, RELEASE_PR_EJECTION, nodeId);
+    const items = record(detail?.timelineItems)?.nodes;
+    const events = Array.isArray(items) ? items.map(record) : [];
+    const last = record(events.at(-1));
+    ejectedAt = last?.__typename === 'RemovedFromMergeQueueEvent' ? text(last.createdAt) : null;
+    headCommittedAt = text(record(record(detail?.headRef)?.target)?.committedDate);
+  } catch {
+    ejectedAt = null;
+    headCommittedAt = null;
+  }
+  return { queued: false, ejectedAt, headCommittedAt };
 }
 
 export async function observeTrain(
@@ -958,7 +1030,7 @@ export async function observeTrain(
     fleet: readSentinel(fleetKillPath()),
     autorun: readSentinel(autorunOffPath()),
   },
-  mergeQueueLookup: (nodeId: string) => Promise<boolean> = releasePrMergeQueued,
+  mergeQueueLookup: (nodeId: string) => Promise<ReleasePrQueueState> = releasePrMergeQueueState,
 ): Promise<TrainObservation> {
   const repo = record(await read(`repos/${REPOSITORY}`));
   if (repo?.id !== REPOSITORY_ID || repo.full_name !== REPOSITORY) throw new Error('unexpected repository');
@@ -1063,7 +1135,7 @@ export async function observeTrain(
     // mergeable_state folds in advisory check and review state; enqueue
     // authority is the required-check judgment below plus GitHub's own rules.
     const mergeable = detail?.mergeable === true ? 'MERGEABLE' : detail?.mergeable === false ? 'CONFLICTING' : 'UNKNOWN';
-    openReleasePr = { number: Number(listed.number), nodeId, version, headSha, headRef, mergeable, state: pullState, queued: false };
+    openReleasePr = { number: Number(listed.number), nodeId, version, headSha, headRef, mergeable, state: pullState, queued: false, queueEjectedAt: null, headCommittedAt: null, branchSyncDue: false };
   }
   // Required check names are shared by the release-PR head, the admitted
   // candidate and the fix-forward master read; fetch the ruleset evidence once.
@@ -1071,7 +1143,27 @@ export async function observeTrain(
   const requiredNames = () => (requiredNamesPromise ??= requiredCheckNames(read));
   let pullChecks: TrainObservation['pullChecks'] = null;
   if (openReleasePr) {
-    openReleasePr.queued = await mergeQueueLookup(openReleasePr.nodeId);
+    const queue = await mergeQueueLookup(openReleasePr.nodeId);
+    openReleasePr.queued = queue.queued;
+    openReleasePr.queueEjectedAt = queue.ejectedAt;
+    openReleasePr.headCommittedAt = queue.headCommittedAt;
+    // A merge-queue ejection leaves the head's own required checks green:
+    // they verified head+base at pull_request time while the queue rejected
+    // head+base at enqueue time. When that rejection postdates the head
+    // commit, the green evidence is stale and re-enqueueing retries a merge
+    // the queue already refused. Sync the branch once so pull_request checks
+    // re-verify the exact head against current master: a transient failure
+    // then merges, a deterministic one surfaces as red head checks and lets
+    // release-please regenerate. The head-commit comparison keeps a synced
+    // head from re-entering this path, and the base comparison keeps a head
+    // that already contains master from planning a no-op update.
+    const ejectedMs = queue.ejectedAt ? Date.parse(queue.ejectedAt) : Number.NaN;
+    const committedMs = queue.headCommittedAt ? Date.parse(queue.headCommittedAt) : Number.NaN;
+    if (Number.isFinite(ejectedMs) && Number.isFinite(committedMs) && ejectedMs > committedMs) {
+      const compare = record(await read(`repos/${REPOSITORY}/compare/${masterSha}...${openReleasePr.headSha}`));
+      const status = text(compare?.status);
+      openReleasePr.branchSyncDue = status === 'behind' || status === 'diverged';
+    }
     // Only required checks gate the enqueue: advisory Actions runs (dependency
     // audit, Vercel-adjacent jobs) neither block nor substitute for Merge Gate.
     const prCi = await requiredCiOnSha(read, openReleasePr.headSha, await requiredNames());
