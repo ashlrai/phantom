@@ -345,3 +345,22 @@ only. The report is advisory-only: it writes nothing, never touches
 `weights.json`, and changes no live routing, rank or admission. A missing or
 unreadable ledger reports `status: "unavailable"` with null counts rather
 than an empty success.
+
+## Revert outcome scan
+
+`phm fleet reverts --repo-dir <dir> --prs <file> [--prs <file>]... [--ref <ref>] [--json]`
+produces the `revert.scan.v1` evidence the hold-rate fold reads: it parses
+gh-shaped merged-PR exports (`gh pr list --state merged --json
+url,number,mergeCommit,mergedAt`) into revert candidates, resolves a local
+ref (`--ref`, else `origin/HEAD` then `HEAD` — the caller fetches; the scan
+never fetches itself) and runs the 72h-window detector over that checkout's
+history. Each in-window revert emits a `RevertOutcomeRecord` — repository,
+PR key, merge and revert commits, both times, revert latency and reland
+state — and `revertedKeys` is the sorted prKey set a router subtracts from
+landed work. The report names the scanned ref and head commit so coverage is
+explicit: merges whose 72h window had not closed by the head commit, or whose
+reverts landed outside the scanned history, are not claimed. Rows missing a
+PR identity or merge commit are skipped and counted, unreadable exports and
+duplicate PRs are counted rather than guessed, and a checkout or ref git
+cannot read marks the report `degraded` instead of implying a clean scan.
+Read-only; it writes nothing and changes no routing by itself.
