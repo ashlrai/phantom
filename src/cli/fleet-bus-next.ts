@@ -1,7 +1,7 @@
 import { claimNextBusWork } from '../core/fleet/bus-next-claim.js';
 
-const usage = `Usage: ashlr fleet bus-next --to <exact-address> --owner <label> --lease-ms <1..3600000> [--root <absolute>] --json
-Only messages addressed exactly to --to with an object body containing {"kind":"work"} are eligible. Local coordination only; labels are not identity or authority, and message bodies are never executed.`;
+const usage = `Usage: ashlr fleet bus-next --to <agent-or-topic> --owner <label> --lease-ms <1..3600000> [--root <absolute>] --json
+Messages with an object body containing {"kind":"work"} or protocol kind 'task' addressed to --to are eligible; when --to names a registered agent identity, work addressed under any of its labels (handle, agent: address, stable id, aliases) qualifies. Local coordination only; labels are not identity or authority, and message bodies are never executed.`;
 
 /** Claims one opted-in receipt; never interprets or executes its body. */
 export async function cmdFleetBusNext(args: string[]): Promise<number> {

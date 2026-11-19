@@ -453,7 +453,11 @@ Example (replace `FAKE-TOKEN`):
 
 The v1 message-id claim (`ashlr fleet bus-claim acquire|renew|release|complete
 --id --owner --lease-ms`) keeps working for single-message work. Resource claims
-are the v2 layer above it.
+are the v2 layer above it. `bus next`/`bus-next --to` matches work addressed to
+one agent identity under every routing label that resolves to it — handle,
+`agent:` address, stable id or alias — through the same identity registry the
+inbox, wakes and message filters use; a `--to` naming no identity or an
+unreadable registry keeps exact-label matching and never widens.
 
 ### 4. Work feed
 
