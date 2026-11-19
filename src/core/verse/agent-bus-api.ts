@@ -5,7 +5,9 @@
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
  * GET /api/verse/agent-bus/work-feed is the v2 work projection (`phm fleet
  * work-feed --json`): ok and refused answers return 200 with the projection's
- * own status; unreadable or invalid storage returns 503.
+ * own status; unreadable or invalid storage returns 503. Its only parameter is
+ * `claims=true`, which adds the same live coordination-hold join the CLIs'
+ * `--claims` flag produces.
  * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
@@ -112,7 +114,8 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'limit'] : [];
+      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'limit']
+      : method === 'GET' && path === WORK_FEED ? ['claims'] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
     }
@@ -121,7 +124,10 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         const result = readFleetEdges();
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } else if (path === WORK_FEED) {
-        const result = (deps.workFeed ?? readBusWorkFeed)();
+        const claims = params.get('claims');
+        if (claims !== null && claims !== 'true') { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
+        const feed = deps.workFeed ?? readBusWorkFeed;
+        const result = claims === 'true' ? feed({ claims: true }) : feed();
         sendJson(res, result.status === 'ok' || result.status === 'refused' ? 200 : 503, { v: 1, ...result });
       } else if (path === MESSAGES) {
         const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,

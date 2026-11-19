@@ -1442,8 +1442,9 @@ authentication check. It performs no I/O, transport, claim mutation or execution
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
 `readBusWorkFeed` (`src/core/agents/bus-work-feed-read.ts`) is the bounded
 read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
-(`src/core/verse/agent-bus-api.ts`, read session required, no parameters)
-serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
+(`src/core/verse/agent-bus-api.ts`, read session required; `claims=true` is
+the only accepted parameter and adds the `claims` hold join, every other
+parameter or value is a 400) serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
 200 with the projection's own status, `unavailable`/`retryable`/`invalid`
 answer 503.
 
