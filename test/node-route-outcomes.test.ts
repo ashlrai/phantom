@@ -8,9 +8,9 @@ import type { RouterOutcome } from '../src/core/router/outcomes.js';
 
 const GIB = 1024 ** 3, MIB = 1024 ** 2;
 
-const outcome = (job: string, lane: string | null, merged: boolean | null): RouterOutcome => ({
+const outcome = (job: string, lane: string | null, merged: boolean | null, reverted: boolean | null = null): RouterOutcome => ({
   schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null,
-  merged, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
+  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
 });
 
 describe('foldRouteLaneOutcomes', () => {
@@ -22,6 +22,14 @@ describe('foldRouteLaneOutcomes', () => {
     ]);
     expect(folded).toEqual({ codex: { attempts: 1, merged: 0 }, grok: { attempts: 3, merged: 2 } });
     expect(Object.keys(folded)).toEqual(['codex', 'grok']);
+  });
+
+  it('counts a reverted merge as an attempt but never as a held merge', () => {
+    const folded = foldRouteLaneOutcomes([
+      outcome('a', 'grok', true, true), outcome('b', 'grok', true), outcome('c', 'grok', true, false),
+      outcome('d', 'grok', false, true), outcome('e', 'codex', true, true),
+    ]);
+    expect(folded).toEqual({ codex: { attempts: 1, merged: 0 }, grok: { attempts: 4, merged: 2 } });
   });
 
   it('returns an empty map for no usable outcomes', () => {
@@ -49,6 +57,18 @@ describe('readRouteLaneOutcomes', () => {
     expect(read.state).toBe('read');
     expect(read.schema).toBe('phantom.node-route-outcomes.v1');
     expect(read.outcomes).toEqual({ codex: { attempts: 1, merged: 1 }, grok: { attempts: 2, merged: 1 } });
+  });
+
+  it('does not count a ledger-recorded revert as a held merge', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'route-out-'));
+    ledger(dir, [
+      { job: 'j1', lane: 'grok', ts: '2026-11-16T05:00:00Z', state: 'MERGED' },
+      { job: 'j1', lane: 'grok', ts: '2026-11-16T06:00:00Z', event: 'reverted' },
+      { job: 'j2', lane: 'grok', ts: '2026-11-16T05:01:00Z', state: 'MERGED' },
+    ]);
+    const read = await readRouteLaneOutcomes({ runsDir: dir });
+    expect(read.state).toBe('read');
+    expect(read.outcomes).toEqual({ grok: { attempts: 2, merged: 1 } });
   });
 
   it('reports a missing ledger as missing with empty tallies, and a non-file as not-file', async () => {

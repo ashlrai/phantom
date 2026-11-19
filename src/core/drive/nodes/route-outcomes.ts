@@ -12,7 +12,10 @@
  * as an attempt only when its merge verdict is known (`merged` is true or
  * false — MERGED, or CLOSED/merged:false). `merged: null` means the job's
  * result is unknown (still running, aborted, or no outcome row), so it is
- * excluded from both sides rather than counted as a failed attempt. A lane
+ * excluded from both sides rather than counted as a failed attempt. A merge
+ * recorded as reverted (`reverted: true`) still counts as an attempt but not
+ * as a held merge — the same rule `proposeRouterWeights` applies — so a lane
+ * whose merges get reverted does not keep an inflated learned rate. A lane
  * with no known verdicts simply has no entry and keeps the router's prior.
  */
 import {
@@ -42,7 +45,7 @@ export function foldRouteLaneOutcomes(outcomes: readonly RouterOutcome[]): Recor
     if (outcome.lane === null || outcome.merged === null) continue;
     const row = tally.get(outcome.lane) ?? { attempts: 0, merged: 0 };
     row.attempts++;
-    if (outcome.merged) row.merged++;
+    if (outcome.merged && outcome.reverted !== true) row.merged++;
     tally.set(outcome.lane, row);
   }
   const folded: Record<string, LaneOutcomes> = {};
