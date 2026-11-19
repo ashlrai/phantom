@@ -16,6 +16,7 @@ import { conversationalPrompt, extractMessageRefs, referencedRecords, refLabels,
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { classifyTeammateIntent as classifyInboxIntent, markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
+import { isTeammateTaskPeer, runTeammateTasks } from './imessage-teammate-tasks.js';
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamMessageReceipt, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
 interface Reply { rowid: number; senderId: string; state: 'claimed' | 'drafted' | 'sending' | 'sent' | 'suppressed'; at: number; claimUntil: number; text?: string; attemptedAt?: number; sendAttempts?: number; receipt?: TeamMessageReceipt; tries?: number; ack?: boolean }
@@ -241,6 +242,9 @@ export async function runTeammateResponder(cfg: AshlrConfig, options: TeammateWo
       if (row && row.senderId !== message.senderId) throw new Error('Teammate identity changed');
       if (row?.state === 'sent' || row?.state === 'suppressed') { markTeammateTextsAnswered([message.rowid], runs); continue; }
       if (!(options.approved ?? approvedTeammateHandle)(message.senderId, cfg, options)) { report.pending++; continue; }
+      // Dot/Instinct reply only through fleet envelopes. Their prose stays for review
+      // and cannot reach the generator, acknowledgements, clarification loops or jobs.
+      if (isTeammateTaskPeer(message.senderId)) { report.pending++; continue; }
       if (row?.state === 'sending') {
         if (processed++ >= 3) { report.examined--; scanned = checkpoint; break; }
         const receipt = row.text && row.attemptedAt !== undefined ? await (options.reconcile ?? reconcileTeammateMessage)(row.text, row.senderId, row.attemptedAt, cfg, options) : null;
@@ -326,7 +330,13 @@ export async function tickTeammateMessages(cfg: AshlrConfig, options: TeammateWo
     if (lock.state !== 'acquired') return { state: 'busy' as const };
     const intake = await ingestIMessages(cfg, { runsDir: runs });
     releaseLocalStoreLock(lock.lock); lock = undefined;
-    result = intake.ok ? { ...await runTeammateResponder(cfg, options), intake } : { state: intake.state, intake };
+    if (intake.ok) {
+      // Intake lock is already released, so the task ledger lock is never nested
+      // under it. A task failure is reported without starving ordinary replies.
+      const tasks = await runTeammateTasks(cfg, { ...options, apply: true })
+        .catch(() => ({ state: 'unavailable' as const }));
+      result = { ...await runTeammateResponder(cfg, options), intake, tasks };
+    } else result = { state: intake.state, intake };
     writePrivateFileAtomically(join(dir, `.${randomUUID()}.tmp`), join(dir, 'teammate-status.json'),
       JSON.stringify({ at: new Date((options.now ?? Date.now)()).toISOString(), ...result }), { anchorPath: dir, label: 'Teammate worker status' });
     return result;
