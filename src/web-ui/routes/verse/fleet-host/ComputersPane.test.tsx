@@ -55,7 +55,7 @@ it('narrow drops malformed rows and never invents a state', () => {
   expect(narrowComputers({ nodes: 'x' })).toBeNull();
   const view = narrowComputers(payload(['junk', { state: 'ready for work' }, { name: 'node-x', stateCode: 'great', state: 'ready for work', freeMemoryBytes: -1, lanes: 'claude' }]));
   expect(view?.computers).toEqual([{ name: 'node-x', isSelf: false, stateCode: 'unknown', state: 'unknown',
-    freeMemoryBytes: 'unknown', cpuHeadroomPercent: 'unknown', lanes: 'unknown', jobsRunning: 'unknown' }]);
+    freeMemoryBytes: 'unknown', cpuHeadroomPercent: 'unknown', lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown' }]);
 });
 
 it('registers a Computers pane that loads the cards from the API', async () => {

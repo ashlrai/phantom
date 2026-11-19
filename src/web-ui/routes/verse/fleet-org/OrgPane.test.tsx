@@ -78,3 +78,18 @@ it('rebuilds the tree from the graph when the server sends a tree this build can
   expect(within(tree).getByRole('button', { name: 'Open job RQ-A' })).toBeInTheDocument();
   expect(within(tree).getByRole('button', { name: /^claude,/ })).toHaveTextContent('unknown of unknown running');
 });
+
+it('Machines row: one chip per computer with its free slots (two machines, one offline)', async () => {
+  const row = (name: string, o: Record<string, unknown>) => ({ name, isSelf: false, stateCode: 'ready', state: 'ready for work', freeMemoryBytes: 'unknown', cpuHeadroomPercent: 'unknown', lanes: ['claude'], jobsRunning: [], freeSlots: 2, ...o });
+  stub({ '/runtime-identity/nodes': { nodes: [row('mac-one', { isSelf: true }), row('mac-two', { stateCode: 'offline', state: 'offline since 10:42', freeSlots: 'unknown' })], reasons: [] }, [MAP]: orgMap(), [OFFICE]: { value: office } });
+  render(<OrgPane {...props} />);
+  const machines = within(await screen.findByRole('region', { name: 'Machines' }));
+  expect(await machines.findByText(/mac-one/)).toBeTruthy();
+  expect(machines.getAllByRole('listitem').map(li => li.textContent)).toEqual(['mac-one (this Mac) · 2 free', 'mac-two · offline']);
+});
+
+it('Machines row says "Only this Mac." with one computer', async () => {
+  stub({ '/runtime-identity/nodes': { nodes: [{ name: 'mac-one', isSelf: true, stateCode: 'ready', state: 'ready for work', freeSlots: 1 }], reasons: [] }, [MAP]: orgMap(), [OFFICE]: { value: office } });
+  render(<OrgPane {...props} />);
+  expect(await within(await screen.findByRole('region', { name: 'Machines' })).findByText('Only this Mac.')).toBeTruthy();
+});

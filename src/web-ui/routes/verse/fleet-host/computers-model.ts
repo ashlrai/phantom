@@ -14,6 +14,7 @@ export interface ComputerCard {
   cpuHeadroomPercent: number | Unknown;
   lanes: string[] | Unknown;
   jobsRunning: number | Unknown;
+  freeSlots: number | Unknown;
 }
 export interface ComputersView { computers: ComputerCard[]; reasons: string[] }
 
@@ -41,6 +42,7 @@ export function narrowComputers(raw: unknown): ComputersView | null {
       cpuHeadroomPercent: count(row.cpuHeadroomPercent),
       lanes: strings(row.lanes) ?? 'unknown',
       jobsRunning: strings(row.jobsRunning)?.length ?? 'unknown',
+      freeSlots: count(row.freeSlots),
     });
   }
   return { computers, reasons: strings(raw.reasons) ?? [] };
