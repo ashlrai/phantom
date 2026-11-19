@@ -39,3 +39,10 @@
 .reply + .reply { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
 .reply p { white-space: pre-wrap; }
 .replyWhen { color: var(--text-secondary); font-size: var(--text-xs-size); }
+
+/* Pulse strip: four big numbers, each with its 24 hour sparkline. They wrap, so two across on a phone and four on a wide pane. */
+.strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.tile { flex: 1 1 8rem; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-2); border-radius: var(--radius-md); background: var(--bg-surface-raised); }
+.tileTitle { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.tileValue { color: var(--text-primary); font-size: var(--text-xl-size); font-weight: var(--font-weight-semibold); }
+.tileNote { color: var(--text-secondary); font-size: var(--text-xs-size); }

@@ -20,6 +20,7 @@ import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
+import { PulseStrip, pulseLanesQuery } from '../../home/PulseStrip.js';
 import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -44,6 +45,7 @@ export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
   refetchQuery(poolsQuery.key, () => poolsQuery.fetch(), true).catch(() => undefined),
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(pulseLanesQuery.key, () => pulseLanesQuery.fetch(), true).catch(() => undefined),
   refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
   refetchQuery(leaderRepliesQuery(1).key, () => leaderRepliesQuery(1).fetch(), true).catch(() => undefined),
   refetchQuery(shippedQuery(1).key, () => shippedQuery(1).fetch(), true).catch(() => undefined),
@@ -75,6 +77,7 @@ export function HomeGlance() {
   return (
     <>
       <BriefTiles />
+      <PulseStrip />
       <PulseCard />
       {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
         <section className={`${ui.card} ${styles.needs}`} role="alert">
