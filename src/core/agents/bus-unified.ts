@@ -639,9 +639,10 @@ function channelOf(to: string, channels: Map<string, string>): string | null {
 
 /**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
- * traffic still addressed to its legacy aliases, and posts in its channels
- * (minus its own). Returned highest priority first; `nextCursor` covers every
- * scanned row, so callers persist it only after handling the page.
+ * traffic still addressed to its bare handle, stable id or legacy aliases,
+ * and posts in its channels (minus its own). Returned highest priority
+ * first; `nextCursor` covers every scanned row, so callers persist it only
+ * after handling the page.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number } = {},
   options: UnifiedBusOptions = {}): InboxPage {
@@ -696,9 +697,10 @@ export type WakePage = { status: 'ok'; agent: string; wakes: BusWakeRow[] } |
   { status: 'unknown-agent' | 'unavailable'; reason: string };
 
 /**
- * Wake hints addressed to this identity (directly, by alias, or to one of its
- * channels) after `sinceAt`. A wake is only a hint to read the inbox: it
- * carries routing ids, never a body, and grants nothing.
+ * Wake hints addressed to this identity under any label it resolves through
+ * (address, bare handle, stable id or alias) or to one of its channels after
+ * `sinceAt`. A wake is only a hint to read the inbox: it carries routing ids,
+ * never a body, and grants nothing.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {}): WakePage {
   const read = readAgentRegistry(options);

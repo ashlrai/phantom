@@ -131,9 +131,12 @@ export function findAgentChannel(registry: AgentRegistry, name: string): AgentCh
   return registry.channels.find(channel => channel.name === name);
 }
 
-/** Every routing label a message to this identity may carry: its address and its aliases. */
+/** Every routing label a message to this identity may carry: the refs
+ * `resolveAgent` accepts — its `agent:` address, bare handle, stable id and
+ * aliases. Inbox and wake matching key on this set, so a foreign producer that
+ * addresses the bare handle or `agt_` id still reaches the same agent. */
 export function agentLabels(identity: AgentIdentity): string[] {
-  return [`${AGENT_ADDRESS_PREFIX}${identity.handle}`, ...identity.aliases];
+  return [`${AGENT_ADDRESS_PREFIX}${identity.handle}`, identity.handle, identity.id, ...identity.aliases];
 }
 
 function emptyRegistry(): AgentRegistry {
