@@ -298,13 +298,25 @@ matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusio
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
 `router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})`,
-`readLedgerFile(path, limit?)`, `readLedgerTail(path, maxBytes?)` and
+`foldSpendCosts(text)`, `readLedgerFile(path, limit?)`,
+`readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
-`router.outcome.v1` records folded from `metrics/jobs.jsonl`. The ledger is
-append-only and unbounded, so the read retains the newest
-`ROUTER_OUTCOME_LEDGER_LIMIT` (16 MiB) bytes via `readLedgerTail`: an oversized
-ledger reports `truncated: true` and folds only the retained window — a lower
-bound on history, never a refused read or a claimed total. `passk` is the
+`router.outcome.v1` records folded from `metrics/jobs.jsonl`. The jobs
+ledger is append-only and unbounded, so the read retains the newest
+`ROUTER_OUTCOME_LEDGER_LIMIT` (16 MiB) bytes via `readLedgerTail`: an
+oversized ledger reports `truncated: true` and folds only the retained
+window — a lower bound on history, never a refused read or a claimed
+total. `cost_usd` is an explicit `cost_usd`/`usd`/`cost` field on a jobs
+row when present; otherwise it is the sum of `metrics/api-spend.jsonl`
+call costs naming the job (`job`/`job_id`/`id`, same
+`cost_usd`/`usd`/`cost` precedence the fleet spend readers use), read
+under the same bound — spend rows without a job id are unattributable
+and never counted, a job whose calls reported no cost stays `null`
+(unknown, never zero), and `cost_estimated` rows still count because
+they report a USD figure. The spend read degrades independently:
+`RouterOutcomeRead.spend_state` reports its health and
+`spend_truncated` marks a cut spend tail (joined costs are lower
+bounds). `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

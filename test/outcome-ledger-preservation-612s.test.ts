@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   foldRouterOutcomes,
+  foldSpendCosts,
   readLedgerFile,
   readLedgerTail,
   readRouterOutcomes,
@@ -26,6 +27,12 @@ function runsDir(ledger?: string): string {
 }
 
 const ledgerPath = (root: string) => join(root, 'metrics', 'jobs.jsonl');
+const spendPath = (root: string) => join(root, 'metrics', 'api-spend.jsonl');
+
+function writeSpend(root: string, text: string): void {
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(spendPath(root), text);
+}
 
 function ashlarDir(scores?: unknown): string {
   const root = mkdtempSync(join(tmpdir(), 'ledger-612s-eval-'));
@@ -345,5 +352,104 @@ describe('router outcome pass^k join', () => {
 
   it('requires an absolute ashlarDir when given', async () => {
     await expect(readRouterOutcomes({ runsDir: runsDir(''), ashlarDir: 'relative/ashlr' })).rejects.toThrow(RangeError);
+  });
+});
+
+describe('router outcome spend join', () => {
+  it('folds api-spend rows into per-job USD sums with the fleet spend contract', () => {
+    const costs = foldSpendCosts([
+      '{"ts":"2026-11-02T08:00:00Z","job":"J1","cost_usd":1.25}',
+      '{"ts":"2026-11-02T09:00:00Z","job":"J1","model":"m","usd":0.5}',
+      '{"timestamp":"2026-11-02T10:00:00Z","job_id":"J2","cost":0.25}',
+      '{"ts":"2026-11-02T11:00:00Z","id":"J3","cost_usd":0}',
+      '{"ts":"2026-11-02T12:00:00Z","job":"J4","cost_estimated":true,"cost_usd":0.75}',
+      '{"ts":"2026-11-02T13:00:00Z","model":"m","cost_usd":9}',
+      '{"ts":"2026-11-02T14:00:00Z","job":"J5"}',
+      '{"ts":"2026-11-02T15:00:00Z","job":"J6","cost_usd":-1}',
+      'not json',
+      '[1,2]',
+      '',
+    ].join('\n'));
+    expect(costs.get('J1')).toBeCloseTo(1.75);
+    expect(costs.get('J2')).toBe(0.25);
+    // A reported zero is evidence; estimated costs still report a USD figure.
+    expect(costs.get('J3')).toBe(0);
+    expect(costs.get('J4')).toBe(0.75);
+    // No job id, no cost, invalid cost: never counted.
+    expect(costs.has('J5')).toBe(false);
+    expect(costs.has('J6')).toBe(false);
+    expect(costs.size).toBe(4);
+  });
+
+  it('populates cost_usd from spend rows only where the jobs fold left it null', async () => {
+    const root = runsDir([
+      '{"job":"J1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","phase":"CLOSED","cost_usd":2,"ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J4","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeSpend(root, [
+      '{"job":"J1","cost_usd":1.25}',
+      '{"job":"J1","usd":0.5}',
+      '{"job":"J2","cost_usd":9}',
+      '{"job":"J3","model":"m"}',
+      '{"job":"J-UNKNOWN","cost_usd":7}',
+      '{"cost_usd":3}',
+    ].join('\n'));
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.state).toBe('read');
+    expect(result.spend_state).toBe('read');
+    expect(result.spend_truncated).toBe(false);
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    // Spend sum fills the null; the explicit ledger cost wins over spend.
+    expect(byId.get('J1')?.cost_usd).toBeCloseTo(1.75);
+    expect(byId.get('J2')?.cost_usd).toBe(2);
+    // Calls with no reported cost stay unknown, never zero; spend rows for
+    // jobs outside the jobs window never create outcomes.
+    expect(byId.get('J3')?.cost_usd).toBeNull();
+    expect(byId.get('J4')?.cost_usd).toBeNull();
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3', 'J4']);
+  });
+
+  it('accepts usd/cost aliases on jobs rows as explicit cost evidence', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","cost":0.4}\n{"job":"J2","phase":"MERGED","usd":0.6}\n');
+    writeSpend(root, '{"job":"J1","cost_usd":5}\n');
+    const result = await readRouterOutcomes({ runsDir: root });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.cost_usd).toBe(0.4);
+    expect(byId.get('J2')?.cost_usd).toBe(0.6);
+  });
+
+  it('degrades the spend source independently of the jobs fold', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    // No api-spend.jsonl at all: spend_state reports missing, cost stays null.
+    const missing = await readRouterOutcomes({ runsDir: root });
+    expect(missing).toMatchObject({ state: 'read', spend_state: 'missing', spend_truncated: false });
+    expect(missing.outcomes[0]?.cost_usd).toBeNull();
+
+    // A symlinked spend ledger is refused like the jobs ledger.
+    const target = join(root, 'real-spend.jsonl');
+    writeFileSync(target, '{"job":"J1","cost_usd":1}\n');
+    symlinkSync(target, spendPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', spend_state: 'unreadable' });
+    expect(linked.outcomes[0]?.cost_usd).toBeNull();
+  });
+
+  it('still reports spend health when the jobs ledger itself is missing', async () => {
+    const root = runsDir();
+    writeSpend(root, '{"job":"J1","cost_usd":1}\n');
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'missing', spend_state: 'read', spend_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut spend tail so joined costs read as lower bounds', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    writeSpend(root, '');
+    // Sparse file past the bound: the retained window holds no whole line.
+    truncateSync(spendPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', spend_state: 'read', spend_truncated: true });
+    expect(result.outcomes[0]?.cost_usd).toBeNull();
   });
 });

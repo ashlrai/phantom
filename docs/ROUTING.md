@@ -299,10 +299,21 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
-`ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) and reports one
+`ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
+same bound of `<runs-dir>/metrics/api-spend.jsonl`, and reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
-time and the advisory `passk` join from `eval.lane-scores.v1`. `reverted`
+time and the advisory `passk` join from `eval.lane-scores.v1`. `cost_usd`
+is an explicit `cost_usd`/`usd`/`cost` field on a jobs row when one is
+recorded; otherwise it is the sum of api-spend call costs naming the job
+(same `job`/`job_id`/`id` attribution and `cost_usd`/`usd`/`cost`
+precedence the fleet spend readers use). jobs.jsonl finish rows carry
+`cost: null` by design, so the spend join is what populates real cost
+evidence; a job whose calls reported no cost stays `null` — unknown,
+never zero — and `cost_estimated` calls still count because they report a
+USD figure. The spend read degrades independently: the report's
+`spend_state` mirrors the jobs `state` vocabulary and `spend_truncated`
+marks a cut spend tail, in which case joined costs are lower bounds. `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
 stamp — sticky-true like metrics-ingest, so a recorded revert is never
