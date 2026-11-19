@@ -163,8 +163,9 @@ cap compacts it to the newest complete hints inside the 256 KiB window readers
 observe, so a busy bus keeps waking rather than reporting every wake failed.
 
 **Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
-posts in the agent's channels (minus its own) and traffic still addressed to its
-aliases, highest priority first. Persist `nextCursor` only after handling the
+posts in the agent's channels (minus its own) and traffic still addressed to
+its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
+highest priority first. Persist `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
 `context` and `worker-handoff` carry their message text, while typed

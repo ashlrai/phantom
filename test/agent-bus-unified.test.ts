@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  agentAddress, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry,
+  agentAddress, agentLabels, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry,
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
@@ -17,6 +17,7 @@ import {
 } from '../src/core/agents/bus-cli-adapters.js';
 import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { subscribeGroup } from '../src/core/fleet/bus-group.js';
 import { busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
 
@@ -221,6 +222,49 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     options.clock.now += 61_000;
     const later = readAgentInbox('nova', {}, options);
     expect(later.status === 'ok' && later.messages.map(m => m.envelope.id)).toEqual(['m-p0', 'm-p2']);
+  });
+
+  it('reaches the inbox and wakes under every label the identity resolves through', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const novaId = stableAgentId('nova');
+    const registry = readAgentRegistry(options);
+    if (registry.status !== 'ok') throw new Error('unreadable');
+    const nova = resolveAgent(registry.registry, 'nova');
+    if (!nova) throw new Error('not registered');
+    expect(agentLabels(nova)).toEqual(['agent:nova', 'nova', novaId]);
+    // Foreign producers may address the bare handle or the stable id; both are
+    // refs resolveAgent accepts, so they land in the same inbox as agent:<handle>.
+    expect(appendBusInbox({ id: 'bare-1', from: 'leader', to: 'nova', priority: 'P2', ttl: 60_000,
+      body: { kind: 'note', text: 'bare handle' } }, options).status).toBe('posted');
+    expect(appendBusInbox({ id: 'id-1', from: 'leader', to: novaId, priority: 'P2', ttl: 60_000,
+      body: { kind: 'note', text: 'stable id' } }, options).status).toBe('posted');
+    expect(appendBusInbox({ id: 'ho-bare', from: 'agent:atlas', to: 'nova', priority: 'P1', ttl: 60_000,
+      channel: 'handoff', channel_ref: 'handoff:RQ-T-1',
+      sender: { agent_id: stableAgentId('atlas'), vendor: 'claude', human: false, team: true },
+      external: false, origin_bridge: 'agent-bus',
+      body: { kind: 'worker-handoff', taskId: 'RQ-T-1', prompt: 'p' } }, options).status).toBe('posted');
+    // A channel post from the bare handle is the agent's own: hidden from its
+    // inbox but visible to other members.
+    expect(appendBusInbox({ id: 'own-1', from: 'nova', to: 'group:release:general', priority: 'P2', ttl: 60_000,
+      channel: 'bus', channel_ref: 'group:release:general',
+      sender: { agent_id: novaId, vendor: 'claude', human: false, team: true },
+      external: false, origin_bridge: 'agent-bus',
+      body: { kind: 'note', text: 'own post' } }, options).status).toBe('posted');
+
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    expect(inbox.messages.map(m => `${m.envelope.id}:${m.kind}`)).toEqual(['ho-bare:handoff', 'bare-1:legacy', 'id-1:legacy']);
+    const atlasInbox = readAgentInbox('atlas', {}, options);
+    expect(atlasInbox.status === 'ok' && atlasInbox.messages.map(m => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['own-1:channel']);
+
+    expect(enqueueBusWake({ kind: 'bus.send', id: 'wake-bare', from: 'agent:atlas', to: 'nova' }, { root: options.runsRoot })).toBe('queued');
+    expect(enqueueBusWake({ kind: 'bus.send', id: 'wake-id', from: 'agent:atlas', to: novaId }, { root: options.runsRoot })).toBe('queued');
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
+      wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
   });
 });
 
