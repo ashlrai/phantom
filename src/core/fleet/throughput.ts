@@ -68,7 +68,7 @@ export function throughputOptions(hours?: string | null, by?: string | null): { 
 }
 
 /** Pure: one mark per launch, per PR published, per PR merged and per job finished, at or after `since`. */
-function marksOf(rows: readonly LedgerRow[], since: number, now: number): Mark[] {
+function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaunch = false): Mark[] {
   const routes = new Map<string, Partial<Route>>();
   const launches = new Map<string, { job: string; at: number }>();
   const prs = new Map<string, { job: string; repo: string | null; published?: number; merged?: number; ttm?: number }>();
@@ -113,8 +113,26 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number): Mark[]
     if (pr.merged !== undefined) marks.push({ kind: 'merged', at: pr.merged, route,
       seconds: pr.published !== undefined && pr.published <= pr.merged ? (pr.merged - pr.published) / 1000 : pr.ttm ?? null });
   }
-  for (const finish of finishesIn(rows.filter(row => row.at >= since))) marks.push({ kind: 'finished', at: finish.at, route: routeOf(finish.id), empty: finish.empty });
+  const ended = rows.filter(row => row.at >= since);
+  let finishes = finishesIn(ended);
+  if (perLaunch) {
+    // The work log counts how each launch ended, so a job launched twice has two endings and a skipped job has none.
+    const runs = new Map<string, LedgerRow[]>(), launched = new Map<string, number>();
+    for (const row of [...ended].sort((x, y) => x.at - y.at)) {
+      const run = `${row.id}#${launched.set(row.id, (launched.get(row.id) ?? 0) + (row.row.event === 'launch' ? 1 : 0)).get(row.id)}`;
+      runs.set(run, [...(runs.get(run) ?? []), row]);
+    }
+    finishes = [...runs.values()].flatMap(run => finishesIn(run)).filter(finish => !finish.skipped);
+  }
+  for (const finish of finishes) marks.push({ kind: 'finished', at: finish.at, route: routeOf(finish.id), empty: finish.empty });
   return marks.filter(mark => mark.at >= since && mark.at <= now);
+}
+
+export type ThroughputMark = Mark;
+/** Pure: the marks between `since` and `now` and the count of skipped lines. `phm fleet worklog` buckets these same marks, with one ending per launch. */
+export function throughputMarks(ledger: string, since: number, now: number, perLaunch = false): { marks: Mark[]; malformed: number } {
+  const read = ledgerRows(ledger, now, (now - since) / HOUR + LOOKBACK_HOURS, true);
+  return { marks: marksOf(read.rows, since, now, perLaunch), malformed: read.malformed };
 }
 
 function counts(marks: readonly Mark[]): ThroughputCounts {
@@ -142,8 +160,8 @@ export function durationText(seconds: number | null): string {
 export function buildThroughput(input: { ledger: string | null; now: number; hours: number; by: ThroughputBy; metricsPath: string; main?: ThroughputReport['main'] }): ThroughputReport {
   const { now, hours, by } = input;
   const since = now - hours * HOUR;
-  const read = input.ledger === null ? null : ledgerRows(input.ledger, now, hours + LOOKBACK_HOURS, true);
-  const all = read && marksOf(read.rows, since, now);
+  const read = input.ledger === null ? null : throughputMarks(input.ledger, since, now);
+  const all = read && read.marks;
   const section = (marks: readonly Mark[] | null): { totals: ThroughputCounts; buckets: ThroughputHour[] } => {
     const slots = Array.from({ length: hours }, (): Mark[] => []);
     for (const mark of marks ?? []) slots[Math.min(hours - 1, Math.floor((mark.at - since) / HOUR))]!.push(mark);

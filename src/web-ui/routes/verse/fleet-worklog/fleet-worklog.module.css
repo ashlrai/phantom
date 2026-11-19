@@ -1,0 +1,17 @@
+/* One readable column: a sentence and its trend line per number, then the tables. Wraps the same at 390 px. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.root h2 { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.numbers { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.numbers li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.numbers li:first-child { font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+.meta { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.meta[data-stale] { color: var(--status-warning-fg); }
+.table { width: 100%; border-collapse: collapse; font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.table caption { padding-bottom: var(--space-1); color: var(--text-secondary); font-weight: var(--font-weight-semibold); text-align: start; }
+.table th, .table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border-subtle); text-align: end; }
+.table th:first-child { text-align: start; }
+
+/* Keep labels readable on narrow panes; the named region supports keyboard scrolling. */
+.tableScroll { max-width: 100%; overflow-x: auto; }
+.tableScroll:focus-visible { outline: 2px solid var(--focus-ring, #2563eb); outline-offset: 2px; }
+.table { min-width: 42rem; overflow-wrap: normal; }
