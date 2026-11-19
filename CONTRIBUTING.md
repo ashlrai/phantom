@@ -2,6 +2,12 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+**First pull request?** Follow [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md):
+clone, install, verify once, push to your fork, open the pull request, and what
+`Merge Gate` and auto-merge expect. Coding agents build most of Phantom, and
+outside contributors take the same path as the fleet. This file holds the full
+conventions behind that guide.
+
 ---
 
 ## Prerequisites
@@ -21,12 +27,17 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+npm ci                    # a single checkout; also what CI and release packaging use
+npm run install:worktree  # several trusted local worktrees sharing one store; requires pnpm 10.28.2
 ```
 
+See [Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees)
+before using the second form.
+
 Run focused verification locally while developing. Pull requests and default-branch
-pushes run the repository's CI and Dependency Audit workflows. Check the actual
+pushes run the repository's CI and Dependency Audit workflows; on a pull request
+CI runs only the fast `Merge Gate` lane described in
+[Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires). Check the actual
 run for your commit; workflow source alone is not evidence that it passed.
 Dependency changes must keep the
 affected manifest and lockfile consistent, including separately packaged Raycast
@@ -221,12 +232,11 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+broker checks. None of these run on pull requests, the merge queue or master
+pushes, which take the fast `Merge Gate` lane only. They run on the six-hour
+scheduled `master` run (whose Mac work takes one of seven daily slices, see
+`.github/scripts/ci-mac-rotation.mjs`), on manual dispatch and when another
+workflow calls CI; failures there are fixed forward. Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
@@ -347,6 +357,7 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 
 - Keep commits focused and atomic; one logical change per commit.
 - Use a concise, imperative subject line (e.g. `add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Pull requests land as squash commits, so the pull request title becomes the commit subject on `master`; write it with the same care.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
