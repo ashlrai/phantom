@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, seatMayClaim, seatParticipants, sendSeatMessage, transitionSeatState, type QuotaEvidence, type SeatOptions, type SeatState } from '../src/core/bots/seats.js';
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
@@ -24,7 +25,7 @@ async function fixture(value: unknown = seat()) {
   const home = await mkdtemp(join(tmpdir(), 'bot-seats-')); homes.push(home);
   const root = join(home, '.phantom', 'bots');
   await mkdir(root, { recursive: true, mode: 0o700 });
-  await writeFile(join(root, 'seats.json'), JSON.stringify({ schema: 'phantom-bot-seats.v1', seats: [value] }));
+  await writeFile(join(root, 'seats.json'), JSON.stringify({ schema: 'phantom-bot-seats.v1', seats: Array.isArray(value) ? value : [value] }));
   return { home, root, now: () => now, runs: join(home, 'runs') };
 }
 afterEach(async () => { await Promise.all(homes.splice(0).map(h => rm(h, { recursive: true, force: true }))); });
@@ -244,6 +245,23 @@ it('posts a real bus note to leaders for each handed-off record by default', asy
   expect((await applySeatHandoff('helper', opts)).handoffs).toEqual([]);
   const again = listBusInboxAfter(0, 100, { root: fleetRoot });
   expect(again.status === 'ok' ? again.messages : []).toHaveLength(1);
+});
+it('routes seat-to-seat messages through the seat fleet root and clock', async () => {
+  const reviewer = { id: 'reviewer', kind: 'local', displayName: 'Reviewer', participantId: 'reviewer', capabilities: ['review'], quota: { source: 'none' } };
+  const o = await fixture([seat(), reviewer]);
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  for (const handle of ['helper', 'reviewer']) {
+    expect(registerAgentIdentity({ handle }, { root: fleetRoot, now: o.now }).status).toBe('created');
+  }
+  const result = await sendSeatMessage({ from: 'helper', to: 'reviewer', text: 'please review' }, o);
+  expect(result).toMatchObject({ status: 'posted', to: 'agent:reviewer' });
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot, now: o.now });
+  expect(page.status).toBe('ok');
+  const rows = page.status === 'ok' ? page.messages : [];
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.envelope.from).toBe('agent:helper');
+  expect(rows[0]!.envelope.to).toBe('agent:reviewer');
+  expect(rows[0]!.receivedAt).toBe(now);
 });
 it('reports an unavailable bus store honestly instead of claiming a posted note', async () => {
   const o = await fixture();
