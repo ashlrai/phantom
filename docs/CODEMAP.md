@@ -150,6 +150,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/openai-agents/`
 - `src/core/org/`
 - `src/core/owner-assist/`
+- `src/core/plan/`
 - `src/core/playbooks/`
 - `src/core/plugins/`
 - `src/core/policy/`
@@ -157,6 +158,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/proactive/`
 - `src/core/providers/`
 - `src/core/prs/`
+- `src/core/publish/`
 - `src/core/quality/`
 - `src/core/queue/`
 - `src/core/radar/`
