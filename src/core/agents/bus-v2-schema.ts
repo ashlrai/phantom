@@ -103,13 +103,86 @@ export function globMatches(glob: string, subject: string): boolean {
   return new RegExp(`^${re}$`, 's').test(subject);
 }
 
+// ─── Glob intersection ──────────────────────────────────────────────
+// pathGlobsOverlap must answer "does some path match both globs" exactly:
+// the coordination table treats a false as proof two claims are disjoint,
+// so a missed intersection lets two live claims cover the same paths.
+
+type GlobAtom =
+  | { kind: 'lit'; ch: string }
+  | { kind: 'seg' }        // `?` — exactly one non-`/` char
+  | { kind: 'star-seg' }   // `*` — any run of non-`/` chars
+  | { kind: 'star-any' };  // `**` — any run of chars
+
+/** Compile a glob to the atoms globMatches consumes: `**`→`.*`, `*`→`[^/]*`, `?`→`[^/]`, else literal. */
+function globAtoms(glob: string): GlobAtom[] {
+  const atoms: GlobAtom[] = [];
+  for (let i = 0; i < glob.length; i += 1) {
+    const c = glob[i]!;
+    if (c === '*') {
+      if (glob[i + 1] === '*') { atoms.push({ kind: 'star-any' }); i += 1; }
+      else atoms.push({ kind: 'star-seg' });
+    } else atoms.push(c === '?' ? { kind: 'seg' } : { kind: 'lit', ch: c });
+  }
+  return atoms;
+}
+
+type ConsumeClass = { t: 'lit'; ch: string } | { t: 'seg' } | { t: 'any' };
+
+function atomClass(atom: GlobAtom): ConsumeClass {
+  switch (atom.kind) {
+    case 'lit': return { t: 'lit', ch: atom.ch };
+    case 'seg':
+    case 'star-seg': return { t: 'seg' };
+    case 'star-any': return { t: 'any' };
+  }
+}
+
+/** Whether one consumed character can satisfy both classes at once. */
+function classesMeet(a: ConsumeClass, b: ConsumeClass): boolean {
+  if (a.t === 'any' || b.t === 'any') return true;
+  if (a.t === 'seg') return b.t === 'seg' || b.ch !== '/';
+  if (b.t === 'seg') return a.ch !== '/';
+  return a.ch === b.ch;
+}
+
+const isStarAtom = (atom: GlobAtom): boolean => atom.kind === 'star-seg' || atom.kind === 'star-any';
+
+/**
+ * Exact intersection of two globs under globMatches semantics, by product
+ * construction over their atom NFAs: a state is the pair of next-atom
+ * positions, star atoms may consume their class and stay or be skipped, and
+ * every other atom consumes one character and advances. Both sides must
+ * consume the same character, so classes must intersect. O(len(a)·len(b)).
+ */
+function globLanguagesIntersect(a: string, b: string): boolean {
+  const left = globAtoms(a), right = globAtoms(b);
+  const width = right.length + 1;
+  const seen = new Uint8Array((left.length + 1) * width);
+  const queue: number[] = [0];
+  seen[0] = 1;
+  for (let head = 0; head < queue.length; head += 1) {
+    const state = queue[head]!;
+    const i = Math.floor(state / width), j = state % width;
+    if (i === left.length && j === right.length) return true;
+    if (i < left.length && isStarAtom(left[i]!) && !seen[state + width]) { seen[state + width] = 1; queue.push(state + width); }
+    if (j < right.length && isStarAtom(right[j]!) && !seen[state + 1]) { seen[state + 1] = 1; queue.push(state + 1); }
+    if (i < left.length && j < right.length && classesMeet(atomClass(left[i]!), atomClass(right[j]!))) {
+      const ni = isStarAtom(left[i]!) ? i : i + 1;
+      const nj = isStarAtom(right[j]!) ? j : j + 1;
+      const next = ni * width + nj;
+      if (!seen[next]) { seen[next] = 1; queue.push(next); }
+    }
+  }
+  return false;
+}
+
 function pathGlobsOverlap(a: string, b: string): boolean {
   if (a === b) return true;
-  const hit = (glob: string, other: string): boolean => {
-    const p = literalPrefix(other);
-    return globMatches(glob, p) || globMatches(glob, p.endsWith('/') ? p : `${p}/`);
-  };
-  return hit(a, b) || hit(b, a);
+  // A wildcard-free side is one concrete subject: a single globMatches decides.
+  if (!/[*?]/.test(a)) return globMatches(b, a);
+  if (!/[*?]/.test(b)) return globMatches(a, b);
+  return globLanguagesIntersect(a, b);
 }
 
 /** Pure overlap rule. A repo claim overlaps any path claim in that repo; other kinds never cross. */

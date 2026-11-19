@@ -26,6 +26,13 @@ describe('coordinationRowBlocks', () => {
     expect(coordinationRowBlocks(team, 'repo:fake/other')).toBe(false);
   });
 
+  it('blocks wildcard path claims that share a concrete path', () => {
+    const held = row({ key: 'path:fake/repo:**/*.ts' });
+    expect(coordinationRowBlocks(held, 'path:fake/repo:src/*.ts')).toBe(true);
+    expect(coordinationRowBlocks(held, 'path:fake/repo:docs/*.md')).toBe(false);
+    expect(coordinationRowBlocks(held, 'path:fake/repo:src/core/**')).toBe(true);
+  });
+
   it('never blocks on queue observations or malformed keys', () => {
     const queued = observeQueuedPaths(new Map([['src/a.ts', ['job-1']]]))[0]!;
     expect(queued.origin).toBe('queue');
