@@ -19,6 +19,15 @@ again just before Git runs, printed and appended to
 `~/.ashlr-runs/queue/worktree-reap.jsonl`. Add `--json` for the
 `worktrees.v1` report. The Home view's Disk card shows the same counts.
 
+The same command reports reaper health (`reaper` in the JSON). It is
+`healthy` when nothing is safe to remove or the last removal attempt in
+`worktree-reap.jsonl` is under 24 hours old, and `stale` when safe worktrees
+are waiting and the reaper never ran, last ran over 24 hours ago, or its last
+batch only failed. A publisher marker over six hours old is listed under
+`stuckRuns`. It is `unknown` when a record cannot be read. `eligible` lists the
+safe jobs; the check only reads, so live, open, kept, dirty and unmerged
+worktrees are never listed or removed by it.
+
 ## `phm worktrees prune`
 
 
