@@ -11,12 +11,12 @@ import { readFailureReason } from '../../../data/client.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { SkeletonRow } from '../../../components/primitives/Skeleton.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import type { FleetLaneView } from '../../../data/api-types.js';
+import type { FleetLaneView, StarvedLane } from '../../../data/api-types.js';
 import { creditBarLabel, creditLine, creditTone, laneChipText, sourceNotes, updatedText } from './ops-lane-model.js';
 import styles from './ops.module.css';
 import meter from './ops-lane-console.module.css';
 
-function LaneRow({ lane }: { lane: FleetLaneView }) {
+function LaneRow({ lane, starved }: { lane: FleetLaneView; starved?: StarvedLane }) {
   const barLabel = creditBarLabel(lane);
   return (
     <div className={styles.row}>
@@ -27,6 +27,7 @@ function LaneRow({ lane }: { lane: FleetLaneView }) {
         ))}
       </p>
       <p className={styles.rowMeta}>{creditLine(lane)}</p>
+      {starved?.line ? <p className={styles.rowMeta} data-tone="warn">{starved.line}</p> : null}
       {barLabel !== null ? (
         <span className={meter.track} role="img" aria-label={barLabel} data-tone={creditTone(lane.credit.remainingPct)}>
           <span className={meter.fill} style={{ width: `${Math.min(100, Math.max(0, lane.credit.remainingPct ?? 0))}%` }} />
@@ -69,7 +70,7 @@ export function OpsLaneConsole() {
         <>
           {snapshot.lanes.length === 0
             ? <p className={styles.empty}>No lanes reported by the queue dir</p>
-            : <div className={styles.list}>{snapshot.lanes.map((lane) => <LaneRow key={lane.lane} lane={lane} />)}</div>}
+            : <div className={styles.list}>{snapshot.lanes.map((lane) => <LaneRow key={lane.lane} lane={lane} starved={snapshot.starved?.lanes[lane.lane]} />)}</div>}
           {notes.length > 0 ? <p className={styles.note}>{notes.join(' · ')}</p> : null}
         </>
       )}

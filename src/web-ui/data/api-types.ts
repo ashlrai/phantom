@@ -120,7 +120,9 @@ import type { FleetLaneSnapshot as CoreFleetLaneSnapshot, FleetLaneView as CoreF
 export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 /** `slotTarget` is optional here so a response from an older server still type-checks. */
 export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
-export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
+export type { StarvedLane } from '../../core/fleet/lane-starved.js';
+/** `starved` is optional here so a response from an older server still type-checks. */
+export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes' | 'starved'> & { lanes: FleetLaneView[]; starved?: CoreFleetLaneSnapshot['starved'] };
 /** fleet.sessions.v1 — unified dispatchd session list behind GET /api/fleet/sessions. */
 export type {
   FleetSessionsV1,

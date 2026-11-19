@@ -48,7 +48,7 @@ async function fixture(contents: unknown) {
 async function run(contents: unknown, args: string[]) {
   const file = await fixture(contents);
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const code = await cmdFleetStarved(args, file.reader);
+  const code = await cmdFleetStarved(args, file.reader, async () => ({ lanes: {}, waiting_elsewhere: 0 }));
   expect(file.reader).toHaveBeenCalledExactlyOnceWith(join(homedir(), '.ashlr-runs', 'queue', 'status.json'));
   expect(await readFile(file.path, 'utf8')).toBe(file.text);
   const printed = String(output.mock.calls[0]?.[0] ?? '');
@@ -178,6 +178,8 @@ describe('ashlr fleet starved', () => {
         { lane: 'codex', running: 0, target: 4, queued: 15, starved: true, backlogged: true },
         { lane: 'devin', running: 2, target: 2, queued: 1, starved: false, backlogged: false },
       ],
+      starved_lanes: [],
+      waiting_elsewhere: 0,
     });
   });
 

@@ -971,6 +971,8 @@ export interface LeaderRunDeps {
   announceRelease?: () => Promise<unknown>;
   /** Plan pace warning (usage/plan-pace.ts): one line per too-fast or too-slow plan, at most every 2 h; absent in injected tests. */
   announcePace?: () => Promise<unknown>;
+  /** Starved-lane notice (fleet/lane-starved.ts): one line per lane starved 30 min, at most once per 6 h; absent in injected tests. */
+  announceStarved?: () => Promise<unknown>;
   /** Offline advisory pass: its only write is metrics/amplify.jsonl. */
   amplifyTick?: (nowMs: number) => Promise<void>;
   board?: { record(nowMs: number): Promise<unknown> };
@@ -1008,6 +1010,7 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     adviseActionClass: defaultLeaderActionAdvisor(cfg),
     announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
     announcePace: () => import('../usage/plan-pace.js').then(m => m.runDefaultPaceAlerts()),
+    announceStarved: () => import('../fleet/lane-starved.js').then(m => m.runDefaultStarvedNotices()),
     amplifyTick: async nowMs => { amplifySnapshot = await amplifier.amplifyTick(undefined, nowMs); },
     sources: {
       amplify: async nowMs => {
@@ -1555,6 +1558,11 @@ async function leaderTickOnce(deps: LeaderRunDeps, opts: { awaitRun?: boolean } 
   if (deps.announcePace) {
     void Promise.resolve().then(deps.announcePace).catch((error: unknown) => {
       console.error(`leader tick: pace warning failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
+  }
+  if (deps.announceStarved) {
+    void Promise.resolve().then(deps.announceStarved).catch((error: unknown) => {
+      console.error(`leader tick: starved lane notice failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
   }
   let graded: LeaderOutcomeRecord[] = [];

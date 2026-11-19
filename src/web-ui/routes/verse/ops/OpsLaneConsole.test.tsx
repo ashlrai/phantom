@@ -63,6 +63,23 @@ describe('OpsLaneConsole', () => {
     expect(screen.getAllByRole('img')).toHaveLength(1);
   });
 
+  it('shows the starved line on a starved lane card only', async () => {
+    const line = 'codex-personal: 8 free slots, 0 ready rows for 42 min; next step: add work for codex-personal';
+    stub(() => Promise.resolve(Response.json(snapshot({
+      starved: {
+        waiting_elsewhere: 0,
+        lanes: {
+          'codex-personal': { free_slots: 8, ready_rows: 0, starved: true, starved_since: null, line },
+          'local-omlx': { free_slots: 0, ready_rows: 0, starved: false, starved_since: null, line: null },
+        },
+      },
+    }))));
+    render(<OpsLaneConsole />);
+
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    expect(screen.getAllByText(/next step: add work for/)).toHaveLength(1);
+  });
+
   it('renders the empty-lanes line and names a degraded source in the footer', async () => {
     const snap = snapshot({ lanes: [] });
     snap.sources.queue = { state: 'degraded', file: 'ready.tsv', rows: 0, dropped: 0, unhinted: 0 };
