@@ -100,6 +100,20 @@ zero. The same rows for agents:
 phm pools
 ```
 
+The Usage pane is the provider-account side of the same picture: one card per
+signed-in account (Claude, Codex, Grok) with its brand mark, plan and exactly
+the windows the provider reported. The headline counts where the accounts
+stand (flagged at a limit, not readable, still checking, no reading) and the
+line under it names the next reset. A limit is counted only when the provider
+flagged it, never from a 100% reading, because credits can keep that account
+usable. Each window shows its bar, percent and reset as a countdown plus a
+local clock time; Claude's reset is the provider's own sentence, so no clock
+time is derived for it. A window with no reading has a hatched bar, not an
+empty one. Tokens last hour totals the lanes that reported a figure, says how
+many did not, and draws each lane as a thin bar against the busiest lane.
+Accounts come from `GET /api/verse/accounts` and lane tokens from
+`GET /api/verse/fleet/runs`.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being
