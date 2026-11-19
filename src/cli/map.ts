@@ -5,7 +5,8 @@ export const MAP_USAGE = `Usage: phm map [--json]
 The whole fleet on one map: the leader, each lane, its running jobs, every
 computer and the pools lanes draw on, with who reports to whom, what runs
 where, which pool each lane uses and who messaged whom in the last 15 minutes.
---json prints the fleet.live-map.v1 graph (stable ids, stable order).
+--json prints the fleet.live-map.v1 graph (stable ids, stable order), with orgLayout:
+the 3D position of every leader, group, lane and job, grouped by who it reports to.
 Unknown facts read "unknown" and are listed as notes. Read only.
 
 map edges lists who messaged whom (default: the last 15 minutes): from agent,

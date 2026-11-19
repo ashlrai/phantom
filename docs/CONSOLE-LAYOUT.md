@@ -84,6 +84,22 @@ asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
 
+The Pools pane is one board of every resource pool, most at risk of going
+unused first. Each card has the pool's plain-words line, a bar (solid: used so
+far; lighter: where the current burn ends by reset; marker: time elapsed in
+the window) and labelled readings: used, left, the reset as a countdown and a
+local time, burn per hour and its basis, unused at reset, jobs running against
+the slot target, and how long ago the reading was taken and by which reader.
+Claude's per-model weekly windows sit under its card. A credits pool shows its
+balance and no bar. The line under the headline names the next reset, and the
+switch narrows the list to Behind, On pace or Unknown (arrow keys move it).
+Every value is read from `pools.v1`; one it does not hold reads unknown, never
+zero. The same rows for agents:
+
+```sh
+phm pools
+```
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being

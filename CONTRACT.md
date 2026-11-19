@@ -1314,12 +1314,13 @@ claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
 Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
 reject ASCII controls including DEL. Claims grant no execution authority.
 
-`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[])`
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
 It validates at most 1024 retained receipts in strictly increasing cursor order;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
-provider comes from the post or explicit participant metadata (missing is refused).
+provider comes from the post, explicit participant metadata, or the
+injected `providerFor` resolver — schema-checked, never guessed (missing is refused).
 Statuses update only retained jobs from the same routing owner; orphan statuses
 are ignored. Duplicate job posts and malformed work bodies refuse the projection.
 Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
@@ -1333,9 +1334,13 @@ serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
 200 with the projection's own status, `unavailable`/`retryable`/`invalid`
 answer 503.
 
-`readBusWorkFeed({root?, now?, claims?})` in `src/core/agents/bus-work-feed-read.ts`
+`readBusWorkFeed({root?, now?, claims?, participants?, providerFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. With `claims:true` the ok result
+retryable/invalid with receipt count and `asOf`. Omitted post providers fall back
+to the sender identity's newest registered runtime in the agent registry beside
+the bus store (`resolveAgent` over handle, `agent:<handle>`, stable id and
+aliases); an absent or unreadable registry hints nothing, and an explicit
+`providerFor` replaces the registry fallback. With `claims:true` the ok result
 adds `claims:{source,holds,truncated}`: holds list each live coordination lease
 blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 `leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is

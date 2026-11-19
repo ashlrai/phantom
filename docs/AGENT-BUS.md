@@ -387,7 +387,8 @@ Every job is `{id, owner, provider, repo, claimKeys[], status, updatedAt}`
 and the feed is `{v:2, jobs:[...]}`. `projectBusWorkFeed` in
 `src/core/agents/bus-work-feed.ts` projects a retained receipt snapshot without
 I/O. Posts start queued; `owner` is the sender label. Provider comes from the
-post or explicit participant metadata; absent provider refuses the projection.
+post, explicit participant metadata, or — in the read layer — the sender
+identity's newest registered runtime; absent provider refuses the projection.
 Statuses from that owner update retained jobs in cursor order with receipt time
 as `updatedAt`; orphan statuses are ignored. Duplicate posts and malformed work
 bodies are refused. Legacy and unrelated bodies stay opaque. This projection is
@@ -400,6 +401,14 @@ for `ok` and `refused` — the projection's own status and reason stay in the
 body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
 missing store reads as an empty `ok` feed. Status filtering stays client-side;
 a missing provider stays a refusal, never a fabricated owner.
+
+The read resolves an omitted post `provider` through the agent identity
+registry beside the bus store: a sender label matching a handle,
+`agent:<handle>`, stable id or alias takes that identity's newest runtime
+provider (`BusWorkFeedReadOptions.providerFor` replaces this fallback and
+`participants` adds explicit participant metadata). An absent or unreadable
+registry hints nothing — provider stays unknown and the projection still
+refuses rather than guessing.
 
 `readBusWorkFeed({claims:true})` and `phm fleet work-feed --claims` join each
 job's declared claim keys against the live coordination table in one read:

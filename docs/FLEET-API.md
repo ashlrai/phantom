@@ -412,6 +412,11 @@ graph to the desktop Map pane with a current read session. The graph adds no
 source of its own. It joins the org map and tree above, `phm nodes` (computers
 and the jobs each one holds) and the pool-usage ledger.
 
+- `orgLayout`: where the 3D map puts each org node, grouped by who it reports
+  to (the tree `phm fleet org` prints; anything with no owner is under
+  `unassigned`). `positions[]` has `id`, `role`, `label`, `parent`, `depth`, `x`,
+  `y`, `z`; `labels[]` has one per lane and group with `text` such as
+  `claude: 2 running`. The same input gives the same positions.
 - `nodes[]`: `id`, `kind` (`leader`, `lane`, `job`, `computer`, `resource`),
   `level` (0 to 4, the row in the drawing), `label`, `provider`, `status`,
   `detail` and `live` (jobs only). Ids are stable: `leader`, `lane:<name>`,

@@ -63,8 +63,22 @@ describe('buildPoolsView', () => {
   it('reports an on-pace pool with every field measured', () => {
     expect(one(FIXTURE[1]!)).toEqual({
       id: 'on-pace', kind: 'subscription', usedPct: 60, resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
-      burnBasis: 'reported', projectedUnusedPct: 0, wasteRisk: 'low', creditsRemaining: null, held: false, asOf: at(-0.1), reason: null, summary: 'on pace',
+      burnBasis: 'reported', projectedUnusedPct: 0, wasteRisk: 'low', creditsRemaining: null, held: false,
+      running: 1, target: 2, source: 'claude-native-usage', scopes: [], asOf: at(-0.1), reason: null, summary: 'on pace',
     });
+  });
+
+  it('carries running jobs, the reader and per-model windows, and drops the windows with a stale reading', () => {
+    const quotaScopes = [{ id: 'fable', usedPct: 41.26, resetAt: at(30) }, { id: 'opus', usedPct: 90, resetAt: at(-1) }, { id: 'sonnet', usedPct: 130, resetAt: null }];
+    expect(one(lane('claude', { running: 3, target: null, quotaScopes }))).toMatchObject({ running: 3, target: null, source: 'claude-native-usage', scopes: [
+      { id: 'fable', usedPct: 41.3, resetAt: at(30), hoursLeft: 30 },
+      { id: 'opus', usedPct: null, resetAt: at(-1), hoursLeft: null },
+      { id: 'sonnet', usedPct: 100, resetAt: null, hoursLeft: null },
+    ] });
+    expect(formatPoolsText(buildPoolsView(ledger(lane('claude', { quotaScopes })), NOW)))
+      .toContain(`  fable: used 41.3%; resets ${at(30)} (30h left)\n  opus: used unknown; resets ${at(-1)} (unknown left)`);
+    expect(one(lane('claude', { quotaScopes }, -2))).toMatchObject({ usedPct: null, scopes: [], running: 1, target: 2 });
+    expect(one(lane('status-only', { source: 'dispatchd budget' }, null)).source).toBe('dispatchd budget');
   });
 
   it('says how much a behind pool would leave unused', () => {

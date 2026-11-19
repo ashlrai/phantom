@@ -45,6 +45,8 @@ export function UsageHistoryChart({ series, status = 'ready', now = Date.now() }
       <span>{resetLabel(series.reset_at, now)}</span>
       <span className={styles.pace}>Pace: {series.pace}</span>
     </figcaption>
+    {/* Same sentence as the top of `phm fleet usage-history`: runs dry early, on pace, leaves usage unspent, or unknown. */}
+    <span className={styles.reason} data-runway={series.runway.verdict.replace(/ /g, '-')}>{series.runway.sentence}</span>
     {series.reason ? <span className={styles.reason}>{series.reason}</span> : null}
   </figure>;
 }
