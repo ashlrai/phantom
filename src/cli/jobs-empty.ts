@@ -1,7 +1,7 @@
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
-export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<number> {
+const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by-family] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
+export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies: (hours: number) => ReturnType<typeof import('../core/fleet/empty-families.js').readEmptyFamilies> = async hours => (await import('../core/fleet/empty-families.js')).readEmptyFamilies(hours)): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
   if (args[0] === 'empty-why') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1), undefined, Date.now(), true);
@@ -14,8 +14,10 @@ export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<num
   let json = false;
   let family: string | undefined;
   let lane: string | undefined;
+  let byFamily = false;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--json') json = true;
+    else if (args[i] === '--by-family') byFamily = true;
     else if (args[i] === '--help' || args[i] === '-h') { console.log(usage); return 0; }
     else if (args[i] === '--since') {
       const match = /^(\d+(?:\.\d+)?)h$/.exec(args[++i] ?? '');
@@ -28,6 +30,15 @@ export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<num
       lane = args[++i];
       if (!lane || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(lane)) { console.error(usage); return 2; }
     } else { console.error(usage); return 2; }
+  }
+  if (byFamily) {
+    if (family || lane) { console.error(usage); return 2; }
+    const { formatEmptyFamilies } = await import('../core/fleet/empty-families.js');
+    const grouped = await readFamilies(hours);
+    if (!grouped) { console.error('Jobs ledger is unreadable.'); return 1; }
+    if (json) console.log(JSON.stringify(grouped));
+    else for (const line of formatEmptyFamilies(grouped)) console.log(line);
+    return 0;
   }
   const report = await read(hours, undefined, undefined, undefined, { family, lane, quote: true });
   if (!report) { console.error('Jobs ledger is unreadable.'); return 1; }
