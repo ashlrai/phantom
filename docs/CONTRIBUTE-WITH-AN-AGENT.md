@@ -111,6 +111,39 @@ as soon as `Merge Gate` passes in the queue, with no separate manual merge
 step. If `master` moves and your branch conflicts, rebase onto `origin/master`,
 rerun the checks in step 4, and push again.
 
+### Protected paths wait for the owner
+
+A passing `Merge Gate` is enough only when the diff stays off the protected
+(Tier-1) paths. [`.github/CODEOWNERS`](https://github.com/ashlrai/phantom/blob/master/.github/CODEOWNERS)
+assigns those paths to the repository owner and GitHub requires the owner's
+review on them, so a pull request that touches one waits for that review even
+with auto-merge armed. Fleet agents follow the same rule; the fleet's GitHub
+App is never a code owner. The protected set includes:
+
+- CI configuration (`.github/**`) and `CODEOWNERS` itself.
+- Manifests and lockfiles (every `package.json`, `pnpm-lock.yaml` and similar),
+  so any new or changed dependency needs the owner.
+- Build, hook and verify configuration (`tsconfig*.json`, `Dockerfile`,
+  `Makefile`, `.husky/**`) and release tooling (`scripts/release*`,
+  `scripts/build*`).
+- Test infrastructure (`test/setup/**`, `test/config/**`, `vitest.config*`) and
+  the tests that guard Tier-1 code, listed by name.
+- Authority code and docs (`src/core/authority/**`, `docs/**/*AUTHORITY*`),
+  memory (`src/core/memory/**`), desktop custody and secret material.
+
+The file is generated from `src/core/authority/protected-paths.ts`, so treat it
+as the source of truth rather than this summary. Before you start, check
+whether your change lands on a protected path:
+
+```sh
+grep -n "<path or directory>" .github/CODEOWNERS
+```
+
+If it does, keep the change and say in the pull request body why it needs the
+protected path, or split it so the unprotected part can merge on its own.
+Never edit `CODEOWNERS` by hand: `npm run authority:regen` regenerates it, and
+`test/authority-codeowners-310b.test.ts` fails on drift.
+
 Nothing in this flow weakens a test, bypasses a ruleset or uses an admin
 override; changes that try are refused. See the
 [safety invariants](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#safety-invariants-contributors-must-never-weaken).
