@@ -8,16 +8,17 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { defaultRunsDir } from './landed-closes-read.js';
+import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
 import type { ThroughputMark } from './throughput.js';
 
 export const PULSE_ALERTS_SCHEMA = 'fleet.pulse.alerts.v1' as const;
-export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste'] as const;
+export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale'] as const;
 export type PulseAlertKind = (typeof PULSE_ALERT_KINDS)[number];
 export interface PulseAlertV1 {
   kind: PulseAlertKind;
-  /** The lane, or the pool for pool_waste; `fleet` for stalled. */
+  /** The lane, or the pool for pool_waste, or the repo for release_stale; `fleet` for stalled. */
   lane: string;
   /** ISO time the trouble began; null when it is a projection with no start (pool_waste). */
   since: string | null;
@@ -31,7 +32,9 @@ export interface PulseAlertsV1 {
   unknown: string[];
 }
 /** Every reader's output as it returned it; null when that reader failed. */
-export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null }
+export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null;
+  /** Release cadence; absent means not checked, null means the read failed. */
+  releases?: CadenceV1 | null }
 
 export const STALL_MINUTES = 30;
 export const WASTING_JOBS = 20;
@@ -49,7 +52,7 @@ const minutesText = (ms: number): string => ms >= 120 * MIN ? `${Math.floor(ms /
 /** Pure: the active alerts for these inputs at `now`. */
 export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAlertsV1 {
   const alerts: PulseAlertV1[] = [], unknown: string[] = [];
-  const { marks, starved, spend } = inputs;
+  const { marks, starved, spend, releases } = inputs;
 
   if (!marks) unknown.push('Stalled, wasting: the job metrics file could not be read.');
   else {
@@ -94,6 +97,18 @@ export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAl
         fix_hint: `Queue more jobs for ${row.pool} before it resets.` });
     }
     if (!spend.pools.some(row => row.status !== 'unknown')) unknown.push(`Pool waste: ${spend.headline.replace(/^Unknown: /, '')}`);
+  }
+
+  if (releases === null) unknown.push('Release cadence: GitHub releases could not be read.');
+  else if (releases) for (const row of releases.repos) {
+    const since = row.published_at === 'unknown' ? null : row.published_at;
+    if (row.status === 'unknown') { unknown.push(`Release cadence: ${row.repo} could not be read.`); continue; }
+    if (row.status === 'stale') alerts.push({ kind: 'release_stale', lane: row.repo, since,
+      detail: `${row.repo} last released ${row.latest_tag} ${Math.floor(row.hours_since as number)} hours ago and ${row.merged_since} PRs have merged since.`,
+      fix_hint: `Cut a release for ${row.repo}: phm release cadence.` });
+    else if (row.has_assets === false) alerts.push({ kind: 'release_stale', lane: row.repo, since,
+      detail: `${row.repo} ${row.latest_tag} was published with 0 assets, so nobody can download it.`,
+      fix_hint: `Re-run the release workflow for ${row.repo}: phm release cadence.` });
   }
 
   const order = (a: PulseAlertV1) => PULSE_ALERT_KINDS.indexOf(a.kind);
@@ -179,12 +194,13 @@ export async function readPulseAlertInputs(runsDir: string, now: number): Promis
   const [{ readText }, { throughputMarks }, { readUsageSpend }] = await Promise.all([
     import('./empty-cause.js'), import('./throughput.js'), import('../usage/spend.js'),
   ]);
-  const [ledger, starved, spend] = await Promise.all([
+  const [ledger, starved, spend, releases] = await Promise.all([
     readText(join(runsDir, 'metrics', 'jobs.jsonl'), 32 * 1024 * 1024),
     quiet(import('./lane-console.js').then(m => m.getFleetLaneSnapshot()).then(snapshot => snapshot.starved)),
     quiet(readUsageSpend(join(runsDir, 'queue', 'status.json'), now)),
+    quiet(import('../release/cadence.js').then(m => m.readReleaseCadence({ now }))),
   ]);
-  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend };
+  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases };
 }
 
 export interface ReadPulseAlertsOpts {
