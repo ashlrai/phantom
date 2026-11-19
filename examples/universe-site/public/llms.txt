@@ -11,7 +11,7 @@
 ## Canonical guides
 
 - [Run your first experiment](https://github.com/ashlrai/ashlr-hub/blob/master/docs/DEMO.md): Reproduce a two-generation search with fixed workers. No model account is needed; the demo creates local files and executes sandboxed code.
-- [Inspect before dispatch](https://github.com/ashlrai/ashlr-hub/blob/master/docs/README.md#for-coding-agents): Read campaign state, resource configuration and delivery receipts before choosing the next action. Healthy records are not proof of authenticated workers.
+- [Inspect before dispatch](https://github.com/ashlrai/phantom/blob/master/docs/README.md#inspect-universe-evidence): Read campaign state, resource configuration and delivery receipts before choosing the next action. Healthy records are not proof of authenticated workers.
 - [Allocate worker capacity](https://github.com/ashlrai/ashlr-hub/blob/master/docs/RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity): Commission supported native accounts or local models, preserve your personal reserve, and verify an explicit resource configuration.
 - [Run bounded campaigns](https://github.com/ashlrai/ashlr-hub/blob/master/docs/ASHLR-UNIVERSE.md#continue-autonomously-with-a-bounded-campaign): Turn an objective into competing variants with fixed evaluation, resource limits and recorded outcomes. Continue improving inside the delegated budget.
 - [Deliver and reconcile](https://github.com/ashlrai/ashlr-hub/blob/master/docs/ASHLR-UNIVERSE.md#deliver-supervised-campaign-results): Use an explicit delivery plan for local branches. Reconcile completed campaign receipts without rerunning workers; a branch is not a production release.

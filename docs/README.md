@@ -34,6 +34,68 @@ phm wire status --json
 
 A zero exit code is not a merge and not permission to spend. `phm docs --agent --json` from the installed binary wins if this page is older.
 
+### Read the command registry
+
+`phm docs --agent --json` returns command usage, descriptions, safety
+classifications and JSON shape references; `phm docs --agent` prints the same
+registry as plain text. From a trusted, built source checkout, use
+`node bin/ashlr` in place of `phm`. The registry is discovery metadata, not a
+complete schema or permission to execute. Consult the selected command's help
+and the owning guide; do not infer current provider readiness or mutation
+authority from a safety label. Command scores and the remaining agent gaps are
+in [CLI agent readiness](CLI-AGENT-READINESS.md). For failure handling, see
+[CLI failure handling for agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-CLI-CONTRACTS.md).
+
+### Work on this repository
+
+Phantom is built mostly by coding agents, including its own fleet. Before
+changing it, read:
+
+- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): the agent constitution, what agents may do and what stays with the owner.
+- [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): conventions, hermetic tests and contract-first changes.
+- [Agent operations](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md): set up and operate Phantom from a cold start.
+- [Agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md): the companion MCP servers declared in `.mcp.json`, their limits and approvals.
+
+Before a pull request, automated workers run `node scripts/verify-changed.mjs`
+once in the foreground, then `npm run check:docs` and the affected tests, for
+example `npx vitest run test/doc-facts.test.ts` after changing a documented
+command. Merge Gate stays the full check. For the public-source review of
+contributor instructions across the seven repos, see the
+[AGENTS.md audit](https://github.com/ashlrai/phantom/blob/master/docs/AGENTS-MD-AUDIT.md).
+For an opt-in versioned source installation, see
+[versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md).
+
+### Inspect Universe evidence
+
+For an already configured Universe store, these commands inspect evidence
+without starting campaigns or contacting model providers. Replace `ID`,
+`ABS_ROOT` and `ABS_RUNTIME` with the assigned experiment or campaign ID and
+explicit private absolute paths; keep the same root throughout a task.
+
+| Question | Read-only command | Interpret the result |
+| --- | --- | --- |
+| What experiments and outcomes are recorded? | `ashlr universe status --root ABS_ROOT --json` | Check `sourceState`, run status and measured usage; unknown values are not zero. |
+| What recovery state is recorded for this campaign? | `ashlr universe campaign check ID --root ABS_ROOT --json` | Check `sourceState`, `disposition` and `reasonCode`; this does not inspect current workers. |
+| Is the explicit resource setup valid? | `ashlr universe resources check --resource-runtime ABS_RUNTIME --json` | Check `status`, worker eligibility and warnings; valid configuration is not authenticated account readiness. |
+| Was a local artifact handoff recorded? | `ashlr universe deliveries ID --root ABS_ROOT --json` | Check `sourceState` and each receipt's `status`; `pending`, `unchanged` and `delivered` are different outcomes. |
+
+A zero exit code alone does not mean work is ready, useful or delivered. For
+example, campaign `check` returns zero for healthy held or terminal evidence.
+Inspect the structured result and use each command's own exit-code contract.
+Raw startup records and private JSON can contain tokens or paths; do not publish
+them. The [demo exporter](DEMO.md#generate-a-shareable-evidence-graphic) is the
+separate, allowlisted path for sharing the deterministic demo.
+
+When execution is within your delegated scope, follow the existing
+[experiment contract](ASHLR-UNIVERSE.md#the-experiment-contract),
+[bounded campaign guide](ASHLR-UNIVERSE.md#continue-autonomously-with-a-bounded-campaign)
+and [worker commissioning guide](RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity).
+For [supervised local delivery](ASHLR-UNIVERSE.md#deliver-supervised-campaign-results),
+inspect both campaign and delivery outcomes and reconcile receipts before retrying.
+A local branch is not a merge, release or production acceptance. Keep scope,
+resource reserves and acceptance criteria explicit; routine execution can proceed
+within them without turning discovery or a passing trial into broader authority.
+
 ## Humans, start here
 
 | Your task | Canonical guide |
@@ -203,58 +265,6 @@ The generated [CLI reference](https://github.com/ashlrai/phantom/blob/master/doc
 records every registered usage, summary, flag and JSON example. Run `phm docs cli`
 to regenerate it or `phm docs cli --check` to check for drift without writing.
 
-## For coding agents
-
-Command scores and the remaining agent gaps are in
-[CLI agent readiness](CLI-AGENT-READINESS.md).
-
-Start with the selected command registry from the binary you intend to use:
-
-```sh
-ashlr docs --agent --json
-```
-
-From a trusted, built source checkout, use `node bin/ashlr` in place of `ashlr`.
-The registry returns command usage, descriptions, safety classifications and JSON
-shape references. It is discovery metadata, not a complete schema or permission
-to execute. Consult the selected command's help and the owning guide; do not
-infer current provider readiness or mutation authority from a safety label.
-
-For an already configured store, these commands inspect evidence without starting
-campaigns or contacting model providers. Replace `ID`, `ABS_ROOT` and `ABS_RUNTIME`
-with the assigned experiment/campaign ID and explicit private absolute paths;
-keep the same root throughout a task.
-
-| Question | Read-only command | Interpret the result |
-| --- | --- | --- |
-| What experiments and outcomes are recorded? | `ashlr universe status --root ABS_ROOT --json` | Check `sourceState`, run status and measured usage; unknown values are not zero. |
-| What recovery state is recorded for this campaign? | `ashlr universe campaign check ID --root ABS_ROOT --json` | Check `sourceState`, `disposition` and `reasonCode`; this does not inspect current workers. |
-| Is the explicit resource setup valid? | `ashlr universe resources check --resource-runtime ABS_RUNTIME --json` | Check `status`, worker eligibility and warnings; valid configuration is not authenticated account readiness. |
-| Was a local artifact handoff recorded? | `ashlr universe deliveries ID --root ABS_ROOT --json` | Check `sourceState` and each receipt's `status`; `pending`, `unchanged` and `delivered` are different outcomes. |
-
-A zero exit code alone does not mean work is ready, useful or delivered. For
-example, campaign `check` returns zero for healthy held or terminal evidence.
-Inspect the structured result and use each command's own exit-code contract.
-Raw startup records and private JSON can contain tokens or paths; do not publish
-them. The [demo exporter](DEMO.md#generate-a-shareable-evidence-graphic) is the
-separate, allowlisted path for sharing the deterministic demo.
-
-When execution is within your delegated scope, follow the existing
-[experiment contract](ASHLR-UNIVERSE.md#the-experiment-contract),
-[bounded campaign guide](ASHLR-UNIVERSE.md#continue-autonomously-with-a-bounded-campaign)
-and [worker commissioning guide](RESOURCE-POOLS.md#commission-native-accounts-and-local-capacity).
-For [supervised local delivery](ASHLR-UNIVERSE.md#deliver-supervised-campaign-results),
-inspect both campaign and delivery outcomes and reconcile receipts before retrying.
-A local branch is not a merge, release or production acceptance. Keep scope,
-resource reserves and acceptance criteria explicit; routine execution can proceed
-within them without turning discovery or a passing trial into broader authority.
-
-For an opt-in versioned source installation, see [versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md) (source).
-
-To set up and operate Phantom from a cold start, see the [agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md) (source).
-
-For the public-source review of contributor instructions across the seven repos, see the [AGENTS.md audit](https://github.com/ashlrai/phantom/blob/master/docs/AGENTS-MD-AUDIT.md) (source).
-
 ## What the evidence means
 
 - **Implemented** means the code path exists; **verified** names the tests that ran.
@@ -290,10 +300,6 @@ hashes, artifact digests, provider observations and rollback identities in dated
 release or commissioning evidence instead of duplicating them throughout the
 documentation. Use focused local checks while iterating, then follow the
 canonical release guide for required hosted qualification and publication.
-
-- [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
-
-- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
 
 ## All documents
 
@@ -386,35 +392,28 @@ canonical release guide for required hosted qualification and publication.
 - [ashlr-plugin Leverage Maximization Plan](https://github.com/ashlrai/phantom/blob/master/docs/PLUGIN-LEVERAGE-PLAN.md)
 - [cfg.foundry — Polyglot Backend Configuration](https://github.com/ashlrai/phantom/blob/master/docs/FOUNDRY-CONFIG.md)
 
+### Recently added guides
+
+- [Local model inventory](https://github.com/ashlrai/phantom/blob/master/docs/MODEL-INVENTORY.md): opt-in Mac benchmarks, admission and fleet schema.
+- [Routines](https://github.com/ashlrai/phantom/blob/master/docs/ROUTINES.md): UTC-cron YAML schedules with executor failover, learned local-first placement runs, and a portable provider placement registry.
 - [Standing lane freshness](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-LANE-FRESHNESS.md): observe slots while mirror prep waits.
-
 - [Dispatcher route hysteresis](https://github.com/ashlrai/phantom/blob/master/docs/ROUTE-HYSTERESIS.md): route residency, move caps, replay and Security pin handoff.
-
 - [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import|exec|config --json`; metadata and Phantom Secrets references, phantom-injected launch and token-free client configs.
-
 - [Verify a worktree change](https://github.com/ashlrai/phantom/blob/master/docs/VERIFY-CHANGE.md): local toolchain checks and safe verdicts.
 - [Done contract](https://github.com/ashlrai/phantom/blob/master/docs/DONE-CONTRACT.md): the layered `done-contract.v1` file schema, floor checks, frozen acceptance criteria, verify commands, and `phm verify done`, the one generic validator (backward compatible with freeform bridge notes).
-
 - [Tier-1 import diagnosis](https://github.com/ashlrai/phantom/blob/master/docs/TIER1-WHY.md): shortest runtime chains and the fleet apps boundary.
-
 - [Agent checkpoints](AGENT-CHECKPOINT.md): explicit durable state and resume format.
 - [Session handoff](https://github.com/ashlrai/phantom/blob/master/docs/SESSION-HANDOFF.md): model-independent checkpoints, claim-coordinated resume and advisory quota failover.
 - [Stigmergic coordination](https://github.com/ashlrai/phantom/blob/master/docs/STIGMERGY.md): `phm trail` file markers, claim/lease, heartbeats, resumable checkpoints; agents pick up stalled work.
 - [Engineering receipt](https://github.com/ashlrai/phantom/blob/master/docs/ENGINEERING-RECEIPT.md): evidence from tool events vs model claims; `PHANTOM_RECEIPTS=1`.
-
-- [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md) — offline dataset preparation and paired evaluation.
-
-- [Rebase-wave status](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-STATUS.md) — read-only conflict and queue coverage snapshot.
-- [Merge queue latency](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-LATENCY.md) — record observed queue transitions, inspect blocker and eligibility timing, and re-arm dropped auto-merges after transient queue failures.
-- [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md) — read-only file-overlap batching of open PRs with a least-rebase-churn order.
-- [Merge-plan scoreboard](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-PLAN.md) — read-only merges/hour, failure causes, rebase candidates and superseded-duplicate close proposals from one PR snapshot, with before/after diffs.
-- [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md) — read-only conflict-to-queue wiring: clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
-
+- [Local model tuning data and evaluation](https://github.com/ashlrai/phantom/blob/master/docs/TUNE.md): offline dataset preparation and paired evaluation.
+- [Rebase-wave status](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-STATUS.md): read-only conflict and queue coverage snapshot.
+- [Merge queue latency](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-LATENCY.md): record observed queue transitions, inspect blocker and eligibility timing, and re-arm dropped auto-merges after transient queue failures.
+- [Merge-batch planner](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-BATCH.md): read-only file-overlap batching of open PRs with a least-rebase-churn order.
+- [Merge-plan scoreboard](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-MERGE-PLAN.md): read-only merges/hour, failure causes, rebase candidates and superseded-duplicate close proposals from one PR snapshot, with before/after diffs.
+- [Rebase-plan](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-REBASE-PLAN.md): read-only conflict-to-queue wiring; clusters conflicting bridge PRs by file overlap and emits ready.tsv-ready rebase-job specs.
 - [Empty job reasons](https://github.com/ashlrai/phantom/blob/master/docs/FLEET-EMPTIES.md): group recorded empty outcomes and review filler suggestions.
-
-[Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
-
+- [Fable 5.2 orchestration and host handoff](https://github.com/ashlrai/phantom/blob/master/docs/FABLE-ORCHESTRATOR.md)
 - [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
-
 - [App restart](https://github.com/ashlrai/phantom/blob/master/docs/APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.
-- [Rebase batch ordering](https://github.com/ashlrai/phantom/blob/master/docs/REBASE-ORDERING.md) — file-overlap clusters group eligible sibling rebase jobs within batch limits.
+- [Rebase batch ordering](https://github.com/ashlrai/phantom/blob/master/docs/REBASE-ORDERING.md): file-overlap clusters group eligible sibling rebase jobs within batch limits.
