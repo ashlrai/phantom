@@ -11,9 +11,11 @@
  *               mirrored bus envelope `imessage-teammate-<rowid>`.
  *   drafts      outbound email drafts still pending approval
  *               (`phm drafts list --status pending`), act: show/approve/reject.
- *   bus         live `kind:'work'` envelopes in the local bus inbox with no
- *               live claim row — an expired lease is free again and counts as
- *               unclaimed — act: `phm fleet bus-claim acquire`. A live
+ *   bus         live envelopes whose body the claim contract accepts
+ *               (`isClaimableWork`: a `kind:'work'` body, or a protocol-v1
+ *               transport `task` body) with no live claim row — an expired
+ *               lease is free again and counts as unclaimed — act:
+ *               `phm fleet bus-claim acquire`. A live
  *               coordination-table row on the envelope's `queue:<id>` key
  *               (resource, lane or board claims share the one table the
  *               message-id claim consults) also counts as held. The same
@@ -51,7 +53,7 @@ import type { WorkJob } from '../agents/bus-v2-schema.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
-import type { BusPriority } from '../fleet/bus-envelope.js';
+import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
@@ -186,10 +188,41 @@ async function draftItems(list: typeof listDrafts, runsDir: string | undefined):
   return { report: { state, pending: items.length }, items };
 }
 
-/** Live envelopes whose body marks them claimable work (the work loop's contract). */
+/**
+ * Live envelopes whose body the bus-next claim contract accepts — the work
+ * loop's contract (`isClaimableWork`): a `kind:'work'` body, or a protocol-v1
+ * transport `task` body. A `kind:'work'` body carrying a non-task `protocol`
+ * is not claimable (the protocol branch decides), so it stays off the list.
+ */
 function isWorkReceipt(receipt: BusInboxReceipt): boolean {
-  const body = receipt.envelope.body;
-  return body !== null && typeof body === 'object' && !Array.isArray(body) && body.kind === 'work';
+  return isClaimableWork(receipt.envelope.body);
+}
+
+/**
+ * One-line title for a bare protocol-v1 transport body — the claimable shape
+ * that carries no `kind:'work'` and no `text`: `protocol <kind> <topic>:
+ * <payload_ref>`, the same read the bus inbox frames compose. Typed bodies
+ * (a `kind` string is present) return null so the caller keeps its
+ * `work <from> → <to>` fallback; fields are read defensively because stored
+ * envelopes are untrusted data.
+ */
+function protocolBodyTitle(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  const kind = record['kind'];
+  if (typeof kind === 'string' && kind.trim() !== '') return null;
+  const proto = record[BUS_PROTOCOL_KEY];
+  if (proto === null || typeof proto !== 'object' || Array.isArray(proto)) return null;
+  const p = proto as Record<string, unknown>;
+  const pk = p['kind'];
+  if (typeof pk !== 'string' || pk.trim() === '') return null;
+  const field = (key: string): string | null => {
+    const value = p[key];
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+  };
+  const head = ['protocol', pk.trim(), field('topic')].filter((part): part is string => part !== null).join(' ');
+  const ref = field('payload_ref');
+  return ref === null ? head : `${head}: ${ref}`;
 }
 
 /** Announcement metadata for a v2 work job, read off its live `work.post` receipt. */
@@ -316,7 +349,9 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
         kind: 'bus-work',
         severity: envelope.priority === 'P0' ? 'high' : envelope.priority === 'P1' ? 'warn' : 'info',
         blocking: false,
-        title: oneLine(text || `work ${envelope.from} → ${envelope.to}`, TITLE_MAX),
+        // `kind:'work'` bodies title from their text; bare protocol `task`
+        // bodies have no text, so their kind/topic/ref names the item.
+        title: oneLine(text || protocolBodyTitle(body) || `work ${envelope.from} → ${envelope.to}`, TITLE_MAX),
         detail: cap(`from ${envelope.from} to ${envelope.to} · ${envelope.priority} · cursor ${receipt.cursor}`, DETAIL_MAX),
         since: iso(receipt.receivedAt),
         // The reader decrements ttl to what remains; expiry is a real deadline.
