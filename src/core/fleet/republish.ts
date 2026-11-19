@@ -1,7 +1,6 @@
-import { constants } from 'node:fs';
-import { open, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import { z } from 'zod';
+import { findPublishAbort, PUBLISH_LOG_NAME, readPublishLogLines } from './publish-log.js';
 
 export interface RepublishJob {
   job: string;
@@ -35,26 +34,14 @@ export async function readFleetRepublish(runsDir: string, fetcher: typeof fetch 
     return { data: await response.json() as unknown, more: /rel="next"/.test(response.headers.get('link') ?? '') };
   };
   for (const name of (await readdir(runsDir)).sort()) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.publish$/.test(name) || name.includes('..')) continue;
+    if (!PUBLISH_LOG_NAME.test(name) || name.includes('..')) continue;
     const job = name.slice(0, -8), branch = `codex-bridge/${job}`;
     const row: RepublishJob = { job, status: 'unknown', reason: 'Publish log is unreadable or too large.', head: null, sha: null, readyLine: null, pr_state: 'unknown' };
     jobs.push(row);
     try {
-      const file = await open(join(runsDir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      let log: string;
-      try {
-        if (!(await file.stat()).isFile()) throw new Error('Not a file');
-        const buffer = Buffer.alloc(2 * 1024 * 1024 + 1);
-        const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-        if (bytesRead === buffer.length) throw new Error('Log too large');
-        log = buffer.subarray(0, bytesRead).toString('utf8');
-      } finally { await file.close(); }
-      const lines = log.split(/\r?\n/);
-      const pushed = lines.reduce((last, line, index) => line.trim().replace(/^remote:\s*/, '').startsWith(`Create a pull request for '${branch}'`) ? index : last, -1);
-      const result = lines.reduce((last, line, index) => /^(?:RESULT\s|ABORT\b)/.test(line) ? index : last, -1);
-      if (pushed < 0 || result <= pushed || !/^(?:RESULT )?ABORT(?:\s|$)/.test(lines[result]!)) {
-        row.status = 'skip'; row.reason = 'No abort after a confirmed push.'; continue;
-      }
+      const lines = await readPublishLogLines(runsDir, name);
+      const abort = findPublishAbort(lines, branch), pushed = abort?.pushed ?? -1;
+      if (!abort) { row.status = 'skip'; row.reason = 'No abort after a confirmed push.'; continue; }
       row.reason = 'Fork identity is unknown; the push link is missing or unsupported.';
       const link = lines.slice(pushed + 1, pushed + 4).join('\n').match(/https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/new\/codex-bridge\/([A-Za-z0-9._-]+)(?=\s|$)/);
       if (!link || link[3] !== job || !repos.has(link[2]!)) continue;
@@ -78,7 +65,7 @@ export async function readFleetRepublish(runsDir: string, fetcher: typeof fetch 
       if (response.more) continue;
       row.pr_state = prs.length ? 'closed' : 'none';
       row.status = 'ready';
-      row.reason = /^(?:RESULT )?ABORT default-fetch$/.test(lines[result]!)
+      row.reason = abort.reason === 'default-fetch'
         ? 'Publish aborted after push because the default branch fetch failed.' : 'Publish aborted after push.';
       row.readyLine = `- READY RQ-REPUBLISH-${job} (P1, pool=any, tier=frontier, repo=${link[2]}): Cherry-pick ${row.sha} from ${fork} branch ${branch} onto fresh master. Reason: ${row.reason} Acceptance: recheck the branch and PR head, resolve conflicts, and run affected tests through the normal review and publish path.`;
     } catch { /* Keep the specific unknown reason; never echo logs or transport errors. */ }
