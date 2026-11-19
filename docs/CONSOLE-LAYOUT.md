@@ -100,6 +100,23 @@ zero. The same rows for agents:
 phm pools
 ```
 
+The Models pane is one board of every model the router knows, grouped under
+each provider's mark. A model's card says whether the router would launch it
+and why not when it would not, then lists the lanes that name it with the tiers
+that pick it, the last launch that used it, the date official docs last
+confirmed the name, and the source page. Verify (or Check again) on the card
+re-reads that page. The switch narrows the board to Needs attention or Routable
+(arrow keys move it), and models the provider docs name that the registry lacks
+are listed at the end. The registry, the check and the lane model table are
+read separately: when one cannot be read the board says which, and the facts it
+would have held read unknown rather than zero or routable. The same rows for
+agents:
+
+```sh
+phm models --json
+phm models check --json
+```
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being
