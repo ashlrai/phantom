@@ -195,9 +195,12 @@ export async function cmdUsage(args: string[]): Promise<number> {
   if (args[0] === 'pace') {
     if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage pace [--json]'); return 2; }
     const { readUsagePace } = await import('../core/usage/pace.js');
-    const pace = await readUsagePace();
-    if (args[1] === '--json') console.log(JSON.stringify(pace, null, 2));
-    else for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`} · suggested running slots: ${row.recommendedSlots ?? 'unknown'}`);
+    const { readPlanPace } = await import('../core/usage/plan-pace.js');
+    const [pace, plans] = await Promise.all([readUsagePace(), readPlanPace().then(p => p.plans, () => [])]);
+    // `plans` is the per-plan runway check (plan-pace.ts); the rest is the dispatch forecast, unchanged.
+    if (args[1] === '--json') console.log(JSON.stringify({ ...pace, plans }, null, 2));
+    else for (const p of plans) console.log(`${p.plan}: ${p.verdict}${p.points_per_hour === null ? '' : ` (${p.points_per_hour} points an hour, even pace ${p.even_pace_points_per_hour})`}${p.reason ? ` - ${p.reason}` : ''}`);
+    if (args[1] !== '--json') for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`} · suggested running slots: ${row.recommendedSlots ?? 'unknown'}`);
     return 0;
   }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));

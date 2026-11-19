@@ -969,6 +969,8 @@ export interface LeaderRunDeps {
   adviseActionClass?: LeaderActionAdvisor;
   /** Release-live announcement (release-live-announce.ts); absent in injected tests. */
   announceRelease?: () => Promise<unknown>;
+  /** Plan pace warning (usage/plan-pace.ts): one line per too-fast or too-slow plan, at most every 2 h; absent in injected tests. */
+  announcePace?: () => Promise<unknown>;
   /** Offline advisory pass: its only write is metrics/amplify.jsonl. */
   amplifyTick?: (nowMs: number) => Promise<void>;
   board?: { record(nowMs: number): Promise<unknown> };
@@ -1005,6 +1007,7 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     cloudBacklog: { append: (items) => cloudBacklog.appendUserBacklogItems(items) },
     adviseActionClass: defaultLeaderActionAdvisor(cfg),
     announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
+    announcePace: () => import('../usage/plan-pace.js').then(m => m.runDefaultPaceAlerts()),
     amplifyTick: async nowMs => { amplifySnapshot = await amplifier.amplifyTick(undefined, nowMs); },
     sources: {
       amplify: async nowMs => {
@@ -1547,6 +1550,11 @@ async function leaderTickOnce(deps: LeaderRunDeps, opts: { awaitRun?: boolean } 
   if (deps.announceRelease) {
     void Promise.resolve().then(deps.announceRelease).catch((error: unknown) => {
       console.error(`leader tick: release announcement failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
+  }
+  if (deps.announcePace) {
+    void Promise.resolve().then(deps.announcePace).catch((error: unknown) => {
+      console.error(`leader tick: pace warning failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
   }
   let graded: LeaderOutcomeRecord[] = [];
