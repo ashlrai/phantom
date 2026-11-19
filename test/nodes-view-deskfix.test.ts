@@ -66,6 +66,25 @@ describe('buildNodesSnapshot (phantom.nodes.v1)', () => {
     expect(gamma).toMatchObject({ role: 'worker', status: 'down', ghAuth: 'unknown' });
   });
 
+  it('frees a dead node\'s claims: liveJobs counts only claims on an unexpired record', () => {
+    write(inventory({
+      sequence: 9,
+      jobs: [
+        { id: 'RQ-9', state: 'pending' },
+        { id: 'RQ-7', state: 'running', claim: { jobId: 'RQ-7', nodeId: 'alpha', session: 2, token: 4, leaderToken: 3, expiresAt: NOW + 60_000 } },
+        // gamma's record expired but its claim has not: fenced, so not a live job.
+        { id: 'RQ-3', state: 'running', claim: { jobId: 'RQ-3', nodeId: 'gamma', session: 4, token: 6, leaderToken: 3, expiresAt: NOW + 30_000 } },
+        // beta's heartbeat is stale but its record is unexpired: the claim can still act.
+        { id: 'RQ-4', state: 'running', claim: { jobId: 'RQ-4', nodeId: 'beta', session: 3, token: 7, leaderToken: 3, expiresAt: NOW + 45_000 } },
+      ],
+    }));
+    const snap = buildNodesSnapshot({ dir, nowMs: NOW });
+    const byId = Object.fromEntries(snap.nodes.map(n => [n.id, n]));
+    expect(byId.gamma).toMatchObject({ status: 'down', liveJobs: [] });
+    expect(byId.beta).toMatchObject({ status: 'stale', liveJobs: ['RQ-4'] });
+    expect(byId.alpha).toMatchObject({ status: 'ready', liveJobs: ['RQ-7'] });
+  });
+
   it('drops the whole snapshot to an error when any field holds a secret-shaped value', () => {
     write(inventory({ nodes: [{ nodeId: 'leak', session: 1, heartbeatAt: NOW - 1_000, expiresAt: NOW + 1_000, owners: [`ghp_${'a'.repeat(20)}`] }] }));
     const snap = buildNodesSnapshot({ dir, nowMs: NOW });
