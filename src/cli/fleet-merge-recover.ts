@@ -23,6 +23,8 @@ export interface MergeRecoverDeps {
   write?: typeof writeDropJob;
   reserve?: typeof reserveMergeRecoveryAttempt;
   output?: (text: string) => void;
+  /** Limit the plan to these `number:head` pairs (used by `queue-latency --recover`). */
+  only?: ReadonlySet<string>;
 }
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
@@ -57,11 +59,11 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
       if (!validMergeQueueAgeInput(snapshot)) throw new Error('invalid queue snapshot');
       queue = mergeQueueAge(snapshot);
     }
-    const prs = await (deps.inspect ?? (async () => {
+    const prs = (await (deps.inspect ?? (async () => {
       let text = '';
       if (await cmdFleetDirtyLanded(['--json'], { gh, output: t => { text = t; } })) throw new Error('inspect');
       return (JSON.parse(text) as { prs: DirtyLandedPr[] }).prs;
-    }))();
+    }))()).filter(p => !deps.only || deps.only.has(`${p.number}:${p.head}`));
     const ranks = new Map<number, number>();
     queue?.entries.forEach((entry, index) => {
       if (entry.ageSeconds !== null && !entry.missingData.includes('unique_queue_entry')) ranks.set(entry.number, index);
