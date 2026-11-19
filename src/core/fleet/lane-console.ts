@@ -69,7 +69,8 @@ import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
-import { laneHealthFor, type LaneHealth } from './lane-badge.js';
+import { emptyNoteFor, laneHealthFor, type LaneHealth } from './lane-badge.js';
+import { readEmptyJobs } from './empty-jobs.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 
 // ---------------------------------------------------------------------------
@@ -734,6 +735,25 @@ export function defaultUsageLogPaths(queueDir: string): string[] {
   return [join(queueDir, 'usage-readings.log'), join(home, 'usage-readings.log')];
 }
 
+const EMPTY_NOTE_TTL_MS = 60_000;
+const emptyNoteCache = new Map<string, { at: number; notes: Map<string, string> }>();
+
+/** Top EMPTY reason per lane over the last 24 h, for the badge tooltip. Cached a minute: the snapshot is polled and this reads job logs. A missing ledger gives no notes. */
+async function laneEmptyNotes(runsDir: string, nowMs: number): Promise<Map<string, string>> {
+  const hit = emptyNoteCache.get(runsDir);
+  if (hit && nowMs - hit.at >= 0 && nowMs - hit.at < EMPTY_NOTE_TTL_MS) return hit.notes;
+  const notes = new Map<string, string>();
+  try {
+    const report = await readEmptyJobs(24, runsDir, undefined, nowMs);
+    for (const row of report?.final?.lanes ?? []) {
+      const note = emptyNoteFor(row.top, row.reasons[row.top], row.total);
+      if (note) notes.set(row.lane, note);
+    }
+  } catch { /* the tooltip is optional */ }
+  emptyNoteCache.set(runsDir, { at: nowMs, notes });
+  return notes;
+}
+
 export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}): Promise<FleetLaneSnapshot> {
   const now = options.now?.() ?? new Date();
   const mergeWindowMs = options.mergeWindowMs ?? DEFAULT_MERGE_WINDOW_MS;
@@ -948,6 +968,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
   })), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
 
+  const emptyNotes = await laneEmptyNotes(dirname(queueDir), now.getTime());
   for (const view of views) {
     const row = starved.lanes[view.lane];
     view.health = laneHealthFor({
@@ -966,26 +987,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       windowMinutes: Math.round(mergeWindowMs / 60_000),
       liveJobs: view.liveJobs,
     }, now.getTime());
-  }
-
-  for (const view of views) {
-    const row = starved.lanes[view.lane];
-    view.health = laneHealthFor({
-      lane: view.lane,
-      remainingPct: view.credit.remainingPct,
-      held: view.hold?.held === true,
-      heldReason: view.hold?.reason ?? null,
-      slotTarget: view.slotTarget,
-      starved: row?.starved === true,
-      freeSlots: row?.free_slots ?? null,
-      readyRows: view.queueDepth,
-      starvedSince: row?.starved_since ?? null,
-      starts: view.startsInWindow,
-      // Merges are per hour over the window; convert back to a count.
-      merged: view.mergesPerHour === null ? null : Math.round(view.mergesPerHour * (mergeWindowMs / 3_600_000)),
-      windowMinutes: Math.round(mergeWindowMs / 60_000),
-      liveJobs: view.liveJobs,
-    }, now.getTime());
+    const note = emptyNotes.get(view.lane);
+    if (note) view.health.emptyNote = note;
   }
 
   return {

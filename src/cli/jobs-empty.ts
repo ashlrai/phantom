@@ -1,6 +1,6 @@
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
+const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
 export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
@@ -13,6 +13,7 @@ export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<num
   let hours = 24;
   let json = false;
   let family: string | undefined;
+  let lane: string | undefined;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--json') json = true;
     else if (args[i] === '--help' || args[i] === '-h') { console.log(usage); return 0; }
@@ -23,13 +24,25 @@ export async function cmdJobs(args: string[], read = readEmptyJobs): Promise<num
     } else if (args[i] === '--family' && family === undefined) {
       family = args[++i];
       if (!family || !/^[A-Za-z0-9][A-Za-z0-9._*-]*$/.test(family)) { console.error(usage); return 2; }
+    } else if (args[i] === '--lane' && lane === undefined) {
+      lane = args[++i];
+      if (!lane || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(lane)) { console.error(usage); return 2; }
     } else { console.error(usage); return 2; }
   }
-  const report = await read(hours, undefined, undefined, undefined, { family });
+  const report = await read(hours, undefined, undefined, undefined, { family, lane, quote: true });
   if (!report) { console.error('Jobs ledger is unreadable.'); return 1; }
   if (json) console.log(JSON.stringify(report));
+  else if (report.total === 0) console.log('No empty jobs.');
   else {
     console.log(`${report.total} empty jobs in the last ${hours} hours`);
+    for (const row of report.final?.lanes ?? []) {
+      const parts = Object.entries(row.reasons).filter(([, n]) => n > 0).map(([why, n]) => `${why} ${n}`);
+      console.log(`Lane ${row.lane}: ${row.total} empty; ${parts.join(', ')}`);
+    }
+    for (const [why, list] of Object.entries(report.final?.examples ?? {})) {
+      const quote = list?.[0]?.sentence;
+      if (quote) console.log(`Newest ${why}: "${quote}" (${list![0]!.id})`);
+    }
     for (const [label, groups] of [['Family', report.diagnosis?.families], ['Lane', report.diagnosis?.lanes]] as const) {
       for (const group of groups ?? []) console.log(`${label} ${group.name}: ${group.total} empty; ${group.topReason}; ${group.suggestion}`);
     }

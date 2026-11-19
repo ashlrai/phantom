@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ledgerFinishes, type EmptiesFinish } from './empties.js';
 import { jobFamily } from './slot-yield.js';
+import { classifyFinalEmpty, summarizeFinalEmpty, type FinalEmptyJob, type FinalEmptyReport } from './empty-final-reason.js';
 import { scrubSecrets } from '../util/scrub.js';
 import type { DecideInput, DecideResult } from '../decide/options.js';
 import { classifyEmptyLog, diagnoseEmptyJob, EMPTY_JOB_REASONS, EMPTY_JOB_SUGGESTIONS, FLEET_EMPTY_WHY_LOG_LINES, FLEET_EMPTY_WHY_REASONS, type EmptyJobDiagnosis, type FleetEmptyWhyReason } from './empty-why-classify.js';
@@ -19,7 +20,7 @@ export interface EmptyJobReason { id: string; lane: string; reason: FleetEmptyWh
 /** The `fleet empty-why` log-tail tags for the newest empty jobs (the CLI's classifier, shared). */
 export interface EmptyJobsReasons { by_reason: Record<FleetEmptyWhyReason, number>; recent: EmptyJobReason[] }
 /** `reasons` is optional so the desktop panel still reads an older server's report. */
-export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; topCauses: EmptyCause[]; reasons?: EmptyJobsReasons; diagnosis?: EmptyDiagnosisReport }
+export interface EmptyJobsReport { schema: 'jobs.empty.v1'; hours: number; total: number; counts: Record<EmptyClass, number>; jobs: EmptyJobResult[]; topCauses: EmptyCause[]; reasons?: EmptyJobsReasons; diagnosis?: EmptyDiagnosisReport; /** Why each job said it stopped, per lane (empty-final-reason.ts). */ final?: FinalEmptyReport }
 export interface DiagnosedEmptyJob { id: string; lane: string; family: string; reason: EmptyJobDiagnosis }
 export interface EmptyDiagnosisGroup { name: string; total: number; topReason: EmptyJobDiagnosis; suggestion: string }
 export interface EmptyDiagnosisReport { jobs: DiagnosedEmptyJob[]; families: EmptyDiagnosisGroup[]; lanes: EmptyDiagnosisGroup[] }
@@ -121,22 +122,24 @@ async function tail(path: string, size: number): Promise<string | null> {
   } catch { return null; } finally { await file?.close(); }
 }
 
-export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs'), worktrees = process.env.ASHLR_WT_DIR?.trim() || join(homedir(), 'Projects/ashlrai/wt'), now = Date.now(), options: { read?: EmptyJobsReader; family?: string; decide?: boolean; decider?: EmptyDecider } = {}): Promise<EmptyJobsReport | null> {
+export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DIR?.trim() || join(homedir(), '.ashlr-runs'), worktrees = process.env.ASHLR_WT_DIR?.trim() || join(homedir(), 'Projects/ashlrai/wt'), now = Date.now(), options: { read?: EmptyJobsReader; family?: string; lane?: string; /** Include the matched sentence in `final` examples. Off by default: logs can hold private text; only the CLI asks. */ quote?: boolean; decide?: boolean; decider?: EmptyDecider } = {}): Promise<EmptyJobsReport | null> {
   const reader: EmptyJobsReader = options.read ?? ((path, max) => max ? tail(path, max) : readFile(path, 'utf8'));
   const read: EmptyJobsReader = (path, max) => reader(path, max).catch(() => null);
   const ledger = await read(join(root, 'metrics/jobs.jsonl'));
   if (ledger === null) return null;
   const selected = ledgerFinishes(ledger, now, hours).finishes.filter(job => job.empty &&
-    (!options.family || jobFamily(job.id) === jobFamily(options.family)));
+    (!options.family || jobFamily(job.id) === jobFamily(options.family)) && (!options.lane || job.lane === options.lane));
   const jobs: EmptyJobResult[] = [];
   const logs = new Map<string, string | null>();
   const evidence = new Map<string, string>();
   const diagnoses = new Map<string, DiagnosedEmptyJob>();
+  const finals = new Map<string, FinalEmptyJob>();
   for (let offset = 0; offset < selected.length; offset += 16) {
     const batch = selected.slice(offset, offset + 16);
     jobs.push(...await Promise.all(batch.map(async job => {
       const [notes, log, publish] = await Promise.all([read(join(worktrees, job.id, 'BRIDGE_NOTES.md'), 65536), read(join(root, `${job.id}.log`), 65536), read(join(root, `${job.id}.publish`), 65536)]);
       logs.set(job.id, log);
+      finals.set(job.id, { id: job.id, lane: job.lane, verdict: options.quote ? classifyFinalEmpty(log) : { ...classifyFinalEmpty(log), sentence: null } });
       evidence.set(job.id, [notes?.slice(0, 4000), log?.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n').slice(-4000)].filter(Boolean).join('\n\n'));
       diagnoses.set(job.id, { id: job.id, lane: job.lane, family: jobFamily(job.id), reason: diagnoseEmptyJob(log, publish) });
       return { id: job.id, lane: job.lane, ...classifyEmpty(notes, log, job) };
@@ -155,5 +158,6 @@ export async function readEmptyJobs(hours = 24, root = process.env.ASHLR_RUNS_DI
   const recent = tagged.slice(-REASON_RECENT_LIMIT).reverse();
   const diagnosed = [...diagnoses.values()].sort((a, b) => a.id.localeCompare(b.id));
   return { schema: 'jobs.empty.v1', hours, total: jobs.length, counts, jobs, topCauses, reasons: { by_reason, recent },
-    diagnosis: { jobs: diagnosed, families: groupDiagnoses(diagnosed, 'family'), lanes: groupDiagnoses(diagnosed, 'lane') } };
+    diagnosis: { jobs: diagnosed, families: groupDiagnoses(diagnosed, 'family'), lanes: groupDiagnoses(diagnosed, 'lane') },
+    final: summarizeFinalEmpty(selected.flatMap(job => finals.get(job.id) ?? [])) };
 }

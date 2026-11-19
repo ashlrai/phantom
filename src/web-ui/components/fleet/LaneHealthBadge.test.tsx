@@ -24,6 +24,11 @@ describe('LaneHealthBadge', () => {
     expect(screen.getByLabelText(REASONS[state])).toBe(badge);
   });
 
+  it('adds the lane top empty reason to the tooltip', () => {
+    render(<LaneHealthBadge health={{ state: 'wasteful', reason: REASONS.wasteful, number: 8, emptyNote: 'top empty reason: timeout (2 of 3 empty jobs)' }} />);
+    expect(screen.getByTestId('lane-health').getAttribute('title')).toBe(`${REASONS.wasteful}. top empty reason: timeout (2 of 3 empty jobs)`);
+  });
+
   it('renders nothing when the server sent no verdict', () => {
     const { container } = render(<LaneHealthBadge health={undefined} />);
     expect(container.firstChild).toBeNull();
