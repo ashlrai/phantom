@@ -1263,7 +1263,9 @@ See [node runner](docs/NODES.md#reference-runner-security-review-before-installa
 The fold turns `router.outcome.v1` records into the `{provider: {attempts,
 merged}}` tallies `planAutoscaleRoutes` consumes: one record is one attempt
 only when its merge verdict is known (`merged` true or false); `merged: null`
-is excluded from both sides, never counted as a failure. `readRouteLaneOutcomes`
+is excluded from both sides, never counted as a failure. A merge recorded as
+reverted (`reverted: true`) counts as an attempt but not as a held merge,
+matching `proposeRouterWeights`. `readRouteLaneOutcomes`
 wraps the bounded `readRouterOutcomes` ledger read: 'read' carries the tallies,
 'missing' is an absent journal with empty tallies, and 'unreadable'/'not-file'
 report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
