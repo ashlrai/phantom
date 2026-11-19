@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit } from '../scripts/release-cadence.mjs';
+import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit, GREEN_EVIDENCE_MAX_AHEAD } from '../scripts/release-cadence.mjs';
 import { peelReleaseTag } from '../scripts/peel-release-tag.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
 const revision = 'a'.repeat(40), tagged = 'b'.repeat(40);
+const RUNS_KEY = '/actions/workflows/ci.yml/runs?event=push&branch=master&status=completed&per_page=100';
 const repo = { full_name: 'ashlrai/phantom', id: 1263526319, node_id: 'R_kgDOS0_hrw',
   owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
 const now = Date.parse('2026-11-05T04:00:00Z');
@@ -22,7 +23,7 @@ function fixture(overrides = {}) {
     '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'commit', sha: tagged } },
     [`/compare/${tagged}...${revision}`]: { status: 'ahead', ahead_by: 4 },
     [`/commits/${tagged}`]: { commit: { committer: { date: '2026-11-05T03:20:00Z' } } },
-    [`/actions/workflows/ci.yml/runs?event=push&branch=master&head_sha=${revision}&per_page=100`]: { total_count: 1, workflow_runs: [run] },
+    [RUNS_KEY]: { total_count: 1, workflow_runs: [run] },
     ...overrides,
   };
   const read = async path => {
@@ -31,7 +32,7 @@ function fixture(overrides = {}) {
     assert.ok(Object.hasOwn(data, key), `unexpected read ${key}`);
     return data[key];
   };
-  return { read, run, data, input: { repository: 'ashlrai/phantom', revision, now, read } };
+  return { read, run, data, input: { repository: 'ashlrai/phantom', now, read } };
 }
 
 test('cadence validator honors configured values', () => {
@@ -73,33 +74,90 @@ test('an annotated tag is peeled to its commit before the cadence compare', asyn
   assert.equal((await planReleaseCadence(mismatch.input)).reason, 'no-new-commits');
 });
 
-test('no new commits, an untagged bump, and moved master never open another version PR', async () => {
+test('no new commits and an untagged bump never open another version PR', async () => {
   for (const [overrides, reason] of [
-    [{ '/branches/master': { commit: { sha: tagged } } }, 'master-moved'],
     [{ '/git/ref/tags/v3.30.1': null }, 'current-version-awaits-tag'],
     [{ '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'commit', sha: revision } } }, 'no-new-commits'],
   ]) assert.deepEqual(await planReleaseCadence(fixture(overrides).input), { due: false, reason });
 });
 
+test('the live master tip is evaluated, not the SHA that woke the workflow', async () => {
+  const tip = 'e'.repeat(40), green = 'f'.repeat(40);
+  const f = fixture();
+  f.data['/branches/master'] = { commit: { sha: tip } };
+  f.data[`/contents/package.json?ref=${tip}`] = f.data[`/contents/package.json?ref=${revision}`];
+  f.data[`/contents/.release-please-manifest.json?ref=${tip}`] = f.data[`/contents/.release-please-manifest.json?ref=${revision}`];
+  f.data[`/compare/${tagged}...${tip}`] = { status: 'ahead', ahead_by: 6 };
+  f.data[`/compare/${green}...${tip}`] = { status: 'ahead', ahead_by: 3 };
+  // The newest decisive verdict sits on a bounded ancestor of the live tip.
+  f.run.head_sha = green;
+  assert.deepEqual(await planReleaseCadence(f.input),
+    { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision: tip, ciRunId: 123, ciRunAttempt: 1 });
+  // A tip that moves again while the check itself runs still refuses.
+  let branches = 0;
+  const read = path => path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : f.read(path);
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read }), { due: false, reason: 'master-moved' });
+});
+
+test('the newest decisive master push verdict wins; verdict-less runs never block', async () => {
+  const f = fixture();
+  f.data[RUNS_KEY] = { total_count: 4, workflow_runs: [
+    { ...f.run, id: 120, conclusion: 'success' },
+    { ...f.run, id: 130, conclusion: 'failure' },
+    { ...f.run, id: 140, status: 'in_progress' },
+    { ...f.run, id: 150, conclusion: 'cancelled' },
+  ] };
+  // id 130 failure is the newest decisive verdict; the cancelled and
+  // in-progress runs carry none.
+  assert.equal((await planReleaseCadence(f.input)).due, false);
+  f.data[RUNS_KEY] = { total_count: 4, workflow_runs: [
+    { ...f.run, id: 121, conclusion: 'failure' },
+    { ...f.run, id: 124, conclusion: 'success' },
+    { ...f.run, id: 125, conclusion: 'neutral' },
+    { ...f.run, id: 126, conclusion: 'cancelled' },
+  ] };
+  // id 124 success is newer than the id 121 failure; neutral and cancelled
+  // runs are skipped rather than counted.
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  f.data[RUNS_KEY] = { total_count: 2, workflow_runs: [
+    f.run,
+    { ...f.run, id: 127, conclusion: 'timed_out' },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, false);
+});
+
+test('green evidence must cover the live tip within a bounded commit window', async () => {
+  const f = fixture();
+  const ancestor = 'd'.repeat(40);
+  f.run.head_sha = ancestor;
+  f.data[RUNS_KEY] = { total_count: 1, workflow_runs: [f.run] };
+  f.data[`/compare/${ancestor}...${revision}`] = { status: 'ahead', ahead_by: GREEN_EVIDENCE_MAX_AHEAD };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  f.data[`/compare/${ancestor}...${revision}`] = { status: 'ahead', ahead_by: GREEN_EVIDENCE_MAX_AHEAD + 1 };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-stale' });
+  f.data[`/compare/${ancestor}...${revision}`] = { status: 'diverged', ahead_by: 3, behind_by: 1 };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-stale' });
+});
+
 test('failed, running, absent, foreign and ambiguous CI evidence fails closed', async () => {
-  for (const conclusion of ['failure', 'cancelled', 'skipped', 'neutral', null]) {
+  for (const conclusion of ['failure', 'timed_out', 'cancelled', 'skipped', 'neutral', null]) {
     const f = fixture(); f.run.conclusion = conclusion;
     assert.equal((await planReleaseCadence(f.input)).due, false);
   }
   const f = fixture(); f.run.status = 'in_progress';
   assert.equal((await planReleaseCadence(f.input)).due, false);
-  f.run.status = 'completed'; f.run.head_sha = tagged;
-  await assert.rejects(planReleaseCadence(f.input));
-  const missing = fixture(); const key = Object.keys(missing.data).find(k => k.includes('/runs?'));
-  missing.data[key] = { total_count: 0, workflow_runs: [] };
+  const missing = fixture(); missing.data[RUNS_KEY] = { total_count: 0, workflow_runs: [] };
   assert.equal((await planReleaseCadence(missing.input)).due, false);
-  missing.data[key] = { total_count: 101, workflow_runs: [] };
+  missing.data[RUNS_KEY] = { total_count: 101, workflow_runs: [] };
   await assert.rejects(planReleaseCadence(missing.input), /incomplete/);
+  const foreign = fixture();
+  foreign.data[RUNS_KEY] = { total_count: 1, workflow_runs: [{ ...foreign.run, repository: { ...repo, id: 1 } }] };
+  await assert.rejects(planReleaseCadence(foreign.input));
 });
 
 test('a newer failed run cannot inherit an older success; tip rechecked before eligibility', async () => {
-  const f = fixture(); const key = Object.keys(f.data).find(k => k.includes('/runs?'));
-  f.data[key] = { total_count: 2, workflow_runs: [f.run, { ...f.run, id: 124, conclusion: 'failure' }] };
+  const f = fixture();
+  f.data[RUNS_KEY] = { total_count: 2, workflow_runs: [f.run, { ...f.run, id: 124, conclusion: 'failure' }] };
   assert.equal((await planReleaseCadence(f.input)).due, false);
   const g = fixture(); let branches = 0;
   const read = path => path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : g.read(path);

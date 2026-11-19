@@ -37,16 +37,33 @@ export function cadenceMinutes(raw = '30') {
   return minutes;
 }
 
-export async function planReleaseCadence({ repository, revision, minutes = 30, now = Date.now(), read }) {
-  assert.match(revision ?? '', SHA);
+/**
+ * How far behind the live tip the newest decisive green push run may sit.
+ * Every master commit lands through the merge queue's required Merge Gate,
+ * so a bounded run of queue-verified commits on top of a green fast-gate
+ * verdict is not known-red master. The release PR's own required checks —
+ * not this read — remain the merge gate for the exact head that ships.
+ */
+export const GREEN_EVIDENCE_MAX_AHEAD = 100;
+// Completed run conclusions that carry a verdict on the code. Cancelled,
+// neutral, skipped, stale and startup/action-required runs carry none and
+// must never mask or block the newest real verdict.
+const DECISIVE_RED = new Set(['failure', 'timed_out']);
+const decisiveVerdict = run => run.status === 'completed'
+  && (run.conclusion === 'success' || DECISIVE_RED.has(run.conclusion));
+
+export async function planReleaseCadence({ repository, minutes = 30, now = Date.now(), read }) {
   assert.ok(Number.isFinite(now));
   cadenceMinutes(String(minutes));
   const base = `repos/${repository}`;
   requireRepositoryMetadata(repository, await read(base));
-  const branch = await read(`${base}/branches/master`);
-  if (branch.commit?.sha !== revision) return { due: false, reason: 'master-moved' };
+  // The plan always evaluates the live master tip, never the SHA a workflow
+  // happened to start on: during merge bursts the tip moves before the check
+  // finishes, and pinning the decision to a stale SHA starves every release.
+  const tip = (await read(`${base}/branches/master`)).commit?.sha;
+  assert.match(tip ?? '', SHA);
   const content = async path => {
-    const response = await read(`${base}/contents/${path}?ref=${revision}`);
+    const response = await read(`${base}/contents/${path}?ref=${tip}`);
     assert.equal(response.encoding, 'base64');
     return JSON.parse(Buffer.from(response.content, 'base64').toString('utf8'));
   };
@@ -61,32 +78,44 @@ export async function planReleaseCadence({ repository, revision, minutes = 30, n
   if (tag === null) return { due: false, reason: 'current-version-awaits-tag' };
   assert.equal(tag.ref, `refs/tags/v${pkg.version}`);
   const tagSha = await peeledCommit(read, base, tag.object);
-  if (tagSha === revision) return { due: false, reason: 'no-new-commits' };
-  const compare = await read(`${base}/compare/${tagSha}...${revision}`);
+  if (tagSha === tip) return { due: false, reason: 'no-new-commits' };
+  const compare = await read(`${base}/compare/${tagSha}...${tip}`);
   assert.equal(compare.status, 'ahead', 'current version tag is not an ancestor of master');
   assert.ok(Number.isSafeInteger(compare.ahead_by) && compare.ahead_by > 0);
   const tagged = await read(`${base}/commits/${tagSha}`);
   const taggedAt = Date.parse(tagged.commit?.committer?.date);
   assert.ok(Number.isFinite(taggedAt) && taggedAt <= now, 'invalid tagged commit timestamp');
   if (now - taggedAt < minutes * 60_000) return { due: false, reason: 'cadence-not-due' };
-  // Latest matching run wins: a failed or incomplete replacement is not masked
-  // by an older green attempt. The API is scoped by event, branch AND SHA.
-  const response = await read(`${base}/actions/workflows/ci.yml/runs?event=push&branch=master&head_sha=${revision}&per_page=100`);
-  assert.ok(Array.isArray(response.workflow_runs) && Number.isSafeInteger(response.total_count) && response.total_count <= 100, 'incomplete push CI inventory');
-  assert.equal(response.workflow_runs.length, response.total_count);
+  // The newest decisive completed push run on master is the latest real CI
+  // verdict. Requiring that exact verdict on the exact tip is impossible
+  // while merges land faster than CI finishes; the tip or a bounded ancestor
+  // is the evidence that master is not known-red.
+  const response = await read(`${base}/actions/workflows/ci.yml/runs?event=push&branch=master&status=completed&per_page=100`);
+  assert.ok(Array.isArray(response.workflow_runs) && Number.isSafeInteger(response.total_count)
+    && response.total_count >= response.workflow_runs.length && response.workflow_runs.length <= 100
+    && response.workflow_runs.length === Math.min(response.total_count, 100), 'incomplete push CI inventory');
   const runs = response.workflow_runs;
   assert.equal(new Set(runs.map(run => run.id)).size, runs.length, 'duplicate CI run identity');
   for (const run of runs) {
     requireRepositoryReference(repository, run.repository);
     assert.equal(run.path, '.github/workflows/ci.yml');
-    assert.equal(run.head_sha, revision); assert.equal(run.head_branch, 'master'); assert.equal(run.event, 'push');
+    assert.equal(run.head_branch, 'master'); assert.equal(run.event, 'push');
+    assert.match(run.head_sha ?? '', SHA);
     assert.ok(Number.isSafeInteger(run.id) && run.id > 0 && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
   }
-  const latest = [...runs].sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)[0];
-  if (!latest || latest.status !== 'completed' || latest.conclusion !== 'success') return { due: false, reason: 'push-ci-not-green' };
-  // Re-read before opening a PR: this SHA must still be the default-branch tip.
-  if ((await read(`${base}/branches/master`)).commit?.sha !== revision) return { due: false, reason: 'master-moved' };
-  return { due: true, reason: 'green-master-cadence-due', version, revision, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+  const latest = runs.filter(decisiveVerdict).sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)[0];
+  if (!latest || latest.conclusion !== 'success') return { due: false, reason: 'push-ci-not-green' };
+  if (latest.head_sha !== tip) {
+    const green = await read(`${base}/compare/${latest.head_sha}...${tip}`);
+    if (green.status !== 'ahead' || !Number.isSafeInteger(green.ahead_by)
+      || green.ahead_by < 1 || green.ahead_by > GREEN_EVIDENCE_MAX_AHEAD) {
+      return { due: false, reason: 'push-ci-stale' };
+    }
+  }
+  // Re-read before opening a PR: movement during this check still refuses, so
+  // version and evidence are never computed across a moving tip.
+  if ((await read(`${base}/branches/master`)).commit?.sha !== tip) return { due: false, reason: 'master-moved' };
+  return { due: true, reason: 'green-master-cadence-due', version, revision: tip, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
 }
 
 class MetadataRateLimitError extends Error {}
@@ -167,7 +196,7 @@ export function createPublicMetadataReader({ fetchImpl = fetch, now = () => perf
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     assert.equal(process.env.GITHUB_REF, 'refs/heads/master');
-    const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY, revision: process.env.GITHUB_SHA,
+    const plan = await planReleaseCadenceWhenAvailable({ repository: process.env.GITHUB_REPOSITORY,
       minutes: cadenceMinutes(process.env.RELEASE_CADENCE_MINUTES || '5'), read: createPublicMetadataReader() });
     assert.ok(process.env.GITHUB_OUTPUT);
     appendFileSync(process.env.GITHUB_OUTPUT, `due=${plan.due}\nversion=${plan.version ?? ''}\n`);
