@@ -152,11 +152,14 @@ describe('body kinds and work feed', () => {
     expect(busBodySchema.safeParse(body).success).toBe(false);
   });
   it('validates work jobs', () => {
-    const job = { id: 'j1', owner: 'dot-main', provider: 'devin', repo: 'a/b', claimKeys: ['repo:a/b'],
+    const job = { id: 'j1', owner: 'dot-main', to: 'leaders', provider: 'devin', repo: 'a/b', claimKeys: ['repo:a/b'],
       status: 'running', updatedAt: 5 };
     expect(workJobSchema.safeParse(job).success).toBe(true);
     expect(workJobSchema.safeParse({ ...job, status: 'paused' }).success).toBe(false);
     expect(workJobSchema.safeParse({ ...job, updatedAt: -1 }).success).toBe(false);
+    expect(workJobSchema.safeParse({ ...job, to: 'two words' }).success).toBe(false);
+    const { to: _to, ...withoutTo } = job;
+    expect(workJobSchema.safeParse(withoutTo).success).toBe(false);
   });
 });
 

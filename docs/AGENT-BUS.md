@@ -275,10 +275,11 @@ statuses never fan out. The result's `claimHoldersWoken` counts the hints
 present after the call — absent when the fan-out did not run, `null` when the
 live claim table could not be read (unknown holders are never reported as
 none), and a hint that cannot be written is best-effort, never a failed send.
-`phm agents bus work feed [--status <s>] [--claims]` reads the same projection
-back — jobs newest-first, optionally filtered and joined with the live
-coordination holds — so the whole post/status/feed loop stays on this surface
-without dropping to `phm fleet work-feed`.
+`phm agents bus work feed [--status <s>] [--to <label>] [--claims]` reads the
+same projection back — jobs newest-first, optionally filtered by status or
+announcement address and joined with the live coordination holds — so the
+whole post/status/feed loop stays on this surface without dropping to
+`phm fleet work-feed`.
 
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
@@ -550,10 +551,12 @@ keeps exact-label matching.
 
 ### 4. Work feed
 
-Every job is `{id, owner, provider, repo, claimKeys[], status, updatedAt}`
+Every job is `{id, owner, to, provider, repo, claimKeys[], status, updatedAt}`
 and the feed is `{v:2, jobs:[...]}`. `projectBusWorkFeed` in
 `src/core/agents/bus-work-feed.ts` projects a retained receipt snapshot without
-I/O. Posts start queued; `owner` is the sender label. Provider comes from the
+I/O. Posts start queued; `owner` is the sender label and `to` is the routing
+label the `work.post` announcement was addressed to (the `leaders` sink by
+default). Provider comes from the
 post, explicit participant metadata, or — in the read layer — the sender
 identity's newest registered runtime; absent provider refuses the projection.
 Statuses from that owner update retained jobs in cursor order with receipt time
@@ -567,7 +570,13 @@ authentication check; labels grant no authority.
 `phm fleet work-feed --json`, `phm agents bus work feed` and GET
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
-newest-first order, hold regrouping and human rendering. The
+one announcement-address filter, newest-first order, hold regrouping and
+human rendering. `--to <label>` keeps only jobs whose post was addressed to
+that routing label; like `bus next`, `bus-follow`, handoff receive and claim
+`--owner`, the label matches literally and under every label of one agent
+identity through the registry, while an unresolvable `--to` or an unreadable
+registry keeps exact-label matching — the filter narrows the fleet view, it
+never widens it. The
 endpoint needs a current read session and accepts only `claims=true` (any
 other parameter or value is a 400), and answers 200
 for `ok` and `refused` — the projection's own status and reason stay in the

@@ -9,7 +9,7 @@ import {
   sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, executeBusClaimBody, listBusClaims, newBusClaimOpId, type BusClaimResult } from '../core/agents/bus-claims.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
@@ -38,14 +38,15 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--claims]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--to <label>] [--claims]
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
 wakes, P1 and handoffs wake by default, and wake always records its hint.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
-read-only and need no identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
+read-only and need no identity; work feed --to keeps jobs announced to that
+routing label under every label of one agent identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
@@ -243,9 +244,14 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (status !== undefined && !(WORK_STATUSES as readonly string[]).includes(status)) {
         throw new UsageError(`--status must be one of ${WORK_STATUSES.join(', ')}.`);
       }
+      const to = one('--to');
+      if (to !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(to)) {
+        throw new UsageError('--to must be a printable routing label of 1-128 characters.');
+      }
+      const toMatch = to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root });
       const result = projectBusWorkFeedView(
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') }),
-        status as WorkJob['status'] | undefined);
+        status as WorkJob['status'] | undefined, toMatch);
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
       return result.status === 'ok' ? 0 : 1;
     }

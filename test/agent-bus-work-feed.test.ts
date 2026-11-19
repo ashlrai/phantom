@@ -8,8 +8,8 @@ import { isClaimableWork } from '../src/core/fleet/bus-envelope.js';
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 
 const post = { kind: 'work.post', jobId: 'job', title: 'Review', repo: 'a/b', claimKeys: ['repo:a/b'], provider: 'devin' };
-const receipt = (body: unknown, cursor = 1, from = 'agent') => ({ cursor, receivedAt: cursor * 100,
-  envelope: { id: `m-${cursor}`, from, to: 'leaders', priority: 'P2', ttl: 1000, body } });
+const receipt = (body: unknown, cursor = 1, from = 'agent', to = 'leaders') => ({ cursor, receivedAt: cursor * 100,
+  envelope: { id: `m-${cursor}`, from, to, priority: 'P2', ttl: 1000, body } });
 const participant: Participant = { participantId: 'agent', provider: 'claude', displayName: 'Agent',
   capabilities: [], wake: { kind: 'poll', target: 'agent' }, status: 'active' };
 
@@ -33,12 +33,18 @@ describe('retained v2 work projection', () => {
   it('writes a versioned feed and applies every status in cursor order', () => {
     const rows = [receipt(post), ...WORK_STATUSES.map((status, n) => receipt({ kind: 'work.status', jobId: 'job', status }, n + 2))];
     const result = projectBusWorkFeed(rows);
-    expect(result).toEqual({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job', owner: 'agent', provider: 'devin',
+    expect(result).toEqual({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job', owner: 'agent', to: 'leaders', provider: 'devin',
       repo: 'a/b', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] } });
     if (result.status !== 'ok') throw new Error('fixture refused');
     expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
     expect(rows[0]!.envelope.body).toEqual(post);
     expect(isClaimableWork(post)).toBe(false);
+  });
+  it('keeps the post announcement address on the job across status updates', () => {
+    const directed = receipt(post, 1, 'agent', 'agent:worker');
+    const rows = [directed, receipt({ kind: 'work.status', jobId: 'job', status: 'running' }, 2, 'agent', 'leaders')];
+    expect(projectBusWorkFeed(rows)).toMatchObject({ status: 'ok',
+      feed: { jobs: [{ id: 'job', owner: 'agent', to: 'agent:worker', status: 'running' }] } });
   });
   it('preserves v1 and peer bodies as opaque data and ignores orphan statuses', () => {
     expect(projectBusWorkFeed([
