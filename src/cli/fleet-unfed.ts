@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { currentUnfed, foldClaimOverrides, foldMarketOverrides, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
 import { readTail, runsRoot } from '../core/metrics/loop-collect.js';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -75,12 +75,13 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
     const jobsInfo = await stat(jobsPath).catch(() => null);
     const nowMs = Date.now();
     const window = windowHours ?? DEFAULT_WINDOW_HOURS;
+    const jobsTruncated = jobsInfo !== null && jobsInfo.isFile() && jobsInfo.size > CLAIMS_TAIL_BYTES;
     report = {
       ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs }),
       history: foldUnfedHistory(history, nowMs, window),
       overrides: foldMarketOverrides(history, nowMs, window),
-      claims: foldClaimOverrides(jobsText, nowMs, window,
-        jobsInfo !== null && jobsInfo.isFile() && jobsInfo.size > CLAIMS_TAIL_BYTES),
+      claims: foldClaimOverrides(jobsText, nowMs, window, jobsTruncated),
+      decisionOutcomes: foldDecisionOutcomes(history, jobsText, nowMs, window, jobsTruncated),
     };
   } catch {
     const error = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';

@@ -484,7 +484,9 @@ under existing worker gates.
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
 `--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
 nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)`,
-`foldClaimOverrides(jsonl, nowMs, windowHours, truncated?)` and
+`foldClaimOverrides(jsonl, nowMs, windowHours, truncated?)`,
+`foldDecisionOutcomes(marketJsonl, jobsJsonl, nowMs, windowHours,
+jobsTruncated?)` and
 `renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
 `phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
@@ -495,7 +497,15 @@ window's `route_decision` rows to each job's latest decision and tallies
 `claim`/`batch_claim` events — launches that actually left their hinted
 lane, including `batch_session` moves decisions never record — into the
 report's `claims` field (`available`, `truncated`, `claimed`, `overridden`,
-`byReason`, `lanes`). The optional `market` carries the
+`byReason`, `lanes`). `foldDecisionOutcomes` joins the same collapsed
+latest-per-job decisions to the newest recorded outcome in the retained
+jobs.jsonl tail through the router outcome fold, partitioning decided jobs
+into `hinted`/`overridden`/`open`/`unrouted`/`unexplained` outcome tallies
+(`decided`, `known`, `merged`, `unmerged`, `reverted`, `unresolved`) plus
+`byReason` override-reason counts and per-`work_class` tallies in the
+report's `decisionOutcomes` field (`available`, `jobsAvailable`,
+`jobsTruncated`, `decided`); a missing jobs ledger leaves every decided
+job `unresolved`, never a fabricated outcome. The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
 report recomputes per-lane `blocked` reason codes with the same eligibility

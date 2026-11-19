@@ -315,6 +315,20 @@ combined session makes after each member's own decision appear here and
 nowhere in `overrides`, and a decision overridden on paper but deferred
 before launch never counts. `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
+The same collapsed decisions also join the retained tail of
+`metrics/jobs.jsonl` into `decisionOutcomes`: each decided job counts once,
+by how its latest decision treated the hint — `hinted` (chose the declared
+preferred lane), `overridden` (recorded a well-formed `lane_override`),
+`open` (chose a lane with no declared preference), `unrouted` (chose no
+lane) or `unexplained` (left a declared preference with no well-formed
+override record) — then to the newest recorded outcome through the same
+fold `phm router outcomes` uses, so merged, closed-unmerged, reverted and
+still-unresolved jobs keep identical semantics. `byReason` recounts
+overridden jobs by override reason and `byClass` tallies outcomes per
+recorded `work_class` (`unclassified` when absent or outside the market's
+closed values). A missing jobs ledger leaves every decided job
+`unresolved` — unknown stays unknown — and `jobsTruncated` marks a
+tail-bound lower bound on outcomes.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
