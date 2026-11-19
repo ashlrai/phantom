@@ -133,7 +133,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
-  router: ['rank', 'serve', 'models', 'pick', 'config', 'catalog'],
+  router: ['rank', 'serve', 'models', 'pick', 'config', 'catalog', 'outcomes'],
   spec: ['new', 'list', 'show', 'refine'],
   swarm: ['show', 'verify', 'approve', 'rollback'],
   verify: ['change', 'done', '--worktree', '--checks', '--contract', '--plan', '--help'],

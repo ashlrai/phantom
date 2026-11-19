@@ -1,0 +1,189 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  buildRouterOutcomesReport,
+  cmdRouterOutcomes,
+  routerOutcomeLines,
+  ROUTER_OUTCOMES_USAGE,
+} from '../src/cli/router-outcomes.js';
+import { cmdRouter } from '../src/cli/router.js';
+import { readRouterOutcomes, type RouterOutcome, type RouterOutcomeRead } from '../src/core/router/outcomes.js';
+
+const roots: string[] = [];
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function runsDir(ledger?: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'router-outcomes-cli-'));
+  roots.push(root);
+  if (ledger !== undefined) {
+    mkdirSync(join(root, 'metrics'));
+    writeFileSync(join(root, 'metrics', 'jobs.jsonl'), ledger);
+  }
+  return root;
+}
+
+function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutcome {
+  return {
+    schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null,
+    merged: true, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600, passk: null,
+    ...over,
+  };
+}
+
+function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
+  return {
+    state: 'read', path: '/runs/metrics/jobs.jsonl', eval_state: 'missing',
+    outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0,
+    ...over,
+  };
+}
+
+type ReadOpts = Parameters<typeof readRouterOutcomes>[0];
+
+/** A canned core read; opts are ignored. */
+const canned = (result: RouterOutcomeRead): typeof readRouterOutcomes => async () => result;
+
+/** Wraps a read implementation, capturing console output and the opts it receives. */
+function harness(readImpl: typeof readRouterOutcomes) {
+  const calls: ReadOpts[] = [];
+  const readFn: typeof readRouterOutcomes = async (opts = {}) => {
+    calls.push({ ...opts });
+    return readImpl(opts);
+  };
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  return {
+    calls, readFn,
+    out: () => String(log.mock.calls.at(-1)?.[0] ?? ''),
+    errs: () => err.mock.calls.map(c => String(c[0])).join('\n'),
+  };
+}
+
+describe('phm router outcomes', () => {
+  it('prints a router.outcomes.v1 report, newest first, and exits 0', async () => {
+    const h = harness(canned(read({ outcomes: [outcome('A'), outcome('B'), outcome('C')] })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
+    const report = JSON.parse(h.out());
+    expect(report).toMatchObject({
+      schema: 'router.outcomes.v1', state: 'read', path: '/runs/metrics/jobs.jsonl',
+      eval_state: 'missing', total: 3, returned: 3, limit: 100,
+      malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0,
+    });
+    expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['C', 'B', 'A']);
+  });
+
+  it('bounds the page with --limit while total keeps the full count', async () => {
+    const h = harness(canned(read({ outcomes: [outcome('A'), outcome('B'), outcome('C'), outcome('D'), outcome('E')] })));
+    expect(await cmdRouterOutcomes(['--json', '--limit', '2'], h.readFn)).toBe(0);
+    const report = JSON.parse(h.out());
+    expect(report).toMatchObject({ total: 5, returned: 2, limit: 2 });
+    expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['E', 'D']);
+  });
+
+  it('passes --lane and --runs-dir through to the core read', async () => {
+    const h = harness(canned(read({ outcomes: [outcome('A', { lane: 'alpha' })] })));
+    expect(await cmdRouterOutcomes(['--json', '--lane', 'alpha', '--runs-dir', '/x'], h.readFn)).toBe(0);
+    expect(h.calls).toEqual([{ runsDir: '/x', lane: 'alpha' }]);
+    // Omitted flags stay absent rather than undefined-valued keys.
+    const h2 = harness(canned(read()));
+    await cmdRouterOutcomes(['--json'], h2.readFn);
+    expect(h2.calls).toEqual([{}]);
+  });
+
+  it.each([
+    { state: 'missing', code: 0 },
+    { state: 'read', code: 0 },
+    { state: 'unreadable', code: 1 },
+    { state: 'not-file', code: 1 },
+    { state: 'too-large', code: 1 },
+  ] as const)('ledger state $state exits $code', async ({ state, code }) => {
+    const h = harness(canned(read({ state })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(code);
+    expect(JSON.parse(h.out()).state).toBe(state);
+  });
+
+  it('exits 1 when the ledger read itself fails', async () => {
+    const h = harness(async () => { throw new Error('boom'); });
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(1);
+    expect(h.errs()).toContain('Router outcomes unavailable.');
+  });
+
+  it.each([
+    { args: ['--limit', '0'] },
+    { args: ['--limit', '1001'] },
+    { args: ['--limit', 'abc'] },
+    { args: ['--limit', '1.5'] },
+    { args: ['--runs-dir', 'relative/path'] },
+    { args: ['--bogus'] },
+    { args: ['--json', '--json'] },
+    { args: ['--lane'] },
+    { args: ['--lane', '--json'] },
+  ])('rejects bad usage $args with exit 2 and never reads', async ({ args }) => {
+    const h = harness(canned(read()));
+    expect(await cmdRouterOutcomes(args, h.readFn)).toBe(2);
+    expect(h.calls).toEqual([]);
+    expect(h.errs()).toContain(ROUTER_OUTCOMES_USAGE);
+  });
+
+  it('prints usage for --help without reading', async () => {
+    const h = harness(canned(read()));
+    expect(await cmdRouterOutcomes(['--help'], h.readFn)).toBe(0);
+    expect(h.out()).toContain('Usage: ashlr router outcomes');
+    expect(h.calls).toEqual([]);
+  });
+
+  it('renders text lines with unknown for null fields and review counts when present', async () => {
+    const report = buildRouterOutcomesReport(read({
+      outcomes: [
+        outcome('A', { merged: null, cost_usd: null, wall_s: null, passk: null, review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
+        outcome('B', { lane: null, model: null, tier: null, work_class: 'docs' }),
+      ],
+      malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2,
+    }), 100);
+    const lines = routerOutcomeLines(report);
+    expect(lines[0]).toBe('router outcomes state=read eval=missing jobs=2 shown=2 malformed=3 unattached=1 ambiguous_urls=2');
+    expect(lines[1]).toBe(`ledger ${report.path}`);
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown passk=unknown');
+    expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true');
+  });
+
+  it('folds a real ledger end-to-end through cmdRouter and cmdRouterOutcomes', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","model":"m1","tier":"work","phase":"MERGED","ts":"2026-11-01T00:00:00Z","cost_usd":1.25,"wall_s":900,"ci_first_pass":true}',
+      '{"job":"J2","lane":"beta","model":"m2","phase":"CLOSED","ts":"2026-11-02T00:00:00Z"}',
+      'not json',
+    ].join('\n'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Dispatch through the parent command proves the verb is wired.
+    expect(await cmdRouter(['outcomes', '--runs-dir', root, '--json'])).toBe(0);
+    const report = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(report).toMatchObject({
+      schema: 'router.outcomes.v1', state: 'read', total: 2, returned: 2,
+      malformed_rows: 1, eval_state: 'missing',
+    });
+    // Newest first: J2 (appended last) leads.
+    expect(report.outcomes.map((o: RouterOutcome) => o.job_id)).toEqual(['J2', 'J1']);
+    expect(report.outcomes[1]).toMatchObject({ lane: 'alpha', model: 'm1', merged: true, cost_usd: 1.25, wall_s: 900, ci_first_pass: true, passk: null });
+    expect(report.outcomes[0]).toMatchObject({ lane: 'beta', merged: false, cost_usd: null });
+
+    const laneFiltered = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdRouterOutcomes(['--runs-dir', root, '--lane', 'alpha', '--json'])).toBe(0);
+    const filtered = JSON.parse(String(laneFiltered.mock.calls.at(-1)![0]));
+    expect(filtered.total).toBe(1);
+    expect(filtered.outcomes[0].job_id).toBe('J1');
+  });
+
+  it('reports a missing ledger as state=missing with exit 0', async () => {
+    const h = harness(readRouterOutcomes);
+    expect(await cmdRouterOutcomes(['--json', '--runs-dir', runsDir()], h.readFn)).toBe(0);
+    const report = JSON.parse(h.out());
+    expect(report).toMatchObject({ state: 'missing', total: 0, returned: 0, outcomes: [] });
+  });
+});
