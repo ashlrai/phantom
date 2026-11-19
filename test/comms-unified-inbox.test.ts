@@ -170,6 +170,33 @@ describe('readUnifiedInbox sources', () => {
     now += 2_000;
     expect((await read()).items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:stale']);
   });
+
+  it('hides work held by a live coordination claim on its queue key', async () => {
+    postWork('coord-held'); postWork('coord-free');
+    holdKey('queue:coord-held');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:coord-free']);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('re-lists work whose coordination lease has lapsed', async () => {
+    postWork('coord-stale');
+    const held = acquireCoordination({ root: busRoot, origin: 'resource', key: 'queue:coord-stale', owner: 'worker',
+      leaseMs: 1_000, leaseUntil: now + 1_000, sourceId: 'test:coord-stale', now });
+    expect(held.status).toBe('acquired');
+    expect((await read()).items.filter(i => i.source === 'bus')).toHaveLength(0);
+    now += 2_000;
+    expect((await read()).items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:coord-stale']);
+  });
+
+  it('degrades the bus source when the coordination table is unreadable', async () => {
+    postWork('coord-blind');
+    mkdirSync(join(busRoot, 'coordination'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(busRoot, 'coordination', 'claims.json'), '{"version":1,"claims":{},"statuses":[]}', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources.bus.state).toBe('degraded');
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:coord-blind']);
+  });
 });
 
 describe('v2 work-feed jobs in the bus source', () => {
