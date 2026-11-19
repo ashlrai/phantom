@@ -84,6 +84,8 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'publish',
   // The typed command catalog the desktop palette also lists (RQ-CMDPALN17TQ8).
   'commands',
+  // Leader reply outbox for the hourly owner digest (RQ-REPLYFEEDN20OQ8).
+  'outbox',
 ];
 
 /** Subcommands per top-level command (first-position completion only). */
