@@ -1308,7 +1308,14 @@ async function cmdStatus(args: string[]): Promise<void> {
     printCoreUsage('status', 'Attention board: dirty, off-sync and stale repos; ecosystem summary.', [
       ['phm status', 'human attention board'],
       ['phm status --json', 'running, merged (24h), blocked and pool usage'],
+      ['phm status --brief [--json]', 'four numbers: merged, time to merge, main green, plan runway'],
     ]);
+    return;
+  }
+  if (args.includes('--brief')) {
+    const { readFleetBrief, briefText } = await import('../core/fleet/status-brief.js');
+    const brief = await readFleetBrief();
+    console.log(args.includes('--json') ? JSON.stringify(brief, null, 2) : briefText(brief).join('\n'));
     return;
   }
   if (args.includes('--json')) {

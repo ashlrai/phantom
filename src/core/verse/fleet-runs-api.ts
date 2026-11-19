@@ -568,6 +568,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readLeaderReplies({ limit, planLog }));
       return true;
     }
+    // The phone's four tiles read the same fleet.brief.v1 as `phm status --brief --json`.
+    if (path === '/api/verse/fleet/runs/brief') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readFleetBrief } = await import('../fleet/status-brief.js');
+      sendJson(res, 200, await readFleetBrief({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
     // Home's Pulse card reads the same fleet.pulse.v1 as `phm fleet pulse --json`.
     if (path === '/api/verse/fleet/runs/pulse') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
