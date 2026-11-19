@@ -242,6 +242,12 @@ describe('release train', () => {
       const syncing = buildTrain({ ...stuck, openReleasePr: { ...successorPr, branchSyncDue: true }, pullChecks: { pending: 0, failing: 0 } });
       expect(syncing.writes).toEqual([syncReleasePullRequest('PR_kwDO_next', pr)]);
       expect(syncing.state.steps['release-pr']?.reason).toBe('release-pr-syncing');
+      // An unreadable ejection base compare is unknown, not clear: no write
+      // targets the PR, and the fix-forward plan itself still proceeds.
+      const unknownSync = buildTrain({ ...stuck, openReleasePr: { ...successorPr, branchSyncUnknown: true }, pullChecks: { pending: 0, failing: 0 } });
+      expect(unknownSync.writes).toEqual([]);
+      expect(unknownSync.state).toMatchObject({ version: '3.30.35', advance: { action: 'advance-from-master' } });
+      expect(unknownSync.state.steps['release-pr']?.reason).toBe('release-pr-compare-unknown');
       const checking = buildTrain({ ...stuck, openReleasePr: successorPr, pullChecks: { pending: 2, failing: 0 } });
       expect(checking.writes).toEqual([]);
       expect(checking.state).toMatchObject({ version: '3.30.35', next: 'release-pr', steps: { 'release-pr': { reason: 'release-pr-checks-pending' } } });
@@ -389,6 +395,16 @@ describe('release train', () => {
     expect(merge).toEqual(enqueueReleasePullRequest('PR_kwDO_test'));
     expect(due.writes.some(write => write.path.includes('release-please.yml'))).toBe(false);
     expect(due.state.advance).toBeUndefined();
+    // An unknown ejection base compare defers the PR write only; supersede
+    // patches and workflow dispatches for the admitted candidate still plan.
+    const deferred = buildTrain(observation({
+      masterVersion: '3.30.27',
+      openReleasePr: { number: 9, nodeId: 'PR_kwDO_test', version: '3.30.28', headSha: pr, headRef: 'release-please--master', mergeable: 'MERGEABLE', state: 'OPEN', queued: false, branchSyncUnknown: true },
+      pullChecks: { pending: 0, failing: 0 },
+    }));
+    expect(deferred.writes.some((write) => write.path === 'graphql')).toBe(false);
+    expect(deferred.writes.some((write) => write.method === 'PATCH')).toBe(true);
+    expect(deferred.writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(true);
     expect(ENQUEUE_PULL_REQUEST).toContain('enqueuePullRequest');
     // The declared GraphQL variable must match the variables key sent, or GitHub rejects $id as an invalid ID! (v3.30.35 train runs 43858601478, 43858533926).
     const declared = [...ENQUEUE_PULL_REQUEST.matchAll(/\$(\w+):/g)].map((m) => m[1]);
@@ -1132,6 +1148,66 @@ describe('release train', () => {
     expect(contained.openReleasePr?.branchSyncDue).toBe(false);
     const undated = await observe(greenRuns, false, 'clean', true, '2026-11-09T05:00:00.000Z', null);
     expect(undated.openReleasePr?.branchSyncDue).toBe(false);
+  });
+
+  it('defers release PR writes when the ejection base compare cannot be read', async () => {
+    const pullSha = 'c'.repeat(40);
+    const pkg = { encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.27' })).toString('base64') };
+    const data: Record<string, unknown> = {
+      'repos/ashlrai/phantom': { id: 1263526319, full_name: 'ashlrai/phantom' },
+      [`repos/ashlrai/phantom/commits/${sha}`]: { sha, commit: { message: 'merge', committer: { date: '2026-11-09T01:00:00Z' } } },
+      'repos/ashlrai/phantom/commits/master': { sha },
+      [`repos/ashlrai/phantom/contents/package.json?ref=${sha}`]: pkg,
+      'repos/ashlrai/phantom/git/ref/tags/v3.30.27': { ref: 'refs/tags/v3.30.27', object: { type: 'commit', sha: head } },
+      [`repos/ashlrai/phantom/commits/${head}`]: { sha: head, commit: { message, committer: { date: '2026-11-09T02:30:00.000Z' } } },
+      [`repos/ashlrai/phantom/compare/${head}...${sha}`]: { status: 'ahead', ahead_by: 2 },
+      'repos/ashlrai/phantom/tags?per_page=100&page=1': [{ name: 'v3.30.27', commit: { sha: head } }],
+      'repos/ashlrai/phantom/releases?per_page=100&page=1': [],
+      'repos/ashlrai/phantom/pulls?state=open&per_page=100&page=1': [{ number: 9, title: 'chore(master): release 3.30.28', head: { ref: 'release-please--master' } }],
+      'repos/ashlrai/phantom/pulls/9': {
+        number: 9, title: 'chore(master): release 3.30.28', state: 'open', merged_at: null,
+        node_id: 'PR_kwDO_test', mergeable: true, mergeable_state: 'clean',
+        head: { ref: 'release-please--master', sha: pullSha },
+      },
+      'registry/npm/@ashlr/phantom/3.30.27': null,
+      ...greenCi(head),
+    };
+    const pullRunsPath = `repos/ashlrai/phantom/commits/${pullSha}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`;
+    const pullComparePath = `repos/ashlrai/phantom/compare/${sha}...${pullSha}`;
+    const ejected = { queued: false, ejectedAt: '2026-11-09T05:00:00.000Z', headCommittedAt: '2026-11-09T04:00:00.000Z' };
+    const observe = (compare: () => unknown) => observeTrain(async (path) => {
+      if (path === pullRunsPath) return { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } }] };
+      if (path === pullComparePath) return compare();
+      if (path === 'repos/ashlrai/phantom/pulls/9') return data[path];
+      if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
+      if (!Object.hasOwn(data, path)) throw new Error(`unexpected ${path}`);
+      return data[path];
+    }, '2026-11-09T06:00:00.000Z', 30, { fleet: 'inactive', autorun: 'inactive' }, async () => ejected);
+
+    // A 503 on the ejection base compare must not abort the observation: the
+    // sync evidence is unknown, no write targets the PR, and the rest of the
+    // train — candidate CI and the audit/build dispatches — is still planned.
+    const failed = await observe(() => { throw new Error('github GET repos/ashlrai/phantom/compare failed (HTTP 503)'); });
+    expect(failed.openReleasePr).toMatchObject({ queued: false, queueEjectedAt: ejected.ejectedAt, branchSyncDue: false, branchSyncUnknown: true });
+    expect(failed.candidateCi).toBe('green');
+    expect(failed.pullChecks).toEqual({ pending: 0, failing: 0 });
+    const deferred = buildTrain(failed);
+    expect(deferred.exitCode).toBe(0);
+    expect(deferred.writes.filter((write) => write.path === 'graphql')).toEqual([]);
+    expect(deferred.writes.map((write) => write.path)).toEqual([
+      'repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/dispatches',
+      'repos/ashlrai/phantom/actions/workflows/ci.yml/dispatches',
+    ]);
+
+    // A recognized compare still decides sync-vs-enqueue, and an
+    // unrecognized status defers the same way a failed read does.
+    const syncing = buildTrain(await observe(() => ({ status: 'diverged' })));
+    expect(syncing.writes[0]).toEqual(syncReleasePullRequest('PR_kwDO_test', pullSha));
+    const enqueueing = buildTrain(await observe(() => ({ status: 'ahead' })));
+    expect(enqueueing.writes[0]).toEqual(enqueueReleasePullRequest('PR_kwDO_test'));
+    const unrecognized = await observe(() => ({ status: 'mystery' }));
+    expect(unrecognized.openReleasePr?.branchSyncUnknown).toBe(true);
+    expect(buildTrain(unrecognized).writes.filter((write) => write.path === 'graphql')).toEqual([]);
   });
 
   it('reads merge-queue membership, ejection and head commit from GraphQL and fails closed', async () => {

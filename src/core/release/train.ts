@@ -238,6 +238,14 @@ export interface TrainObservation {
      * the queue already rejected, so the plan syncs the branch first.
      */
     branchSyncDue?: boolean;
+    /**
+     * True when that ejection's base compare could not be read or returned no
+     * recognized status, so whether the head trails master is unknown. The
+     * plan defers every write to this PR — enqueue could retry evidence the
+     * queue already rejected and a blind sync could be a no-op write — while
+     * the rest of the observation and plan still complete.
+     */
+    branchSyncUnknown?: boolean;
   } | null;
   pullChecks: { pending: number; failing: number } | null;
   /** Required CI on `head.sha`. Green is the only value that may dispatch a build. */
@@ -623,8 +631,8 @@ function fixForward(input: TrainObservation, candidate: { name: string; sha: str
   let releasePr: string;
   const ready = readyReleasePr(pr, input.pullChecks, successor);
   if (ready) {
-    if (cadenceDue) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
-    releasePr = !cadenceDue ? 'release-cadence-wait' : ready.branchSyncDue ? 'release-pr-syncing' : 'release-pr-enqueued';
+    if (cadenceDue && !ready.branchSyncUnknown) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
+    releasePr = !cadenceDue ? 'release-cadence-wait' : ready.branchSyncUnknown ? 'release-pr-compare-unknown' : ready.branchSyncDue ? 'release-pr-syncing' : 'release-pr-enqueued';
   } else if (pr && pr.state === 'OPEN' && pr.version === successor) {
     releasePr = pr.queued ? 'release-pr-queued' : 'release-pr-checks-pending';
   } else if (cadenceDue) {
@@ -739,7 +747,7 @@ export function buildTrain(input: TrainObservation): TrainPlan {
   const checks = input.pullChecks;
   if (fixForwardDue(input, headTag)) return fixForward(input, headTag, expected, cadenceDue);
   const ready = cadenceDue ? readyReleasePr(pr, checks, expected) : null;
-  if (ready) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
+  if (ready && !ready.branchSyncUnknown) writes.push(ready.branchSyncDue ? syncReleasePullRequest(ready.nodeId, ready.headSha) : enqueueReleasePullRequest(ready.nodeId));
 
   const row = input.releases.find((release) => release.tag_name === headTag.name) ?? null;
   const names = row?.assets.map((asset) => asset.name) ?? [];
@@ -1160,9 +1168,17 @@ export async function observeTrain(
     const ejectedMs = queue.ejectedAt ? Date.parse(queue.ejectedAt) : Number.NaN;
     const committedMs = queue.headCommittedAt ? Date.parse(queue.headCommittedAt) : Number.NaN;
     if (Number.isFinite(ejectedMs) && Number.isFinite(committedMs) && ejectedMs > committedMs) {
-      const compare = record(await read(`repos/${REPOSITORY}/compare/${masterSha}...${openReleasePr.headSha}`));
-      const status = text(compare?.status);
-      openReleasePr.branchSyncDue = status === 'behind' || status === 'diverged';
+      // A failed or unrecognized compare is unknown, never clear: the plan
+      // defers writes to this PR rather than enqueueing stale evidence or
+      // planning a blind sync, while the rest of the observation completes.
+      try {
+        const compare = record(await read(`repos/${REPOSITORY}/compare/${masterSha}...${openReleasePr.headSha}`));
+        const status = text(compare?.status);
+        if (status === 'behind' || status === 'diverged') openReleasePr.branchSyncDue = true;
+        else if (status !== 'ahead' && status !== 'identical') openReleasePr.branchSyncUnknown = true;
+      } catch {
+        openReleasePr.branchSyncUnknown = true;
+      }
     }
     // Only required checks gate the enqueue: advisory Actions runs (dependency
     // audit, Vercel-adjacent jobs) neither block nor substitute for Merge Gate.
