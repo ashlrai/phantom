@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { messageLineWidth, type FleetLiveMap, type LiveMapEdge, type LiveMapNode } from '../../../../core/fleet/live-map.js';
 import { prefersReducedMotion } from '../../../components/charts/motion.js';
+import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { DEGREES_PER_SECOND, layoutLiveMap3D, projectLayout3D } from './map3d-model.js';
 import { pulsing } from './map-model.js';
@@ -114,6 +115,7 @@ export function MapStage3D({ map, now, onOpen, onOpenEdge, nameOf, showMessages 
       {(node.kind === 'lane' || node.kind === 'job') && <ProviderBadge of={node.provider} iconOnly size={12} />}
       {node.live && <span className={styles.live} role="img" aria-label="Active in the last 5 minutes" />}
       <strong>{node.label}</strong>
+      {node.kind === 'lane' && <LaneHealthBadge health={node.health} />}
     </button>)}
   </div>;
 }

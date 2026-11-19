@@ -55,10 +55,10 @@ Run the CLI from source with `npm run dev -- --help`.
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files plus one type check
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ changed
-npm run check:docs                        # if docs changed
+npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
 npx vitest run test/doc-facts.test.ts     # if a documented command, flag or npm script changed
 ```
 

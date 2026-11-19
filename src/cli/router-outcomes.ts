@@ -1,7 +1,7 @@
 /**
  * `ashlr router outcomes` — read-only per-job outcome records folded from the
  * host metrics ledger (metrics/jobs.jsonl) by src/core/router/outcomes.ts:
- * merge state, CI first pass, review findings, cost, wall time and the
+ * merge and revert state, CI first pass, review findings, cost, wall time and the
  * advisory pass^k join from eval.lane-scores.v1. Never writes; a missing
  * ledger reports `missing`, an unreadable or non-file one exits 1. The read
  * retains the newest bounded tail of the ledger, so an oversized ledger
@@ -104,7 +104,7 @@ function outcomeLine(o: RouterOutcome): string {
   return [
     o.job_id,
     `lane=${text(o.lane)}`, `model=${text(o.model)}`, `tier=${text(o.tier)}`, `work_class=${text(o.work_class)}`,
-    `merged=${text(o.merged)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
+    `merged=${text(o.merged)}`, `reverted=${text(o.reverted)}`, `ci_first_pass=${text(o.ci_first_pass)}`, `review=${review}`,
     `cost_usd=${text(o.cost_usd)}`, `wall_s=${text(o.wall_s)}`, `passk=${text(o.passk)}`,
   ].join(' ');
 }

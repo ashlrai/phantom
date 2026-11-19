@@ -27,6 +27,14 @@ export interface RouterOutcome {
   work_class: string | null;
   /** true only on an explicit MERGED state or merged:true; false on CLOSED or merged:false; else null. */
   merged: boolean | null;
+  /**
+   * true on explicit revert evidence — reverted:true, a revert event name or
+   * terminal REVERT/REVERTED state, or a parseable reverted_at/revertedAt stamp;
+   * false only on an explicit reverted:false with no positive evidence; else
+   * null. Sticky-true like metrics-ingest: a recorded revert is never
+   * contradicted by a later reverted:false.
+   */
+  reverted: boolean | null;
   ci_first_pass: boolean | null;
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
   cost_usd: number | null;
@@ -125,6 +133,24 @@ const str = (r: Row, ...keys: string[]): string | null => {
 const num = (v: unknown): number | null => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 const count = (v: unknown): number | null => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null;
 
+// Revert evidence uses the same field vocabulary the fleet ledger readers
+// already honor: event names (event/type/kind), terminal state fields
+// (phase/state/outcome/status/result/conclusion) and the reverted_at /
+// revertedAt stamps (ask status stream and outcome metrics dialects).
+const REVERT_NAMES: ReadonlySet<string> = new Set(['revert', 'reverted']);
+const REVERT_EVENT_KEYS = ['event', 'type', 'kind'];
+const REVERT_STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'];
+const hasRevertName = (r: Row, keys: readonly string[]): boolean =>
+  keys.some(k => {
+    const v = r[k];
+    return typeof v === 'string' && REVERT_NAMES.has(v.trim().toLowerCase());
+  });
+const hasRevertStamp = (r: Row): boolean =>
+  ['reverted_at', 'revertedAt'].some(k => {
+    const v = r[k];
+    return typeof v === 'string' && v.trim() !== '' && Number.isFinite(Date.parse(v));
+  });
+
 export interface RouterOutcomeFold {
   outcomes: RouterOutcome[];
   /** Non-blank lines that were not a JSON object. Skipped, never attached. */
@@ -176,7 +202,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (!j) { unattached++; continue; }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
-      merged: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
+      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
@@ -187,6 +213,16 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     if (merged !== null) {
       const ts = Date.parse(str(r, 'ts', 'timestamp', 'at', 'mergedAt', 'closedAt') ?? '') || 0;
       if (ts >= (mergedAt.get(j) ?? -1)) { o.merged = merged; mergedAt.set(j, ts); }
+    }
+    // Sticky-true, matching metrics-ingest: any recorded revert evidence wins
+    // and a later reverted:false cannot undo it; explicit false only stands
+    // when no positive evidence exists anywhere in the job's rows.
+    if (o.reverted !== true) {
+      if (r['reverted'] === true || hasRevertStamp(r) || hasRevertName(r, REVERT_EVENT_KEYS) || hasRevertName(r, REVERT_STATE_KEYS)) {
+        o.reverted = true;
+      } else if (r['reverted'] === false) {
+        o.reverted = false;
+      }
     }
     if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
     o.cost_usd = num(r['cost_usd']) ?? o.cost_usd;

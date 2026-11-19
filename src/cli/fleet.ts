@@ -1877,6 +1877,11 @@ export function formatFleetLanes(snapshot: FleetLaneSnapshot): string {
       lane.mergesPerHour === null ? '—' : String(lane.mergesPerHour),
     ].join(' '));
   }
+  const unhealthy = snapshot.lanes.filter(lane => lane.health && lane.health.state !== 'ok');
+  if (unhealthy.length > 0) {
+    lines.push('');
+    for (const lane of unhealthy) lines.push(`  ${lane.lane} ${lane.health.reason}`);
+  }
   lines.push('');
   const src = snapshot.sources;
   const state = (s: { state: string }, detail: string): string =>

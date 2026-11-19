@@ -311,8 +311,13 @@ it is `null` whenever the ledger lacks lane/model, the projection is
 missing or degraded, the pair is duplicated, or the row's own pass^k is
 null — unknown stays null, never estimated. `RouterOutcomeRead.eval_state`
 reports the projection health (`healthy`/`missing`/`degraded`) so callers
-can distinguish absent eval evidence from a real score. The fold is
-read-only and advisory: it never routes, ranks, tunes or writes.
+can distinguish absent eval evidence from a real score. `reverted` folds
+explicit revert evidence — a `reverted` boolean, a revert event name or
+terminal REVERT/REVERTED state field, or a parseable `reverted_at`/
+`revertedAt` stamp — sticky-true like metrics-ingest, so a recorded revert
+is never contradicted by a later `reverted:false`; it is `null` when the
+ledger records nothing either way. The fold is read-only and advisory: it
+never routes, ranks, tunes or writes.
 
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
@@ -480,7 +485,12 @@ Reports also carry `fleetStop` (`admission_stopped` | `global_admission` | null)
 tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
 `paused`/`admission` verdict for a derived report (where it replaces the
 per-lane codes) or back out of the published `blocked` codes for a
-dispatcher one.
+dispatcher one. Every report carries `statusAsOf` (status.json's `last_tick`
+as ISO-8601, or null) and `statusFresh` (boolean, or null when no evaluation
+clock was supplied): fresh requires a `dispatchd.status.v1` schema, a
+parseable non-future `last_tick`, and an age within the same two-minute
+window the spend projection uses; a stale or untimestamped snapshot is
+reported as the last published state, flagged rather than hidden.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
@@ -880,7 +890,11 @@ last tick; `generatedAt` is the read time. Recent outcomes are the producer's
 24-hour lane merge counts and the number of publication records in the last hour
 (null at the underlying 50-record cap). No free text, environment,
 credentials, paths, or job contents are returned. Partial source health must be
-checked before interpreting observations as complete.
+checked before interpreting observations as complete. Each lane also carries
+`effectiveTarget`, the fleet controller's load-shed ceiling from the
+dispatcher's `effective_target` (null when the producer does not publish it).
+Available slots count against the launch target — the configured target
+tightened by `effectiveTarget` — so a shed lane never reports phantom room.
 
 ## Persistent fleet worker sessions (RQ-CMP-ORG-RUNTIME-1)
 
@@ -1522,7 +1536,8 @@ token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
 are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
 undefined for non-claim bodies so opaque mail still appends),
 `BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
-`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`) is the
+`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
+`jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
@@ -1534,7 +1549,12 @@ resolves through the identity registry matches every label of that identity;
 an unresolvable ref or unreadable registry falls back to the exact owner
 label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
-mistaken for identity proof. `phm agents bus claim list [--key] [--owner]`
+mistaken for identity proof. With `jobs:true` each claim gains an optional
+`jobs` list of the announced work-feed jobs its keys block (`{id, owner,
+status}` per job, the reverse of the feed's `--claims` hold join) and the
+result's `feed` field reports the feed read state; a non-`ok` feed leaves
+`jobs` absent so blocked work stays unknown, never an empty list.
+`phm agents bus claim list [--key] [--owner] [--jobs]`
 prints it.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table

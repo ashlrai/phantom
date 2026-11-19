@@ -301,8 +301,13 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) and reports one
 `router.outcome.v1` record per job in that window, newest
-first: merge state, CI first pass, review findings, cost, wall time and the
-advisory `passk` join from `eval.lane-scores.v1`. It is read-only; a missing
+first: merge and revert state, CI first pass, review findings, cost, wall
+time and the advisory `passk` join from `eval.lane-scores.v1`. `reverted`
+folds explicit revert evidence — a `reverted` boolean, a revert event name
+or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
+stamp — sticky-true like metrics-ingest, so a recorded revert is never
+contradicted by a later `reverted:false`; it stays `null` when the ledger
+records nothing either way. It is read-only; a missing
 ledger reports `state: "missing"` rather than failing, while an unreadable or
 non-file ledger exits 1. The ledger is append-only and unbounded, so when it
 exceeds the bound the read keeps the newest bytes, drops the cut first line,
@@ -317,9 +322,11 @@ feed weights, ranking or dispatch by itself.
 
 `phm fleet router-weights [--runs-dir <dir>] [--json]` folds the same
 `metrics/jobs.jsonl` outcomes into `router.weight-proposals.v1`: per
-`(work_class, lane)` group it compares the observed merge rate against a
+`(work_class, lane)` group it compares the observed held-merge rate against a
 0.5 baseline and proposes a bounded shift — at least 20 known outcomes per
-group, shifts capped at 0.1 and clamped to [0, 1]. Groups below the evidence
+group, shifts capped at 0.1 and clamped to [0, 1]. A merged outcome recorded
+as reverted counts as known evidence (`reverted_n` reports the count) but
+never as a held merge. Groups below the evidence
 floor are refused and keep their baseline; `merged: null` outcomes count as
 unknown, never as failures. When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes

@@ -98,7 +98,10 @@ reported as zero. Owner, capability, local-auth and fencing checks still apply.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors
-and queued counts from dispatcher status. Four local reads run concurrently,
+and queued counts from dispatcher status. Lane `available` counts slots against
+the launch target — the configured target tightened by the controller's
+`effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
+— so a shed lane never reports phantom room. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
 Lane availability expires after two 30-second dispatcher intervals.
 

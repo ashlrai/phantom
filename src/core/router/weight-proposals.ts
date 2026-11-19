@@ -39,6 +39,8 @@ export interface RouterWeightProposal {
   reason: 'insufficient-evidence' | null;
   /** Known outcomes (merged non-null) behind this group. */
   known_n: number;
+  /** Known outcomes whose merge was recorded as reverted; counted in known_n but never as a held merge. */
+  reverted_n: number;
   baseline_weight: number;
   /** Equals baseline_weight when refused. Always within [0, 1]. */
   proposed_weight: number;
@@ -55,7 +57,8 @@ export interface RouterWeightProposalSet {
 /**
  * Groups by (work_class, lane). Non-ID work_class or lane is unclassified; merged:null is unknown and
  * excluded from evidence. A group below minSamples is refused and keeps its baseline. Otherwise the
- * weight moves toward the observed merge rate, capped at maxShift and clamped to [0, 1].
+ * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
+ * known evidence but never as held merges — capped at maxShift and clamped to [0, 1].
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -73,22 +76,25 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     baselines.set(key, b.weight);
   }
 
-  const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number }>();
+  const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number; reverted: number }>();
   let known = 0, unknown = 0, unclassified = 0;
   for (const o of outcomes) {
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) { unknown++; continue; }
     const key = JSON.stringify([o.work_class, o.lane]);
-    const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0 };
+    const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0, reverted: 0 };
     g.known++;
-    if (o.merged) g.merged++;
+    if (o.merged) {
+      if (o.reverted === true) g.reverted++;
+      else g.merged++;
+    }
     groups.set(key, g);
     known++;
   }
 
   const proposals = [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, g]): RouterWeightProposal => {
     const baseline = baselines.get(key) ?? ROUTER_WEIGHT_BASELINE;
-    const base = { work_class: g.work_class, lane: g.lane, known_n: g.known, baseline_weight: baseline };
+    const base = { work_class: g.work_class, lane: g.lane, known_n: g.known, reverted_n: g.reverted, baseline_weight: baseline };
     if (g.known < minSamples) {
       return { ...base, status: 'refused', reason: 'insufficient-evidence', proposed_weight: baseline, shift: 0 };
     }

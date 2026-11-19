@@ -41,7 +41,9 @@ export async function readFleetLiveMap(now = Date.now()): Promise<FleetLiveMap> 
   let computers = null;
   try { computers = readNodesView(defaultNodesViewDeps()); } catch { /* unknown, listed in gaps */ }
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
-  return sanitizePublicJson(buildFleetLiveMap({ org: org?.map ?? null, usage: org?.usage ?? null, computers, now })) as FleetLiveMap;
+  let lanes = null;
+  try { lanes = await (await import('../fleet/lane-console.js')).getFleetLaneSnapshot(); } catch { /* badges absent, listed nowhere: the map still draws */ }
+  return sanitizePublicJson(buildFleetLiveMap({ org: org?.map ?? null, usage: org?.usage ?? null, computers, lanes, now })) as FleetLiveMap;
 }
 
 /** At most one `read` per interval; concurrent callers share the build in flight. A failed build is not kept. Also throttles the Sessions read. */

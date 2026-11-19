@@ -3,6 +3,8 @@
  * Pure: no I/O. `readFleetRunsDirState` supplies the inputs and carries the
  * result as `notRunning`, so the CLI, the fleet API and the desktop share one list.
  */
+import { laneLaunchTarget } from './lane-launch-target.js';
+
 export type NotRunningKind = 'held_launch' | 'idle_lane' | 'launched_no_finish' | 'finished_no_publish';
 export interface NotRunningRow {
   job_or_lane: string; kind: NotRunningKind; reason: string;
@@ -13,7 +15,9 @@ export interface NotRunningRow {
 }
 /** One `<job>.launch` file: its first line, its modified time and whether `<job>.publish` exists. */
 export interface LaunchRecord { job: string; firstLine: string; at: string; lane?: string | null; published?: boolean }
-export interface NotRunningLane { lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null }
+export interface NotRunningLane { lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null;
+  /** The controller's load-shed ceiling; absent keeps the configured target as the launch target. */
+  effectiveTarget?: number | null }
 export interface NotRunningInput {
   lanes: readonly NotRunningLane[]; launches: readonly LaunchRecord[];
   /** Tail of metrics/jobs.jsonl; null when unreadable, which leaves finish and publish states unknown (not listed). */
@@ -103,7 +107,8 @@ export function fleetNotRunning(input: NotRunningInput): NotRunningRow[] {
       reason: 'Finished with no publish record', unblock: 'Republish this job or requeue it' });
   }
   for (const lane of input.lanes) {
-    if (!(lane.target > 0) || lane.running !== 0 || lane.queued !== 0) continue;
+    // A lane the controller shed to zero launch slots is curtailed, not idle.
+    if (!(laneLaunchTarget(lane.target, lane.effectiveTarget) > 0) || lane.running !== 0 || lane.queued !== 0) continue;
     const last = laneLast.get(lane.lane);
     const known = lane.held ? unblockFor(lane.heldReason ?? '', lane.lane) : 'Queue work for this lane';
     rows.push({ job_or_lane: lane.lane, kind: 'idle_lane', since: last === undefined ? null : iso(last),

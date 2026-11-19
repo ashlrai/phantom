@@ -929,6 +929,27 @@ async function ancestorReleaseMessage(read: (path: string) => Promise<unknown>, 
   return null;
 }
 
+/**
+ * Merge-queue membership is GraphQL-only; REST pull reads never expose it.
+ * enqueuePullRequest rejects an already-queued PR, so the plan must observe
+ * the entry instead of planning a write that can only fail.
+ */
+export async function releasePrMergeQueued(
+  nodeId: string,
+  call: (method: string, path: string, body?: unknown) => string = gh,
+): Promise<boolean> {
+  if (!PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
+  const payload: unknown = JSON.parse(call('POST', 'graphql', {
+    query: 'query($id:ID!){node(id:$id){... on PullRequest{isInMergeQueue}}}',
+    variables: { id: nodeId },
+  }));
+  const errors = record(payload)?.errors;
+  if (Array.isArray(errors) && errors.length > 0) throw new Error('release queue state unavailable');
+  const node = record(record(record(payload)?.data)?.node);
+  if (typeof node?.isInMergeQueue !== 'boolean') throw new Error('release queue state unavailable');
+  return node.isInMergeQueue;
+}
+
 export async function observeTrain(
   read: (path: string) => Promise<unknown>,
   now = new Date().toISOString(),
@@ -937,6 +958,7 @@ export async function observeTrain(
     fleet: readSentinel(fleetKillPath()),
     autorun: readSentinel(autorunOffPath()),
   },
+  mergeQueueLookup: (nodeId: string) => Promise<boolean> = releasePrMergeQueued,
 ): Promise<TrainObservation> {
   const repo = record(await read(`repos/${REPOSITORY}`));
   if (repo?.id !== REPOSITORY_ID || repo.full_name !== REPOSITORY) throw new Error('unexpected repository');
@@ -1036,27 +1058,24 @@ export async function observeTrain(
     const headRef = text(record(detail?.head)?.ref) ?? '';
     const headSha = text(record(detail?.head)?.sha) ?? '';
     const nodeId = text(detail?.node_id) ?? '';
-    const state = text(detail?.mergeable_state) ?? '';
     const pullState = detail?.merged_at ? 'MERGED' : detail?.state === 'open' ? 'OPEN' : 'OPEN';
     if (!version || !headRef.startsWith('release-please--') || !SHA.test(headSha) || !PULL_NODE.test(nodeId)) throw new Error('invalid release pull request');
-    const mergeable = detail?.mergeable === true && state === 'clean' ? 'MERGEABLE' : state === 'dirty' ? 'CONFLICTING' : 'UNKNOWN';
+    // mergeable_state folds in advisory check and review state; enqueue
+    // authority is the required-check judgment below plus GitHub's own rules.
+    const mergeable = detail?.mergeable === true ? 'MERGEABLE' : detail?.mergeable === false ? 'CONFLICTING' : 'UNKNOWN';
     openReleasePr = { number: Number(listed.number), nodeId, version, headSha, headRef, mergeable, state: pullState, queued: false };
   }
+  // Required check names are shared by the release-PR head, the admitted
+  // candidate and the fix-forward master read; fetch the ruleset evidence once.
+  let requiredNamesPromise: Promise<string[]> | null = null;
+  const requiredNames = () => (requiredNamesPromise ??= requiredCheckNames(read));
   let pullChecks: TrainObservation['pullChecks'] = null;
   if (openReleasePr) {
-    const checks = record(await read(`repos/${REPOSITORY}/commits/${openReleasePr.headSha}/check-runs?filter=latest&per_page=100`));
-    const runs = Array.isArray(checks?.check_runs) ? checks.check_runs : null;
-    if (!runs || checks?.total_count !== runs.length || runs.length > 100) throw new Error('incomplete check inventory');
-    let pending = 0; let failing = 0; let actions = 0;
-    for (const run of runs) {
-      const item = record(run);
-      if (record(item?.app)?.id !== 15368) continue;
-      actions += 1;
-      if (item?.status !== 'completed') pending += 1;
-      else if (item.conclusion !== 'success' && item.conclusion !== 'skipped') failing += 1;
-    }
-    if (actions === 0) failing += 1;
-    pullChecks = { pending, failing };
+    openReleasePr.queued = await mergeQueueLookup(openReleasePr.nodeId);
+    // Only required checks gate the enqueue: advisory Actions runs (dependency
+    // audit, Vercel-adjacent jobs) neither block nor substitute for Merge Gate.
+    const prCi = await requiredCiOnSha(read, openReleasePr.headSha, await requiredNames());
+    pullChecks = { pending: prCi === 'pending' ? 1 : 0, failing: prCi === 'red' || prCi === 'unknown' ? 1 : 0 };
   }
   const version = head ? head.tag.slice(1) : masterVersion;
   const found = head ? await successfulRun(read, 'ci.yml', head.sha, head.tag) : { build: null, pending: false, pushCiRed: false };
@@ -1085,10 +1104,10 @@ export async function observeTrain(
     }
   }
   const docsSynced = head ? docsCarriersSynced(head.message, version) : false;
-  const candidateCi = head ? await requiredCi(read, head.sha) : 'unknown';
+  const candidateCi = head ? await requiredCiOnSha(read, head.sha, await requiredNames()) : 'unknown';
   // Only a candidate that can never build needs master's gate: see fixForwardDue.
   const masterCi = head && found.pushCiRed && !found.build && !found.pending && head.sha !== masterSha
-    ? await requiredCi(read, masterSha) : undefined;
+    ? await requiredCiOnSha(read, masterSha, await requiredNames()) : undefined;
   return {
     now, fleetKill: kill.fleet, autorunOff: kill.autorun,
     masterSha, masterVersion, cadenceMinutes, lastTaggedAt, aheadBy, tags, head, skippedTags, releases,
@@ -1127,8 +1146,8 @@ function checkContext(value: unknown): string | null {
   return name && name.length > 0 && name.length <= 128 && !name.includes('\n') ? name : null;
 }
 
-/** Required contexts from rulesets and classic protection, judged on this exact SHA. */
-async function requiredCi(read: (path: string) => Promise<unknown>, sha: string): Promise<CandidateCi> {
+/** Required check contexts from rulesets and classic branch protection. */
+async function requiredCheckNames(read: (path: string) => Promise<unknown>): Promise<string[]> {
   const names = new Set<string>();
   const rules = await read(`repos/${REPOSITORY}/rules/branches/master`);
   if (Array.isArray(rules)) {
@@ -1151,6 +1170,11 @@ async function requiredCi(read: (path: string) => Promise<unknown>, sha: string)
       if (name) names.add(name);
     }
   }
+  return [...names];
+}
+
+/** Required contexts judged on this exact SHA's latest Actions check runs. */
+async function requiredCiOnSha(read: (path: string) => Promise<unknown>, sha: string, names: readonly string[]): Promise<CandidateCi> {
   const collected: unknown[] = [];
   let total: number | null = null;
   for (let page = 1; page <= 10; page += 1) {
@@ -1173,7 +1197,7 @@ async function requiredCi(read: (path: string) => Promise<unknown>, sha: string)
       appId: Number(record(item?.app)?.id),
     };
   });
-  return judgeRequiredChecks([...names], parsed);
+  return judgeRequiredChecks(names, parsed);
 }
 
 async function publishedFeedVersion(read: (path: string) => Promise<unknown>, releases: ReleaseRow[], tag: string | null): Promise<string | null> {

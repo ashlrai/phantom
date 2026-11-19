@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
 import { listCoordination } from '../src/core/agents/claim-store.js';
 import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
+import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import { handleAgentBusApi } from '../src/core/verse/agent-bus-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
@@ -217,6 +218,45 @@ describe('listBusClaims', () => {
       owner: { ref: 'atlas', identity: null, registry: 'unavailable' } });
     if (listed.status !== 'ok') throw new Error('expected ok');
     expect(listed.claims.map(row => row.owner)).toEqual(['atlas']);
+  });
+
+  it('joins each claim with the announced feed jobs its keys block when jobs is set', () => {
+    const root = tempDir('v2claim-jobs-');
+    const post = { kind: 'work.post', jobId: 'RQ-JOB', title: 'T', repo: 'a/b',
+      claimKeys: ['queue:RQ-JOB', 'path:a/b:docs/**'], provider: 'devin' };
+    expect(appendBusInbox({ id: 'w-post-1', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-JOB', 'worker-1', 600_000, 'op-1', root);
+    acquire('repo:other/repo', 'worker-2', 600_000, 'op-2', root);
+
+    const listed = listBusClaims({ root, now: NOW, jobs: true });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available', feed: 'ok' });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    const byKey = new Map(listed.claims.map(row => [row.key, row]));
+    // The queue claim overlaps the job's queue key; the unrelated repo claim blocks nothing.
+    expect(byKey.get('queue:RQ-JOB')?.jobs).toEqual([{ id: 'RQ-JOB', owner: 'agent-1', status: 'queued' }]);
+    expect(byKey.get('repo:other/repo')?.jobs).toEqual([]);
+    // Without jobs the same claims carry no feed join and no feed state.
+    const plain = listBusClaims({ root, now: NOW });
+    if (plain.status !== 'ok') throw new Error('expected ok');
+    expect(plain.feed).toBeUndefined();
+    expect(plain.claims.every(row => row.jobs === undefined)).toBe(true);
+  });
+
+  it('leaves jobs absent and reports the feed state when the feed cannot be read', () => {
+    const root = tempDir('v2claim-jobs-');
+    // A work.post with no provider and no registry hint refuses the whole feed.
+    const post = { kind: 'work.post', jobId: 'RQ-BAD', title: 'T', repo: 'a/b', claimKeys: ['queue:RQ-BAD'] };
+    expect(appendBusInbox({ id: 'w-post-2', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-JOB', 'worker-1', 600_000, 'op-1', root);
+
+    const listed = listBusClaims({ root, now: NOW, jobs: true });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available', feed: 'refused' });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    // Claims still list; blocked work stays unknown rather than an empty list.
+    expect(listed.claims).toHaveLength(1);
+    expect(listed.claims[0]?.jobs).toBeUndefined();
   });
 });
 

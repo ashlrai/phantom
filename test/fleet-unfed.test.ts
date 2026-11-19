@@ -222,7 +222,9 @@ describe('phm fleet unfed', () => {
   });
 
   it('reports utilization, unfed lanes and windowed history from the runs directory', async () => {
-    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: LANES }));
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
+    }));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
     const t = Date.now() / 1000;
     writeFileSync(join(dir, 'metrics', 'work-market.jsonl'), [
@@ -235,7 +237,11 @@ describe('phm fleet unfed', () => {
     const json = await run(['--json', '--window', '1']);
     expect(json.code).toBe(1);
     const report = JSON.parse(json.lines[0]!);
-    expect(report).toMatchObject({ schema: 'fleet.unfed.v1', readOnly: true, source: 'derived', unfedLanes: ['codex-cmp'], unfedSlots: 3 });
+    expect(report).toMatchObject({
+      schema: 'fleet.unfed.v1', readOnly: true, source: 'derived',
+      unfedLanes: ['codex-cmp'], unfedSlots: 3,
+      statusAsOf: expect.any(String), statusFresh: true,
+    });
     expect(report.history).toMatchObject({ windowHours: 1, available: true, ticks: 1 });
     expect(report.history.lanes[0]).toMatchObject({ lane: 'codex-cmp', unfedTicks: 1, slotTicks: 2 });
     // RQ-M1's latest in-window decision ran on-hint; only RQ-M2 counts as overridden.
@@ -259,7 +265,10 @@ describe('phm fleet unfed', () => {
   });
 
   it('exits 0 with no unfed capacity and no history file', async () => {
-    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: { a: { running: 2, target: 2 } } }));
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
+      lanes: { a: { running: 2, target: 2 } },
+    }));
     const result = await run([]);
     expect(result.code).toBe(0);
     expect(result.lines).toEqual([
@@ -268,6 +277,72 @@ describe('phm fleet unfed', () => {
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.',
       'Last 24h: no metrics/work-market.jsonl history.',
     ]);
+  });
+
+  it('flags a stale status snapshot in json and text without hiding the counts', async () => {
+    const staleTick = new Date(Date.now() - 10 * 60_000).toISOString();
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: staleTick, lanes: LANES,
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
+    const json = await run(['--json']);
+    expect(json.code).toBe(1);
+    const report = JSON.parse(json.lines[0]!);
+    expect(report).toMatchObject({ statusAsOf: staleTick, statusFresh: false, unfedLanes: ['codex-cmp'] });
+    vi.restoreAllMocks();
+    const text = await run([]);
+    expect(text.code).toBe(1);
+    expect(text.lines.join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${staleTick}`);
+    expect(text.lines.join('\n')).toContain('3 slot(s) could be filled now across codex-cmp');
+  });
+});
+
+describe('status freshness', () => {
+  const NOW = 1_800_000_000_000;
+  const status = (lastTick?: unknown) => JSON.stringify({
+    schema: 'dispatchd.status.v1',
+    lanes: { a: { running: 0, target: 2 } },
+    ...(lastTick === undefined ? {} : { last_tick: lastTick }),
+  });
+  const render = (report: ReturnType<typeof currentUnfed>) =>
+    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24) });
+
+  it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
+    const tick = new Date(NOW - 30_000).toISOString();
+    const report = currentUnfed(status(tick), '', { nowMs: NOW });
+    expect(report.statusAsOf).toBe(tick);
+    expect(report.statusFresh).toBe(true);
+    expect(render(report).join('\n')).not.toContain('Status snapshot');
+  });
+
+  it('flags stale, future, missing and unverifiable ticks without hiding the counts', () => {
+    const stale = new Date(NOW - 121_000).toISOString();
+    const old = currentUnfed(status(stale), '', { nowMs: NOW });
+    expect(old.statusFresh).toBe(false);
+    expect(old.statusAsOf).toBe(stale);
+    expect(render(old).join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${stale}`);
+    // Exactly at the two-minute boundary is still fresh.
+    expect(currentUnfed(status(new Date(NOW - 120_000).toISOString()), '', { nowMs: NOW }).statusFresh).toBe(true);
+    // A future-dated tick proves nothing about freshness.
+    expect(currentUnfed(status(new Date(NOW + 60_000).toISOString()), '', { nowMs: NOW }).statusFresh).toBe(false);
+    // No readable tick: age unknown, never assumed fresh.
+    for (const bad of [status(undefined), status('not a date'), status(1_800_000_000)]) {
+      const report = currentUnfed(bad, '', { nowMs: NOW });
+      expect(report.statusFresh).toBe(false);
+      expect(report.statusAsOf).toBeNull();
+    }
+    expect(render(currentUnfed(status(undefined), '', { nowMs: NOW })).join('\n'))
+      .toContain('Status snapshot age unknown: status.json has no readable last_tick');
+    // A file without the dispatcher schema is not a live tick at all.
+    const foreign = JSON.stringify({ lanes: { a: { running: 0, target: 2 } }, last_tick: new Date(NOW).toISOString() });
+    expect(currentUnfed(foreign, '', { nowMs: NOW }).statusFresh).toBe(false);
+  });
+
+  it('leaves freshness unknown when no evaluation clock is supplied', () => {
+    const report = currentUnfed(JSON.stringify({ lanes: { a: { running: 0, target: 2 } } }), '');
+    expect(report.statusFresh).toBeNull();
+    expect(report.statusAsOf).toBeNull();
+    expect(render(report).join('\n')).not.toContain('Status snapshot');
   });
 });
 
@@ -477,7 +552,9 @@ describe('fleet stop verdicts', () => {
   });
 
   it('prints the fleet stop line in text output', async () => {
-    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: STOP_LANES, paused: 'hold' }));
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: STOP_LANES, paused: 'hold',
+    }));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), TWO_WAITING);
     const result = await run([]);
     expect(result.code).toBe(1);

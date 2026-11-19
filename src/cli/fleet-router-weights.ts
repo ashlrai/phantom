@@ -13,9 +13,9 @@ import { buildRouterWeightProposalReport, type RouterWeightProposalReport } from
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
   'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs). ' +
-  'Proposes bounded weight shifts per work_class/lane from merged outcomes (20 known outcomes required, ' +
-  'shifts capped at 0.1). Writes nothing and changes no live routing. Exit 0 for a read, 1 for an ' +
-  'unavailable ledger, 2 for usage.';
+  'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
+  'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
+  'live routing. Exit 0 for a read, 1 for an unavailable ledger, 2 for usage.';
 
 function parseArgs(args: string[]): { runsDir?: string; json: boolean } | null {
   const parsed: { runsDir?: string; json: boolean } = { json: false };
@@ -39,9 +39,12 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   }
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
-  const rows = report.proposals.map(p => p.status === 'proposed'
-    ? `${p.work_class}/${p.lane}: proposed ${p.baseline_weight} -> ${p.proposed_weight} (known=${p.known_n})`
-    : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged`);
+  const rows = report.proposals.map(p => {
+    const reverted = p.reverted_n > 0 ? ` reverted=${p.reverted_n}` : '';
+    return p.status === 'proposed'
+      ? `${p.work_class}/${p.lane}: proposed ${p.baseline_weight} -> ${p.proposed_weight} (known=${p.known_n}${reverted})`
+      : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n}${reverted} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged`;
+  });
   const none = report.proposals.length === 0 ? ['insufficient evidence: no classified known outcomes'] : [];
   const coverage = report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : [];
   return [header, counts, `ledger ${report.ledger.path}`, ...coverage, ...rows, ...none];

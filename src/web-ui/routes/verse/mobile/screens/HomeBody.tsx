@@ -35,7 +35,7 @@ import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
 import { LeaderReplies } from '../LeaderReplies.js';
 import { HomeRuns } from '../HomeRuns.js';
-import { PoolPaceCard } from '../PoolPaceCard.js';
+import { SpendDownCard } from '../SpendDownCard.js';
 import { hostTopQuery, ThisMacCard } from '../../home/ThisMacCard.js';
 import { Button, SkeletonList } from '../ui.js';
 import { Badge, Row, Section, ui, type Tone } from '../ui-parts.js';
@@ -187,7 +187,7 @@ export function HomeBody() {
           onClick={() => navigate({ screen: 'inbox' })} />
       </Section> : personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
       <HomeRuns />
-      <PoolPaceCard />
+      <SpendDownCard />
       <ThisMacCard className={ui.card} />
       <MobileInterject />
       <LeaderReplies />

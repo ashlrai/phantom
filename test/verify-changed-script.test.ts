@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { collectChangedPaths, masterMovedAuthorityDrift, selectChangedFiles } from '../scripts/verify-changed.mjs';
+import { collectChangedPaths, docsCheckPreflight, masterMovedAuthorityDrift, selectChangedFiles } from '../scripts/verify-changed.mjs';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn(), spawnSync: vi.fn() }));
 
@@ -12,12 +12,13 @@ describe('changed verification selection', () => {
       webTypecheck: false,
       authorityDrift: true,
       fleetRegistry: false,
+      docsCheck: true,
     });
   });
 
   it('excludes deleted files from lint while retaining deleted web paths for typecheck', () => {
     expect(selectChangedFiles(['src/gone.ts', 'src/web-ui/old screen.tsx'], [])).toEqual({
-      lintFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false,
+      lintFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true,
     });
   });
 
@@ -49,7 +50,29 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['notes.md'], ['notes.md']).lintFiles).toEqual([]);
     const paths = ['a.js', 'b.cjs', 'c.mjs', 'd.ts', 'e.cts', 'f.mts', 'g.tsx', 'h.jsx'];
     expect(selectChangedFiles(paths, paths).lintFiles).toEqual(paths);
-    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false });
+    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false });
+  });
+
+  it('selects the docs check for markdown changes and deletions, not modified code', () => {
+    expect(selectChangedFiles(['docs/guide.md'], ['docs/guide.md']).docsCheck).toBe(true);
+    expect(selectChangedFiles(['AGENTS.MD'], ['AGENTS.MD']).docsCheck).toBe(true);
+    expect(selectChangedFiles(['src/core/x.ts'], ['src/core/x.ts']).docsCheck).toBe(false);
+    expect(selectChangedFiles(['src/gone.ts'], []).docsCheck).toBe(true);
+    expect(selectChangedFiles(['docs/gone.md'], []).docsCheck).toBe(true);
+  });
+});
+
+describe('docsCheckPreflight preflight check', () => {
+  it('returns ok true when node_modules/marked/package.json exists', () => {
+    const result = docsCheckPreflight('/fake/root', (() => true) as unknown as typeof import('node:fs').existsSync);
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok false naming the marked package manifest when absent', () => {
+    const result = docsCheckPreflight('/fake/root', (() => false) as unknown as typeof import('node:fs').existsSync);
+    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('reason');
+    expect(result.reason).toContain('node_modules/marked/package.json');
   });
 });
 

@@ -2279,6 +2279,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'outbox': {
+        const { cmdOutbox } = await import('./outbox.js');
+        process.exitCode = await cmdOutbox(rest);
+        break;
+      }
+
       case 'home': {
         const { cmdHome } = await import('./home.js');
         process.exitCode = await cmdHome(rest);

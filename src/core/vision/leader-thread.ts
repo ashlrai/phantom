@@ -1227,10 +1227,10 @@ export async function approveLeaderAction(
 export { OPERATOR_DIRECTIVE_KINDS };
 
 /** Typed API shared by the CLI. Receipts survive rotation; uncertain writes never replay. */
-export async function syncLeaderReplies(planLog?: string): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; posted: string[]; skipped: string[]; unknown: string[] }> {
+export async function syncLeaderReplies(planLog?: string, file?: string): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; posted: string[]; skipped: string[]; unknown: string[] }> {
   const { readPlanLogReplies, replyTextHash } = await import('../fleet/mason-outbox.js');
   // `planLog` is the comms.leaderPlanLogPath config value; PHANTOM_PLAN_LOG still wins.
-  const source = await readPlanLogReplies({ planLog });
+  const source = await readPlanLogReplies({ planLog, ...(file ? { file } : {}) });
   const result = { sourceState: source.sourceState, posted: [] as string[], skipped: [] as string[], unknown: [] as string[] };
   withThreadLock(() => {
     const index = readIndex();

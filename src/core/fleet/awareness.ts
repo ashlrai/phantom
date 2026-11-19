@@ -1,6 +1,7 @@
 /** Pure measured-capacity projection shared by pool dispatch and fleet views. No authority or IO. */
 import { NODE_HEARTBEAT_MS, type NodesState } from '../drive/nodes/state.js';
 import { nodeCapacityView } from '../drive/nodes/router.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 const obj = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -15,10 +16,11 @@ export function projectFleetAwareness(state: NodesState | null, now: number, dis
   const dispatcherFresh = fresh(at, now, 30_000);
   const unpaused = d.paused === false || (d.schema === 'dispatchd.status.v1' && d.paused === null);
   const lanes = Object.entries(obj(d.lanes)).slice(0, 128).filter(([id]) => /^[a-z][a-z0-9-]{1,30}$/.test(id) && safe(id)).map(([lane, value]) => {
-    const row = obj(value), running = dispatcherFresh ? count(row.running) : null, target = count(row.target);
-    return { lane, running, target, floor: count(row.floor), queued: dispatcherFresh ? count(row.queued) : null,
+    const row = obj(value), running = dispatcherFresh ? count(row.running) : null, target = count(row.target),
+      effectiveTarget = count(row.effective_target);
+    return { lane, running, target, effectiveTarget, floor: count(row.floor), queued: dispatcherFresh ? count(row.queued) : null,
       available: dispatcherFresh && unpaused && typeof row.held === 'boolean' && running !== null && target !== null
-        ? row.held ? 0 : Math.max(0, target - running) : null };
+        ? row.held ? 0 : Math.max(0, laneLaunchTarget(target, effectiveTarget) - running) : null };
   });
   return { schema: 'fleet.awareness.v1' as const, generatedAt: new Date(now).toISOString(), heartbeatMs: NODE_HEARTBEAT_MS,
     hosts, lanes, queue: { nodePending: state ? state.jobs.filter(j => j.state === 'pending' ||

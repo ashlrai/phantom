@@ -152,6 +152,16 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 | Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
 
+`phm fleet handoff-receive` and `phm fleet handoff-reply` run one retained
+`worker-handoff` for the caller's `--to`. The flag names the recipient
+identity, not one literal label: a handoff addressed to the `agent:` address,
+bare handle, stable id or any alias of that identity all match, through the
+same registry read the inbox, wakes and `bus next` claims use. A `--to`
+naming no registered identity — and an unreadable registry — keeps
+exact-label matching, so unknown identity state never widens which handoffs
+run. The check still only proves the envelope's addressee; routing labels are
+never authenticated identities.
+
 Channel posts are refused unless the sender is a member
 (`phm agents bus channel create|join|leave`). Because channel addresses are
 bus-group addresses, existing `subscribeGroup` readers see the same posts.
@@ -176,8 +186,12 @@ data, the same for every CLI: each line summarizes the body — `note`,
 kinds compose one scrubbed line (`work.status <job> <status> — <detail>`,
 `work.result <job> <outcome> — <reason>`, `interjection <channel>: <text>`,
 `peer.message <kind> <from>-><to>: <text>`, `protocol <kind> <topic>: <ref>`,
-and so on across the channel, leader, peer, group, cos and incident notices
-that share the store); claim tokens and `work.result` queue/receipt ids
+and so on across the channel, leader, peer, group, cos, incident and
+fleet-ops notices (`apps-watch.*.v1`, `reset-watch.*.v1`, `fleet-event`,
+`fleet-self-loop-pass`, `org.membership`, `work-board-notify`,
+`desktop.intent`, `apps-control`) that share the store — watcher error
+payloads summarize as counts only, never message text); claim tokens and
+`work.result` queue/receipt ids
 never appear, string bodies render as their scrubbed text, and
 unrecognized bodies keep a secret-scrubbed raw JSON render clipped to 512
 characters so one large body cannot crowd out the rest of the frame.
@@ -437,7 +451,8 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>]` is the read
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--jobs]` is
+the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
 would block an acquire through the same overlap rule, or by `--owner` to one
@@ -446,7 +461,10 @@ identity registry, falling back to the exact owner label when the ref does
 not resolve or the registry is unreadable (the JSON `owner` field reports the
 `ref`, resolved `identity` or null, and `registry` state). A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
-zero.
+zero. With `--jobs` each claim also names the announced work-feed jobs its
+keys block (`{id, owner, status}` — the reverse of `work feed --claims`), and
+the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
+`jobs` absent so blocked work stays unknown, never an empty list.
 
 Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
@@ -458,6 +476,11 @@ one agent identity under every routing label that resolves to it — handle,
 `agent:` address, stable id or alias — through the same identity registry the
 inbox, wakes and message filters use; a `--to` naming no identity or an
 unreadable registry keeps exact-label matching and never widens.
+`fleet bus-request` and `fleet bus-scatter` correlate replies the same way: a
+reply counts when its `from` resolves to the request's `to` identity and its
+`to` resolves to the request's `from` identity, under any of their labels; a
+label that resolves to no identity, and an unreadable registry, keep
+exact-label matching.
 
 ### 4. Work feed
 
