@@ -153,7 +153,10 @@ both preserve the row, lease and manifest without withdrawing or requeueing.
 
 A ready row with a `needs` value other than an array of strings, or a
 `data_class` that is not a string own key of `DATA_CLASSES`, stays local with
-`needs_invalid` or `data_class_invalid`, respectively.
+`needs_invalid` or `data_class_invalid`, respectively. A row whose status or
+lane cell carries the dispatcher's `PARKED-` hold marker (either ready.tsv
+dialect) stays local with `parked_row`, whatever its requirements spec says —
+held work is never offloaded.
 
 The bridge does nothing and reports `inert` with one of these reason codes:
 `bridge-owner-unset`, `bridge-disabled` (when `--apply` is used without
@@ -165,7 +168,7 @@ lacks the lease protocol), `router-unavailable`, `not-pool-primary` or
 (`callPool`). A demoted primary never claims.
 
 A row stays local with one of these reasons: `invalid_row`,
-`invalid_requirements`, `data_class_invalid`, `needs_invalid`,
+`invalid_requirements`, `parked_row`, `data_class_invalid`, `needs_invalid`,
 `duplicate_row`, `host_bound_job` (`RQ-FIX-MAIN-`,
 `RQ-REL-`, `RQ-DESK-`, `RQ-BATCH-`), `local_claim_present`, `exclusive`,
 `local_execution_required` (`codex-local`, `omlx`), `lane_not_remote` (`devin`,

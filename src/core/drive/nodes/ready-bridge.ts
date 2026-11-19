@@ -100,7 +100,14 @@ export function parseReadyRow(text: string): ReadyRow | null {
   if (!line.trim() || line.startsWith('#')) return null;
   const f = line.split('\t');
   const job = f[0] ?? '';
-  if (f.length < 5 || !JID.test(job)) return { job, lane: f[2] ?? '', line, spec: null, invalid: 'invalid_row' };
+  const laneCell = f[2] ?? '';
+  // A PARKED- marker in the status or lane cell is a hold, not a candidate —
+  // the same cells dispatchd's parked_row() skips. A spec retained from before
+  // the park still names preferred_lane, so the check must precede spec use.
+  if (/^PARKED-/i.test(f[0]!) || /^PARKED-/i.test(laneCell)) {
+    return { job, lane: laneCell, line, spec: null, invalid: 'parked_row' };
+  }
+  if (f.length < 5 || !JID.test(job)) return { job, lane: laneCell, line, spec: null, invalid: 'invalid_row' };
   let spec: Record<string, unknown> = {};
   if (f.length > 5) {
     try {
