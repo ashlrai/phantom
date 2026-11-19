@@ -106,6 +106,16 @@ describe('buildSessionThreads', () => {
       expect(entry.messages.map(({ truncated: _cut, ...rest }) => rest)).toEqual(single.messages.slice(-THREADS_MESSAGES_SHOWN));
       expect(entry.sources).toEqual(single.sources);
       expect(entry.gaps).toEqual(single.gaps);
+      expect(entry.reply).toEqual(single.reply);
+    }
+  });
+
+  it('says where a reply to each session goes, as the entry\'s last key', async () => {
+    const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map() }, NOW);
+    expect(read.threads.map(entry => [entry.session.id, entry.reply.to, entry.reply.mention])).toEqual([['leader', 'leader', null], ['RQ-A', 'job', '@RQ-A'], ['RQ-QUIET', 'job', '@RQ-QUIET']]);
+    for (const entry of read.threads) {
+      expect(Object.keys(entry).at(-1)).toBe('reply');
+      expect(entry.reply.hint).not.toBe('');
     }
   });
 

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { takeRequestedWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
-import { takeLeaderDraft } from '../leader-thread/leader-draft-store.js';
 import { getPane } from '../panes/pane-registry.js';
 import { REGISTERED_DOCK_PANE_GROUPS } from '../shell/dock-pane-catalog.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { SessionWallPane, WallView } from './SessionWall.js';
-import { aimableJob, narrowOpenThread, narrowSessionWall, routedJobs, sourcesLine, wallHeadline } from './session-wall-model.js';
+import { narrowSessionWall, replyLine, wallHeadline } from './session-wall-model.js';
 import './session-wall.pane.js';
 import { requestWallSession, takeRequestedWallSession } from './wall-selection.js';
 
@@ -27,7 +27,7 @@ function threads(over: Record<string, unknown> = {}) {
       { session: session('leader', { kind: 'leader', lane: 'unknown', model: 'unknown', repo: 'unknown', jobId: null, parentId: null, state: 'idle', lastMessageAgeSeconds: 360 }),
         summary: ['leader is the leader.', 'It is idle between passes.'], messageCount: 2, sources, gaps: [],
         messages: [message('owner:1', 'other', 'Mason', 'Ship the wall today.', { at: '2026-11-18T11:50:00.000Z' }), message('reply:1', 'session', 'Leader', 'Routed to **claude**.', { format: 'markdown' })] },
-      { session: session('RQ-A'), summary: ['RQ-A is a worker on claude.', 'It is running.'], messageCount: 9, sources, gaps: [],
+      { session: session('RQ-A'), summary: ['RQ-A is a worker on claude.', 'It is running.'], messageCount: 9, sources, gaps: [], reply: { to: 'job', mention: '@RQ-A', hint: 'Goes to the Leader\'s inbox with @RQ-A in front, so the Leader knows which session you mean.' },
         messages: [message('step:4', 'record', 'Step 4', 'Ran the tests'), message('bus:7', 'other', 'leader on the bus', 'Keep the diff small.'), message('latest', 'session', 'RQ-A', 'Running the web suite now.', { truncated: true })] },
       { session: session('helper-a', { kind: 'subagent', jobId: null, parentId: 'RQ-A', state: 'quiet', lastMessageAgeSeconds: null }), summary: [], messageCount: 0, sources, gaps: [], messages: [] },
       { session: session('RQ-DONE', { state: 'done', prUrl: 'https://github.com/ashlrai/phantom/pull/9' }), summary: ['RQ-DONE finished.'], messageCount: 1, sources, gaps: [],
@@ -43,21 +43,24 @@ const thread = (id: string, over: Record<string, unknown> = {}) => ({
   sources, gaps: ['Notes unknown: none recorded.'], ...over });
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-/** Answers both reads; `single` builds the opened conversation's response. */
+/** Answers both reads and takes a message for the Leader inbox; `single` builds the opened conversation's response. */
 function serve(wall: () => Response, single: (id: string) => Response = id => json(thread(id))) {
-  const fetch = vi.fn(async (input: unknown) => {
+  const fetch = vi.fn(async (input: unknown, _init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost');
+    if (url.pathname === INBOX) return json({ ok: true });
     return url.pathname.endsWith('/session-thread') ? single(url.searchParams.get('id')!) : wall();
   });
   vi.stubGlobal('fetch', fetch);
   return fetch;
 }
+const INBOX = '/api/verse/leader/inbox';
+const sentToInbox = (fetch: ReturnType<typeof serve>) => fetch.mock.calls.filter(call => String(call[0]).endsWith(INBOX)).map(call => JSON.parse(String(call[1]?.body)) as { text: string });
 const host = () => ({ openPane: vi.fn() });
 const card = (id: string) => screen.getByRole('button', { name: new RegExp(`^${id}, `) });
 
 let viewport: ViewportMock | null = null;
-beforeEach(() => { evictAll(); takeLeaderDraft(); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
-afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+beforeEach(() => { evictAll(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
+afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
 
 it('registers a session-independent Conversations pane beside the Leader chat', () => {
   expect(getPane('session-wall')).toMatchObject({ id: 'session-wall', title: 'Conversations', needsSession: false });
@@ -78,6 +81,11 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('the wall at %s', (_na
     expect(cards[1]!.textContent).toContain('6 earlier');
     expect(cards[1]!.textContent).toContain('Step 4: Ran the tests');
     for (const fact of ['subagent', 'helps RQ-A', 'last spoke unknown', 'Summary unknown: the read returned none.', 'Nothing is recorded for this session yet.']) expect(cards[2]!.textContent).toContain(fact);
+    // Each card ends with where a reply would go: the read's answer for RQ-A, the same rule applied here for the others.
+    expect(cards.map(item => { const to = item.querySelector('[data-to]')!; return [to.getAttribute('data-to'), to.textContent]; })).toEqual([
+      ['leader', 'Reply goes to the Leader\'s inbox'], ['job', 'Reply goes to @RQ-A'], ['none', 'Read only'], ['none', 'Read only']]);
+    expect(cards[1]!.querySelector('[data-to]')!.getAttribute('title')).toBe('Goes to the Leader\'s inbox with @RQ-A in front, so the Leader knows which session you mean.');
+    expect(cards[3]!.querySelector('[data-to]')!.getAttribute('title')).toBe('This session is not running, so there is nothing to steer. Write to the Leader in the Leader chat.');
     expect(card('RQ-A').getAttribute('aria-describedby')).toBe(within(cards[1]!).getByText('RQ-A is a worker on claude. It is running.').id);
     expect(within(screen.getByRole('list', { name: 'Not shown' })).getByText('Bus messages unknown: the agent bus could not be read.')).toBeTruthy();
   });
@@ -116,22 +124,22 @@ describe('where the Leader routed a message', () => {
     serve(() => json(threads()), id => json(thread(id, { session: leader, messages: [asked, routing], sources: { ...sources, orders: 'available' } })));
     render(<SessionWallPane visible host={host() as never} />);
     fireEvent.click(await screen.findByRole('button', { name: 'leader, idle' }));
-    const jobs = within(await screen.findByRole('list', { name: 'Routed to 2 jobs' })).getAllByRole('listitem');
-    expect(jobs.map(job => job.textContent)).toEqual(['RQ-A, on claude: published #9', 'RQ-B, lane unknown: queued']);
-    expect(within(jobs[0]!).getByRole('link', { name: 'Pull request 9' }).getAttribute('href')).toBe('https://github.com/ashlrai/phantom/pull/9');
+    await screen.findByRole('list', { name: 'Conversation with leader' });
+    const record = document.querySelector('li[data-kind="routing"]')!;
+    expect(record.firstElementChild?.textContent).toBe('Routed to 2 jobs');
+    const jobs = within(record as HTMLElement).getAllByRole('listitem');
+    expect(jobs.map(job => job.textContent)).toEqual(['RQ-A, on claude: published PR #9', 'RQ-B, lane unknown: queued']);
+    expect(within(jobs[0]!).getByRole('link', { name: 'PR #9' }).getAttribute('href')).toBe('https://github.com/ashlrai/phantom/pull/9');
     expect(within(jobs[1]!).queryByRole('link')).toBeNull();
     expect(screen.getByText(/replies to you none recorded · routing shown$/)).toBeTruthy();
   });
 
-  it('keeps the server\'s words and never reads a missing trace as nothing routed', () => {
-    expect(routedJobs(routed)).toEqual([{ text: 'RQ-A, on claude: published', pr: { url: 'https://github.com/ashlrai/phantom/pull/9', number: '9' } }, { text: 'RQ-B, lane unknown: queued', pr: null }]);
-    // A link that is not a GitHub pull request stays text; nothing is made clickable from it.
-    expect(routedJobs('RQ-C: published https://example.com/pull/3\n\n')).toEqual([{ text: 'RQ-C: published https://example.com/pull/3', pr: null }]);
-    const line = (kind: string, over: Record<string, unknown>) => sourcesLine(narrowOpenThread(thread('x', { session: session('x', { kind }), sources: { ...sources, ...over } }))!);
-    expect(line('worker', { orders: 'unavailable' })).toMatch(/routing unknown$/);
+  it('says routing is unknown, not absent, when the opened read carries no trace', async () => {
     // A server that predates routing sends no `orders` key: unknown, not "none recorded".
-    expect(line('worker', { orders: undefined })).toMatch(/routing unknown$/);
-    expect(line('subagent', { orders: 'none' })).not.toContain('routing');
+    serve(() => json(threads()), id => json(thread(id, { sources: { ...sources, orders: undefined } })));
+    render(<SessionWallPane visible host={host() as never} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'RQ-A, running' }));
+    expect(await screen.findByText(/routing unknown$/)).toBeTruthy();
   });
 });
 
@@ -150,33 +158,60 @@ it('moves between cards with the arrow keys, J and K, Home and End', () => {
   expect(onOpen).toHaveBeenCalledWith('RQ-A');
 });
 
-it('opens a card as the whole conversation, hands a message to the Leader box, and comes back to the same card', async () => {
+it('opens a card as the whole conversation, sends a reply aimed at it, and comes back to the same card', async () => {
   const fetch = serve(() => json(threads()));
   const pane = host();
   render(<SessionWallPane visible host={pane as never} />);
   fireEvent.click(await screen.findByRole('button', { name: 'RQ-A, running' }));
-  const open = screen.getByRole('region', { name: 'Conversation with RQ-A' });
-  // The card's own facts fill the header before the thread answers.
-  expect(open.querySelector('[data-state="running"]')?.textContent).toBe('running');
+  const open = screen.getByRole('region', { name: 'Session RQ-A' });
+  expect(within(open).getByRole('button', { name: 'Back to every conversation' }).textContent).toBe('← All');
   const log = await screen.findByRole('list', { name: 'Conversation with RQ-A' });
   expect(fetch.mock.calls.map(call => String(call[0])).at(-1)).toContain('/api/verse/fleet/control/session-thread?id=RQ-A');
+  expect(open.querySelector('[data-state="running"]')?.textContent).toBe('running');
   expect(within(screen.getByLabelText('Summary')).getByText('It has run 3 commands.')).toBeTruthy();
   expect(within(log).getAllByRole('listitem').map(item => [item.getAttribute('data-side'), item.textContent])).toEqual([
-    ['other', 'BriefBuild the wall.'], ['record', 'Step 1 Read the docs'], ['session', 'RQ-A rannpm run build'], ['session', expect.stringContaining('Done with')]]);
+    ['other', 'BriefBuild the wall.'], ['record', 'Step 1Read the docs'], ['session', 'RQ-A rannpm run build'], ['session', expect.stringContaining('Done with')]]);
   expect(log.querySelector('pre')?.textContent).toBe('npm run build');
   expect(screen.getByText('Activity shown · bus messages none recorded · your messages shown · routing none recorded')).toBeTruthy();
   expect(within(screen.getByRole('list', { name: 'Not shown' })).getByText('Notes unknown: none recorded.')).toBeTruthy();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Write to it' }));
-  expect(takeLeaderDraft()).toBe('@RQ-A ');
-  expect(pane.openPane).toHaveBeenLastCalledWith('leader-thread');
+  // The reply is sent from here, through the Leader's inbox, with the session's job in front.
+  const box = screen.getByRole('textbox', { name: 'Message RQ-A' });
+  expect(document.activeElement).not.toBe(box);
+  fireEvent.change(box, { target: { value: 'Keep the diff small.' } });
+  fireEvent.keyDown(box, { key: 'Enter' });
+  await waitFor(() => expect(sentToInbox(fetch)).toEqual([{ text: '@RQ-A Keep the diff small.', source: 'Phantom desktop' }]));
+  expect(await screen.findByText(/In the Leader's inbox\./)).toBeTruthy();
+  expect(pane.openPane).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Live log' }));
   expect(takeRequestedWorkerLogJob()).toBe('RQ-A');
   expect(pane.openPane).toHaveBeenLastCalledWith('worker-log');
 
+  // Esc in a reply box that holds words keeps them; from the conversation it returns to the card it was opened from.
+  fireEvent.change(box, { target: { value: 'half a thought' } });
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(screen.getByRole('region', { name: 'Session RQ-A' })).toBeTruthy();
   fireEvent.keyDown(open, { key: 'Escape' });
   await waitFor(() => expect(document.activeElement).toBe(card('RQ-A')));
-  expect(screen.queryByRole('region', { name: 'Conversation with RQ-A' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Session RQ-A' })).toBeNull();
+});
+
+it('opens a card ready to reply with R, and reads a session that cannot be written to without a box', async () => {
+  serve(() => json(threads()), id => json(thread(id, id === 'RQ-DONE' ? { session: threads().threads[3]!.session } : {})));
+  render(<SessionWallPane visible host={host() as never} />);
+  (await screen.findByRole('button', { name: 'RQ-A, running' })).focus();
+  fireEvent.keyDown(document.activeElement!, { key: 'r' });
+  const box = await screen.findByRole('textbox', { name: 'Message RQ-A' });
+  await waitFor(() => expect(document.activeElement).toBe(box));
+  fireEvent.keyDown(box, { key: 'Escape' });
+  await waitFor(() => expect(document.activeElement).toBe(card('RQ-A')));
+
+  // R on a finished session still opens it; there is no box to put the cursor in, and the reason is on screen.
+  card('RQ-DONE').focus();
+  fireEvent.keyDown(document.activeElement!, { key: 'r' });
+  await screen.findByRole('list', { name: 'Conversation with RQ-DONE' });
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(screen.getByRole('note').textContent).toBe('This session is not running, so there is nothing to steer. Write to the Leader in the Leader chat.');
 });
 
 it('opens the one conversation another surface asked for, once, whether the pane is already open or not', async () => {
@@ -184,17 +219,19 @@ it('opens the one conversation another surface asked for, once, whether the pane
   // Asked before the pane exists: a routed job in the Leader chat opens the pane straight onto its conversation.
   requestWallSession('RQ-A');
   const first = render(<SessionWallPane visible host={host() as never} />);
-  expect(screen.getByRole('region', { name: 'Conversation with RQ-A' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Session RQ-A' })).toBeTruthy();
+  // Asked for from elsewhere, it opens for reading: the cursor is not put in the reply box.
   await screen.findByRole('list', { name: 'Conversation with RQ-A' });
+  expect(document.activeElement).not.toBe(screen.getByRole('textbox', { name: 'Message RQ-A' }));
   expect(fetch.mock.calls.map(call => String(call[0])).some(url => url.includes('/session-thread?id=RQ-A'))).toBe(true);
   expect(takeRequestedWallSession()).toBeNull();
   // Going back shows the wall; the spent request does not reopen it.
   fireEvent.click(screen.getByRole('button', { name: 'Back to every conversation' }));
   expect(await screen.findByRole('button', { name: 'RQ-A, running' })).toBeTruthy();
-  expect(screen.queryByRole('region', { name: 'Conversation with RQ-A' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Session RQ-A' })).toBeNull();
   // Asked while the wall is on screen.
   act(() => requestWallSession('RQ-DONE'));
-  expect(screen.getByRole('region', { name: 'Conversation with RQ-DONE' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Session RQ-DONE' })).toBeTruthy();
   first.unmount();
 
   // Free text is never a session id, and a session that has left the list says so instead of showing a blank.
@@ -209,22 +246,24 @@ it('opens the one conversation another surface asked for, once, whether the pane
   expect(gone.textContent).toContain('No session RQ-OLD in the list.');
 });
 
-it('offers no message to a finished session or a helper, and sends the leader to the Leader chat', async () => {
-  serve(() => json(threads()), id => json(thread(id, { session: id === 'leader' ? threads().threads[0]!.session : threads().threads[3]!.session })));
+it('offers no reply box to a finished session, and writes to the leader as the Leader chat does', async () => {
+  const fetch = serve(() => json(threads()), id => json(thread(id, { session: id === 'leader' ? threads().threads[0]!.session : threads().threads[3]!.session })));
   const pane = host();
   render(<SessionWallPane visible host={pane as never} />);
   fireEvent.click(await screen.findByRole('button', { name: 'RQ-DONE, done' }));
   await screen.findByRole('list', { name: 'Conversation with RQ-DONE' });
-  expect(screen.queryByRole('button', { name: 'Write to it' })).toBeNull();
+  expect(screen.queryByRole('textbox')).toBeNull();
   expect(screen.getByRole('note').textContent).toBe('This session is not running, so there is nothing to steer. Write to the Leader in the Leader chat.');
   expect(screen.getByRole('link', { name: 'Pull request' }).getAttribute('href')).toBe('https://github.com/ashlrai/phantom/pull/9');
   fireEvent.click(screen.getByRole('button', { name: 'Back to every conversation' }));
   fireEvent.click(await screen.findByRole('button', { name: 'leader, idle' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Open the Leader chat' }));
-  expect(pane.openPane).toHaveBeenLastCalledWith('leader-thread');
-  expect(takeLeaderDraft()).toBe('');
+  const box = await screen.findByRole('textbox', { name: 'Message the Leader' });
   expect(screen.queryByRole('note')).toBeNull();
-  expect(aimableJob(narrowSessionWall(threads())!.entries[2]!.session)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Live log' })).toBeNull();
+  fireEvent.change(box, { target: { value: 'How is the fleet?' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(sentToInbox(fetch)).toEqual([{ text: 'How is the fleet?', source: 'Phantom desktop' }]));
+  expect(pane.openPane).not.toHaveBeenCalled();
 });
 
 it('says why when the wall or a conversation cannot be read', async () => {
@@ -266,8 +305,6 @@ it('says why when the wall or a conversation cannot be read', async () => {
 
 it('narrows defensively: bad entries dropped, unsafe links removed, unknown kept as unknown', () => {
   expect(narrowSessionWall({ schema: 'fleet.session-thread.v1', threads: [] })).toBeNull();
-  expect(narrowOpenThread(threads())).toBeNull();
-  expect(narrowOpenThread({ schema: 'fleet.session-thread.v1', session: null })).toBeNull();
   const read = narrowSessionWall({ schema: 'fleet.session-threads.v1', counts: { sessions: 45 }, threads: [
     { session: { id: 'RQ-X', state: 'odd', prUrl: 'javascript:alert(1)', lastMessageAgeSeconds: -4 }, messageCount: 1, summary: ['ok', 7, ''],
       messages: [message('latest', 'session', 'RQ-X', 'one'), message('latest', 'session', 'RQ-X', 'duplicate key'), { key: 'bus:1' }, 7, message('bus:2', 'sideways', '', 'two', { at: 'never', format: 'html' })] },
@@ -276,6 +313,12 @@ it('narrows defensively: bad entries dropped, unsafe links removed, unknown kept
   expect(read.entries[0]!.session).toEqual({ id: 'RQ-X', kind: 'worker', lane: 'unknown', model: 'unknown', repo: 'unknown', jobId: null, parentId: null, state: 'unknown', lastMessageAgeSeconds: null, prUrl: null });
   expect(read.entries[0]).toMatchObject({ summary: ['ok'], messageCount: 2, messages: [{ key: 'latest', text: 'one', truncated: false }, { key: 'bus:2', side: 'record', label: 'Unlabelled', at: null, format: 'plain' }] });
   expect(wallHeadline(read)).toBe('1 of 45 sessions: 1 state unknown');
+  // A body never gets to aim Mason's words at another session: the rule is applied here instead.
+  const aimed = (reply: unknown, over: Record<string, unknown> = {}) => narrowSessionWall(threads({ threads: [{ session: session('RQ-A', over), reply }] }))!.entries[0]!.reply;
+  expect(aimed({ to: 'job', mention: '@RQ-OTHER', hint: 'Goes elsewhere.' })).toMatchObject({ to: 'job', job: 'RQ-A' });
+  expect(aimed({ to: 'leader', mention: null, hint: 'Goes to the Leader.' })).toMatchObject({ to: 'job', job: 'RQ-A' });
+  expect(aimed({ to: 'none', mention: null, hint: 'Held by the server.' })).toEqual({ to: 'none', hint: 'Held by the server.' });
+  expect(replyLine(aimed('nonsense', { state: 'done' }))).toBe('Read only');
   expect(wallHeadline(narrowSessionWall(threads({ threads: [], counts: { sessions: 0 } }))!)).toBe('No agent sessions');
   render(<WallView read={narrowSessionWall(threads({ threads: [], counts: { sessions: 0 } }))!} onOpen={() => {}} />);
   expect(screen.getByRole('status').textContent).toBe('No agent sessions right now. Each one appears here as the fleet starts it.');

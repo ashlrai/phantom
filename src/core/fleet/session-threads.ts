@@ -17,6 +17,7 @@ import { flatTree, type LiveSessionsV1 } from './live-sessions.js';
 import type { LeaderRepliesV1 } from './mason-outbox.js';
 import type { OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
+import type { SessionThreadReply } from './session-reply.js';
 import {
   buildSessionThread, type SessionThreadMessage, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
   type SessionThreadState, type SessionThreadV1,
@@ -40,6 +41,8 @@ export interface SessionThreadsEntry {
   messageCount: number;
   sources: SessionThreadV1['sources'];
   gaps: string[];
+  /** Where words written to this session go, the answer its single thread gives, so a screen of every session can offer a reply without a second read. */
+  reply: SessionThreadReply;
 }
 export interface SessionThreadsV1 {
   schema: typeof SESSION_THREADS_SCHEMA;
@@ -103,7 +106,7 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
     if (!thread.session) continue;
     states[thread.session.state] += 1;
     threads.push({ session: thread.session, summary: thread.summary, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
-      messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps });
+      messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps, reply: thread.reply });
   }
   const gaps = [...list.gaps];
   if (total > shown.length) gaps.push(`${total - shown.length} more session${total - shown.length === 1 ? '' : 's'} not shown: the read holds ${THREADS_MAX}. Narrow it with a lane or repo, or ask for running ones only.`);

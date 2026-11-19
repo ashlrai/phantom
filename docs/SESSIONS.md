@@ -88,10 +88,12 @@ is a short list of the jobs the Leader routed it to, each with its lane, how
 far it got and a link to its pull request; a worker's conversation opens with
 the message it serves. A line at the bottom names what each source held, so
 an empty conversation is not mistaken for a quiet session and unread routing
-is not mistaken for a message nobody picked up. "Write to it" puts `@<job id>`
-in the Leader's reply box for a worker that is still running; nothing is sent
-until you send it there. "Live log" opens the worker log, where pause and
-stop live. A server without the read says so and offers the Sessions pane.
+is not mistaken for a message nobody picked up. The opened conversation ends
+in a reply box: a message to a worker that is still running goes to the
+Leader's inbox with `@<job id>` in front, a message to the leader goes there
+as it is, and a session that cannot be written to says why instead. Each card
+says where a reply would go, and R on a card opens it with the cursor in the
+reply box. "Live log" opens the worker log, where pause and stop live. A server without the read says so and offers the Sessions pane.
 The Leader chat opens this pane on one session: "Conversation" on a routed
 job there shows that job's conversation, and Esc returns to every session.
 
