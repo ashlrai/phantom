@@ -52,6 +52,17 @@ where pause and stop live. Escape or **Sessions** returns to the tree. The
 conversation is read from `GET /api/verse/fleet/control/session-thread` every
 10 seconds; a server without that read says so and shows no conversation.
 
+An open conversation is followed while it grows. A message that arrives while
+the end of the conversation is on screen scrolls into view. Once you have
+scrolled up to read, the view stays where you are: a **New** rule sits above
+the first message you have not reached and the header shows a count, such as
+**2 new ↓**. Click the count to go to the first new message, or press End to
+go to the newest. Reaching the end clears the count and leaves the rule in
+place until the next message arrives. "New" means it arrived in this window
+after the conversation was opened; nothing is marked new on opening. When a
+conversation spans more than one day, each day's first message has a heading
+(**Today**, **Yesterday**, or the date).
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
