@@ -410,6 +410,12 @@ session. It groups the live map below and reads nothing else.
 - `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`), `label`, `parent`
   (null for the root), `children` (ids) and `counts` (`running`, `queued`,
   `idle`, `unknown`, summed over the leaves below). Parents come before children.
+- `headline`: the one line a phone shows first: `running`, `queued`, `stuck` (running
+  jobs with no activity in 5 minutes), `mergedLastHour` (null when no lane reported)
+  and `text` ("6 running, 2 stuck, 14 merged in the last hour", or "Nothing running.").
+- Lane nodes also carry `status`, `health` (the lane badge), `mergedPerHour` and
+  `usedPct` (plan used, 0 to 100; null reads "Usage unknown"). Job nodes carry
+  `status` and `live`. The phone Org layout draws exactly this and nothing more.
 - A node with no known parent sits under the group `group:unassigned`. A repeated
   id keeps its first row and is listed in `duplicates`. Computers and pools are not
   part of the org.

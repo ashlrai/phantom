@@ -34,7 +34,9 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
     nodes.push({ id, kind, level: count(row.level) ?? NODE_KINDS.indexOf(kind), label: text(row.label) ?? id,
       provider: (text(row.provider) ?? 'unknown') as LiveMapNode['provider'], status: text(row.status) ?? 'unknown',
       detail: text(row.detail) ?? 'unknown', live: typeof row.live === 'boolean' ? row.live : null,
-      ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}) });
+      ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}),
+      ...(kind === 'lane' && (row.mergedPerHour === null || typeof row.mergedPerHour === 'number') ? { mergedPerHour: row.mergedPerHour } : {}),
+      ...(kind === 'resource' && (row.usedPct === null || typeof row.usedPct === 'number') ? { usedPct: row.usedPct } : {}) });
   }
   const edges: LiveMapEdge[] = [];
   for (const row of raw.edges.slice(0, MAX_EDGES)) {

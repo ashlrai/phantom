@@ -126,6 +126,8 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('message edges on the 
     viewport = mockViewport(width);
     const onOpenMessages = vi.fn();
     const view = render(<MapView {...scene(said, jobs)} now={NOW} onOpen={() => {}} onOpenMessages={onOpenMessages} />);
+    // A phone starts on the org list; the drawn map is one tap away.
+    if (width < 480) fireEvent.click(screen.getByRole('button', { name: 'Show the full map' }));
     return { ...view, onOpenMessages, talk: screen.getByRole('region', { name: 'Messages on the map' }) };
   }
 
@@ -347,6 +349,7 @@ describe('the 2D/3D toggle', () => {
     viewport = mockViewport(390);
     localStorage.setItem('phantom.fleet-map.view', '3d');
     render(<MapView map={map()} now={NOW} onOpen={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the full map' }));
     expect(screen.queryByRole('radiogroup', { name: 'Map view' })).toBeNull();
     expect(stage()).toBeNull();
     expect(screen.getByRole('button', { name: /^Open lane claude:/ }).style.top).not.toBe('');
