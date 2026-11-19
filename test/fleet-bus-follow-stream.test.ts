@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendBusInbox, listBusInboxAfter, type BusInboxPage } from '../src/core/fleet/bus-inbox.js';
 import { followBusStream, type BusFollowRecord } from '../src/core/fleet/bus-follow-stream.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { cmdFleetBusFollow } from '../src/cli/fleet-bus-follow.js';
 import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
@@ -58,6 +59,33 @@ it('delivers only exact --to matches while checkpoints advance past filtered row
   expect(messages(records).map(row => row.envelope.id)).toEqual(['mine']);
   expect(messages(records)[0]!.cursor).toBe(2);
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('streams mail addressed under every label of the --to agent identity', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b', aliases: ['wb-alias'] }, { root }).status).toBe('created');
+  post('a-bare'); post('a-address', 'agent:worker-a'); post('a-alias', 'wa-alias'); post('a-id', stableAgentId('worker-a'));
+  post('b-alias', 'wb-alias'); post('topic', 'fleet.deploy');
+  for (const to of ['worker-a', 'agent:worker-a', 'wa-alias', stableAgentId('worker-a')]) {
+    const { records, pending, expire } = follow({ to });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual(['a-bare', 'a-address', 'a-alias', 'a-id']);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 6 });
+  }
+});
+
+it('keeps exact-label matching when the identity registry is unreadable', async () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('exact', 'agent:worker-a'); post('alias-work', 'wa-alias');
+  writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+  const { records, pending, expire } = follow({ to: 'agent:worker-a' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['exact']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 2 });
 });
 
 it('resumes from an emitted checkpoint without redelivering messages', async () => {

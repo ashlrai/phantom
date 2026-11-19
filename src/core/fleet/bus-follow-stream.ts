@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
 import type { BusEnvelope } from './bus-envelope.js';
+import { agentIdentityKeys } from '../agents/bus-identity.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
 export const BUS_FOLLOW_MIN_INTERVAL_MS = 100;
@@ -18,7 +19,13 @@ export interface BusFollowRequest {
   after: number;
   /** Bounded lifetime is mandatory: 1..3600000 milliseconds. */
   durationMs: number;
-  /** Optional exact-case routing-label filter. Filtering is not authentication. */
+  /** Optional routing-label filter, resolved once at stream start through the
+   * agent identity registry: every label of one registered identity — handle,
+   * `agent:` address, stable id or alias — matches, the same read `bus next`,
+   * `handoff-receive` and `bus-request` replies use. A `--to` naming no
+   * registered identity, and an unreadable registry, keep exact-label
+   * matching, so unknown identity state never widens the stream. Filtering is
+   * not authentication. */
   to?: string;
   intervalMs?: number;
   /** Selects an existing local store; never creates or mutates inbox files. */
@@ -97,6 +104,10 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
   const interval = request.intervalMs ?? BUS_FOLLOW_DEFAULT_INTERVAL_MS;
   const list = deps.list ?? listBusInboxAfter;
   const options = { root: request.root, now: deps.now };
+  const identityOf = agentIdentityKeys({ root: request.root });
+  const target = request.to === undefined ? undefined : identityOf?.(request.to);
+  const addressedTo = (to: string): boolean =>
+    request.to === undefined || to === request.to || (target !== undefined && identityOf?.(to) === target);
   const emit = async (record: BusFollowRecord): Promise<boolean> => {
     try { await deps.emit(record); return true; } catch { return false; }
   };
@@ -113,7 +124,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       if (page.status !== 'ok' || !sanePage(page, cursor)) { status = 'source-unavailable'; break; }
       let accepted = true;
       for (const row of page.messages) {
-        if (request.to !== undefined && row.envelope.to !== request.to) continue;
+        if (!addressedTo(row.envelope.to)) continue;
         if (!(await emit({ type: 'message', cursor: row.cursor, receivedAt: row.receivedAt, envelope: row.envelope }))) {
           status = aborted() ? 'cancelled' : 'output-unavailable';
           accepted = false;

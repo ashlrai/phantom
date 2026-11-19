@@ -523,7 +523,10 @@ unreadable registry keeps exact-label matching and never widens.
 reply counts when its `from` resolves to the request's `to` identity and its
 `to` resolves to the request's `from` identity, under any of their labels; a
 label that resolves to no identity, and an unreadable registry, keep
-exact-label matching.
+exact-label matching. `fleet bus-follow --to` resolves its stream filter the
+same way, once when the stream starts: mail addressed under any label of the
+named identity streams, and an unresolvable `--to` or an unreadable registry
+keeps exact-label matching.
 
 ### 4. Work feed
 
