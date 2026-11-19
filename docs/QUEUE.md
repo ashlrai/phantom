@@ -302,6 +302,11 @@ phm fleet unfed --window 6 --json
 `phm fleet unfed` prints each resource's utilization and its unfed capacity
 now, then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
+The same window's `route_decision` rows are folded into `overrides`:
+each waiting job counts once, by its latest in-window decision — how many
+jobs the market decided and how many left their hinted lane, by reason
+(`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
+hinted-to-chosen lane.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when

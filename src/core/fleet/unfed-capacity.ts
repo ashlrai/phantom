@@ -50,6 +50,32 @@ export interface UnfedHistory {
   lanes: UnfedHistoryLane[];
 }
 
+/** One hinted->chosen lane pair an override took, with its reason. */
+export interface UnfedOverrideLane {
+  /** Hinted lane, or null when the job carried an open (undeclared) hint. */
+  from: string | null;
+  /** Lane the market chose. */
+  to: string;
+  /** Why the decision left the hint: resource_fit, preferred_lane_fallback or unknown_preference. */
+  reason: string;
+  /** Distinct jobs whose latest in-window decision took this route. */
+  jobs: number;
+}
+
+/** lane_override accounting over the window's route_decision rows. */
+export interface UnfedOverrides {
+  /** False when metrics/work-market.jsonl is absent or unreadable. */
+  available: boolean;
+  /** Distinct jobs with a route decision in the window. */
+  decided: number;
+  /** Distinct jobs whose latest decision left the hinted lane. */
+  overridden: number;
+  /** overridden count by override reason. */
+  byReason: Record<string, number>;
+  /** overridden count by hinted->chosen lane and reason, largest first. */
+  lanes: UnfedOverrideLane[];
+}
+
 export type FleetStopCode = 'admission_stopped' | 'global_admission';
 
 export interface UnfedReport {
@@ -80,6 +106,8 @@ export interface UnfedReport {
   unfedSlots: number;
   resources: UnfedResource[];
   history: UnfedHistory;
+  /** lane_override accounting over the same window's route_decision rows. */
+  overrides: UnfedOverrides;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -163,7 +191,7 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history'> {
+export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const hints = readyHints(readyTsv);
@@ -262,6 +290,66 @@ export function foldUnfedHistory(jsonl: string | null, nowMs: number, windowHour
   return history;
 }
 
+/**
+ * Fold `route_decision` rows from metrics/work-market.jsonl over a window:
+ * lane_override accounting. The dispatcher re-decides every waiting job each
+ * tick, so rows collapse to each job's latest in-window decision before
+ * counting — a job that waited for hours counts once, by where the market
+ * currently sends it. Counts and lane/reason codes only; no job ids, task
+ * text or credentials. Null text means the file was absent or unreadable;
+ * malformed rows are skipped.
+ */
+export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowHours: number): UnfedOverrides {
+  const tally: UnfedOverrides = { available: jsonl !== null, decided: 0, overridden: 0, byReason: {}, lanes: [] };
+  if (jsonl === null) return tally;
+  const since = nowMs / 1000 - windowHours * 3600;
+  const latest = new Map<string, { ts: number; override: { from: string | null; to: string; reason: string } | null }>();
+  for (const line of jsonl.split('\n')) {
+    // Cheap prefilter: route decisions are the bulk of the file.
+    if (!line.includes('"route_decision"')) continue;
+    let row: unknown;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!isRecord(row) || row.schema !== 'work-market.v1' || row.event !== 'route_decision') continue;
+    const ts = row.ts;
+    if (typeof ts !== 'number' || !Number.isFinite(ts) || ts < since || ts > nowMs / 1000 + 300) continue;
+    const job = row.job;
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const prev = latest.get(job);
+    if (prev !== undefined && prev.ts >= ts) continue;
+    let override: { from: string | null; to: string; reason: string } | null = null;
+    if (isRecord(row.override)) {
+      const from = row.override.from, to = row.override.to, reason = row.override.reason;
+      if ((from === null || (typeof from === 'string' && LANE.test(from)))
+          && typeof to === 'string' && LANE.test(to)
+          && typeof reason === 'string' && CODE.test(reason)) {
+        override = { from: from as string | null, to, reason };
+      }
+    }
+    latest.set(job, { ts, override });
+  }
+  const pairs = new Map<string, UnfedOverrideLane>();
+  for (const decision of latest.values()) {
+    tally.decided++;
+    const override = decision.override;
+    if (override === null) continue;
+    tally.overridden++;
+    if (tally.byReason[override.reason] !== undefined || Object.keys(tally.byReason).length < MAX_CODES) {
+      tally.byReason[override.reason] = (tally.byReason[override.reason] ?? 0) + 1;
+    }
+    const key = `${override.from ?? ''}\t${override.to}\t${override.reason}`;
+    const entry = pairs.get(key) ?? { from: override.from, to: override.to, reason: override.reason, jobs: 0 };
+    entry.jobs++;
+    pairs.set(key, entry);
+  }
+  tally.lanes = [...pairs.values()]
+    .sort((a, b) => b.jobs - a.jobs || (a.from ?? '').localeCompare(b.from ?? '')
+      || a.to.localeCompare(b.to) || a.reason.localeCompare(b.reason))
+    .slice(0, MAX_OVERRIDE_LANES);
+  return tally;
+}
+
+const MAX_OVERRIDE_LANES = 16;
+
 const topCodes = (blocked: Record<string, number>): string =>
   Object.entries(blocked).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 3).map(([code, n]) => `${code} ${n}`).join(', ');
 
@@ -296,6 +384,19 @@ export function renderUnfed(report: UnfedReport): string[] {
     lines.push(`Last ${h.windowHours}h: ${h.ticks} tick(s) left capacity unfed.`);
     for (const l of h.lanes) {
       lines.push(`  ${l.lane}: ${l.unfedTicks} tick(s), ${l.slotTicks} slot-tick(s) lost${Object.keys(l.blocked).length ? ` (${topCodes(l.blocked)})` : ''}`);
+    }
+  }
+  const o = report.overrides;
+  if (o.available) {
+    if (o.decided === 0) lines.push(`Last ${h.windowHours}h: no route decisions recorded.`);
+    else {
+      lines.push(`Last ${h.windowHours}h: ${o.decided} job(s) decided, ${o.overridden} left their hinted lane.`);
+      if (o.overridden > 0) {
+        lines.push(`  override reasons: ${topCodes(o.byReason)}`);
+        for (const l of o.lanes.slice(0, 3)) {
+          lines.push(`  ${l.from ?? 'open'} -> ${l.to} (${l.reason}): ${l.jobs} job(s)`);
+        }
+      }
     }
   }
   return lines;
