@@ -7,8 +7,8 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, shouldWake,
-  updateWorkStatus, type UnifiedBusOptions,
+  announceWork, busBodySummary, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff,
+  sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import {
@@ -265,6 +265,62 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
       wakes: [{ id: 'wake-bare', to: 'nova' }, { id: 'wake-id', to: novaId }] });
     expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+  });
+});
+
+describe('v2 wake requests on the one bus store', () => {
+  it('posts a wake body to the addressee and always records its hint', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const sent = await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'feed moved', jobId: 'RQ-W-9', id: 'wk-1' }, options);
+    expect(sent).toMatchObject({ status: 'posted', to: 'agent:nova', wake: 'queued' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    expect(raw.messages[0]!.envelope).toMatchObject({
+      from: 'agent:atlas', to: 'agent:nova', channel: 'bus', channel_ref: 'work:RQ-W-9',
+      body: { kind: 'wake', target: 'agent:nova', reason: 'feed moved', jobId: 'RQ-W-9' },
+    });
+    expect(Object.keys(raw.messages[0]!.envelope.body as object).sort()).toEqual(['jobId', 'kind', 'reason', 'target']);
+    // The mail lands like a DM and the hint names the same agent under every label.
+    expect(readAgentInbox('nova', {}, options)).toMatchObject({ messages: [{ kind: 'dm', envelope: { id: 'wk-1' } }] });
+    expect(readAgentWakes('nova', undefined, options))
+      .toMatchObject({ status: 'ok', wakes: [{ id: 'wk-1', from: 'agent:atlas', to: 'agent:nova' }] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+    // A duplicate retry re-attempts the hint; the queue dedupes by envelope id.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'feed moved', jobId: 'RQ-W-9', id: 'wk-1' }, options))
+      .toMatchObject({ status: 'duplicate', wake: 'queued' });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'wk-1' }] });
+  });
+
+  it('resolves every agent ref, threads without a job and refuses bad input', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    expect(registerAgentIdentity({ handle: 'nova', aliases: ['lane-nova'] }, options).status).toBe('created');
+    const registry = readAgentRegistry(options);
+    if (registry.status !== 'ok') throw new Error('unreadable');
+    const nova = resolveAgent(registry.registry, 'nova');
+    if (!nova) throw new Error('not registered');
+    // Alias and stable-id refs land on the same canonical address.
+    for (const [ref, id] of [['lane-nova', 'wk-alias'], [nova.id, 'wk-id'], ['agent:nova', 'wk-addr']] as const) {
+      expect(await sendWakeRequest({ from: 'atlas', to: ref, reason: `wake ${id}`, id }, options))
+        .toMatchObject({ status: 'posted', to: 'agent:nova' });
+    }
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    const noJob = raw.messages.find(row => row.envelope.id === 'wk-alias');
+    expect(noJob?.envelope).toMatchObject({ channel_ref: 'dm:atlas:nova',
+      body: { kind: 'wake', target: 'agent:nova', reason: 'wake wk-alias' } });
+    expect(noJob?.envelope.body).not.toHaveProperty('jobId');
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ wakes: [{ id: 'wk-alias' }, { id: 'wk-id' }, { id: 'wk-addr' }] });
+
+    expect(await sendWakeRequest({ from: 'ghost', to: 'nova', reason: 'x' }, options)).toMatchObject({ status: 'unknown-sender' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'ghost', reason: 'x' }, options)).toMatchObject({ status: 'unknown-recipient' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'x'.repeat(513) }, options)).toMatchObject({ status: 'invalid' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'x', jobId: 'bad job id' }, options)).toMatchObject({ status: 'invalid' });
+    // The body's purpose is the hint; opting out is refused, not ignored.
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'x', wake: false }, options)).toMatchObject({ status: 'invalid' });
+    expect(await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'token ghp_' + 'b'.repeat(36) }, options)).toMatchObject({ status: 'refused' });
   });
 });
 

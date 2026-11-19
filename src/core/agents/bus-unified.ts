@@ -13,6 +13,7 @@ import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type Owner
  *   DM       to `agent:<handle>`                channel `bus`
  *   channel  to `group:<channel>:<topic>`       channel `bus`   (bus-group address)
  *   handoff  to `agent:<handle>`                channel `handoff`, body `worker-handoff`
+ *   wake     to `agent:<handle>`                channel `bus`,   body `wake`
  */
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -26,7 +27,7 @@ import { isFleetJobId } from '../fleet/runs-job-detail.js';
 import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
-import { BUS_V2_TEXT_MAX, workPostBodySchema, workStatusBodySchema,
+import { BUS_V2_TEXT_MAX, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
   type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
@@ -223,6 +224,50 @@ export async function sendHandoff(input: HandoffInput, options: UnifiedBusOption
     priority: base.priority, ttl: base.ttl, body: { kind: 'worker-handoff', taskId: input.taskId, prompt: input.prompt },
     ...metadata(sender, 'handoff', `handoff:${input.taskId}`),
   }, shouldWake(base.priority, input.wake, true), options);
+}
+
+export interface WakeRequestInput extends SendCommon {
+  /** Registered agent to wake: handle, `agent:<handle>`, stable id or alias. */
+  to: string;
+  /** Why the target should read its inbox; the v2 wake body caps it at 512 chars. */
+  reason: string;
+  /** Optional job the wake concerns; joins the job's thread in message projections. */
+  jobId?: string;
+}
+
+/**
+ * Post a v2 `wake` body to one registered identity — the one body kind that is
+ * itself a request to look at the bus. The mail lands in the target's inbox
+ * like a DM, and the post always records the routing-only wake hint for its
+ * addressee through the same post-accept hook every bus wake uses: the body's
+ * purpose is the hint, so `wake: false` is refused rather than silently
+ * ignored. `target` repeats the `agent:<handle>` address so the body and the
+ * hint name the same agent under every label `readAgentWakes` matches. Like
+ * every send it is untrusted data: a wake is a hint to read the inbox and
+ * grants no authority.
+ */
+export async function sendWakeRequest(input: WakeRequestInput, options: UnifiedBusOptions = {}): Promise<UnifiedSendResult> {
+  const base = common(input, { priority: 'P2', ttl: DEFAULT_DM_TTL_MS });
+  if ('status' in base) return base;
+  if (input.wake === false) return refuse('invalid', 'A wake request always records its hint.');
+  const reg = registry(options);
+  if ('status' in reg) return reg;
+  const sender = resolveAgent(reg, input.from);
+  if (!sender) return refuse('unknown-sender', 'Sender is not a registered identity.');
+  const recipient = resolveAgent(reg, input.to);
+  if (!recipient) return refuse('unknown-recipient', 'Recipient is not a registered identity.');
+  const to = `${AGENT_ADDRESS_PREFIX}${recipient.handle}`;
+  const body = wakeBodySchema.safeParse({
+    kind: 'wake', target: to, reason: input.reason,
+    ...(input.jobId === undefined ? {} : { jobId: input.jobId }),
+  });
+  if (!body.success) return refuse('invalid', 'Wake request is outside the v2 contract.');
+  const pair = [sender.handle, recipient.handle].sort();
+  return post({
+    id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to,
+    priority: base.priority, ttl: base.ttl, body: body.data,
+    ...metadata(sender, 'bus', input.jobId === undefined ? `dm:${pair.join(':')}` : `work:${input.jobId}`),
+  }, true, options);
 }
 
 export interface WorkAnnouncementInput extends SendCommon {

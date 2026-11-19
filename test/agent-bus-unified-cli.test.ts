@@ -73,6 +73,25 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('sends v2 wake requests that land in the inbox and wakes', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['wake', '--from', 'atlas', '--to', 'nova', '--reason', 'feed moved',
+      '--job', 'RQ-CLI-WK', '--id', 'cli-wk'])).json)
+      .toMatchObject({ status: 'posted', to: 'agent:nova', wake: 'queued' });
+    const inbox = await run(['inbox', 'nova']);
+    expect(inbox.json.messages.map((m: { envelope: { id: string }; kind: string }) => `${m.envelope.id}:${m.kind}`))
+      .toEqual(['cli-wk:dm']);
+    const wakes = await run(['wakes', 'nova']);
+    expect(wakes.json.wakes.map((w: { id: string; to: string }) => `${w.id}:${w.to}`)).toEqual(['cli-wk:agent:nova']);
+    // The verb always records its hint: the wake flags are usage errors, and
+    // unknown endpoints refuse like a DM.
+    expect(await run(['wake', '--from', 'atlas', '--to', 'nova', '--reason', 'x', '--no-wake'])).toMatchObject({ code: 2 });
+    expect(await run(['wake', '--from', 'atlas', '--to', 'nova', '--reason', 'x', '--wake'])).toMatchObject({ code: 2 });
+    expect(await run(['wake', '--from', 'atlas', '--to', 'ghost', '--reason', 'x'])).toMatchObject({ code: 1, json: { status: 'unknown-recipient' } });
+    expect(await run(['wake', '--from', 'atlas', '--to', 'nova'])).toMatchObject({ code: 2 });
+  });
+
   it('announces and updates v2 work on the same bus, owner-only for status', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
