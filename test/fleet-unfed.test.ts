@@ -556,6 +556,24 @@ describe('ready row validation', () => {
     expect(hints.invalid).toBe(1);
   });
 
+  it('keeps the row repo through the envelope like the dispatcher re-parse', () => {
+    const routerQueue = '- READY RQ-ENV (P1): open envelope row';
+    const ready = vrow('RQ-ENV', 'codex-cmp');
+    const hints = readyHints(ready, routerQueue);
+    expect(hints.rows[0]).toMatchObject({ hint: null, repo: 'phantom' });
+    // repo_unserved is scored by the real repo: served on codex-cmp's allowlist,
+    // blocked on claude's — never reported for every envelope row at once.
+    const lanes = {
+      'codex-cmp': { running: 0, target: 1, held: false },
+      claude: { running: 0, target: 1, held: false },
+    };
+    const slots = JSON.stringify({ 'codex-cmp': { repos: ['phantom'] }, claude: { repos: ['other-repo'] } });
+    const report = currentUnfed(JSON.stringify({ lanes }), ready, { slots, routerQueue });
+    const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
+    expect(byLane['codex-cmp']!.blocked).toEqual({ deferred_after_selection: 1 });
+    expect(byLane.claude!.blocked).toEqual({ repo_unserved: 1 });
+  });
+
   it('counts every JID+tier-valid row by raw lane column when admission stopped', () => {
     const status = JSON.stringify({ lanes: VLANES, paused: 'hold' });
     const ready = [
