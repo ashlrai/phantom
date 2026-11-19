@@ -2,9 +2,11 @@
  * data/queue-stats/source.ts: pluggable data sources for `queue.stats.v1`.
  *
  * fixture: works today. queue-now: CI Efficiency's interim `queue_now.v1`
- * output (payload or loader), mapped to v1. command: stub for `phm queue stats --json` (needs a
- * native or daemon bridge; RQ-QUEUE-3). http: stub for a web route that serves
- * the same JSON. Every source returns parsed, whitelisted data only.
+ * output (payload or loader), mapped to v1. command: stub for a producer that
+ * emits `queue.stats.v1` (`phm queue stats --json` emits the journal-stats
+ * schema instead, so it cannot feed this contract directly). http: stub for a
+ * web route that serves the same JSON. Every source returns parsed,
+ * whitelisted data only.
  */
 import { parseQueueStats, type ParseResult } from './schema.js';
 import { QUEUE_STATS_NORMAL } from './fixtures.js';
@@ -33,16 +35,16 @@ export function queueNowQueueStatsSource(load: () => Promise<unknown> | unknown)
   };
 }
 
-/** Stub: wire to a bridge that runs `phm queue stats --json` once RQ-QUEUE-3 lands. */
+/** Stub: wire to a bridge that runs a `queue.stats.v1` producer once one exists. */
 export function commandQueueStatsSource(run?: () => Promise<string>): QueueStatsSource {
   return {
     kind: 'command',
     load: async () => {
-      if (!run) return { ok: false, error: 'phm queue stats --json is not wired yet (RQ-QUEUE-3)' };
+      if (!run) return { ok: false, error: 'no queue.stats.v1 producer is wired yet' };
       try {
         return parseQueueStats(JSON.parse(await run()));
       } catch {
-        return { ok: false, error: 'phm queue stats output was not valid JSON' };
+        return { ok: false, error: 'queue stats producer output was not valid JSON' };
       }
     },
   };
