@@ -7,6 +7,7 @@ import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { claimNextBusWork } from '../src/core/fleet/bus-next-claim.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
@@ -80,6 +81,51 @@ it('returns empty for missing inbox and unavailable for corrupt inbox', () => {
   post('work');
   writeFileSync(join(root, 'bus-inbox', 'messages.json'), '{invalid', { mode: 0o600 });
   expect(claimNextBusWork(request())).toEqual({ status: 'unavailable' });
+});
+
+it('claims work addressed under any label of the named agent identity', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b', aliases: ['wb-alias'] }, { root }).status).toBe('created');
+  post('a-bare');                                             // to worker-a, P2
+  post('a-again', { to: 'wa-alias' });                        // P2, later cursor
+  post('a-alias', { to: 'wa-alias', priority: 'P1' });
+  post('a-address', { to: 'agent:worker-a', priority: 'P3' });
+  post('b-alias', { to: 'wb-alias', priority: 'P0' });
+  post('topic', { to: 'fleet.deploy', priority: 'P0' });
+  const take = (to: string) => {
+    const result = claimNextBusWork({ ...request(), to });
+    expect(result.status).toBe('acquired');
+    if (result.status !== 'acquired') throw new Error('expected a claim');
+    // Complete, not release: a released receipt stays claimable and would be
+    // picked again ahead of the lower-priority remainder.
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+  // Every ref form names the same identity and sees work under every label,
+  // highest priority first; worker-b's alias and the topic never qualify.
+  expect(take('agent:worker-a')).toBe('a-alias');
+  expect(take('wa-alias')).toBe('a-bare');
+  expect(take(stableAgentId('worker-a'))).toBe('a-again');
+  expect(take('worker-a')).toBe('a-address');
+  expect(claimNextBusWork({ ...request(), to: 'agent:worker-a' })).toEqual({ status: 'empty' });
+  // Non-identity addresses keep exact-label matching.
+  expect(take('fleet.deploy')).toBe('topic');
+  expect(take('agent:worker-b')).toBe('b-alias');
+});
+
+it('keeps exact-label matching when the identity registry is unreadable', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  post('exact', { to: 'agent:worker-a' });
+  post('alias-work', { to: 'wa-alias', priority: 'P0' });
+  writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+  const result = claimNextBusWork({ ...request(), to: 'agent:worker-a' });
+  expect(result.status).toBe('acquired');
+  if (result.status !== 'acquired') throw new Error('expected a claim');
+  // The higher-priority alias-addressed receipt stays unmatched: an
+  // unreadable registry narrows to the literal label, never widens.
+  expect(result.receipt.envelope.id).toBe('exact');
+  expect(mutateBusWorkClaim({ action: 'complete', id: 'exact', token: result.token, root }).status).toBe('completed');
+  expect(claimNextBusWork({ ...request(), to: 'agent:worker-a' })).toEqual({ status: 'empty' });
 });
 
 it('reports full claim storage rather than declaring the queue empty', () => {

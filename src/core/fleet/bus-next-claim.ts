@@ -2,14 +2,29 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork } from './bus-envelope.js';
 import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
+import { agentIdentityKeys } from '../agents/bus-identity.js';
 
 export interface BusNextRequest { to: string; owner: string; leaseMs: number; root?: string }
 export type BusNextResult = { status: 'acquired'; receipt: BusInboxReceipt; token: string; leaseUntil: number }
   | { status: string };
 
+/**
+ * `--to` claims for one agent identity under every routing label that
+ * resolves to it — handle, `agent:` address, stable id or alias — matching
+ * the identity reads elsewhere on the bus. A `--to` that names no registered
+ * identity (a topic such as `fleet.deploy`) and an unreadable registry both
+ * keep exact-label matching, so unknown identity state never widens a claim.
+ */
+function claimAddressMatcher(request: BusNextRequest): (to: string) => boolean {
+  const identityOf = agentIdentityKeys({ root: request.root });
+  const target = identityOf?.(request.to);
+  return to => to === request.to || (target !== undefined && identityOf?.(to) === target);
+}
+
 export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   const claim = { action: 'acquire' as const, id: request.to, owner: request.owner, leaseMs: request.leaseMs, root: request.root };
   if (!validBusClaimRequest(claim)) return { status: 'invalid' };
+  const addressedTo = claimAddressMatcher(request);
   const candidates: BusInboxReceipt[] = [];
   let cursor = 0, scanned = 0, finished = false;
   // An extra page is needed when a full page ends exactly at the high-water mark.
@@ -19,7 +34,7 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
     scanned += result.messages.length;
     if (scanned > BUS_INBOX_MAX_MESSAGES || result.nextCursor < cursor) return { status: 'retryable' };
     for (const receipt of result.messages) {
-      if (receipt.envelope.to === request.to && isClaimableWork(receipt.envelope.body)) candidates.push(receipt);
+      if (addressedTo(receipt.envelope.to) && isClaimableWork(receipt.envelope.body)) candidates.push(receipt);
     }
     if (result.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
     if (result.nextCursor <= cursor) return { status: 'retryable' };
