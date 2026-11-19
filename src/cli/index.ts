@@ -2150,6 +2150,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdPools(rest);
         break;
       }
+      case 'inventory': {
+        const { cmdInventory } = await import('./inventory.js');
+        process.exitCode = await cmdInventory(rest);
+        break;
+      }
       case 'tools': {
         const { cmdTools } = await import('./tools.js');
         process.exitCode = await cmdTools(rest);
