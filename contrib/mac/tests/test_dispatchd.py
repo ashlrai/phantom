@@ -335,9 +335,11 @@ class MaxRuntimeTests(unittest.TestCase):
         self.mock_watchdog(home, self.START_TIME)
         (home / 'mock-start-times.json').write_text(json.dumps({str(pid): start for pid, start in starts.items()}))
 
-    def write_ps_two(self, home, lane='codex-cmp'):
-        inventory = (f'{self.PID} {self.START_TIME} /bin/bash\n'
-                     f'{self.PID2} {self.START_TIME2} /bin/bash')
+    def write_ps_two(self, home, lane='codex-cmp', starts=None):
+        starts = starts or (self.START_TIME, self.START_TIME2)
+        def _inv(pid, start):
+            return f'{pid} {start} /bin/bash' if start else f'{pid} /bin/bash'
+        inventory = _inv(self.PID, starts[0]) + '\n' + _inv(self.PID2, starts[1])
         command = (f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work\n'
                    f'{self.PID2} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work')
         (home / 'stubbin' / 'ps').write_text(
@@ -518,6 +520,47 @@ class MaxRuntimeTests(unittest.TestCase):
         rows = [json.loads(line) for line in marker.read_text().splitlines()]
         self.assertEqual(sorted(row['pid'] for row in rows if not row.get('pending')),
                          sorted([self.PID, self.PID2]))
+        self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
+        # Tick 3 past grace: both termed groups escalate and KILL lands only
+        # after both are done.
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home)[-2:], [
+            {'pid': self.PID, 'signal': signal.SIGKILL},
+            {'pid': self.PID2, 'signal': signal.SIGKILL},
+        ])
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+
+    def test_pending_unknown_start_retries_when_inventory_recovers(self):
+        # The first TERM tick sees two live wrappers but the second one has
+        # no start time in the process inventory, so it cannot be verified
+        # or signaled. It must stay pending by pid instead of dropping out;
+        # once the inventory reports its start, a later tick TERM's and
+        # records it before escalation can complete.
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: None})
+        self.write_ps_two(home, starts=(self.START_TIME, None))
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)
+        marker = run / 'RQ-HUNG.maxruntime'
+        rows = [json.loads(line) for line in marker.read_text().splitlines()]
+        pending_rows = [row for row in rows if row.get('pending')]
+        self.assertEqual(len(pending_rows), 1)
+        self.assertEqual(pending_rows[0]['pid'], self.PID2)
+        self.assertIsNone(pending_rows[0]['start'])
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        # Tick 2: the inventory reports the second start time; it is TERM'd
+        # and recorded, superseding the unknown-start pending row.
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.write_ps_two(home)
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [
+            {'pid': self.PID, 'signal': signal.SIGTERM},
+            {'pid': self.PID2, 'signal': signal.SIGTERM},
+        ])
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
         # Tick 3 past grace: both termed groups escalate and KILL lands only
         # after both are done.
