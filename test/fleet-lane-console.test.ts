@@ -19,7 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import * as http from 'node:http';
 
 import {
@@ -375,6 +375,32 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(snapshot.sources.budgets.state).toBe('healthy');
     expect(JSON.stringify(snapshot)).not.toContain(FIXTURE_QUEUE);
     expect(JSON.stringify(snapshot)).not.toContain(scratch);
+  });
+
+  it('attaches injected emptyNotes to lane health tooltips', async () => {
+    const seen: Array<readonly [string, number]> = [];
+    const snapshot = await getFleetLaneSnapshot({
+      ...fixtureOptions,
+      emptyNotes: async (runsDir, nowMs) => {
+        seen.push([runsDir, nowMs]);
+        return new Map([['devin', 'top empty reason: timeout (2 of 3 empty jobs)']]);
+      },
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('devin')!.health?.emptyNote).toBe('top empty reason: timeout (2 of 3 empty jobs)');
+    expect(byLane.get('grok-ultra')!.health?.emptyNote).toBeUndefined();
+    expect(seen).toEqual([[dirname(FIXTURE_QUEUE), ANCHOR.getTime()]]);
+  });
+
+  it('leaves emptyNote absent without a provider and survives a throwing one', async () => {
+    const bare = await getFleetLaneSnapshot(fixtureOptions);
+    expect(bare.lanes.every(l => l.health?.emptyNote === undefined)).toBe(true);
+    const broken = await getFleetLaneSnapshot({
+      ...fixtureOptions,
+      emptyNotes: async () => { throw new Error('provider exploded'); },
+    });
+    expect(broken.lanes.every(l => l.health?.emptyNote === undefined)).toBe(true);
+    expect(broken.schema).toBe('fleet.lanes.v1');
   });
 
   it('degrades cleanly when the queue directory does not exist', async () => {

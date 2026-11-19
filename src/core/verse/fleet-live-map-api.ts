@@ -42,7 +42,11 @@ export async function readFleetLiveMap(now = Date.now()): Promise<FleetLiveMap> 
   try { computers = readNodesView(defaultNodesViewDeps()); } catch { /* unknown, listed in gaps */ }
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
   let lanes = null;
-  try { lanes = await (await import('../fleet/lane-console.js')).getFleetLaneSnapshot(); } catch { /* badges absent, listed nowhere: the map still draws */ }
+  try {
+    const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
+    const { fleetLaneEmptyNotes } = await import('../fleet/lane-empty-notes.js');
+    lanes = await getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes });
+  } catch { /* badges absent, listed nowhere: the map still draws */ }
   return sanitizePublicJson(buildFleetLiveMap({ org: org?.map ?? null, usage: org?.usage ?? null, computers, lanes, now })) as FleetLiveMap;
 }
 

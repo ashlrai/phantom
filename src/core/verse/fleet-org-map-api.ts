@@ -28,7 +28,11 @@ export interface FleetOrgReaders {
 export const fleetOrgReaders: FleetOrgReaders = { live: buildFleetLiveSnapshot, sessions: getFleetSessions, runs: readFleetRunsDirState,
   registry: loadVerifiedRegistry,
   ledger: readResourceLedger, models: () => getLaneModelSnapshot(),
-  laneHealth: async () => (await import('../fleet/lane-console.js')).getFleetLaneSnapshot(), messages: readFleetEdges, now: Date.now };
+  laneHealth: async () => {
+    const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
+    const { fleetLaneEmptyNotes } = await import('../fleet/lane-empty-notes.js');
+    return getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes });
+  }, messages: readFleetEdges, now: Date.now };
 
 /** The org map, its tree and the pool-usage ledger it was built from (`phm map` also draws the ledger's resources). */
 export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<{ map: FleetOrgMap & { tree: FleetOrgTree }; usage: ResourceLedgerV1 | null }> {

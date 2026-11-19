@@ -69,8 +69,7 @@ import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
-import { emptyNoteFor, laneHealthFor, type LaneHealth } from './lane-badge.js';
-import { readEmptyJobs } from './empty-jobs.js';
+import { laneHealthFor, type LaneHealth } from './lane-badge.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
 
 // ---------------------------------------------------------------------------
@@ -161,6 +160,14 @@ export interface FleetLaneSnapshot {
   starved: StarvedRead;
 }
 
+/**
+ * Supplies the per-lane top EMPTY reason notes for badge tooltips. Display
+ * surfaces inject `fleetLaneEmptyNotes` (src/core/fleet/lane-empty-notes.ts);
+ * lane-console must not import the empty-jobs report cluster itself because
+ * it sits inside the Tier-1 authority import closure.
+ */
+export type LaneEmptyNotesProvider = (runsDir: string, nowMs: number) => Promise<ReadonlyMap<string, string>>;
+
 export interface FleetLaneConsoleOptions {
   /** Router queue directory. Default `~/.ashlr-runs/queue`. Must be absolute when given. */
   queueDir?: string;
@@ -174,6 +181,8 @@ export interface FleetLaneConsoleOptions {
   mergeWindowMs?: number;
   /** Where the Leader remembers when a lane first looked starved. Default `~/.ashlr/vision/leader`. */
   starvedStateDir?: string;
+  /** Badge-tooltip notes per lane. Absent means no notes — never an error. */
+  emptyNotes?: LaneEmptyNotesProvider;
 }
 
 // ---------------------------------------------------------------------------
@@ -736,21 +745,18 @@ export function defaultUsageLogPaths(queueDir: string): string[] {
 }
 
 const EMPTY_NOTE_TTL_MS = 60_000;
-const emptyNoteCache = new Map<string, { at: number; notes: Map<string, string> }>();
+const emptyNoteCache = new Map<string, { at: number; provider: LaneEmptyNotesProvider; notes: Map<string, string> }>();
 
-/** Top EMPTY reason per lane over the last 24 h, for the badge tooltip. Cached a minute: the snapshot is polled and this reads job logs. A missing ledger gives no notes. */
-async function laneEmptyNotes(runsDir: string, nowMs: number): Promise<Map<string, string>> {
+/** Top EMPTY reason per lane over the last 24 h, for the badge tooltip. Cached a minute per provider: the snapshot is polled and the provider reads job logs. No provider means no notes; a throwing provider degrades to none — the tooltip is optional. */
+async function laneEmptyNotes(runsDir: string, nowMs: number, provider: LaneEmptyNotesProvider | undefined): Promise<Map<string, string>> {
+  if (!provider) return new Map();
   const hit = emptyNoteCache.get(runsDir);
-  if (hit && nowMs - hit.at >= 0 && nowMs - hit.at < EMPTY_NOTE_TTL_MS) return hit.notes;
-  const notes = new Map<string, string>();
+  if (hit && hit.provider === provider && nowMs - hit.at >= 0 && nowMs - hit.at < EMPTY_NOTE_TTL_MS) return hit.notes;
+  let notes = new Map<string, string>();
   try {
-    const report = await readEmptyJobs(24, runsDir, undefined, nowMs);
-    for (const row of report?.final?.lanes ?? []) {
-      const note = emptyNoteFor(row.top, row.reasons[row.top], row.total);
-      if (note) notes.set(row.lane, note);
-    }
+    notes = new Map(await provider(runsDir, nowMs));
   } catch { /* the tooltip is optional */ }
-  emptyNoteCache.set(runsDir, { at: nowMs, notes });
+  emptyNoteCache.set(runsDir, { at: nowMs, provider, notes });
   return notes;
 }
 
@@ -968,7 +974,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
   })), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
 
-  const emptyNotes = await laneEmptyNotes(dirname(queueDir), now.getTime());
+  const emptyNotes = await laneEmptyNotes(dirname(queueDir), now.getTime(), options.emptyNotes);
   for (const view of views) {
     const row = starved.lanes[view.lane];
     view.health = laneHealthFor({

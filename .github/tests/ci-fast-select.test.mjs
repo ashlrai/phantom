@@ -160,6 +160,27 @@ test('Tier-1 paths always add the named authority tests, even past the cap', (t)
   for (const name of TIER1_TESTS) assert.ok(codeowners.tests.includes(name), `CODEOWNERS adds ${name}`);
 });
 
+test('a diff touching a recorded Tier-1 closure member selects the closure invariant', (t) => {
+  const snapshot = 'test/fixtures/authority/tier1-closure.json';
+  const { dir, commit } = repo(t, {
+    'src/core/fleet/lane-console.ts': 'export const lc = 1;\n',
+    'src/core/fleet/unrelated.ts': 'export const u = 1;\n',
+    'test/lane-console.test.ts': "import '../src/core/fleet/lane-console.js';\n",
+    'test/unrelated.test.ts': "import '../src/core/fleet/unrelated.js';\n",
+    [snapshot]: JSON.stringify({ closure: ['src/core/fleet/lane-console.ts'] }),
+    'test/authority-tier1-closure-310b.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  const member = plan({ cwd: dir, paths: ['src/core/fleet/lane-console.ts'] });
+  assert.ok(member.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'closure member diff runs the invariant');
+  const snap = plan({ cwd: dir, paths: [snapshot] });
+  assert.ok(snap.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'snapshot regen runs the invariant');
+  const other = plan({ cwd: dir, paths: ['src/core/fleet/unrelated.ts'] });
+  assert.ok(!other.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'non-member diff does not');
+  const newRoot = plan({ cwd: dir, paths: ['src/core/memory/brand-new.ts'] });
+  assert.ok(newRoot.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'a new root-eligible file runs the invariant');
+});
+
 test('workflow and script edits select their node and m30 tests', (t) => {
   const { dir, commit } = repo(t, {
     'test/m30.ci.test.ts': 'export {};\n',

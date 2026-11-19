@@ -24,7 +24,10 @@ final log message of each empty job read as one reason from a fixed list (alread
 no-change-needed, repo-rule, blocked-dependency, tool-missing, usage-out, timeout, unknown),
 counts per lane and reason, and the five newest examples per reason. The CLI quotes the matched
 sentence (scrubbed, at most 200 characters); the web report leaves it null. A log with no final
-message reads as unknown. The lane health badge tooltip names the lane's top reason. Plain pattern
+message reads as unknown. The lane health badge tooltip names the lane's top reason;
+`fleetLaneEmptyNotes` (`src/core/fleet/lane-empty-notes.ts`) supplies it to
+`getFleetLaneSnapshot` through the `emptyNotes` option, so the lanes projection itself stays
+out of the Tier-1 authority import closure. Plain pattern
 rules in `src/core/fleet/empty-final-reason.ts`; no model calls.
 
 This extends the existing empty-job report, using the `phm empties` newest-finish
