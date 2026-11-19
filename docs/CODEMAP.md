@@ -155,6 +155,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/policy/`
 - `src/core/portfolio/`
 - `src/core/proactive/`
+- `src/core/providers/`
 - `src/core/prs/`
 - `src/core/quality/`
 - `src/core/queue/`
