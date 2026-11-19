@@ -9,6 +9,7 @@ export interface FleetQueueV1 {
   ready: number;
   parked: number;
   malformed: number;
+  unhinted?: number;
   byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
   nextUp?: Array<{ lane: string; jobs: string[] }>;
   groups: ParkedGroup[];

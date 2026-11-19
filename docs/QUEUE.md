@@ -962,7 +962,10 @@ re-pinning before dispatcher installation; no live cutover is part of this chang
 Run `phm fleet parked --json` for the read-only `health` summary
 (`fleet.queue-health.v1`). It separates ready and parked counts and groups
 repeated precheck skips, including `RESTOCK`, by job, code and reason over the
-last 24 hours. A repeat means at least two matching records; it does not prove
+last 24 hours. READY rows whose lane cell is empty or names no lane are the
+market's open hint: they count in `ready`/`total`/`unhinted` and in the health
+ready count, but stay unattributed in `byLane` and `nextUp`. A repeat means at
+least two matching records; it does not prove
 a job is still blocked. The plain-text command shows the same repeat counts.
 Counts cover the bounded readable queue and log snapshot, before display
 limits; check `sources` for missing or degraded evidence. Unavailable health
