@@ -108,6 +108,13 @@ export function classify(envelope: BusInboxReceipt['envelope'], body: Body | nul
   const outcome = (str(body?.outcome) ?? '').toLowerCase();
   if (envelope.channel === 'handoff' || has('handoff', 'assignment') || peerKind === 'handoff') return 'handoff';
   if (has('blocked', 'blocker', 'escalation', 'failed', 'incident') || ['blocked', 'failed'].includes(status) || outcome === 'failed') return 'blocker';
+  // Slack ingress stamps the peer protocol's declared kind; a request asks and
+  // a reply answers even when the body carries no local replyTo.
+  if (kind === 'slack-coordination') {
+    const messageType = (str(body?.messageType) ?? '').toLowerCase();
+    if (messageType === 'request') return 'ask';
+    if (messageType === 'reply') return 'reply';
+  }
   if (has('reply', 'result', 'ack', 'exit') || str(body?.replyTo) || str(body?.inReplyTo)) return 'reply';
   if (['task', 'review', 'query'].includes(peerKind ?? '') || kind === 'work.post' || kind.endsWith('owner-message')
     || has('interjection', 'request', 'ask', 'question')) return 'ask';

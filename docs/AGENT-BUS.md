@@ -27,7 +27,11 @@ second bus. v2 `work.*` bodies summarize their typed fields — `work.status`
 as `status: detail`, `work.result` and `work.release` as `outcome: reason`,
 `work.claim` as `op claimKey` — and messages about one `jobId` share a
 `job:<jobId>` conversation; a claim or release that names only a `claimKey`
-joins the newest `work.post` in the read listing that key. Claim tokens and
+joins the newest `work.post` in the read listing that key. Slack-bridge
+`slack-coordination` notices summarize as `slack-coordination <type> <mode>:
+<text>` and classify by their declared `messageType` — `request` reads as
+ask, `reply` as reply — so peer requests surface as waiting conversations.
+Claim tokens and
 dispatch ids never appear in a summary. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
 address of one registered identity counts as that agent, so its labels never

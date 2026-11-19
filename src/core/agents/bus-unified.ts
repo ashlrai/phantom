@@ -390,7 +390,8 @@ function summaryNumber(source: Record<string, unknown>, key: string): string | n
  * incident notices that share the store (`interjection`, `owner-thread`,
  * `comms-reply`, `leader.*`, `peer.*`, `group.*`, `cos-*`, `order-merged`,
  * `inbox-ack`, `ci.failed-scheduled-run`, `worker-exit`, `selector.picks`,
- * `browser`, `apps-*.v1`, legacy `work` and protocol-v1 transport bodies).
+ * `browser`, `slack-coordination`, `apps-*.v1`, legacy `work` and
+ * protocol-v1 transport bodies).
  * Claim tokens and `work.result` queueId/receiptId never appear: they are
  * private coordination data, not message content, so the secret-bearing kinds
  * return at least their kind literal rather than ever falling back to a raw
@@ -503,6 +504,8 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
     }
     case 'comms-reply':
       return simple('comms-reply', [], 'text');
+    case 'slack-coordination':
+      return simple('slack-coordination', ['messageType', 'routeMode'], 'text');
     case 'order-merged':
       return simple('order-merged', ['channel'], 'text');
     case 'inbox-ack':

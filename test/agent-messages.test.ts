@@ -170,6 +170,31 @@ describe('phm messages projection', () => {
     expect(byId.get('u3')).toMatchObject({ summary: 'complete', kind: 'reply', conversation: 'pair:a|b', job: null });
   });
 
+  it('reads slack-coordination messageType as the declared ask or reply', () => {
+    const root = store();
+    const slack = (id: string, at: number, messageType: string, text: string, over: Record<string, unknown> = {}) =>
+      post(root, at, { id, from: 'agent:peer-a', to: 'agent:peer-b', channel: 'slack', channel_ref: 'T1/C1/1.2',
+        sender: { agent_id: 'agent:peer-a', vendor: 'peer', human: false, team: true }, external: false, origin_bridge: 'remote-bridge',
+        body: { kind: 'slack-coordination', trust: 'untrusted', messageType, routeMode: 'peer', text,
+          messageId: 'm-1', inReplyTo: null, workspaceId: 'T1', channelId: 'C1', threadTs: '1.2', eventTs: '1.2',
+          originBridge: 'remote-bridge', visitedBridges: ['remote-bridge', 'local-bridge'], ...over } });
+    slack('s1', T0, 'request', 'can you pick up the review?');
+    slack('s2', T0 + 1_000, 'request', 'second ask', { inReplyTo: 'remote-9' });
+    slack('s3', T0 + 2_000, 'reply', 'done, PR is up');
+    slack('s4', T0 + 3_000, 'status', 'still working', { inReplyTo: 'remote-9' });
+    slack('s5', T0 + 4_000, 'note', 'fyi only');
+    const result = read(root);
+    const byId = new Map(result.messages.map(m => [m.id, m]));
+    // The declared type wins over text shape and local reply hints: a request
+    // asks even when threaded, a reply answers even without inReplyTo.
+    expect(byId.get('s1')).toMatchObject({ kind: 'ask', summary: 'can you pick up the review?' });
+    expect(byId.get('s2')).toMatchObject({ kind: 'ask' });
+    expect(byId.get('s3')).toMatchObject({ kind: 'reply', summary: 'done, PR is up' });
+    // Unmapped types keep the existing heuristics: inReplyTo still reads as a reply.
+    expect(byId.get('s4')).toMatchObject({ kind: 'reply' });
+    expect(byId.get('s5')).toMatchObject({ kind: 'status' });
+  });
+
   it('validates flags and reads relative --since', () => {
     expect(parseSince('15m', T0)).toBe(T0 - 900_000);
     expect(parseSince('2026-11-17T00:00:00Z')).toBe(Date.UTC(2026, 10, 17));
