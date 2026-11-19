@@ -159,6 +159,19 @@ Channel adapters do not live here. After they authenticate the owner they call
 a caller. The desktop Leader pane
 shows the conversation, the open assignments and the org.
 
+When the Leader has asked you something and the conversation holds no answer
+yet, the Leader pane (⌘⌥L) pins it above the reply box as **The Leader is
+asking**, with how long it has waited. The question that has waited longest
+leads; ‹ and › step through the rest and a half-written answer stays with its
+question. A question with choices shows them: press 1 to 9 to choose and ⌘↵ to
+submit. Any other question takes a written answer, sent with Enter. Answers go
+to the Leader's question route, the one Needs you uses, and need the dispatch
+token; a read-only session can read the question but not answer it. The tray
+reads the newest 50 messages of the conversation, so an older question is
+answered from Needs you (⌘J). With nothing open the tray is not shown. The
+tray stays in place under **Needs you only**, and while a question is open
+that view says the Leader is asking instead of "Nothing needs you right now."
+
 ```sh
 phm leader status --json
 phm leader ask "fix the flaky test" --json

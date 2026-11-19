@@ -45,6 +45,8 @@ import { ThreadScreenshot } from './ThreadScreenshot.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { DeliveryReceipt } from './DeliveryReceipt.js';
+import { LeaderAsks } from './LeaderAsks.js';
+import { openLeaderAsks } from './leader-asks-model.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
@@ -259,6 +261,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const read = thread.data;
   const messages = read?.value?.messages ?? NO_MESSAGES;
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
+  const openAsks = useMemo(() => openLeaderAsks(messages).length, [messages]);
   const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
   const laneItems = useMemo(() => laneEventItems(laneEvents), [laneEvents]);
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
@@ -458,7 +461,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     body = threadMissing && !needsYouOnly
       ? <p className={leaderStyles.placeholder} data-tone="unknown">{read!.reason ?? 'The Leader conversation did not answer.'}</p>
       : <div className={leaderStyles.empty}>
-        <p className={leaderStyles.emptyTitle}>{needsYouOnly ? 'Nothing needs you right now.' : 'All quiet'}</p>
+        {/* An open question is answered in the tray under the conversation, so the filtered view must not read as all clear. */}
+        <p className={leaderStyles.emptyTitle}>{!needsYouOnly ? 'All quiet' : openAsks === 0 ? 'Nothing needs you right now.' : `The Leader is asking you ${openAsks === 1 ? 'a question' : `${openAsks} questions`}, below.`}</p>
         {needsYouOnly ? null : <p className={leaderStyles.emptyBody}>No conversation or interjections yet — reply below or post to the inbox from any channel.</p>}
       </div>;
   } else {
@@ -530,6 +534,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         {commandLines.map(line => <LineView key={line.id} line={line} />)}
       </div>
     </div>
+    {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}
+    <LeaderAsks visible={visible} readOnly={actions.readOnly} />
     {note ? <p className={styles.note} role="note">{note}</p> : null}
     <form className={styles.reply} onSubmit={onSubmit}>
       {assist.panel}
