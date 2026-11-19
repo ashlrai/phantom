@@ -681,7 +681,7 @@ cap, or ok. `global.closed` is the fleet verdict (cap, gate or pause) and
 `global.non_cap_closed` marks a block the cap cannot explain. It does not probe
 the host or launch work. It exits 1 when any lane is admission closed or blocked
 by the global cap with 5 or more jobs queued. Other waits are
-`ashlr fleet lane-idle`.
+`ashlr fleet lane-idle`, which explains each under-target lane from the same verdict as held, nothing queued, admission closed, blocked by the global cap, or queued work not launching.
 
 `ashlr fleet lane-share [--json]` reads the same file and prints each lane's share
 of the fleet: one line per lane with running of target and queued, marked `starved`
