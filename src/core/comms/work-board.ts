@@ -77,7 +77,7 @@ export interface WorkBoardResult {
  * name their request through `inReplyTo` (bus-reply-post) or `in_reply_to`
  * (peer-protocol bodies). Both absent or null counts as a request; the body
  * is untrusted, so only these two keys are ever read. */
-function isRequest(row: BusInboxReceipt): boolean {
+export function isRequest(row: BusInboxReceipt): boolean {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return true;
   const record = body as Record<string, unknown>;
