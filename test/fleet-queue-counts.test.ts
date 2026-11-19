@@ -87,6 +87,52 @@ it('includes parked jobs in the oldest wait and refuses incomplete or ambiguous 
   expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBeNull();
 });
 
+it('reads the enqueue spelling dispatchd writes, not only the queued alias', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', repo: 'ashlrai/phantom', lane: 'devin', tier: 'work', ts: minutesAgo(minutes) });
+  await writeFile(path, [enqueued('a-1', 45), enqueued('a-2', 10)].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now })).lanes[0]!.oldestWaitSeconds).toBe(2700);
+});
+
+it('keeps oldest waits honest across both ends of an oversized ledger', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [
+    row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin'), row('READY', 'a-3', 'devin'),
+  ].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', ts: minutesAgo(minutes) });
+  const filler = Array.from({ length: 60 }, (_, i) => JSON.stringify({ job: `f-${i}`, event: 'launch', ts: minutesAgo(1) }));
+  // a-1's enqueue sits in the head window, a-2's in the tail window, and
+  // a-3's lands in the unread middle: its wait stays unknown, so the lane's
+  // oldest wait is null rather than silently dropping the uncovered job.
+  await writeFile(path, [enqueued('a-1', 60), ...filler.slice(0, 30), enqueued('a-3', 20), ...filler.slice(30), enqueued('a-2', 10)].join('\n'));
+  const counts = await getLaneQueueCounts({ runsDir: root, now, ledgerBytes: 512 });
+  expect(counts.lanes[0]).toMatchObject({ lane: 'devin', ready: 3, oldestWaitSeconds: null });
+  // With a-3 gone, both remaining enqueues are inside the read windows and
+  // the oldest wait is the head-window enqueue, not a guess.
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now, ledgerBytes: 512 })).lanes[0]!.oldestWaitSeconds).toBe(3600);
+});
+
+it('dedupes enqueue evidence when the end windows overlap', async () => {
+  await writeFile(join(queueDir, 'ready.tsv'), [row('READY', 'a-1', 'devin'), row('READY', 'a-2', 'devin')].join('\n'));
+  await mkdir(join(root, 'metrics'));
+  const path = join(root, 'metrics', 'jobs.jsonl');
+  const enqueued = (job: string, minutes: number) => JSON.stringify({ job, event: 'enqueue', ts: minutesAgo(minutes) });
+  const filler = (n: number) => JSON.stringify({ job: `f-${n}`, event: 'launch', ts: minutesAgo(1) });
+  // File larger than one 1 KiB window but smaller than two: the windows
+  // overlap around a-1's line, so it is read twice and must still count once.
+  await writeFile(path, [
+    ...Array.from({ length: 8 }, (_, i) => filler(i)),
+    enqueued('a-1', 50),
+    ...Array.from({ length: 6 }, (_, i) => filler(8 + i)),
+    enqueued('a-2', 5),
+  ].join('\n'));
+  expect((await getLaneQueueCounts({ runsDir: root, now, ledgerBytes: 1024 })).lanes[0]!.oldestWaitSeconds).toBe(3000);
+});
+
 it('prints text and JSON from the CLI and rejects bad arguments', async () => {
   await writeFile(join(queueDir, 'ready.tsv'), row('READY', 'a-1', 'devin'));
   const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
