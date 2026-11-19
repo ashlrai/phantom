@@ -3,6 +3,9 @@ import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { readThroughput, throughputOptions } from '../fleet/throughput.js';
 import { launchRateHours, readLaunchRate } from '../fleet/launch-rate.js';
+import { readScoreboard, scoreboardDays } from '../fleet/scoreboard.js';
+import { trendWindow } from '../fleet/scoreboard-trend.js';
+import { usageHistoryPath } from '../fleet/usage-history.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { INVENTORY_KINDS, INVENTORY_PATH, parseInventoryKind, type Inventory } from '../fleet/inventory-schema.js';
@@ -548,6 +551,18 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (hours === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes a whole number from 1 to 168' }); return true; }
       const runsDir = deps.runsDir ?? defaultRunsDir();
       sendJson(res, 200, sanitizePublicJson(await readLaunchRate({ runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours, now: now() })));
+      return true;
+    }
+    // The Scoreboard view reads the same report as `phm fleet score --json`.
+    if (path === '/api/verse/fleet/runs/scoreboard') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const days = scoreboardDays(query.get('days')), trend = query.has('trend') ? trendWindow(query.get('trend')) : undefined;
+      if (trend === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'trend takes 24h or 7d' }); return true; }
+      if (days === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'days takes a whole number from 1 to 30' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, sanitizePublicJson(await readScoreboard({ metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), days, now: now(),
+        ...(trend === undefined ? {} : { trend, usagePath: usageHistoryPath(runsDir) }) })));
       return true;
     }
     // The desktop Home view reads the same summary as `phm home`; leaderSeen is the reader's last-read time in epoch ms.

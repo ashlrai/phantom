@@ -62,7 +62,7 @@ export function SpendDown() {
   useEffect(() => { refresh(); return () => pending.current?.abort(); }, [refresh]);
   usePollWhileVisible(refresh, 60_000);
   return <section aria-label="Spend down"><h2 className={styles.heading}>Spend down</h2>
-    {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
+    {!data || !Array.isArray(data.pools) ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
       : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <><p className={bar.headline} role="status">{data.headline}</p><ul className={bar.list}>
       {data.pools.map(row => <li className={styles.dotRow} key={row.pool} aria-label={row.pool}>
         <span className={bar.head}><span className={styles.dotLabel}>{row.unit === 'usd' ? `${row.pool} gift` : row.pool}</span>
