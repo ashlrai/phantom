@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { FILLER_ID } from './fleet-lane-starve.js';
 
 const SCHEMA = 'fleet.launchable.v1';
@@ -10,6 +11,7 @@ Count ready jobs that can start per lane and compare them with free slots.
 Reads ~/.ashlr-runs/queue (override with ASHLR_RUNS_DIR). Exit 1 if any lane has more free slots than launchable jobs.`;
 
 type Lane = { lane: string; running: number; target: number; free: number; launchable: number };
+// target is the launch target: the configured target tightened by the controller's effective_target shed.
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const count = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
@@ -49,7 +51,9 @@ export async function cmdFleetLaunchable(args: string[]): Promise<number> {
     const lanes = new Map<string, Lane>();
     for (const [lane, value] of Object.entries(status.lanes)) {
       if (!record(value) || !count(value.running) || !count(value.target)) throw new Error('Invalid lane');
-      lanes.set(lane, { lane, running: value.running, target: value.target, free: Math.max(0, value.target - value.running), launchable: 0 });
+      // Free slots count against the launch ceiling: a shed lane has no phantom room.
+      const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
+      lanes.set(lane, { lane, running: value.running, target, free: Math.max(0, target - value.running), launchable: 0 });
     }
     const excluded = new Set(skipped.split('\n').flatMap(line => {
       const cols = line.split('\t');

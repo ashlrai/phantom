@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { StarvedLane, StarvedRead } from '../core/fleet/lane-starved.js';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_STARVED_SCHEMA = 'fleet.starved.v1';
@@ -16,6 +17,7 @@ export interface FleetStarvedIdleLane extends StarvedLane { lane: string; line: 
 export interface FleetStarvedLane {
   lane: string;
   running: number;
+  /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
   queued: number;
   /** True when running is below target while the admission reason starts with at_cap. */
@@ -50,7 +52,7 @@ export type FleetStarvedReader = (path: string) => Promise<string>;
 export type FleetStarvedLanesReader = () => Promise<StarvedRead | null>;
 
 const USAGE = `Usage: ashlr fleet starved [--json]
-Name lanes with free slots and no ready rows ("claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude"), count the READY rows waiting on a held or drained pool, then read queue/status.json and print one plain line per lane that still has queued work: running of target, queued, marked starved when running is below target while the admission reason starts with at_cap, then the admission running, cap and reason. Read-only; the queue is never written.
+Name lanes with free slots and no ready rows ("claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude"), count the READY rows waiting on a held or drained pool, then read queue/status.json and print one plain line per lane that still has queued work: running of target, queued, marked starved when running is below target while the admission reason starts with at_cap, then the admission running, cap and reason. Target is the launch target: the configured target tightened by the controller's effective_target shed. Read-only; the queue is never written.
 Exits 1 when any lane has ${FLEET_STARVED_RED_QUEUED} or more queued and none running, or when a lane has free slots and no ready rows. Unreadable status exits 2.
 Related: ashlr fleet lane-share, ashlr fleet admission.`;
 
@@ -64,6 +66,11 @@ function record(value: unknown): Record<string, unknown> {
 function count(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid count');
   return value;
+}
+
+/** A count that stays unknown (null) instead of failing the whole report. */
+function maybeCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** Drop control characters so a lane name or reason stays one plain line. */
@@ -102,7 +109,9 @@ export function explainFleetStarved(value: unknown, idle: StarvedRead | null = n
     if (!lane) throw new Error('Invalid lane');
     const fields = record(row);
     const laneRunning = count(fields.running);
-    const target = count(fields.target);
+    // The launch target is the configured target tightened by the controller's
+    // effective_target shed; a shed lane has no phantom room below it.
+    const target = laneLaunchTarget(count(fields.target), maybeCount(fields.effective_target));
     const queued = count(fields.queued);
     if (queued === 0) return [];
     return [{

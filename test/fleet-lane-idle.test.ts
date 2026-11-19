@@ -14,6 +14,16 @@ it('explains all four reasons with hold and empty-queue precedence, omitting ful
     .toMatchObject({ reason: 'queued work not launching', gate_reason: null, running: 1, target: 3, queued: 2 });
 });
 
+it('omits a lane at its shed launch ceiling and reports room against it', () => {
+  const lanes = {
+    shedFull: lane({ running: 2, target: 4, effective_target: 2 }),
+    shedRoom: lane({ running: 1, target: 4, effective_target: 2 }),
+  };
+  const rows = explainIdleLanes({ lanes, admission: { admit: true } });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ lane: 'shedRoom', running: 1, target: 2, reason: 'queued work not launching' });
+});
+
 it('reports the global cap block the same way fleet admission does', () => {
   const atCap = { cap: 8, running: 8 };
   expect(explainIdleLanes({ lanes: { codex: lane() }, admission: atCap })[0])

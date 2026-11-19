@@ -51,6 +51,14 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(0);
     expect(report().lanes[0].launchable).toBe(4);
   });
+  it('counts free slots against the shed launch target', async () => {
+    status({ shed: { target: 4, running: 3, effective_target: 3 }, room: { target: 4, running: 2, effective_target: 3 } });
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report().lanes).toEqual([
+      { lane: 'room', running: 2, target: 3, free: 1, launchable: 0 },
+      { lane: 'shed', running: 3, target: 3, free: 0, launchable: 0 },
+    ]);
+  });
   it('handles absent optional files and clamps negative free slots', async () => {
     status({ idle: { target: 2, running: 0 }, full: { target: 1, running: 2 } });
     expect(await cmdFleetLaunchable([])).toBe(1);

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_LANE_SHARE_SCHEMA = 'fleet.lane-share.v1';
@@ -13,6 +14,7 @@ export type FleetLaneShareStatus = 'ok' | 'red';
 export interface FleetLaneShareLane {
   lane: string;
   running: number;
+  /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
   queued: number;
   mark: FleetLaneShareMark | null;
@@ -33,7 +35,7 @@ export type FleetLaneShareReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet lane-share [--json]
 Read queue/status.json and print each lane's share of the fleet: one line per lane with running of target and queued, then fleet running against the admission cap. Read-only.
-A lane is marked starved when it has ${FLEET_LANE_SHARE_STARVED_QUEUED} or more queued and none running, full when its running equals its target; starved wins when both are true.
+A lane is marked starved when it has ${FLEET_LANE_SHARE_STARVED_QUEUED} or more queued and none running, full when its running equals its launch target (the configured target tightened by the controller's effective_target shed); starved wins when both are true.
 Exits 1 when a lane is starved while the admission reason starts with at_cap (queued work parked because the whole fleet is full). Unreadable status exits 2.
 Related: ashlr fleet admission, ashlr fleet trim.`;
 
@@ -47,6 +49,11 @@ function record(value: unknown): Record<string, unknown> {
 function count(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid count');
   return value;
+}
+
+/** A count that stays unknown (null) instead of failing the whole report. */
+function maybeCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** Drop control characters so a lane name or reason stays one plain line. */
@@ -82,7 +89,9 @@ export function explainFleetLaneShare(value: unknown): FleetLaneShareView {
     if (!lane) throw new Error('Invalid lane');
     const fields = record(row);
     const running = count(fields.running);
-    const target = count(fields.target);
+    // Full means at the launch ceiling: a lane the controller shed has no
+    // phantom room between running and its configured target.
+    const target = laneLaunchTarget(count(fields.target), maybeCount(fields.effective_target));
     const queued = count(fields.queued);
     const mark = laneMark(running, target, queued);
     return { lane, running, target, queued, mark, starvedAtCap: mark === 'starved' && atCap };
