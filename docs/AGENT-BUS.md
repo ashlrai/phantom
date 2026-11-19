@@ -184,6 +184,10 @@ that announced it, under any of its labels. A refused, retryable, invalid or
 unavailable feed refuses the send rather than posting a receipt that would
 poison the projection. Neither verb dispatches, claims or executes anything;
 the bodies remain untrusted contract data until a consumer admits them.
+`phm agents bus work feed [--status <s>] [--claims]` reads the same projection
+back — jobs newest-first, optionally filtered and joined with the live
+coordination holds — so the whole post/status/feed loop stays on this surface
+without dropping to `phm fleet work-feed`.
 
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
@@ -416,6 +420,11 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
+`phm agents bus claim list [--key <claimKey>]` is the read side: it prints the
+live coordination claims (owner, origin, lease end, source id — never tokens)
+across every origin, or only those that would block an acquire of `--key`
+through the same overlap rule. A missing table reads as a verified-empty list;
+an unreadable one stays `unavailable`, never zero.
 
 Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
@@ -440,8 +449,10 @@ Duplicate posts and malformed work bodies are refused. Legacy and unrelated
 bodies stay opaque. This projection is neither a historical ledger nor an
 authentication check; labels grant no authority.
 
-`phm fleet work-feed --json` and GET `/api/verse/agent-bus/work-feed` serve the
-same `BusWorkFeedReadResult` as `{v:1, status, jobs?, receipts, asOf}`. The
+`phm fleet work-feed --json`, `phm agents bus work feed` and GET
+`/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
+`{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
+newest-first order, hold regrouping and human rendering. The
 endpoint needs a current read session, takes no parameters, and answers 200
 for `ok` and `refused` — the projection's own status and reason stay in the
 body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
