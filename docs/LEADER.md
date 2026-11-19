@@ -181,6 +181,14 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   resources can participate when their current capacity and signed Leader role
   permit it. A reply sees the last 30 messages. Missing capacity or a failed
   invocation produces a clear unavailable response.
+- **Kept draft:** the desktop Leader pane keeps what you have typed and not
+  sent. It is stored in this browser on this computer as you type, put back
+  when the pane opens again after a reload or a restart ("Draft restored,
+  last edited 2h ago", with Discard draft), and forgotten once you send or
+  discard it. A refused send keeps it. With two windows open, sending or
+  discarding in one clears the same text in the other. If the browser cannot
+  store it, the pane says the draft lasts only while it stays open. Near the
+  box's 6,000 character limit a counter shows the room left.
 - **Limits:** your message up to 4,000 characters; replies time out after 120
   seconds and cancel the owned native invocation. Conversation calls have no
   hidden daily ceiling. Attempts for replies, extractions and brief narratives

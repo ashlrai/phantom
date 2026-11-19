@@ -52,6 +52,7 @@ import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
 import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
 import { subscribeLeaderDraft, takeLeaderDraft } from './leader-draft-store.js';
+import { ReplyDraft } from './ReplyDraft.js';
 import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } from './inbox-held-model.js';
 import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
@@ -512,6 +513,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       {hints.length ? <ul className={styles.note} aria-label="Composer commands">
         {hints.map(hint => <li key={hint.name}><code>{hint.usage}</code> {hint.summary}</li>)}
       </ul> : null}
+      {/* The unsent draft is kept on this computer and put back after a reload. */}
+      <ReplyDraft draft={draft} onDraft={setDraft} />
       {held ? <div className={styles.note} role="status">
         <p>{INBOX_HELD_SENTENCE} Only Mason edits this file.</p>
         <CopyPill text={COMMS_TOML_PATH} what="the comms.toml path" />
