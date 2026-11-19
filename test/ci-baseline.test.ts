@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; contents?: Record<string, string>; contentsMiss?: 'error' } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -25,8 +25,19 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     } else if (endpoint.includes('/branches/')) value = { commit: { sha: master } };
     else if (endpoint.includes('/compare/')) value = { status: 'ahead' };
     else if (endpoint.includes('/contents/')) {
-      if (options.contents) {
-        const path = endpoint.split('/contents/')[1]!.split('?')[0]!;
+      const path = endpoint.split('/contents/')[1]!.split('?')[0]!;
+      if (path === '') {
+        // Root listing for harness-config discovery: immediate children of the
+        // fixture repo, files at depth 0 and directories for deeper paths.
+        const roots = new Map<string, 'file' | 'dir'>();
+        for (const p of Object.keys(options.contents ?? {})) {
+          const seg = p.split('/')[0]!;
+          roots.set(seg, p.includes('/') ? 'dir' : 'file');
+        }
+        value = [...roots.entries()].map(([name, type]) => ({ name, path: name, type }));
+      } else if (options.contentsError?.includes(path)) {
+        return { ok: false, stdout: '', stderr: 'HTTP 500: Internal Server Error' };
+      } else if (options.contents) {
         const source = options.contents[path];
         if (source === undefined) {
           if (options.contentsMiss === 'error') return { ok: false, stdout: '', stderr: 'HTTP 500: Internal Server Error' };
@@ -140,6 +151,55 @@ describe('CI baseline evidence', () => {
     }
     const flake = await analyzeCiBaseline('owner/repo', github({ web: true, contents, count: 1, pass: true }).gh);
     expect(flake.groups[0]?.action).toBe('rerun-failed');
+  });
+  it('counts runner-harness files as dependencies of every governed suite', async () => {
+    const contents = {
+      'test/example.test.ts': "import { it } from 'vitest';",
+      'vitest.config.ts': "export default { test: { setupFiles: ['./test/setup/home.ts'] } };",
+      'test/setup/home.ts': "import '../../src/core/real-home.js';",
+      'src/core/real-home.ts': 'export const home = 1;',
+    };
+    // A PR breaking the suite through the injected setup file, its imports, the
+    // config itself, or the toolchain config is PR-caused — the test's own
+    // import closure never sees any of them, so this used to read as a flake.
+    for (const touched of ['vitest.config.ts', 'test/setup/home.ts', 'src/core/real-home.ts', 'tsconfig.json']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, touched, contents }).gh);
+      expect(report.groups[0]?.action, touched).toBe('pr-caused');
+    }
+    const flake = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, touched: 'docs/README.md', contents }).gh);
+    expect(flake.groups[0]?.action).toBe('rerun-failed');
+  });
+  it('scopes harness deps to the config that governs each suite', async () => {
+    const contents = {
+      'test/example.test.ts': "import { it } from 'vitest';",
+      'vitest.config.ts': "export default { test: { include: ['test/**/*.test.ts'], setupFiles: ['./test/setup/home.ts'] } };",
+      'test/setup/home.ts': 'export {};',
+      'src/web-ui/design/tokens.test.tsx': "import { it } from 'vitest';",
+      'vitest.config.web.ts': "export default { test: { include: ['src/web-ui/**/*.test.{ts,tsx}'], setupFiles: ['./src/web-ui/test/setup.ts'] } };",
+      'src/web-ui/test/setup.ts': 'export {};',
+    };
+    // The web suite runs under vitest.config.web.ts only: a PR touching the
+    // backend config or its setup file leaves the web failure unattributed.
+    for (const touched of ['vitest.config.ts', 'test/setup/home.ts']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ web: true, contents, touched }).gh);
+      expect(report.groups[0]?.action, touched).toBe('queue-master-fix');
+    }
+    for (const touched of ['vitest.config.web.ts', 'src/web-ui/test/setup.ts']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ web: true, contents, touched }).gh);
+      expect(report.groups[0]?.action, touched).toBe('pr-caused');
+    }
+  });
+  it('fails closed when a harness probe errors or a setup entry is a glob', async () => {
+    const contents = {
+      'test/example.test.ts': "import { it } from 'vitest';",
+      'vitest.config.ts': "export default { test: { setupFiles: ['./test/setup/home.ts'] } };",
+      'test/setup/home.ts': 'export {};',
+    };
+    const errored = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, touched: 'test/setup/home.ts', contents, contentsError: ['vitest.config.ts'] }).gh);
+    expect(errored.groups[0]?.classification).toBe('unknown');
+    const globbed = { ...contents, 'vitest.config.ts': "export default { test: { setupFiles: ['./test/setup/*.ts'] } };" };
+    const globbedReport = await analyzeCiBaseline('owner/repo', github({ count: 1, pass: true, touched: 'test/setup/home.ts', contents: globbed }).gh);
+    expect(globbedReport.groups[0]?.classification).toBe('unknown');
   });
   it('handles empty PR lists, invalid repositories, and empty logs', async () => {
     expect((await analyzeCiBaseline('owner/repo', github({ count: 0 }).gh)).groups).toEqual([]);
