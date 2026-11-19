@@ -43,8 +43,9 @@ Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
 wakes, P1 and handoffs wake by default, and wake always records its hint.
-work feed and claim list are read-only
-and need no identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
+A terminal work status also queues a routing-only wake hint for each live claim
+holder on the job's keys; --no-wake opts out. work feed and claim list are
+read-only and need no identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
@@ -274,7 +275,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       const result = await updateWorkStatus({ ...routed, jobId: required('--job'),
         status: status as WorkStatusInput['status'], detail: one('--detail') }, options);
-      return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+      const holders = 'id' in result ? result.claimHoldersWoken : undefined;
+      const holderNote = holders === undefined ? '' :
+        ` claim-holders=${holders === null ? 'unknown' : holders}`;
+      return finish(result, 'id' in result ?
+        `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})${holderNote}` : '');
     }
     if (verb === 'claim') {
       noExtra(2);
