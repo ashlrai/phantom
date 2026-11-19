@@ -390,6 +390,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'runtime': () => import('./fleet-runtime.js'),
   'runtime-identity': () => import('./fleet-runtime-identity.js'),
   'safari-import': () => import('./fleet-safari-import.js'),
+  'score': () => import('./fleet-score.js'),
   'self-loop': () => import('./fleet-self-loop.js'),
   'self-loop-await': () => import('./fleet-self-loop-await.js'),
   'self-loop-record': () => import('./fleet-self-loop-record.js'),
