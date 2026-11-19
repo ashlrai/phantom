@@ -7,8 +7,8 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  announceWork, busBodySummary, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff,
-  sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
+  announceWork, busBodySummary, listBusChannels, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage,
+  sendHandoff, sendWakeRequest, shouldWake, updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import {
@@ -108,6 +108,41 @@ describe('identity registry', () => {
     expect(leaveAgentChannel('release', 'nova', options)).toMatchObject({ status: 'updated', channel: { members: ['atlas', 'orion'] } });
     expect(joinAgentChannel('missing', 'orion', options)).toMatchObject({ status: 'not-found' });
     expect(createAgentChannel({ name: '../x', createdBy: 'atlas' }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
+describe('channel listing', () => {
+  it('lists registry channels for discovery and filters to one identity', () => {
+    const options = setup();
+    // A missing registry is a verified-empty list, not an error.
+    expect(listBusChannels(undefined, options))
+      .toEqual({ status: 'ok', source: 'missing', agent: null, channels: [] });
+    register(options, 'atlas', 'nova', 'orion');
+    expect(createAgentChannel({ name: 'zeta', createdBy: 'atlas', members: ['nova'] }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'alpha', createdBy: 'nova' }, options).status).toBe('created');
+    const all = listBusChannels(undefined, options);
+    expect(all).toMatchObject({ status: 'ok', source: 'available', agent: null });
+    if (all.status !== 'ok') throw new Error('unreadable');
+    // Name-sorted; the creator joins automatically and member order is join order.
+    expect(all.channels.map(c => c.name)).toEqual(['alpha', 'zeta']);
+    expect(all.channels[0]).toMatchObject({ name: 'alpha', createdBy: 'nova', members: ['nova'] });
+    expect(all.channels[1]).toMatchObject({ name: 'zeta', createdBy: 'atlas', members: ['atlas', 'nova'] });
+    // Every ref resolveAgent accepts narrows to that identity's channels.
+    for (const ref of ['atlas', agentAddress('atlas'), stableAgentId('atlas')]) {
+      const mine = listBusChannels(ref, options);
+      expect(mine).toMatchObject({ status: 'ok', agent: 'atlas' });
+      if (mine.status !== 'ok') throw new Error('unreadable');
+      expect(mine.channels.map(c => c.name)).toEqual(['zeta']);
+    }
+    const nova = listBusChannels('nova', options);
+    if (nova.status !== 'ok') throw new Error('unreadable');
+    expect(nova.channels.map(c => c.name)).toEqual(['alpha', 'zeta']);
+    // An identity in no channel lists none; an unknown ref refuses.
+    expect(listBusChannels('orion', options)).toMatchObject({ status: 'ok', agent: 'orion', channels: [] });
+    expect(listBusChannels('ghost', options)).toMatchObject({ status: 'unknown-agent' });
+    // An unreadable registry is unavailable, never an empty list.
+    writeFileSync(join(options.root!, 'agent-identities', 'registry.json'), '{broken');
+    expect(listBusChannels(undefined, options).status).toBe('unavailable');
   });
 });
 

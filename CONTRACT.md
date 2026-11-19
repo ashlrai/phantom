@@ -1601,7 +1601,13 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
-`readAgentWakes(ref, sinceAt, options?)`, `shouldWake(priority, requested, handoff?)`
+`readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
+(the registry channels name-sorted with `createdBy`, `createdAt` and member
+handles in join order — all of them, or only those one resolved identity
+belongs to; `source` is `missing` for a verified-empty registry or
+`available`, `agent` the resolved handle or null, and an unknown ref or
+unreadable registry answers `unknown-agent`/`unavailable`, never an empty
+list), `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
 inbox surfaces (`note`/`context`/`worker-handoff` return their message text,
 possibly multi-line; every other recognized kind — the v2 work/wake bodies

@@ -73,6 +73,31 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('lists channels for discovery and filters by agent', async () => {
+    // Before any registry exists the list is verified-empty, not an error.
+    expect(await run(['channel', 'list'])).toMatchObject({ code: 0,
+      json: { status: 'ok', source: 'missing', agent: null, channels: [] } });
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'zeta', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'alpha', '--from', 'nova'])).json).toMatchObject({ status: 'created' });
+    const all = await run(['channel', 'list']);
+    expect(all.code).toBe(0);
+    expect(all.json).toMatchObject({ status: 'ok', source: 'available', agent: null });
+    expect(all.json.channels.map((c: { name: string }) => c.name)).toEqual(['alpha', 'zeta']);
+    expect(all.json.channels[1]).toMatchObject({ createdBy: 'atlas', members: ['atlas', 'nova'] });
+    const mine = await run(['channel', 'list', '--agent', 'agent:atlas']);
+    expect(mine.json).toMatchObject({ status: 'ok', agent: 'atlas' });
+    expect(mine.json.channels.map((c: { name: string }) => c.name)).toEqual(['zeta']);
+    expect(await run(['channel', 'list', '--agent', 'ghost'])).toMatchObject({ code: 1, json: { status: 'unknown-agent' } });
+    expect(await run(['channel', 'list', 'extra'])).toMatchObject({ code: 2 });
+    // Human output prints members, creator and the honest source footer.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'list', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('#zeta  members=atlas,nova  createdBy=atlas');
+    expect(text.join('\n')).toContain('channels=2 source=available');
+  });
+
   it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
