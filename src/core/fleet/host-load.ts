@@ -34,6 +34,8 @@ export function describeHostLoad(load: HostLoad | null | undefined): string {
 
 export const HOST_LOAD_SCHEMA = 'host.load.v1';
 export const HOST_LOAD_PS_ARGS = ['-axo', 'pid,ppid,pcpu,rss,comm'];
+/** Tree mode reads the whole command line, so a root can be matched by folder or pattern. */
+export const HOST_LOAD_TREE_PS_ARGS = ['-axo', 'pid,ppid,pcpu,rss,command'];
 export const HOST_LOAD_GROUPS = [
   { id: 'fleet-workers', label: 'Fleet workers', words: 'fleet workers' },
   { id: 'local-models', label: 'Local models', words: 'local models' },
@@ -67,6 +69,99 @@ export interface HostLoadReport {
   summary: string;
   groups: HostLoadGroup[];
   gaps: string[];
+  /** Present only in by-tree mode (`phm host load --by-tree`, `?by=tree`). */
+  trees?: HostLoadTrees;
+}
+
+// ── By tree: every process counted under the root it descends from ─────────────────────────────────────────────
+
+/** One process row. cpu is ps CPU (100 = one busy core); memoryKb is resident memory. */
+export interface ProcessRow { pid: number; ppid: number; cpu: number; memoryKb: number; command: string }
+/** A root: a fleet job (by pid) or a named app, found by pid and/or a command pattern (a working folder or a word). */
+export interface TreeRootMatcher { name: string; fleet: boolean; pid?: number; command?: RegExp }
+export interface TreeRow {
+  name: string; fleet: boolean; cpuPercent: number; memoryMb: number;
+  /** Processes in the tree other than the root process itself. */
+  descendants: number;
+  /** The three busiest descendant commands, busiest first. */
+  topCommands: { command: string; cpuPercent: number }[];
+}
+export interface HostLoadTrees {
+  /** One plain sentence for the top of the human output. */
+  summary: string;
+  /** Fleet tree CPU divided by total CPU, 0 to 1; 'unknown' when there is nothing to divide. */
+  fleetShare: number | 'unknown';
+  fleetCpuPercent: number; totalCpuPercent: number;
+  roots: TreeRow[];
+}
+export const UNATTRIBUTED = 'unattributed';
+const NAMED_APPS = ['Codex', 'Claude', 'ChatGPT', 'Cursor', 'Grok', 'Chrome', 'Docker'];
+const WORK_WORDS = /\b(typecheck|tsgo|tsc|vitest|jest|eslint|lint|build|test|install)\b/i;
+const shortCommand = (command: string): string => command.replace(/\s+/g, ' ').trim().slice(0, 80);
+/** "typecheck", "vitest" ... when the command names the work; otherwise the program name. */
+const workWord = (command: string): string =>
+  WORK_WORDS.exec(command)?.[1]?.toLowerCase() ?? plainName(baseName(command.trim().split(/\s+/)[0] ?? ''));
+
+/** The fleet's job roots plus the named desktop apps and local model servers, as matchers. */
+export function defaultTreeMatchers(jobRoots: readonly HostLoadJobRoot[] | null): TreeRootMatcher[] {
+  return [
+    ...(jobRoots ?? []).map(root => ({ name: `job ${root.jobId}`, fleet: true, pid: root.pid })),
+    ...NAMED_APPS.map(app => ({ name: app, fleet: false, command: new RegExp(`/${app}\\.app/`, 'i') })),
+    { name: 'Local models', fleet: false, command: HOST_LOAD_MODEL_COMMAND },
+  ];
+}
+
+/**
+ * Pure: puts every process under one root, the topmost ancestor (or itself) that a matcher names; fleet roots win
+ * over apps. Anything else, including a process whose parent is missing from the list, goes under "unattributed",
+ * so the rows always add up to the whole list. A repeated pid counts once (the first row); a parent loop stops at
+ * the first repeat.
+ */
+export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: readonly TreeRootMatcher[]): HostLoadTrees {
+  const rows = new Map<number, ProcessRow>();
+  for (const row of rowsIn) if (!rows.has(row.pid)) rows.set(row.pid, row);
+  const match = (row: ProcessRow, fleet: boolean) =>
+    matchers.find(m => m.fleet === fleet && (m.pid === row.pid || (m.command !== undefined && m.command.test(row.command))));
+  const trees = new Map<string, { fleet: boolean; rootPids: Set<number>; members: ProcessRow[] }>();
+  for (const row of rows.values()) {
+    let found: TreeRootMatcher | undefined, foundAt: ProcessRow = row, foundFleet = false;
+    const seen = new Set<number>();
+    for (let at: ProcessRow | undefined = row; at && !seen.has(at.pid); at = rows.get(at.ppid)) {
+      seen.add(at.pid);
+      const fleetHit = match(at, true);
+      if (fleetHit) { found = fleetHit; foundAt = at; foundFleet = true; }
+      else if (!foundFleet) { const appHit = match(at, false); if (appHit) { found = appHit; foundAt = at; } }
+    }
+    const name = found?.name ?? UNATTRIBUTED;
+    const tree = trees.get(name) ?? { fleet: found?.fleet ?? false, rootPids: new Set<number>(), members: [] };
+    if (found) tree.rootPids.add(foundAt.pid);
+    tree.members.push(row);
+    trees.set(name, tree);
+  }
+  const out: TreeRow[] = [...trees].map(([name, tree]) => {
+    const below = tree.members.filter(row => !tree.rootPids.has(row.pid)).sort((a, b) => b.cpu - a.cpu || a.pid - b.pid);
+    return {
+      name, fleet: tree.fleet, descendants: below.length,
+      cpuPercent: round1(tree.members.reduce((sum, row) => sum + row.cpu, 0)),
+      memoryMb: Math.round(tree.members.reduce((sum, row) => sum + row.memoryKb, 0) / 1024),
+      topCommands: below.slice(0, 3).map(row => ({ command: shortCommand(row.command), cpuPercent: round1(row.cpu) })),
+    };
+  }).sort((a, b) => b.cpuPercent - a.cpuPercent || a.name.localeCompare(b.name));
+  const totalCpuPercent = round1(out.reduce((sum, row) => sum + row.cpuPercent, 0));
+  const fleetCpuPercent = round1(out.filter(row => row.fleet).reduce((sum, row) => sum + row.cpuPercent, 0));
+  const fleetShare = totalCpuPercent > 0 ? Math.round((fleetCpuPercent / totalCpuPercent) * 1000) / 1000 : 'unknown';
+  const topFleet = out.find(row => row.fleet && row.cpuPercent > 0);
+  const work = topFleet ? ` (${workWord(topFleet.topCommands[0]?.command ?? topFleet.name)})` : '';
+  const summary = fleetShare === 'unknown'
+    ? "The fleet's share of CPU is unknown: no process list could be read."
+    : !topFleet ? `The fleet's own jobs and their children use ${Math.round(fleetShare * 100)}% of CPU; no fleet job is running.`
+    : `The fleet's own jobs and their children use ${Math.round(fleetShare * 100)}% of CPU; the top tree is ${topFleet.name}${work}.`;
+  return { summary, fleetShare, fleetCpuPercent, totalCpuPercent, roots: out };
+}
+
+/** Pure: process-list text (pid ppid cpu memory command) as rows. Commands may be long and contain spaces. */
+export function parseProcessList(psText: string | null): ProcessRow[] {
+  return [...parseHostPs(psText).values()].map(row => ({ pid: row.pid, ppid: row.ppid, cpu: row.cpu, memoryKb: row.rssKb, command: row.comm }));
 }
 
 export const HOST_LOAD_MODEL_COMMAND = /(?:^|[^a-z])(?:o?mlx|llama|ollama)/i;
@@ -172,14 +267,14 @@ export function groupHostLoad(
 
 export interface HostLoadDeps {
   /** Returns the text of `ps -axo pid,ppid,pcpu,rss,comm`, or null when it cannot be read. Tests inject text. */
-  ps?: () => Promise<string | null>;
+  ps?: (full?: boolean) => Promise<string | null>;
   /** Returns the fleet's job roots, or null when they cannot be read. */
   jobRoots?: () => HostLoadJobRoot[] | null;
   load?: () => HostLoad;
   now?: () => number;
 }
 
-export const readHostPs = (): Promise<string | null> => new Promise(resolve => execFile('/bin/ps', HOST_LOAD_PS_ARGS,
+export const readHostPs = (full = false): Promise<string | null> => new Promise(resolve => execFile('/bin/ps', full ? HOST_LOAD_TREE_PS_ARGS : HOST_LOAD_PS_ARGS,
   { timeout: 5000, maxBuffer: 16 * 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } },
   (error, stdout) => resolve(error ? null : stdout)));
 
@@ -201,10 +296,12 @@ export function readHostLoadJobRoots(runsDir = process.env.ASHLR_RUNS_DIR ?? joi
 }
 
 /** The one impure entry: runs ps and reads the claims, then hands both to groupHostLoad. Never throws. */
-export async function readHostLoadReport(deps: HostLoadDeps = {}): Promise<HostLoadReport> {
+export async function readHostLoadReport(deps: HostLoadDeps = {}, opts: { byTree?: boolean } = {}): Promise<HostLoadReport> {
   let psText: string | null = null, roots: HostLoadJobRoot[] | null = null;
-  try { psText = await (deps.ps ?? readHostPs)(); } catch { /* Unknown process list. */ }
+  try { psText = await (deps.ps ?? readHostPs)(opts.byTree === true); } catch { /* Unknown process list. */ }
   try { roots = (deps.jobRoots ?? readHostLoadJobRoots)(); } catch { /* Unknown job roots. */ }
   const load = (deps.load ?? readHostLoad)();
-  return groupHostLoad(psText, roots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
+  const report = groupHostLoad(psText, roots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
+  if (opts.byTree) report.trees = attributeProcessTrees(parseProcessList(psText), defaultTreeMatchers(roots));
+  return report;
 }
