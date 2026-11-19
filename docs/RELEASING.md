@@ -170,8 +170,22 @@ woke the workflow, reads its independent tip-pinned inputs concurrently to
 keep the still-tip window small, and a merge landing mid-check re-verifies
 at the new tip a bounded number of times instead of starving the release;
 green evidence is the newest decisive completed master push CI run on the
-tip or a bounded ancestor, and the release PR's own required checks remain
-the merge gate for the exact head that ships. It requests a patch bump,
+tip or a bounded ancestor whose required checks — read from the branch
+ruleset and protection and judged on that run's SHA through the check-runs
+API — are green, so an advisory job failure (for example authority drift,
+which is deliberately off Merge Gate needs) cannot starve a release while
+the merge queue's own authority stays green, and the release PR's own
+required checks remain the merge gate for the exact head that ships. While
+an open release PR's required checks are still running or green and
+awaiting the train's enqueue, the cadence reports not-due
+(`release-pr-checks-in-flight`) before reading any tip state: every
+release-please update force-pushes the branch and restarts CI on a new
+head, so during merge bursts the head never survived long enough for
+checks to finish and every release starved. Freezing updates — never the
+merge — lets the PR's own checks reach a verdict on a stable head; a
+decisively red verdict, an unreadable check inventory, a conflicting PR
+(whose heal is the rebase update), or a head whose required contexts have
+not reported yet all leave updates allowed. It requests a patch bump,
 then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
 release PR. Auto-tag creates the tag and draft only after the exact commit's
