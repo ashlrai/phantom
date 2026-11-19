@@ -298,12 +298,16 @@ Positive allowance with a future reset is `reset-pressure` even when burn pace i
 ## Recorded job outcomes
 
 `phm router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]`
-reads `<runs-dir>/metrics/jobs.jsonl` (default `ASHLR_RUNS_DIR`, then
-`~/.ashlr-runs`) and reports one `router.outcome.v1` record per job, newest
+reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
+`ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) and reports one
+`router.outcome.v1` record per job in that window, newest
 first: merge state, CI first pass, review findings, cost, wall time and the
 advisory `passk` join from `eval.lane-scores.v1`. It is read-only; a missing
-ledger reports `state: "missing"` rather than failing, while an unreadable,
-non-file or oversized ledger exits 1. Unknown fields stay `null` in JSON and
+ledger reports `state: "missing"` rather than failing, while an unreadable or
+non-file ledger exits 1. The ledger is append-only and unbounded, so when it
+exceeds the bound the read keeps the newest bytes, drops the cut first line,
+and reports `truncated: true` — every count covers the retained window only,
+a lower bound on the full history. Unknown fields stay `null` in JSON and
 `unknown` in text — the fold never infers a merge from a PR URL or VERIFIED
 marker, and a PR URL claimed by two jobs attaches to neither. This is the
 per-job evidence surface outcome-driven router analysis reads; it does not

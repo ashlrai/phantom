@@ -288,9 +288,14 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
-`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})` and
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})`,
+`readLedgerFile(path, limit?)`, `readLedgerTail(path, maxBytes?)` and
 `readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
-`router.outcome.v1` records folded from `metrics/jobs.jsonl`. `passk` is the
+`router.outcome.v1` records folded from `metrics/jobs.jsonl`. The ledger is
+append-only and unbounded, so the read retains the newest
+`ROUTER_OUTCOME_LEDGER_LIMIT` (16 MiB) bytes via `readLedgerTail`: an oversized
+ledger reports `truncated: true` and folds only the retained window — a lower
+bound on history, never a refused read or a claimed total. `passk` is the
 lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
 projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
 it is `null` whenever the ledger lacks lane/model, the projection is

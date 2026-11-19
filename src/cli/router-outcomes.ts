@@ -3,7 +3,9 @@
  * host metrics ledger (metrics/jobs.jsonl) by src/core/router/outcomes.ts:
  * merge state, CI first pass, review findings, cost, wall time and the
  * advisory pass^k join from eval.lane-scores.v1. Never writes; a missing
- * ledger reports `missing`, an unreadable or oversized one exits 1.
+ * ledger reports `missing`, an unreadable or non-file one exits 1. The read
+ * retains the newest bounded tail of the ledger, so an oversized ledger
+ * reports `truncated: true` — coverage of the retained window, not a refusal.
  */
 import { isAbsolute } from 'node:path';
 
@@ -15,7 +17,7 @@ import {
 
 export const ROUTER_OUTCOMES_USAGE =
   'Usage: ashlr router outcomes [--json] [--runs-dir <dir>] [--lane <lane>] [--limit <1..1000>]\n' +
-  'Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs); one router.outcome.v1 row per job, newest first. passk is advisory eval evidence, null when unknown. Exit 0 report (a missing ledger reports state=missing, not an error), 1 unreadable/oversized/not-file ledger, 2 usage.';
+  'Reads the newest bounded tail of <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs); one router.outcome.v1 row per job in the retained window, newest first, truncated=true when older rows were not read. passk is advisory eval evidence, null when unknown. Exit 0 report (a missing ledger reports state=missing, not an error), 1 unreadable/non-file ledger, 2 usage.';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -70,6 +72,8 @@ export interface RouterOutcomesReport {
   malformed_rows: number;
   unattached_rows: number;
   ambiguous_urls: number;
+  /** True when the ledger exceeded the retained tail; counts cover only the newest bytes. */
+  truncated: boolean;
   outcomes: RouterOutcome[];
 }
 
@@ -87,6 +91,7 @@ export function buildRouterOutcomesReport(read: RouterOutcomeRead, limit: number
     malformed_rows: read.malformed_rows,
     unattached_rows: read.unattached_rows,
     ambiguous_urls: read.ambiguous_urls,
+    truncated: read.truncated,
     outcomes: page,
   };
 }
@@ -106,8 +111,9 @@ function outcomeLine(o: RouterOutcome): string {
 
 export function routerOutcomeLines(report: RouterOutcomesReport): string[] {
   return [
-    `router outcomes state=${report.state} eval=${report.eval_state} jobs=${report.total} shown=${report.returned} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls}`,
+    `router outcomes state=${report.state} eval=${report.eval_state} jobs=${report.total} shown=${report.returned} truncated=${report.truncated} malformed=${report.malformed_rows} unattached=${report.unattached_rows} ambiguous_urls=${report.ambiguous_urls}`,
     `ledger ${report.path}`,
+    ...(report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : []),
     ...report.outcomes.map(outcomeLine),
   ];
 }
