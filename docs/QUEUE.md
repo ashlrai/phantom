@@ -724,6 +724,18 @@ when a lane has been starved for 30 minutes, at most once per lane every 6 hours
 and remembers first sightings in `~/.ashlr/vision/leader/starved-lanes.json`. The
 router queue is never written.
 
+Each lane in the `fleet.lanes.v1` read also carries one `health` verdict:
+`{ state, reason, number }` with `state` one of `ok`, `held`, `starved`, `wasteful`
+or `drained` and a one-line reason that starts with the state, for example
+`starved: 5 free slots, 0 ready rows for 40 min`. When two apply the order is
+drained, held, starved, wasteful. A lane is wasteful when it started 5 or more jobs
+(distinct `launch` events in `jobs.jsonl`, new `startsInWindow` field) in the merge
+window and fewer than 1 PR per 5 starts merged. The schema id stays `fleet.lanes.v1`:
+`health` and `startsInWindow` are additive. `fleet.live-map.v1` lane nodes carry the
+same `health`, which the 2D map, the 3D map and the desktop lane card show as a
+colored badge with the reason as its tooltip; `phm fleet lanes` prints a line for
+each lane that is not ok.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename
@@ -860,7 +872,7 @@ recorded evidence, not necessarily every job or PR.
 
 ## Waiting to launch
 
-Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading.
+Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading. The dispatch-events log is append-only and unbounded, so it is folded line by line: memory stays flat however large the log grows, and every event still counts.
 
 ### Retry empty jobs
 

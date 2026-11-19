@@ -21,6 +21,8 @@ import type { FleetOrgMap } from './org-map.js';
 import { orgLayoutOf, type FleetOrgLayout3D } from './org-layout-3d.js';
 import type { NodesView } from './nodes-view.js';
 import { providerFor, type ProviderName } from './provider.js';
+import type { LaneHealth } from './lane-badge.js';
+import type { FleetLaneSnapshot } from './lane-console.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 
 export const LIVE_MAP_WINDOW_MINUTES = 15;
@@ -49,6 +51,8 @@ export interface LiveMapNode {
   detail: string;
   /** Jobs: activity in the last 5 minutes (null when no time is known). Null for other kinds. */
   live: boolean | null;
+  /** Lanes: ok | held | starved | wasteful | drained with a plain reason (lane-badge.ts). Absent when the lanes read failed or from older servers. */
+  health?: LaneHealth;
 }
 export interface LiveMapEdge {
   id: string;
@@ -86,6 +90,8 @@ export interface LiveMapInputs {
   computers?: NodesView | null;
   /** The pool-usage ledger (`readResourceLedger`). */
   usage?: ResourceLedgerV1 | null;
+  /** `getFleetLaneSnapshot`: each lane's health verdict, shown as a badge on its node. */
+  lanes?: Pick<FleetLaneSnapshot, 'lanes'> | null;
   now: number;
 }
 
@@ -93,7 +99,7 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const shown = (value: string | null | undefined) => value && value !== 'unknown' ? value : null;
 
 export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
-  const { org, computers, usage, now } = inputs;
+  const { org, computers, usage, lanes, now } = inputs;
   const nodes = new Map<string, LiveMapNode>();
   const edges = new Map<string, LiveMapEdge>();
   const gaps: string[] = [];
@@ -173,6 +179,11 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     }
   } else gaps.push('Messages unknown: the agent bus could not be read.');
   if (unmapped) gaps.push(`${unmapped} message${unmapped === 1 ? '' : 's'} could not be matched to a node on this map.`);
+
+  for (const view of lanes?.lanes ?? []) {
+    const lane = nodes.get(laneId(view.lane));
+    if (lane && view.health) lane.health = view.health;
+  }
 
   const order = (kind: LiveMapNodeKind) => LIVE_MAP_LEVEL[kind];
   const insertion = [...nodes.keys()];

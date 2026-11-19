@@ -139,6 +139,13 @@ The same typed function, `syncLeaderReplies()` in `leader-thread.ts`, serves
 agent callers. Reply text appears directly in the conversation; Telegram
 messages enter the existing delivery queue.
 
+Run `phm outbox from-log --apply --json` each hour to also put the newest
+**Reply for Mason** in `MASON-OUTBOX.md` beside the plan log, as one
+`## <ISO time> (leader)` entry, so it reaches Mason between daily digests. It
+skips text the outbox already holds, shows the same text in the Leader chat
+through the sync above, and without `--apply` only prints what it would add.
+No reply block is a no-op (exit 0). JSON schema: `outbox.from-log.v1`.
+
 The command reads only the last 256 KiB and considers the newest 30 blocks.
 It never writes the plan log. Dated headings identify replies, including when
 text repeats; editing an already posted heading does not post it again.

@@ -20,6 +20,7 @@ import { useState } from 'react';
 import { ConversationsPanel } from './ConversationsPanel.js';
 import { conversationsQuery, threadLines, type Conversation } from './conversations-model.js';
 import { prefersReducedMotion } from '../../../components/charts/motion.js';
+import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -153,6 +154,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
             {(node.kind === 'lane' || node.kind === 'job') && <ProviderBadge of={node.provider} iconOnly size={node.kind === 'lane' ? 16 : 12} />}
             {node.live && <span className={styles.live} role="img" aria-label="Active in the last 5 minutes" />}
             <strong>{node.label}</strong>
+            {node.kind === 'lane' && <LaneHealthBadge health={node.health} />}
           </span>
           <small>{node.detail}</small>
         </button>)}

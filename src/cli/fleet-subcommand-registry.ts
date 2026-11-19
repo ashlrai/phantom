@@ -94,6 +94,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'claim-notices': () => import('./fleet-claim-notices.js'),
   'class-share': () => import('./fleet-class-share.js'),
   'claude-quota': () => import('./fleet-claude-quota.js'),
+  'coding-regret': () => import('./fleet-coding-regret.js'),
   'comms-readiness': () => import('./fleet-comms-readiness.js'),
   'config': () => import('./fleet-config.js'),
   'conflict-risk': () => import('./fleet-conflict-risk.js'),

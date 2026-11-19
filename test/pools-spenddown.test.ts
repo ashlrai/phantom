@@ -1,0 +1,78 @@
+/** Fixture tests for pools.spenddown.v1 (`phm pools spenddown`): synthetic ledger rows, no real home. */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cmdPools } from '../src/cli/pools.js';
+import { buildPoolsView } from '../src/core/fleet/pools-view.js';
+import { buildSpendDown, formatSpendDownText, SPENDDOWN_SCHEMA } from '../src/core/fleet/pools-spenddown.js';
+import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
+
+const NOW = Date.parse('2026-11-17T12:00:00.000Z');
+const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
+const lane = (name: string, patch: Partial<ResourceLaneRow> = {}): ResourceLaneRow => ({
+  lane: name, running: 1, target: 2, held: false, window: 'weekly', usedPct: 50, creditsRemaining: null, resetAt: at(84),
+  burnPctPerHour: null, tokensPerHour6h: null, projectedExhaustion: null, source: null, deadSignal: null,
+  observation: { source: 'claude-native-usage' as const, asOf: at(-0.1) }, ...patch,
+});
+const ledger = (...lanes: ResourceLaneRow[]): ResourceLedgerV1 => ({
+  v: 1, generatedAt: at(0), sources: { status: 'healthy', apiSpend: 'missing', jobs: 'missing' }, asOf: at(0), lanes, apiSpend: null, jobsMalformedRows: null,
+});
+const chart = (...lanes: ResourceLaneRow[]) => buildSpendDown(buildPoolsView(ledger(...lanes), NOW));
+const only = (row: ResourceLaneRow) => chart(row).pools[0]!;
+
+describe('buildSpendDown', () => {
+  it('on pace: used, even pace and projected line up and the verdict says so', () => {
+    // 50% used, 84 h left of 168 h (even pace 50%), burning 0.6 %/h: 50 + 50.4 lands at 100%.
+    expect(only(lane('claude', { usedPct: 50, burnPctPerHour: 0.6 }))).toMatchObject({
+      id: 'claude', label: 'Claude', state: 'on-pace', used_frac: 0.5, even_pace_frac: 0.5, projected_at_reset: 1,
+      reset_at: at(84), verdict: 'on pace', reason: null,
+    });
+  });
+
+  it('under-spending: says how much will be left and to add work', () => {
+    // 72% used with 31 h left, burning 0.3 %/h: ends near 81%, 19% unused.
+    const row = only(lane('claude', { usedPct: 72, resetAt: at(31), burnPctPerHour: 0.3 }));
+    expect(row).toMatchObject({ state: 'under', used_frac: 0.72, even_pace_frac: 0.815, projected_at_reset: 0.813, verdict: 'will leave 19% unused: add work' });
+  });
+
+  it('over-spending: names the day and hour it runs dry', () => {
+    const row = only(lane('codex-cmp', { usedPct: 70, resetAt: at(100), burnPctPerHour: 3.6 }));
+    expect(row.state).toBe('over');
+    expect(row.verdict).toMatch(/^will run out about \w{3} \d{1,2} [AP]M: slow down$/);
+    expect(row.projected_empty_at).toBe(at(30 / 3.6));
+  });
+
+  it('drained: fully used reads empty until the reset', () => {
+    const row = only(lane('claude', { usedPct: 100, resetAt: at(20) }));
+    expect(row).toMatchObject({ state: 'drained', used_frac: 1, projected_at_reset: 1, reset_at: at(20) });
+    expect(row.verdict).toMatch(/^drained until \w{3} \d{1,2} [AP]M$/);
+  });
+
+  it('unknown: no reading is "no reading", never zero', () => {
+    expect(only(lane('zai', { usedPct: null }))).toMatchObject({
+      state: 'unknown', used_frac: null, even_pace_frac: null, projected_at_reset: null, verdict: 'no reading', reason: 'no reading',
+    });
+    // A reading with no burn to project from keeps the used share and says why there is no marker.
+    expect(only(lane('grok', { usedPct: 40 }))).toMatchObject({
+      state: 'unknown', used_frac: 0.4, projected_at_reset: null, verdict: 'no pace yet: not enough readings',
+    });
+  });
+
+  it('keeps pools.v1 order and prints one plain line per pool', () => {
+    const data = chart(lane('claude', { usedPct: 50, burnPctPerHour: 0.6 }), lane('zai', { usedPct: null }));
+    expect(data.schema).toBe(SPENDDOWN_SCHEMA);
+    expect(data.generated_at).toBe(at(0));
+    expect(formatSpendDownText(data).split('\n')).toEqual(['Claude: 50% used, even pace 50%, ends near 100%: on pace', 'Zai: no reading']);
+    expect(formatSpendDownText({ ...data, pools: [] })).toBe('No plans reported.');
+  });
+});
+
+describe('phm pools spenddown', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('--help names the subcommand and a stray flag exits 2', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await cmdPools(['spenddown', '--help'])).toBe(0);
+    expect(String(log.mock.calls[0]![0])).toContain('phm pools spenddown');
+    expect(await cmdPools(['spenddown', '--nope'])).toBe(2);
+    expect(err).toHaveBeenCalled();
+  });
+});

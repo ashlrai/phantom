@@ -328,6 +328,7 @@
 /test/cloud-timeline.test.ts @masonwyatt23
 /test/codex-selected-producer.test.ts @masonwyatt23
 /test/codex-session-usage.test.ts @masonwyatt23
+/test/coding-cli-offline-policy-replay-recovery-648s.test.ts @masonwyatt23
 /test/comms-agent-send-policy.test.ts @masonwyatt23
 /test/comms-send-policy-typefix-s133.test.ts @masonwyatt23
 /test/comms-telegram-leader-314.test.ts @masonwyatt23
@@ -1220,6 +1221,7 @@
 /test/router-calibration.test.ts @masonwyatt23
 /test/router-catalog-refresh.test.ts @masonwyatt23
 /test/router-current-claude-models.test.ts @masonwyatt23
+/test/router-decision-reader-recovery-646s.test.ts @masonwyatt23
 /test/router-eval-harness.test.ts @masonwyatt23
 /test/router-gateway.test.ts @masonwyatt23
 /test/router-lint.test.ts @masonwyatt23

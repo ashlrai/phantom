@@ -7,6 +7,7 @@
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge, MapEdgeAgent, MapEdgeRole } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
+import { narrowLaneHealth } from '../../../../core/fleet/lane-badge.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
@@ -32,7 +33,8 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
     known.add(id);
     nodes.push({ id, kind, level: count(row.level) ?? NODE_KINDS.indexOf(kind), label: text(row.label) ?? id,
       provider: (text(row.provider) ?? 'unknown') as LiveMapNode['provider'], status: text(row.status) ?? 'unknown',
-      detail: text(row.detail) ?? 'unknown', live: typeof row.live === 'boolean' ? row.live : null });
+      detail: text(row.detail) ?? 'unknown', live: typeof row.live === 'boolean' ? row.live : null,
+      ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}) });
   }
   const edges: LiveMapEdge[] = [];
   for (const row of raw.edges.slice(0, MAX_EDGES)) {
