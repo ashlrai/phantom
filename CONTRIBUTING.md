@@ -2,6 +2,13 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+**First contribution?** Coding agents build most of Phantom, and outside
+contributors take the same path as the fleet: one focused branch pushed to a
+fork, local checks run once, a pull request, and the one required check,
+`Merge Gate`. [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md)
+walks that path from clone to auto-merge; agents also follow
+[AGENTS.md](AGENTS.md). This guide holds the full conventions behind it.
+
 ---
 
 ## Prerequisites
@@ -21,9 +28,17 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+git clone https://github.com/ashlrai/phantom.git
+cd phantom
+npm ci                    # single clone; also what CI and release packaging use
 ```
+
+Keep the upstream repository as `origin`: `node scripts/verify-changed.mjs`
+diffs against `origin/master`. Add your fork as a second remote to push to.
+If you run several agents in trusted local worktrees on one machine, use
+`npm run install:worktree` instead of `npm ci` in each worktree; it requires
+pnpm 10.28.2 and shares one dependency store (see
+[Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees)).
 
 Run focused verification locally while developing. Pull requests and default-branch
 pushes run the repository's CI and Dependency Audit workflows. Check the actual
@@ -346,7 +361,8 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 ## Commit style
 
 - Keep commits focused and atomic; one logical change per commit.
-- Use a concise, imperative subject line (e.g. `add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Use a concise, imperative subject with a conventional type prefix (e.g. `feat: add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Pull requests land as squash commits, so the pull request title becomes the subject on `master`. release-please groups `master` subjects into `CHANGELOG.md` sections by type: `feat`, `fix`, `perf`, `refactor`, `chore`, `docs`, `test`, `ci` and `build` (see `release-please-config.json`). Fleet agents use the `bridge(<job>):` type.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
