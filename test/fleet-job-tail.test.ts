@@ -155,7 +155,7 @@ describe('getFleetJobTail', () => {
     expect(tail.events).toEqual([]);
     const io = capture();
     expect(await cmdJobTail([JOB, '--runs-dir', runs], io)).toBe(1);
-    expect(io.lines.join('\n')).toContain(`Job ${JOB} is unknown here: no launch, log or result is recorded on this machine.`);
+    expect(io.lines).toEqual(['ERR No job with that id.']);
   });
 
   it('reports a finished job with its result and PR link', async () => {
@@ -193,9 +193,9 @@ describe('getFleetJobTail', () => {
     const redact = (line: string) => { seen.push(line); return line.replaceAll('STUBMARK', '[redacted]'); };
     const tail = await getFleetJobTail(JOB, { runsDir: runs, redact, lines: 5 });
     expect(tail.events).toEqual([
-      { ts: at(0).toISOString(), source: 'event', text: 'launch lane=[redacted]' },
-      { ts: null, source: 'log', text: 'step one' },
-      { ts: null, source: 'log', text: '[redacted] step two' },
+      { ts: at(0).toISOString(), source: 'event', kind: 'say', text: 'launch lane=[redacted]' },
+      { ts: null, source: 'log', kind: 'say', text: 'step one' },
+      { ts: null, source: 'log', kind: 'say', text: '[redacted] step two' },
     ]);
     expect(seen.length).toBeGreaterThanOrEqual(3);
     expect(JSON.stringify(tail)).not.toContain('STUBMARK');
@@ -338,5 +338,51 @@ describe('follow mode', () => {
     expect(await done).toBe(0);
     const appended = io.lines.map(l => JSON.parse(l) as FleetJobTailEvent).find(e => e.text === 'appended');
     expect(appended).toMatchObject({ source: 'log', ts: expect.any(String) });
+  });
+});
+
+describe('phm job tail --json records (fleet.job.tail.line.v1)', () => {
+  const records = (lines: string[]) => lines.map(l => JSON.parse(l) as Record<string, unknown>);
+
+  it('running job: new lines appear in order, each typed with a schema id and kind', async () => {
+    await runningJob('plan the change\n$ ls src\nerror: nothing broke\n');
+    const controller = new AbortController();
+    const io = capture();
+    let sent = 0;
+    const done = cmdJobTail([JOB, '--runs-dir', runs, '--follow', '--json'], {
+      out: line => {
+        io.out(line);
+        if (line.includes('"text":"error: nothing broke"') && sent === 0) { sent = 1; void appendFile(join(runs, `${JOB}.log`), 'second\nthird\n'); }
+        if (line.includes('"text":"third"')) controller.abort();
+      },
+      err: io.err, signal: controller.signal, intervalMs: 20,
+    });
+    expect(await done).toBe(0);
+    const rows = records(io.lines).filter(r => r['source'] === 'log');
+    expect(rows.map(r => r['text'])).toEqual(['plan the change', '$ ls src', 'error: nothing broke', 'second', 'third']);
+    expect(rows.map(r => r['kind'])).toEqual(['say', 'tool', 'error', 'say', 'say']);
+    for (const row of records(io.lines)) expect(row).toMatchObject({ schema: 'fleet.job.tail.line.v1', kind: expect.stringMatching(/^(say|tool|result|error)$/) });
+  });
+
+  it('finished job: the stream ends with the result line', async () => {
+    await put(`${JOB}.launch`, `launched ${JOB} codex pid 4242 base 1234\n`, at(0));
+    await put(`${JOB}.log`, 'all done\n', at(5));
+    await put(`${JOB}.publish`, 'RESULT PR https://github.com/example/repo/pull/42\n', at(10));
+    const io = capture();
+    expect(await cmdJobTail([JOB, '--runs-dir', runs, '--follow', '--json'], io)).toBe(0);
+    expect(records(io.lines).at(-1)).toMatchObject({ kind: 'result', text: `Job ${JOB} finished. Result: published https://github.com/example/repo/pull/42.` });
+  });
+
+  it('missing id: one error record and plain words, exit 1', async () => {
+    const io = capture();
+    expect(await cmdJobTail([JOB, '--runs-dir', runs, '--json'], io)).toBe(1);
+    expect(records(io.lines)).toEqual([expect.objectContaining({ schema: 'fleet.job.tail.line.v1', kind: 'error', text: 'No job with that id.' })]);
+  });
+
+  it('masks a flagged value in a line before it leaves', async () => {
+    await runningJob('before\nuse MASKED_EXAMPLE here\n');
+    const tail = await getFleetJobTail(JOB, { runsDir: runs, redact: l => l.replaceAll('MASKED_EXAMPLE', '[redacted]') });
+    expect(tail.events.map(e => e.text)).toEqual(['before', 'use [redacted] here']);
+    expect(JSON.stringify(tail)).not.toContain('MASKED_EXAMPLE');
   });
 });

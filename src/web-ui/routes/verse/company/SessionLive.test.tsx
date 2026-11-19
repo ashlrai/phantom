@@ -12,7 +12,7 @@ const tail = (over: Partial<FleetJobTailV1> = {}): FleetJobTailV1 => ({
   schema: 'fleet.job.tail.v1', generatedAt: '2026-11-17T10:00:00.000Z', job: JOB, status: 'live', headline: `Job ${JOB}`, message: null,
   detail: { state: 'running', lane: 'codex', tier: 'frontier', model: 'model-x', launchedAt: '2026-11-17T09:00:00.000Z', prUrl: null, repo: null, tokens: 1200 },
   controls: { available: true, reason: null },
-  events: [{ ts: '2026-11-17T09:00:00.000Z', source: 'event', text: 'launch codex' }, { ts: null, source: 'log', text: 'running typecheck' }],
+  events: [{ ts: '2026-11-17T09:00:00.000Z', source: 'event', kind: 'say', text: 'launch codex' }, { ts: null, source: 'log', kind: 'tool', text: 'running typecheck' }],
   truncated: false, cursor: { log: 10, ledger: 10 }, ...over,
 });
 function serve(value: unknown) {

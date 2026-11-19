@@ -33,3 +33,10 @@ it('shows new lines while not following and jumps back to live output', async ()
   await waitFor(() => expect(screen.queryByRole('button', { name: /new line/ })).not.toBeInTheDocument());
   expect(follow).not.toBeChecked();
 }, 15000);
+
+// jsdom does no layout, so the phone fit is checked in the stylesheet itself.
+it('gives the live log most of a phone screen and a thumb-sized Jump to latest', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync('src/web-ui/routes/verse/fleet-job-log/worker-log.module.css', 'utf8');
+  expect(css).toMatch(/@media \(max-width: 480px\)[^]*\.logWrap \{ min-height: 50dvh; \}[^]*\.newLines \{ min-height: 44px;/);
+});

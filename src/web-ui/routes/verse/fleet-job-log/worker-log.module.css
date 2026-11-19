@@ -35,3 +35,10 @@
 .streamReport { flex: 1; min-width: 0; }
 .streamReportHead { color: var(--text-secondary); margin-bottom: var(--space-1); }
 .streamReport > * { max-height: 12rem; overflow: auto; }
+
+/* Phone: the live log gets most of the screen and "Jump to latest" is a thumb-sized target. */
+@media (max-width: 480px) {
+  .pane { padding: var(--space-2); }
+  .logWrap { min-height: 50dvh; }
+  .newLines { min-height: 44px; min-width: 44px; }
+}

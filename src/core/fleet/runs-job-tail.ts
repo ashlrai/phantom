@@ -15,7 +15,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { describeJob, type JobTailStatus } from './job-tail-words.js';
+import { classifyJobLine, describeJob, type JobLineKind, type JobTailStatus } from './job-tail-words.js';
 import { jobControlAvailability, type JobControlAvailability } from './job-control-types.js';
 import { parseJobLedgerEvents, rowJob } from './runs-job-activity.js';
 import { getFleetJobDetail, isFleetJobId, scrubJobLogLine, type FleetJobDetailV1 } from './runs-job-detail.js';
@@ -24,8 +24,13 @@ export interface FleetJobTailEvent {
   /** ISO time: the ledger row's own time, or when follow first saw a log line; null for history log lines (the log has no per-line clock). */
   ts: string | null;
   source: 'log' | 'event' | 'status';
+  /** Plain bucket for the line: say, tool, result or error. */
+  kind: JobLineKind;
   text: string;
 }
+
+const tailEvent = (ts: string | null, source: FleetJobTailEvent['source'], text: string): FleetJobTailEvent =>
+  ({ ts, source, kind: classifyJobLine(source, text), text });
 
 export interface FleetJobTailV1 {
   schema: 'fleet.job.tail.v1';
@@ -131,7 +136,7 @@ function headline(d: FleetJobDetailV1): string {
 }
 
 const ledgerEvent = (e: { at: string | null; event: string; summary: string }, redact: (l: string) => string): FleetJobTailEvent =>
-  ({ ts: e.at, source: 'event', text: redact([e.event, e.summary].filter(Boolean).join(' ')) });
+  tailEvent(e.at, 'event', redact([e.event, e.summary].filter(Boolean).join(' ')));
 
 /** Repo and worker-reported token total from this job's ledger rows; the newest row that says wins. */
 function ledgerFacts(text: string, job: string): { repo: string | null; tokens: number | null } {
@@ -191,7 +196,7 @@ export async function getFleetJobTail(job: string, options: FleetJobTailOptions 
     controls: jobControlAvailability(status),
     events: [
       ...ledgerRows.map(e => ledgerEvent(e, redact)),
-      ...detail.log.tail.map((text): FleetJobTailEvent => ({ ts: null, source: 'log', text: redact(text) })),
+      ...detail.log.tail.map((text): FleetJobTailEvent => tailEvent(null, 'log', redact(text))),
     ],
     truncated: detail.log.truncated || clipped,
     cursor: { log: log?.next ?? null, ledger: ledger ? ledger.from + ledgerEnd : null },
@@ -275,7 +280,7 @@ export async function followFleetJobTail(job: string, cursor: FleetJobTailV1['cu
   const logLines = lineBuffer();
   const ledgerLines = lineBuffer();
   const emitLog = (lines: (string | null)[], ts: string) => {
-    for (const line of lines) options.onEvent({ ts, source: 'log', text: redact(line ?? 'Log line omitted: exceeds follow byte limit.') });
+    for (const line of lines) options.onEvent(tailEvent(ts, 'log', redact(line ?? 'Log line omitted: exceeds follow byte limit.')));
   };
   const emitLedger = (lines: (string | null)[]) => {
     const text = lines.filter((line): line is string => line !== null).join('\n');
@@ -300,7 +305,7 @@ export async function followFleetJobTail(job: string, cursor: FleetJobTailV1['cu
       if (!confirmed || appended?.data.length || rows?.data.length || appended?.drained === false || rows?.drained === false) continue;
       emitLog(logLines(Buffer.alloc(0), false, true), ts);
       emitLedger(ledgerLines(Buffer.alloc(0), false, true));
-      options.onEvent({ ts, source: 'status', text: redact(describeJob(detail, Date.parse(ts)).text ?? `Job ${job} finished.`) });
+      options.onEvent(tailEvent(ts, 'status', redact(describeJob(detail, Date.parse(ts)).text ?? `Job ${job} finished.`)));
       return 'finished';
     }
     terminalSeen = false;
