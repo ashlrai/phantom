@@ -31,6 +31,10 @@ joins the newest `work.post` in the read listing that key. Slack-bridge
 `slack-coordination` notices summarize as `slack-coordination <type> <mode>:
 <text>` and classify by their declared `messageType` — `request` reads as
 ask, `reply` as reply — so peer requests surface as waiting conversations.
+Declared `refs` on a `note` or `context` body (for example `RQ-…` or
+`owner/repo#123`) join the message's `job`/`pr` links ahead of prose
+mentions; senders set them with repeatable `--ref` on `bus dm` and
+`channel post`.
 Claim tokens and
 dispatch ids never appear in a summary. `--agent` and `--with` match through
 the agent identity registry beside the store: a handle, alias or `agent:`
@@ -418,6 +422,8 @@ desktop source does not prevent CLI or teammate observations.
 these shared projections to every enrolled, authenticated peer, independent of
 lane or role. Private inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
+Repeatable `--ref <ref>` on `dm` and `channel post` records v2 `refs` on the
+`note` body.
 
 `body.kind` is one of:
 
