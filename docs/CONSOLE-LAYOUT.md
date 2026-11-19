@@ -111,6 +111,22 @@ merge list together. These links open the existing screens and preserve their
 permissions and confirmation flows. The merge list uses the live fleet runs
 read and shows unknown or unavailable data as such.
 
+The Leader thread shows where each of your messages went. Under a message
+that became work sits a routing trail: one row per job whose prompt cites the
+message, with the lane it was routed to, a four-step track (queued, launched,
+published, merged) and the recorded result. A launched job's id opens its
+Worker log and a published or merged one links its PR. A job that ended with
+nothing to publish says so. A message from the last six hours that no job
+cites reads “Not routed to a lane yet”; if the job prompts could not be read
+it reads routing unknown instead, and a job with no recorded lane reads “lane
+unknown”. The toolbar counts the routed jobs still in flight, or says
+“Routing unavailable” when the trace does not answer. The trail reads
+`GET /api/verse/leader/orders`, the same order trace as:
+
+```sh
+phm fleet orders --json
+```
+
 ## Fleet telemetry and Show Mode
 
 The Fleet screen's read-only **Fleet map** places agent sessions inside their
