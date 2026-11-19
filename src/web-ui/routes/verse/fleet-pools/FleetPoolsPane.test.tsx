@@ -42,15 +42,15 @@ it('draws one card per resource, most at risk first, with its bar, projection an
   const rows = await pools();
   expect(names()).toEqual(['codex-personal pool', 'claude pool', 'codex-cmp pool']);
   expect(rows.map(row => row.dataset.risk)).toEqual(['high', 'low', 'unknown']);
-  expect(within(rows[0]!).getByText('behind: 68% would go unused')).toBeInTheDocument();
+  expect(within(rows[0]!).getByText('Codex personal: 68% will go unused: add work')).toBeInTheDocument();
   expect(bars(rows[0]!)).toEqual(['codex-personal: 20% used, 85.7% of the window elapsed, 32% by reset at this burn']);
-  expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Jobs', 'Read'].map(label => fact(rows[0]!, label)))
-    .toEqual(['20%', '80%', 'in 1 d', '0.5%/h', '68%', '3 of 4 running', '6 min ago']);
+  expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Empty', 'Jobs', 'Read'].map(label => fact(rows[0]!, label)))
+    .toEqual(['20%', '80%', 'in 1 d', '0.5%/h', '68%', 'not before reset', '3 of 4 running', '6 min ago']);
   expect(within(rows[0]!).getByText('reported')).toBeInTheDocument();
   expect(within(rows[0]!).getByText('claude-native-usage')).toBeInTheDocument();
-  expect(within(rows[1]!).getByText('on pace')).toBeInTheDocument();
+  expect(within(rows[1]!).getByText('Claude: on pace')).toBeInTheDocument();
   expect(bars(rows[1]!)).toEqual(['claude: 60% used, 64.3% of the window elapsed, 100% by reset at this burn']);
-  expect(within(rows[2]!).getByText(`unknown: no reading since ${at(-2)}`)).toBeInTheDocument();
+  expect(within(rows[2]!).getByText(`Codex cmp: unknown: no reading since ${at(-2)}`)).toBeInTheDocument();
   expect(bars(rows[2]!)).toEqual(['codex-cmp usage unknown']);
   // A stale reading keeps its reported reset and its age, and every usage number reads unknown.
   expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Read'].map(label => fact(rows[2]!, label))).toEqual(['unknown', 'unknown', 'in 2 h', 'unknown', 'unknown', '2 h ago']);
@@ -63,7 +63,7 @@ it('narrows the list by state from the switch, by click or arrow key, and says w
   serve(view(...MIXED));
   render(<FleetPoolsPane {...props} />);
   await pools();
-  expect(screen.getAllByRole('radio').map(option => option.textContent)).toEqual(['All 3', 'Behind 1', 'On pace 1', 'Unknown 1']);
+  expect(screen.getAllByRole('radio').map(option => option.textContent)).toEqual(['All 3', 'Too fast 0', 'Behind 1', 'On pace 1', 'Unknown 1']);
   fireEvent.click(screen.getByRole('radio', { name: 'Behind 1' }));
   expect(names()).toEqual(['codex-personal pool']);
   fireEvent.keyDown(screen.getByRole('radio', { name: 'Behind 1' }), { key: 'ArrowRight' });
@@ -113,7 +113,7 @@ it('says so when every reading is unknown, and never draws a zero bar or a zero 
   expect(bars(claude!)).toEqual(['claude usage unknown']);
   expect(['Used', 'Left', 'Resets', 'Burn', 'Unused at reset', 'Jobs'].map(label => fact(claude!, label))).toEqual(Array(6).fill('unknown'));
   expect(fact(devin!, 'Balance')).toBe('unknown');
-  expect(screen.getByText('unknown: no reading')).toBeInTheDocument();
+  expect(screen.getByText('Claude: unknown: no reading')).toBeInTheDocument();
   expect(screen.getByText(/^Next reset unknown\./)).toBeInTheDocument();
   expect(screen.queryByText(/^0(\.0)?%/)).toBeNull();
   expect(screen.queryByText(/on pace$/)).toBeNull();

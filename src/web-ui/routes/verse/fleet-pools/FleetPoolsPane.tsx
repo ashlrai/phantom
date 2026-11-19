@@ -5,30 +5,20 @@
  * `phm pools` prints, so the pane decides nothing an agent cannot read.
  */
 import { useState } from 'react';
-import { POOLS_PATH, POOLS_SCHEMA, type PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
-import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
-import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { localTime, PoolItem } from './PoolItem.js';
+import { fleetPoolsQuery } from './pools-query.js';
 import { nextReset, poolCounts, poolGroup, poolsHeadline, span, type PoolFilter } from './pools-board-model.js';
 import styles from './fleet-pools.module.css';
 
-export const fleetPoolsQuery: QueryDef<PoolsViewV1> = {
-  key: 'app-pools',
-  fetch: async signal => {
-    const data = await apiGet<PoolsViewV1>(POOLS_PATH, signal);
-    // A drifted payload is loud, not a blank list.
-    if (data?.schema !== POOLS_SCHEMA || !Array.isArray(data.pools)) throw new Error(`Expected ${POOLS_SCHEMA}`);
-    // An older server sends rows without the newer fields: absent is unknown (or none), never a number.
-    return { ...data, pools: data.pools.map(row => ({ ...row, running: row.running ?? null, target: row.target ?? null, source: row.source ?? null, scopes: Array.isArray(row.scopes) ? row.scopes : [] })) };
-  },
-};
+export { fleetPoolsQuery };
 
 const FILTERS: readonly { value: PoolFilter; word: string; none: string }[] = [
   { value: 'all', word: 'All', none: '' },
+  { value: 'fast', word: 'Too fast', none: 'No pool is running out early.' },
   { value: 'behind', word: 'Behind', none: 'No pool is behind.' },
   { value: 'pace', word: 'On pace', none: 'No pool is known to be on pace.' },
   { value: 'unknown', word: 'Unknown', none: 'Every pool has a current reading.' },
