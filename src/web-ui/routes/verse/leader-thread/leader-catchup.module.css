@@ -1,0 +1,108 @@
+/* "Since you last looked": one dense card above the Leader conversation. The left rule is its tone. */
+.card {
+  flex: none;
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) var(--card-pad) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--accent-500);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  animation: catchup-in var(--duration-base) var(--ease-standard);
+}
+
+.card[data-attention='true'] { border-left-color: var(--status-warning-fg); }
+
+@keyframes catchup-in {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))); }
+  to { opacity: 1; transform: none; }
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: inherit;
+  font-weight: 600;
+  line-height: inherit;
+}
+
+.when {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.action:hover { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+.action:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+.parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.parts li + li::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--text-tertiary);
+}
+
+.parts li[data-tone='attention'] { color: var(--status-warning-fg); font-weight: 600; }
+.parts li[data-tone='unknown'] { color: var(--status-unknown-fg); }
+
+.latest {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+}
+
+.latestLabel { flex: none; color: var(--text-tertiary); }
+
+.latestText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card { animation: none; }
+  .action { transition: none; }
+}
