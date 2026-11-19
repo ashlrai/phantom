@@ -2,7 +2,7 @@
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
-import { readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import type { Participant, WorkJob } from './bus-v2-schema.js';
 
 /** One live coordination lease blocking a job's declared claim key. */
@@ -134,15 +134,32 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
 }
 
 /**
- * Client-side `--status` filter and newest-first ordering shared by the feed
- * CLIs. With claims, holds regroup under the jobs still shown so a filtered
- * view never lists a hold for a hidden job. Non-ok results pass through
- * untouched; nothing is fabricated for a refused or unavailable read.
+ * Match a job's announcement `to` label against a `--to` ref under every label
+ * of one agent identity — the same contract `bus next`, `bus-follow`, handoff
+ * receive and claim `--owner` use: the literal label always matches, and any
+ * label resolving to the ref's identity key matches too. A ref that resolves
+ * to no identity, and an unreadable registry, keep exact-label matching, so
+ * unknown identity state never widens the feed filter.
  */
-export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: WorkJob['status']): BusWorkFeedReadResult {
+export function busWorkFeedToMatcher(to: string, options: { root?: string } = {}): (label: string) => boolean {
+  const identityOf = agentIdentityKeys({ root: options.root });
+  const target = identityOf?.(to);
+  return label => label === to || (target !== undefined && identityOf?.(label) === target);
+}
+
+/**
+ * Client-side `--status`/`--to` filters and newest-first ordering shared by
+ * the feed CLIs; `toMatch` is a `busWorkFeedToMatcher` predicate over each
+ * job's announcement address. With claims, holds regroup under the jobs still
+ * shown so a filtered view never lists a hold for a hidden job. Non-ok
+ * results pass through untouched; nothing is fabricated for a refused or
+ * unavailable read.
+ */
+export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: WorkJob['status'],
+  toMatch?: (to: string) => boolean): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
   const jobs = result.jobs
-    .filter(job => status === undefined || job.status === status)
+    .filter(job => (status === undefined || job.status === status) && (toMatch === undefined || toMatch(job.to)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
   if (result.claims !== undefined) {
@@ -162,7 +179,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
   const lines: string[] = [];
   if (result.status === 'ok') {
     for (const job of result.jobs) {
-      lines.push(`${job.id} ${job.status} owner=${job.owner} provider=${job.provider} repo=${job.repo} updated=${new Date(job.updatedAt).toISOString()}`);
+      lines.push(`${job.id} ${job.status} owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} updated=${new Date(job.updatedAt).toISOString()}`);
     }
     if (result.claims) {
       for (const hold of result.claims.holds) {

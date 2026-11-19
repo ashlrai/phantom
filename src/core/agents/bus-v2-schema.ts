@@ -292,6 +292,8 @@ export type BusBody = z.infer<typeof busBodySchema>;
 export const workJobSchema = z.object({
   id: jobId,
   owner: label,
+  /** Routing label the work.post announcement was addressed to. */
+  to: label,
   provider: providerSchema,
   repo: repoSlug,
   claimKeys: z.array(claimKeySchema).max(16),

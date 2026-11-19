@@ -1519,7 +1519,8 @@ reject ASCII controls including DEL. Claims grant no execution authority.
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
 It validates at most 1024 retained receipts in strictly increasing cursor order;
-legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
+legacy and unrelated bodies stay opaque. Posts start queued with `owner=from` and
+`to` set to the announcement envelope's routing label;
 provider comes from the post, explicit participant metadata, or the
 injected `providerFor` resolver — schema-checked, never guessed (missing is refused).
 Statuses update only retained jobs from the same owner: exact sender-label
@@ -1555,12 +1556,17 @@ blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 the table is unavailable. Holds cap at 1024 with `truncated` set.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
-structural overlap rule. `projectBusWorkFeedView(result, status?)` applies the
-client-side status filter, newest-first order and per-job hold regrouping, and
-`formatBusWorkFeed(result)` renders the shared human lines; both feed CLIs use
-them. `phm fleet work-feed [--claims]` and `phm agents bus work feed
-[--status] [--claims]` print the same projection — hold lines plus a `claims=`
-footer — and non-ok reads print `jobs=unknown` rather than a fabricated count.
+structural overlap rule. `projectBusWorkFeedView(result, status?, toMatch?)` applies the
+client-side status and announcement-address filters, newest-first order and
+per-job hold regrouping; `toMatch` is the predicate `busWorkFeedToMatcher(to,
+{root?})` builds, matching a job's `to` label literally and under every label
+of one agent identity (an unresolvable ref or unreadable registry keeps
+exact-label matching). `formatBusWorkFeed(result)` renders the shared human
+lines; both feed CLIs use them, and both accept `--to <label>` beside
+`--status`. `phm fleet work-feed [--claims] [--to <label>]` and
+`phm agents bus work feed [--status] [--claims] [--to <label>]` print the same
+projection — hold lines plus a `claims=` footer — and non-ok reads print
+`jobs=unknown` rather than a fabricated count.
 
 `src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
 `BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result

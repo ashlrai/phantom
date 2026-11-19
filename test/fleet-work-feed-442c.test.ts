@@ -11,12 +11,12 @@ import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 
 const post = { kind: 'work.post', jobId: 'fake-job', title: 'Review', repo: 'fake/repo',
   claimKeys: ['repo:fake/repo'], provider: 'devin' };
-const envelope = (body: unknown, cursor = 1, from = 'fake-agent') => ({
-  id: `fake-message-${cursor}`, from, to: 'leaders', priority: 'P2', ttl: 1000, body,
+const envelope = (body: unknown, cursor = 1, from = 'fake-agent', to = 'leaders') => ({
+  id: `fake-message-${cursor}`, from, to, priority: 'P2', ttl: 1000, body,
 });
 let root: string, now: number;
-const append = (body: unknown, cursor = 1, from = 'fake-agent') => {
-  expect(appendBusInbox(envelope(body, cursor, from), { root, now: () => now }).status).toBe('posted');
+const append = (body: unknown, cursor = 1, from = 'fake-agent', to = 'leaders') => {
+  expect(appendBusInbox(envelope(body, cursor, from, to), { root, now: () => now }).status).toBe('posted');
 };
 const output = () => vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -76,7 +76,7 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
       { id: 'fake-second', status: 'queued', updatedAt: now - 10 }] });
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
-    expect(log.mock.calls[0]?.[0]).toBe(`fake-job running owner=fake-agent provider=devin repo=fake/repo updated=${new Date(now).toISOString()}`);
+    expect(log.mock.calls[0]?.[0]).toBe(`fake-job running owner=fake-agent to=leaders provider=devin repo=fake/repo updated=${new Date(now).toISOString()}`);
     expect(log.mock.calls[1]?.[0]).toContain('fake-second queued');
     log.mockClear();
     expect(await cmdFleetWorkFeed(['--root', root, '--status', 'queued'])).toBe(0);
@@ -157,11 +157,12 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     for (const args of [['--root', 'relative/path'], ['--status', 'unknown'], ['--root'],
-      ['--status', 'queued', '--status', 'done'], ['--json', '--json'], ['--claims', '--claims'], ['--bogus']]) {
+      ['--status', 'queued', '--status', 'done'], ['--json', '--json'], ['--claims', '--claims'], ['--bogus'],
+      ['--to'], ['--to', 'two words'], ['--to', 'a\nb'], ['--to', 'x', '--to', 'y']]) {
       expect(await cmdFleetWorkFeed(args)).toBe(2);
     }
     expect(log).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledTimes(7);
+    expect(error).toHaveBeenCalledTimes(11);
     expect(error.mock.calls[0]?.[0]).toContain('Usage: ashlr fleet work-feed');
     expect(await cmdFleetWorkFeed(['--help'])).toBe(0);
   });
@@ -186,5 +187,53 @@ describe('work-feed owner matching through the identity registry', () => {
     // An injected ownerKeyFor replaces the registry fallback entirely.
     expect(readBusWorkFeed({ root, ownerKeyFor: () => 'same-owner' })).toMatchObject({ status: 'ok',
       jobs: [{ id: post.jobId, status: 'done' }] });
+  });
+});
+
+describe('work-feed --to announcement-address filter', () => {
+  it('keeps only jobs whose post was addressed to the label, in text and JSON', async () => {
+    append(post, 1, 'fake-agent', 'leaders');
+    append({ ...post, jobId: 'fake-directed' }, 2, 'fake-agent', 'agent:worker-bot');
+    now += 10;
+    append({ kind: 'work.status', jobId: 'fake-directed', status: 'running' }, 3, 'fake-agent', 'leaders');
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', jobs: [
+      { id: 'fake-job', to: 'leaders', status: 'queued' },
+      { id: 'fake-directed', to: 'agent:worker-bot', status: 'running' }] });
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root, '--to', 'agent:worker-bot'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0]))).toEqual([
+      `fake-directed running owner=fake-agent to=agent:worker-bot provider=devin repo=fake/repo updated=${new Date(now).toISOString()}`,
+      `jobs=1 receipts=3 feed=ok as-of=${new Date(now).toISOString()}`]);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--to', 'leaders', '--status', 'queued', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
+      ...result, jobs: result.status === 'ok' ? result.jobs.filter(job => job.to === 'leaders' && job.status === 'queued') : [],
+    });
+    // An address no post used is an honest empty view, not an error.
+    expect(await cmdFleetWorkFeed(['--root', root, '--to', 'ghost'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=3 feed=ok');
+  });
+
+  it('matches --to under every label of one agent identity and never widens on unknown identity', async () => {
+    append(post, 1, 'fake-agent', 'agent:worker-bot');
+    append({ ...post, jobId: 'fake-sink' }, 2, 'fake-agent', 'leaders');
+    const jobLines = (calls: unknown[][]) => calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    const log = output();
+    // No registry: only the literal announcement label matches.
+    expect(await cmdFleetWorkFeed(['--root', root, '--to', 'worker-bot'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    log.mockClear();
+    expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
+      runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
+    for (const ref of ['worker-bot', 'agent:worker-bot', 'lane-7']) {
+      log.mockClear();
+      expect(await cmdFleetWorkFeed(['--root', root, '--to', ref])).toBe(0);
+      expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-job')]);
+    }
+    // The fleet sink job stays out of every identity-scoped view.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--to', 'leaders'])).toBe(0);
+    expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
   });
 });

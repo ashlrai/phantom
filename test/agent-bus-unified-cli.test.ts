@@ -171,7 +171,7 @@ describe('phm agents bus (unified)', () => {
     const feed = await run(['work', 'feed']);
     expect(feed.code).toBe(0);
     expect(feed.json).toMatchObject({ status: 'ok', receipts: 2,
-      jobs: [{ id: 'RQ-FEED', status: 'running', owner: 'agent:atlas', provider: 'claude' }] });
+      jobs: [{ id: 'RQ-FEED', status: 'running', owner: 'agent:atlas', to: 'leaders', provider: 'claude' }] });
     expect((await run(['work', 'feed', '--status', 'queued'])).json).toMatchObject({ status: 'ok', jobs: [] });
     expect((await run(['work', 'feed', '--status', 'running', '--claims'])).json)
       .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
@@ -204,7 +204,7 @@ describe('phm agents bus (unified)', () => {
     // Human output shares the fleet feed lines; reads need no identity.
     const text: string[] = [];
     expect(await runAgentsBusUnified(['work', 'feed', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
-    expect(text.join('\n')).toContain('RQ-FEED running owner=agent:atlas provider=claude');
+    expect(text.join('\n')).toContain('RQ-FEED running owner=agent:atlas to=leaders provider=claude');
     expect(text.join('\n')).toContain('jobs=1 receipts=2 feed=ok');
     const claimText: string[] = [];
     expect(await runAgentsBusUnified(['claim', 'list', '--root', root], t => claimText.push(t), () => {}, {})).toBe(0);
@@ -214,6 +214,34 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
     expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running)');
     expect(claimJobsText.join('\n')).toContain('feed=ok');
+  });
+
+  it('filters the work feed by announcement address under one agent identity', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SINK', '--title', 'Fleet job',
+      '--repo', 'ashlrai/phantom', '--provider', 'claude', '--id', 'feed-sink'])).json)
+      .toMatchObject({ status: 'posted', to: 'leaders' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-DIRECT', '--title', 'Directed job',
+      '--repo', 'ashlrai/phantom', '--provider', 'claude', '--to', 'agent:nova', '--id', 'feed-direct'])).json)
+      .toMatchObject({ status: 'posted', to: 'agent:nova' });
+
+    // The unfiltered feed shows both jobs with their announcement addresses.
+    const all = (await run(['work', 'feed'])).json.jobs as Array<{ id: string; to: string }>;
+    expect(all).toHaveLength(2);
+    expect(all.find(job => job.id === 'RQ-SINK')).toMatchObject({ to: 'leaders' });
+    expect(all.find(job => job.id === 'RQ-DIRECT')).toMatchObject({ to: 'agent:nova' });
+    // --to matches the literal label and every label of one identity.
+    for (const ref of ['agent:nova', 'nova']) {
+      expect((await run(['work', 'feed', '--to', ref])).json.jobs)
+        .toEqual([expect.objectContaining({ id: 'RQ-DIRECT', to: 'agent:nova' })]);
+    }
+    expect((await run(['work', 'feed', '--to', 'leaders'])).json.jobs)
+      .toEqual([expect.objectContaining({ id: 'RQ-SINK', to: 'leaders' })]);
+    expect((await run(['work', 'feed', '--to', 'ghost'])).json.jobs).toEqual([]);
+    // Status and address filters compose; holds still regroup under shown jobs.
+    expect((await run(['work', 'feed', '--to', 'nova', '--status', 'done'])).json.jobs).toEqual([]);
+    expect(await run(['work', 'feed', '--to', 'bad label'])).toMatchObject({ code: 2 });
   });
 
   it('filters claim list by owner through the identity registry', async () => {
