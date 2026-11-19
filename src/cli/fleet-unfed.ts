@@ -4,20 +4,22 @@ import { currentUnfed, foldMarketOverrides, foldUnfedHistory, renderUnfed, FLEET
 import { readTail, runsRoot } from '../core/metrics/loop-collect.js';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; give it a wider bound. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 /** The market log is mostly route decisions; the tail bounds the read. */
 const HISTORY_TAIL_BYTES = 32 * 1024 * 1024;
 const DEFAULT_WINDOW_HOURS = 24;
 const MAX_WINDOW_HOURS = 24 * 7;
 
 const USAGE = `Usage: phm fleet unfed [--window <hours>] [--json]
-Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl.
-Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, HOLD and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Read-only: no writes, no child processes, no network.
+Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl.
+Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md, HOLD and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Read-only: no writes, no child processes, no network.
 Exit 1 when any lane is unfed now, 2 when status.json is unreadable.`;
 
-async function readBounded(path: string): Promise<string | null> {
+async function readBounded(path: string, maxBytes = MAX_FILE_BYTES): Promise<string | null> {
   try {
     const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error('unreadable or over read bound');
+    if (!info.isFile() || info.size > maxBytes) throw new Error('unreadable or over read bound');
     return await readFile(path, 'utf8');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -26,9 +28,9 @@ async function readBounded(path: string): Promise<string | null> {
 }
 
 /** Optional market inputs: any read failure degrades to "reasons unknown", never to a wrong answer. */
-async function readOptional(path: string): Promise<string | null> {
+async function readOptional(path: string, maxBytes = MAX_FILE_BYTES): Promise<string | null> {
   try {
-    return await readBounded(path);
+    return await readBounded(path, maxBytes);
   } catch {
     return null;
   }
@@ -55,18 +57,19 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
     const status = await readBounded(join(root, 'queue', 'status.json'));
     if (status === null) throw new Error('no status');
     const ready = (await readBounded(join(root, 'queue', 'ready.tsv'))) ?? '';
-    const [slots, models, budget, adaptive, hold] = await Promise.all([
+    const [slots, models, budget, adaptive, hold, routerQueue] = await Promise.all([
       readOptional(join(root, 'queue', 'slots.json')),
       readOptional(join(root, 'models.json')),
       readOptional(join(root, 'queue', 'budget-overrides.json')),
       readOptional(join(root, 'queue', 'adaptive.json')),
       readOptional(join(root, 'HOLD')),
+      readOptional(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
     ]);
     const history = await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES);
     const nowMs = Date.now();
     const window = windowHours ?? DEFAULT_WINDOW_HOURS;
     report = {
-      ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, nowMs }),
+      ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs }),
       history: foldUnfedHistory(history, nowMs, window),
       overrides: foldMarketOverrides(history, nowMs, window),
     };

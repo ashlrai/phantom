@@ -457,10 +457,17 @@ window's `route_decision` rows to each job's latest decision and tallies
 `overrides` field carries the counts (`available`, `decided`, `overridden`,
 `byReason`, `lanes`). The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
-adaptive.json, HOLD); when slots.json parses, a derived report recomputes
-per-lane `blocked` reason codes with the same eligibility rules as
-`contrib/mac/work_market.py`, reported as `derivedReasons: true`. Reports also
-carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
+adaptive.json, HOLD, router-queue.md); when slots.json parses, a derived
+report recomputes per-lane `blocked` reason codes with the same eligibility
+rules as `contrib/mac/work_market.py`, reported as `derivedReasons: true`.
+Ready rows are validated exactly like `work_market.requirements` — a malformed
+job id, tier or requirements spec (including a spec-less row whose
+router-queue.md `(attrs)` envelope fails `from_envelope`) is rejected before
+the market sees it, so it is counted in the report's `invalidRows` and left
+out of `waiting`/unfed math like the dispatcher's `_waiting` set; on an
+admission-stopped tick the dispatcher counts every JID+tier-valid row by its
+raw lane column instead, and the derived report follows that relaxed set.
+Reports also carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
 tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
 `paused`/`admission` verdict for a derived report (where it replaces the
 per-lane codes) or back out of the published `blocked` codes for a
@@ -1526,11 +1533,14 @@ with a `reason`); they never throw for bad input or storage faults.
 `sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)`, `shouldWake(priority, requested, handoff?)`
-and `busBodySummary(body)` — a pure, secret-scrubbed one-line read of a bus body
-for inbox surfaces (`note`/`context`/`worker-handoff` return their message
-text, possibly multi-line; v2 kinds compose `<kind> <subject>: <payload>`),
-null when the body has no typed content; claim tokens and `work.result`
-queueId/receiptId never appear in a summary.
+and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
+inbox surfaces (`note`/`context`/`worker-handoff` return their message text,
+possibly multi-line; every other recognized kind — the v2 work/wake bodies
+plus the channel, leader, peer, group, cos and incident notices that share
+the store — composes one `<kind> <subject>: <payload>` line, and protocol-v1
+transport bodies summarize their `protocol` kind/topic/ref), null when the
+body has no typed content; claim tokens and `work.result` queueId/receiptId
+never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
@@ -1545,7 +1555,10 @@ dispatch, claim or execute.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
-`frameBusInbox(cli, messages)`. Identities are routing names and grant no authority.
+`frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
+falling back to a secret-scrubbed single-line read of string bodies or a
+bounded 512-character raw JSON render for unrecognized bodies. Identities
+are routing names and grant no authority.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
 
 `fleet.specialist-identity.v1` adds a read-only identity/outcome projection over

@@ -312,7 +312,14 @@ carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
 `queue/slots.json` also parses it recomputes the same eligibility reason codes
 the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
-reasons stay unknown. Independently of `source`, `fleetStop` names the
+reasons stay unknown. Ready rows are validated exactly like the dispatcher's
+`work_market.requirements`: a malformed job id, tier or requirements spec —
+including a spec-less row whose `queue/router-queue.md` `(attrs)` envelope
+fails validation — never reaches the market, so the report counts it in
+`invalidRows` and excludes it from `waiting` and the unfed math, matching the
+dispatcher's `_waiting` set (on an admission-stopped tick the dispatcher
+counts every JID+tier-valid row by its raw lane column instead, and the
+derived report follows that). Independently of `source`, `fleetStop` names the
 tick's fleet-wide stop in the dispatcher's own codes — `admission_stopped`
 when the PAUSE file, disk guard or load gate kept the market from running,
 `global_admission` when the launch budget or fleet cap was spent — or `null`
@@ -695,6 +702,13 @@ still have queued work: running of target and queued, marked `starved` when a la
 is below its target while the admission reason starts with `at_cap`, then one line
 with the admission running, cap and reason. It exits 1 when any lane has 10 or
 more jobs queued and none running.
+
+`ashlr fleet lane-starve [--json]` lists the lanes running below target while work
+is queued and splits each lane's `queue/ready.tsv` rows into filler and real,
+using the same non-parked row rule as the dispatcher's queue depth: rows whose
+status or lane cell leads with `PARKED-` are not queued work and never count.
+It also reports when `queue/FILLER_HOLD` is set, and exits 1 while any lane is
+starved.
 
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned

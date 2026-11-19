@@ -448,6 +448,85 @@ describe('CLI session adapters', () => {
       .not.toContain(token);
   });
 
+  it('summarizes channel, leader, peer and incident notices as bounded one-liners', () => {
+    expect(busBodySummary({ kind: 'interjection', channel: 'telegram', text: 'how is the fleet?', receivedAt: 'x', dedupeKey: 'k' }))
+      .toBe('interjection telegram: how is the fleet?');
+    expect(busBodySummary({ kind: 'owner-thread', threadId: 'owner', channel: 'desktop', text: 'reply text' }))
+      .toBe('owner-thread desktop: reply text');
+    expect(busBodySummary({ kind: 'owner-thread', threadId: 'owner', channel: 'imessage', redacted: true }))
+      .toBe('owner-thread imessage: redacted');
+    expect(busBodySummary({ kind: 'comms-reply', text: 'drafted reply' })).toBe('comms-reply: drafted reply');
+    expect(busBodySummary({ kind: 'leader-reply', requestId: 'r1', text: 'Leader: shipped' })).toBe('leader-reply r1: Leader: shipped');
+    expect(busBodySummary({ kind: 'leader.reply', rq: 'RQ-X-1', text: 'done' })).toBe('leader.reply RQ-X-1: done');
+    expect(busBodySummary({ kind: 'leader.escalation', rq: 'RQ-X-1', category: 'blocked', text: 'needs mason' }))
+      .toBe('leader.escalation RQ-X-1 blocked: needs mason');
+    expect(busBodySummary({ kind: 'leader.assignment', rq: 'RQ-X-1', lane: 'codex', text: 'take this' }))
+      .toBe('leader.assignment RQ-X-1 codex: take this');
+    expect(busBodySummary({ kind: 'order-merged', channel: 'telegram', text: 'merged PR' })).toBe('order-merged telegram: merged PR');
+    expect(busBodySummary({ kind: 'inbox-ack', channel: 'email', text: 'got it' })).toBe('inbox-ack email: got it');
+    expect(busBodySummary({ kind: 'cos-drafted', id: 'd-1', provider: 'anthropic' })).toBe('cos-drafted d-1 anthropic');
+    expect(busBodySummary({ kind: 'cos-blocked', id: 'd-1', reason: 'no adapter' })).toBe('cos-blocked d-1: no adapter');
+    expect(busBodySummary({ kind: 'group.presence', state: 'online' })).toBe('group.presence: online');
+    expect(busBodySummary({ kind: 'peer.draft', status: 'drafted', action: 'identity.register', name: 'alice', displayName: 'alice', private: true, gate: 'g', requires: 'r', dryRun: true }))
+      .toBe('peer.draft identity.register alice: drafted');
+    expect(busBodySummary({ kind: 'peer.escalation', origin: 'peer-1', reason: 'loop-or-hop-cap' }))
+      .toBe('peer.escalation peer-1: loop-or-hop-cap');
+    expect(busBodySummary({ kind: 'peer.plan', results: [{ status: 'posted' }, { status: 'drafted' }, { status: 'posted' }] }))
+      .toBe('peer.plan: 3 results (posted, drafted)');
+    expect(busBodySummary({ kind: 'peer.message', peer: { fromAgent: 'alice', toAgent: 'bob', kind: 'task', text: 'review this', threadId: 't', origin: 'o', hopCount: 1 } }))
+      .toBe('peer.message task alice->bob: review this');
+    expect(busBodySummary({ kind: 'peer.message', peer: { fromAgent: 'alice', channel: 'C0123', kind: 'query', text: 'status?' } }))
+      .toBe('peer.message query alice->C0123: status?');
+    expect(busBodySummary({ kind: 'peer.message' })).toBeNull();
+    expect(busBodySummary({ kind: 'group.message', value: 'room hello' })).toBe('group.message: room hello');
+    expect(busBodySummary({ kind: 'group.message', value: { kind: 'note', text: 'nested note' } })).toBe('group.message: nested note');
+    expect(busBodySummary({ kind: 'group.message', value: { text: 'plain object' } })).toBe('group.message: plain object');
+    expect(busBodySummary({ kind: 'group.message' })).toBeNull();
+    expect(busBodySummary({ kind: 'ci.failed-scheduled-run', repo: 'ashlrai/phantom', runId: 99, attempt: 2, workflow: 'ci', branch: 'main', failedJobCount: 3 }))
+      .toBe('ci.failed-scheduled-run ashlrai/phantom run 99 attempt 2: 3 failed jobs — ci on main');
+    expect(busBodySummary({ kind: 'worker-exit', inReplyTo: 'req-1', exitCode: 0, succeeded: true, taskId: 'RQ-X-1', verification: 'pass' }))
+      .toBe('worker-exit RQ-X-1: exit 0 succeeded — pass');
+    expect(busBodySummary({ kind: 'selector.picks', picks: [{ id: 'a' }, { id: 'b' }, { score: 1 }] }))
+      .toBe('selector.picks: 3 picks: a, b');
+    expect(busBodySummary({ kind: 'browser', browser: 'safari', action: 'navigate', outcome: 'ok', detail: 'loaded' }))
+      .toBe('browser safari navigate: ok — loaded');
+    expect(busBodySummary({ kind: 'apps-changes.event.v1', invocationId: 'i1', sequence: 1, type: 'app', app: 'Safari', state: 'active', time: 't' }))
+      .toBe('apps-changes.event.v1 app Safari: active');
+    expect(busBodySummary({ kind: 'apps-changes.event.v1', invocationId: 'i1', sequence: 2, type: 'summary', outcome: 'ok', samples: 4, transitions: 2 }))
+      .toBe('apps-changes.event.v1 summary: ok');
+    expect(busBodySummary({ kind: 'apps-recovery-batch.progress.v1', batchRunId: 'run-1', invocationIds: ['a', 'b'], evidence: 'retained', liveProbe: false, verdicts: [{}, {}], outcome: 'done' }))
+      .toBe('apps-recovery-batch progress run-1: 2 invocations 2 verdicts done');
+    expect(busBodySummary({ kind: 'work', text: 'claimable job' })).toBe('work: claimable job');
+    expect(busBodySummary({ protocol: { version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'ref-1' }, correlation_id: 'c', payload: { big: 'x'.repeat(5000) } }))
+      .toBe('protocol task fleet.deploy: ref-1');
+    // Secret-bearing fields still never appear, and nested rooms cannot recurse forever.
+    expect(busBodySummary({ kind: 'interjection', channel: 'telegram', text: `token ghp_${'b'.repeat(36)}` })).not.toContain('ghp_');
+    let deep: Record<string, unknown> = { kind: 'note', text: 'bottom' };
+    for (let i = 0; i < 8; i++) deep = { kind: 'group.message', value: deep };
+    expect(busBodySummary(deep)).toContain('group.message');
+  });
+
+  it('frames notice bodies as one-liners and bounds raw fallback renders', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const post = (id: string, body: BusJsonValue) => {
+      expect(appendBusInbox({ id, from: 'agent:atlas', to: 'agent:nova', priority: 'P2', ttl: 60_000, body }, options).status).toBe('posted');
+    };
+    post('notice', { kind: 'interjection', channel: 'telegram', text: 'status?' });
+    post('peer', { kind: 'peer.message', peer: { fromAgent: 'alice', toAgent: 'bob', kind: 'task', text: 'x'.repeat(9000) } });
+    post('mystery-big', { kind: 'mystery', blob: 'y'.repeat(9000) });
+    post('plain-string', 'a plain string body');
+    const inbox = readAgentInbox('nova', {}, options);
+    if (inbox.status !== 'ok') throw new Error('unreadable');
+    const framed = frameBusInbox('claude', inbox.messages);
+    expect(framed).toContain('interjection telegram: status?');
+    expect(framed).toContain('peer.message task alice->bob:');
+    expect(framed).toContain('a plain string body');
+    expect(framed).not.toContain('x'.repeat(300));
+    expect(framed).not.toContain('y'.repeat(600));
+    expect(framed.length).toBeLessThanOrEqual(32 * 1024);
+  });
+
   it('frames v2 work, wake and context inbox bodies as typed summaries without coordination secrets', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');

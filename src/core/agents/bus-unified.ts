@@ -366,31 +366,52 @@ function busSummaryField(value: string): string {
 const busSummaryClip = (value: string): string =>
   value.length > BUS_BODY_SUMMARY_MAX ? `${value.slice(0, BUS_BODY_SUMMARY_MAX - 1)}…` : value;
 
+/** Scrubbed, single-line text of one string field; null when absent or empty. */
+function summaryField(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key];
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const cleaned = busSummaryField(value);
+  return cleaned === '' ? null : cleaned;
+}
+
+/** A finite number rendered for a summary line; null for anything else. */
+function summaryNumber(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key];
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : null;
+}
+
 /**
  * A one-line read of a bus body for inbox surfaces, or null when the body has
  * no typed content worth summarizing (the caller keeps its own fallback, for
- * example a raw JSON render). `note`, `context` and `worker-handoff` return
- * their message text, which may span lines; the other v2 kinds compose a
- * single scrubbed line as `<kind> <subject>: <payload>` — jobId, claimKey or
- * wake target lead, outcome/detail/reason trail. Claim tokens and
- * `work.result` queueId/receiptId never appear: they are private coordination
- * data, not message content, so those three kinds return at least their kind
- * literal rather than ever falling back to a raw render.
+ * example a bounded raw JSON render). `note`, `context` and `worker-handoff`
+ * return their message text, which may span lines; every other recognized
+ * kind composes a single scrubbed line as `<kind> <subject>: <payload>` —
+ * the v2 work/wake bodies plus the channel, leader, peer, group, cos and
+ * incident notices that share the store (`interjection`, `owner-thread`,
+ * `comms-reply`, `leader.*`, `peer.*`, `group.*`, `cos-*`, `order-merged`,
+ * `inbox-ack`, `ci.failed-scheduled-run`, `worker-exit`, `selector.picks`,
+ * `browser`, `apps-*.v1`, legacy `work` and protocol-v1 transport bodies).
+ * Claim tokens and `work.result` queueId/receiptId never appear: they are
+ * private coordination data, not message content, so the secret-bearing kinds
+ * return at least their kind literal rather than ever falling back to a raw
+ * render.
  */
 export function busBodySummary(body: unknown): string | null {
+  return summarizeBusBody(body, 0);
+}
+
+/** Nested bodies (a `group.message` room payload) summarize at most this deep. */
+const BUS_BODY_SUMMARY_MAX_DEPTH = 4;
+
+function summarizeBusBody(body: unknown, depth: number): string | null {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
   const record = body as Record<string, unknown>;
   const str = (key: string): string | null => {
     const value = record[key];
     return typeof value === 'string' && value.trim() ? value : null;
   };
-  /** Scrubbed, single-line field for composed summaries; null when absent or empty after cleaning. */
-  const field = (key: string): string | null => {
-    const value = str(key);
-    if (value === null) return null;
-    const cleaned = busSummaryField(value);
-    return cleaned === '' ? null : cleaned;
-  };
+  const field = (key: string): string | null => summaryField(record, key);
+  const num = (key: string): string | null => summaryNumber(record, key);
   const parts = (...values: (string | null)[]): string | null => {
     const kept = values.filter((value): value is string => value !== null);
     return kept.length === 0 ? null : busSummaryClip(kept.join(' '));
@@ -400,7 +421,27 @@ export function busBodySummary(body: unknown): string | null {
     head === null ? tail : tail === null ? head : `${head} — ${tail}`;
   const composed = (head: string, detail: string | null): string =>
     busSummaryClip(detail === null ? head : `${head}: ${detail}`);
-  switch (str('kind')) {
+  /** `<kind> <labels>: <detail>` for flat notification bodies; null when nothing readable. */
+  const simple = (kind: string, labels: readonly string[], detail?: string | readonly string[]): string | null => {
+    const head = parts(kind, ...labels.map(label => field(label)));
+    const detailText = detail === undefined ? null
+      : typeof detail === 'string' ? field(detail)
+      : detail.map(key => field(key)).find(value => value !== null) ?? null;
+    if (head === kind && detailText === null) return null;
+    return composed(head ?? kind, detailText);
+  };
+  const kind = str('kind');
+  if (kind === null) {
+    // Bus-transport v1 bodies carry protocol.kind with no top-level kind; the
+    // payload stays opaque (it can be large), only its printable ref is read.
+    const proto = record['protocol'];
+    if (proto === null || typeof proto !== 'object' || Array.isArray(proto)) return null;
+    const p = proto as Record<string, unknown>;
+    const pk = summaryField(p, 'kind');
+    if (pk === null) return null;
+    return composed(parts('protocol', pk, summaryField(p, 'topic')) ?? 'protocol', summaryField(p, 'payload_ref'));
+  }
+  switch (kind) {
     case 'note':
     case 'context': {
       const bodyText = str('text');
@@ -450,8 +491,131 @@ export function busBodySummary(body: unknown): string | null {
       if (head === 'wake' && reason === null) return null;
       return composed(head ?? 'wake', reason);
     }
-    default:
+    case 'work':
+      return simple('work', [], 'text');
+    case 'interjection':
+      return simple('interjection', ['channel'], 'text');
+    case 'owner-thread': {
+      const channel = field('channel');
+      const bodyText = field('text') ?? (record['redacted'] === true ? 'redacted' : null);
+      if (channel === null && bodyText === null) return null;
+      return composed(parts('owner-thread', channel) ?? 'owner-thread', bodyText);
+    }
+    case 'comms-reply':
+      return simple('comms-reply', [], 'text');
+    case 'order-merged':
+      return simple('order-merged', ['channel'], 'text');
+    case 'inbox-ack':
+      return simple('inbox-ack', ['channel'], 'text');
+    case 'leader-reply':
+      return simple('leader-reply', ['requestId'], 'text');
+    case 'leader.reply':
+      return simple('leader.reply', ['rq'], 'text');
+    case 'leader-away-digest':
+      return simple('leader-away-digest', ['day'], 'text');
+    case 'leader.owner-message':
+      return simple('leader.owner-message', ['rq'], 'text');
+    case 'leader.escalation':
+      return simple('leader.escalation', ['rq', 'category'], 'text');
+    case 'leader.assignment':
+      return simple('leader.assignment', ['rq', 'lane'], 'text');
+    case 'cos-drafted':
+      return simple('cos-drafted', ['id', 'provider']);
+    case 'cos-blocked':
+      return simple('cos-blocked', ['id'], 'reason');
+    case 'group.presence':
+      return simple('group.presence', [], 'state');
+    case 'peer.draft':
+      return simple('peer.draft', ['action', 'name'], 'status');
+    case 'peer.escalation':
+      return simple('peer.escalation', ['origin'], 'reason');
+    case 'apps-changes.event.v1':
+      return simple('apps-changes.event.v1', ['type', 'app'], ['state', 'outcome']);
+    case 'peer.plan': {
+      const results = record['results'];
+      if (!Array.isArray(results)) return null;
+      const statuses = [...new Set(results.flatMap(item => {
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) return [];
+        const status = summaryField(item as Record<string, unknown>, 'status');
+        return status === null ? [] : [status];
+      }))];
+      const detail = statuses.length === 0 ? `${results.length} results` : `${results.length} results (${statuses.join(', ')})`;
+      return composed('peer.plan', detail);
+    }
+    case 'peer.message': {
+      const peer = record['peer'];
+      if (peer === null || typeof peer !== 'object' || Array.isArray(peer)) return null;
+      const p = peer as Record<string, unknown>;
+      const from = summaryField(p, 'fromAgent');
+      const to = summaryField(p, 'toAgent') ?? summaryField(p, 'channel');
+      const route = from !== null && to !== null ? `${from}->${to}` : from ?? to;
+      const head = parts('peer.message', summaryField(p, 'kind'), route);
+      return composed(head ?? 'peer.message', summaryField(p, 'text'));
+    }
+    case 'group.message': {
+      if (!Object.hasOwn(record, 'value')) return null;
+      const value = record['value'];
+      const isObject = value !== null && typeof value === 'object' && !Array.isArray(value);
+      let inner: string | null = null;
+      if (typeof value === 'string') {
+        inner = busSummaryField(value);
+      } else if (isObject && depth < BUS_BODY_SUMMARY_MAX_DEPTH) {
+        inner = summarizeBusBody(value, depth + 1);
+      }
+      if (inner === null && isObject) inner = summaryField(value as Record<string, unknown>, 'text');
+      if (inner !== null) {
+        const flat = busSummaryField(inner);
+        inner = flat === '' ? null : flat;
+      }
+      return composed('group.message', inner);
+    }
+    case 'ci.failed-scheduled-run': {
+      const runId = num('runId'), attempt = num('attempt'), failed = num('failedJobCount');
+      const workflow = field('workflow'), branch = field('branch');
+      const head = parts('ci.failed-scheduled-run', field('repo'),
+        runId === null ? null : `run ${runId}`, attempt === null ? null : `attempt ${attempt}`);
+      if (head === 'ci.failed-scheduled-run' && workflow === null && branch === null && failed === null) return null;
+      return composed(head ?? 'ci.failed-scheduled-run',
+        pair(failed === null ? null : `${failed} failed jobs`, parts(workflow, branch === null ? null : `on ${branch}`)));
+    }
+    case 'worker-exit': {
+      const exitCode = num('exitCode');
+      const succeeded = record['succeeded'];
+      const state = succeeded === true ? 'succeeded' : succeeded === false ? 'failed' : null;
+      const verification = field('verification');
+      const head = parts('worker-exit', field('taskId') ?? field('inReplyTo'));
+      if (head === 'worker-exit' && exitCode === null && state === null && verification === null) return null;
+      return composed(head ?? 'worker-exit',
+        pair(parts(exitCode === null ? null : `exit ${exitCode}`, state), verification));
+    }
+    case 'selector.picks': {
+      const picks = record['picks'];
+      if (!Array.isArray(picks)) return null;
+      const ids = picks.flatMap(item => {
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) return [];
+        const id = summaryField(item as Record<string, unknown>, 'id');
+        return id === null ? [] : [id];
+      }).slice(0, 8);
+      return composed('selector.picks', ids.length === 0 ? `${picks.length} picks` : `${picks.length} picks: ${ids.join(', ')}`);
+    }
+    case 'browser': {
+      const outcome = field('outcome'), detailText = field('detail');
+      const head = parts('browser', field('browser'), field('action'));
+      if (head === 'browser' && outcome === null && detailText === null) return null;
+      return composed(head ?? 'browser', pair(outcome, detailText));
+    }
+    default: {
+      // `apps-recovery-batch.<stage>.v1` is the one parameterized kind on the bus.
+      if (kind.startsWith('apps-recovery-batch.')) {
+        const stage = kind.split('.')[1] ?? '';
+        const count = (value: unknown, noun: string): string | null =>
+          Array.isArray(value) ? `${value.length} ${noun}${value.length === 1 ? '' : 's'}` : null;
+        const head = parts('apps-recovery-batch', stage === '' ? null : stage, field('batchRunId'));
+        return composed(head ?? 'apps-recovery-batch',
+          parts(count(record['invocationIds'], 'invocation'), count(record['verdicts'], 'verdict'), field('outcome')));
+      }
       return null;
+    }
   }
 }
 

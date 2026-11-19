@@ -54,6 +54,21 @@ describe('findStarvedLanes', () => {
       { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 3, filler: 2, real: 1 },
     ]);
   });
+  it('excludes parked rows, comments and blank lines like the dispatcher queue depth', () => {
+    const tsv = [
+      'RQ-X-A123456Q8\tp1\tclaude-api',
+      'PARKED-DEP.claude-api\tRQ-PARKED1\tclaude-api\twork\tashlrai/phantom\twaits on deps',
+      'RQ-PARKED2\tashlrai/phantom\tPARKED-DEP.claude-api\twork\twaits on deps',
+      'PARKED-MERGERATE.codex\tRQ-PARKED3\tcodex\twork\tashlrai/phantom\tmerging',
+      '# a comment\twith\tclaude-api',
+      '',
+      '   ',
+      'RQ-Y\tp1\tclaude-api',
+    ].join('\n') + '\n';
+    expect(findStarvedLanes(STATUS, tsv)).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1 },
+    ]);
+  });
   it('rejects malformed status', () => {
     expect(() => findStarvedLanes('{"lanes":{"a":{"running":"1"}}}', '')).toThrow();
   });
