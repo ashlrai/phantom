@@ -1,0 +1,127 @@
+/**
+ * Agent Bus v2 resource claims (docs/AGENT-BUS.md, "Claim protocol").
+ * `work.claim` and `work.release` bodies are operations, not mail: they run
+ * against the one coordination table (claim-store.ts) so overlap with
+ * message-id, team and board leases is decided in one place. Claims coordinate
+ * only; they grant no execution authority. The 64-hex fencing token is returned
+ * to its acquirer and never appears in a conflict holder.
+ */
+import { createHash, randomUUID } from 'node:crypto';
+import type { z } from 'zod';
+import { acquireCoordination, renewCoordination, settleCoordination } from './claim-store.js';
+import { workClaimBodySchema, workReleaseBodySchema } from './bus-v2-schema.js';
+
+export interface BusClaimOptions {
+  /** Coordination store root; defaults to the shared fleet root. */
+  root?: string;
+  /** Injectable clock for tests; defaults to Date.now(). */
+  now?: number;
+}
+
+export type BusClaimResult =
+  | { v: 2; status: 'acquired'; claim: { claimKey: string; owner: string; leaseMs: number; token: string; leaseUntil: number } }
+  | { v: 2; status: 'renewed'; claim: { claimKey: string; leaseUntil: number } }
+  | { v: 2; status: 'released' | 'completed'; claimKey: string }
+  | { v: 2; status: 'conflict'; holder: { owner: string; claimKey: string; leaseUntil: number } }
+  | { v: 2; status: 'mismatched-token' | 'expired' | 'lost' | 'invalid' | 'unavailable' | 'full' };
+
+type WorkClaimBody = z.infer<typeof workClaimBodySchema>;
+type AcquireBody = Extract<WorkClaimBody, { op: 'acquire' }>;
+type RenewBody = Extract<WorkClaimBody, { op: 'renew' }>;
+type ReleaseBody = z.infer<typeof workReleaseBodySchema>;
+
+/**
+ * Deterministic lease source id: a retried operation on the same claim key
+ * replaces its own row instead of conflicting with it, while the same operation
+ * id reused on a different key cannot silently relocate the first lease.
+ */
+function sourceIdFor(opId: string, claimKey: string): string {
+  const digest = createHash('sha256').update(claimKey, 'utf8').digest('hex').slice(0, 16);
+  return `agentbus:${opId}:${digest}`;
+}
+
+function acquire(body: AcquireBody, opId: string, options: BusClaimOptions, now: number): BusClaimResult {
+  const gate = acquireCoordination({
+    root: options.root, origin: 'resource', key: body.claimKey, owner: body.owner,
+    leaseMs: body.leaseMs, leaseUntil: now + body.leaseMs,
+    sourceId: sourceIdFor(opId, body.claimKey), now,
+    started: Number.isFinite(now) ? new Date(now).toISOString() : null,
+  });
+  if (gate.status === 'acquired' && gate.token !== undefined && gate.leaseUntil !== undefined) {
+    return { v: 2, status: 'acquired', claim: { claimKey: body.claimKey, owner: body.owner,
+      leaseMs: body.leaseMs, token: gate.token, leaseUntil: gate.leaseUntil } };
+  }
+  if (gate.status === 'conflict') {
+    return { v: 2, status: 'conflict', holder: { owner: gate.holder.owner,
+      claimKey: gate.holder.key, leaseUntil: gate.holder.leaseUntil } };
+  }
+  if (gate.status === 'invalid' || gate.status === 'full' || gate.status === 'unavailable') {
+    return { v: 2, status: gate.status };
+  }
+  return { v: 2, status: 'unavailable' };
+}
+
+function renew(body: RenewBody, options: BusClaimOptions, now: number): BusClaimResult {
+  const gate = renewCoordination({ root: options.root, key: body.claimKey, token: body.token,
+    leaseUntil: now + body.leaseMs, now });
+  if (gate.status === 'renewed' && gate.leaseUntil !== undefined) {
+    return { v: 2, status: 'renewed', claim: { claimKey: body.claimKey, leaseUntil: gate.leaseUntil } };
+  }
+  if (gate.status === 'mismatched-token' || gate.status === 'expired' || gate.status === 'lost' ||
+      gate.status === 'invalid' || gate.status === 'unavailable') {
+    return { v: 2, status: gate.status };
+  }
+  return { v: 2, status: 'unavailable' };
+}
+
+function release(body: ReleaseBody, options: BusClaimOptions, now: number): BusClaimResult {
+  const gate = settleCoordination({ root: options.root, key: body.claimKey, token: body.token,
+    outcome: body.outcome, now });
+  if (gate.status === 'released' || gate.status === 'completed') {
+    return { v: 2, status: gate.status, claimKey: body.claimKey };
+  }
+  if (gate.status === 'mismatched-token' || gate.status === 'expired' || gate.status === 'lost' ||
+      gate.status === 'invalid' || gate.status === 'unavailable') {
+    return { v: 2, status: gate.status };
+  }
+  return { v: 2, status: 'unavailable' };
+}
+
+/**
+ * Execute one envelope body as a v2 claim operation. Returns undefined for any
+ * other body kind so opaque v1 mail still appends unchanged. `opId` is the
+ * envelope id (or a caller-chosen operation id) and only feeds lease source
+ * ids; renew and release are addressed by claim key and fencing token.
+ */
+export function executeBusClaimBody(body: unknown, opId: string, options: BusClaimOptions = {}): BusClaimResult | undefined {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const kind = (body as { kind?: unknown }).kind;
+  if (kind !== 'work.claim' && kind !== 'work.release') return undefined;
+  const now = options.now ?? Date.now();
+  if (kind === 'work.release') {
+    const parsed = workReleaseBodySchema.safeParse(body);
+    return parsed.success ? release(parsed.data, options, now) : { v: 2, status: 'invalid' };
+  }
+  const parsed = workClaimBodySchema.safeParse(body);
+  if (!parsed.success) return { v: 2, status: 'invalid' };
+  return parsed.data.op === 'acquire' ? acquire(parsed.data, opId, options, now) : renew(parsed.data, options, now);
+}
+
+/** HTTP status for each claim result; the conflict holder shape is the v2 contract. */
+export const BUS_CLAIM_HTTP_STATUS: Record<BusClaimResult['status'], number> = {
+  acquired: 201, renewed: 200, released: 200, completed: 200,
+  conflict: 409, 'mismatched-token': 409, expired: 409, lost: 404,
+  invalid: 400, unavailable: 503, full: 507,
+};
+
+/** CLI exit code: success 0, invalid arguments 2, every other refusal 1. */
+export function busClaimExitCode(result: BusClaimResult): number {
+  return result.status === 'acquired' || result.status === 'renewed' ||
+    result.status === 'released' || result.status === 'completed' ? 0
+    : result.status === 'invalid' ? 2 : 1;
+}
+
+/** Fresh operation id for CLI callers that do not pass --id. */
+export function newBusClaimOpId(): string {
+  return `busclaim-${randomUUID()}`;
+}

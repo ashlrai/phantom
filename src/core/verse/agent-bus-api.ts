@@ -35,6 +35,7 @@ import { resolveNeedsMasonWithInbox } from '../fleet/needs-mason-relay.js';
 import { answerAsk, listAsks, type AskAnswerResult } from '../fleet/asks.js';
 import { listAskBatch, type AskBatch } from '../fleet/asks-batch.js';
 import { answerApproval, listApprovals, type ApprovalAnswerResult } from '../fleet/approvals.js';
+import { executeBusClaimBody, BUS_CLAIM_HTTP_STATUS, type BusClaimResult } from '../agents/bus-claims.js';
 import { OPERATOR_SENDER_ID } from '../fleet/channel-envelope.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import type { ApiModule } from './api-modules.js';
@@ -64,6 +65,7 @@ export interface AgentBusApiDeps {
   };
   asks?: { batch?: () => AskBatch; list: typeof listAsks; answer: (id: unknown, answer: unknown) => Promise<AskAnswerResult> };
   approvals?: { list: typeof listApprovals; answer: typeof answerApproval };
+  claims?: typeof executeBusClaimBody;
 }
 const APPROVAL_STATUS_HTTP: Record<ApprovalAnswerResult['status'], number> = {
   answered: 200, 'already-answered': 200, unverified: 403, expired: 410, unknown: 404, ambiguous: 409, invalid: 400, unavailable: 503,
@@ -71,6 +73,24 @@ const APPROVAL_STATUS_HTTP: Record<ApprovalAnswerResult['status'], number> = {
 const ASK_STATUS_HTTP: Record<AskAnswerResult['status'], number> = {
   answered: 200, 'already-answered': 200, refused: 403, unknown: 404, ambiguous: 409, invalid: 400, unavailable: 503,
 };
+
+/**
+ * Claim results carry the caller's own 64-hex fencing token, which the public
+ * scrub inside sendJson would redact; every field is schema-bounded (labels,
+ * numbers, the token) so the gated caller receives the contract response intact.
+ */
+function sendClaimJson(res: ServerResponse, status: number, body: BusClaimResult): void {
+  try {
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(JSON.stringify(body));
+  } catch {
+    // Socket already closed — same swallow as sendJson.
+  }
+}
 
 /** Dependencies permit isolated store tests; the public handler uses the default store. */
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
@@ -174,6 +194,13 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         try { raw = await readBody(req); } catch { sendJson(res, 413, { error: 'Request body too large.' }); return true; }
         const parsed = parseBusEnvelope(raw);
         if (!parsed.ok) { sendJson(res, 400, { v: 1, status: 'invalid' }); return true; }
+        // v2 claim bodies are operations on the coordination table, not mail:
+        // they execute and answer {v:2, ...} instead of appending to the inbox.
+        const claim = (deps.claims ?? executeBusClaimBody)(parsed.value.body, parsed.value.id);
+        if (claim !== undefined) {
+          sendClaimJson(res, BUS_CLAIM_HTTP_STATUS[claim.status], claim);
+          return true;
+        }
         const result = (deps.append ?? appendBusInbox)(parsed.value);
         const status = result.status === 'posted' ? 201 : result.status === 'duplicate' ? 200 :
           result.status === 'invalid' ? 400 : result.status === 'conflict' ? 409 : result.status === 'full' ? 507 : 503;

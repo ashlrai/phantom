@@ -8,10 +8,11 @@ import {
   postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, type UnifiedBusOptions,
 } from '../core/agents/bus-unified.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { busClaimExitCode, executeBusClaimBody, newBusClaimOpId, type BusClaimResult } from '../core/agents/bus-claims.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters', 'claim']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -23,6 +24,9 @@ ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <a
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
 ashlr agents bus adapters
+ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
+ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
+ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
@@ -30,7 +34,7 @@ wakes, P1 and handoffs wake by default. No network, no engine runs. Spec: docs/A
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
-  '--frame', '--since', '--root']);
+  '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome']);
 const MULTI = new Set(['--alias', '--member']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake']);
 
@@ -65,6 +69,16 @@ function integer(raw: string | undefined, name: string): number | undefined {
   if (raw === undefined) return undefined;
   if (!/^[0-9]{1,16}$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new UsageError(`${name} must be a non-negative integer.`);
   return Number(raw);
+}
+
+function claimHuman(result: BusClaimResult): string {
+  if (result.status === 'acquired') {
+    return `acquired ${result.claim.claimKey} owner=${result.claim.owner} leaseMs=${result.claim.leaseMs} leaseUntil=${result.claim.leaseUntil} token=${result.claim.token}`;
+  }
+  if (result.status === 'renewed') return `renewed ${result.claim.claimKey} leaseUntil=${result.claim.leaseUntil}`;
+  if (result.status === 'released' || result.status === 'completed') return `${result.status} ${result.claimKey}`;
+  if (result.status === 'conflict') return `conflict ${result.holder.claimKey} held by ${result.holder.owner} until ${result.holder.leaseUntil}`;
+  return result.status;
 }
 
 export async function runAgentsBusUnified(argv: string[], out: (text: string) => void, err: (text: string) => void,
@@ -187,6 +201,30 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
       return 0;
+    }
+    if (verb === 'claim') {
+      noExtra(2);
+      const claimKey = required('--key');
+      const leaseMsRaw = one('--lease-ms');
+      const leaseMs = leaseMsRaw === undefined ? undefined : integer(leaseMsRaw, '--lease-ms');
+      let body: Record<string, unknown>;
+      if (sub === 'acquire') {
+        const owner = one('--owner') ?? self;
+        if (!owner) throw new UsageError('--owner is required when PHM_AGENT_ID is not set.');
+        if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
+        body = { kind: 'work.claim', op: 'acquire', claimKey, owner, leaseMs };
+      } else if (sub === 'renew') {
+        if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
+        body = { kind: 'work.claim', op: 'renew', claimKey, token: required('--token'), leaseMs };
+      } else if (sub === 'release') {
+        body = { kind: 'work.release', claimKey, token: required('--token'), outcome: required('--outcome') };
+      } else {
+        throw new UsageError('claim requires acquire, renew or release.');
+      }
+      const result: BusClaimResult = executeBusClaimBody(body, one('--id') ?? newBusClaimOpId(), { root: options.root })
+        ?? { v: 2, status: 'invalid' };
+      out(json ? JSON.stringify(result) : claimHuman(result));
+      return busClaimExitCode(result);
     }
     throw new UsageError('Unknown agents bus command.');
   } catch (error) {
