@@ -81,6 +81,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'constitution', 'wb', 'caps',
   // COS report pages for the loopback dashboard (RQ-COS-PAGES-1).
   'pages',
+  'publish',
   // The typed command catalog the desktop palette also lists (RQ-CMDPALN17TQ8).
   'commands',
 ];
@@ -202,6 +203,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   plugins: ['init', 'list', 'info', 'enable', 'disable'],
   skills: ['list', 'audit'],
   pages: ['publish', 'list', '--json', '--help'],
+  publish: ['resume', 'orphans', '--branch', '--repo', '--json', '--help'],
   runtime: ['install', 'status', 'rollback', 'run'],
   // Mirrors the verb switch in src/cli/local-runtime.ts (cmdLocalRuntime).
   'local-runtime': ['status', 'start', 'stop', 'restart', 'reshape', 'install', 'uninstall', 'logs', 'resolve-model', 'missing-model-guard'],
