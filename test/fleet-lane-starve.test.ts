@@ -54,6 +54,22 @@ describe('findStarvedLanes', () => {
       { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 3, filler: 2, real: 1 },
     ]);
   });
+  it('does not count parked or comment rows as ready supply', () => {
+    const ready = [
+      'RQ-A123456Q8\tp1\tclaude-api\twork\tprompt',
+      'RQ-REAL\tp1\tclaude-api\twork\tprompt',
+      // Status-first parked dialect: the marker leads and the real lane sits in the lane cell.
+      'PARKED-DEP.claude-api\tRQ-PARKED-1\tclaude-api\twork\tphantom\tprompt',
+      // Lane-column parked dialect: the marker sits in the lane cell.
+      'RQ-PARKED-2\tphantom\tPARKED-DEP.codex\twork\tprompt',
+      'RQ-PARKED-3\tphantom\tPARKED-HOLD.devin\twork\tprompt',
+      // Comments are not rows, even when they contain tabs.
+      '# fleet note\twith\ttabs',
+    ].join('\n');
+    expect(findStarvedLanes(STATUS, ready)).toEqual([
+      { lane: 'claude-api', running: 1, target: 3, queued: 4, ready: 2, filler: 1, real: 1 },
+    ]);
+  });
   it('rejects malformed status', () => {
     expect(() => findStarvedLanes('{"lanes":{"a":{"running":"1"}}}', '')).toThrow();
   });
