@@ -426,9 +426,14 @@ is invoked. Queue task strings remain untrusted data under existing worker gates
 (`bulk|standard|judgment`) beside `preferred_lane`, `needs`, `min_tier`,
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
-`--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
+`--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
 nowMs, windowHours)` and `renderUnfed(report)` in
-`src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
+`src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
+`phm fleet unfed` (`fleet.unfed.v1`). The optional `market` carries the
+dispatcher's own input files (slots.json, models.json, budget-overrides.json,
+adaptive.json, HOLD); when slots.json parses, a derived report recomputes
+per-lane `blocked` reason codes with the same eligibility rules as
+`contrib/mac/work_market.py`, reported as `derivedReasons: true`.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
@@ -1327,6 +1332,20 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
 200 with the projection's own status, `unavailable`/`retryable`/`invalid`
 answer 503.
+
+`readBusWorkFeed({root?, now?, claims?})` in `src/core/agents/bus-work-feed-read.ts`
+pages the bounded bus inbox without writes and returns ok/refused/unavailable/
+retryable/invalid with receipt count and `asOf`. With `claims:true` the ok result
+adds `claims:{source,holds,truncated}`: holds list each live coordination lease
+blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
+`leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is
+`missing`, `available` or `unavailable`, and holds are unknown, not empty, when
+the table is unavailable. Holds cap at 1024 with `truncated` set.
+`coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
+exported read-only overlap predicate; acquisition and observation now share one
+structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
+a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
+fabricated count.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

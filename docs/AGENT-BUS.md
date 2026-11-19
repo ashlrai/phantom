@@ -401,6 +401,14 @@ body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
 missing store reads as an empty `ok` feed. Status filtering stays client-side;
 a missing provider stays a refusal, never a fabricated owner.
 
+`readBusWorkFeed({claims:true})` and `phm fleet work-feed --claims` join each
+job's declared claim keys against the live coordination table in one read:
+`claims.holds` lists every live lease blocking a job key (job, key, owner,
+lease end, origin, source id; tokens never leave the store), with
+`claims.source` of `missing`, `available` or `unavailable`. An unavailable
+claim table means holds are unknown, not absent. The HTTP work-feed endpoint
+above omits claims; the claims join remains CLI-only.
+
 ### Bounded peer dispatch
 
 `phm agentnet peers post <to> <work-post-json>` posts a directed work proposal

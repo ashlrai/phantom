@@ -9,9 +9,10 @@
 // tests that import a changed module directly, capped at MAX_RELATED_TESTS.
 // The exhaustive import graph stays on the master schedule.
 //
-// Modes: docs (typecheck only), related (selected tests), fallback (a bounded
-// broader set, used when a global input changed or selection failed). Nothing
-// ever skips tests silently: every uncertain input resolves to fallback.
+// Modes: docs (doc-reading tests, see selectDocs), related (selected tests),
+// fallback (a bounded broader set, used when a global input changed or
+// selection failed). Nothing ever skips tests silently: every uncertain input
+// resolves to fallback.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -179,6 +180,43 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
   return { tests: ranked.slice(0, limit), capped: Math.max(0, ranked.length - limit), deferred, node: domain.node };
 }
 
+// A docs diff has no import edges, so related selection finds nothing — but
+// suites that read pages as text can still fail. The whole-tree link guard
+// always runs; every other suite whose source names a changed path (full
+// repo-relative path first, then bare basename for join()-style readers) is
+// added through the same dist/slow filters and cap as related selection.
+export const DOCS_TREE_TESTS = Object.freeze(['test/docs-repo-links.test.ts']);
+
+function docReaderTests(cwd, needles) {
+  if (needles.length === 0) return [];
+  let out = '';
+  try {
+    out = git(cwd, ['grep', '-l', '-F', ...needles.flatMap((n) => ['-e', n]), 'HEAD', '--', 'test']);
+  } catch (error) {
+    if (error.status !== 1) throw error; // 1 = no match
+  }
+  return out.split('\n').filter(Boolean).map((f) => f.replace(/^HEAD:/, '')).filter((f) => TEST_FILE.test(f)).sort();
+}
+
+export function selectDocs({ cwd, paths }) {
+  const testFiles = new Set(git(cwd, ['ls-files', '-z', '--', 'test']).split('\0').filter((f) => TEST_FILE.test(f)));
+  const ranked = [];
+  const deferred = [];
+  const add = (f, derived = false) => {
+    if (!testFiles.has(f) || ranked.includes(f) || deferred.includes(f)) return;
+    if (needsDist(cwd, f) || (derived && SLOW.has(f))) { deferred.push(f); return; }
+    ranked.push(f);
+  };
+  for (const t of DOCS_TREE_TESTS) add(t);
+  const pinned = ranked.length;
+  const full = [...new Set(paths)].sort();
+  const base = [...new Set(full.map((p) => p.split('/').pop()).filter((b) => b && !full.includes(b)))].sort();
+  for (const f of docReaderTests(cwd, full)) add(f, true);
+  for (const f of docReaderTests(cwd, base)) add(f, true);
+  const limit = Math.max(MAX_RELATED_TESTS, pinned);
+  return { tests: ranked.slice(0, limit), capped: Math.max(0, ranked.length - limit), deferred, node: [] };
+}
+
 // Bounded broader set: every Tier-1 test plus an even, deterministic spread of
 // the repository's test files, split round-robin so shards have equal counts.
 export function selectFallback({ cwd, requiredTests = [] }) {
@@ -199,7 +237,14 @@ export { changedPaths };
 
 export function plan({ cwd, paths, graph = null }) {
   const verdict = classifyPaths(paths);
-  if (verdict.mode === 'docs') return { ...verdict, tests: [], node: [], shards: [], capped: 0 };
+  if (verdict.mode === 'docs') {
+    if (paths.length === 0) return { ...verdict, tests: [], node: [], shards: [], capped: 0, deferred: [] };
+    const sel = selectDocs({ cwd, paths });
+    if (sel.tests.length === 0) {
+      return { mode: 'fallback', reason: 'docs diff maps to no test', ...selectFallback({ cwd }), capped: 0 };
+    }
+    return { mode: 'related', reason: `${verdict.reason}: ${sel.tests.length} doc-reading test(s)`, ...sel, shards: [] };
+  }
   if (verdict.mode === 'fallback') {
     const requiredTests = paths.includes('package.json') ? [PACKAGE_FILES_TEST] : [];
     return { ...verdict, ...selectFallback({ cwd, requiredTests }), capped: 0 };

@@ -462,6 +462,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'work-state': () => import('./fleet-work-state.js'),
   'work-trace': () => import('./fleet-work-trace.js'),
   'workers': () => import('./fleet-workers.js'),
+  'worklog': () => import('./fleet-worklog.js'),
   'worktree-stale': () => import('./fleet-worktree-stale.js'),
   'worktrees': () => import('./fleet-worktrees.js'),
   'write-budget': () => import('./fleet-write-budget.js'),

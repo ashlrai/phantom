@@ -101,7 +101,16 @@ export function coordinationRoot(root?: string): string {
   return root ?? join(ashlrHome(), 'fleet');
 }
 
-function teamTargetOf(row: StoredClaim): ClaimTarget | null {
+interface OverlapRow {
+  origin: CoordinationOrigin | 'queue';
+  key: string;
+  repo: string | null;
+  branch: string | null;
+  path: string | null;
+  live: boolean;
+}
+
+function teamTargetOf(row: { repo: string | null; branch: string | null; path: string | null }): ClaimTarget | null {
   if (!row.repo) return null;
   return { repo: row.repo, ...(row.branch ? { branch: row.branch } : {}), ...(row.path ? { path: row.path } : {}) };
 }
@@ -134,8 +143,8 @@ function teamHitsKey(target: ClaimTarget, key: string): boolean {
   return false;
 }
 
-function overlaps(a: StoredClaim, b: StoredClaim, now: number): boolean {
-  if (!live(a, now) || !live(b, now)) return false;
+function overlapRows(a: OverlapRow, b: OverlapRow): boolean {
+  if (!a.live || !b.live) return false;
   if (a.origin === 'team' && b.origin === 'team') {
     const left = teamTargetOf(a);
     const right = teamTargetOf(b);
@@ -150,6 +159,14 @@ function overlaps(a: StoredClaim, b: StoredClaim, now: number): boolean {
     return Boolean(target && (teamHitsKey(target, a.key) || a.key === b.key));
   }
   return a.key === b.key || claimKeysOverlap(a.key, b.key);
+}
+
+function overlaps(a: StoredClaim, b: StoredClaim, now: number): boolean {
+  const shape = (row: StoredClaim): OverlapRow => ({
+    origin: row.origin, key: row.key, repo: row.repo, branch: row.branch, path: row.path,
+    live: live(row, now),
+  });
+  return overlapRows(shape(a), shape(b));
 }
 
 function validLease(origin: CoordinationOrigin, leaseMs: number): boolean {
@@ -308,6 +325,18 @@ export function listCoordination(root?: string, now = Date.now()): {
   } catch {
     return { source: 'unavailable', claims: [], statuses: [] };
   }
+}
+
+/**
+ * Read-only: would acquiring `key` conflict with this coordination row? Applies
+ * the same overlap rule acquireCoordination uses, including team targets, over
+ * already-listed rows. `row.live` is the view's own lease state; queue
+ * observations are never live and never block. Claim tokens never leave the store.
+ */
+export function coordinationRowBlocks(row: CoordinationView, key: string): boolean {
+  return overlapRows(
+    { origin: row.origin, key: row.key, repo: row.repo, branch: row.branch, path: row.path, live: row.live },
+    { origin: 'resource', key, repo: null, branch: null, path: null, live: true });
 }
 
 export function coordinationSummary(root?: string, now = Date.now()): {

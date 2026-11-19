@@ -1901,6 +1901,15 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/worklog' && method === 'GET') {
+      // The numbers per hour and per day (fleet.worklog.v1), the report `phm fleet worklog --json` prints.
+      const { readFleetWorklog, worklogOptions } = await import('../fleet/worklog-numbers.js');
+      const options = worklogOptions(getQueryParam(req.url ?? '', 'hours') || undefined, getQueryParam(req.url ?? '', 'by') || undefined);
+      if (!options) { sendJson(res, 400, { error: 'Use hours from 1 to 168 and by=hour or by=day.' }); return true; }
+      sendJson(res, 200, sanitizePublicJson(await readFleetWorklog(options)));
+      return true;
+    }
+
     if (path === '/api/fleet/empties' && method === 'GET') {
       // Why each empty run ended empty (fleet.empties.why.v1), the `why` block of `phm fleet empties --json`.
       const { readEmptiesWhy } = await import('../fleet/empties-why.js');
@@ -1908,6 +1917,20 @@ export async function handleApi(
       const hours = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : NaN;
       if (!(hours > 0 && hours <= 2160)) { sendJson(res, 400, { error: 'Use a number of hours up to 2160, for example 24.' }); return true; }
       const report = await readEmptiesWhy({ hours });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
+    if (path === '/api/fleet/stranded' && method === 'GET') {
+      // Finished work that never became a PR (fleet.stranded.work.v1), the report inside `phm fleet stranded --json`.
+      const { readStrandedWork, STRANDED_MAX_DAYS } = await import('../fleet/stranded-work.js');
+      const raw = getQueryParam(req.url ?? '', 'days') ?? '3';
+      const days = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+      const verify = getQueryParam(req.url ?? '', 'verify');
+      if (!(days >= 1 && days <= STRANDED_MAX_DAYS) || !['1', '0', undefined].includes(verify)) {
+        sendJson(res, 400, { error: `Use days from 1 to ${STRANDED_MAX_DAYS} and verify=1 to compare with the local main branch.` }); return true;
+      }
+      const report = await readStrandedWork({ days, verify: verify === '1' });
       sendJson(res, report.known ? 200 : 503, report);
       return true;
     }
