@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fleetAdmissionVerdict } from '../core/fleet/admission-verdict.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 /** A lane parked by a fleet-wide block is red once it has this many jobs queued. */
@@ -116,13 +117,11 @@ export function explainFleetAdmission(value: unknown): FleetAdmissionReport {
   const cap = count(admission.cap);
   const running = count(admission.running);
   const atCap = running >= cap;
-  // Same verdict fleet lane-idle derives: the stored admit/decision flags, the
-  // gate reason, the pause flag, or the cap itself all mean nothing new launches.
+  // Shared with fleet lane-idle so both commands read the same fleet verdict.
   const gate = gateReason(admission.gate_reason);
-  const paused = Boolean(status.paused);
-  const closed = atCap || admission.admit === false || admission.decision === 'stop' || gate !== null || paused;
-  // A block the cap cannot explain: gate reasons, a pause, or a stop verdict while under the cap.
-  const nonCapClosed = gate !== null || paused || ((admission.admit === false || admission.decision === 'stop') && !atCap);
+  const { closed, nonCapClosed } = fleetAdmissionVerdict({
+    atCap, admit: admission.admit, decision: admission.decision, gateReason: gate, paused: status.paused,
+  });
   const lanes = Object.entries(record(status.lanes)).map(([name, row]): FleetAdmissionLane => {
     const lane = plain(name);
     if (!lane) throw new Error('Invalid lane');
