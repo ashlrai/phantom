@@ -60,6 +60,10 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Add `phm tools` and `phm tools parity` to show which lane has which tool and the top gaps ([#6664](https://github.com/ashlrai/phantom/pull/6664)), and `phm router catalog refresh`, a dry-run model catalog refresh that writes a report and patch under `~/.ashlr/router/catalog/` ([#6696](https://github.com/ashlrai/phantom/pull/6696)). See `docs/ROUTER-CATALOG.md`.
 - Add `phm agents apps` to operate other agent apps through one provider-neutral adapter interface ([#6688](https://github.com/ashlrai/phantom/pull/6688)), a read-only agent group chat projection over Agent Bus v2 ([#6567](https://github.com/ashlrai/phantom/pull/6567)), `phm subagent spawn` for cross-provider child plans ([#6774](https://github.com/ashlrai/phantom/pull/6774)), and `phm bots` for provider-neutral bot metadata and external bot seats ([#6781](https://github.com/ashlrai/phantom/pull/6781), [#6792](https://github.com/ashlrai/phantom/pull/6792)). Metadata grants no authority. See `docs/AGENT-APPS.md`, `docs/AGENT-CHAT.md`, `docs/SUBAGENTS.md`, `docs/BOTS.md` and `docs/BOT-SEATS.md`.
 - Add `phm pages publish|list` for report pages served only from the loopback dashboard ([#6662](https://github.com/ashlrai/phantom/pull/6662)), and `phm metrics impact`, the single `phantom-impact/v1` reward read from local evidence. See `docs/PAGES.md` and `docs/IMPACT-METRICS.md`.
+- Add `phm outbox from-log` to copy the leader's newest "Reply for Mason" from the plan log into `MASON-OUTBOX.md`. It previews by default, `--apply` appends one entry and shows it in the Leader chat, and the same reply is never added twice. Nothing leaves the team.
+- Add `phm plan check <file>` and `phm plan dup "<bet text>"` to vet a leader plan before queuing from it: too few bets, malformed READY lines, bets with no Acceptance, duplicate ids, bets on a drained lane, and bets that look already shipped (new, partly-shipped or shipped, by keyword overlap with CLI verbs, recent merged PR titles and docs headings). Read-only and offline.
+- Add `phm job pause|resume|stop|move <id>` to steer one fleet job, with `--lane`, `--dry-run` and `--json`, and `phm agents roster` for one unified live session roster that reports unknown on a probe timeout.
+- Show a one-line headline ("6 running, 2 stuck, 14 merged in the last hour") above the reporting tree in `phm fleet org`.
 
 ### Fixes
 
@@ -70,6 +74,7 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 - Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
 - Offer `spend` as a completion verb for `phm usage`, matching the documented `phm usage spend --json`, so `test/doc-facts.test.ts` passes again.
 - Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
+- Add the missing help row and completion verb for `phm outbox`, so the generated CLI reference and `test/cli-reference-drift.test.ts` cover it, and regenerate `docs/CODEMAP.md`, `docs/cli.md` and `docs/CLI-REFERENCE.md` after `plan` and `publish` landed.
 - Fix release auto-tag to admit a green full CI run on an ancestor commit and a manual full dispatch, to treat a missing current-version tag ref as not yet tagged, and to send the enqueue GraphQL variable it names ([#6304](https://github.com/ashlrai/phantom/pull/6304), [#6300](https://github.com/ashlrai/phantom/pull/6300), [#6299](https://github.com/ashlrai/phantom/pull/6299)).
 
 ### Removed
