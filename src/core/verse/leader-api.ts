@@ -21,6 +21,8 @@
  *   GET    /api/verse/leader/thread?limit=&before=      → {messages} oldest first
  *                                                        (limit 1–200, default 50;
  *                                                        before = message id or ISO)
+ *   GET    /api/verse/leader/thread/merged[?since=<hours>] → inbox + outbox + plan-log replies as one thread
+ *                                                        (leader-thread-merged-api.ts; read-only)
  *   POST   /api/verse/leader/thread {text, replyTo?}   → {message, reply, directive?}
  *   GET    /api/verse/leader/questions/<questionId> → exact saved question + capability
  *   POST   /api/verse/leader/questions/<questionId>/answer {text} → {message, reply}
@@ -71,6 +73,7 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
 import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
 import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
+import { handleLeaderThreadMerged, VERSE_LEADER_THREAD_MERGED_PATH } from './leader-thread-merged-api.js';
 import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo, type LeaderStateV1 } from '../vision/leader-types.js';
 import { leaderRoot, listMemoIds, readLeaderMemo } from '../vision/leader-memo.js';
 import {
@@ -834,6 +837,7 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
     }
     return true;
   }
+  if (path === VERSE_LEADER_THREAD_MERGED_PATH) return handleLeaderThreadMerged(ctx, req, res, method);
   if (path === '/api/verse/leader/attachments') return handleLeaderAttachmentList(ctx, req, res, method);
   if (path === VERSE_LEADER_ATTACHMENT_PATH) return handleLeaderAttachment(ctx, req, res, method);
   if (path.startsWith(`${VERSE_LEADER_ATTACHMENT_PATH}/`)) {
