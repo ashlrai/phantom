@@ -1,0 +1,90 @@
+/**
+ * The Pools board's words, derived only from pools.v1 (`phm pools`): which rows are behind, the next reset, and each
+ * row's labelled facts. Pure. A value the view does not hold reads "unknown" with the view's own reason, never zero.
+ */
+import type { PoolRow, PoolScope, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+
+export type PoolFilter = 'all' | 'behind' | 'pace' | 'unknown';
+export type PoolGroup = Exclude<PoolFilter, 'all'>;
+export const poolGroup = (row: PoolRow): PoolGroup => row.wasteRisk === 'unknown' ? 'unknown' : row.wasteRisk === 'low' ? 'pace' : 'behind';
+
+export function poolCounts(pools: readonly PoolRow[]): Record<PoolFilter, number> {
+  const counts = { all: pools.length, behind: 0, pace: 0, unknown: 0 };
+  for (const row of pools) counts[poolGroup(row)] += 1;
+  return counts;
+}
+
+export function poolsHeadline(pools: readonly PoolRow[]): string {
+  const { all, behind, unknown } = poolCounts(pools);
+  if (all === 0) return 'No resources reported.';
+  if (unknown === all) return 'No current reading for any resource. Nothing here is known to be on pace.';
+  return `${behind === 0 ? 'Nothing is behind' : `${behind} behind`}${unknown ? `, ${unknown} unknown` : ''}.`;
+}
+
+/** A length of time in the two largest units that matter: "2 d 12 h", "5 h 30 min", "40 min". */
+export function span(hours: number): string {
+  const minutes = Math.max(1, Math.round(hours * 60));
+  const days = Math.floor(minutes / 1440), rest = Math.floor(minutes % 1440 / 60), mins = minutes % 60;
+  if (days) return `${days} d${rest ? ` ${rest} h` : ''}`;
+  return rest ? `${rest} h${mins ? ` ${mins} min` : ''}` : `${mins} min`;
+}
+
+const HOUR_MS = 3_600_000;
+const ms = (iso: string | null): number => iso === null ? NaN : Date.parse(iso);
+/** Hours from the view's own clock to `iso`; null when either time is missing. Negative once it has passed. */
+export const hoursUntil = (iso: string | null, view: Pick<PoolsViewV1, 'generatedAt'>): number | null => {
+  const hours = (ms(iso) - ms(view.generatedAt)) / HOUR_MS;
+  return Number.isFinite(hours) ? hours : null;
+};
+
+/** The soonest reset still ahead, as last reported, whatever the state of that pool's usage reading. */
+export function nextReset(view: PoolsViewV1): { id: string; hours: number } | null {
+  let next: { id: string; hours: number } | null = null;
+  for (const row of view.pools) {
+    const hours = hoursUntil(row.resetAt, view);
+    if (hours !== null && hours > 0 && (next === null || hours < next.hours)) next = { id: row.id, hours };
+  }
+  return next;
+}
+
+/** Where the bar ends at reset if the current burn holds: used so far plus what the burn adds. */
+export function projectedEndPct(row: PoolRow): number | null {
+  return row.usedPct === null || row.projectedUnusedPct === null ? null : Math.max(row.usedPct, Math.round((100 - row.projectedUnusedPct) * 10) / 10);
+}
+
+export const KIND_WORD: Readonly<Record<PoolRow['kind'], string>> = { subscription: 'weekly plan', credits: 'credit balance', unmetered: 'no usage window' };
+const BASIS_WORD: Readonly<Record<NonNullable<PoolRow['burnBasis']>, string>> = { reported: 'reported', 'window-average': 'average over the window', held: 'lane is held' };
+const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+const pct = (value: number | null): string | null => value === null ? null : `${value}%`;
+
+export interface PoolFact { label: string; value: string | null; note?: string }
+
+/** The row's labelled readings. `value: null` is drawn as "unknown". An unmetered lane has no usage to list, only its jobs. */
+export function poolFacts(row: PoolRow, view: Pick<PoolsViewV1, 'generatedAt'>, localTime: (iso: string) => string): PoolFact[] {
+  const age = hoursUntil(row.asOf, view);
+  const read: PoolFact = { label: 'Read', value: age === null || age > 0 ? null : -age * 60 < 1 ? 'just now' : `${span(-age)} ago`, note: row.source ?? undefined };
+  const jobs: PoolFact = { label: 'Jobs', value: row.running === null ? null : `${row.running}${row.target === null ? '' : ` of ${row.target}`} running` };
+  if (row.kind === 'unmetered') return [jobs];
+  if (row.kind === 'credits') return [{ label: 'Balance', value: row.creditsRemaining === null ? null : `${number.format(row.creditsRemaining)} credits` }, jobs, read];
+  const until = hoursUntil(row.resetAt, view);
+  return [
+    { label: 'Used', value: pct(row.usedPct) },
+    { label: 'Left', value: pct(row.usedPct === null ? null : Math.round((100 - row.usedPct) * 10) / 10) },
+    { label: 'Resets', value: until === null ? null : until > 0 ? `in ${span(until)}` : 'passed', note: row.resetAt === null || until === null ? undefined : localTime(row.resetAt) },
+    { label: 'Burn', value: row.burnPctPerHour === null ? null : `${row.burnPctPerHour}%/h`, note: row.burnBasis ? BASIS_WORD[row.burnBasis] : undefined },
+    { label: 'Unused at reset', value: pct(row.projectedUnusedPct) },
+    jobs,
+    read,
+  ];
+}
+
+/** A per-model window's name: Claude reports them as `seven_day_<model>`. */
+export function scopeName(id: string): string {
+  const name = id.replace(/^seven_day_/, '').replaceAll('_', ' ');
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+/** One per-model window in words. A window whose reset has passed has no percentage to show. */
+export function scopeLine(scope: PoolScope): string {
+  if (scope.usedPct === null) return 'unknown: its window reset and there is no new reading';
+  return `${scope.usedPct}% used, ${scope.hoursLeft === null ? 'reset unknown' : `resets in ${span(scope.hoursLeft)}`}`;
+}

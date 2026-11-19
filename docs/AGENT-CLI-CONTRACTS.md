@@ -147,7 +147,14 @@ returns the identical object. Rows are sorted by `wasteRisk` (`high`, `medium`,
 `staleAfterMinutes`, past its reset, or missing has `wasteRisk: "unknown"`, a
 `reason`, and `null` numbers; never treat it as zero or as spare capacity.
 `burnBasis` says whether the burn was `reported`, a `window-average`, or zero
-because the lane is `held`. `gaps` lists what the view cannot see. Exit 0 with
+because the lane is `held`. `running` and `target` are the lane's jobs against
+its slot target as the dispatcher last reported them, and `source` names the
+reader behind the usage reading; each is `null` when not reported. `scopes`
+lists per-model windows (`id`, `usedPct`, `resetAt`, `hoursLeft`) beside the
+pool's own: it is empty unless the pool's reading is current, and a scope whose
+own reset has passed has `usedPct: null`. These fields were added to `pools.v1`
+without a version change; a reader must treat an absent one as unknown. `gaps`
+lists what the view cannot see. Exit 0 with
 JSON on stdout, 2 on an unknown flag.
 
 The `window-average` burn and unused-at-reset projection are anchored to the

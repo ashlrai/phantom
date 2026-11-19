@@ -1,7 +1,8 @@
 /** `phm pools`: thin argv layer over core/fleet/pools-view.ts. Read-only. */
 export const POOLS_USAGE = `Usage: phm pools [--text]
 One row per resource: used percent, reset time, hours left, burn per hour,
-projected unused percent at reset, waste risk and the reading's as-of time.
+projected unused percent at reset, waste risk, running jobs against the slot
+target, the reader behind the reading, its as-of time and any per-model windows.
 JSON (pools.v1) by default; --text for people. Most at risk first, then soonest reset.
 A stale or missing reading is unknown with a reason, never zero.`;
 

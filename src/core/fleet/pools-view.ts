@@ -18,6 +18,14 @@ const WEEK_HOURS = 168;
 const HOUR_MS = 3_600_000;
 
 export type PoolWasteRisk = 'high' | 'medium' | 'low' | 'unknown';
+/** One narrower window inside a pool (Claude meters some models on their own weekly window). */
+export interface PoolScope {
+  id: string;
+  /** Null once this window's reset has passed: the old percentage no longer describes it. */
+  usedPct: number | null;
+  resetAt: string | null;
+  hoursLeft: number | null;
+}
 export interface PoolRow {
   id: string;
   kind: 'subscription' | 'credits' | 'unmetered';
@@ -35,6 +43,13 @@ export interface PoolRow {
   /** Absolute balance for credits rows; not a percentage. */
   creditsRemaining: number | null;
   held: boolean | null;
+  /** Jobs running on the lane against its slot target, as the dispatcher last reported them. */
+  running: number | null;
+  target: number | null;
+  /** The reader that produced the usage reading; null when the ledger does not name one. */
+  source: string | null;
+  /** Per-model windows beside the pool's own. Empty unless the pool's reading is current. */
+  scopes: PoolScope[];
   /** When the reading was captured. A dispatcher tick never substitutes for it. */
   asOf: string | null;
   /** Why the row is unknown; null when the risk is known. */
@@ -66,7 +81,8 @@ function poolRow(lane: ResourceLaneRow, now: number): PoolRow {
   const row: PoolRow = {
     id: lane.lane, kind: lane.window === 'weekly' ? 'subscription' : lane.window === 'credits' ? 'credits' : 'unmetered',
     usedPct: null, resetAt: lane.resetAt, hoursLeft: null, elapsedPct: null, burnPctPerHour: null, burnBasis: null,
-    projectedUnusedPct: null, wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, held: lane.held, asOf,
+    projectedUnusedPct: null, wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, held: lane.held,
+    running: lane.running, target: lane.target, source: lane.observation?.source ?? lane.source, scopes: [], asOf,
     reason: null, summary: '',
   };
   const unknown = (reason: string): PoolRow => ({ ...row, reason, summary: `unknown: ${reason}` });
@@ -82,6 +98,13 @@ function poolRow(lane: ResourceLaneRow, now: number): PoolRow {
 
   const usedPct = clampPct(lane.usedPct);
   row.usedPct = round1(usedPct);
+  // Per-model windows ride on the same current reading; one whose own reset has passed is unknown, like the pool's.
+  row.scopes = (lane.quotaScopes ?? []).map(scope => {
+    const scopeReset = scope.resetAt === null ? NaN : Date.parse(scope.resetAt);
+    const open = !(scopeReset <= now);
+    return { id: scope.id, usedPct: open ? round1(clampPct(scope.usedPct)) : null, resetAt: scope.resetAt,
+      hoursLeft: open && Number.isFinite(scopeReset) ? round1((scopeReset - now) / HOUR_MS) : null };
+  });
   if (!Number.isFinite(resetMs)) return unknown('reset time not reported');
   const hoursLeft = (resetMs - now) / HOUR_MS;
   const elapsedHours = Math.max(0, WEEK_HOURS - hoursLeft);
@@ -130,6 +153,7 @@ export function formatPoolsText(view: PoolsViewV1): string {
     lines.push(`${row.id}: ${row.summary}`);
     lines.push(`  risk ${row.wasteRisk}; used ${cell(row.usedPct, '%')}; resets ${row.resetAt ?? 'unknown'} (${cell(row.hoursLeft, 'h')} left); `
       + `burn ${cell(row.burnPctPerHour, '%/h')}${row.burnBasis ? ` (${row.burnBasis})` : ''}; unused at reset ${cell(row.projectedUnusedPct, '%')}; as of ${row.asOf ?? 'unknown'}`);
+    for (const scope of row.scopes) lines.push(`  ${scope.id}: used ${cell(scope.usedPct, '%')}; resets ${scope.resetAt ?? 'unknown'} (${cell(scope.hoursLeft, 'h')} left)`);
   }
   for (const gap of view.gaps) lines.push(`Not covered: ${gap}`);
   return lines.join('\n');
