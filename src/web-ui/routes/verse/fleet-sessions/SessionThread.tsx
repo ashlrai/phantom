@@ -1,0 +1,183 @@
+/**
+ * One session as a conversation, opened from a row of the Sessions pane: a
+ * summary assembled from the records, then what was said to the session
+ * (right), what it said and did (left) and its recorded steps (centre), where
+ * Mason's messages were routed, and a reply box. A reply goes through the
+ * Leader's inbox, the route the Leader chat uses, aimed where the read's
+ * `reply` field says (`@RQ-…` for a running worker); nothing is sent to a
+ * session that is not running. Built on GET /api/verse/fleet/control/session-thread.
+ */
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { sessionAge } from '../../../../core/fleet/live-sessions.js';
+import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
+import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
+import { hasMutationHold } from '../../../data/auth-store.js';
+import { readFailureReason } from '../../../data/client.js';
+import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { clockTime } from '../leader/thread-model.js';
+import { inboxHeld } from '../leader-thread/inbox-held-model.js';
+import { sendLeaderInboxMessage } from '../leader-thread/leader-inbox-data.js';
+import { MessageMarkdown } from '../MessageMarkdown.js';
+import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { onRecord, replyText, routedRow, sessionThreadQuery, sourcesLine, STATE_WORD, threadFailure, THREAD_POLL_MS, THREAD_REPLY_MAX,
+  type SessionThread as Thread, type ThreadMessage } from './session-thread-model.js';
+import styles from './session-thread.module.css';
+
+interface SentLine { key: string; at: string; text: string }
+
+function Bubble({ message }: { message: ThreadMessage }) {
+  const at = message.at ? clockTime(message.at) : '';
+  if (message.kind === 'routing') {
+    // Where the Leader sent one of Mason's messages: a row per job, its pull request as a link.
+    return <li className={styles.routing} data-side="record" data-kind="routing">
+      <span className={styles.recordLabel}>{message.label}</span>
+      <ul className={styles.routed}>{message.text.split('\n').map(routedRow).map(row => <li key={row.text}>
+        {row.text}{row.pr && <> <a href={row.pr} target="_blank" rel="noopener noreferrer">PR #{/\/pull\/(\d+)/.exec(row.pr)![1]}</a></>}
+      </li>)}</ul>
+    </li>;
+  }
+  if (message.side === 'record') {
+    return <li className={styles.record} data-side="record">
+      <span className={styles.recordLabel}>{message.label}</span>{message.text && <span>{message.text}</span>}{at && <time dateTime={message.at!}>{at}</time>}
+    </li>;
+  }
+  return <li className={styles.entry} data-side={message.side} data-kind={message.kind}>
+    <span className={styles.label}>{message.label}{at && <> · <time dateTime={message.at!}>{at}</time></>}</span>
+    <div className={styles.bubble}>
+      {message.format === 'markdown' ? <MessageMarkdown text={message.text} />
+        : message.format === 'mono' ? <pre className={styles.mono}>{message.text}</pre>
+        : <p className={styles.plain}>{message.text}</p>}
+    </div>
+  </li>;
+}
+
+function ReplyBox({ thread, onSent }: { thread: Thread; onSent: (line: SentLine) => void }) {
+  const route = thread.reply;
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const inFlight = useRef(false);
+  if (route.to === 'none') return <p className={styles.noReply} role="note">{route.hint}</p>;
+  const outgoing = replyText(route, draft);
+  const tooLong = draft.trim() !== '' && outgoing === null;
+
+  async function send() {
+    if (inFlight.current || outgoing === null) return;
+    if (!hasMutationHold()) { setUnlockOpen(true); return; }
+    inFlight.current = true;
+    setSending(true);
+    setFailure(null);
+    try {
+      await sendLeaderInboxMessage(outgoing);
+      const at = new Date().toISOString();
+      onSent({ key: `sent:${at}`, at, text: outgoing });
+      setDraft('');
+    } catch (error) {
+      setFailure(inboxHeld(error)?.reason ?? readFailureReason(error));
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
+  }
+  const onSubmit = (event: FormEvent) => { event.preventDefault(); void send(); };
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); }
+  };
+  const name = route.to === 'leader' ? 'the Leader' : route.job;
+  return <form className={styles.reply} onSubmit={onSubmit}>
+    <textarea className={styles.box} rows={2} value={draft} maxLength={THREAD_REPLY_MAX} aria-label={`Message ${name}`}
+      placeholder={`Message ${name}. Enter sends, Shift+Enter adds a line.`} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
+    <button type="submit" className={styles.send} disabled={sending || outgoing === null}>{sending ? 'Sending…' : 'Send'}</button>
+    <p className={styles.hint}>{tooLong ? `Too long: a message holds ${THREAD_REPLY_MAX.toLocaleString('en-US')} characters.` : route.hint}</p>
+    {failure && <p className={styles.failure} role="alert">Not sent. {failure}</p>}
+    <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}
+      reason="Messaging a session requires the dispatch token." tokenHelp="the mutation token ashlr verse printed" />
+  </form>;
+}
+
+export function SessionThreadView({ thread, sent, onSent }: { thread: Thread; sent: readonly SentLine[]; onSent: (line: SentLine) => void }) {
+  const { session } = thread;
+  // Once the read holds Mason's own record of a message, the local copy steps aside for it.
+  const waiting = sent.filter(line => !onRecord(thread, line.text));
+  return <>
+    <div className={styles.summary} aria-label="Summary">
+      <span className={styles.summaryTitle}>Summary <span className={styles.muted}>from the records, as of {clockTime(thread.generatedAt) || 'an unknown time'}</span></span>
+      {thread.summary.length === 0 ? <p className={styles.plain}>Summary unknown: the read returned none.</p>
+        : thread.summary.map(line => <p key={line} className={styles.plain}>{line}</p>)}
+    </div>
+    {thread.messages.length === 0 && waiting.length === 0
+      ? <p className={styles.empty} role="status">Nothing is recorded for {session.id} yet.</p>
+      : <ol className={styles.log} aria-label={`Conversation with ${session.id}`}>
+        {thread.messages.map(message => <Bubble key={message.key} message={message} />)}
+        {waiting.map(line => <li key={line.key} className={styles.entry} data-side="other" data-kind="sent">
+          <span className={styles.label}>You, from here · <time dateTime={line.at}>{clockTime(line.at)}</time></span>
+          <div className={styles.bubble}><p className={styles.plain}>{line.text}</p></div>
+          <span className={styles.receipt}>In the Leader&apos;s inbox. It shows in this conversation once a record names it.</span>
+        </li>)}
+      </ol>}
+    <p className={styles.sources}>{sourcesLine(thread)}</p>
+    {thread.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{thread.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
+    <ReplyBox thread={thread} onSent={onSent} />
+  </>;
+}
+
+export interface SessionThreadProps {
+  id: string;
+  visible: boolean;
+  onBack: () => void;
+  /** Opens the session's live log (pause and stop live there); given only for a session with a job. */
+  onOpenLog?: (job: string) => void;
+}
+
+export function SessionThread({ id, visible, onBack, onOpenLog }: SessionThreadProps) {
+  const def = useMemo(() => sessionThreadQuery(id), [id]);
+  const read = useQuery(def, { enabled: visible, freshMs: THREAD_POLL_MS });
+  const refetch = useRefetch(def);
+  usePollWhileVisible(refetch, THREAD_POLL_MS, { enabled: visible });
+  const [sent, setSent] = useState<SentLine[]>([]);
+  const root = useRef<HTMLElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  const thread = read.data ?? null;
+  const loaded = thread !== null;
+  useEffect(() => { root.current?.focus(); }, [id]);
+  // Open at the newest message, the way a conversation reads; later refreshes leave the reading position alone.
+  useEffect(() => { if (loaded) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [loaded, sent.length]);
+
+  const failure = read.error ? threadFailure(read.error) : null;
+  const session = thread?.session;
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    // Escape in a reply box that holds words keeps them; it leaves only from an empty box or the conversation.
+    if (event.target instanceof HTMLTextAreaElement && event.target.value !== '') return;
+    // Escape inside the unlock dialog closes the dialog, not the conversation.
+    if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
+    onBack();
+  };
+  return <section ref={root} className={styles.root} tabIndex={-1} aria-label={`Session ${id}`} onKeyDown={onKeyDown}>
+    <header className={styles.header}>
+      <button type="button" className={styles.back} onClick={onBack} aria-label="Back to all sessions" title="Back to all sessions (Esc)">← Sessions</button>
+      {session?.kind === 'worker' && session.lane !== 'unknown' && <ProviderBadge of={session.lane} iconOnly size={14} />}
+      <strong className={styles.id}>{id}</strong>
+      {session && <span className={styles.state} data-state={session.state}>{STATE_WORD[session.state]}</span>}
+      {session && <span className={styles.muted}>
+        {session.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(session.lastMessageAgeSeconds)} ago`}
+      </span>}
+      <span className={styles.actions}>
+        {session?.jobId && onOpenLog && <button type="button" className={styles.link} onClick={() => onOpenLog(session.jobId!)}>Live log</button>}
+        {session?.prUrl && <a className={styles.link} href={session.prUrl} target="_blank" rel="noopener noreferrer">Pull request</a>}
+      </span>
+    </header>
+    {failure && thread && <p className={styles.notice} role="status">
+      {failure.kind === 'gone' ? 'This session has left the list. Showing the last read.' : 'Refresh failed. Showing the last read, which may be stale.'}
+    </p>}
+    {thread ? <SessionThreadView thread={thread} sent={sent} onSent={line => setSent(lines => [...lines, line])} />
+      : failure ? <div className={styles.fault} role="alert" data-kind={failure.kind}>
+        <p className={styles.plain}>{failure.text}</p>
+        {failure.kind !== 'unsupported' && <button type="button" className={styles.link} onClick={refetch}>Try again</button>}
+      </div>
+      : read.data === null ? <p className={styles.fault} role="alert">The server answered with something that is not a session conversation.</p>
+      : <p className={styles.loading} role="status">Reading {id}…</p>}
+    <div ref={end} />
+  </section>;
+}

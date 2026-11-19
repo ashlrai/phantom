@@ -7,6 +7,7 @@
  * Read only, and it needs a current read session like the session list. One
  * build per filter serves every caller for 5 seconds, and callers that arrive
  * while it is running share it, so polling panes cost one fleet read per 5 s.
+ * The order trace behind the routing lines is shared across filters for 15 s.
  *
  *   200 the threads · 400 bad query · 401 no read session · 405 not GET
  *   503 the session list could not be read
@@ -15,6 +16,7 @@ import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { SESSION_FILTER_RE } from '../fleet/live-sessions.js';
 import { readLeaderSessionFacts } from '../fleet/live-sessions-read.js';
+import { readOrderTrace, type OrderTraceV1 } from '../fleet/order-trace.js';
 import type { LeaderSessionFacts } from '../fleet/session-tree.js';
 import type { SessionThreadsV1 } from '../fleet/session-threads.js';
 import { readSessionThreads } from '../fleet/session-threads-read.js';
@@ -22,6 +24,8 @@ import { throttledLiveMap } from './fleet-live-map-api.js';
 
 export const SESSION_THREADS_PATH = '/api/verse/fleet/control/session-threads';
 const LEADER_FACTS_MIN_INTERVAL_MS = 15_000;
+/** The trace reads job prompts off disk; the Leader pane's own orders read polls no faster. */
+const ORDER_TRACE_MIN_INTERVAL_MS = 15_000;
 /** Filters are caller text, so the per-filter builds kept are bounded. */
 const FILTERS_KEPT = 16;
 
@@ -31,13 +35,14 @@ export type SessionThreadsRead = (filter: SessionThreadsFilter) => Promise<Sessi
 /** The default read: one throttled build per filter. */
 export function defaultSessionThreadsRead(): SessionThreadsRead {
   const leader = throttledLiveMap<LeaderSessionFacts>(() => readLeaderSessionFacts(), Date.now, LEADER_FACTS_MIN_INTERVAL_MS);
+  const orders = throttledLiveMap<OrderTraceV1>(() => readOrderTrace(), Date.now, ORDER_TRACE_MIN_INTERVAL_MS);
   const builds = new Map<string, () => Promise<SessionThreadsV1>>();
   return filter => {
     const key = JSON.stringify([filter.lane, filter.repo, filter.live === true]);
     let build = builds.get(key);
     if (!build) {
       if (builds.size >= FILTERS_KEPT) builds.clear();
-      build = throttledLiveMap<SessionThreadsV1>(() => readSessionThreads({ ...filter, readLeader: () => leader() }));
+      build = throttledLiveMap<SessionThreadsV1>(() => readSessionThreads({ ...filter, readLeader: () => leader(), readOrders: () => orders() }));
       builds.set(key, build);
     }
     return build();

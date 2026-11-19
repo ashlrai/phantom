@@ -57,6 +57,9 @@ import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
 import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
 import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
+import { OrderRouting } from './OrderRouting.js';
+import { inboxAtForLine, lineRouting, routingInFlight, type LineRouting } from './thread-routing-model.js';
+import { requestWallSession } from '../session-wall/wall-selection.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -287,6 +290,19 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     return out;
   }, [merged, ownerLines, busRows, now, needsYouOnly]);
 
+  // Where each of Mason's inbox messages went: the jobs citing it, by lane and stage.
+  const routings = useMemo(() => {
+    const out = new Map<string, LineRouting>();
+    for (const item of items) {
+      if (item.type !== 'line' || item.line.who !== 'mason') continue;
+      const routing = lineRouting(trace, inboxAtForLine(item.line, inbox), { lineAtMs: item.line.at, nowMs: now, skipJob: steerTargetId(item.line.text), quiet: item.line.quiet !== undefined });
+      if (routing) out.set(item.key, routing);
+    }
+    return out;
+  }, [items, trace, inbox, now]);
+  const routedInFlight = useMemo(() => routingInFlight([...routings.values()]), [routings]);
+  const routingUnavailable = trace === null && (orders.error !== undefined || orders.data !== undefined);
+
   const matches = useMemo(() => threadMatches(items, findQuery), [items, findQuery]);
   const currentIndex = matches.length ? findIndex % matches.length : 0;
   const currentKey = matches[currentIndex];
@@ -443,9 +459,12 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       if (item.type === 'day') return <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>;
       if (item.type !== 'line') return <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />;
       const target = item.line.who === 'mason' ? steerTargetId(item.line.text) : null;
+      const routing = routings.get(item.key);
       return <Fragment key={item.key}>
         <LineView line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />
         {target !== null ? <SteerTargetLine id={target} text={item.line.text} trace={trace} merges={merges} liveByJob={liveByJob} now={now} /> : null}
+        {routing ? <OrderRouting routing={routing} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }}
+          onOpenConversation={job => { requestWallSession(job); openDockPane('session-wall'); }} /> : null}
       </Fragment>;
     });
   }
@@ -473,6 +492,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <button type="button" className={styles.tool} aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button>
       <button type="button" className={styles.tool} onClick={() => setFindOpen(true)}>Find</button>
       <span className={styles.toolbarMeta}>
+        {routingUnavailable ? <span data-tone="unknown" title="The order trace did not answer, so messages show no routing.">Routing unavailable</span>
+          : routedInFlight > 0 ? <span title="Jobs from the messages below that are queued, launched or awaiting merge">{routedInFlight} routed {routedInFlight === 1 ? 'job' : 'jobs'} in flight</span> : null}
         <span>{busRows.length} bus replies</span>
         {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
       </span>

@@ -1,4 +1,5 @@
-<!-- Thanks for contributing to ashlr-hub! -->
+<!-- Thanks for contributing to Phantom! Humans and coding agents use the same
+     path: see CONTRIBUTING.md and AGENTS.md ("Working in this repository"). -->
 
 ## What & why
 
@@ -6,24 +7,26 @@
 
 ## How it was verified
 
-- [ ] `npm run typecheck` clean
-- [ ] `npm run lint` clean
-- [ ] `npm run build` succeeds
-- [ ] Hermetic test suite green: `HOME=$(mktemp -d) npx vitest run --no-file-parallelism` (no decrease in test count; new behavior has tests)
-- [ ] `ashlr verify-safety` still passes (5/5) if any safety-relevant code changed
+<!-- Tick what you ran; say what you skipped and why. Local checks do not
+     replace the required hosted CI (Merge Gate stays the full check). -->
 
-## Safety checklist (for anything touching the autonomous path)
+- [ ] `node scripts/verify-changed.mjs` clean (lint of changed files plus one type check; run once, in the foreground)
+- [ ] Affected backend tests pass hermetically: `npm run test:ci -- test/<file>.test.ts` (new behavior has tests; no test was weakened or removed)
+- [ ] `npm run test:web` if `src/web-ui/` changed
+- [ ] `npm run check:docs` if docs changed; `npx vitest run test/doc-facts.test.ts` if a documented command, flag or script changed
+- [ ] `npm run build` succeeds if build, packaging or CLI wiring changed
+- [ ] `phm verify-safety` still passes if safety-relevant code changed
 
-- [ ] No new outward capability (push / PR / deploy / apply) outside the Approval Inbox
-- [ ] Autonomous work stays sandboxed (never the real working tree)
-- [ ] Enrollment / kill-switch / budget guards unchanged or strengthened (never weakened)
-- [ ] No code-to-cloud by default; secrets never logged
-- [ ] If a guard's behavior changed, the change is intentional and the regression test was updated deliberately
-- [ ] **Behavior changes are flag-gated** — new behavior is off by default; `--flag-off` parity verified (see CONTRIBUTING.md invariants)
+## Safety invariants (see CONTRIBUTING.md)
 
-## Dependency / zero-dep invariant
+- [ ] None of the [safety invariants](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#safety-invariants-contributors-must-never-weaken) is weakened: enrollment gate, kill-switch, sandboxed engines with diff-only capture, blocked sandbox push, signed provenance, merge policy
+- [ ] No secret values, tokens or personal absolute paths in code, logs, docs or this PR
+- [ ] Exported signature changes update `CONTRACT.md` or the matching `docs/contracts/CONTRACT-M<N>.md`
+- [ ] If authority drift failed, `npm run authority:regen` was run and each new Tier-1 root is listed below for CODEOWNERS review
 
-- [ ] No new runtime dependencies added to `dependencies` in `package.json` (the zero-runtime-dep core invariant; see CONTRIBUTING.md)
+## Dependencies
+
+- [ ] No new runtime dependency, or the [dependency boundary](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#dependency-boundary) was updated together with the manifest, lockfile and inventory
 
 ## Notes
 

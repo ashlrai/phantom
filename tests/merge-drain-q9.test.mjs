@@ -310,3 +310,69 @@ test('report totals cover every scanned PR', async () => {
   assert.equal(report.totals.skipped, 1);
   assert.deepEqual(report.prs.map((r) => r.number), [140, 141, 142, 143]);
 });
+
+test('already merged: a PR that merged after listing reports merged and is never recut or updated', async () => {
+  const merged = fixture(140, { state: 'closed', merged: true, merged_at: '2026-11-18T00:00:00Z',
+    mergeable: null, mergeable_state: 'unknown', auto_merge: null });
+  const closed = fixture(141, { state: 'closed', merged: false, mergeable: null, auto_merge: null });
+  const h = hub({
+    pages: [[row(fixture(140)), row(fixture(141))]],
+    pulls: { 140: merged, 141: closed },
+  });
+  const report = await drain(h);
+  const status = byNumber(report);
+  assert.equal(status[140], 'merged');
+  assert.equal(status[141], 'closed');
+  assert.equal(report.prs.some((r) => r.ask), false);
+  assert.equal(mutationCalls(h.calls).length, 0);
+});
+
+test('already merged: a failing update-branch call that raced a merge resolves to merged', async () => {
+  const h = hub({
+    pages: [[row(fixture(150))]],
+    pulls: { 150: seq(fixture(150), fixture(150, { state: 'closed', merged: true, auto_merge: null })) },
+    puts: { 150: seq(httpError(422)) },
+  });
+  const report = await drain(h, { retries: 2 });
+  assert.equal(report.prs[0].status, 'merged');
+  assert.equal(h.attempts.put.get(150), 1);
+});
+
+test('conflict: an update-branch refusal followed by a dirty observation yields a recut ask', async () => {
+  const h = hub({
+    pages: [[row(fixture(160))]],
+    pulls: { 160: seq(fixture(160), fixture(160, { mergeable: false, mergeable_state: 'dirty' })) },
+    puts: { 160: seq(httpError(422)) },
+  });
+  const report = await drain(h, { retries: 2 });
+  assert.equal(report.prs[0].status, 'conflict');
+  assert.match(report.prs[0].ask.id, /^RQ-RECUT-[a-f0-9]{64}$/);
+  assert.equal(h.attempts.put.get(160), 1);
+});
+
+test('conflict: a still-computing mergeable settles to dirty within the retry bound', async () => {
+  const h = hub({
+    pages: [[row(fixture(170))]],
+    pulls: { 170: seq(fixture(170, { mergeable: null, mergeable_state: 'unknown' }),
+      fixture(170, { mergeable: false, mergeable_state: 'dirty' })) },
+  });
+  const report = await drain(h, { retries: 2 });
+  assert.equal(report.prs[0].status, 'conflict');
+  assert.equal(mutationCalls(h.calls).length, 0);
+});
+
+test('recut ask: auto-merge through the queue, no bypass, and a retried drain re-emits the same id', async () => {
+  const dirty = fixture(180, { mergeable: false, mergeable_state: 'dirty' });
+  const run = async () => (await drain(hub({ pages: [[row(dirty)]], pulls: { 180: dirty } }))).prs[0];
+  const first = await run();
+  const second = await run();
+  assert.equal(first.ask.id, second.ask.id);
+  assert.match(first.ask.task, /auto-merge/);
+  assert.match(first.ask.task, /protected merge queue/);
+  assert.match(first.ask.task, /already merged/);
+  assert.match(first.ask.task, /No admin bypass/);
+  // A moved source head is a different revision, so it gets a different ask.
+  const moved = fixture(180, { mergeable: false, mergeable_state: 'dirty', head: { ...dirty.head, sha: sha('c') } });
+  const third = (await drain(hub({ pages: [[row(dirty)]], pulls: { 180: moved } }))).prs[0];
+  assert.notEqual(third.ask.id, first.ask.id);
+});

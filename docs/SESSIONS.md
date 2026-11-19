@@ -32,6 +32,26 @@ says which record is missing. Its model is not recorded anywhere yet. In the
 Sessions pane, selecting the leader's row opens the Leader chat.
 See [live sessions](FLEET-API.md#live-sessions).
 
+Every row in the Sessions pane also has a **Thread** button. It opens that
+session as a conversation in the same pane: a summary assembled from the
+session's records, then what was said to it on the right, what it said and did
+on the left, and its recorded steps in the centre. A "Routed to" record lists
+the jobs serving one of your messages, one row per job with its lane, state
+and pull request link. A line under the conversation says whether activity,
+bus messages, your messages and routing are shown, not recorded or unknown,
+and anything left out is listed. The reply box writes to the Leader's inbox,
+the same route as the Leader chat, with the session's job id in front
+(`@RQ-...`) so the Leader knows which session you mean. Where a reply goes is
+the server's answer, the `reply` field of the read, so the pane and
+`phm sessions thread` agree. Enter sends and Shift+Enter adds a line. The pane
+asks for the dispatch token when none is held, and a refused send keeps your
+words and shows the reason. What you sent shows as "You, from here" until the
+next read carries the inbox's own record of it. A session that is not running
+has no reply box and a line saying why. **Live log** opens the worker log,
+where pause and stop live. Escape or **Sessions** returns to the tree. The
+conversation is read from `GET /api/verse/fleet/control/session-thread` every
+10 seconds; a server without that read says so and shows no conversation.
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
@@ -47,11 +67,33 @@ It prints a count by state, then a few lines per session, leader first: the
 summary and its newest three messages, each on one line, with a note of how
 many earlier ones there are. What you wrote counts: the leader's lines include
 your Leader inbox messages, and a worker's the ones you aimed at it with
-`@<job>`. `--lane`, `--repo` and `--live` narrow it the same way they narrow
+`@<job>`. Routing counts too: under each of your messages the leader's lines
+list the jobs serving it, and a worker's summary names the message it serves.
+`--lane`, `--repo` and `--live` narrow it the same way they narrow
 the tree. It shows up to 40 sessions and says how many it left out. `--json`
 prints `fleet.session-threads.v1`; when the session list cannot be read it
 says so and exits 1 instead of printing an empty list. See
 [session threads](FLEET-API.md#session-threads).
+
+The console's Conversations pane puts every session on one screen. Each
+session is a card: its id, state and when it last spoke, the summary, and its
+newest messages, with what was said to it on the right and what it said on the
+left. The pane makes one request for all of them
+(`GET /api/verse/fleet/control/session-threads`) and asks again every 10
+seconds while it is on screen. The buttons above the cards show only the
+sessions in one state. Arrow keys or J and K move between cards, Enter opens
+one and Esc comes back to the same card. An opened card shows that session's
+whole conversation. Under each of your messages in the leader's conversation
+is a short list of the jobs the Leader routed it to, each with its lane, how
+far it got and a link to its pull request; a worker's conversation opens with
+the message it serves. A line at the bottom names what each source held, so
+an empty conversation is not mistaken for a quiet session and unread routing
+is not mistaken for a message nobody picked up. "Write to it" puts `@<job id>`
+in the Leader's reply box for a worker that is still running; nothing is sent
+until you send it there. "Live log" opens the worker log, where pause and
+stop live. A server without the read says so and offers the Sessions pane.
+The Leader chat opens this pane on one session: "Conversation" on a routed
+job there shows that job's conversation, and Esc returns to every session.
 
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
@@ -68,7 +110,8 @@ request. A job counts only when its prompt cites your message's time. A message 
 records the worker reading it, so its label says "Mason to the Leader, aimed
 at" the job. Lines starting `>` were said to the session, `<` is the
 session speaking and `-` is a recorded step. The summary is assembled from the
-records, not written by a model. `--json` prints `fleet.session-thread.v1`;
+records, not written by a model. A "To write to it" line near the end says
+where a message to that session goes, or why none can be sent. `--json` prints `fleet.session-thread.v1`;
 an unknown id exits 2. See [session thread](FLEET-API.md#session-thread).
 
 For old heartbeats or quiet jobs, run `phm sessions reconcile --json` (omit

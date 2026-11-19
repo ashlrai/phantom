@@ -863,6 +863,17 @@ def _maxruntime_identity_alive(identity):
     except Exception: current_start = None
     return not current_start or current_start == start_time
 
+def _maxruntime_pid_absent(pid):
+    """Affirmative absence only: the pid has no process group. A missed
+    snapshot or failed start-time probe never counts as absence."""
+    try:
+        os.getpgid(pid)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
 def _maxruntime_identities(marker):
     identities = set()
     try:
@@ -873,6 +884,7 @@ def _maxruntime_identities(marker):
         try: row = json.loads(line)
         except (TypeError, ValueError): continue
         if not isinstance(row, dict): continue
+        if row.get("pending") is True: continue
         pid, start_time = row.get("pid"), row.get("start")
         if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
             identities.add((pid, start_time))
@@ -881,10 +893,55 @@ def _maxruntime_escalated(marker):
     try:
         with open(marker) as f: return "KILL" in {line.strip() for line in f}
     except OSError: return True
-def _write_maxruntime_identities(marker, identities):
+def _maxruntime_done_identities(marker):
+    done = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return done
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("done") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            done.add((pid, start_time))
+    return done
+def _maxruntime_pending_identities(marker):
+    """TERM candidates the first pass could not verify; a later non-pending
+    row for the same identity -- or the same pid for an unknown-start
+    candidate -- supersedes them."""
+    pending, termed = set(), set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return pending
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1):
+            continue
+        identity = (pid, start_time if isinstance(start_time, str) and start_time else None)
+        if row.get("pending") is True: pending.add(identity)
+        elif row.get("done") is not True: termed.add(identity)
+    return {(pid, start) for pid, start in pending
+            if not any(tpid == pid and (start is None or start == tstart) for tpid, tstart in termed)}
+
+def _maxruntime_pending_identity_alive(identity, leaders):
+    pid, start_time = identity
+    if isinstance(start_time, str) and start_time:
+        return _maxruntime_identity_alive(identity)
+    # Unknown-start candidate: alive while its pid still leads the job; absent
+    # only on affirmative proof (no process group), never on a failed probe.
+    if any(leader_pid == pid for leader_pid, _ in leaders): return True
+    return not _maxruntime_pid_absent(pid)
+def _write_maxruntime_identities(marker, identities, pending=()):
     with open(marker, "w") as f:
         for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
             f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+        for pid, start_time in sorted(pending, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time, "pending": True}, separators=(",", ":")) + "\n")
 def job_watchdog():
     jobs = set(job_leaders)
     jobs.update(os.path.basename(path)[:-len(".maxruntime")] for path in glob.glob(RUN + "/*.maxruntime"))
@@ -900,17 +957,53 @@ def job_watchdog():
             age = NOW - os.path.getmtime(src)
             mk = RUN + "/" + j + ".maxruntime"
             if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
+                if not _maxruntime_escalated(mk):
+                    # Candidates the first TERM could not verify stay pending
+                    # in the marker; retry them each tick so a recovered
+                    # identity is TERM'd and recorded before escalation ends.
+                    pending_ids = sorted(_maxruntime_pending_identities(mk), key=lambda identity: (identity[0], identity[1] or ""))
+                    retry_known = [identity for identity in pending_ids if isinstance(identity[1], str) and identity[1]]
+                    retry_unknown = [identity for identity in pending_ids if identity[1] is None]
+                    termed_now = _kill_leaders(retry_known, signal.SIGTERM, j) if retry_known else []
+                    leader_pids = {pid for pid, _ in leaders}
+                    if retry_unknown:
+                        wanted = {pid for pid, _ in retry_unknown}
+                        current = [identity for identity in leaders
+                                   if identity[0] in wanted and isinstance(identity[1], str) and identity[1]]
+                        termed_now += _kill_leaders(current, signal.SIGTERM, j)
+                        gone_unknown = []
+                        for pid, _start in retry_unknown:
+                            if pid in leader_pids: continue
+                            if _maxruntime_pid_absent(pid): gone_unknown.append(pid)
+                        if gone_unknown:
+                            with open(mk, "a") as f:
+                                for pid in gone_unknown:
+                                    f.write(json.dumps({"pid": pid, "start": None}, separators=(",", ":")) + "\n")
+                    if termed_now:
+                        with open(mk, "a") as f:
+                            for pid, start_time in sorted(termed_now):
+                                f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+                        ev("REAP TIMEOUT %s SIGTERM retry" % j)
                 if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
                     expected = _maxruntime_identities(mk)
-                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=expected)
+                    done = _maxruntime_done_identities(mk)
+                    pending = [identity for identity in sorted(expected) if identity not in done]
+                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=set(pending)) if pending else []
                     if signalled:
-                        with open(mk, "a") as f: f.write("KILL\n")
+                        with open(mk, "a") as f:
+                            for pid, start_time in signalled:
+                                f.write(json.dumps({"pid": pid, "start": start_time, "done": True}, separators=(",", ":")) + "\n")
+                        done.update(signalled)
                         ev("REAP TIMEOUT %s SIGKILL" % j)
-                    elif any(_maxruntime_identity_alive(identity) for identity in expected):
-                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
-                    else:
+                    unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
+                    unresolved += [identity for identity in _maxruntime_pending_identities(mk)
+                                   if _maxruntime_pending_identity_alive(identity, leaders)]
+                    if not unresolved:
                         with open(mk, "a") as f: f.write("KILL\n")
-                        ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
+                        if not signalled:
+                            ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
+                    else:
+                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
                 continue
             if age < limit: continue
             if not os.path.exists(RUN + "/" + j + ".rc"):
@@ -918,7 +1011,9 @@ def job_watchdog():
             ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
             term_identities = _kill_leaders(leaders, signal.SIGTERM, j)
             if term_identities:
-                _write_maxruntime_identities(mk, term_identities)
+                termed_set = set(term_identities)
+                pending = [identity for identity in leaders if identity not in termed_set]
+                _write_maxruntime_identities(mk, term_identities, pending)
             else:
                 ev("REAP TIMEOUT %s identity-unknown retry" % j)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))

@@ -5,7 +5,8 @@
  *
  * Pure, and no source of its own. Each entry is the same thread
  * `phm sessions thread <id>` builds (session-thread.ts), cut down to its
- * summary and newest messages (what Mason wrote to it included), so a screen
+ * summary and newest messages (what Mason wrote to it and where the Leader
+ * routed it included), so a screen
  * that shows every session at once makes one request instead of one per
  * session. Sessions come in the order of the session tree: the leader, then
  * each worker followed by its helpers. The reader lives in
@@ -14,6 +15,7 @@
 import type { AgentMessages } from './agent-messages.js';
 import { flatTree, type LiveSessionsV1 } from './live-sessions.js';
 import type { LeaderRepliesV1 } from './mason-outbox.js';
+import type { OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import {
   buildSessionThread, type SessionThreadMessage, type SessionThreadOwnerRead, type SessionThreadSession, type SessionThreadSource,
@@ -47,7 +49,7 @@ export interface SessionThreadsV1 {
   counts: { sessions: number; shown: number; states: Record<SessionThreadState, number> };
   threads: SessionThreadsEntry[];
   /** `unavailable` sessions means the list could not be read: `threads` is empty and that is not "no sessions". */
-  sources: { sessions: 'available' | 'unavailable'; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource };
+  sources: { sessions: 'available' | 'unavailable'; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource };
   /** Plain words for what the whole read could not show. Each thread lists its own. */
   gaps: string[];
 }
@@ -64,6 +66,8 @@ export interface SessionThreadsParts {
   replies?: LeaderRepliesV1 | null;
   /** The Leader inbox, newest first, shared by the leader's and every worker's thread. Undefined when not asked for; null when the read failed. */
   owner?: SessionThreadOwnerRead | null;
+  /** The order trace, shared by the leader's thread and every worker's that has a job. Undefined when not asked for; null when the read failed. */
+  orders?: OrderTraceV1 | null;
 }
 
 /** The sessions a threads read shows, in tree order, and how many the list holds in all. */
@@ -83,7 +87,7 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
   const base = { schema: SESSION_THREADS_SCHEMA, generatedAt: new Date(now).toISOString(),
     filter: { lane: list.filter.lane, repo: list.filter.repo, live: list.live } } as const;
   if (!parts.sessionsRead) {
-    return { ...base, counts: { sessions: 0, shown: 0, states }, threads: [], sources: { sessions: 'unavailable', bus: 'none', owner: 'none', replies: 'none' },
+    return { ...base, counts: { sessions: 0, shown: 0, states }, threads: [], sources: { sessions: 'unavailable', bus: 'none', owner: 'none', replies: 'none', orders: 'none' },
       gaps: ['Sessions unknown: the session list could not be read.'] };
   }
   const { shown, total } = threadSessions(list);
@@ -93,7 +97,9 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
     const thread = buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus,
       ...(jobId !== null && parts.activity.has(jobId) ? { activity: parts.activity.get(jobId) } : {}),
       ...(kind !== 'subagent' && parts.owner !== undefined ? { owner: parts.owner } : {}),
-      ...(kind === 'leader' && parts.replies !== undefined ? { replies: parts.replies } : {}) }, now);
+      ...(kind === 'leader' && parts.replies !== undefined ? { replies: parts.replies } : {}),
+      // Routing goes to the same sessions the single thread's reader gives it to: the leader and a worker with a job.
+      ...((kind === 'leader' || (kind === 'worker' && jobId !== null)) && parts.orders !== undefined ? { orders: parts.orders } : {}) }, now);
     if (!thread.session) continue;
     states[thread.session.state] += 1;
     threads.push({ session: thread.session, summary: thread.summary, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
@@ -106,10 +112,12 @@ export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsP
   const ownerDown = parts.owner === null || parts.owner?.sourceState === 'degraded';
   if (ownerDown) gaps.push('Messages from Mason unknown: the Leader inbox could not be read.');
   const repliesDown = parts.replies === null || parts.replies?.sourceState === 'unknown';
-  const source = (name: 'bus' | 'owner' | 'replies', down: boolean): SessionThreadSource =>
+  const ordersDown = parts.orders === null || parts.orders?.sources.inbox === 'degraded';
+  if (ordersDown) gaps.push('Routing unknown: the order trace could not be read.');
+  const source = (name: 'bus' | 'owner' | 'replies' | 'orders', down: boolean): SessionThreadSource =>
     (down ? 'unavailable' : threads.some(entry => entry.sources[name] === 'available') ? 'available' : 'none');
   return { ...base, counts: { sessions: total, shown: threads.length, states }, threads,
-    sources: { sessions: 'available', bus: source('bus', busDown), owner: source('owner', ownerDown), replies: source('replies', repliesDown) }, gaps };
+    sources: { sessions: 'available', bus: source('bus', busDown), owner: source('owner', ownerDown), replies: source('replies', repliesDown), orders: source('orders', ordersDown) }, gaps };
 }
 
 const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { session: '<', other: '>', record: '-' };

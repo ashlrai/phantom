@@ -79,7 +79,14 @@ Home's Merged PRs card opens the Throughput pane. It leads with the report's
 headline and a Delivery flow chart: jobs launched, PRs published and PRs merged
 in the window, each with its exact count and its share of the step before. The
 counts are what happened inside the window, not one batch followed through, and
-the chart says so. Pick 6 hours, 24 hours (the default) or 7 days; each choice
+the chart says so. Above it a row of figures gives launched, published, merged,
+the share of finished jobs that changed nothing and the median time to merge,
+each over a line of its own hours, with the busiest hour named. Under the two
+hourly charts each lane has a card: the provider's mark, its merged count, a bar
+against the lane that merged most, its merges hour by hour and its launched,
+published, merge time and changed-nothing readings. A figure the report does
+not hold reads unknown and has no line under it.
+Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
@@ -99,6 +106,22 @@ zero. The same rows for agents:
 ```sh
 phm pools
 ```
+
+The Usage pane is the provider-account side of the same picture: one card per
+signed-in account (Claude, Codex, Grok) with its brand mark, plan and exactly
+the windows the provider reported. The headline counts where the accounts
+stand (flagged at a limit, not readable, still checking, no reading) and the
+line under it names the next reset. A limit is counted only when the provider
+flagged it, never from a 100% reading, because credits can keep that account
+usable. Each window shows its bar, percent and reset as a countdown plus a
+local clock time; Claude's reset is the provider's own sentence, so no clock
+time is derived for it. A window with no reading has a hatched bar, not an
+empty one. Tokens last hour totals the lanes that reported a figure, says how
+many did not, and draws each lane as a thin bar against the busiest lane.
+Accounts come from `GET /api/verse/accounts` and lane tokens from
+`GET /api/verse/fleet/runs`. `phm usage limits [--json]` prints the same
+accounts, headline and next reset in a terminal; one core module
+(`src/core/usage/account-limits.ts`) computes them for both.
 
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
@@ -126,6 +149,23 @@ Needs you approvals and the comms inbox, the leader order box, and the recent
 merge list together. These links open the existing screens and preserve their
 permissions and confirmation flows. The merge list uses the live fleet runs
 read and shows unknown or unavailable data as such.
+
+The Leader chat shows where each of your messages went. Under a message that
+became work sits a routing trail: one row per job whose prompt cites the
+message, with the lane it was routed to, a four-step track (queued, launched,
+published, merged) and the recorded result. On a job that has launched, the
+id opens its Worker log and "Conversation" opens what that session was told,
+said and did in the Conversations pane; a published or merged job links its
+PR. A job that ended with nothing to publish says so. A message from the last
+six hours that no job cites reads "Not routed to a lane yet". If the job
+prompts could not be read it reads routing unknown instead, and a job with no
+recorded lane reads "lane unknown". The toolbar counts the routed jobs still
+in flight, or says "Routing unavailable" when the trace does not answer. The
+trail reads `GET /api/verse/leader/orders`, the same order trace as:
+
+```sh
+phm fleet orders --json
+```
 
 ## Fleet telemetry and Show Mode
 

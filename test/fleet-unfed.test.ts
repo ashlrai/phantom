@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdFleetUnfed } from '../src/cli/fleet-unfed.js';
-import { currentUnfed, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
+import { currentUnfed, foldMarketOverrides, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -36,6 +36,8 @@ const READY = [
 ].join('\n');
 const unfedRow = (ts: number, lanes: Record<string, unknown>) =>
   JSON.stringify({ schema: 'work-market.v1', event: 'unfed_capacity', ts, lanes });
+const decisionRow = (job: string, ts: number, override: unknown = { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback' }) =>
+  JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job, ts, chosen_lane: 'claude', preferred_lane: 'codex-personal', override });
 
 async function run(args: string[] = ['--json']) {
   const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -130,6 +132,68 @@ describe('foldUnfedHistory', () => {
   });
 });
 
+describe('foldMarketOverrides', () => {
+  const now = 1_800_000_000_000;
+  const t = now / 1000;
+  const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts,
+      chosen_lane: 'claude', preferred_lane: 'codex-personal',
+      override: { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', preferred_lane_blocked_by: ['saturated'] },
+      ...extra,
+    });
+
+  it("collapses route decisions to each job's latest in-window decision", () => {
+    const journal = [
+      // Same job decided twice: only the latest counts, and it ran on-hint.
+      decision('RQ-A', t - 300),
+      decision('RQ-A', t - 60, { override: null, chosen_lane: 'codex-personal' }),
+      decision('RQ-B', t - 120),
+      decision('RQ-B', t - 30, { override: { from: null, to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-C', t - 90, { chosen_lane: null, override: null, reason_codes: ['no_runnable_lane'] }),
+      // Out-of-window, future, missing-ts, malformed and non-decision rows never count.
+      decision('RQ-D', t - 25 * 3600),
+      decision('RQ-E', t + 3600),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-F' }),
+      '{"event":"route_decision" broken',
+      unfedRow(t - 60, {}),
+      // Overrides with malformed lane or reason fields are not counted.
+      decision('RQ-G', t - 40, { override: { from: 'bad lane!', to: 'claude', reason: 'preferred_lane_fallback' } }),
+      decision('RQ-H', t - 40, { override: { from: 'codex-personal', to: 'claude', reason: 'NOT_A_CODE' } }),
+    ].join('\n');
+    expect(foldMarketOverrides(journal, now, 24)).toEqual({
+      available: true,
+      decided: 5, // RQ-A, RQ-B, RQ-C, RQ-G, RQ-H
+      overridden: 1, // only RQ-B's latest decision left its (open) hint
+      byReason: { resource_fit: 1 },
+      lanes: [{ from: null, to: 'devin', reason: 'resource_fit', jobs: 1 }],
+    });
+  });
+
+  it('tallies overrides by reason and hinted->chosen lane, largest first', () => {
+    const journal = [
+      decision('RQ-A', t - 100),
+      decision('RQ-B', t - 90),
+      decision('RQ-C', t - 80, { override: { from: 'codex-personal', to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-D', t - 70, { override: { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback' } }),
+    ].join('\n');
+    const tally = foldMarketOverrides(journal, now, 24);
+    expect(tally.decided).toBe(4);
+    expect(tally.overridden).toBe(4);
+    expect(tally.byReason).toEqual({ preferred_lane_fallback: 3, resource_fit: 1 });
+    expect(tally.lanes).toEqual([
+      { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', jobs: 2 },
+      { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback', jobs: 1 },
+      { from: 'codex-personal', to: 'devin', reason: 'resource_fit', jobs: 1 },
+    ]);
+  });
+
+  it('says when there is no history file', () => {
+    expect(foldMarketOverrides(null, now, 24)).toEqual({ available: false, decided: 0, overridden: 0, byReason: {}, lanes: [] });
+    expect(foldMarketOverrides('', now, 24)).toEqual({ available: true, decided: 0, overridden: 0, byReason: {}, lanes: [] });
+  });
+});
+
 describe('phm fleet unfed', () => {
   it('is registered as a fleet verb', async () => {
     const mod = await FLEET_SUBCOMMAND_LOADERS.unfed!();
@@ -164,6 +228,9 @@ describe('phm fleet unfed', () => {
     writeFileSync(join(dir, 'metrics', 'work-market.jsonl'), [
       unfedRow(t - 600, { 'codex-cmp': { unfed: true, headroom: 2, waiting_elsewhere: 4, blocked: { missing_capability: 4 } } }),
       unfedRow(t - 3 * 3600, { 'codex-cmp': { unfed: true, headroom: 1, waiting_elsewhere: 1, blocked: {} } }),
+      decisionRow('RQ-M1', t - 500),
+      decisionRow('RQ-M2', t - 400),
+      decisionRow('RQ-M1', t - 100, null),
     ].join('\n') + '\n');
     const json = await run(['--json', '--window', '1']);
     expect(json.code).toBe(1);
@@ -171,6 +238,12 @@ describe('phm fleet unfed', () => {
     expect(report).toMatchObject({ schema: 'fleet.unfed.v1', readOnly: true, source: 'derived', unfedLanes: ['codex-cmp'], unfedSlots: 3 });
     expect(report.history).toMatchObject({ windowHours: 1, available: true, ticks: 1 });
     expect(report.history.lanes[0]).toMatchObject({ lane: 'codex-cmp', unfedTicks: 1, slotTicks: 2 });
+    // RQ-M1's latest in-window decision ran on-hint; only RQ-M2 counts as overridden.
+    expect(report.overrides).toEqual({
+      available: true, decided: 2, overridden: 1,
+      byReason: { preferred_lane_fallback: 1 },
+      lanes: [{ from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', jobs: 1 }],
+    });
     vi.restoreAllMocks();
     const text = await run([]);
     expect(text.code).toBe(1);
@@ -180,6 +253,9 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('3 slot(s) could be filled now across codex-cmp; 4 rows waiting.');
     expect(body).toContain('Last 24h: 2 tick(s) left capacity unfed.');
     expect(body).toContain('codex-cmp: 2 tick(s), 3 slot-tick(s) lost (missing_capability 4)');
+    expect(body).toContain('Last 24h: 2 job(s) decided, 1 left their hinted lane.');
+    expect(body).toContain('override reasons: preferred_lane_fallback 1');
+    expect(body).toContain('codex-personal -> claude (preferred_lane_fallback): 1 job(s)');
   });
 
   it('exits 0 with no unfed capacity and no history file', async () => {
@@ -197,9 +273,10 @@ describe('phm fleet unfed', () => {
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
-      'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.']);
+      'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
+      'Last 24h: no route decisions recorded.']);
   });
 });
 

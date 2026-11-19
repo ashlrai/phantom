@@ -92,6 +92,53 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ status: 'invalid' });
   });
 
+  it('reads the work feed and live claims on the same surface', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    // Empty stores read honestly before anything is posted or claimed.
+    expect((await run(['work', 'feed'])).json).toMatchObject({ status: 'ok', jobs: [], receipts: 0 });
+    expect((await run(['claim', 'list'])).json).toMatchObject({ status: 'ok', source: 'missing', claims: [] });
+
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-FEED', '--title', 'Read me',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'cli-feed'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-FEED', '--status', 'running', '--id', 'cli-feed-s'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const feed = await run(['work', 'feed']);
+    expect(feed.code).toBe(0);
+    expect(feed.json).toMatchObject({ status: 'ok', receipts: 2,
+      jobs: [{ id: 'RQ-FEED', status: 'running', owner: 'agent:atlas', provider: 'claude' }] });
+    expect((await run(['work', 'feed', '--status', 'queued'])).json).toMatchObject({ status: 'ok', jobs: [] });
+    expect((await run(['work', 'feed', '--status', 'running', '--claims'])).json)
+      .toMatchObject({ status: 'ok', claims: { source: 'missing', holds: [] } });
+
+    // A live claim lists with no token, narrows by --key, and joins the feed.
+    expect((await run(['claim', 'acquire', '--key', 'repo:ashlrai/phantom', '--lease-ms', '600000',
+      '--owner', 'atlas', '--id', 'cli-claim'])).json).toMatchObject({ status: 'acquired' });
+    const claims = await run(['claim', 'list']);
+    expect(claims.code).toBe(0);
+    expect(claims.json).toMatchObject({ status: 'ok', source: 'available' });
+    expect(claims.json.claims).toHaveLength(1);
+    expect(claims.json.claims[0]).toMatchObject({ key: 'repo:ashlrai/phantom', owner: 'atlas',
+      origin: 'resource', live: true });
+    expect(JSON.stringify(claims.json)).not.toContain('token');
+    expect((await run(['claim', 'list', '--key', 'path:ashlrai/phantom:src/**'])).json.claims
+      .map((row: { key: string }) => row.key)).toEqual(['repo:ashlrai/phantom']);
+    expect((await run(['claim', 'list', '--key', 'queue:RQ-FREE'])).json.claims).toEqual([]);
+    expect((await run(['work', 'feed', '--claims'])).json.claims.holds)
+      .toEqual([expect.objectContaining({ jobId: 'RQ-FEED', claimKey: 'repo:ashlrai/phantom', owner: 'atlas' })]);
+
+    // Human output shares the fleet feed lines; reads need no identity.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'feed', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('RQ-FEED running owner=agent:atlas provider=claude');
+    expect(text.join('\n')).toContain('jobs=1 receipts=2 feed=ok');
+    const claimText: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--root', root], t => claimText.push(t), () => {}, {})).toBe(0);
+    expect(claimText.join('\n')).toContain('repo:ashlrai/phantom owner=atlas origin=resource');
+    expect(claimText.join('\n')).toContain('claims=1 source=available');
+  });
+
   it('refuses bad work verbs and flags with usage errors', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect(await run(['work', 'post', '--from', 'atlas', '--title', 'x', '--repo', 'a/b']))

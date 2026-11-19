@@ -1308,7 +1308,14 @@ async function cmdStatus(args: string[]): Promise<void> {
     printCoreUsage('status', 'Attention board: dirty, off-sync and stale repos; ecosystem summary.', [
       ['phm status', 'human attention board'],
       ['phm status --json', 'running, merged (24h), blocked and pool usage'],
+      ['phm status --brief [--json]', 'four numbers: merged, time to merge, main green, plan runway'],
     ]);
+    return;
+  }
+  if (args.includes('--brief')) {
+    const { readFleetBrief, briefText } = await import('../core/fleet/status-brief.js');
+    const brief = await readFleetBrief();
+    console.log(args.includes('--json') ? JSON.stringify(brief, null, 2) : briefText(brief).join('\n'));
     return;
   }
   if (args.includes('--json')) {
@@ -3489,6 +3496,8 @@ async function main(): Promise<void> {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
             ['phm usage spend [--json]', 'Same as phm spend: is every pool spent before it resets'],
+            ['phm usage limits [--json]', 'Every provider account: used percent, flagged limits and reset times'],
+            ['phm usage producers [--since 6h] [--json]', 'Who started jobs: each dispatcher lane and outside loop'],
             ['phm usage validate', 'Validate a usage reading'],
             ['phm usage resource-live [--json] [--watch] [--show]', 'Read every allowance and write state/resource-live.json'],
           ]);

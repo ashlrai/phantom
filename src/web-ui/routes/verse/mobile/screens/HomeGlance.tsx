@@ -1,5 +1,6 @@
 /**
- * The phone opens here, on exactly six things, top to bottom:
+ * The phone opens here, on exactly seven things, top to bottom:
+ *  -1. the four tiles: merged, time to merge, main green, plan runway (`phm status --brief --json`);
  *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
  *   1. one line of fleet health: merges in the last hour, lanes running, main
  *      green or red (one read of `phm home --json`, home.v1);
@@ -14,6 +15,7 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { apiGet, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
+import { BriefTiles, briefQuery } from '../BriefTiles.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
@@ -38,6 +40,7 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
   },
 };
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
+  refetchQuery(briefQuery.key, () => briefQuery.fetch(), true).catch(() => undefined),
   refetchQuery(poolsQuery.key, () => poolsQuery.fetch(), true).catch(() => undefined),
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
@@ -71,6 +74,7 @@ export function HomeGlance() {
   const health = home ? healthLine(home) : null;
   return (
     <>
+      <BriefTiles />
       <PulseCard />
       {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
         <section className={`${ui.card} ${styles.needs}`} role="alert">

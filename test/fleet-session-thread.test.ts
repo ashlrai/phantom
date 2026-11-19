@@ -13,10 +13,11 @@ import type { OrderTraceJob, OrderTraceV1 } from '../src/core/fleet/order-trace.
 import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
-import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOwnerMessages, THREAD_BUS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOwnerMessages, sessionReply, THREAD_BUS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
+import { AGENT_COMMANDS } from '../src/cli/help.js';
 import { cmdSessions, cmdSessionThread } from '../src/cli/sessions.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -284,6 +285,27 @@ describe('buildSessionThread', () => {
     expect(buildSessionThread(await liveList(), 'unknown parent', { sessionsRead: true, bus: null }, NOW).session).toBeNull();
   });
 
+  it('says where a message to the session goes, and that a finished, jobless or unknown session takes none', async () => {
+    const list = await liveList(), read = (id: string) => buildSessionThread(list, id, { sessionsRead: true, bus: bus([]) }, NOW);
+    const worker = read('RQ-A');
+    expect(worker.reply).toEqual({ to: 'job', mention: '@RQ-A', hint: 'Goes to the Leader\'s inbox with @RQ-A in front, so the Leader knows which session you mean.' });
+    expect(Object.keys(worker).at(-1)).toBe('reply');
+    expect(read('RQ-QUIET').reply).toMatchObject({ to: 'job', mention: '@RQ-QUIET' });
+    expect(read('leader').reply).toEqual({ to: 'leader', mention: null, hint: 'Goes to the Leader\'s inbox, the same as the Leader chat.' });
+    expect(read('RQ-NOPE').reply).toEqual({ to: 'none', mention: null, hint: 'There is no session to write to. Write to the Leader in the Leader chat.' });
+    for (const state of ['idle', 'done', 'failed', 'unknown']) {
+      expect([state, sessionReply({ kind: 'worker', jobId: 'RQ-A', state })]).toEqual([state,
+        { to: 'none', mention: null, hint: 'This session is not running, so there is nothing to steer. Write to the Leader in the Leader chat.' }]);
+    }
+    for (const jobId of [null, 'job-7', 'RQ-a b']) {
+      expect([jobId, sessionReply({ kind: 'subagent', jobId, state: 'running' })]).toEqual([jobId,
+        { to: 'none', mention: null, hint: 'This session has no job id a message can be aimed at. Write to the Leader in the Leader chat.' }]);
+    }
+    // The mention the thread hands out is the one it later reads back as "aimed at" this session.
+    expect(sessionOwnerMessages({ kind: 'worker', jobId: 'RQ-A' }, [wrote('06:40', `${worker.reply.mention} hold the tests`), wrote('06:41', 'for everyone')])).toHaveLength(1);
+    expect(renderSessionThreadText(worker).split('\n').at(-2)).toBe('To write to it: Goes to the Leader\'s inbox with @RQ-A in front, so the Leader knows which session you mean.');
+  });
+
   it('renders the thread for people', async () => {
     const text = renderSessionThreadText(buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([message('m1', 'leader', 'RQ-A')]) }, NOW));
     const lines = text.split('\n');
@@ -426,5 +448,15 @@ describe('phm sessions thread', () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     expect(await cmdSessions(['thread', '--help'])).toBe(0);
     expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--json]');
+  });
+
+  it('documents the JSON it prints: every top-level key, and every source the thread names', async () => {
+    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--json]');
+    const shape = doc?.jsonShape ?? '';
+    const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW);
+    // The documented shape lists `sources` as `sources:{a,b,...}`; it must name the keys the builder returns, in order.
+    expect(/sources:\{([^}]*)\}/.exec(shape)?.[1]?.split(',')).toEqual(Object.keys(thread.sources));
+    for (const key of Object.keys(thread)) expect([key, shape.includes(key)]).toEqual([key, true]);
+    expect(doc?.description).toContain('routed');
   });
 });

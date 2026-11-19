@@ -57,6 +57,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `library` | Library | — | `src/web-ui/routes/verse/library/library.pane.tsx` |
 | `models` | Models | none | `src/web-ui/routes/verse/models/models.pane.tsx` |
 | `reasoning` | Reasoning | — | `src/web-ui/routes/verse/reasoning/reasoning.pane.tsx` |
+| `session-wall` | Conversations | none | `src/web-ui/routes/verse/session-wall/session-wall.pane.tsx` |
 | `sources` | Sources | — | `src/web-ui/routes/verse/reasoning/sources.pane.tsx` |
 | `terminal` | Terminal | — | `src/web-ui/routes/verse/terminal/terminal.pane.tsx` |
 | `worker-log` | Worker log | — | `src/web-ui/routes/verse/fleet-job-log/fleet-job-log.pane.tsx` |

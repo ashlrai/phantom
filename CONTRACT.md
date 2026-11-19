@@ -443,9 +443,14 @@ under existing worker gates.
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
 `--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
-nowMs, windowHours)` and `renderUnfed(report)` in
+nowMs, windowHours)`, `foldMarketOverrides(jsonl, nowMs, windowHours)` and
+`renderUnfed(report)` in
 `src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
-`phm fleet unfed` (`fleet.unfed.v1`). The optional `market` carries the
+`phm fleet unfed` (`fleet.unfed.v1`). `foldMarketOverrides` collapses the
+window's `route_decision` rows to each job's latest decision and tallies
+`lane_override`s by reason and hinted-to-chosen lane; the report's
+`overrides` field carries the counts (`available`, `decided`, `overridden`,
+`byReason`, `lanes`). The optional `market` carries the
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD); when slots.json parses, a derived report recomputes
 per-lane `blocked` reason codes with the same eligibility rules as
@@ -1314,17 +1319,19 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
 `SessionThreadsMessage` and `SessionThreadsParts`. `parts` is
-`{sessionsRead, bus, activity, replies?, owner?}`, where `activity` maps a job
-id to its activity read (null when that read failed, no key when it was not
-asked for) and `owner` is the Leader inbox, handed to the leader's and every
-worker's thread and to no helper's. Each entry is built by
+`{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
+maps a job id to its activity read (null when that read failed, no key when it
+was not asked for), `owner` is the Leader inbox, handed to the leader's and
+every worker's thread and to no helper's, and `orders` is the order trace
+(`OrderTraceV1`), handed to the leader's thread and to every worker's that has
+a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
 `buildSessionThread`, so its session, summary, sources and gaps equal the
 single-session thread for the same records.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
-`readLeader`, `readActivity`, `readBus`, `readOwner` and `readReplies`; the
-list, the bus, the Leader inbox and the leader's replies are read once and
-each shown job's activity once.
+`readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
+`readOrders`; the list, the bus, the Leader inbox, the leader's replies and
+the order trace are read once and each shown job's activity once.
 `src/cli/sessions.ts` exports `cmdSessionThreads(args, read)` for
 `phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]` (exit
 0 read, 1 list unreadable, 2 usage).
@@ -1354,6 +1361,13 @@ from `readOrderTrace`), messages gain the kinds `order` and `routing` (keys
 `order:<id>`, `routing:<id>`), `sources` gains `orders`, the module exports
 `THREAD_ORDERS_SHOWN` and `THREAD_ROUTED_SHOWN`, and `readSessionThread`
 takes an injectable `readOrders`.
+Reply (additive): the document gains a last top-level key
+`reply: {to: 'leader' | 'job' | 'none', mention: string | null, hint: string}`,
+built by the pure `sessionReply(session | null)` that the new import-free
+`src/core/fleet/session-reply.ts` exports with `SessionThreadReply`,
+`SessionReplySubject` and `AIMABLE_JOB_RE`; `session-thread.ts` re-exports
+`sessionReply` and `SessionThreadReply`, and `renderSessionThreadText` gains
+a "To write to it" line.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is
@@ -1449,9 +1463,12 @@ blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 the table is unavailable. Holds cap at 1024 with `truncated` set.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
-structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
-a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
-fabricated count.
+structural overlap rule. `projectBusWorkFeedView(result, status?)` applies the
+client-side status filter, newest-first order and per-job hold regrouping, and
+`formatBusWorkFeed(result)` renders the shared human lines; both feed CLIs use
+them. `phm fleet work-feed [--claims]` and `phm agents bus work feed
+[--status] [--claims]` print the same projection — hold lines plus a `claims=`
+footer — and non-ok reads print `jobs=unknown` rather than a fabricated count.
 
 `src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
 `BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result
@@ -1461,6 +1478,13 @@ token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
 are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
 undefined for non-claim bodies so opaque mail still appends),
 `BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
+`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`) is the read-side
+companion: it returns the live coordination claims as `CoordinationView` rows
+(fencing tokens never leave the store) with `source` of `missing` (verified
+empty), `available` or `unavailable` (holds unknown, not free), plus `asOf`.
+A malformed `key` answers `invalid`; a set `key` narrows the list through the
+same `coordinationRowBlocks` overlap rule an acquire applies, previewing the
+claims that would block it. `phm agents bus claim list [--key]` prints it.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
 with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of
@@ -1481,7 +1505,12 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
-`readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
+`readAgentWakes(ref, sinceAt, options?)`, `shouldWake(priority, requested, handoff?)`
+and `busBodySummary(body)` — a pure, secret-scrubbed one-line read of a bus body
+for inbox surfaces (`note`/`context`/`worker-handoff` return their message
+text, possibly multi-line; v2 kinds compose `<kind> <subject>: <payload>`),
+null when the body has no typed content; claim tokens and `work.result`
+queueId/receiptId never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day

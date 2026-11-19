@@ -37,6 +37,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/history` | days, tz | [FleetHistoryResponse](../src/core/verse/fleet-history-types.ts) | [source](../src/core/verse/fleet-history.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/history?days=30&tz=0'` |
 | GET | `/api/verse/fleet/grok-ultra` | none | [GrokUltraRunway](../src/core/fleet/grok-ultra-types.ts) | [source](../src/core/verse/grok-ultra-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/grok-ultra'` |
 | GET | `/api/verse/fleet/runs` | none | [FleetRunsV1](../src/core/verse/fleet-runs-types.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs'` |
+| GET | `/api/verse/fleet/usage/producers` | since | [UsageProducersReport](../src/core/fleet/usage-producers.ts) (`fleet.usage-producers.v1`) | [source](../src/core/verse/fleet-usage-producers-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/usage/producers?since=6h'` |
 | GET | `/api/verse/fleet/runs/glance` | none | [OperatorGlance](../src/core/fleet/operator-glance.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/glance'` |
 | GET | `/api/verse/fleet/runs/inbox` | limit, source | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | POST | `/api/verse/fleet/runs/inbox` | none | [inline {ok, at} (201)](../src/core/verse/fleet-runs-api.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Please review the queue","source":"operator"}' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
@@ -605,11 +606,16 @@ replies are read once, and the recorded activity once for each job shown.
   leader's holds every Leader inbox message, a worker's the ones naming it as
   `@<job>` (kind `owner`), and a helper's none. A worker's summary says how
   many were aimed at it.
-- `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`
-  and `replies` (`available`, `none` when the read answered and no shown
-  session has any, or `unavailable`). `gaps[]` holds the session list's own
-  gaps, a line counting the sessions left out past 40, and a failed bus or
-  inbox read.
+- Where the Leader routed a message is part of each thread too, from the same
+  order trace as the session thread: a `routing` record follows each routed
+  message in the leader's thread, and a worker with a job opens with the
+  message it serves (kind `order`) and says so in its summary. Helpers get
+  none. The trace is read once for the whole document.
+- `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
+  `replies` and `orders` (`available`, `none` when the read answered and no
+  shown session has any, or `unavailable`). `gaps[]` holds the session list's
+  own gaps, a line counting the sessions left out past 40, and a failed bus,
+  inbox or order trace read.
 
 Each read fails on its own: a job whose activity could not be read says so in
 its own `gaps` and the other threads are whole. The route answers 503 when the
@@ -676,6 +682,15 @@ messages Mason wrote in the Leader inbox and, for the leader,
 - `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
   `owner`, `replies`, `orders` (`available`, `none` when the read answered with nothing for this
   session, or `unavailable`). `gaps[]` says in plain words what is missing.
+- `reply`: where a message written to this session goes, so every client
+  aims it the same way. `to` is `leader` (the Leader inbox as it is), `job`
+  (the Leader inbox with `mention`, `@<job id>`, in front) or `none`.
+  `mention` is null unless `to` is `job`. `hint` is one sentence saying
+  where the message goes or why none can be sent. Only a running or quiet
+  worker whose job id fits the `@RQ-...` mention syntax gets `job`; a
+  finished session, a helper without a job and an unknown id get `none`. No
+  route writes to a worker directly: the inbox belongs to the leader, and
+  the write is `POST /api/verse/leader/inbox`.
 
 Each read fails on its own, so a thread with an unreadable bus still shows the
 rest. The route answers 404 for an id the list does not hold (finished
