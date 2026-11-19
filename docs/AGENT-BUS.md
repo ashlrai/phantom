@@ -462,6 +462,11 @@ one agent identity under every routing label that resolves to it — handle,
 `agent:` address, stable id or alias — through the same identity registry the
 inbox, wakes and message filters use; a `--to` naming no identity or an
 unreadable registry keeps exact-label matching and never widens.
+`fleet bus-request` and `fleet bus-scatter` correlate replies the same way: a
+reply counts when its `from` resolves to the request's `to` identity and its
+`to` resolves to the request's `from` identity, under any of their labels; a
+label that resolves to no identity, and an unreadable registry, keep
+exact-label matching.
 
 ### 4. Work feed
 

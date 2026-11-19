@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPost, type BusInboxReceipt } from './bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
+import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 
 export type RequestOutcome = 'replied' | 'timeout' | 'cancelled' | 'post-refused' | 'source-unavailable' | 'invalid-input';
 export interface RequestResult {
@@ -28,6 +29,20 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * A reply's routing label counts as the addressed party when it is the literal
+ * label or any other label of the same registered identity — a request to
+ * `agent:<handle>` is answered from the bare handle or an alias just as `bus
+ * next` claims under every label. A label that resolves to no identity, and an
+ * unreadable registry, keep exact-label matching: unknown identity state never
+ * widens a correlation.
+ */
+function replyAddressMatcher(identityOf: AgentIdentityKeyFor | undefined, label: string): (value: string) => boolean {
+  const key = identityOf?.(label);
+  if (key === undefined) return value => value === label;
+  return value => value === label || identityOf?.(value) === key;
+}
+
 /** A correlation is untrusted data: routing labels authenticate neither peer nor completion. */
 export async function requestBusRoundtrip(input: unknown, timeoutMs: number, intervalMs: number,
   options: BusInboxOptions = {}, deps: RequestDependencies = {}): Promise<RequestResult> {
@@ -40,6 +55,9 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
   if (!checked.ok || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3600000 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs > 60000) return result('invalid-input');
   const request: BusEnvelope = checked.value;
+  const identityOf = agentIdentityKeys({ root: options.root });
+  const replyFrom = replyAddressMatcher(identityOf, request.to);
+  const replyTo = replyAddressMatcher(identityOf, request.from);
   const deadline = start + Math.min(timeoutMs, request.ttl);
   const stopped = (): RequestOutcome | null => deps.signal?.aborted ? 'cancelled' : performance.now() >= deadline ? 'timeout' : null;
   const pause = async (): Promise<void> => wait(Math.max(0, Math.min(intervalMs, deadline - performance.now())), deps.signal);
@@ -65,7 +83,7 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
       if (!beforePost) {
         for (const row of page.messages) {
           const { envelope } = row, body = envelope.body;
-          if (envelope.ttl > Math.max(0, readEnded - readStarted) && envelope.from === request.to && envelope.to === request.from && body !== null &&
+          if (envelope.ttl > Math.max(0, readEnded - readStarted) && replyFrom(envelope.from) && replyTo(envelope.to) && body !== null &&
               typeof body === 'object' && !Array.isArray(body) && Object.hasOwn(body, 'inReplyTo') && body.inReplyTo === request.id) {
             const stopBeforeReply = stopped();
             if (stopBeforeReply) return result(stopBeforeReply);
