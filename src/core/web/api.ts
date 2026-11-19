@@ -1972,6 +1972,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/machines' && method === 'GET') {
+      const { readFleetMachines } = await import('./fleet-machines-route.js');
+      sendJson(res, 200, readFleetMachines());
+      return true;
+    }
+
     // ── GET /api/fleet/board ─────────────────────────────────────────────
     // RQ-SWE3-BOARDUI-1: the Leader-as-CEO board the last Leader tick
     // recorded at <runs>/coordination/leader-board.json — lanes, READY depth
