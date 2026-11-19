@@ -281,6 +281,8 @@ interface ParsedTsv {
   dropped: number;
   /** Dispatcher rows recognized but carrying no lane hint — open market rows the dispatcher may place on any lane. */
   unhinted: number;
+  /** The validated job id and repo of each lane-open row, for supply classification without a lane. */
+  unhintedRows: { id: string; repo: string }[];
 }
 
 /** work_market preferred_lane spellings: lowercase lane ids only. */
@@ -302,7 +304,7 @@ function requirementsLaneHint(cell: string | undefined): string | null {
 /** A recognized dispatcher row: attributed to a lane, or lane-open (the market places it anywhere). */
 type DispatcherRow =
   | { readonly kind: 'row'; readonly row: FleetLaneQueueRow }
-  | { readonly kind: 'open' }
+  | { readonly kind: 'open'; readonly id: string; readonly repo: string }
   | null;
 
 /**
@@ -346,7 +348,7 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
   const [id, repo, laneCell, tier, prompt] = [cells[0]!, cells[1]!, cells[2]!, cells[3]!, cells[4]!];
   if (!REPO_ID.test(repo) || isQueueTier(laneCell) || !isQueueTier(tier) || !promptCell(prompt)) return null;
   const pool = LANE_ID.test(laneCell) ? laneCell : requirementsLaneHint(extra);
-  if (pool === null) return { kind: 'open' };
+  if (pool === null) return { kind: 'open', id, repo };
   return { kind: 'row', row: { id, status: 'READY', pool, tier, repo, title: prompt } };
 }
 
@@ -359,6 +361,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
   const rows: FleetLaneQueueRow[] = [];
   let dropped = 0;
   let unhinted = 0;
+  const unhintedRows: { id: string; repo: string }[] = [];
   let header: (keyof FleetLaneQueueRow)[] | null = null;
 
   const lines = text.split('\n');
@@ -390,7 +393,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
     if (header === null) {
       const dialect = dispatcherQueueRow(cells);
       if (dialect !== null) {
-        if (dialect.kind === 'open') unhinted++;
+        if (dialect.kind === 'open') { unhinted++; unhintedRows.push({ id: dialect.id, repo: dialect.repo }); }
         else rows.push(dialect.row);
         continue;
       }
@@ -449,7 +452,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
     }
     rows.push(row);
   }
-  return { rows, dropped, unhinted };
+  return { rows, dropped, unhinted, unhintedRows };
 }
 
 // ---------------------------------------------------------------------------

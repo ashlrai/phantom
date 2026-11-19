@@ -30,7 +30,9 @@ export async function cmdFleetReadySupply(
     const lines = result.lanes.map(lane =>
       `${safeText(lane.lane)}  phantom ${lane.phxReady} ready${lane.oldestPhxId === null ? '' : ` (next ${safeText(lane.oldestPhxId)})`}, ${lane.phxParked} parked; filler ${lane.fillerReady} ready, ${lane.fillerParked} parked`);
     const total = result.totals;
-    lines.push(`total  phantom ${total.phxReady} ready, ${total.phxParked} parked; filler ${total.fillerReady} ready, ${total.fillerParked} parked`);
+    const unhinted = result.unhinted;
+    lines.push(`total  phantom ${total.phxReady} ready, ${total.phxParked} parked; filler ${total.fillerReady} ready, ${total.fillerParked} parked${
+      unhinted === null ? '' : `; lane-open ${unhinted.total} (${unhinted.phantom} phantom, ${unhinted.filler} filler)`}`);
     lines.push(`source: ${result.sourceState}`);
     console.log(lines.join('\n'));
   }

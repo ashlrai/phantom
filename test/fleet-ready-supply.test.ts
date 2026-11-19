@@ -3,7 +3,8 @@ import { cmdFleetReadySupply } from '../src/cli/fleet-ready-supply.js';
 import type { ReadySupplyV1 } from '../src/core/fleet/ready-supply.js';
 
 const sample: ReadySupplyV1 = {
-  v: 1, generatedAt: '2026-11-01T00:00:00.000Z', sourceState: 'healthy', rows: 3, dropped: 0,
+  v: 1, generatedAt: '2026-11-01T00:00:00.000Z', sourceState: 'healthy', rows: 3,
+  unhinted: { total: 2, phantom: 1, filler: 1 }, dropped: 0,
   lanes: [{ lane: 'codex-personal', phxReady: 1, phxParked: 0, fillerReady: 1, fillerParked: 1, oldestPhxId: 'RQ-PHX-FIRST' }],
   totals: { phxReady: 1, phxParked: 0, fillerReady: 1, fillerParked: 1 },
 };
@@ -16,7 +17,7 @@ describe('fleet ready-supply', () => {
     const now = () => new Date(0);
     expect(await cmdFleetReadySupply(['--runs-dir', '/tmp/runs'], { read, now })).toBe(0);
     expect(read).toHaveBeenCalledWith({ runsDir: '/tmp/runs', now });
-    expect(log).toHaveBeenCalledWith('codex-personal  phantom 1 ready (next RQ-PHX-FIRST), 0 parked; filler 1 ready, 1 parked\ntotal  phantom 1 ready, 0 parked; filler 1 ready, 1 parked\nsource: healthy');
+    expect(log).toHaveBeenCalledWith('codex-personal  phantom 1 ready (next RQ-PHX-FIRST), 0 parked; filler 1 ready, 1 parked\ntotal  phantom 1 ready, 0 parked; filler 1 ready, 1 parked; lane-open 2 (1 phantom, 1 filler)\nsource: healthy');
   });
 
   it('prints sanitized JSON and reports degraded only as failure', async () => {
