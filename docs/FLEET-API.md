@@ -192,6 +192,16 @@ only and retained as evidence. Active, dirty, protected and uncertain trees
 are never candidates. This command deletes nothing. Roots honor `ASHLR_WT_DIR`
 and `ASHLR_RUNS_DIR`; size walks and git probes have shared two-second budgets.
 
+`phm disk runway [--json]` and `GET /api/verse/fleet/disk-runway` answer how long
+the disk lasts, as one typed report (`fleet.disk-runway.v1`): free GB now, GB lost
+per hour over the last 6 hours, hours until the 60 GB launch freeze, the worktree
+count, and the ten largest worktrees grouped as merged PR, empty or unpublished by
+the same classifier as `phm disk --plan`. Missing readings are `null`, never zero.
+Both are read-only. When hours to the freeze drop under 6, the Leader chat feed
+gets one plain line ("Disk: 8 h to the launch freeze; 140 finished worktrees could
+free about 60 GB") and stays quiet until the runway clears; the desktop machines
+glance shows the same sentence as its Disk line.
+
 ## Merge queue age from a snapshot
 
 Run `phm fleet merge-queue-age --input snapshot.json` for queued PR age and

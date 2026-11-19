@@ -267,6 +267,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-merge-pace' as MountedApiModuleId, load: async () => (await import('./merge-pace-api.js')).handleMergePaceApi },
   { id: 'fleet-doctor' as MountedApiModuleId, load: async () => (await import('./fleet-doctor-api.js')).handleFleetDoctorApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
+  // Disk runway: GET /api/verse/fleet/disk-runway (core/verse/disk-runway-api.ts); read-only.
+  { id: 'fleet-disk-runway' as MountedApiModuleId, load: async () => (await import('./disk-runway-api.js')).handleDiskRunwayApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
   // The `phm commands` catalog for the palette, plus bounded read-only runs (core/verse/commands-api.ts).
   { id: 'commands' as MountedApiModuleId, load: async () => (await import('./commands-api.js')).handleCommandsApi },

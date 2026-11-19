@@ -27,9 +27,10 @@ afterEach(() => { vi.unstubAllGlobals(); evictAll(); resetLaneHistory(); });
 describe('LanesStrip machines row', () => {
   it('shows host, drift badge and peer states', async () => {
     const now = Date.now();
-    stubSurfaceFetch({ kind: 'live', now, routes: { '/api/fleet/machines': machines } });
+    stubSurfaceFetch({ kind: 'live', now, routes: { '/api/fleet/machines': machines, '/api/verse/fleet/disk-runway': { sentence: 'Disk: 86 GB free, falling 19 GB an hour, 1.4 h to the launch freeze', status: 'falling' } } });
     render(<LanesStrip live={fleetLive('live', now)} />);
     expect(await screen.findByText('answering: mac-a.example v3.30.40')).toBeTruthy();
+    expect(await screen.findByText('Disk: 86 GB free, falling 19 GB an hour, 1.4 h to the launch freeze')).toBeTruthy();
     expect(screen.getByText(/version drift/)).toBeTruthy();
     expect(screen.getByText('mac-b.example')).toBeTruthy();
     expect(screen.getByText(/^online · last seen/)).toBeTruthy();
