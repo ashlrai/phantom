@@ -18,7 +18,7 @@ import {
   type PoolReach,
   type PoolReachDeps,
 } from '../fleet/pool-reach.js';
-import { defaultNodesViewDeps, readNodesView, type NodesView, type NodesViewDeps } from '../fleet/nodes-view.js';
+import { defaultNodesViewDeps, NODES_SCHEMA, readNodesView, type NodesView, type NodesViewDeps } from '../fleet/nodes-view.js';
 
 export const VERSE_FLEET_TAILNET_PEERS_PATH = '/api/verse/fleet/runtime-identity/tailnet-peers';
 export const VERSE_FLEET_POOL_REACH_PATH = '/api/verse/fleet/runtime-identity/pool-reach';
@@ -47,7 +47,7 @@ export function createFleetHostReachApi(deps: FleetHostReachApiDeps = {}): ApiMo
       try {
         view = readNodesView(deps.nodesDeps ?? defaultNodesViewDeps());
       } catch {
-        view = { schemaVersion: 1, asOf: generatedAt, self: UNKNOWN, registry: UNKNOWN, nodes: [], reasons: ['computers: reader failed; all fields unknown'] };
+        view = { schema: NODES_SCHEMA, schemaVersion: 1, asOf: generatedAt, self: UNKNOWN, registry: UNKNOWN, nodes: [], reasons: ['computers: reader failed; all fields unknown'] };
       }
       sendJson(res, 200, { v: 1, generatedAt, ...view });
       return true;

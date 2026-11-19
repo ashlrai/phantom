@@ -20,8 +20,8 @@ import './fleet-map.pane.js';
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = new Date(NOW).toISOString();
 const receipt = (from: string, to: string, receivedAt: number) => ({ cursor: 1, receivedAt,
   envelope: { id: `${from}-${to}-${receivedAt}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text: 'fixture' } } });
-const computer = (name: string, jobs: string[], isSelf = false): NodeRow => ({ name, isSelf, reachable: true, lastSeen: AT, phantom: 'running',
-  freeMemoryBytes: 8e9, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: jobs, freeSlots: 1, stateCode: 'ready', state: 'ready for work' });
+const computer = (name: string, jobs: string[], isSelf = false): NodeRow => ({ name, isSelf, reachable: true, lastSeen: AT, heartbeatAgeSeconds: 2, phantom: 'running',
+  freeMemoryBytes: 8e9, freeMemoryPercent: 25, load: 1, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: jobs, freeSlots: 1, stateCode: 'ready', state: 'ready for work' });
 
 function fleet(): FleetLiveMap {
   const messages = { schema: 'fleet.edges.v1' as const, source: 'available' as const, edges: projectFleetEdges([
@@ -30,7 +30,7 @@ function fleet(): FleetLiveMap {
     { job: 'RQ-A', lane: 'claude', repo: 'phantom', model: 'fixture-model', status: 'running', elapsedSeconds: 60, startedAt: '2026-11-17T11:59:00Z', live: 'yes' },
   ] } as unknown as FleetSessionsV1 });
   return buildFleetLiveMap({ now: NOW, org: { ...map, tree: fleetOrgTree(map) },
-    computers: { schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', reasons: [], nodes: [computer('node-a', [], true), computer('node-b', [])] } });
+    computers: { schema: 'phantom.nodes-view.v1', schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', reasons: [], nodes: [computer('node-a', [], true), computer('node-b', [])] } });
 }
 
 let viewport: ViewportMock | null = null;

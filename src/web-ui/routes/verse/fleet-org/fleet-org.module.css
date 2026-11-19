@@ -62,3 +62,8 @@
 .avatar[data-color='teal'] { --avatar: color-mix(in srgb, var(--status-success-solid) 55%, var(--status-info-solid)); }
 .avatar[data-color='pink'] { --avatar: color-mix(in srgb, var(--status-danger-solid) 50%, var(--accent-500)); }
 .avatar[data-color='slate'] { --avatar: var(--text-secondary); }
+
+.machines { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.machine { padding: 4px 10px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.85em; opacity: 0.9; }
+.machine[data-state='offline'] { opacity: 0.5; }
+.machine[data-state='busy'], .machine[data-state='held'] { border-style: dashed; }

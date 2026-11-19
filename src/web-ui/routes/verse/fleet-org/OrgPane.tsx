@@ -8,6 +8,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { leaderOfficeQuery } from '../leader-thread/leader-office-data.js';
 import { OrgAvatar } from './OrgAvatar.js';
 import { orgExecutives, type OrgMember, type OrgStatus } from './org-roster.js';
+import { MachinesRow } from './MachinesRow.js';
 import { OrgTree } from './OrgTree.js';
 import { talkingNow, who } from '../fleet-messages/messages-model.js';
 import { talkingNowQuery } from '../fleet-messages/messages-query.js';
@@ -67,6 +68,7 @@ export function OrgPane({ visible }: PaneProps) {
   const executives = useMemo(() => orgExecutives(office.data?.value ?? null), [office.data]);
   return <div className={styles.root}>
     <h2 className={styles.headline}>Organization</h2>
+    <MachinesRow visible={visible} />
     <OrgTree visible={visible} />
     {executives ? <Tier title="Executives" members={executives} empty="No executives reported." />
       : <p className={styles.notice} role="status">{office.data === undefined && office.status !== 'error' ? 'Reading the org chart…' : 'Executives not reported right now.'}</p>}

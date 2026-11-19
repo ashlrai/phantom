@@ -41,6 +41,7 @@ export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNode
   }
   const empty = lane === null ? 'No computers known.' : `No computer can take a ${lane} job now. Run \`phm nodes\` to see why.`;
   const choice = placement?.node ? [`Suggested computer: ${placement.node}. ${placement.explanation}`] : [];
-  console.log([...choice, ...(nodes.length ? nodes.map(line) : [empty]), ...view.reasons.map(reason => `note: ${reason}`)].join('\n'));
+  const only = lane === null && nodes.length === 1 && nodes[0]!.isSelf ? ['Only this Mac.'] : [];
+  console.log([...choice, ...(nodes.length ? nodes.map(line) : [empty]), ...only, ...view.reasons.map(reason => `note: ${reason}`)].join('\n'));
   return 0;
 }
