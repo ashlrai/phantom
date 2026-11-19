@@ -61,6 +61,23 @@ jobs against it. A pool with no reading gets a hatched bar and a lane with no
 target gets none, so a missing number never looks like zero. Main lists one
 mark per repository.
 
+Home's **Pools** card is a resource bar: one tile per pool, as many across as
+fit (two on a phone). A tile shows the provider's mark and the pool's name,
+the share left as the large figure, how long the pool lasts at the measured
+burn, when it resets, and the used bar along its bottom edge. A pool that
+empties before it resets has its figure and that line in amber. A pool with
+no reading says "usage unknown" in place of a figure, and Local shows "free,
+limited by memory" with no bar. The line under the title names the pool that
+will not last to its reset (or counts them), counts pools without a usage
+reading, and gives the soonest reset and the time the readings were taken.
+Select a tile to list that pool's running jobs under the bar; a job opens in
+the Worker log. **Open Pools** opens the Pools pane. The same readings for
+agents:
+
+```sh
+phm pool runway --json
+```
+
 Home's **Working now** card answers "what is each agent doing?" without
 leaving Home. It lists up to six worker sessions with repo, when each last
 spoke and its last message: quiet ones first (no output for 10 minutes), then
