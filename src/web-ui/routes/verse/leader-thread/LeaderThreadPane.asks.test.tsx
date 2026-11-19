@@ -41,7 +41,7 @@ describe('Leader thread pane, the ask ledger at the top', () => {
   it('shows Needs you with one-tap buttons above the overview, and answers through the typed route', async () => {
     const batch = buildAskBatch([
       { id: 'nm-a', question: 'Use the Claude API credit before Nov 24?', kind: 'yes-no', askedAt: minutesAgo(30), hardLimit: 'money' },
-      { id: 'nm-b', question: 'What percent of your Grok plan is used?', kind: 'short-value', askedAt: minutesAgo(60), hardLimit: null },
+      { id: 'nm-b', question: 'What percent of your Grok plan is used?', kind: 'short-value', numeric: true, askedAt: minutesAgo(60), hardLimit: null },
     ]);
     let answered: Record<string, unknown> | null = null;
     serve({
@@ -56,11 +56,11 @@ describe('Leader thread pane, the ask ledger at the top', () => {
     vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
       String(input).endsWith('/needs-mason/asks/batch') ? Promise.resolve(json(batch)) : base(input, init));
     render(<LeaderThreadPane visible />);
-    const heading = await screen.findByText('Needs you (2)');
+    const heading = await screen.findByText('Asks (2)');
     expect(heading.compareDocumentPosition(screen.getByRole('region', { name: 'Leader overview' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: /What percent of your Grok plan/ })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: /What percent of your Grok plan/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Yes: Use the Claude API credit/ }));
-    expect(await screen.findByText('Got it: yes.')).toBeInTheDocument();
+    expect(await screen.findByText('Recorded: yes.')).toBeInTheDocument();
     expect(answered).toEqual({ id: 'nm-a', answer: 'yes' });
   });
 });
