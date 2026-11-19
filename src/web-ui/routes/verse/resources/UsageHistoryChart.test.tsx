@@ -12,6 +12,8 @@ const RESET = '2026-11-21T12:00:00.000Z';
 function series(fields: Partial<PoolUsageSeries> = {}): PoolUsageSeries {
   return { pool: 'claude', pace: 'behind', reason: null, used_pct: 30, observed_at: '2026-11-18T12:00:00.000Z', reset_at: RESET,
     window_start: '2026-11-14T12:00:00.000Z', ideal_pct: 57.1, resets: [],
+    runway: { verdict: 'unknown', pace_per_hour: null, pace_6h_per_hour: null, runway_hours: null, hours_to_reset: 72, hours_early: null,
+      unspent_pct: null, target_pace_per_hour: null, advice: null, reason: 'only one reading', sentence: 'Claude: 30% used, unknown (only one reading)' },
     points: [{ at: '2026-11-15T12:00:00.000Z', used_pct: 10 }, { at: '2026-11-18T12:00:00.000Z', used_pct: 30 }],
     ideal: { from: { at: '2026-11-14T12:00:00.000Z', used_pct: 0 }, to: { at: RESET, used_pct: 100 } }, ...fields };
 }
