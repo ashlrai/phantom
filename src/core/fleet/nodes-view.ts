@@ -135,8 +135,13 @@ export function buildNodesView(
     // Absence proves "not running" only where the list is authoritative and current.
     const silenceKnown = state !== null ? !mirrorStale : machine.isSelf && registry?.source === 'none';
     const phantom = live.length ? 'running' : silenceKnown ? 'not-running' : UNKNOWN;
-    const nodeIds = new Set(machine.records.map(record => record.nodeId));
-    const jobs = state?.jobs.filter(job => job.state === 'running' && job.claim && nodeIds.has(job.claim.nodeId)).map(job => job.id).sort() ?? UNKNOWN;
+    // A claim counts only while the session that took it can still act on it:
+    // unexpired claim, unexpired record on this machine, same node and session.
+    const jobs = state === null || mirrorStale ? UNKNOWN : state.jobs.filter(job => {
+      const claim = job.claim;
+      return job.state === 'running' && claim !== undefined && claim.expiresAt > nowMs &&
+        live.some(record => record.nodeId === claim.nodeId && record.session === claim.session);
+    }).map(job => job.id).sort();
     const slots = live.length && live.every(record => record.slots !== undefined) && jobs !== UNKNOWN
       ? Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length) : UNKNOWN;
     const held = live.map(record => record.capacity?.held).find(Boolean);

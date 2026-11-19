@@ -1,6 +1,6 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
-import { nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
+import { actionableClaim, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
@@ -56,8 +56,7 @@ export interface JobView {
   producerWithdrawn?: true;
   /** Accepted completion's executor identity; no result body or fencing token. */
   completedBy?: string;
-  /** Current holder of a running job's claim (lapsed or live); no fencing token. */
-  /** Status views only: the node holding a running claim. Never sent to a runner. */
+  /** Status views only: the node whose live session can still act on a running claim. Never sent to a runner. */
   claimedBy?: string;
 }
 
@@ -292,7 +291,7 @@ export class DriveNodes implements QueueV1 {
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
-        ...(j.state === 'running' && j.claim ? { claimedBy: j.claim.nodeId } : {}) })),
+        ...(actionableClaim(state, j, now) ? { claimedBy: j.claim!.nodeId } : {}) })),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
     }));
   }
@@ -313,7 +312,7 @@ export class DriveNodes implements QueueV1 {
       const node = state.nodes.find(n => sameSession(n, worker))!;
       if (!nodeCanAcceptWork(node, now)) return null;
       const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
-        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId).length;
+        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId && j.claim.session === worker.session).length;
       if (node.slots !== undefined && active >= node.slots) return null;
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
