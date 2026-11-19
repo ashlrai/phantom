@@ -32,7 +32,7 @@ function runsDir(ledger?: string): string {
 function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutcome {
   return {
     schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null,
-    merged: true, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600, passk: null,
+    merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600, passk: null,
     ...over,
   };
 }
@@ -142,7 +142,7 @@ describe('phm router outcomes', () => {
   it('renders text lines with unknown for null fields and review counts when present', async () => {
     const report = buildRouterOutcomesReport(read({
       outcomes: [
-        outcome('A', { merged: null, cost_usd: null, wall_s: null, passk: null, review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
+        outcome('A', { merged: null, reverted: true, cost_usd: null, wall_s: null, passk: null, review_findings: { fixed: 2, rejected: 1, ignored: 0 } }),
         outcome('B', { lane: null, model: null, tier: null, work_class: 'docs' }),
       ],
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2,
@@ -150,8 +150,8 @@ describe('phm router outcomes', () => {
     const lines = routerOutcomeLines(report);
     expect(lines[0]).toBe('router outcomes state=read eval=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2');
     expect(lines[1]).toBe(`ledger ${report.path}`);
-    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown passk=unknown');
-    expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true');
+    expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown passk=unknown');
+    expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true reverted=unknown');
   });
 
   it('surfaces truncated coverage in JSON and text without changing exit 0', async () => {

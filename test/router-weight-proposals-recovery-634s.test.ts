@@ -169,6 +169,15 @@ describe('pure proposal semantics', () => {
     expect(proposeRouterWeights(outcomesOf(merged(20, 'gamma'))).proposals[0]).toMatchObject({ baseline_weight: 0.5, proposed_weight: 0.6 });
   });
 
+  it('excludes reverted merges from the held-merge rate but keeps them known', () => {
+    const held = outcomesOf(merged(10));
+    const reverted = outcomesOf(Array.from({ length: 10 }, (_, i) =>
+      event(`synthetic-pure-rev-${i}`, 'alpha', 'code', 'MERGED', { reverted: true })));
+    const set = proposeRouterWeights([...held, ...reverted]);
+    // 10 held of 20 known sits exactly on the 0.5 baseline: proposed, zero shift.
+    expect(set.proposals[0]).toMatchObject({ known_n: 20, reverted_n: 10, proposed_weight: 0.5, shift: 0 });
+  });
+
   it('rejects invalid tuning bounds, baselines and as_of timestamps', () => {
     const rows1 = outcomesOf(merged(1));
     for (const minSamples of [0, -1, 1.5, NaN]) expect(() => proposeRouterWeights(rows1, { minSamples })).toThrow(RangeError);
@@ -176,6 +185,46 @@ describe('pure proposal semantics', () => {
     expect(() => proposeRouterWeights(rows1, { baselines: [{ work_class: 'code', lane: 'alpha', weight: 1.2 }] })).toThrow(RangeError);
     const pair = [{ work_class: 'code', lane: 'alpha', weight: 0.4 }, { work_class: 'code', lane: 'alpha', weight: 0.6 }];
     expect(() => proposeRouterWeights(rows1, { baselines: pair })).toThrow(RangeError);
+  });
+});
+
+describe('reverted merges', () => {
+  const revertedRows = (n: number, lane = 'alpha', workClass = 'code'): object[] =>
+    Array.from({ length: n }, (_, i) => event(`synthetic-rev-${lane}-${workClass}-${i}`, lane, workClass, 'MERGED', { reverted: true }));
+
+  it('never counts a recorded revert as a held merge and reports reverted_n', async () => {
+    writeLedger([...merged(15), ...revertedRows(5)]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    // 15 held of 20 known = 0.75, capped at +0.1; the 5 reverts stay visible.
+    expect(report.proposals[0]).toMatchObject({ status: 'proposed', known_n: 20, reverted_n: 5, proposed_weight: 0.6, shift: 0.1 });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('code/alpha: proposed 0.5 -> 0.6 (known=20 reverted=5)');
+  });
+
+  it('moves downward when every known merge was recorded as reverted', async () => {
+    writeLedger(revertedRows(20));
+    const { report } = await runJson();
+    expect(report.proposals[0]).toMatchObject({ status: 'proposed', known_n: 20, reverted_n: 20, proposed_weight: 0.4, shift: -0.1 });
+  });
+
+  it('folds revert events and stamps, not only the reverted boolean', async () => {
+    writeLedger([
+      ...merged(18),
+      event('synthetic-ev-revert', 'alpha', 'code', 'MERGED'),
+      { job: 'synthetic-ev-revert', event: 'revert' },
+      event('synthetic-stamp-revert', 'alpha', 'code', 'MERGED'),
+      { job: 'synthetic-stamp-revert', reverted_at: '2026-11-02T00:00:00Z' },
+    ]);
+    const { report } = await runJson();
+    // 18 held of 20 known = 0.9, capped at +0.1; the two recorded reverts do not hold.
+    expect(report.proposals[0]).toMatchObject({ status: 'proposed', known_n: 20, reverted_n: 2, proposed_weight: 0.6 });
+  });
+
+  it('keeps explicit reverted:false merges in the held count', async () => {
+    writeLedger([...merged(19), event('synthetic-held', 'alpha', 'code', 'MERGED', { reverted: false })]);
+    const { report } = await runJson();
+    expect(report.proposals[0]).toMatchObject({ known_n: 20, reverted_n: 0, proposed_weight: 0.6 });
   });
 });
 
