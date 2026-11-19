@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
+import { buildAskBatch } from '../../../../core/fleet/asks-batch.js';
 import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
 import { msg } from '../leader/thread-fixtures.test-support.js';
 import type { LeaderQuestionProjection, LeaderThreadMessage } from '../leader/thread-types.js';
@@ -35,6 +36,34 @@ function serve(options: { messages: () => LeaderThreadMessage[]; question?: () =
 }
 
 const tray = () => screen.findByRole('region', { name: 'The Leader is asking' });
+
+describe('Leader thread pane, the ask ledger at the top', () => {
+  it('shows Needs you with one-tap buttons above the overview, and answers through the typed route', async () => {
+    const batch = buildAskBatch([
+      { id: 'nm-a', question: 'Use the Claude API credit before Nov 24?', kind: 'yes-no', askedAt: minutesAgo(30), hardLimit: 'money' },
+      { id: 'nm-b', question: 'What percent of your Grok plan is used?', kind: 'short-value', askedAt: minutesAgo(60), hardLimit: null },
+    ]);
+    let answered: Record<string, unknown> | null = null;
+    serve({
+      messages: () => [msg({ id: 'one', text: 'Hello from the Leader.' })],
+      post: (url, body) => {
+        if (!url.endsWith('/needs-mason/asks/answer')) return undefined;
+        answered = body;
+        return json({ schema: 'asks.answer.v1', status: 'answered', answer: body.answer });
+      },
+    });
+    const base = globalThis.fetch;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith('/needs-mason/asks/batch') ? Promise.resolve(json(batch)) : base(input, init));
+    render(<LeaderThreadPane visible />);
+    const heading = await screen.findByText('Needs you (2)');
+    expect(heading.compareDocumentPosition(screen.getByRole('region', { name: 'Leader overview' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: /What percent of your Grok plan/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Yes: Use the Claude API credit/ }));
+    expect(await screen.findByText('Got it: yes.')).toBeInTheDocument();
+    expect(answered).toEqual({ id: 'nm-a', answer: 'yes' });
+  });
+});
 
 describe('Leader thread pane, the Leader is asking', () => {
   it('shows nothing when the Leader has asked nothing, and keeps the reply box', async () => {

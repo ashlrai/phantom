@@ -6,8 +6,11 @@ phm comms bus claim acquire --id <message-id> --owner <label> --lease-ms <1..360
 phm comms bus claim renew|release|complete --id <message-id> --token <claim-token>
 Leases make one claimant per message ID: a live lease answers 'conflict' to everyone else.
 next claims the oldest highest-priority live task (protocol kind 'task' or legacy {kind:'work'})
-addressed to --to, which may be a topic name. Exit 0 acquired or empty, 1 unavailable/retryable,
-2 invalid. Claim output includes the token; never log it. Renew reuses the original lease length.
+addressed to --to. --to may be a topic name or any label of one agent identity — handle,
+agent:<handle>, stable id or alias — resolved through the identity registry; an unresolvable
+--to or unreadable registry keeps exact-label matching. Exit 0 acquired or empty, 1
+unavailable/retryable, 2 invalid. Claim output includes the token; never log it. Renew
+reuses the original lease length.
 Coordination only: a claim confers no authenticated identity and executes nothing.`;
 
 const LEASE_FLAG = '--lease-ms';

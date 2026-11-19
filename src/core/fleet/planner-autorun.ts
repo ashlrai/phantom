@@ -142,7 +142,9 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
 /**
  * The reads behind decidePlannerAutorun. Never throws: the queued Phantom
  * supply is readReadySupply's canonical count (every parked-row form,
- * including the dispatcher's five-column lane marker), and a missing or
+ * including the dispatcher's five-column lane marker, plus lane-open rows
+ * whose Phantom ids count as supply the market can place anywhere), and a
+ * missing or
  * unreadable ready.tsv counts as phxReady 0 with queueUnreadable set, so a
  * tick still runs a pass rather than starving; the lane and health readers
  * fail soft to empty lanes / unknown health. ORCH_OFF is the same
@@ -157,7 +159,7 @@ export async function readPlannerAutorunInput(runsDir: string, now: number): Pro
   ]);
   const queueUnreadable = supply === null || supply.sourceState !== 'healthy';
   return {
-    phxReady: supply !== null && !queueUnreadable ? supply.totals.phxReady : 0,
+    phxReady: supply !== null && !queueUnreadable ? supply.totals.phxReady + (supply.unhinted?.phantom ?? 0) : 0,
     lanes: (state?.lanes ?? [])
       .map((lane) => ({ lane: lane.lane, running: lane.running, target: lane.target, held: lane.held })),
     health: health ?? { status: 'unknown', failingSince: null, lastGoodPassAt: null, resetAt: null, reason: null },

@@ -152,6 +152,16 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 | Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
 
+`phm fleet handoff-receive` and `phm fleet handoff-reply` run one retained
+`worker-handoff` for the caller's `--to`. The flag names the recipient
+identity, not one literal label: a handoff addressed to the `agent:` address,
+bare handle, stable id or any alias of that identity all match, through the
+same registry read the inbox, wakes and `bus next` claims use. A `--to`
+naming no registered identity — and an unreadable registry — keeps
+exact-label matching, so unknown identity state never widens which handoffs
+run. The check still only proves the envelope's addressee; routing labels are
+never authenticated identities.
+
 Channel posts are refused unless the sender is a member
 (`phm agents bus channel create|join|leave`). Because channel addresses are
 bus-group addresses, existing `subscribeGroup` readers see the same posts.
@@ -453,7 +463,11 @@ Example (replace `FAKE-TOKEN`):
 
 The v1 message-id claim (`ashlr fleet bus-claim acquire|renew|release|complete
 --id --owner --lease-ms`) keeps working for single-message work. Resource claims
-are the v2 layer above it.
+are the v2 layer above it. `bus next`/`bus-next --to` matches work addressed to
+one agent identity under every routing label that resolves to it — handle,
+`agent:` address, stable id or alias — through the same identity registry the
+inbox, wakes and message filters use; a `--to` naming no identity or an
+unreadable registry keeps exact-label matching and never widens.
 
 ### 4. Work feed
 

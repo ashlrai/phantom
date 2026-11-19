@@ -1,4 +1,4 @@
-/* global AbortController, Buffer, DOMException, URL */
+/* global AbortController, Buffer, DOMException, URL, setTimeout */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -149,6 +149,24 @@ test('master movement past the attempt bound still refuses, and the bound is val
   assert.deepEqual(await planReleaseCadence({ ...f.input, read: movingRead(), attempts: 1 }), { due: false, reason: 'master-moved' });
   await assert.rejects(planReleaseCadence({ ...f.input, read: f.read, attempts: 0 }), /attempt bound/);
   await assert.rejects(planReleaseCadence({ ...f.input, read: f.read, attempts: 11 }), /attempt bound/);
+});
+
+test('independent pinned inputs are read in parallel so the still-tip window stays small', async () => {
+  const f = fixture();
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const read = async path => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 2));
+      return await f.read(path);
+    } finally {
+      inFlight -= 1;
+    }
+  };
+  assert.equal((await planReleaseCadence({ ...f.input, read })).due, true);
+  assert.equal(maxInFlight, 2);
 });
 
 test('the newest decisive master push verdict wins; verdict-less runs never block', async () => {

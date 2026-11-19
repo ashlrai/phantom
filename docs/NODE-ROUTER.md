@@ -239,6 +239,16 @@ cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
 
+The outcomes file is optional to maintain by hand: `--outcomes-ledger` derives
+the same `{provider: {attempts, merged}}` tallies from
+`<runs-dir>/metrics/jobs.jsonl` (default `ASHLR_RUNS_DIR`, then
+`~/.ashlr-runs`; `--runs-dir` requires the flag). A job counts as an attempt
+only when its merge verdict is known — MERGED or CLOSED — so in-flight and
+aborted work never deflates a lane's rate; an absent ledger means no recorded
+outcomes, while an unreadable one refuses the route. Explicit `--outcomes`
+entries win per provider over ledger tallies, and the JSON plan reports the
+ledger state, truncation and provider count under `outcomes_ledger`.
+
 ## Limits
 
 State is a private local directory (`~/.ashlr/nodes`, or `$ASHLR_HOME/nodes`)

@@ -1,22 +1,33 @@
 /** `phm asks`: thin handler. Parses argv and prints what core/fleet/asks.ts returns. */
 import {
-  answerAsk, askAnswerText, asksText, listAsks, raiseAsk, type AskAnswerResult, type AsksList, type AsksOptions,
+  answerAsk, askAnswerText, asksText, formatAge, listAsks, raiseAsk, type AskAnswerResult, type AsksList, type AsksOptions,
 } from '../core/fleet/asks.js';
+import { readMasonUsage } from '../core/fleet/asks-ledger.js';
 import { listAskBatch, batchChoicesText, type AskBatch } from '../core/fleet/asks-batch.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm asks [--json]
        phm asks list [--json]
-       phm asks answer <id> yes|no|done|later [--json]
-       phm asks add password|2fa|device|payment|outreach "<one-line request>" [--json]
-Things only Mason can do (a password, a 2FA code, a device approval, a payment, a message to someone outside the team),
-each answered with one word.
+       phm asks answer <id> <reply> [--json]
+       phm asks add <kind> "<one-line request>" [--subject <name>] [--unblocks "<what it unblocks>"] [--json]
+       phm asks usage [<pool>] [--json]
+Things only Mason can do (a password, a 2FA code, a device approval, a payment, a message to someone outside the team,
+his usage percent for a lane, a yes or no on spending a credit), each answered with one word or one number.
   phm asks list         one batch, oldest first, same question merged, with each allowed answer (--json: schema asks.batch.v1)
   phm asks              list open asks: short id, kind, age and the request (--json: schema asks.v1)
-  answer <id> <word>    record yes, no, done or later once, with source cli and the time; a repeat changes nothing
-  add <kind> <request>  raise an ask; never put the secret itself in the request
-Anything that is not one of the five kinds is refused: the fleet decides this itself.
+  answer <id> <reply>   record the reply once (yes, no, done or later; a number 0-100 for a usage ask), with source cli and the
+                        time, in the answers ledger; a repeat changes nothing; a reply the ask does not accept records nothing
+  add <kind> <request>  raise an ask; kinds: password, 2fa, device, payment, outreach, usage (needs --subject <pool>), approval;
+                        never put the secret itself in the request
+  usage [<pool>]        Mason's latest stated usage for a pool (default grok-ultra), with its time and age (--json: asks.usage.v1)
+An approval answer is a record only: nothing is spent and no billing call is made.
+Anything that is not one of the kinds is refused: the fleet decides this itself.
 From Telegram, Mason can reply "yes <id>", "no <id>" or "done <id>".`;
+
+const flagValue = (args: string[], name: string): { value?: string; rest: string[] } => {
+  const at = args.indexOf(name);
+  return at < 0 ? { rest: args } : { value: args[at + 1], rest: [...args.slice(0, at), ...args.slice(at + 2)] };
+};
 
 export interface AsksCliDeps { options?: AsksOptions; list?: typeof listAsks; answer?: typeof answerAsk; raise?: typeof raiseAsk; batch?: typeof listAskBatch }
 
@@ -49,8 +60,18 @@ export async function cmdAsks(args: string[], deps: AsksCliDeps = {}): Promise<n
     print(json, outcome, askAnswerText(outcome));
     return exitOf(outcome);
   }
+  if (rest[0] === 'usage' && rest.length <= 2) {
+    const pool = rest[1] ?? 'grok-ultra';
+    const reading = readMasonUsage(pool, { ...(options.runsDir ? { runsDir: options.runsDir } : {}), ...(options.now ? { now: options.now } : {}) });
+    const text = reading ? `${pool}: ${reading.pctUsed}% (you said so ${formatAge(Math.round(reading.ageMs / 1000))} ago, via ${reading.channel}).`
+      : `${pool}: no reading from you yet. Answer the usage ask with a number from 0 to 100.`;
+    print(json, { schema: 'asks.usage.v1', pool, reading }, text);
+    return 0;
+  }
   if (rest[0] === 'add' && rest.length >= 3) {
-    const raised = (deps.raise ?? raiseAsk)(rest[1]?.toLowerCase(), rest.slice(2).join(' '), options);
+    const subject = flagValue(rest, '--subject'), unblocks = flagValue(subject.rest, '--unblocks');
+    const raised = (deps.raise ?? raiseAsk)(unblocks.rest[1]?.toLowerCase(), unblocks.rest.slice(2).join(' '), options,
+      { ...(subject.value ? { subject: subject.value } : {}), ...(unblocks.value ? { unblocks: unblocks.value } : {}) });
     print(json, raised, raised.ok ? `${raised.duplicate ? 'Already asked' : 'Asked'}: ${raised.id}` : `Not asked: ${raised.reason}.`.replace(/\.\.$/, '.'));
     return raised.ok ? 0 : 1;
   }

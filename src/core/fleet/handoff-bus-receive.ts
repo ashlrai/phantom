@@ -21,6 +21,7 @@ import {
 } from './bus-inbox.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubPrivateText } from '../util/scrub.js';
+import { agentIdentityKeys } from '../agents/bus-identity.js';
 import { isFleetJobId } from './runs-job-detail.js';
 import { runContextWorker, type ContextWorkerIO } from './context-worker-run.js';
 
@@ -41,6 +42,21 @@ const token = (value: unknown): value is string =>
   typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
 
 interface WorkerHandoffBody { taskId: string; prompt: string }
+
+/**
+ * `--to` names one agent identity, not one literal label: a retained
+ * handoff addressed to the `agent:` address, bare handle, stable id or any
+ * alias of that identity all match, through the same registry read the bus
+ * inbox, wakes, message filters and `bus next` claims use. A `--to` naming
+ * no registered identity — and an unreadable registry — keep exact-label
+ * matching, so unknown identity state never widens which handoffs run.
+ */
+export function handoffRecipientMatches(to: string, recipient: string, options: BusInboxOptions): boolean {
+  if (to === recipient) return true;
+  const identityOf = agentIdentityKeys({ root: options.root });
+  const target = identityOf?.(recipient);
+  return target !== undefined && identityOf?.(to) === target;
+}
 
 /** Exact body schema emitted by `ashlr fleet handoff-send --apply`. */
 function isWorkerHandoffBody(body: unknown): body is WorkerHandoffBody {
@@ -92,7 +108,8 @@ function matchingSnapshot(path: string, taskId: string): string | null {
 export interface HandoffBusReceiveOptions {
   /** Envelope id to locate in the local inbox. */
   id: string;
-  /** The exact address the retained envelope must be addressed to. */
+  /** The recipient the retained envelope must be addressed to; any routing
+   * label of the same agent identity matches (see handoffRecipientMatches). */
   to: string;
   /** Absolute path to a NodeContextPackInput JSON whose node.jobId equals the body taskId. */
   snapshot: string;
@@ -148,7 +165,7 @@ export async function receiveHandoffBus(opts: HandoffBusReceiveOptions,
     return 1;
   }
   const envelope = found.receipt.envelope;
-  if (envelope.to !== opts.to) { diagnostic('handoff is not addressed to this recipient'); return 1; }
+  if (!handoffRecipientMatches(envelope.to, opts.to, options)) { diagnostic('handoff is not addressed to this recipient'); return 1; }
   if (!isWorkerHandoffBody(envelope.body)) { diagnostic('unexpected handoff body'); return 1; }
   const { taskId, prompt } = envelope.body;
   const snapshot = matchingSnapshot(opts.snapshot, taskId);

@@ -15,18 +15,29 @@
  * by wording, and their creation time is unknown unless the line carries one.
  */
 import { appendNeedsMasonLine } from './needs-mason-append.js';
+import { USAGE_POOLS } from '../fabric/usage-signal-writer.js';
+import { appendAskLedger, askLedgerRecordOf } from './asks-ledger.js';
 import { readNeedsMasonAnswer } from './needs-mason-answer.js';
 import { resolveNeedsMasonWithInbox } from './needs-mason-relay.js';
 import { readNeedsMasonLedger, type NeedsMasonLedgerItem, type NeedsMasonOptions } from './needs-mason-resolve.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const ASK_KINDS = ['password', '2fa', 'device', 'payment', 'outreach'] as const;
+export const ASK_KINDS = ['password', '2fa', 'device', 'payment', 'outreach', 'usage', 'approval'] as const;
 export type AskKind = typeof ASK_KINDS[number];
 /** `later` records "not now": the asker reads it and may ask again; nothing is snoozed here. */
 export const ASK_ANSWERS = ['yes', 'no', 'done', 'later'] as const;
 export type AskAnswer = typeof ASK_ANSWERS[number];
 export type AskSource = NonNullable<NeedsMasonOptions['source']>;
+/**
+ * What each kind may be answered with. `usage` takes a percent instead of a word
+ * (see parseAskReply's sibling `parseAnswerFor`); `approval` records a decision only.
+ */
+export const ASK_REPLIES: Record<AskKind, readonly string[]> = {
+  password: ['done', 'later'], '2fa': ['done', 'later'], device: ['done', 'later'],
+  payment: ['yes', 'no'], outreach: ['yes', 'no'], usage: [], approval: ['yes', 'no'],
+};
+export const USAGE_HINT = 'Reply with a number from 0 to 100, like 40.';
 export const ASK_REFUSAL = 'the fleet decides this itself';
 export const ASK_REQUEST_MAX = 200;
 const SHORT_MIN = 4;
@@ -37,8 +48,16 @@ export interface Ask {
   /** Shortest unique prefix of the hex (at least 4), for one-word replies: `yes <shortId>`. */
   shortId: string;
   kind: AskKind;
-  /** One plain line: what Mason is asked to do. */
+  /** One plain line: what Mason is asked to do (the question). */
   request: string;
+  /** Allowed replies, one word each. Empty when the reply is a value (see replyHint). */
+  replies: string[];
+  /** Plain words for a value reply ("a number from 0 to 100"), else null. */
+  replyHint: string | null;
+  /** One line: what the answer unblocks, or null when the ask does not say. */
+  unblocks: string | null;
+  /** What the ask is about (`grok-ultra`, `claude-api-credit`), or null. */
+  subject: string | null;
   /** ISO time the ask was raised, or null when the ledger line does not say. */
   created: string | null;
   /** Whole seconds since `created`, or null when that is unknown. */
@@ -63,17 +82,21 @@ export interface AskAnswerResult {
   id: string | null;
   kind: AskKind | null;
   /** The recorded answer. For already-answered this is the first answer, or null when it can no longer be read. */
-  answer: AskAnswer | null;
+  answer: string | null;
   source: string | null;
   answeredAt: string | null;
   /** Plain reason for anything other than answered. */
   reason: string | null;
 }
 
-export interface AsksOptions extends Pick<NeedsMasonOptions, 'runsDir' | 'bus'> { now?: () => number }
+export interface AsksOptions extends Pick<NeedsMasonOptions, 'runsDir' | 'bus'> {
+  now?: () => number;
+  /** The surface the answer came through, for the answers ledger (default: the source). */
+  channel?: string;
+}
 export interface AnswerAskDeps { resolve?: typeof resolveNeedsMasonWithInbox; readAnswer?: typeof readNeedsMasonAnswer }
 
-const TAGGED = /^ask:(password|2fa|device|payment|outreach)\s+(.+?)(?:\s+\(asked\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\))?$/i;
+const TAGGED = /^ask:(password|2fa|device|payment|outreach|usage|approval)(?:@([a-z0-9][a-z0-9-]{0,40}))?\s+(.+?)(?:\s+\(asked\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\))?$/i;
 const APPROVAL_LINE = /^approval #\d{1,6}: /;
 const STAMP = /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z)\b/;
 // First match wins: a 2FA code for a device sign-in is a 2FA ask, not a device one.
@@ -90,13 +113,19 @@ const isKind = (value: unknown): value is AskKind => typeof value === 'string' &
 export const isAskAnswer = (value: unknown): value is AskAnswer => typeof value === 'string' && (ASK_ANSWERS as readonly string[]).includes(value);
 
 /** The ask a ledger line describes, or null when it is not one of the kinds. Outreach is only ever tagged, never guessed from wording. */
-export function askOfLine(text: string): { kind: AskKind; request: string; created: string | null } | null {
+export function askOfLine(text: string): { kind: AskKind; request: string; created: string | null; unblocks: string | null; subject: string | null } | null {
   // An agent's approval line (approvals.ts) has its own options; wording must not reclassify it.
   if (APPROVAL_LINE.test(text.trim())) return null;
   const tagged = TAGGED.exec(text.trim());
-  if (tagged) return { kind: tagged[1]!.toLowerCase() as AskKind, request: tagged[2]!.trim(), created: validIso(tagged[3]) };
+  if (tagged) {
+    // "<question> => <what it unblocks>": both plain, the question is what Mason reads first.
+    const [question, ...rest] = tagged[3]!.split(' => ');
+    const unblocks = rest.join(' => ').trim();
+    return { kind: tagged[1]!.toLowerCase() as AskKind, request: question!.trim(), created: validIso(tagged[4]),
+      unblocks: unblocks || null, subject: tagged[2]?.toLowerCase() ?? null };
+  }
   const match = WORDING.find(([, pattern]) => pattern.test(text));
-  return match ? { kind: match[0], request: text.trim(), created: validIso(STAMP.exec(text)?.[1]) } : null;
+  return match ? { kind: match[0], request: text.trim(), created: validIso(STAMP.exec(text)?.[1]), unblocks: null, subject: null } : null;
 }
 
 function validIso(value: string | undefined): string | null {
@@ -129,7 +158,8 @@ export function listAsks(options: AsksOptions = {}): AsksList {
     if (!ask) continue;
     const createdMs = ask.created === null ? NaN : Date.parse(ask.created);
     asks.push({
-      id: item.id, shortId: shorts.get(item.id)!, kind: ask.kind, request: ask.request, created: ask.created,
+      id: item.id, shortId: shorts.get(item.id)!, kind: ask.kind, request: ask.request, replies: [...ASK_REPLIES[ask.kind]],
+      replyHint: ask.kind === 'usage' ? 'a number from 0 to 100' : null, unblocks: ask.unblocks, subject: ask.subject, created: ask.created,
       ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null,
     });
   }
@@ -146,25 +176,55 @@ export type RaiseAskResult =
  * one plain line, and an identical open ask is returned instead of a second line.
  * Never put the secret itself in the request: say what is needed, not the value.
  */
-export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions = {}): RaiseAskResult {
+export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions = {}, extra: { subject?: string; unblocks?: string } = {}): RaiseAskResult {
   if (!isKind(kind)) return { ok: false, reason: ASK_REFUSAL };
-  // eslint-disable-next-line no-control-regex
-  const line = typeof request === 'string' ? request.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  const oneLine = (value: unknown): string =>
+    // eslint-disable-next-line no-control-regex
+    typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  const line = oneLine(request).replace(/ => /g, ' - ');
   if (!line) return { ok: false, reason: 'The request needs one plain line.' };
   if (line.length > ASK_REQUEST_MAX) return { ok: false, reason: `The request is limited to ${ASK_REQUEST_MAX} characters.` };
+  const subject = extra.subject === undefined ? null : extra.subject.trim().toLowerCase();
+  if (subject !== null && !/^[a-z0-9][a-z0-9-]{0,40}$/.test(subject)) return { ok: false, reason: 'The subject is one short word like grok-ultra.' };
+  // A usage answer is stored as that pool's reading, so the pool must be one the usage readers know.
+  if (kind === 'usage' && (subject === null || !(USAGE_POOLS as readonly string[]).includes(subject))) {
+    return { ok: false, reason: `A usage ask names its pool: ${USAGE_POOLS.join(', ')}.` };
+  }
+  const unblocks = oneLine(extra.unblocks).replace(/ => /g, ' - ');
+  if (unblocks.length > ASK_REQUEST_MAX) return { ok: false, reason: `What it unblocks is limited to ${ASK_REQUEST_MAX} characters.` };
   const runsDir = runsDirOf(options);
   const existing = listAsks({ ...options, runsDir });
   if (existing.ledger === 'unavailable') return { ok: false, reason: 'The needs-you ledger could not be read.' };
-  const same = existing.asks.find(ask => ask.kind === kind && ask.request === line);
+  const same = existing.asks.find(ask => ask.kind === kind && ask.request === line && ask.subject === subject);
   if (same) return { ok: true, id: same.id, duplicate: true };
   const created = new Date((options.now ?? Date.now)()).toISOString();
-  try { appendNeedsMasonLine(runsDir, `ask:${kind} ${line} (asked ${created})`); }
-  catch { return { ok: false, reason: 'The needs-you ledger could not be written.' }; }
-  const raised = listAsks({ ...options, runsDir }).asks.find(ask => ask.kind === kind && ask.request === line);
+  try {
+    appendNeedsMasonLine(runsDir, `ask:${kind}${subject ? `@${subject}` : ''} ${line}${unblocks ? ` => ${unblocks}` : ''} (asked ${created})`);
+  } catch { return { ok: false, reason: 'The needs-you ledger could not be written.' }; }
+  const raised = listAsks({ ...options, runsDir }).asks.find(ask => ask.kind === kind && ask.request === line && ask.subject === subject);
   return raised ? { ok: true, id: raised.id, duplicate: false } : { ok: false, reason: 'The ask was written but could not be read back.' };
 }
 
 const ID_INPUT = /^(?:nm-)?([0-9a-f]{4,12})$/;
+const ANSWER_HINT = 'Answer yes, no, done or later.';
+const PERCENT = /^(\d{1,3}(?:\.\d{1,2})?)\s*%?$/;
+
+/**
+ * The reply a kind accepts, in plain words when it does not. A usage reply is a
+ * percent (40, 40%, 12.5); anything else is refused with a hint, never guessed.
+ */
+export function parseAnswerFor(kind: AskKind, raw: unknown): { ok: true; value: string } | { ok: false; hint: string } {
+  const text = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (kind === 'usage') {
+    const match = PERCENT.exec(text);
+    const value = match ? Number(match[1]) : NaN;
+    return Number.isFinite(value) && value >= 0 && value <= 100 ? { ok: true, value: String(value) } : { ok: false, hint: USAGE_HINT };
+  }
+  if (kind === 'approval') {
+    return text === 'yes' || text === 'no' || text === 'later' ? { ok: true, value: text } : { ok: false, hint: 'Answer yes or no.' };
+  }
+  return isAskAnswer(text) ? { ok: true, value: text } : { ok: false, hint: ANSWER_HINT };
+}
 const result = (status: AskAnswerStatus, fields: Partial<Omit<AskAnswerResult, 'schema' | 'status'>> = {}): AskAnswerResult => ({
   schema: 'asks.answer.v1', status, id: fields.id ?? null, kind: fields.kind ?? null, answer: fields.answer ?? null,
   source: fields.source ?? null, answeredAt: fields.answeredAt ?? null, reason: fields.reason ?? null,
@@ -178,7 +238,6 @@ export async function answerAsk(idInput: unknown, answer: unknown, source: AskSo
     deps: AnswerAskDeps = {}): Promise<AskAnswerResult> {
   const idMatch = typeof idInput === 'string' ? ID_INPUT.exec(idInput.trim().toLowerCase()) : null;
   if (!idMatch) return result('invalid', { reason: 'Give the ask id (as shown by phm asks).' });
-  if (!isAskAnswer(answer)) return result('invalid', { reason: 'Answer yes, no, done or later.' });
   const runsDir = runsDirOf(options);
   const ledger = readNeedsMasonLedger({ runsDir });
   if (ledger.status === 'unavailable') return result('unavailable', { reason: 'The needs-you ledger could not be read.' });
@@ -190,25 +249,33 @@ export async function answerAsk(idInput: unknown, answer: unknown, source: AskSo
   if (matches.length > 1) return result('ambiguous', { reason: 'More than one ask starts with that id; use more of it.' });
   const item = matches[0]!;
   const ask = askOfLine(item.text);
-  if (!ask) return result('refused', { id: item.id, reason: ASK_REFUSAL });
+  if (!ask) return isAskAnswer(answer) ? result('refused', { id: item.id, reason: ASK_REFUSAL }) : result('invalid', { reason: ANSWER_HINT });
   const base = { id: item.id, kind: ask.kind };
+  const reply = parseAnswerFor(ask.kind, answer);
+  if (!reply.ok) return result('invalid', { ...base, reason: reply.hint });
   const alreadyAnswered = (): AskAnswerResult => {
     const recorded = (deps.readAnswer ?? readNeedsMasonAnswer)(item.id, options.bus ?? {});
     if (recorded.status !== 'found') return result('already-answered', { ...base, reason: 'Already answered; the first answer can no longer be read.' });
     const word = recorded.answer.reply?.trim().toLowerCase();
     return result('already-answered', {
-      ...base, answer: isAskAnswer(word) ? word : null, source: recorded.answer.source, answeredAt: recorded.answer.resolvedAt,
+      ...base, answer: word && parseAnswerFor(ask.kind, word).ok ? word : null, source: recorded.answer.source, answeredAt: recorded.answer.resolvedAt,
       reason: 'Already answered; nothing changed.',
     });
   };
   if (item.resolved) return alreadyAnswered();
+  // Nothing is recorded for an invalid reply, an unreadable ledger or a repeat: this is the only write path.
   const now = options.now ?? Date.now;
   const answeredAt = new Date(now()).toISOString();
-  const resolved = await (deps.resolve ?? resolveNeedsMasonWithInbox)({ itemId: item.id, reply: answer },
+  const resolved = await (deps.resolve ?? resolveNeedsMasonWithInbox)({ itemId: item.id, reply: reply.value },
     { runsDir, source, now, ...(options.bus ? { bus: options.bus } : {}) });
   if (resolved.ok) {
     if (resolved.duplicate) return alreadyAnswered();
-    return result('answered', { ...base, answer, source, answeredAt });
+    // After the bus event: the answers ledger is the durable, append-only record (and, for usage, the reading).
+    const recorded = appendAskLedger(runsDir, askLedgerRecordOf({
+      askId: item.id, kind: ask.kind, subject: ask.subject, reply: reply.value, channel: options.channel ?? source, at: answeredAt,
+    }));
+    return recorded ? result('answered', { ...base, answer: reply.value, source, answeredAt })
+      : result('unavailable', { ...base, reason: 'The answer was sent but the answers ledger could not be written; tell the fleet.' });
   }
   if (resolved.code === 'already-resolved') return alreadyAnswered();
   if (resolved.code === 'unknown') return result('unknown', { reason: 'No ask has that id.' });
@@ -219,11 +286,13 @@ export async function answerAsk(idInput: unknown, answer: unknown, source: AskSo
  * A one-word phone reply: `yes 3f2a`, `3f2a done`, `No nm-3f2a1b2c3d4e.`.
  * Anything longer or different is not an ask reply and goes to its usual path.
  */
-export function parseAskReply(text: string): { id: string; answer: AskAnswer } | null {
+export function parseAskReply(text: string): { id: string; answer: string } | null {
   const words = text.trim().replace(/[.!]+$/, '').split(/\s+/);
   if (words.length !== 2) return null;
   const [a, b] = words.map(word => word.toLowerCase()) as [string, string];
-  const [answer, id] = isAskAnswer(a) ? [a, b] : isAskAnswer(b) ? [b, a] : [null, null];
+  // A percent has at most three digits, so it can never read as a four-plus hex id: "40 3f2a".
+  const isAnswer = (word: string): boolean => isAskAnswer(word) || /^\d{1,3}(?:\.\d{1,2})?%?$/.test(word);
+  const [answer, id] = isAnswer(a) ? [a, b] : isAnswer(b) ? [b, a] : [null, null];
   return answer && id && ID_INPUT.test(id) ? { id, answer } : null;
 }
 
@@ -266,7 +335,7 @@ export function asksText(list: AsksList): string[] {
   if (list.ledger === 'unavailable') return ['Asks: unknown (the needs-you ledger could not be read).'];
   if (list.count === 0) return ['Nothing needs you.'];
   return [
-    `${list.count} ${list.count === 1 ? 'ask needs' : 'asks need'} you. Answer with: phm asks answer <id> yes|no|done|later`,
-    ...list.asks.map(ask => `${ask.shortId}  ${ask.kind.padEnd(8)}  ${formatAge(ask.ageSeconds).padStart(7)}  ${ask.request}`),
+    `${list.count} ${list.count === 1 ? 'ask needs' : 'asks need'} you. Answer with: phm asks answer <id> <reply>`,
+    ...list.asks.map(ask => `${ask.shortId}  ${ask.kind.padEnd(8)}  ${formatAge(ask.ageSeconds).padStart(7)}  ${ask.request} [${ask.replyHint ?? ask.replies.join('/')}]${ask.unblocks ? ` -> ${ask.unblocks}` : ''}`),
   ];
 }

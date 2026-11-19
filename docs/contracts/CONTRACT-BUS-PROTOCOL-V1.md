@@ -55,7 +55,11 @@ engine (`src/core/fleet/bus-work-claims.ts`, `bus-next-claim.ts`). They add no
 new state:
 
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>` claims
-  the oldest highest-priority live task addressed to `--to`. It returns
+  the oldest highest-priority live task addressed to `--to`. When `--to`
+  resolves to a registered agent identity, work addressed under any routing
+  label of that identity (handle, `agent:` address, stable id or alias) is
+  eligible; a `--to` that names no identity, or an unreadable registry,
+  keeps exact-label matching. It returns
   `{status:'acquired', receipt, token, leaseUntil}` or `{status:'empty'}`.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one
   message by ID. A live lease answers `conflict` to every other claimant.

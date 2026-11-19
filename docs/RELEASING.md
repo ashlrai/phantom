@@ -166,10 +166,11 @@ The Release PR workflow and the release train both wake every 5 minutes.
 `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
 1440 minutes, and defaults to 5. The train does not raise that value.
 The cadence check evaluates the live master tip rather than the SHA that
-woke the workflow, and a merge landing mid-check re-verifies at the new
-tip a bounded number of times instead of starving the release; green
-evidence is the newest decisive completed master push CI run on the tip
-or a bounded ancestor, and the release PR's own required checks remain
+woke the workflow, reads its independent tip-pinned inputs concurrently to
+keep the still-tip window small, and a merge landing mid-check re-verifies
+at the new tip a bounded number of times instead of starving the release;
+green evidence is the newest decisive completed master push CI run on the
+tip or a bounded ancestor, and the release PR's own required checks remain
 the merge gate for the exact head that ships. It requests a patch bump,
 then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
@@ -219,6 +220,15 @@ What runs without a per-release approval:
   40-character SHA as current or an ancestor of master, then evaluates checks
   and the release gate on that SHA instead of moving master HEAD. A manual
   Auto-tag dispatch without `sha` retains its fail-closed behavior.
+- Release prep's decide step skips the dispatch entirely when the version
+  `package.json` carries at the master SHA is already tagged **and** its
+  GitHub release is published — the same nothing-to-do proof Auto-tag's
+  version step uses (`git/ref/tags/v<version>` plus `releases/tags/v<version>`,
+  which 404s drafts). Per-SHA release-gate runs therefore exist only while a
+  version is owed: from its bump merge until tag + published release. A tag
+  whose release is still a draft, or whose release leg never ran, stays a
+  candidate so Auto-tag's heal path keeps its evidence; any failed or
+  incomplete read also fails open to dispatching.
 - Only the release-please PR changes the release version. The `Quick
   typecheck` job refuses a pull request that changes the `package.json`
   version or `.release-please-manifest.json` unless its head is a

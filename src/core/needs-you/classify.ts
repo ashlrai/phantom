@@ -36,6 +36,8 @@ export const AUTO_REASON = 'ordinary engineering work; the fleet goes ahead';
 
 const ASK_LIMIT: Readonly<Record<AskKind, NeedsYouLimit>> = {
   password: 'sign_in', '2fa': 'sign_in', device: 'sign_in', payment: 'money', outreach: 'outside_send',
+  // Only Mason knows his own number; a credit approval is money, though the answer itself spends nothing.
+  usage: 'unsure', approval: 'money',
 };
 
 // First match wins. Word boundaries keep "tokenizer" or "keyboard" out.

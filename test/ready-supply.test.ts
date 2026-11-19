@@ -30,7 +30,7 @@ describe('ready supply', () => {
     ].join('\n'));
     const result = summarizeReadySupply(parsed.rows, { dropped: parsed.dropped, sourceState: 'healthy', now });
     expect(result).toEqual({
-      v: 1, generatedAt: '2026-11-01T00:00:00.000Z', sourceState: 'healthy', rows: 7, dropped: 1,
+      v: 1, generatedAt: '2026-11-01T00:00:00.000Z', sourceState: 'healthy', rows: 7, unhinted: null, dropped: 1,
       lanes: [
         { lane: 'alpha', phxReady: 0, phxParked: 0, fillerReady: 1, fillerParked: 0, oldestPhxId: null },
         { lane: 'codex-local', phxReady: 0, phxParked: 1, fillerReady: 0, fillerParked: 1, oldestPhxId: null },
@@ -47,10 +47,15 @@ describe('ready supply', () => {
       'RQ-PHX-LANEHOLDPLACE01\tphantom\tdevin\twork\t/abs/path.md',
       'RQ-PHX-NEXT\tdevin\ttier\trepo\ttitle',
       'RQ-OTHER\tother-repo\tdevin\twork\t/abs/other.md',
+      // Lane-open rows: no lane cell and no honest preferred_lane — the market
+      // may place them anywhere, so they are supply but never a lane's row.
+      'RQ-PHX-OPEN1\tphantom\t\twork\t/abs/open.md',
+      'RQ-FILL-OPEN2\tother-repo\t\tmid\t/abs/filler.md\t{"preferred_lane":null}',
     ].join('\n'));
     const result = await readReadySupply({ runsDir: dir, now });
     expect(result.sourceState).toBe('healthy');
     expect(result.rows).toBe(4);
+    expect(result.unhinted).toEqual({ total: 2, phantom: 1, filler: 1 });
     expect(result.lanes).toEqual([
       { lane: 'codex-local', phxReady: 0, phxParked: 0, fillerReady: 0, fillerParked: 1, oldestPhxId: null },
       { lane: 'devin', phxReady: 2, phxParked: 0, fillerReady: 1, fillerParked: 0, oldestPhxId: 'RQ-PHX-LANEHOLDPLACE01' },
