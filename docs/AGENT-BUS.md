@@ -158,7 +158,9 @@ wake is recorded after the store accepts the post, through `createBusWakeHook`
 into `~/.ashlr-runs/bus/wake-queue.jsonl`, and carries only `id`, `from` and
 `to`. Resending the same id returns `duplicate` from the store and re-attempts
 the wake, which the queue deduplicates, so a failed wake is recovered without
-a second message.
+a second message. The file is capped (2 MiB by default); an append past the
+cap compacts it to the newest complete hints inside the 256 KiB window readers
+observe, so a busy bus keeps waking rather than reporting every wake failed.
 
 **Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
 posts in the agent's channels (minus its own) and traffic still addressed to its

@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { busWakeQueueEnqueue, busWakeQueuePath, enqueueBusWake, readBusWakes } from '../src/core/fleet/bus-wake-queue.js';
@@ -24,4 +24,39 @@ it('rejects an already aborted wake without writing', async () => {
   const directory = root();
   await expect(busWakeQueueEnqueue(directory)(request, AbortSignal.abort())).rejects.toThrow();
   expect(readBusWakes({ root: directory }).state).toBe('missing');
+});
+it('compacts to the observable tail at the byte cap instead of failing forever', () => {
+  let tick = 0;
+  const opts = { root: root(), now: () => ++tick, maxBytes: 700 };
+  // Each row is ~80 bytes; the cap holds about eight. Every send must stay queued.
+  for (let i = 0; i < 30; i++) {
+    expect(enqueueBusWake({ kind: 'bus.send', id: `wake-${i}`, from: 'mason', to: 'leaders' }, opts)).toBe('queued');
+  }
+  expect(statSync(busWakeQueuePath(opts.root)).size).toBeLessThanOrEqual(700);
+  const wakes = readBusWakes(opts).wakes;
+  expect(wakes.length).toBeGreaterThan(0);
+  expect(wakes.at(-1)).toMatchObject({ id: 'wake-29', at: 30 });
+  const kept = new Set(wakes.map(wake => wake.id));
+  expect(kept.has('wake-0')).toBe(false); // dropped: beyond the retained window
+  expect(kept.has('wake-29')).toBe(true);
+  // A retained id still deduplicates; a dropped id re-queues like any new hint.
+  expect(enqueueBusWake({ kind: 'bus.send', id: 'wake-29', from: 'mason', to: 'leaders' }, opts)).toBe('duplicate');
+  expect(enqueueBusWake({ kind: 'bus.send', id: 'wake-0', from: 'mason', to: 'leaders' }, opts)).toBe('queued');
+});
+it('does not rewrite the queue for a duplicate at the cap', () => {
+  let tick = 0;
+  const opts = { root: root(), now: () => ++tick, maxBytes: 700 };
+  for (let i = 0; i < 12; i++) {
+    enqueueBusWake({ kind: 'bus.send', id: `d-${i}`, from: 'mason', to: 'leaders' }, opts);
+  }
+  const before = readFileSync(busWakeQueuePath(opts.root));
+  expect(enqueueBusWake({ kind: 'bus.send', id: 'd-11', from: 'mason', to: 'leaders' }, opts)).toBe('duplicate');
+  expect(readFileSync(busWakeQueuePath(opts.root))).toEqual(before);
+});
+it('refuses a row larger than the whole budget without touching stored wakes', () => {
+  const directory = root();
+  enqueueBusWake(request, { root: directory, now: () => 1 });
+  const before = readFileSync(busWakeQueuePath(directory));
+  expect(() => enqueueBusWake({ ...request, id: 'other-id' }, { root: directory, now: () => 2, maxBytes: 10 })).toThrow();
+  expect(readFileSync(busWakeQueuePath(directory))).toEqual(before);
 });
