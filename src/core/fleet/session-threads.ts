@@ -1,0 +1,128 @@
+/**
+ * Every agent session as a short conversation, in one read
+ * (`fleet.session-threads.v1`): behind `phm sessions threads` and GET
+ * /api/verse/fleet/control/session-threads.
+ *
+ * Pure, and no source of its own. Each entry is the same thread
+ * `phm sessions thread <id>` builds (session-thread.ts), cut down to its
+ * summary and newest messages, so a screen that shows every session at once
+ * makes one request instead of one per session. Sessions come in the order of
+ * the session tree: the leader, then each worker followed by its helpers.
+ * The reader lives in session-threads-read.ts.
+ */
+import type { AgentMessages } from './agent-messages.js';
+import { flatTree, type LiveSessionsV1 } from './live-sessions.js';
+import type { LeaderRepliesV1 } from './mason-outbox.js';
+import type { FleetJobActivityV1 } from './runs-job-activity.js';
+import { buildSessionThread, type SessionThreadMessage, type SessionThreadSession, type SessionThreadSource, type SessionThreadState, type SessionThreadV1 } from './session-thread.js';
+
+export const SESSION_THREADS_SCHEMA = 'fleet.session-threads.v1';
+/** The most sessions one read holds, the newest messages each one carries, and the longest message text. */
+export const THREADS_MAX = 40, THREADS_MESSAGES_SHOWN = 3, THREADS_TEXT_CHARS = 400;
+/** `counts.states` keys, in the order they print. */
+export const THREAD_STATES: readonly SessionThreadState[] = ['running', 'quiet', 'idle', 'done', 'failed', 'unknown'];
+
+/** Key order is the JSON contract. A thread message, with `truncated` true when `text` was cut to THREADS_TEXT_CHARS. */
+export interface SessionThreadsMessage extends SessionThreadMessage { truncated: boolean }
+export interface SessionThreadsEntry {
+  session: SessionThreadSession;
+  /** The same sentences `phm sessions thread <id>` prints. */
+  summary: string[];
+  /** The newest THREADS_MESSAGES_SHOWN messages of the thread, oldest of them first. */
+  messages: SessionThreadsMessage[];
+  /** How many messages the whole thread holds. */
+  messageCount: number;
+  sources: SessionThreadV1['sources'];
+  gaps: string[];
+}
+export interface SessionThreadsV1 {
+  schema: typeof SESSION_THREADS_SCHEMA;
+  generatedAt: string;
+  filter: { lane: string | null; repo: string | null; live: boolean };
+  /** `sessions` counts every session in the list; `shown` the ones in `threads`; `states` only those shown. */
+  counts: { sessions: number; shown: number; states: Record<SessionThreadState, number> };
+  threads: SessionThreadsEntry[];
+  /** `unavailable` sessions means the list could not be read: `threads` is empty and that is not "no sessions". */
+  sources: { sessions: 'available' | 'unavailable'; bus: SessionThreadSource; replies: SessionThreadSource };
+  /** Plain words for what the whole read could not show. Each thread lists its own. */
+  gaps: string[];
+}
+
+/** What the reader hands the builder. */
+export interface SessionThreadsParts {
+  /** False when the session list itself could not be read. */
+  sessionsRead: boolean;
+  /** Null when the read failed. */
+  bus: AgentMessages | null;
+  /** Recorded activity by job id. A job with no key was not asked for; null means its read failed. */
+  activity: ReadonlyMap<string, FleetJobActivityV1 | null>;
+  /** The leader's replies. Undefined when not asked for; null when the read failed. */
+  replies?: LeaderRepliesV1 | null;
+}
+
+/** The sessions a threads read shows, in tree order, and how many the list holds in all. */
+export function threadSessions(list: LiveSessionsV1): { shown: { id: string; jobId: string | null; kind: string }[]; total: number } {
+  const nodes = flatTree(list.tree.roots).map(entry => entry.node).filter(node => node.kind !== 'unknown-parent');
+  return { shown: nodes.slice(0, THREADS_MAX).map(node => ({ id: node.id, jobId: node.jobId, kind: node.kind })), total: nodes.length };
+}
+
+function clipped(message: SessionThreadMessage): SessionThreadsMessage {
+  const cut = message.text.length > THREADS_TEXT_CHARS;
+  return { ...message, text: cut ? `${message.text.slice(0, THREADS_TEXT_CHARS - 1).trimEnd()}…` : message.text, truncated: cut };
+}
+
+/** Every session in `list` as a short thread. An unreadable list gives no threads and says so; it never reads as an empty fleet. */
+export function buildSessionThreads(list: LiveSessionsV1, parts: SessionThreadsParts, now: number): SessionThreadsV1 {
+  const states = Object.fromEntries(THREAD_STATES.map(state => [state, 0])) as Record<SessionThreadState, number>;
+  const base = { schema: SESSION_THREADS_SCHEMA, generatedAt: new Date(now).toISOString(),
+    filter: { lane: list.filter.lane, repo: list.filter.repo, live: list.live } } as const;
+  if (!parts.sessionsRead) {
+    return { ...base, counts: { sessions: 0, shown: 0, states }, threads: [], sources: { sessions: 'unavailable', bus: 'none', replies: 'none' },
+      gaps: ['Sessions unknown: the session list could not be read.'] };
+  }
+  const { shown, total } = threadSessions(list);
+  const threads: SessionThreadsEntry[] = [];
+  for (const { id, jobId, kind } of shown) {
+    const thread = buildSessionThread(list, id, { sessionsRead: true, bus: parts.bus,
+      ...(jobId !== null && parts.activity.has(jobId) ? { activity: parts.activity.get(jobId) } : {}),
+      ...(kind === 'leader' && parts.replies !== undefined ? { replies: parts.replies } : {}) }, now);
+    if (!thread.session) continue;
+    states[thread.session.state] += 1;
+    threads.push({ session: thread.session, summary: thread.summary, messages: thread.messages.slice(-THREADS_MESSAGES_SHOWN).map(clipped),
+      messageCount: thread.messages.length, sources: thread.sources, gaps: thread.gaps });
+  }
+  const gaps = [...list.gaps];
+  if (total > shown.length) gaps.push(`${total - shown.length} more session${total - shown.length === 1 ? '' : 's'} not shown: the read holds ${THREADS_MAX}. Narrow it with a lane or repo, or ask for running ones only.`);
+  const busDown = parts.bus === null || parts.bus.source === 'unavailable';
+  if (busDown) gaps.push('Bus messages unknown: the agent bus could not be read.');
+  const repliesDown = parts.replies === null || parts.replies?.sourceState === 'unknown';
+  const any = (name: 'bus' | 'replies') => threads.some(entry => entry.sources[name] === 'available');
+  return { ...base, counts: { sessions: total, shown: threads.length, states }, threads,
+    sources: { sessions: 'available', bus: busDown ? 'unavailable' : any('bus') ? 'available' : 'none', replies: repliesDown ? 'unavailable' : any('replies') ? 'available' : 'none' }, gaps };
+}
+
+const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { session: '<', other: '>', record: '-' };
+const oneLine = (text: string, max: number) => { const flat = text.replace(/\s+/g, ' ').trim(); return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat; };
+
+/**
+ * `phm sessions threads` for people: a count line, then one block per session with its summary and newest messages,
+ * each on one line. `>` is said to the session, `<` is the session, `-` is a recorded step.
+ */
+export function renderSessionThreadsText(read: SessionThreadsV1): string {
+  if (read.sources.sessions === 'unavailable') return read.gaps.join('\n');
+  const scope = [read.filter.lane && `lane ${read.filter.lane}`, read.filter.repo && `repo ${read.filter.repo}`, read.filter.live && 'running only'].filter(Boolean).join(', ');
+  const by = THREAD_STATES.filter(state => read.counts.states[state] > 0).map(state => `${read.counts.states[state]} ${state === 'unknown' ? 'state unknown' : state}`).join(', ');
+  const lines = [read.counts.sessions === 0 ? `No sessions${scope ? ` (${scope})` : ''}.`
+    : `${read.counts.sessions} session${read.counts.sessions === 1 ? '' : 's'}${scope ? ` (${scope})` : ''}${by ? `: ${by}` : ''}.`];
+  for (const entry of read.threads) {
+    const { session } = entry;
+    lines.push('', `${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`, `  ${entry.summary.join(' ')}`);
+    if (entry.messageCount > entry.messages.length) lines.push(`  (${entry.messageCount - entry.messages.length} earlier)`);
+    for (const message of entry.messages) lines.push(`  ${SIDE_MARK[message.side]} ${message.label}${message.at ? ` [${message.at}]` : ''}: ${oneLine(message.text, 160)}`);
+    if (entry.messageCount === 0) lines.push('  Nothing is recorded for this session yet.');
+  }
+  if (read.gaps.length > 0) lines.push('');
+  for (const gap of read.gaps) lines.push(`note: ${gap}`);
+  lines.push('', `Open one: phm sessions thread <id>. Updated ${read.generatedAt}.`);
+  return lines.join('\n');
+}
