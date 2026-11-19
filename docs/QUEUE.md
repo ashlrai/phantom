@@ -705,16 +705,26 @@ the host or launch work. It exits 1 when any lane is admission closed or blocked
 by the global cap with 5 or more jobs queued. Other waits are
 `ashlr fleet lane-idle`, which explains each under-target lane from the same verdict as held, nothing queued, admission closed, blocked by the global cap, or queued work not launching.
 
+These lane reports count availability against the **launch target**: the lane's
+configured `target` tightened by the `effective_target` the fleet controller
+publishes after load shedding (`min(target, effective_target)`, the configured
+target when the shed is absent or unreadable). A lane running at its shed ceiling
+has no phantom room, so `fleet admission`, `fleet lane-idle`, `fleet lane-share`,
+`fleet lane-starve`, `fleet starved`, `fleet launchable`, `fleet idle-lanes`,
+`fleet trim` and the idle-lane checks in `fleet doctor` and the bottleneck ideas
+all measure "under target", "full" and "starved" against it. `fleet trim`'s
+`SLOTS` suggestion still retunes the configured target it would change.
+
 `ashlr fleet lane-share [--json]` reads the same file and prints each lane's share
-of the fleet: one line per lane with running of target and queued, marked `starved`
-(10 or more queued and none running) or `full` (running equals target), then one
+of the fleet: one line per lane with running of launch target and queued, marked `starved`
+(10 or more queued and none running) or `full` (running equals launch target), then one
 line with fleet running against the admission cap. It exits 1 when a lane is
 starved while the admission reason starts with `at_cap` — queued work parked
 because the whole fleet is full, the case `ashlr fleet trim` suggests a slot move for.
 
 `ashlr fleet starved [--json]` reads the same file and prints only the lanes that
-still have queued work: running of target and queued, marked `starved` when a lane
-is below its target while the admission reason starts with `at_cap`, then one line
+still have queued work: running of launch target and queued, marked `starved` when a lane
+is below its launch target while the admission reason starts with `at_cap`, then one line
 with the admission running, cap and reason. It exits 1 when any lane has 10 or
 more jobs queued and none running.
 

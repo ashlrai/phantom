@@ -73,6 +73,14 @@ describe('findStarvedLanes', () => {
   it('rejects malformed status', () => {
     expect(() => findStarvedLanes('{"lanes":{"a":{"running":"1"}}}', '')).toThrow();
   });
+  it('skips a lane at its shed launch ceiling', () => {
+    const shed = JSON.stringify({ lanes: { codex: { running: 1, target: 3, effective_target: 1, queued: 4 } } });
+    expect(findStarvedLanes(shed, '')).toEqual([]);
+    const room = JSON.stringify({ lanes: { codex: { running: 0, target: 3, effective_target: 1, queued: 4 } } });
+    expect(findStarvedLanes(room, '')).toEqual([
+      { lane: 'codex', running: 0, target: 1, queued: 4, ready: 0, filler: 0, real: 0 },
+    ]);
+  });
 });
 
 describe('cmdFleetLaneStarve', () => {

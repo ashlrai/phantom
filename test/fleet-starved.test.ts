@@ -111,6 +111,20 @@ describe('explainFleetStarved', () => {
       { lane: 'zero', running: 0, target: 0, queued: 3, starved: false, backlogged: false },
     ]);
   });
+
+  it('measures starved against the launch target after an effective_target shed', () => {
+    const view = explainFleetStarved(status({
+      reason: 'at_cap running 18 >= cap 18',
+      lanes: {
+        shedFull: { ...lane(2, 4, 9), effective_target: 2 },
+        shedRoom: { ...lane(1, 4, 9), effective_target: 2 },
+      },
+    }));
+    expect(view.lanes).toEqual([
+      { lane: 'shedFull', running: 2, target: 2, queued: 9, starved: false, backlogged: false },
+      { lane: 'shedRoom', running: 1, target: 2, queued: 9, starved: true, backlogged: false },
+    ]);
+  });
 });
 
 describe('ashlr fleet starved', () => {

@@ -85,6 +85,19 @@ describe('explainFleetAdmission', () => {
     expect(report.status).toBe('ok');
   });
 
+  it('reads at target at the shed launch ceiling, not the configured one', () => {
+    const report = explainFleetAdmission(status({
+      lanes: {
+        shedFull: { ...lane(2, 4, 6), effective_target: 2 },
+        shedRoom: { ...lane(1, 4, 6), effective_target: 2 },
+      },
+    }));
+    expect(report.lanes.map(row => [row.lane, row.target, row.reason])).toEqual([
+      ['shedFull', 2, 'at target'],
+      ['shedRoom', 2, 'blocked by the global cap'],
+    ]);
+  });
+
   it('is red only when a cap-blocked lane has 5 or more queued', () => {
     const below = explainFleetAdmission(status({ lanes: { codex: lane(1, 3, FLEET_ADMISSION_RED_QUEUED - 1) } }));
     expect(below.status).toBe('ok');

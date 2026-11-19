@@ -85,6 +85,19 @@ describe('explainFleetLaneShare', () => {
     expect(view.admissionReason).toBeNull();
   });
 
+  it('marks full at the shed launch ceiling and reports the launch target', () => {
+    const view = explainFleetLaneShare(status({
+      lanes: {
+        shedFull: { ...lane(2, 4, 3), effective_target: 2 },
+        shedRoom: { ...lane(1, 4, 3), effective_target: 2 },
+      },
+    }));
+    expect(view.lanes.map(row => [row.lane, row.target, row.mark])).toEqual([
+      ['shedFull', 2, 'full'],
+      ['shedRoom', 2, null],
+    ]);
+  });
+
   it('goes red only when a starved lane sits behind an at_cap admission reason', () => {
     const red = explainFleetLaneShare(status({
       reason: 'at_cap running 18 >= cap 18',

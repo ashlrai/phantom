@@ -2,17 +2,19 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fleetAdmissionVerdict } from '../core/fleet/admission-verdict.js';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: ashlr fleet lane-idle [--json]
-Explain why lanes are below target from queue/status.json. Read-only.
-A lane is blocked by the global cap when it has queued work, is under its target, and global running is at the cap while admission is otherwise open.`;
+Explain why lanes are below their launch target (the configured target tightened by the controller's effective_target shed) from queue/status.json. Read-only.
+A lane is blocked by the global cap when it has queued work, is under its launch target, and global running is at the cap while admission is otherwise open.`;
 
 export type LaneIdleReader = (path: string) => Promise<string>;
 export type LaneIdleReason = 'held' | 'nothing queued' | 'admission closed' | 'blocked by the global cap' | 'queued work not launching';
 export interface IdleLane {
   lane: string;
   running: number;
+  /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
   queued: number;
   reason: LaneIdleReason;
@@ -55,7 +57,10 @@ export function explainIdleLanes(value: unknown): IdleLane[] {
   });
   return Object.entries(lanes).flatMap(([name, value]) => {
     const lane = record(value);
-    const running = count(lane.running), target = count(lane.target), queued = count(lane.queued);
+    const running = count(lane.running), queued = count(lane.queued);
+    // Availability counts against the launch target, not the configured one:
+    // a lane the controller shed has no phantom room below it.
+    const target = laneLaunchTarget(count(lane.target), maybeCount(lane.effective_target));
     if (typeof lane.held !== 'boolean') throw new Error('Invalid hold');
     if (running >= target) return [];
     const reason = lane.held ? 'held' : queued === 0 ? 'nothing queued'

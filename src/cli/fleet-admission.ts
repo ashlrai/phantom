@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fleetAdmissionVerdict } from '../core/fleet/admission-verdict.js';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 /** A lane parked by a fleet-wide block is red once it has this many jobs queued. */
@@ -27,6 +28,7 @@ export interface FleetAdmissionGlobal {
 export interface FleetAdmissionLane {
   lane: string;
   running: number;
+  /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
   queued: number;
   held: boolean;
@@ -46,8 +48,8 @@ export type FleetAdmissionReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet admission [--json]
 Read the global cap and why each lane is waiting. Read-only.
-A lane is admission closed when it has queued work, is under its target, and the dispatcher is not admitting (load gate or pause).
-A lane is blocked by the global cap when it has queued work, is under its target, and global running is at the cap while admission is otherwise open.
+A lane is admission closed when it has queued work, is under its launch target (the configured target tightened by the controller's effective_target shed), and the dispatcher is not admitting (load gate or pause).
+A lane is blocked by the global cap when it has queued work, is under its launch target, and global running is at the cap while admission is otherwise open.
 Exits 1 when any such lane has ${FLEET_ADMISSION_RED_QUEUED} or more queued.
 Other waits: ashlr fleet lane-idle.`;
 
@@ -61,6 +63,11 @@ function record(value: unknown): Record<string, unknown> {
 function count(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid count');
   return value;
+}
+
+/** A count that stays unknown (null) instead of failing the whole report. */
+function maybeCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function load(value: unknown): number {
@@ -127,7 +134,9 @@ export function explainFleetAdmission(value: unknown): FleetAdmissionReport {
     if (!lane) throw new Error('Invalid lane');
     const fields = record(row);
     const laneRunning = count(fields.running);
-    const target = count(fields.target);
+    // A lane shed below its configured target is at its launch ceiling, not
+    // under target: availability counts against effective_target.
+    const target = laneLaunchTarget(count(fields.target), maybeCount(fields.effective_target));
     const queued = count(fields.queued);
     if (typeof fields.held !== 'boolean') throw new Error('Invalid hold');
     const reason = laneReason({ held: fields.held, running: laneRunning, target, queued }, atCap, nonCapClosed);
