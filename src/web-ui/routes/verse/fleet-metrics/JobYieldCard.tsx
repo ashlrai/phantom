@@ -23,7 +23,7 @@ export function JobYieldCard({ report, stopped }: { report: JobYieldReport | und
   const shown = rows.slice(0, JOB_YIELD_ROWS);
   const rest = rows.slice(JOB_YIELD_ROWS);
   const why = usable?.empty_why;
-  return <div className={styles.root}>
+  return <div className={styles.card}>
     <h3 className={styles.heading}>Job yield</h3>
     <p className={styles.note}>{usable ? usable.summary : 'Job yield: unknown'}</p>
     {shown.length ? <div className={styles.scroll}>
@@ -39,11 +39,11 @@ export function JobYieldCard({ report, stopped }: { report: JobYieldReport | und
       : !stopped.length ? <p className={styles.note}>No family is stopped.</p>
       : <ul className={styles.stopped}>{stopped.map(row => <li key={`${row.family} ${row.until}`}>
         <strong>{row.family}</strong> <span className={styles.note}>{row.why} · expires in {expiresIn(row.expires_in_s)}</span></li>)}</ul>}
-    {why?.known ? <section aria-label="Why jobs ended empty"><h4>Why jobs ended empty</h4>
+    {why?.known ? <section aria-label="Why jobs ended empty"><h4 className={styles.heading}>Why jobs ended empty</h4>
       <p className={styles.note}>{why.total} empty jobs in the {hoursWords(why.window_hours)}. Ranked by recorded wasted tokens; missing measurements stay unknown.</p>
-      <ul>{why.families.slice(0, JOB_YIELD_ROWS).map(row => <li key={row.family}>{row.family}: {row.wasted_tokens ?? 'unknown'} wasted tokens
+      <ul className={styles.list}>{why.families.slice(0, JOB_YIELD_ROWS).map(row => <li key={row.family}>{row.family}: {row.wasted_tokens ?? 'unknown'} wasted tokens
         {row.tokens_unknown_jobs ? ` (${row.tokens_unknown_jobs} ${row.tokens_unknown_jobs === 1 ? 'job' : 'jobs'} with unknown tokens)` : ''}; {Object.entries(row.reasons).filter(([, n]) => n).map(([key, n]) => `${n} ${key === 'precheck-catchable' ? 'a precheck could catch' : key.replaceAll('-', ' ')}`).join(', ')}</li>)}</ul>
-      {why.families.length > JOB_YIELD_ROWS ? <p>{why.families.length - JOB_YIELD_ROWS} more families in phm jobs empty-why.</p> : null}
+      {why.families.length > JOB_YIELD_ROWS ? <p className={styles.note}>{why.families.length - JOB_YIELD_ROWS} more families in phm jobs empty-why.</p> : null}
     </section> : null}
   </div>;
 }
