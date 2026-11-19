@@ -76,6 +76,16 @@ describe('executeBusClaimBody', () => {
     expect(tokenOf(retry)).not.toBe(token);
   });
 
+  it('refuses wildcard path claims that share a concrete path', () => {
+    const root = tempDir('v2claim-');
+    // '**/*.ts' and 'src/*.ts' both match src/x.ts; the literal-prefix rule missed this.
+    expect(acquire('path:ashlrai/phantom:**/*.ts', 'dot-main', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
+    const second = acquire('path:ashlrai/phantom:src/*.ts', 'other-seat', 600_000, 'op-2', root);
+    expect(second).toMatchObject({ status: 'conflict', holder: { owner: 'dot-main', claimKey: 'path:ashlrai/phantom:**/*.ts' } });
+    // Provably disjoint globs still coordinate independently.
+    expect(acquire('path:ashlrai/phantom:docs/*.md', 'third-seat', 600_000, 'op-3', root)).toMatchObject({ status: 'acquired' });
+  });
+
   it('lets non-overlapping keys coexist across claim forms', () => {
     const root = tempDir('v2claim-');
     expect(acquire('repo:ashlrai/phantom', 'a', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });

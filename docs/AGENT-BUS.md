@@ -398,10 +398,11 @@ issued on acquire, `leaseUntil` is epoch milliseconds.
 - Acquire fails with 409 and the holder (`{v:2, status:"conflict", holder:{owner,
   claimKey, leaseUntil}}`, never the token) if any live claim overlaps.
 - Overlap: a repo claim overlaps any path claim in the same repo; two path
-  claims in one repo overlap if either glob matches the other's literal prefix
-  (the text before its first `* ? [ {`) or the globs are equal; queue keys
-  overlap on equal id; PR keys on equal repo and number. Repo names compare
-  case-insensitively. Other pairs never overlap.
+  claims in one repo overlap when some path matches both globs (exact glob
+  intersection under `globMatches` semantics — `*` and `?` stay inside one
+  path segment, `**` crosses segments); queue keys overlap on equal id; PR
+  keys on equal repo and number. Repo names compare case-insensitively.
+  Other pairs never overlap.
 - Renew before `leaseUntil`. An expired claim is free: live means `now <
   leaseUntil`.
 - Only the token holder may renew, release or complete.

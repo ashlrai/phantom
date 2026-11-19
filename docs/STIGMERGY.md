@@ -35,8 +35,8 @@ repo:<owner/name>   path:<owner/name>:<glob>   queue:<queue id>   pr:<owner/name
 ```
 
 Overlap follows the bus rule: a `repo:` claim covers every `path:` claim in
-that repo, path globs overlap by literal prefix, and `queue:`/`pr:` keys
-match themselves only.
+that repo, path globs overlap when some path matches both, and `queue:`/`pr:`
+keys match themselves only.
 
 ## Marker record
 

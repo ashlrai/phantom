@@ -64,6 +64,23 @@ describe('claim keys and overlap', () => {
     ['path:a/b:src/*.ts', 'path:a/b:src/core/**', false],
     ['path:a/b:docs/**', 'path:a/b:src/**', false],
     ['path:a/b:src/**', 'path:a/c:src/**', false],
+    // Wildcard-vs-wildcard intersections the literal-prefix heuristic missed:
+    // each pair shares at least one concrete path.
+    ['path:a/b:**/*.ts', 'path:a/b:src/*.ts', true],
+    ['path:a/b:src/**', 'path:a/b:**/x.ts', true],
+    ['path:a/b:docs/**', 'path:a/b:**/*.md', true],
+    ['path:a/b:a/*/c.ts', 'path:a/b:a/b/**', true],
+    ['path:a/b:**/*.test.ts', 'path:a/b:src/**', true],
+    ['path:a/b:**/foo.ts', 'path:a/b:src/bar/**', true],
+    ['path:a/b:src/*', 'path:a/b:**/x.ts', true],
+    ['path:a/b:*/x.ts', 'path:a/b:src/*.ts', true],
+    // Provable disjointness still holds under exact intersection.
+    ['path:a/b:**/*.ts', 'path:a/b:docs/*.md', false],
+    ['path:a/b:a/*/c.ts', 'path:a/b:a/b/d/**', false],
+    ['path:a/b:src/*.ts', 'path:a/b:src/core/*.test.ts', false],
+    // A literal path that is only a prefix of the other's pattern is not a
+    // shared path: 'src/' matches nothing 'src/*.ts' matches.
+    ['path:a/b:src/', 'path:a/b:src/*.ts', false],
     ['path:a/b:*.md', 'path:a/b:*.md', true],
     ['queue:q1', 'queue:q1', true],
     ['queue:q1', 'queue:q2', false],
