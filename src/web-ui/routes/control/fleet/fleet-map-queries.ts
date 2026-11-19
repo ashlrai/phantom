@@ -37,3 +37,23 @@ export const fleetMessageGraphQuery: QueryDef<FleetMessageGraph & { groups: NonN
     return value;
   },
 };
+
+/** One computer's badge from `phm nodes plan --json`; "unknown" is kept as unknown. */
+export interface NodeBadge { name: string; online: boolean | 'unknown'; slots: number | 'unknown'; why: string }
+/** Narrow a phantom.nodes-plan.v1 body to badges; malformed rows are dropped, malformed fields become unknown. */
+export function narrowNodeBadges(value: unknown): NodeBadge[] | null {
+  if (!record(value) || value.schema !== 'phantom.nodes-plan.v1' || !Array.isArray(value.nodes)) return null;
+  return value.nodes.filter(row => record(row) && typeof row.name === 'string' && row.name !== '').map(row => {
+    const r = row as Record<string, unknown>;
+    return {
+      name: (r.name as string).slice(0, 160),
+      online: typeof r.online === 'boolean' ? r.online : 'unknown',
+      slots: typeof r.suggested_slots === 'number' && Number.isFinite(r.suggested_slots) && r.suggested_slots >= 0 ? r.suggested_slots : 'unknown',
+      why: typeof r.why === 'string' ? r.why.slice(0, 200) : '',
+    };
+  });
+}
+export const fleetNodesPlanQuery: QueryDef<NodeBadge[] | null> = {
+  key: 'fleet-map-nodes-plan',
+  fetch: async signal => narrowNodeBadges(await apiGet<unknown>('/api/verse/fleet/runtime-identity/nodes-plan', signal).catch(() => null)),
+};

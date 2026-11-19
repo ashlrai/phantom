@@ -28,3 +28,7 @@
 .detailActivity { white-space: pre-wrap; overflow-wrap: anywhere; }
 :global([data-console-layout='compact']) .grid { grid-template-columns: 1fr; }
 :global([data-console-layout='wide']) .grid { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.badge { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs-size); color: var(--text-secondary); }
+.dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--text-secondary); opacity: 0.5; }
+.badge[data-online='true'] .dot { background: var(--status-ok, #2e9d5b); opacity: 1; }
+.badge[data-online='false'] .dot { background: var(--status-bad, #c0392b); opacity: 1; }

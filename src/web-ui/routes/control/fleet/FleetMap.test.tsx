@@ -37,20 +37,23 @@ function graph(groups: NonNullable<FleetMessageGraph['groups']> | null = []): Fl
   return { schema: 'fleet.message-graph.v1', version: 1, generatedAt: iso, since: new Date(NOW - 900_000).toISOString(), source: groups ? 'available' : 'unavailable',
     organizations: groups && [], groups, messages: groups && groups.reduce((sum, group) => sum + group.count, 0), skipped: 0 };
 }
-let machine: FleetCompute, inventory: FleetSessionMap, talk: FleetMessageGraph, failCompute: boolean, failSessions: boolean;
+let machine: FleetCompute, inventory: FleetSessionMap, talk: FleetMessageGraph, failCompute: boolean, failSessions: boolean, plan: unknown;
 const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
   if (url === '/api/verse/fleet/control/compute') return Response.json(failCompute ? { error: 'offline' } : machine, { status: failCompute ? 503 : 200 });
   if (url === '/api/verse/fleet/control/sessions') return Response.json(failSessions ? { error: 'offline' } : inventory, { status: failSessions ? 503 : 200 });
   if (url === '/api/fleet/message-graph') return Response.json(talk, { status: talk.groups ? 200 : 503 });
+  if (url === '/api/verse/fleet/runtime-identity/nodes-plan') return Response.json(plan, { status: plan ? 200 : 503 });
   throw new Error(`Unexpected read: ${url}`);
 });
+/** Reads of the live maps; the slow-moving plan badges are counted on their own. */
+const reads = () => fetcher.mock.calls.filter(([url]) => !url.includes('nodes-plan')).length;
 async function mount(path = '/control/fleet') {
   await act(async () => { render(<MemoryRouter initialEntries={[path]}><FleetMap /></MemoryRouter>); });
 }
 const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(4000); });
 beforeEach(() => {
   evictAll(); vi.useFakeTimers(); vi.setSystemTime(NOW);
-  machine = compute(); inventory = sessions(); talk = graph(); failCompute = false; failSessions = false;
+  machine = compute(); inventory = sessions(); talk = graph(); failCompute = false; failSessions = false; plan = null;
   fetcher.mockClear(); vi.stubGlobal('fetch', fetcher);
 });
 afterEach(() => { cleanup(); evictAll(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -116,10 +119,25 @@ describe('FleetMap', () => {
     expect(screen.getByText('This selection is no longer in the current snapshot.')).toBeInTheDocument();
   });
 
+  it('shows a plan badge per machine: online dot and suggested slots, unknown kept unknown', async () => {
+    plan = { schema: 'phantom.nodes-plan.v1', as_of: iso, assignable: [], reasons: [],
+      nodes: [{ name: 'Mini', online: true, suggested_slots: 2, why: 'ready for work; room for 2 more jobs' }, { name: 'other', online: false, suggested_slots: 0, why: 'offline' }] };
+    await mount();
+    expect(screen.getByLabelText('Plan: online, 2 suggested slots')).toHaveTextContent('2 slots');
+    plan = { schema: 'phantom.nodes-plan.v1', nodes: [{ name: 'mini', online: 'unknown', suggested_slots: 'unknown', why: '' }] };
+    cleanup(); evictAll(); await mount();
+    expect(screen.getByLabelText('Plan: online unknown, slots unknown')).toHaveTextContent('? slots');
+  });
+
+  it('shows no badge when the plan is unavailable', async () => {
+    await mount();
+    expect(screen.queryByLabelText(/^Plan:/)).not.toBeInTheDocument();
+  });
+
   it('opens machine details without fleet mutations', async () => {
     await mount(); fireEvent.click(screen.getByRole('button', { name: 'mini' }));
     expect(within(screen.getByRole('dialog', { name: 'mini' })).getByText('team')).toBeInTheDocument();
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(reads()).toBe(3);
   });
 
   it('keeps conflicting or absent nodes unplaced and includes recently finished sessions', async () => {
@@ -191,14 +209,14 @@ describe('FleetMap', () => {
 
   it('pauses polling while hidden, refreshes on return and cleans up on unmount', async () => {
     const visibility = vi.spyOn(document, 'visibilityState', 'get');
-    visibility.mockReturnValue('hidden'); await mount(); expect(fetcher).not.toHaveBeenCalled();
+    visibility.mockReturnValue('hidden'); await mount(); expect(reads()).toBe(0);
     visibility.mockReturnValue('visible'); await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-    expect(fetcher).toHaveBeenCalledTimes(3); await tick(); expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(reads()).toBe(3); await tick(); expect(reads()).toBe(6);
     visibility.mockReturnValue('hidden'); fireEvent(document, new Event('visibilitychange'));
-    await tick(); expect(fetcher).toHaveBeenCalledTimes(6);
+    await tick(); expect(reads()).toBe(6);
     expect(screen.getByRole('button', { name: 'Inspect session RQ-MAP' })).toBeInTheDocument();
     visibility.mockReturnValue('visible'); await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
-    expect(fetcher).toHaveBeenCalledTimes(9); cleanup(); await tick(); expect(fetcher).toHaveBeenCalledTimes(9);
+    expect(reads()).toBe(9); cleanup(); await tick(); expect(reads()).toBe(9);
   });
 });
 
