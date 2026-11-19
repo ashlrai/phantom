@@ -1400,7 +1400,8 @@ answer 503.
 
 `readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
-retryable/invalid with receipt count and `asOf`. Omitted post providers fall back
+retryable/invalid with receipt count and `asOf`. `runtimeProvider(identity)` is the exported newest-runtime provider
+lookup both the feed hints and `announceWork` share. Omitted post providers fall back
 to the sender identity's newest registered runtime in the agent registry beside
 the bus store (`resolveAgent` over handle, `agent:<handle>`, stable id and
 aliases), and `ownerKeyFor` falls back to that identity's stable id so statuses
@@ -1444,10 +1445,20 @@ no execution authority; the token returns only to its acquirer.
 with a `reason`); they never throw for bad input or storage faults.
 
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
-`sendHandoff` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
+`announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
+`DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
+TTL; its provider is the explicit input or the sender identity's newest
+runtime provider (`runtimeProvider`), and it refuses `conflict` when the live
+feed already shows the job id. `updateWorkStatus(WorkStatusInput)` posts a
+v2 `work.status` only for a job the feed shows, and only from the identity
+that announced it (resolved through any of its labels). Both read
+`readBusWorkFeed` before appending and propagate a refused, retryable,
+invalid or unavailable feed as a refusal — they never post unchecked and never
+dispatch, claim or execute.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,

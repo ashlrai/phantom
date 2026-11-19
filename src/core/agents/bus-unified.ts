@@ -23,9 +23,12 @@ import { groupAddress } from '../fleet/bus-group.js';
 import { createBusWakeHook, type BusWakeResult } from '../fleet/bus-wake.js';
 import { busWakeQueueEnqueue, readBusWakes, type BusWakeRow } from '../fleet/bus-wake-queue.js';
 import { isFleetJobId } from '../fleet/runs-job-detail.js';
+import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
-import { BUS_V2_TEXT_MAX } from './bus-v2-schema.js';
+import { BUS_V2_TEXT_MAX, workPostBodySchema, workStatusBodySchema,
+  type Participant, type WorkJob } from './bus-v2-schema.js';
+import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
   AGENT_ADDRESS_PREFIX, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistry, type AgentRegistryOptions,
@@ -34,6 +37,9 @@ import {
 export const UNIFIED_BUS_ORIGIN = 'agent-bus';
 export const DEFAULT_DM_TTL_MS = 24 * 60 * 60_000;
 export const DEFAULT_HANDOFF_TTL_MS = 7 * 24 * 60 * 60_000;
+export const DEFAULT_WORK_TTL_MS = 7 * 24 * 60 * 60_000;
+/** Work announcements and statuses default to the fleet work sink label. */
+export const DEFAULT_WORK_ADDRESS = LEADERS_ADDRESS;
 export const MAX_UNIFIED_TTL_MS = 30 * 24 * 60 * 60_000;
 export const DEFAULT_CHANNEL_TOPIC = 'general';
 /** Bounded scan: the whole retained store, at the reader's page size. */
@@ -103,8 +109,7 @@ function common(input: SendCommon, defaults: { priority: BusPriority; ttl: numbe
 
 /** The sender's vendor is its most recently seen runtime's provider, else `phantom`. */
 function vendorOf(identity: AgentIdentity): string {
-  const latest = [...identity.runtimes].sort((a, b) => b.lastSeenAt - a.lastSeenAt)[0];
-  return latest?.provider ?? 'phantom';
+  return runtimeProvider(identity) ?? 'phantom';
 }
 
 function hoplogFile(options: UnifiedBusOptions): string | undefined {
@@ -218,6 +223,121 @@ export async function sendHandoff(input: HandoffInput, options: UnifiedBusOption
     priority: base.priority, ttl: base.ttl, body: { kind: 'worker-handoff', taskId: input.taskId, prompt: input.prompt },
     ...metadata(sender, 'handoff', `handoff:${input.taskId}`),
   }, shouldWake(base.priority, input.wake, true), options);
+}
+
+export interface WorkAnnouncementInput extends SendCommon {
+  /** Routing label the announcement addresses; default `leaders`. */
+  to?: string;
+  jobId: string;
+  title: string;
+  repo: string;
+  claimKeys: readonly string[];
+  /** v2 provider; defaults to the sender identity's newest runtime provider. */
+  provider?: Participant['provider'];
+  dispatch?: { tier: 'fast' | 'mid' | 'work' | 'frontier'; scope: string; acceptance: string };
+}
+export interface WorkStatusInput extends SendCommon {
+  /** Routing label the status addresses; default `leaders`. */
+  to?: string;
+  jobId: string;
+  status: WorkJob['status'];
+  detail?: string;
+}
+
+/** Work bodies address a plain routing label (default the fleet work sink), never an identity. */
+function workRoute(to: string | undefined): string | UnifiedSendResult {
+  const address = to ?? DEFAULT_WORK_ADDRESS;
+  return THREAD.test(address) && scrubSecrets(address) === address
+    ? address
+    : refuse('invalid', 'Work address must be a printable routing label.');
+}
+
+/**
+ * The work feed refuses its whole projection on a duplicate job id, a missing
+ * provider or a foreign status owner, so a blind post can poison it for every
+ * reader until the receipt expires. Verify against the live projection first;
+ * an unreadable feed refuses the send rather than posting unchecked.
+ */
+function workFeedBlocked(feed: BusWorkFeedReadResult): UnifiedSendResult {
+  if (feed.status === 'refused') return refuse('refused', `Work feed is refused (${feed.reason}).`);
+  if (feed.status === 'retryable') return refuse('retryable', 'Work feed read is retryable.');
+  if (feed.status === 'invalid') return refuse('invalid', 'Work feed read is invalid.');
+  return refuse('unavailable', 'Work feed is unavailable.');
+}
+
+function workFeed(options: UnifiedBusOptions): BusWorkFeedReadResult {
+  try { return readBusWorkFeed({ root: options.root, now: options.now }); }
+  catch { return { status: 'unavailable', asOf: new Date().toISOString() }; }
+}
+
+/**
+ * Announce a v2 `work.post`: the job the work feed projects until its TTL ends.
+ * The provider defaults to the sender's newest runtime provider because the
+ * feed refuses posts it cannot attribute; claim keys and dispatch scope are
+ * schema-checked contract data, never execution authority.
+ */
+export async function announceWork(input: WorkAnnouncementInput, options: UnifiedBusOptions = {}): Promise<UnifiedSendResult> {
+  const base = common(input, { priority: 'P2', ttl: DEFAULT_WORK_TTL_MS });
+  if ('status' in base) return base;
+  if (!Array.isArray(input.claimKeys)) return refuse('invalid', 'Claim keys must be an array of claim key strings.');
+  const reg = registry(options);
+  if ('status' in reg) return reg;
+  const sender = resolveAgent(reg, input.from);
+  if (!sender) return refuse('unknown-sender', 'Sender is not a registered identity.');
+  const provider = input.provider ?? runtimeProvider(sender);
+  if (provider === undefined) {
+    return refuse('invalid', 'Work announcements need a provider: pass one or attach a runtime to the sender identity.');
+  }
+  const to = workRoute(input.to);
+  if (typeof to !== 'string') return to;
+  const body = workPostBodySchema.safeParse({
+    kind: 'work.post', jobId: input.jobId, title: input.title, provider, repo: input.repo,
+    claimKeys: [...input.claimKeys], ...(input.dispatch === undefined ? {} : { dispatch: input.dispatch }),
+  });
+  if (!body.success) return refuse('invalid', 'Work announcement is outside the v2 contract.');
+  const feed = workFeed(options);
+  if (feed.status !== 'ok') return workFeedBlocked(feed);
+  if (feed.jobs.some(job => job.id === body.data.jobId)) {
+    return refuse('conflict', 'Job id is already announced on the work feed.');
+  }
+  return post({
+    id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to,
+    priority: base.priority, ttl: base.ttl, body: body.data,
+    ...metadata(sender, 'bus', `work:${body.data.jobId}`),
+  }, shouldWake(base.priority, input.wake), options);
+}
+
+/**
+ * Post a v2 `work.status` for a job the feed shows. Only the identity that
+ * announced the job may move it — the same owner rule the projection enforces —
+ * so this verb cannot post the status that would refuse the whole feed.
+ */
+export async function updateWorkStatus(input: WorkStatusInput, options: UnifiedBusOptions = {}): Promise<UnifiedSendResult> {
+  const base = common(input, { priority: 'P2', ttl: DEFAULT_WORK_TTL_MS });
+  if ('status' in base) return base;
+  const reg = registry(options);
+  if ('status' in reg) return reg;
+  const sender = resolveAgent(reg, input.from);
+  if (!sender) return refuse('unknown-sender', 'Sender is not a registered identity.');
+  const to = workRoute(input.to);
+  if (typeof to !== 'string') return to;
+  const body = workStatusBodySchema.safeParse({
+    kind: 'work.status', jobId: input.jobId, status: input.status,
+    ...(input.detail === undefined ? {} : { detail: input.detail }),
+  });
+  if (!body.success) return refuse('invalid', 'Work status is outside the v2 contract.');
+  const feed = workFeed(options);
+  if (feed.status !== 'ok') return workFeedBlocked(feed);
+  const job = feed.jobs.find(candidate => candidate.id === body.data.jobId);
+  if (!job) return refuse('invalid', 'Work status names a job the feed does not show.');
+  if (resolveAgent(reg, job.owner)?.id !== sender.id) {
+    return refuse('refused', 'Only the identity that announced the job may post its status.');
+  }
+  return post({
+    id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to,
+    priority: base.priority, ttl: base.ttl, body: body.data,
+    ...metadata(sender, 'bus', `work:${body.data.jobId}`),
+  }, shouldWake(base.priority, input.wake), options);
 }
 
 export type InboxKind = 'dm' | 'channel' | 'handoff' | 'legacy';

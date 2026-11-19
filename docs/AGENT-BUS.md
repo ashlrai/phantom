@@ -158,6 +158,23 @@ page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI. `phm agents bus wakes <agent>` lists wake hints
 for the agent and its channels.
 
+**Work announcements.** `phm agents bus work post --job <id> --title <text>
+--repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
+--scope <text> --acceptance <text>] [--to <label>]` sends a v2 `work.post`;
+`phm agents bus work status --job <id> --status <queued|running|idle|rescheduled|blocked|done|failed|terminated>
+[--detail <text>] [--to <label>]` sends a v2 `work.status`. Both default to the
+`leaders` sink, priority P2 and a 7-day TTL, fill `from` with `agent:<handle>`
+and run the same scrub, wake and append path as every other send. The provider
+defaults to the sender identity's newest runtime provider — the feed refuses
+posts it cannot attribute — while an explicit `--provider` wins and is
+schema-checked. Before appending, each verb reads the live work feed: a post
+is refused `conflict` when the job id is already shown, and a status is
+refused unless the feed shows the job and the sender resolves to the identity
+that announced it, under any of its labels. A refused, retryable, invalid or
+unavailable feed refuses the send rather than posting a receipt that would
+poison the projection. Neither verb dispatches, claims or executes anything;
+the bodies remain untrusted contract data until a consumer admits them.
+
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
 `PHM_AGENT_CLI`, else the runtime markers already used by team approvals, such
