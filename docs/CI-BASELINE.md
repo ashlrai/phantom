@@ -59,11 +59,22 @@ unknown KILL state blocks queueing. These gates do not apply to flake reruns.
 
 The append-only `ci-reruns/journal.jsonl` under ASHLR_HOME (default `~/.ashlr`)
 records an attempt durably before calling GitHub, then records its outcome.
+Attempt rows carry the failing test id (bounded to 400 characters), so the same
+test flaking on unrelated commits is visible over time. A test that was
+rerun-attempted on at least three distinct heads within the last seven days is
+a recurring flake: maintenance appends one deduplicated `RQ-CIFLAKE-*`
+stabilization brief (tier `work`) per (repository, test) to the router queue,
+capped at ten new rows per run, under the same standing-authority and KILL
+gates as shared-baseline fixes. The window keeps the signal honest — a fixed
+flake stops producing attempts and ages out instead of being re-queued on stale
+evidence, and journal rows written before the test field existed never count.
 The repository, head SHA and run ID prevent repeated attempts even after a
 crash or failed call; a new head is eligible. Reads tolerate malformed rows and
-are bounded to the last 4 MiB, so deduplication and counts cover that retained
-read window. `phm ci reruns --json` shows the latest 100 entries, counts in that
-window and the last-hour attempt count. `ci-reruns/status.json` contains the last
-maintenance time, per-repository counts, errors and queue-blocked reason;
+are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
+that retained read window. `phm ci reruns --json` shows the latest 100 entries,
+counts in that window, the last-hour attempt count and the recurring flakes.
+`ci-reruns/status.json` contains the last
+maintenance time, per-repository counts (including `recurringFlakes` detected
+and `flakeFixesQueued` appended), errors and queue-blocked reason;
 `phm daemon status --json` exposes it as `ciReruns` (null before the first run).
 Cancellation stops further GitHub calls and records status `aborted`.

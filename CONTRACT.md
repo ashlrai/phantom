@@ -164,14 +164,23 @@ only the failed job evidence to its workflow run and current PR head.
 `runCiRerunMaintenance(opts)`: injectable repositories, cancellation, GitHub,
 analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
 probable flakes are rerun, with durable pre-attempt deduplication and a global
-hourly cap (default ten). Shared-baseline queueing requires effective authority
-and inactive KILL. Cancellation returns/persists `status: 'aborted'`.
+hourly cap (default ten). Rerun attempt rows carry the failing test id (bounded
+to 400 chars). `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
+`flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
+a test probable-flaking on at least three distinct heads within seven days
+becomes one deduplicated `RQ-CIFLAKE-*` work-tier queue row, capped at ten new
+rows per run. Shared-baseline and recurring-flake queueing both require
+effective authority and inactive KILL. Cancellation returns/persists
+`status: 'aborted'`.
 `ciRerunPaths()` resolves journal/status files under the ASHLR state root;
-`readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts and
-lastHour attempts; `readCiRerunStatus(path?)` returns the persisted status or null.
+`readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts,
+lastHour attempts and recurringFlakes; `readCiRerunStatus(path?)` returns the
+persisted status or null, whose per-repo records gain `recurringFlakes` and
+`flakeFixesQueued` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
-The CLI `ci reruns [--json]` reads recent journal entries/counts without mutation.
+The CLI `ci reruns [--json]` reads recent journal entries, counts and
+recurringFlakes without mutation.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
