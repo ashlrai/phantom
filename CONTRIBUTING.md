@@ -2,6 +2,13 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+**First pull request?** Follow [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md):
+clone with upstream as `origin`, install, run `node scripts/verify-changed.mjs`
+once, push to your fork, and open a pull request against `master`. It also
+explains the one required check (`Merge Gate`), auto-merge, and which paths wait
+for the owner's review. Humans and coding agents take the same path; agents also
+follow [AGENTS.md](AGENTS.md).
+
 ---
 
 ## Prerequisites
@@ -21,9 +28,12 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+npm ci                    # a single clone; also what CI and release packaging use
+npm run install:worktree  # several trusted local worktrees sharing one store; requires pnpm 10.28.2
 ```
+
+See [Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees)
+before using the second form.
 
 Run focused verification locally while developing. Pull requests and default-branch
 pushes run the repository's CI and Dependency Audit workflows. Check the actual
@@ -346,7 +356,8 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 ## Commit style
 
 - Keep commits focused and atomic; one logical change per commit.
-- Use a concise, imperative subject line (e.g. `add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Use a [Conventional Commits](https://www.conventionalcommits.org/) subject, `type(scope): imperative summary` (e.g. `fix(genome): add embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Pull requests land as squash commits, so the pull request title becomes the subject on `master`; give it the same form. Release Please builds the changelog from those subjects, grouping `feat`, `fix`, `bridge` (fleet jobs), `perf`, `refactor`, `chore`, `docs`, `test`, `ci` and `build` into sections ([release-please-config.json](release-please-config.json)); a subject without a recognized type is left out of the changelog.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.

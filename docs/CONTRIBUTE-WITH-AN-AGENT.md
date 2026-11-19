@@ -122,7 +122,10 @@ gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>
 Fill in the [pull request template](https://github.com/ashlrai/phantom/blob/master/.github/PULL_REQUEST_TEMPLATE.md):
 what changed, the exact commands you ran, and anything you skipped. Nobody
 pushes directly to `master`. Pull requests land as squash commits, so your pull
-request title becomes the commit subject on `master`.
+request title becomes the commit subject on `master`. Write it as a
+conventional subject such as `docs(readme): fix the install command`; the
+changelog is built from those subjects (see
+[Commit style](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#commit-style)).
 
 Fleet agents push only to forks as well. Their publisher pushes a
 `codex-bridge/<job>` branch, opens the pull request titled
