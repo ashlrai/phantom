@@ -3,6 +3,7 @@
  * web UI can share it). See agent-conversations.ts for the bus read.
  */
 import type { AgentMessageKind } from './agent-messages.js';
+import type { AgentIdentityKeyFor } from '../agents/bus-identity.js';
 
 export const CONVERSATION_STATES = ['waiting', 'answered', 'blocked', 'done'] as const;
 export type ConversationState = typeof CONVERSATION_STATES[number];
@@ -114,10 +115,19 @@ export function groupConversations(messages: readonly ConversationMessage[], now
   return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
 }
 
-/** One agent (by name) and/or waiting threads only. */
-export function filterConversations(list: readonly Conversation[], query: ConversationQuery): Conversation[] {
+/**
+ * One agent (by name) and/or waiting threads only. With `identityOf`, a
+ * participant also matches when its label and the query resolve to the same
+ * registered identity, so one agent's handle, alias and address never split
+ * the filter; an unresolvable side changes nothing.
+ */
+export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
+  identityOf?: AgentIdentityKeyFor): Conversation[] {
   const agent = query.agent?.toLowerCase();
-  return list.filter(c => (!agent || c.participants.some(p => p.name.toLowerCase() === agent)) && (!query.waitingOnly || c.state === 'waiting'));
+  const key = agent !== undefined && identityOf ? identityOf(query.agent!) : undefined;
+  return list.filter(c => (!agent || c.participants.some(p => p.name.toLowerCase() === agent
+      || (key !== undefined && identityOf?.(p.name) === key)))
+    && (!query.waitingOnly || c.state === 'waiting'));
 }
 
 /** `3m`, `2h 5m`, `1d 4h`: one plain duration. */

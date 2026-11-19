@@ -7,7 +7,7 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { PROVIDERS } from '../agents/bus-v2-schema.js';
-import { BUS_CLIS } from '../agents/bus-identity.js';
+import { agentIdentityKeys, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 
 export const AGENT_MESSAGE_KINDS = ['ask', 'reply', 'handoff', 'status', 'blocker'] as const;
@@ -176,18 +176,30 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
   }).reverse();
 }
 
-export function filterAgentMessages(messages: readonly AgentMessage[], query: AgentMessagesQuery): AgentMessage[] {
+/**
+ * `agent`/`with` match a routing label or lane exactly as before; when
+ * `identityOf` resolves both sides to the same registered identity, the labels
+ * count as one agent, so a handle, alias and `agent:` address never split a
+ * filter. An unresolvable side changes nothing.
+ */
+export function filterAgentMessages(messages: readonly AgentMessage[], query: AgentMessagesQuery,
+  identityOf?: AgentIdentityKeyFor): AgentMessage[] {
   const want = (value: string | undefined) => value ? agentName(value).toLowerCase() : null;
   const agent = want(query.agent), peer = want(query.with);
-  const is = (ref: AgentRef, name: string) => ref.name.toLowerCase() === name || ref.lane === name;
+  const agentKey = identityOf && query.agent ? identityOf(agentName(query.agent)) : undefined;
+  const peerKey = identityOf && query.with ? identityOf(agentName(query.with)) : undefined;
+  const is = (ref: AgentRef, name: string, key: string | undefined) =>
+    ref.name.toLowerCase() === name || ref.lane === name || (key !== undefined && identityOf?.(ref.name) === key);
   return messages.filter(m => (query.since === undefined || Date.parse(m.ts) >= query.since)
-    && (!agent || (peer ? (is(m.from, agent) && is(m.to, peer)) || (is(m.from, peer) && is(m.to, agent)) : is(m.from, agent) || is(m.to, agent))));
+    && (!agent || (peer ? (is(m.from, agent, agentKey) && is(m.to, peer, peerKey)) || (is(m.from, peer, peerKey) && is(m.to, agent, agentKey)) : is(m.from, agent, agentKey) || is(m.to, agent, agentKey))));
 }
 
 /** The one typed read behind the CLI, API and panes. */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
-  const matched = filterAgentMessages(projectAgentMessages(scan.rows), query);
+  const identityOf = query.agent === undefined && query.with === undefined ? undefined
+    : agentIdentityKeys({ root: options.root });
+  const matched = filterAgentMessages(projectAgentMessages(scan.rows), query, identityOf);
   const limit = query.limit ?? AGENT_MESSAGES_DEFAULT_LIMIT;
   return { schema: 'agent-messages.v1', source: scan.source, messages: matched.slice(0, limit), matched: matched.length, skipped: scan.skipped };
 }

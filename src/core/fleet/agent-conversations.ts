@@ -11,6 +11,7 @@
  * bus starts its own thread. Names are routing labels, not proven identities.
  */
 import { JOB_THREAD_PREFIX, projectAgentMessages } from './agent-messages.js';
+import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
 import { mapEdgeAgent } from './map-edges.js';
@@ -44,20 +45,22 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
   });
 }
 
-/** Pure: a bus scan in, the typed JSON out. */
+/** Pure: a bus scan in, the typed JSON out. `identityOf` lets `--agent` match
+ * every label of one registered identity; absent or unresolved, labels stay strict. */
 export function buildAgentConversations(scan: { source: AgentConversations['source']; rows: readonly BusInboxReceipt[]; skipped?: number },
-  query: ConversationQuery, now: number): AgentConversations {
+  query: ConversationQuery, now: number, identityOf?: AgentIdentityKeyFor): AgentConversations {
   const head = { schema: 'agents.conversations.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), source: scan.source };
   const skipped = scan.skipped ?? 0;
   if (scan.source === 'unavailable') return { ...head, conversations: null, waiting: null, skipped };
   const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= now);
   const all = buildConversations(conversationMessages(rows), now);
-  return { ...head, conversations: filterConversations(all, query), waiting: all.filter(c => c.state === 'waiting').length, skipped };
+  return { ...head, conversations: filterConversations(all, query, identityOf), waiting: all.filter(c => c.state === 'waiting').length, skipped };
 }
 
 /** The one read behind the CLI, the API and the map. */
 export function readAgentConversations(query: ConversationQuery = {}, options: BusInboxOptions = {}): AgentConversations {
-  return buildAgentConversations(scanBusInbox(options), query, (options.now ?? Date.now)());
+  const identityOf = query.agent === undefined ? undefined : agentIdentityKeys({ root: options.root });
+  return buildAgentConversations(scanBusInbox(options), query, (options.now ?? Date.now)(), identityOf);
 }
 
 /** `phm agents conversations` for people: one line per thread. */
