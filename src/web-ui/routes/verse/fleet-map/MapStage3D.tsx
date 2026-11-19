@@ -1,6 +1,6 @@
 /**
- * The Map pane's 3D view: the same nodes and lines as the 2D rows, stacked as one ring per org level and
- * turning slowly. Plain DOM buttons over an SVG of lines, moved by a projection each frame, so every node
+ * The Map pane's 3D view: the same nodes and lines as the 2D rows, grouped by the org tree (a cluster per lane,
+ * a label per group that hides or shows it) and turning slowly. Plain DOM buttons over an SVG of lines, moved by a projection each frame, so every node
  * stays a real button (keyboard, screen reader, click opens its detail pane) and no 3D library is needed.
  * Rotation stops while the pointer or focus is on the map, and never starts under reduced motion.
  */
@@ -24,7 +24,9 @@ interface Props {
 }
 
 export function MapStage3D({ map, now, onOpen, onOpenEdge, nameOf, showMessages = true, reducedMotion = false, onHover, cardEdge, card }: Props) {
-  const layout = useMemo(() => layoutLiveMap3D(map), [map]);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (id: string) => setCollapsed(now => { const next = new Set(now); if (!next.delete(id)) next.add(id); return next; });
+  const layout = useMemo(() => layoutLiveMap3D(map, collapsed), [map, collapsed]);
   const stage = useRef<HTMLDivElement>(null);
   const yaw = useRef(START_YAW);
   const [still] = useState(prefersReducedMotion);
@@ -43,6 +45,12 @@ export function MapStage3D({ map, now, onOpen, onOpenEdge, nameOf, showMessages 
       if (!p) continue;
       node.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -50%) scale(${p.scale.toFixed(3)})`;
       node.style.zIndex = String(Math.round(p.scale * 1000));
+    }
+    for (const label of el.querySelectorAll<HTMLElement>('[data-label]')) {
+      const p = at.get(`label:${label.dataset.label}`);
+      if (!p) continue;
+      label.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -150%) scale(${p.scale.toFixed(3)})`;
+      label.style.zIndex = String(Math.round(p.scale * 1000));
     }
     for (const line of el.querySelectorAll<SVGLineElement>('line[data-from]')) {
       const a = at.get(line.dataset.from!), b = at.get(line.dataset.to!);
@@ -99,6 +107,8 @@ export function MapStage3D({ map, now, onOpen, onOpenEdge, nameOf, showMessages 
         <ProviderBadge of={byId.get(edge.from)!.provider} iconOnly size={12} />
       </span>)}
     {cardEdge && card && <span className={styles.edgeCard} data-edge-card={cardEdge.id} data-from={cardEdge.from} data-to={cardEdge.to}>{card}</span>}
+    {layout.labels.map(label => <button key={label.id} type="button" className={styles.groupLabel3d} data-label={label.id} aria-expanded={!collapsed.has(label.id)}
+      title={collapsed.has(label.id) ? 'Show this group' : 'Hide this group'} onClick={() => toggle(label.id)}>{label.text}</button>)}
     {layout.nodes.map(node => <button key={node.id} type="button" className={styles.node3d} data-node={node.id} data-kind={node.kind} data-status={node.status}
       aria-label={nameOf(node)} title={node.detail} onClick={() => onOpen(node)}>
       {(node.kind === 'lane' || node.kind === 'job') && <ProviderBadge of={node.provider} iconOnly size={12} />}

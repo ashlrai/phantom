@@ -18,6 +18,7 @@
  */
 import { fleetOrgTree, orgLaneCounts, orgLive, type FleetOrgTree, type OrgTreeJob } from './org-tree.js';
 import type { FleetOrgMap } from './org-map.js';
+import { orgLayoutOf, type FleetOrgLayout3D } from './org-layout-3d.js';
 import type { NodesView } from './nodes-view.js';
 import { providerFor, type ProviderName } from './provider.js';
 import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
@@ -75,6 +76,8 @@ export interface FleetLiveMap {
   unmappedMessages: number | null;
   /** Plain words for every fact the map could not show. */
   gaps: string[];
+  /** Where each org node sits in 3D, grouped by who it reports to: the positions the 3D map draws. Absent from older servers. */
+  orgLayout?: FleetOrgLayout3D;
 }
 export interface LiveMapInputs {
   /** `readFleetOrgSources(15)`: the org map with its tree; null when it could not be read. */
@@ -188,6 +191,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
       computers: computers ? 'available' : 'unknown', resources: usage ? 'available' : 'unknown', messages: messageSource,
     },
     unmappedMessages: unmapped, gaps,
+    orgLayout: orgLayoutOf({ generatedAt: new Date(now).toISOString(), nodes: sortedNodes, edges: sortedEdges }),
   };
 }
 

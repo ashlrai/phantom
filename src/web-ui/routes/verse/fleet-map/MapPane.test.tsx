@@ -292,6 +292,28 @@ describe('the 2D/3D toggle', () => {
     expect(screen.getByRole('radio', { name: '3D' }).getAttribute('aria-checked')).toBe('true');
   });
 
+  it('3D groups by org: a label per lane with its running count; clicking it hides the lane\'s jobs and counts them; nodes still open', () => {
+    viewport = mockViewport(1440);
+    localStorage.setItem('phantom.fleet-map.view', '3d');
+    const onOpen = vi.fn();
+    render(<MapView map={map()} now={NOW} onOpen={onOpen} />);
+    const labels = () => [...stage()!.querySelectorAll<HTMLElement>('[data-label]')];
+    const claude = () => stage()!.querySelector<HTMLElement>('[data-label="lane:claude"]')!;
+    expect(claude().textContent).toMatch(/^claude: \d+ running/);
+    expect(labels().length).toBeGreaterThan(0);
+    expect(claude().style.transform).toMatch(/translate\(/);
+    const jobs = () => screen.queryAllByRole('button', { name: /^Open job RQ-A/ }).length;
+    expect(jobs()).toBe(1);
+    fireEvent.click(claude());
+    expect(claude().getAttribute('aria-expanded')).toBe('false');
+    expect(claude().textContent).toMatch(/, \d+ hidden$/);
+    expect(jobs()).toBe(0);
+    fireEvent.click(claude());
+    expect(jobs()).toBe(1);
+    fireEvent.click(screen.getByRole('button', { name: /^Open lane claude:/ }));
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'lane:claude' }));
+  });
+
   it('desktop, empty fixture: 3D shows the empty note and only the leader', () => {
     viewport = mockViewport(1440);
     localStorage.setItem('phantom.fleet-map.view', '3d');
