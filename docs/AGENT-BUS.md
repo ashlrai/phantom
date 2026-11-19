@@ -453,7 +453,8 @@ authentication check; labels grant no authority.
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
 newest-first order, hold regrouping and human rendering. The
-endpoint needs a current read session, takes no parameters, and answers 200
+endpoint needs a current read session and accepts only `claims=true` (any
+other parameter or value is a 400), and answers 200
 for `ok` and `refused` — the projection's own status and reason stay in the
 body — while `unavailable`, `retryable` and `invalid` storage answer 503. A
 missing store reads as an empty `ok` feed. Status filtering stays client-side;
@@ -475,8 +476,9 @@ job's declared claim keys against the live coordination table in one read:
 `claims.holds` lists every live lease blocking a job key (job, key, owner,
 lease end, origin, source id; tokens never leave the store), with
 `claims.source` of `missing`, `available` or `unavailable`. An unavailable
-claim table means holds are unknown, not absent. The HTTP work-feed endpoint
-above omits claims; the claims join remains CLI-only.
+claim table means holds are unknown, not absent. GET
+`/api/verse/agent-bus/work-feed?claims=true` serves the same join to
+HTTP-only implementers; without the parameter the response omits `claims`.
 
 ### Bounded peer dispatch
 
