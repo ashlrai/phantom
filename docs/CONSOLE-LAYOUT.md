@@ -84,6 +84,22 @@ asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
 
+The Supply pane is one board of how many job files to write so the lanes stay
+full. The headline gives the count, the line under it what opens in the next
+15 minutes and what is waiting for it, and a strip lays every lane's opening
+slots end to end, filled where a job waits. Each lane is a card: provider mark,
+the state in words (N short, Supplied, No slots opening, or Held with when it
+comes back), one square per opening slot (filled when a job waits for it,
+dashed when nothing does) and labelled readings for running against target,
+free now, freeing soon, waiting and shortfall. The lane name opens Lanes and a
+run-out time opens Usage. When the drop folder cannot be read, the pending
+files are unknown rather than zero: the card counts queued jobs only and each
+shortfall reads "up to N". Under the cards, the waste forecast draws each
+weekly window at reset (used, what the current burn adds, hatched for what
+goes unused) beside the target that would use it. Slots and waiting jobs come
+from the read `phm fleet runs --json` prints; run-out times and the forecast
+from the leader's resource ledger.
+
 The Pools pane is one board of every resource pool, most at risk of going
 unused first. Each card has the pool's plain-words line, a bar (solid: used so
 far; lighter: where the current burn ends by reset; marker: time elapsed in
