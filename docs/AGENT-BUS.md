@@ -160,7 +160,12 @@ a second message.
 posts in the agent's channels (minus its own) and traffic still addressed to its
 aliases, highest priority first. Persist `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
-data, the same for every CLI. `phm agents bus wakes <agent>` lists wake hints
+data, the same for every CLI: each line summarizes the body — `note`,
+`context` and `worker-handoff` carry their message text, while v2 kinds
+compose one scrubbed line (`work.status <job> <status> — <detail>`,
+`work.result <job> <outcome> — <reason>`, and so on); claim tokens and
+`work.result` queue/receipt ids never appear, and unrecognized bodies
+keep a raw JSON render. `phm agents bus wakes <agent>` lists wake hints
 for the agent and its channels.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>

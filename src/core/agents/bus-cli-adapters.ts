@@ -17,7 +17,7 @@ import {
   BUS_CLIS, registerAgentIdentity, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
-import type { InboxMessage } from './bus-unified.js';
+import { busBodySummary, type InboxMessage } from './bus-unified.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -141,13 +141,7 @@ function clean(value: string): string {
 
 function summary(message: InboxMessage): string {
   const body = message.envelope.body;
-  if (body && typeof body === 'object' && !Array.isArray(body)) {
-    if (body['kind'] === 'note' && typeof body['text'] === 'string') return body['text'];
-    if (body['kind'] === 'worker-handoff' && typeof body['prompt'] === 'string') {
-      return `handoff task ${String(body['taskId'])}: ${body['prompt']}`;
-    }
-  }
-  return JSON.stringify(body);
+  return busBodySummary(body) ?? JSON.stringify(body);
 }
 
 /**

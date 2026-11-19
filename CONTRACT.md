@@ -1481,7 +1481,12 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
-`readAgentWakes(ref, sinceAt, options?)` and `shouldWake(priority, requested, handoff?)`.
+`readAgentWakes(ref, sinceAt, options?)`, `shouldWake(priority, requested, handoff?)`
+and `busBodySummary(body)` — a pure, secret-scrubbed one-line read of a bus body
+for inbox surfaces (`note`/`context`/`worker-handoff` return their message
+text, possibly multi-line; v2 kinds compose `<kind> <subject>: <payload>`),
+null when the body has no typed content; claim tokens and `work.result`
+queueId/receiptId never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
