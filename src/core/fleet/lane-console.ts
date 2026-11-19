@@ -62,13 +62,15 @@
  * (`phm fleet lanes --queue-dir <abs>`).
  */
 
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import { scrubSecrets } from '../util/scrub.js';
 import { readingIsFresh } from '../usage/sensor-reading.js';
 import { readPoolBudgets, poolBudgetDirectory } from './pool-budget-store.js';
 import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
+import { HELD_LOOKBACK_MS, summarizeLaneHeld, type LaneHeld, type LaunchFile } from './lane-held.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.lanes.v1 wire shape.
@@ -129,6 +131,8 @@ export interface FleetLaneView {
     by: 'autobackoff' | 'manual' | null;
     since: string | null;
   } | null;
+  /** Present only while launches on this lane are being written as HELD (from `<job>.launch`). Absent on a healthy lane. */
+  held?: LaneHeld;
 }
 
 export interface FleetLaneSnapshot {
@@ -871,6 +875,22 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     else if (LIVE_STATUSES.has(row.status)) liveFromTsv.set(row.pool, (liveFromTsv.get(row.pool) ?? 0) + 1);
   }
 
+  // ── 8. held launches — `<job>.launch` files beside the queue directory ──
+  const jobLane = new Map<string, string>();
+  for (const row of queueRows) jobLane.set(row.id, row.pool);
+  for (const [job, pool] of queueState?.jobPool ?? []) jobLane.set(job, pool);
+  for (const event of ledgerEvents) if (event.job && event.pool) jobLane.set(event.job, event.pool);
+  const heldByLane = summarizeLaneHeld({
+    launches: await readLaunchFiles(dirname(queueDir), now.getTime()),
+    laneOf: job => jobLane.get(job) ?? null,
+    meterObservedAt: lane => {
+      const at = creditFor(lane, budgets, usage.latest, now.getTime()).observedAt;
+      return at ? Date.parse(at) : null;
+    },
+    now: now.getTime(),
+  });
+  for (const lane of heldByLane.keys()) lanes.add(lane);
+
   const views: FleetLaneView[] = [...lanes].map(lane => {
     const queueDepth = sources.queue.state !== 'missing'
       ? readyCounts.get(lane) ?? 0
@@ -891,7 +911,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
       by: !row.held ? null : row.heldReason?.startsWith('autobackoff') ? 'autobackoff' : 'manual',
       since: row.lastChange,
     } : null;
-    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
+    return { lane, queueDepth, liveJobs, mergesPerHour, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold,
+      ...(heldByLane.has(lane) ? { held: heldByLane.get(lane)! } : {}) };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.
@@ -910,6 +931,26 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     sources,
     lanes: views,
   };
+}
+
+/** First line and mtime of each recent `<job>.launch`; a failed read leaves the lane view without `held`. */
+async function readLaunchFiles(runsDir: string, nowMs: number): Promise<LaunchFile[]> {
+  let names: string[];
+  try { names = await readdir(runsDir); } catch { return []; }
+  const jobs = names.filter(n => n.endsWith('.launch')).map(n => n.slice(0, -7)).filter(j => JOB_ID.test(j));
+  const found: LaunchFile[] = [];
+  for (let i = 0; i < jobs.length; i += 64) {
+    await Promise.all(jobs.slice(i, i + 64).map(async job => {
+      try {
+        const path = join(runsDir, `${job}.launch`);
+        const info = await lstat(path);
+        if (!info.isFile() || info.mtimeMs > nowMs || nowMs - info.mtimeMs > HELD_LOOKBACK_MS) return;
+        const text = await readBounded(path, 4096);
+        found.push({ job, atMs: info.mtimeMs, firstLine: scrubSecrets((text ?? '').split(/\r?\n/).find(l => l.trim())?.trim().slice(0, 300) ?? '').replace(/(?:~\/|\/)[^\s"'<>]*/g, '[path]') });
+      } catch { /* A record removed mid-scan is not a launch. */ }
+    }));
+  }
+  return found;
 }
 
 function readyPoolOf(rows: readonly FleetLaneQueueRow[], job: string): string | undefined {

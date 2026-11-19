@@ -1877,6 +1877,15 @@ export function formatFleetLanes(snapshot: FleetLaneSnapshot): string {
       lane.mergesPerHour === null ? '—' : String(lane.mergesPerHour),
     ].join(' '));
   }
+  const heldLanes = snapshot.lanes.filter(l => l.held);
+  if (heldLanes.length > 0) {
+    lines.push('');
+    for (const l of heldLanes) {
+      const h = l.held!;
+      lines.push(`  HELD ${l.lane}: ${h.reason} · ${h.launches_held_1h} held in the last hour · since ${h.since}`);
+      lines.push(`    Next: ${h.next_step}`);
+    }
+  }
   lines.push('');
   const src = snapshot.sources;
   const state = (s: { state: string }, detail: string): string =>
