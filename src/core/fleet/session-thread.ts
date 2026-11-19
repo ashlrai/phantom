@@ -19,7 +19,10 @@ import type { InboxEntry } from './mason-inbox.js';
 import { replyTime, type LeaderRepliesV1 } from './mason-outbox.js';
 import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
+import { sessionReply, type SessionThreadReply } from './session-reply.js';
 import type { SessionKind, SessionNode, SessionState } from './session-tree.js';
+
+export { sessionReply, type SessionThreadReply } from './session-reply.js';
 
 export const SESSION_THREAD_SCHEMA = 'fleet.session-thread.v1';
 /** Session ids: `leader`, a job id such as `RQ-FIX-1`, or a subagent id such as `sa-0123abcd`. */
@@ -87,6 +90,8 @@ export interface SessionThreadV1 {
   sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource };
   /** Plain words for every part the thread could not show. */
   gaps: string[];
+  /** How to write to this session (session-reply.ts), so every client aims a message the same way. */
+  reply: SessionThreadReply;
 }
 
 /** What the reader hands the builder. `undefined` means "not asked for" (the session has no job, or is not the leader). */
@@ -228,7 +233,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   if (!node) {
     return { ...base, session: null, summary: [], messages: [],
       sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none' },
-      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'] };
+      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null) };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
   const session = sessionOf(node, row), leader = session.kind === 'leader';
@@ -335,7 +340,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
 
   if (node.lastMessage !== null) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: summaryOf(session, node, row, parts.activity, aimed, routed), messages, sources: { sessions: 'available', activity, bus, owner, replies, orders }, gaps };
+  return { ...base, session, summary: summaryOf(session, node, row, parts.activity, aimed, routed), messages, sources: { sessions: 'available', activity, bus, owner, replies, orders }, gaps, reply: sessionReply(session) };
 }
 
 const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { session: '<', other: '>', record: '-' };
@@ -352,6 +357,7 @@ export function renderSessionThreadText(thread: SessionThreadV1): string {
   }
   if (thread.gaps.length > 0) lines.push('');
   for (const gap of thread.gaps) lines.push(`note: ${gap}`);
+  lines.push(`To write to it: ${thread.reply.hint}`);
   lines.push(`${session.jobId === null ? '' : `Full log: phm sessions tail ${session.jobId}. `}Every session: phm sessions. Updated ${thread.generatedAt}.`);
   return lines.join('\n');
 }
