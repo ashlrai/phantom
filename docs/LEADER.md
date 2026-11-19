@@ -199,6 +199,13 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   own windows and do not reach further back.
 - **Channels:** Phantom, Telegram, CLI and System, shown as a badge on every
   message.
+- **When you are read:** the line under the reply box in the Leader pane (⌘⌥L)
+  says when the last leader pass ran, when the next is due (passes run every 15
+  minutes) and how many of your inbox messages no pass has read yet. A thin bar
+  above it fills across the interval. It turns amber when a pass is late and
+  red, with a button into the Journal, once a pass is more than 30 minutes
+  overdue. When the fleet read holds no pass time the line says unknown and
+  shows no count.
 - **Replies** use the same provider-neutral account/model routing as planning.
   Prepared Claude Code, Codex, Grok, included native Devin models and local
   resources can participate when their current capacity and signed Leader role
