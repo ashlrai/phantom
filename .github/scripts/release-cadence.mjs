@@ -52,14 +52,21 @@ const DECISIVE_RED = new Set(['failure', 'timed_out']);
 const decisiveVerdict = run => run.status === 'completed'
   && (run.conclusion === 'success' || DECISIVE_RED.has(run.conclusion));
 
-export async function planReleaseCadence({ repository, minutes = 30, now = Date.now(), read }) {
-  assert.ok(Number.isFinite(now));
-  cadenceMinutes(String(minutes));
-  const base = `repos/${repository}`;
-  requireRepositoryMetadata(repository, await read(base));
-  // The plan always evaluates the live master tip, never the SHA a workflow
-  // happened to start on: during merge bursts the tip moves before the check
-  // finishes, and pinning the decision to a stale SHA starves every release.
+/**
+ * How many times the plan re-evaluates when master moves mid-check. Merge
+ * bursts make a still tip rare; each pass re-reads every input pinned to
+ * one observed tip, so the bound caps read spend rather than safety, and
+ * exhausting it simply waits for the next scheduled wake.
+ */
+export const CADENCE_MAX_ATTEMPTS = 3;
+
+/**
+ * One evaluation pass pinned to a single observed master tip. Returns the
+ * plan, or null when the closing re-read sees a newer tip — the caller
+ * then re-runs the whole pass at the live tip instead of demanding the
+ * world stand still for the check.
+ */
+async function planAtLiveTip({ base, repository, minutes, now, read }) {
   const tip = (await read(`${base}/branches/master`)).commit?.sha;
   assert.match(tip ?? '', SHA);
   const content = async path => {
@@ -112,10 +119,29 @@ export async function planReleaseCadence({ repository, minutes = 30, now = Date.
       return { due: false, reason: 'push-ci-stale' };
     }
   }
-  // Re-read before opening a PR: movement during this check still refuses, so
-  // version and evidence are never computed across a moving tip.
-  if ((await read(`${base}/branches/master`)).commit?.sha !== tip) return { due: false, reason: 'master-moved' };
+  // Re-read before opening a PR: a newer tip means this pass evaluated a
+  // moving target, so the caller re-verifies at the live tip rather than
+  // demanding the world stand still for the check.
+  if ((await read(`${base}/branches/master`)).commit?.sha !== tip) return null;
   return { due: true, reason: 'green-master-cadence-due', version, revision: tip, ciRunId: latest.id, ciRunAttempt: latest.run_attempt };
+}
+
+export async function planReleaseCadence({ repository, minutes = 30, now = Date.now(), read, attempts = CADENCE_MAX_ATTEMPTS }) {
+  assert.ok(Number.isFinite(now));
+  cadenceMinutes(String(minutes));
+  assert.ok(Number.isSafeInteger(attempts) && attempts >= 1 && attempts <= 10, 'invalid cadence attempt bound');
+  const base = `repos/${repository}`;
+  requireRepositoryMetadata(repository, await read(base));
+  // The plan always evaluates the live master tip, never the SHA a workflow
+  // happened to start on: during merge bursts the tip moves before the check
+  // finishes, and pinning the decision to a stale SHA starves every release.
+  // Movement mid-check re-verifies at the new tip, bounded by attempts; only
+  // a tip that keeps moving past the bound still refuses.
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const plan = await planAtLiveTip({ base, repository, minutes, now, read });
+    if (plan !== null) return plan;
+  }
+  return { due: false, reason: 'master-moved' };
 }
 
 class MetadataRateLimitError extends Error {}

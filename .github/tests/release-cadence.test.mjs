@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit, GREEN_EVIDENCE_MAX_AHEAD } from '../scripts/release-cadence.mjs';
+import { cadenceMinutes, nextPatch, planReleaseCadence, planReleaseCadenceWhenAvailable, createPublicMetadataReader, peeledCommit, GREEN_EVIDENCE_MAX_AHEAD, CADENCE_MAX_ATTEMPTS } from '../scripts/release-cadence.mjs';
 import { peelReleaseTag } from '../scripts/peel-release-tag.mjs';
 import { reconcileTaggedReleasePrs } from '../scripts/release-pr-labels.mjs';
 import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
@@ -33,6 +33,19 @@ function fixture(overrides = {}) {
     return data[key];
   };
   return { read, run, data, input: { repository: 'ashlrai/phantom', now, read } };
+}
+
+// Re-pin the fixture's tip-scoped reads (contents and tag compares) to
+// another master sha so a moved tip can be evaluated in full.
+function repin(f, sha) {
+  for (const path of ['package.json', '.release-please-manifest.json']) {
+    f.data[`/contents/${path}?ref=${sha}`] = f.data[`/contents/${path}?ref=${revision}`];
+  }
+  for (const key of Object.keys(f.data)) {
+    if (key.startsWith('/compare/') && key.endsWith(`...${revision}`)) {
+      f.data[`${key.slice(0, -revision.length)}${sha}`] = f.data[key];
+    }
+  }
 }
 
 test('cadence validator honors configured values', () => {
@@ -93,10 +106,49 @@ test('the live master tip is evaluated, not the SHA that woke the workflow', asy
   f.run.head_sha = green;
   assert.deepEqual(await planReleaseCadence(f.input),
     { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision: tip, ciRunId: 123, ciRunAttempt: 1 });
-  // A tip that moves again while the check itself runs still refuses.
-  let branches = 0;
-  const read = path => path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : f.read(path);
-  assert.deepEqual(await planReleaseCadence({ ...f.input, read }), { due: false, reason: 'master-moved' });
+});
+
+test('a mid-check master move re-verifies at the new tip instead of refusing', async () => {
+  const first = 'e'.repeat(40), second = '8'.repeat(40);
+  const f = fixture();
+  repin(f, first);
+  repin(f, second);
+  // The newest decisive verdict sits on the fixture run sha, a bounded
+  // ancestor of both candidate tips.
+  f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: 2 };
+  f.data[`/compare/${revision}...${second}`] = { status: 'ahead', ahead_by: 3 };
+  // Branch reads: attempt one evaluates `first` then sees `second` move;
+  // attempt two evaluates `second` and finds it still the tip.
+  const tips = [first, second, second, second];
+  let branchReads = 0;
+  const read = path => path.endsWith('/branches/master')
+    ? { commit: { sha: tips[Math.min(branchReads++, tips.length - 1)] } }
+    : f.read(path);
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read }),
+    { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision: second, ciRunId: 123, ciRunAttempt: 1 });
+});
+
+test('master movement past the attempt bound still refuses, and the bound is validated', async () => {
+  assert.equal(CADENCE_MAX_ATTEMPTS, 3);
+  const first = 'e'.repeat(40), second = '8'.repeat(40), third = '9'.repeat(40);
+  const f = fixture();
+  repin(f, first);
+  repin(f, second);
+  f.data[`/compare/${revision}...${first}`] = { status: 'ahead', ahead_by: 2 };
+  f.data[`/compare/${revision}...${second}`] = { status: 'ahead', ahead_by: 3 };
+  // Each pass ends on a newer tip: first to second, second to third.
+  const movingRead = () => {
+    const tips = [first, second, second, third];
+    let branchReads = 0;
+    return path => path.endsWith('/branches/master')
+      ? { commit: { sha: tips[Math.min(branchReads++, tips.length - 1)] } }
+      : f.read(path);
+  };
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read: movingRead(), attempts: 2 }), { due: false, reason: 'master-moved' });
+  // A single pass keeps the pre-retry refusal: movement still blocks.
+  assert.deepEqual(await planReleaseCadence({ ...f.input, read: movingRead(), attempts: 1 }), { due: false, reason: 'master-moved' });
+  await assert.rejects(planReleaseCadence({ ...f.input, read: f.read, attempts: 0 }), /attempt bound/);
+  await assert.rejects(planReleaseCadence({ ...f.input, read: f.read, attempts: 11 }), /attempt bound/);
 });
 
 test('the newest decisive master push verdict wins; verdict-less runs never block', async () => {
@@ -161,7 +213,7 @@ test('a newer failed run cannot inherit an older success; tip rechecked before e
   assert.equal((await planReleaseCadence(f.input)).due, false);
   const g = fixture(); let branches = 0;
   const read = path => path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : g.read(path);
-  assert.deepEqual(await planReleaseCadence({ ...g.input, read }), { due: false, reason: 'master-moved' });
+  assert.deepEqual(await planReleaseCadence({ ...g.input, read, attempts: 1 }), { due: false, reason: 'master-moved' });
 });
 
 test('invalid cadence, divergent tag and source/manifest drift refuse', async () => {
@@ -339,7 +391,7 @@ test('a recovered metadata read still passes every cadence identity and fresh-ti
     const data = path.endsWith('/branches/master') && ++branches > 1 ? { commit: { sha: tagged } } : await g.read(path);
     return { status: 200, text: async () => JSON.stringify(data) };
   } });
-  assert.deepEqual(await planReleaseCadence({ ...g.input, read: movedRead }), { due: false, reason: 'master-moved' });
+  assert.deepEqual(await planReleaseCadence({ ...g.input, read: movedRead, attempts: 1 }), { due: false, reason: 'master-moved' });
 });
 
 test('generated notes normalize below Unreleased without losing previous text', () => {
