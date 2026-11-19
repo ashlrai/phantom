@@ -1,16 +1,19 @@
 /**
  * `phm queue autofill --lane <lane> [--min <n>] [--apply] [--json]`: keep a lane's ready queue from running dry.
  * Pure core. Reads the lane's running, target and queued counts, and when the lane has fewer than `min` ready jobs
- * it takes bets from `bets propose` (the existing proposal source), drops any that already exist in the checkout
+ * it takes candidates in order: open Ideas items, follow-ups from recent EMPTY jobs, then `bets propose`; it drops any that already exist in the checkout
  * (the bets check) or are already in the queue, and returns the rest as the gap to fill.
  * Unknown counts stay null: a lane whose queue cannot be read is never filled blind.
  */
 import { titleHash } from './supply.js';
 import type { BetsProposal, BetsProposeReport } from './bets-propose.js';
+import { stepZeroPrompt, stripStepZero, type AutofillCandidate, type AutofillSource } from './autofill-sources.js';
+import { jobFamily } from './slot-yield.js';
 
 export const QUEUE_AUTOFILL_SCHEMA = 'queue.autofill.v1' as const;
 
-export interface AutofillDraft { id: string; repo: string; tier: string; goal: string; acceptance: string; why: string }
+/** `goal` is the plain task; `prompt` is what the queue gets: the Step-0 line, the ship-partial rule, then the goal. */
+export interface AutofillDraft { id: string; repo: string; tier: string; goal: string; prompt: string; acceptance: string; why: string; source: AutofillSource }
 export interface AutofillSkip { goal: string; reason: string }
 export interface QueueAutofillReport {
   schema: typeof QUEUE_AUTOFILL_SCHEMA;
@@ -36,11 +39,18 @@ export interface AutofillInput {
   /** Jobs already in the queue file, any status, so a bet is never written twice. */
   existing: readonly AutofillQueued[];
   proposed: Pick<BetsProposeReport, 'proposals' | 'droppedGoals'>;
+  /** Open Ideas items, then recent EMPTY-job follow-ups, in the order they are tried; before the bets. */
+  first?: readonly AutofillCandidate[];
+  /** Ideas that were already queued, running or shipped. */
+  shippedIdeas?: readonly string[];
+  /** Job families `phm jobs empty --by-family` marks `stop`; their candidates are skipped. */
+  stoppedFamilies?: ReadonlySet<string>;
 }
 
 const clip = (s: string, n = 100): string => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 const why = (p: BetsProposal): string =>
   `From ${p.evidence.path}${p.evidence.line ? `:${p.evidence.line}` : ''} (${p.source}); the bets check says ${p.verdict}.`;
+const betCandidate = (p: BetsProposal): AutofillCandidate => ({ id: p.id, repo: p.repo, goal: p.goal, acceptance: p.acceptance, why: why(p), source: 'bet', family: jobFamily(p.id) });
 
 export function planAutofill(input: AutofillInput): QueueAutofillReport {
   const { lane, min, running, target, queued } = input;
@@ -50,14 +60,18 @@ export function planAutofill(input: AutofillInput): QueueAutofillReport {
   if (gap <= 0) return { ...base, summary: 'Lane is full.' };
 
   const ids = new Set(input.existing.map(job => job.id));
-  const hashes = new Map(input.existing.map(job => [titleHash(job.scope), job.id]));
-  const skipped: AutofillSkip[] = (input.proposed.droppedGoals ?? []).map(goal => ({ goal: clip(goal), reason: 'Already shipped: the bets check found it in this checkout.' }));
+  const hashes = new Map(input.existing.map(job => [titleHash(stripStepZero(job.scope)), job.id]));
+  const skipped: AutofillSkip[] = [
+    ...(input.shippedIdeas ?? []).map(goal => ({ goal: clip(goal), reason: 'Already queued or shipped: the Ideas list says so.' })),
+    ...(input.proposed.droppedGoals ?? []).map(goal => ({ goal: clip(goal), reason: 'Already shipped: the bets check found it in this checkout.' })),
+  ];
   const drafted: AutofillDraft[] = [];
-  for (const p of input.proposed.proposals) {
-    const queuedAs = ids.has(p.id) ? p.id : hashes.get(titleHash(p.goal));
-    if (queuedAs) { skipped.push({ goal: clip(p.goal), reason: `Already queued as ${queuedAs}.` }); continue; }
+  for (const c of [...(input.first ?? []), ...input.proposed.proposals.map(betCandidate)]) {
+    const queuedAs = ids.has(c.id) ? c.id : hashes.get(titleHash(c.goal));
+    if (queuedAs) { skipped.push({ goal: clip(c.goal), reason: `Already queued as ${queuedAs}.` }); continue; }
+    if (input.stoppedFamilies?.has(c.family)) { skipped.push({ goal: clip(c.goal), reason: `Family ${c.family} is stopped: most of its jobs end empty.` }); continue; }
     if (drafted.length >= gap) break;
-    drafted.push({ id: p.id, repo: p.repo, tier: 'work', goal: p.goal, acceptance: p.acceptance, why: why(p) });
+    drafted.push({ id: c.id, repo: c.repo, tier: 'work', goal: c.goal, prompt: stepZeroPrompt(c.goal), acceptance: c.acceptance, why: c.why, source: c.source });
   }
   const short = gap - drafted.length;
   const summary = drafted.length === 0
@@ -69,7 +83,7 @@ export function planAutofill(input: AutofillInput): QueueAutofillReport {
 export function autofillLines(r: QueueAutofillReport): string[] {
   const state = (n: number | null): string => (n === null ? 'unknown' : String(n));
   const lines = [`Lane ${r.lane}: ${state(r.running)} running, target ${state(r.target)}, ${state(r.queued)} queued, want ${r.min}.`, r.summary];
-  for (const d of r.drafted) lines.push(`${r.applied ? 'Queued' : 'Draft'} ${d.id}: ${clip(d.goal, 140)}`);
+  for (const d of r.drafted) lines.push(`${r.applied ? 'Queued' : 'Draft'} ${d.id} (${d.source}): ${clip(d.goal, 140)}`);
   for (const s of r.skipped) lines.push(`Skipped "${s.goal}": ${s.reason}`);
   if (r.drafted.length && !r.applied) lines.push('Add --apply to write these to the queue.');
   return lines;

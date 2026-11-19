@@ -9,6 +9,8 @@ export interface AutofillDeps {
   /** Runs dir for --status (events and kill switch); the usual runs dir when unset. */
   runsDir?: string;
   now?: () => number;
+  /** Source seams for tests; the live Ideas list, EMPTY-job notes and empty families when unset. */
+  sources?: Pick<import('../core/fleet/autofill-run.js').RunAutofillOptions, 'readIdeas' | 'readFollowUps' | 'readStopped'>;
 }
 
 async function snapshotLane(lane: string) {
@@ -19,7 +21,7 @@ async function snapshotLane(lane: string) {
 
 export async function cmdQueueAutofill(args: string[], deps: AutofillDeps = {}): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    console.log(`${USAGE}\n  --min defaults to the lane's slot target. Dry run unless --apply.\n  --status shows the last runs, whether autofill is on, and how many bets are left this hour.\n  self-tick runs this for every starved lane (max 4 bets per lane and 12 per hour); turn it off with: phm fleet config set autofill.off 1 --reason "<why>"`);
+    console.log(`${USAGE}\n  --min defaults to the lane's slot target. Dry run unless --apply.\n  Order: open Ideas items, then "Not built" follow-ups from recent empty jobs, then bets. Stopped job families are skipped. Each row says its source.\n  --status shows the last runs, whether autofill is on, and how many bets are left this hour.\n  self-tick runs this for every starved lane (max 4 bets per lane and 12 per hour); turn it off with: phm fleet config set autofill.off 1 --reason "<why>"`);
     return 0;
   }
   let lane = '', min: number | undefined, json = false, apply = false, status = false, dir: string | undefined = deps.dir, runsDir: string | undefined = deps.runsDir;
@@ -48,7 +50,7 @@ export async function cmdQueueAutofill(args: string[], deps: AutofillDeps = {}):
     const { HELP_ENTRIES } = await import('./help.js');
     const { runQueueAutofill } = await import('../core/fleet/autofill-run.js');
     const { autofillLines } = await import('../core/fleet/queue-autofill.js');
-    const report = await runQueueAutofill({ lane, counts, min, apply, root: deps.root ?? process.cwd(), dir, entries: HELP_ENTRIES });
+    const report = await runQueueAutofill({ lane, counts, min, apply, root: deps.root ?? process.cwd(), dir, runsDir, entries: HELP_ENTRIES, ...deps.sources });
     if ('error' in report) { console.error('The lane has no slot target; pass --min <n>.'); return 2; }
     if (json) console.log(JSON.stringify(report));
     else console.log(autofillLines(report).join('\n'));
