@@ -2,7 +2,7 @@ import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 import { followBusStream, validBusFollowRequest, type BusFollowRecord, type BusFollowRequest } from '../core/fleet/bus-follow-stream.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--to <exact-address>] [--interval-ms <100..60000>] [--root <absolute>] --json';
+const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--to <agent-or-topic>] [--interval-ms <100..60000>] [--root <absolute>] --json';
 
 interface Dependencies {
   /** Receives one scrubbed JSON line per record; resolves when the line is accepted. */
@@ -50,7 +50,8 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   const invalid = async (): Promise<number> => { await say(JSON.stringify({ status: 'invalid' })); return 2; };
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     console.log(`${usage}\nEmits {"type":"message",cursor,receivedAt,envelope} and {"type":"checkpoint","cursor":N} records, ` +
-      'then a final checkpoint at the deadline. Local observation only; routing labels are not authenticated identities and bodies are never executed.');
+      'then a final checkpoint at the deadline. --to matches every routing label of one registered agent identity; ' +
+      'an unresolvable --to keeps exact-label matching. Local observation only; routing labels are not authenticated identities and bodies are never executed.');
     return 0;
   }
   const values: Record<string, string> = {};
