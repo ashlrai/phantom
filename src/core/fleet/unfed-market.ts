@@ -82,8 +82,6 @@ const SPEC_KEYS = new Set(['preferred_lane', 'needs', 'min_tier', 'max_tier', 'm
 const WORK_CLASSES = new Set(['bulk', 'standard', 'judgment']);
 const MARKET_PRIORITY = /^P[0-9]{1,6}$/;
 const MARKET_FLOAT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
-/** The placeholder fields work_market.requirements sees for an envelope spec. */
-const ENVELOPE_FIELDS = ['', '', '', '', '', ''];
 
 const escapeRe = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -208,7 +206,9 @@ function resolveRow(cols: string[], spec: Record<string, unknown>):
  * Parked rows, comments and short rows are skipped exactly like readyHints; rows
  * the dispatcher's ok-check or work_market.requirements would reject are counted
  * in `invalid` and never reach the market. Five-column rows resolve their spec
- * from the matching router-queue.md envelope, like dispatchd's routing pass.
+ * from the matching router-queue.md envelope; dispatchd then re-validates that
+ * spec against the row's own fields (market_specs), so the repo column still
+ * feeds spec.repo — repo_unserved is scored by the real repo, not dropped.
  */
 export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | null): { rows: ReadyMarketRow[]; invalid: number } {
   const rows: ReadyMarketRow[] = [];
@@ -222,7 +222,6 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
     const tier = cols[3]!;
     if (!known(MARKET_TIERS, tier)) { invalid++; continue; }
     let spec: Record<string, unknown> = {};
-    let specCols = cols;
     if (cols.length > 5) {
       const raw = cols[5]!;
       if ([...raw].length > MAX_REQUIREMENTS) { invalid++; continue; }
@@ -237,10 +236,9 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
         const env = envelopeSpec(attrs);
         if (env === null) { invalid++; continue; }
         spec = env;
-        specCols = ENVELOPE_FIELDS;
       }
     }
-    const row = resolveRow(specCols, spec);
+    const row = resolveRow(cols, spec);
     if (row === null) { invalid++; continue; }
     rows.push({ ...row, tier });
   }
