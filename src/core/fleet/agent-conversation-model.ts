@@ -25,6 +25,8 @@ export interface ConversationMessage {
   /** Epoch ms. */
   at: number;
   replyTo: string | null;
+  /** Explicit thread bucket (a `job:<id>` conversation key); overrides reply-chain rooting. */
+  thread?: string | null;
   /** What the sender said about the work itself, when it said. */
   state: 'blocked' | 'done' | null;
   /** Provider lane when a label proves it (the bus knows it), else null. */
@@ -74,11 +76,11 @@ export function groupConversations(messages: readonly ConversationMessage[], now
     let at = m;
     // A reply to a message not on the bus, or a loop, ends the walk: that message starts the thread.
     for (let hops = 0; hops < 1000 && at.replyTo && at.replyTo !== at.id && byId.has(at.replyTo); hops++) at = byId.get(at.replyTo)!;
-    return at.id;
+    return at.thread ?? at.id;
   };
   const threads = new Map<string, ConversationMessage[]>();
   for (const m of byId.values()) {
-    const root = rootOf(m);
+    const root = m.thread ?? rootOf(m);
     threads.set(root, [...(threads.get(root) ?? []), m]);
   }
   const lanes = new Map<string, string | null>();
