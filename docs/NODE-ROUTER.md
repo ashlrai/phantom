@@ -22,7 +22,10 @@ runs on two nodes.
   node stalls, the lease lapses and another node can pull the job with a higher
   token; the old holder's renew and complete are then refused. Two nodes racing
   for one job get exactly one claim. Pass the token to every external effect so
-  a paused node cannot act after losing the job.
+  a paused node cannot act after losing the job. Only a claim its session can
+  still act on consumes capacity: a lapsed claim is re-routable, and a claim
+  fenced by a rejoin or departure frees the node's slot and host budget at
+  once even though the job itself stays fenced until the claim expires.
 - **Local auth only.** Jobs needing `gh` go only to nodes whose own heartbeat
   reports a working GitHub CLI login (`phm node beat --probe-auth` runs
   `gh auth status` locally and reads only its exit code). Phantom never copies,
