@@ -3228,6 +3228,11 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'mason': {
+        process.exitCode = await (await import('./mason-thread.js')).cmdMason(rest);
+        break;
+      }
+
       case 'comms-agent': {
         process.exitCode = await (await import('./comms-agent.js')).cmdCommsAgent(rest);
         break;
