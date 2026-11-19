@@ -856,23 +856,38 @@ def _maxruntime_identity_alive(identity):
     try:
         os.getpgid(pid)
     except ProcessLookupError:
-        return False
+        # The leader PID is gone, but its group may still hold workers; only
+        # an empty group (non-signalling probe) counts as gone.
+        return not _maxruntime_group_absent(pid)
     except OSError:
         return True
     try: current_start = read_process_start_time(pid)
     except Exception: current_start = None
     return not current_start or current_start == start_time
 
-def _maxruntime_pid_absent(pid):
-    """Affirmative absence only: the pid has no process group. A missed
-    snapshot or failed start-time probe never counts as absence."""
+def _maxruntime_group_absent(pgid):
+    """Non-signalling group-existence check: True only when no process
+    remains in the group (signal 0 probes without delivering a signal)."""
     try:
-        os.getpgid(pid)
+        os.killpg(pgid, 0)
     except ProcessLookupError:
         return True
     except OSError:
         return False
     return False
+
+def _maxruntime_pid_absent(pid):
+    """Affirmative absence: the pid is gone AND its process group is empty.
+    An exited leader with surviving workers is not absent; a missed snapshot
+    or failed start-time probe never counts as absence either."""
+    try:
+        os.getpgid(pid)
+        return False
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    return _maxruntime_group_absent(pid)
 
 def _maxruntime_identities(marker):
     identities = set()
