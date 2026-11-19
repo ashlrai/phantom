@@ -7,7 +7,7 @@ const shown = (value: number | string | null): string => value === null ? 'unkno
 /** `report` is undefined while loading, on a read error, or when the server predates the report. */
 export function ReleasesCard({ report }: { report: ReleasesReport | undefined }) {
   const known = report?.schema === 'phantom.releases.v1' && Array.isArray(report.repos) ? report : undefined;
-  return <section className={styles.root} aria-label="Releases">
+  return <section className={styles.card} aria-label="Releases">
     <h3 className={styles.heading}>Releases</h3>
     {!known ? <p className={styles.note}>Releases: unknown</p>
       : !known.repos.length ? <p className={styles.note}>No repos to check.</p> : <>
