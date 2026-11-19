@@ -26,6 +26,8 @@ export interface OpenAsk {
   hardLimit: HardLimit | null;
   /** One line: what happens on yes (or on the first choice). */
   whatHappens?: string;
+  /** The answer is a number (a usage percent), so a card shows one number field. */
+  numeric?: boolean;
 }
 
 export interface BatchAsk {
@@ -42,6 +44,8 @@ export interface BatchAsk {
   askedAt: string | null;
   hardLimit: HardLimit | null;
   whatHappens: string;
+  /** Set only when the answer is a number from 0 to 100. */
+  numeric?: boolean;
 }
 
 export interface AskBatch {
@@ -79,20 +83,21 @@ export function buildAskBatch(open: readonly OpenAsk[], ledger: AskBatch['ledger
       number: 0, id: ask.id, ids: [ask.id], question: ask.question.trim(), kind: ask.kind, choices: choicesOf(ask),
       askedAt: ask.askedAt, hardLimit: ask.hardLimit,
       whatHappens: ask.whatHappens ?? (ask.hardLimit ? LIMIT_LINE[ask.hardLimit] : 'Unknown: the ask does not say.'),
+      ...(ask.numeric ? { numeric: true } : {}),
     });
   }
   const asks = [...merged.values()].map((ask, i) => ({ ...ask, number: i + 1 }));
   return { schema: 'asks.batch.v1', count: asks.length, asks, ledger };
 }
 
-const FROM_KIND: Record<AskKind, Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens'>> = {
+const FROM_KIND: Record<AskKind, Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric'>> = {
   payment: { kind: 'yes-no', hardLimit: 'money', whatHappens: LIMIT_LINE.money },
   outreach: { kind: 'yes-no', hardLimit: 'outside-send', whatHappens: LIMIT_LINE['outside-send'] },
   password: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   '2fa': { kind: 'pick-one', choices: ASK_REPLIES['2fa'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   device: { kind: 'pick-one', choices: ASK_REPLIES.device, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   // A usage answer is a number, so it is a short value; it is a reading, not a limit.
-  usage: { kind: 'short-value', hardLimit: null, whatHappens: 'Recorded as your latest reading, with the time you said it.' },
+  usage: { kind: 'short-value', numeric: true, hardLimit: null, whatHappens: 'Recorded as your latest reading, with the time you said it.' },
   // Money is a hard limit, but this answer only records the decision; nothing is spent by it.
   approval: { kind: 'yes-no', hardLimit: 'money', whatHappens: 'Recorded as your decision. Nothing is spent by this answer.' },
 };
