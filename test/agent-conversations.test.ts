@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runAgentsConversationsCli } from '../src/cli/agents-conversations.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { buildConversations, filterConversations, formatAgentConversationsText, plainAge, readAgentConversations,
   type ConversationMessage } from '../src/core/fleet/agent-conversations.js';
@@ -72,6 +73,16 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { waitingOnly: true }).map(c => c.id)).toEqual(['a']);
     expect(filterConversations(list, { agent: 'grok', waitingOnly: true })).toEqual([]);
   });
+
+  it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
+    const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
+    const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
+    // 'query-label' is no participant name; only the shared identity key matches.
+    expect(filterConversations(list, { agent: 'query-label' }, same).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { agent: 'query-label' })).toEqual([]);
+    // A resolver that proves nothing for the query changes nothing.
+    expect(filterConversations(list, { agent: 'one' }, () => undefined).map(c => c.id)).toEqual(['a']);
+  });
 });
 
 const roots: string[] = [];
@@ -140,6 +151,26 @@ describe('phm agents conversations --json', () => {
   it('an empty bus is source missing with no conversations', () => {
     expect(readAgentConversations({}, { root: bus(), now: () => NOW })).toEqual({ schema: 'agents.conversations.v1', version: 1,
       generatedAt: '2026-11-18T12:30:00.000Z', source: 'missing', conversations: [], waiting: 0, skipped: 0 });
+  });
+
+  it('matches --agent through the identity registry and stays strict without one', () => {
+    const rows: [number, string, string, string, Record<string, unknown>][] = [
+      [T0, 'm1', 'leader', 'agent:atlas', { text: 'can you look?' }],
+      [T0 + MIN, 'm2', 'agent:atlas', 'leader', { text: 'yes', replyTo: 'm1' }],
+      [T0 + 2 * MIN, 'm3', 'devin-cloud', 'grok', { text: 'alias lane note' }],
+      [T0 + 3 * MIN, 'm4', 'zai', 'claude', { text: 'unrelated' }],
+    ];
+    const bare = bus(rows);
+    // No registry: only the literal alias label matches.
+    expect(readAgentConversations({ agent: 'devin-cloud' }, { root: bare, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m3']);
+    const root = bus(rows);
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['devin-cloud'] }, { root }).status).toBe('created');
+    // The alias finds the handle-labeled thread too; the handle finds the alias one.
+    for (const agent of ['devin-cloud', 'atlas', 'agent:atlas']) {
+      expect(readAgentConversations({ agent }, { root, now: () => NOW }).conversations!.map(c => c.id).sort()).toEqual(['m1', 'm3']);
+    }
+    // A label no identity proves still matches only itself.
+    expect(readAgentConversations({ agent: 'zai' }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m4']);
   });
 
   it('the CLI prints that JSON, filters, and refuses unknown flags', async () => {

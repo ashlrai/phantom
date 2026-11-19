@@ -202,6 +202,29 @@ export function readAgentRegistry(options: AgentRegistryOptions = {}): RegistryR
   catch { return { status: 'unavailable', reason: 'Agent identity registry is unreadable.' }; }
 }
 
+/** Maps one routing label to the stable id of the identity it proves, or undefined. */
+export type AgentIdentityKeyFor = (label: string) => string | undefined;
+
+/**
+ * One registry read shared by every label a read filter compares: a label
+ * resolves to its identity's stable id through handle, `agent:` address, id or
+ * alias (exact match first, then lowercase so `Devin` still finds handle
+ * `devin`). Undefined when the registry cannot be read, so callers keep strict
+ * label matching — an unreadable registry never widens a filter.
+ */
+export function agentIdentityKeys(options: AgentRegistryOptions = {}): AgentIdentityKeyFor | undefined {
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return undefined;
+  const registry = read.registry, keys = new Map<string, string | undefined>();
+  return (label) => {
+    if (!keys.has(label)) {
+      const identity = resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase());
+      keys.set(label, identity?.id);
+    }
+    return keys.get(label);
+  };
+}
+
 type Mutation<T> = (registry: AgentRegistry, now: number) => RegistryFailure | { registry: AgentRegistry; value: T; changed: boolean };
 
 /** Lock, reload, apply, validate, atomically replace. Nothing is written on refusal. */

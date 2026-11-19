@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox, listBusInboxAfter, scanBusInbox } from '../src/core/fleet/bus-inbox.js';
 import {
   formatAgentMessagesText, parseAgentMessagesQuery, parseSince, readAgentMessages,
@@ -51,6 +52,30 @@ describe('phm messages projection', () => {
     expect(read(root, { since: T0 + 1_500 }).messages.map(m => m.id)).toEqual(['m3']);
     expect(read(root, { limit: 1 })).toMatchObject({ matched: 3, messages: [{ id: 'm3' }] });
     expect(formatAgentMessagesText(read(root))).toContain('handoff claude-1 (claude) → codex-local-2 (codex-local): Take over the parser fix  [RQ-CHAINA1]');
+  });
+
+  it('matches --agent and --with through the identity registry, never widening without it', () => {
+    const root = store();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['devin-cloud'] }, { root }).status).toBe('created');
+    post(root, T0, { id: 'i1', from: 'agent:atlas', to: 'agent:claude-1', body: { kind: 'note', text: 'handle label' } });
+    post(root, T0 + 1_000, { id: 'i2', from: 'devin-cloud', to: 'agent:claude-1', body: { kind: 'note', text: 'alias label' } });
+    post(root, T0 + 2_000, { id: 'i3', from: 'grok-9', to: 'agent:claude-1', body: { kind: 'note', text: 'other agent' } });
+    // An alias query finds every label of the one identity, newest first.
+    expect(read(root, { agent: 'devin-cloud' }).messages.map(m => m.id)).toEqual(['i2', 'i1']);
+    expect(read(root, { agent: 'atlas' }).messages.map(m => m.id)).toEqual(['i2', 'i1']);
+    // --with narrows the pair across labels on both sides.
+    expect(read(root, { agent: 'atlas', with: 'claude-1' }).messages.map(m => m.id)).toEqual(['i2', 'i1']);
+    // An unregistered label still matches only its exact name or lane.
+    expect(read(root, { agent: 'grok-9' }).messages.map(m => m.id)).toEqual(['i3']);
+    expect(read(root, { agent: 'nobody' }).messages).toEqual([]);
+    // A damaged registry reads unavailable: the filter falls back to strict labels.
+    writeFileSync(join(root, 'agent-identities', 'registry.json'), '{"broken"', { mode: 0o600 });
+    expect(read(root, { agent: 'devin-cloud' }).messages.map(m => m.id)).toEqual(['i2']);
+    // No registry at all is the same strict read.
+    const bare = store();
+    post(bare, T0, { id: 'i1', from: 'agent:atlas', to: 'agent:claude-1', body: { kind: 'note', text: 'handle label' } });
+    post(bare, T0 + 1_000, { id: 'i2', from: 'devin-cloud', to: 'agent:claude-1', body: { kind: 'note', text: 'alias label' } });
+    expect(read(bare, { agent: 'devin-cloud' }).messages.map(m => m.id)).toEqual(['i2']);
   });
 
   it('skips and counts a malformed record instead of failing the whole read', () => {
