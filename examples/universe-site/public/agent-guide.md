@@ -30,7 +30,7 @@ Read campaign state, resource configuration and delivery receipts before choosin
 
 Effect: Read-only discovery.
 
-[Open the agent command guide](https://github.com/ashlrai/ashlr-hub/blob/master/docs/README.md#for-coding-agents)
+[Open the agent command guide](https://github.com/ashlrai/phantom/blob/master/docs/README.md#inspect-universe-evidence)
 
 ## Allocate worker capacity
 
