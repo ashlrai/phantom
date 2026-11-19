@@ -167,9 +167,16 @@ The Release PR workflow and the release train both wake every 5 minutes.
 1440 minutes, and defaults to 5. The train does not raise that value.
 The cadence check evaluates the live master tip rather than the SHA that
 woke the workflow, reads its independent tip-pinned inputs concurrently to
-keep the still-tip window small, and a merge landing mid-check re-verifies
-at the new tip a bounded number of times instead of starving the release;
-green evidence is the newest decisive completed master push CI run on the
+keep the verification window small, and tolerates master movement instead
+of demanding a still tip: when the tip moves mid-check the pass verifies
+the evaluated tip is still a bounded fast-forward ancestor of the live tip
+and that the version carriers are unchanged there, growing the green
+evidence distance by exactly the moved window; only a snapshot that
+genuinely changed — a version bump, a non-fast-forward move, or a tip that
+keeps moving past the bound — re-evaluates, a bounded number of times,
+instead of starving the release. A read budget exhausted mid-plan defers
+to the next wake rather than failing the job.
+Green evidence is the newest decisive completed master push CI run on the
 tip or a bounded ancestor whose required checks — read from the branch
 ruleset and protection and judged on that run's SHA through the check-runs
 API — are green, so an advisory job failure (for example authority drift,
