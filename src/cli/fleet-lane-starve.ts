@@ -43,10 +43,15 @@ export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedL
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const split = new Map<string, { filler: number; real: number }>();
   for (const line of readyTsv.split('\n')) {
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
     const cols = line.split('\t');
     const id = cols[0]?.trim() ?? '';
-    const lane = cols[2]?.trim();
-    if (!id || !lane) continue;
+    const lane = cols[2]?.trim() ?? '';
+    // Parked rows are not ready supply. The status-first dialect leads with the
+    // PARKED- marker (the job id sits in the next cell, the real lane in this
+    // one); the lane-column dialect carries the marker in the lane cell.
+    // dispatchd's own parked_row check uses the same two positions.
+    if (!id || !lane || id.startsWith('PARKED-') || lane.startsWith('PARKED-')) continue;
     const entry = split.get(lane) ?? { filler: 0, real: 0 };
     entry[FILLER_ID.test(id) ? 'filler' : 'real']++;
     split.set(lane, entry);
