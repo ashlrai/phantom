@@ -472,6 +472,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <button type="button" className={styles.tool} disabled={checkingStatus} aria-busy={checkingStatus || undefined} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button>
       <button type="button" className={styles.tool} aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button>
       <button type="button" className={styles.tool} onClick={() => setFindOpen(true)}>Find</button>
+      {/* Every agent session as its own conversation, beside this one. */}
+      <button type="button" className={styles.tool} onClick={() => openDockPane('agent-threads')}>Agent threads</button>
       <span className={styles.toolbarMeta}>
         <span>{busRows.length} bus replies</span>
         {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
