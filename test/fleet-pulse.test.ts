@@ -185,7 +185,7 @@ describe('readPulse and phm fleet pulse', () => {
     expect(await cmdFleetPulse(['--json'], read)).toBe(0);
     expect(JSON.parse(out[1]!)).toMatchObject({ schema: 'fleet.pulse.v1', v: 1 });
     expect(await cmdFleetPulse(['--help'], read)).toBe(0);
-    expect(out[2]).toMatch(/^Usage: phm fleet pulse \[--lanes\] \[--json\]/);
+    expect(out[2]).toMatch(/^Usage: phm fleet pulse \[--lanes \| --alerts \[--no-notify\]\] \[--json\]/);
     expect(await cmdFleetPulse(['--nope'], read)).toBe(2);
   });
 });

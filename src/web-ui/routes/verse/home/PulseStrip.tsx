@@ -4,6 +4,7 @@
  * Built only on `phm fleet pulse --lanes --json` (fleet.pulse.lanes.v1), its `totals`. Read-only. Unknown reads "unknown",
  * never 0; running vs capacity keeps no history, so it says so instead of drawing a line.
  */
+import { PULSE_ALERTS_SCHEMA, type PulseAlertsV1 } from '../../../../core/fleet/pulse-alerts.js';
 import { PULSE_LANES_SCHEMA, type PulseLanesV1 } from '../../../../core/fleet/pulse-lanes.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
@@ -13,6 +14,32 @@ import styles from './home.module.css';
 
 export const PULSE_LANES_PATH = '/api/verse/fleet/runs/pulse/lanes';
 export const pulseLanesQuery: QueryDef<PulseLanesV1> = { key: 'fleet-pulse-lanes', fetch: signal => apiGet(PULSE_LANES_PATH, signal) };
+
+export const PULSE_ALERTS_PATH = '/api/verse/fleet/runs/pulse/alerts';
+export const pulseAlertsQuery: QueryDef<PulseAlertsV1> = { key: 'fleet-pulse-alerts', fetch: signal => apiGet(PULSE_ALERTS_PATH, signal) };
+
+/** Only a well-formed fleet.pulse.alerts.v1 payload is an alert list. */
+export function alertsOf(data: unknown): PulseAlertsV1 | null {
+  if (data === null || typeof data !== 'object') return null;
+  const read = data as Partial<PulseAlertsV1>;
+  return read.schema === PULSE_ALERTS_SCHEMA && read.v === 1 && Array.isArray(read.alerts) && Array.isArray(read.unknown) ? read as PulseAlertsV1 : null;
+}
+
+/** The red row under the strip: one line per active alert, each with its fix. Nothing is drawn when there are none;
+ * checks that could not be made say so, because silence there would read as fine. */
+export function PulseAlertsRow({ visible = true }: { visible?: boolean }) {
+  const read = useQuery(pulseAlertsQuery, { enabled: visible, freshMs: 0 });
+  const refresh = useRefetch(pulseAlertsQuery);
+  usePollWhileVisible(refresh, 60_000, { enabled: visible });
+  const pulse = alertsOf(read.data);
+  if (!pulse || (!pulse.alerts.length && !pulse.unknown.length)) return null;
+  return <div className={styles.alerts} aria-label="Pulse alerts">
+    {pulse.alerts.length ? <ul role="alert" className={styles.alertList}>
+      {pulse.alerts.map(a => <li key={`${a.kind}:${a.lane}`}><strong>{a.detail}</strong> <span>{a.fix_hint}</span></li>)}
+    </ul> : null}
+    {pulse.unknown.length ? <p className={styles.tileNote} data-unknown>Not checked: {pulse.unknown.join(' ')}</p> : null}
+  </div>;
+}
 
 export interface StripTile { title: string; value: string; note: string; series: (number | null)[]; known: boolean }
 
@@ -76,5 +103,6 @@ export function PulseStrip({ visible = true }: { visible?: boolean }) {
         <span className={styles.tileNote} data-unknown={tile.known ? undefined : true}>{tile.note}</span>
       </li>)}
     </ul>
+    <PulseAlertsRow visible={visible} />
   </section>;
 }

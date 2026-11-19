@@ -121,6 +121,8 @@ export interface FleetRunsApiDeps {
   readWorktrees?: () => Promise<WorktreesReport>;
   /** Home's Running build line; default is readSelfDrift() from core/release/drift (`phm self drift --json`). */
   readDrift?: () => Promise<SelfDriftV1>;
+  /** Home's red alert row; default is readPulseAlerts from core/fleet/pulse-alerts (`phm fleet pulse --alerts --json`). */
+  readPulseAlerts?: (opts: { runsDir?: string; now: number; notify: boolean }) => Promise<unknown>;
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
@@ -587,6 +589,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       const { readPulseLanes } = await import('../fleet/pulse-lanes.js');
       sendJson(res, 200, await readPulseLanes({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
+    // Home's red alert row reads the same fleet.pulse.alerts.v1 as `phm fleet pulse --alerts --json`. Each new alert is also sent once an hour.
+    if (path === '/api/verse/fleet/runs/pulse/alerts') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const read = deps.readPulseAlerts ?? (await import('../fleet/pulse-alerts.js')).readPulseAlerts;
+      sendJson(res, 200, await read({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), notify: true }));
       return true;
     }
     // Home's Running build line reads the same report as `phm self drift --json`.
