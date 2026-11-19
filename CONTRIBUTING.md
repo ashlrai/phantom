@@ -45,6 +45,76 @@ To install the CLI while developing:
 
 ---
 
+## Your first pull request
+
+People and coding agents follow the same path. An agent should read
+[AGENTS.md](AGENTS.md) first, especially "Working in this repository". It
+covers what agents may do on their own and what stays with the owner.
+
+1. **Clone and fork.** Clone the upstream repository with full history; a
+   shallow clone breaks the diff-based checks. Without write access, add your
+   fork as a second remote so `origin/master` keeps tracking upstream, which
+   `verify-changed` diffs against:
+
+   ```sh
+   git clone https://github.com/ashlrai/phantom.git && cd phantom
+   gh repo fork --remote --remote-name fork   # contributors without write access
+   npm ci                                      # or npm run install:worktree, see below
+   git switch -c docs/fix-example              # never commit to master
+   ```
+
+2. **Change one thing.** Keep one mergeable outcome per pull request and follow
+   the [conventions](#conventions). An exported signature change updates its
+   [contract](#contracts-first-pattern) in the same pull request. Add tests for
+   new behavior, and never weaken a test.
+
+3. **Check locally, once, in the foreground.** Run each check once and wait for
+   it to finish.
+
+   ```sh
+   node scripts/verify-changed.mjs                  # lint changed files + one type check
+   npm run test:ci -- test/<file>.test.ts           # affected backend suites, hermetic HOME
+   npm run test:web                                 # only if src/web-ui/ changed
+   npm run check:docs                               # only if docs changed
+   npx vitest run test/doc-facts.test.ts            # if a documented command, flag or script changed
+   node scripts/generate-docs-llms.mjs              # if docs changed; commit any regenerated files
+   ```
+
+4. **Commit and open the pull request.** Use a
+   [Conventional Commits](#commit-style) subject. Push to your branch (or
+   `git push -u fork HEAD` from a fork), then run `gh pr create --repo
+   ashlrai/phantom`. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md)
+   asks how you verified the change and which safety invariants you checked.
+
+5. **Merge.** `master` accepts changes only through a pull request. It has one
+   required check, **Merge Gate**, needs no approving review, and merges through
+   a squash merge queue. Contributors with write access, including fleet agents,
+   arm auto-merge with `gh pr merge --auto --squash`, and the queue merges once
+   Merge Gate passes. For a fork pull request, a maintainer arms it, and GitHub
+   may wait for a maintainer's approval before running workflows for a
+   first-time contributor. Never force-push `master` or use an admin override.
+
+### What Merge Gate requires
+
+Pull requests and merge-queue batches run a fast gate, not the full suite.
+Merge Gate passes only when these jobs succeed:
+
+| Check | What it does |
+|-------|--------------|
+| Secret-shape scan, Secret scan (diff) | Fail closed on secret-shaped values in the diff |
+| Classify PR site lane | Sorts the change into the site, docs or full lane |
+| Check generated files | Re-runs the launcher digest check and `generate-docs-llms.mjs`; fails if the tree changes |
+| Fast gate (typecheck + affected tests) | Type checks, then runs the tests the diff selects; docs-only diffs run no tests |
+
+Quick typecheck also runs, but it is advisory. The full Linux, Windows and
+macOS suites run every six hours on `master`, or by manual dispatch. They never
+run on a pull request. A regression they catch is fixed forward with a new pull
+request. Pull requests that touch [CODEOWNERS](.github/CODEOWNERS) paths, such as
+CI configuration, manifests and lockfiles, still request owner review. When authority drift fails, run
+`npm run authority:regen` and list each new Tier-1 root in the pull request body.
+
+---
+
 ## Everyday commands
 
 | Command | What it does |
@@ -217,16 +287,14 @@ Hosted Darwin runs print numeric capacity observations after the worker policy:
 raw free/available memory, VM free/inactive/speculative/purgeable pages and kernel
 pressure stay separate; diagnostic values never change admission or worker count.
 
-Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts,
-four exhaustive Mac partitions, a separate Mac lane for all isolated suites
-(two at a time, each in its own home with one worker; locally they stay serial
-unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+The full hosted suite includes exhaustive Ubuntu shards, named Windows portability
+contracts, four exhaustive Mac partitions, a separate Mac lane for all isolated
+suites (two at a time, each in its own home with one worker; locally they stay
+serial unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and
+native broker checks. It runs on the six-hour `master` schedule, by manual
+dispatch and through reusable workflow calls. Pull requests, the merge queue
+and `master` pushes run only the fast gate described in
+[What Merge Gate requires](#what-merge-gate-requires). Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
@@ -346,7 +414,7 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 ## Commit style
 
 - Keep commits focused and atomic; one logical change per commit.
-- Use a concise, imperative subject line (e.g. `add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Use a [Conventional Commits](https://www.conventionalcommits.org/) subject: `type(scope): imperative summary`, e.g. `fix(dispatchd): require affirmative absence before retiring pending TERM candidates` or `docs(contributing): describe the first pull request path`. Pull requests squash-merge, so the pull request title becomes the commit subject on `master`, and release-please reads it to build the changelog. Add a body explaining the "why" when it is not obvious.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
