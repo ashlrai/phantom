@@ -1,8 +1,9 @@
 /** Read the bounded local work feed. Labels grant no execution authority. */
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
-import { projectBusWorkFeed, type WorkFeedResult } from './bus-work-feed.js';
-import type { WorkJob } from './bus-v2-schema.js';
+import { projectBusWorkFeed, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
+import { readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import type { Participant, WorkJob } from './bus-v2-schema.js';
 
 /** One live coordination lease blocking a job's declared claim key. */
 export interface BusWorkFeedHold {
@@ -22,6 +23,16 @@ export interface BusWorkFeedClaims {
   truncated: boolean;
 }
 
+export interface BusWorkFeedReadOptions {
+  root?: string;
+  now?: () => number;
+  claims?: boolean;
+  /** Explicit participant metadata; consulted before the provider fallback. */
+  participants?: readonly Participant[];
+  /** Provider fallback for sender labels; defaults to the identity registry's newest runtime. */
+  providerFor?: WorkFeedProviderFor;
+}
+
 export type BusWorkFeedReadResult =
   | { status: 'ok'; jobs: WorkJob[]; receipts: number; asOf: string; claims?: BusWorkFeedClaims }
   | { status: 'refused'; reason: Extract<WorkFeedResult, { status: 'refused' }>['reason']; receipts: number; asOf: string }
@@ -29,8 +40,38 @@ export type BusWorkFeedReadResult =
 
 const HOLDS_MAX = 1024;
 
+/** Provider of the identity's most recently seen runtime; undefined when it has none. */
+function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
+  let provider: Participant['provider'] | undefined;
+  let seen = -1;
+  for (const runtime of identity.runtimes) {
+    if (runtime.lastSeenAt > seen) { seen = runtime.lastSeenAt; provider = runtime.provider; }
+  }
+  return provider;
+}
+
+/**
+ * Provider hints from the identity registry beside the bus store: a sender
+ * label that resolves to a registered identity takes that identity's newest
+ * runtime provider. An absent or unreadable registry hints nothing, so provider
+ * stays unknown and the projection still refuses rather than guessing.
+ */
+function registryProviderFor(root: string | undefined): WorkFeedProviderFor | undefined {
+  const read = readAgentRegistry({ root });
+  if (read.status !== 'ok') return undefined;
+  const registry = read.registry;
+  const cache = new Map<string, Participant['provider'] | undefined>();
+  return (from) => {
+    if (!cache.has(from)) {
+      const identity = resolveAgent(registry, from);
+      cache.set(from, identity ? runtimeProvider(identity) : undefined);
+    }
+    return cache.get(from);
+  };
+}
+
 /** No writes, network, claims or dispatch. Freeze the clock across pages. */
-export function readBusWorkFeed(options: { root?: string; now?: () => number; claims?: boolean } = {}): BusWorkFeedReadResult {
+export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFeedReadResult {
   const now = (options.now ?? Date.now)();
   const asOf = new Date(now).toISOString();
   const receipts: BusInboxReceipt[] = [];
@@ -49,7 +90,8 @@ export function readBusWorkFeed(options: { root?: string; now?: () => number; cl
     if (page.messages.length < 100 || page.nextCursor <= cursor) break;
     cursor = page.nextCursor;
   }
-  const result = projectBusWorkFeed(receipts);
+  const result = projectBusWorkFeed(receipts, options.participants ?? [],
+    options.providerFor ?? registryProviderFor(options.root));
   if (result.status !== 'ok') return { ...result, receipts: receipts.length, asOf };
   const ok: BusWorkFeedReadResult = { status: 'ok', jobs: result.feed.jobs, receipts: receipts.length, asOf };
   if (!options.claims) return ok;

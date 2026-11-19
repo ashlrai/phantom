@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { cmdFleetWorkFeed } from '../src/cli/fleet-work-feed.js';
@@ -39,6 +40,29 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
       expect(await cmdFleetWorkFeed(['--root', directory])).toBe(0);
       expect(log.mock.calls.at(-1)?.[0]).toBe(`jobs=0 receipts=0 feed=ok as-of=${new Date(now).toISOString()}`);
     }
+  });
+
+  it('resolves omitted providers through the identity registry newest runtime', () => {
+    const { provider: _provider, ...withoutProvider } = post;
+    append(withoutProvider, 1, 'agent:worker-bot');
+    append({ ...withoutProvider, jobId: 'fake-alias-job' }, 2, 'lane-7');
+    // Labels that resolve to no identity keep provider unknown: still refused.
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'missing-provider', receipts: 2 });
+    expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
+      runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'ok', jobs: [
+      { id: post.jobId, owner: 'agent:worker-bot', provider: 'codex-cmp' },
+      { id: 'fake-alias-job', owner: 'lane-7', provider: 'codex-cmp' }] });
+    // The newest runtime's provider is the hint; an explicit post provider still wins.
+    registerAgentIdentity({ handle: 'worker-bot', runtime: { cli: 'devin', provider: 'devin', model: null } },
+      { root, now: () => now + 1_000 });
+    append({ ...withoutProvider, provider: 'claude', jobId: 'fake-explicit' }, 3, 'agent:worker-bot');
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'ok', jobs: [
+      { id: post.jobId, provider: 'devin' }, { id: 'fake-alias-job', provider: 'devin' },
+      { id: 'fake-explicit', provider: 'claude' }] });
+    // An injected provider fallback replaces the registry hint.
+    expect(readBusWorkFeed({ root, providerFor: () => 'glm' })).toMatchObject({ status: 'ok',
+      jobs: [{ provider: 'glm' }, { provider: 'glm' }, { provider: 'claude' }] });
   });
 
   it('applies owner status updates, sorts newest first and filters text and JSON', async () => {

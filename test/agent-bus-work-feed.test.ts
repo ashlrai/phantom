@@ -53,6 +53,24 @@ describe('retained v2 work projection', () => {
     expect(result.status === 'ok' && result.feed.jobs[0]?.provider).toBe('claude');
     expect(projectBusWorkFeed([], [participant, participant])).toEqual({ status: 'refused', reason: 'invalid-participants' });
   });
+  it('consults the provider resolver only after the post and participant metadata', () => {
+    const { provider: _provider, ...withoutProvider } = post;
+    const byLabel = (from: string) => (from === 'other' ? 'glm' : undefined);
+    // Participant metadata still wins over the resolver.
+    expect(projectBusWorkFeed([receipt(withoutProvider)], [participant], byLabel))
+      .toMatchObject({ status: 'ok', feed: { jobs: [{ provider: 'claude' }] } });
+    // The resolver supplies a provider the post and participants lack.
+    expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], byLabel))
+      .toMatchObject({ status: 'ok', feed: { jobs: [{ provider: 'glm' }] } });
+    // An explicit post provider wins over both.
+    expect(projectBusWorkFeed([receipt(post, 1, 'other')], [participant], byLabel))
+      .toMatchObject({ status: 'ok', feed: { jobs: [{ provider: 'devin' }] } });
+    // Unknown and invalid hints still refuse rather than guessing.
+    expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], () => undefined))
+      .toEqual({ status: 'refused', reason: 'missing-provider' });
+    expect(projectBusWorkFeed([receipt(withoutProvider, 1, 'other')], [], () => 'not-a-provider' as never))
+      .toEqual({ status: 'refused', reason: 'missing-provider' });
+  });
   it.each([
     { ...post, claimKeys: ['path:a/b:../x'] }, { ...post, provider: 'unknown' }, { ...post, extra: true },
     { kind: 'work.status', jobId: 'job', status: 'unknown' },

@@ -1,7 +1,7 @@
 /** Read-only projection of retained bus receipts; routing labels grant no authority. */
 import { validateBusEnvelope } from '../fleet/bus-envelope.js';
 import {
-  participantSchema, workFeedSchema, workPostBodySchema, workStatusBodySchema,
+  participantSchema, providerSchema, workFeedSchema, workPostBodySchema, workStatusBodySchema,
   type Participant, type WorkJob,
 } from './bus-v2-schema.js';
 
@@ -10,13 +10,18 @@ export type WorkFeedResult =
   | { status: 'refused'; reason: 'invalid-receipts' | 'invalid-participants' | 'invalid-body'
     | 'missing-provider' | 'duplicate-job' | 'owner-mismatch' };
 
+/** Resolves a sender label to a provider when the post and participants do not name one. */
+export type WorkFeedProviderFor = (from: string) => Participant['provider'] | undefined;
+
 /**
  * Project one retained snapshot in cursor order (at most 1024 receipts).
  * This is not a historical ledger: orphan statuses are ignored. A provider must
- * come from the post or supplied participant metadata, never a guessed label.
- * No journal writes, claims, dispatch, authentication or external calls occur.
+ * come from the post, explicit participant metadata or the injected resolver —
+ * never a guessed label. No journal writes, claims, dispatch, authentication or
+ * external calls occur.
  */
-export function projectBusWorkFeed(receipts: readonly unknown[], participants: readonly Participant[] = []): WorkFeedResult {
+export function projectBusWorkFeed(receipts: readonly unknown[], participants: readonly Participant[] = [],
+  providerFor?: WorkFeedProviderFor): WorkFeedResult {
   if (receipts.length > 1024) return { status: 'refused', reason: 'invalid-receipts' };
   const providers = new Map<string, Participant['provider']>();
   for (const input of participants) {
@@ -47,7 +52,10 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
       const post = workPostBodySchema.safeParse(body);
       if (!post.success) return { status: 'refused', reason: 'invalid-body' };
       if (jobs.has(post.data.jobId)) return { status: 'refused', reason: 'duplicate-job' };
-      const provider = post.data.provider ?? providers.get(from);
+      const hinted = providerFor?.(from);
+      const resolved = hinted === undefined ? undefined
+        : providerSchema.safeParse(hinted).success ? hinted : undefined;
+      const provider = post.data.provider ?? providers.get(from) ?? resolved;
       if (!provider) return { status: 'refused', reason: 'missing-provider' };
       jobs.set(post.data.jobId, { id: post.data.jobId, owner: from, provider,
         repo: post.data.repo, claimKeys: post.data.claimKeys, status: 'queued', updatedAt: row.receivedAt });
