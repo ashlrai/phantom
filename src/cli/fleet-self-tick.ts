@@ -94,6 +94,8 @@ interface Dependencies {
   claudeProbe?: Probe;
   /** claude command-finder seam; tests pin it, never a real PATH scan. */
   claudeFindCommand?: () => string | null;
+  /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
+  autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -107,6 +109,13 @@ function summary(step: string, report: unknown): string {
   const count = (value: unknown): number => Array.isArray(value) ? value.length : 0;
   if (step === 'cos-work') {
     return row['mode'] === 'dry-run' ? `pending=${row['pending']}` : `outcome=${row['outcome']}`;
+  }
+  if (step === 'planner-tick') {
+    const autofill = row['autofill'] as Record<string, unknown> | undefined;
+    const runs = Array.isArray(autofill?.['runs']) ? autofill['runs'] as Record<string, unknown>[] : [];
+    const applied = runs.reduce((sum, r) => sum + (typeof r['applied'] === 'number' ? r['applied'] : 0), 0);
+    const base = typeof (row['reason'] ?? row['outcome']) === 'string' ? String(row['reason'] ?? row['outcome']) : '';
+    return runs.length ? `${base}  autofill=${applied} applied across ${runs.length} starved ${runs.length === 1 ? 'lane' : 'lanes'}`.trim() : base;
   }
   if (step === 'reset-release') {
     const quota = row['claudeQuota'] as Record<string, unknown> | null | undefined;
@@ -215,6 +224,28 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     });
     return { exitCode, output: captured.join('\n') };
   };
+  // When pulse says a lane is starved, fill it from bets (capped per hour; off with autofill.off). Never fails the tick.
+  const runAutofillStage = async (): Promise<unknown> => {
+    // Account-root only, like the other steps that write real queue state: a sandbox runs dir is never filled.
+    if (!deps.autofill && root !== join(home, '.ashlr-runs')) return { reason: 'custom-runs-dir-no-autofill' };
+    try {
+      const { runAutofillTick } = await import('../core/fleet/autofill-run.js');
+      const { HELP_ENTRIES } = await import('./help.js');
+      return await runAutofillTick({
+        runsDir: root, apply, now, root: process.cwd(), entries: HELP_ENTRIES,
+        readLanes: async () => {
+          const { getFleetLaneSnapshot } = await import('../core/fleet/lane-console.js');
+          const snapshot = await getFleetLaneSnapshot();
+          const counts: Record<string, { running: number | null; target: number | null; queued: number | null }> = {};
+          for (const view of snapshot.lanes) counts[view.lane] = { running: view.liveJobs ?? null, target: view.slotTarget ?? null, queued: view.queueDepth ?? null };
+          return { starved: Object.entries(snapshot.starved.lanes).filter(([, row]) => row.starved).map(([lane]) => lane), counts };
+        },
+        ...deps.autofill,
+      });
+    } catch (error) {
+      return { reason: `autofill failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
+    }
+  };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
     // plans from is current. It is a sub-stage rather than a new step name so the
@@ -268,7 +299,19 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return { exitCode: posted.some(row => !['posted', 'duplicate'].includes(row.status)) ? 1 : 0,
         output: JSON.stringify({ report, posted, reason: apply ? 'observed' : 'dry-run' }) };
     },
-    'planner-tick': bind(cmdFleetPlannerTick, { now, spawn: deps.spawn }),
+    // Autofill runs first inside this step, so the planner sees the bets it just queued. Like the quota
+    // refresh above it is a sub-stage, not a new step name, so the fixed order and report shape stay as they are.
+    'planner-tick': async (argv) => {
+      const autofill = await runAutofillStage();
+      const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
+      try {
+        const parsed: unknown = JSON.parse(run.output);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return { ...run, output: JSON.stringify({ ...parsed, autofill }) };
+        }
+      } catch { /* the verb's own output stands untouched */ }
+      return run;
+    },
     'inbox-acks': bind(cmdFleetInboxAcks, { now: () => new Date(now()), senders: deps.senders }),
     'owner-live': async (argv) => {
       // The owner thread lives on the real account root; a custom runs dir is
