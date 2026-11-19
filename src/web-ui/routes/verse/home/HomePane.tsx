@@ -18,6 +18,7 @@ import { DiskCard } from './DiskCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
 import { PoolsCard } from './PoolsCard.js';
 import { PulseCard } from './PulseCard.js';
+import { PulseStrip } from './PulseStrip.js';
 import { FleetShippedCard } from './FleetShippedCard.js';
 import { ThisMacCard } from './ThisMacCard.js';
 import { WorkingNowCard } from './WorkingNowCard.js';
@@ -52,12 +53,12 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseStrip visible={visible} /><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /></section>;
   // A failed refresh keeps the last summary on screen; it must not read as current.
   const stale = read.status === 'error';
   const at = readAt(home.asOf);
   return <section className={styles.root} aria-label="Home">
-    <PulseCard visible={visible} />
+    <PulseStrip visible={visible} /><PulseCard visible={visible} />
     <p className={styles.headline} data-health={home.health}>{home.headline}</p>
     <p className={styles.asOf} data-stale={stale || undefined} role={stale ? 'status' : undefined}>
       {stale ? 'Could not refresh. Showing the reading from ' : 'As of '}{at ? <time dateTime={home.asOf}>{at}</time> : 'an unknown time'}.</p>

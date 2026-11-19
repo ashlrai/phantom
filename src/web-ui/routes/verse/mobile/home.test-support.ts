@@ -2,6 +2,7 @@
 import type { ApprovalsList } from '../../../../core/fleet/approvals.js';
 import type { HomeSummary } from '../../../../core/fleet/home.js';
 import type { PulseV1 } from '../../../../core/fleet/pulse.js';
+import type { PulseLanesV1 } from '../../../../core/fleet/pulse-lanes.js';
 
 const ok = <T,>(value: T) => ({ state: 'ok' as const, value });
 const unknown = (reason: string) => ({ state: 'unknown' as const, reason });
@@ -66,4 +67,14 @@ export function pulse(kind: HomeFixture): PulseV1 {
     mainsGreen: { value: red ? 1 : 2, total: 2, red: red ? ['phantom'] : [], trend: 'unknown', better: null, line: red ? 'Red: phantom.' : 'Every main branch is green.' },
     daysSinceRelease: { value: 3, trend: 'up', better: false, line: 'locus last released 3 days ago (v1.0.0).', worstRepo: 'locus', repos: [{ repo: 'locus', tag: 'v1.0.0', days: 3 }] },
     poolsOnPace: { value: 2, measured: 2, trend: 'unknown', better: null, line: '2 of 2 pools on pace.' } };
+}
+
+/** The Pulse strip's read (`phm fleet pulse --lanes --json`): unknown when quiet or unknown, real numbers otherwise; fake lanes only. */
+export function pulseLanes(kind: HomeFixture): PulseLanesV1 {
+  const known = kind !== 'quiet' && kind !== 'unknown';
+  const hours = (value: number | null) => Array.from({ length: 24 }, () => value);
+  return { schema: 'fleet.pulse.lanes.v1', v: 1, as_of: '2026-11-17T12:00:00.000Z', window_h: 24, headline: known ? '144 PRs merged in the last 24 hours (6/h).' : 'Unknown: the job metrics file could not be read.', lanes: [],
+    totals: known
+      ? { running: 3, capacity: 8, merged: 144, finished: 150, merged_per_h: 6, median_open_to_merge_s: 360, empty_rate: 0.1, series: { merged_per_h: hours(6) as number[], median_open_to_merge_s: hours(360), empty_rate: hours(0.1) } }
+      : { running: null, capacity: null, merged: null, finished: null, merged_per_h: null, median_open_to_merge_s: null, empty_rate: null, series: { merged_per_h: [], median_open_to_merge_s: [], empty_rate: [] } } };
 }

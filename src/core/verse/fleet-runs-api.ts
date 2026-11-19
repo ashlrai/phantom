@@ -582,6 +582,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readPulse({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
       return true;
     }
+    // Home's Pulse strip reads the same fleet.pulse.lanes.v1 as `phm fleet pulse --lanes --json`.
+    if (path === '/api/verse/fleet/runs/pulse/lanes') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readPulseLanes } = await import('../fleet/pulse-lanes.js');
+      sendJson(res, 200, await readPulseLanes({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
     // Home's Running build line reads the same report as `phm self drift --json`.
     if (path === '/api/verse/fleet/runs/drift') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
