@@ -193,16 +193,20 @@ What runs without a per-release approval:
 
 - A green `release-please` pull request is merged when the cadence is due
   (default 5 minutes), and only
-  when its version is the next patch, its head is `release-please--*`, and
-  GitHub Actions checks on that head have no pending or failing results
-  (`skipped` path-filtered jobs do not count as failures). The merge uses the
+  when its version is the next patch, its head is `release-please--*`, the
+  pull request is conflict-free and not already in the merge queue (queue
+  membership is read through GraphQL; REST pull reads never expose it), and
+  the required checks on that head — currently `Merge Gate` — are green.
+  Advisory Actions runs neither block nor substitute for the required
+  context. The merge uses the
   existing release app token and has no admin flag.
 - A release-please tag whose commit is an ancestor of master (compare
   `tag...master` status `ahead`, or `identical` when it is master HEAD) is
   the candidate when required CI on that exact SHA is green. Diverged and
   red candidates are refused. The train does not retag and does not delete
   tags. A green open release PR for the next patch is still enqueued only
-  after its own checks are green. The Release PR workflow independently
+  after its required checks are green and its queue state is observed; an
+  already-queued PR is never re-enqueued. The Release PR workflow independently
   checks green master, cadence and version carriers.
 - Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
   release gate is green. The train treats that tagged SHA as the candidate

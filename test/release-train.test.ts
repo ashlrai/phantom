@@ -11,7 +11,7 @@ import {
   successorTagConflict, refusePublishIfSuccessorConflict, publishRunFromAttestation, finalizeRetryDecision,
   finalizeRunIdentity, listFinalizeRuns, finalizeRunsQuery,
   RELEASE_GATE_RECEIPT, releaseGateReceipt,
-  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, selectUpdaterFeed,
+  markWritesApplied, mergeStageDone, observeTrain, pauseReleaseTrain, readSentinel, releaseGithubCall, releaseKillDecision, releasePrMergeQueued, selectUpdaterFeed,
   TRAIN_SCHEMA, trainStepSummary, updaterFeedMatches, WEBSITE_HOOK,
   type ReleaseWrite, type TrainObservation,
 } from '../src/core/release/train.js';
@@ -668,7 +668,7 @@ describe('release train', () => {
         number: 4760, title: 'chore(master): release 3.30.33', node_id: 'PR_kwDO_test', state: 'open', merged_at: null,
         mergeable: true, mergeable_state: 'clean', head: { ref: 'release-please--branches--master--components--phantom', sha: rpHead },
       },
-      [`repos/ashlrai/phantom/commits/${rpHead}/check-runs?filter=latest&per_page=100`]: {
+      [`repos/ashlrai/phantom/commits/${rpHead}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`]: {
         total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } }],
       },
       'updater/latest.json': { version: '3.30.31' },
@@ -679,7 +679,7 @@ describe('release train', () => {
       if (Object.hasOwn(data, path)) return data[path];
       if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
       throw new Error(`unexpected ${path}`);
-    }, '2026-11-11T04:00:00Z', 60, { fleet: 'inactive', autorun: 'inactive' });
+    }, '2026-11-11T04:00:00Z', 60, { fleet: 'inactive', autorun: 'inactive' }, async () => false);
 
     // Guard holds: v3.30.32 is skipped with the exact refusal, nothing threads a release message.
     expect(observed.head).toMatchObject({ tag: 'v3.30.31', sha: rp31 });
@@ -687,10 +687,14 @@ describe('release train', () => {
     expect(observed.skippedTags).toEqual([{ tag: 'v3.30.32', reason: `release_message_mismatch: tag=v3.30.32 first_line=${JSON.stringify(upkeepSubject)} expected=chore(<scope>): release 3.30.32` }]);
 
     // ...and does not block the recovery: the green 3.30.33 release PR is enqueued.
+    // The admitted v3.30.31 candidate also earns its tag-ref dependency audit.
     const plan = buildTrain(observed);
     expect(plan.exitCode).toBe(0);
     expect(plan.state).toMatchObject({ stopped: false, tag: 'v3.30.31' });
-    expect(plan.writes).toEqual([enqueueReleasePullRequest('PR_kwDO_test')]);
+    expect(plan.writes).toEqual([
+      enqueueReleasePullRequest('PR_kwDO_test'),
+      { method: 'POST', path: 'repos/ashlrai/phantom/actions/workflows/dependency-audit.yml/dispatches', body: { ref: 'v3.30.31', inputs: {} } },
+    ]);
     expect(plan.state.superseded).toEqual([]);
     const summary = trainStepSummary(plan.state);
     expect(summary).toContain('- release_message_mismatch: tag=v3.30.32');
@@ -1043,7 +1047,7 @@ describe('release train', () => {
     expect(buildTrain(unpaged).writes.some((write) => write.path.endsWith('/ci.yml/dispatches'))).toBe(false);
   });
 
-  it('does not count skipped path-filtered checks as release PR failures', async () => {
+  it('gates release PR readiness on required checks only and observes queue state', async () => {
     const pullSha = 'c'.repeat(40);
     const pkg = { encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.27' })).toString('base64') };
     const data: Record<string, unknown> = {
@@ -1062,25 +1066,56 @@ describe('release train', () => {
         node_id: 'PR_kwDO_test', mergeable: true, mergeable_state: 'clean',
         head: { ref: 'release-please--master', sha: pullSha },
       },
-      [`repos/ashlrai/phantom/commits/${pullSha}/check-runs?filter=latest&per_page=100`]: { total_count: 0, check_runs: [] },
       'registry/npm/@ashlr/phantom/3.30.27': null,
       ...greenCi(head),
     };
-    const observe = (checkRuns: Record<string, unknown>[]) => observeTrain(async (path) => {
-      if (path === `repos/ashlrai/phantom/commits/${pullSha}/check-runs?filter=latest&per_page=100`) {
-        return { total_count: checkRuns.length, check_runs: checkRuns };
+    const pullRunsPath = `repos/ashlrai/phantom/commits/${pullSha}/check-runs?filter=latest&app_id=15368&per_page=100&page=1`;
+    const observe = (checkRuns: Record<string, unknown>[], queued = false, mergeableState = 'clean', mergeable: boolean | null = true) => observeTrain(async (path) => {
+      if (path === pullRunsPath) return { total_count: checkRuns.length, check_runs: checkRuns };
+      if (path === 'repos/ashlrai/phantom/pulls/9') {
+        return { ...(data[path] as Record<string, unknown>), mergeable, mergeable_state: mergeableState };
       }
       if (path.includes('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
       if (!Object.hasOwn(data, path)) throw new Error(`unexpected ${path}`);
       return data[path];
-    }, '2026-11-09T06:00:00.000Z', 30, { fleet: 'inactive', autorun: 'inactive' });
+    }, '2026-11-09T06:00:00.000Z', 30, { fleet: 'inactive', autorun: 'inactive' }, async () => queued);
     const actions = (name: string, status: string, conclusion: string | null) => ({ name, status, conclusion, app: { id: 15368 } });
-    const skipped = observe([actions('Merge Gate', 'completed', 'success'), actions('Docs PR', 'completed', 'skipped'), actions('Mac exhaustive', 'completed', 'skipped')]);
-    await expect(skipped).resolves.toMatchObject({ openReleasePr: { number: 9 }, pullChecks: { pending: 0, failing: 0 } });
+    // Required Merge Gate green: advisory skipped or failed runs never gate the enqueue.
+    const green = observe([actions('Merge Gate', 'completed', 'success'), actions('Docs PR', 'completed', 'skipped'), actions('Mac exhaustive', 'completed', 'skipped')]);
+    await expect(green).resolves.toMatchObject({ openReleasePr: { number: 9, queued: false, mergeable: 'MERGEABLE' }, pullChecks: { pending: 0, failing: 0 } });
+    const advisoryFail = observe([actions('Merge Gate', 'completed', 'success'), actions('Dependency audit', 'completed', 'failure')]);
+    await expect(advisoryFail).resolves.toMatchObject({ pullChecks: { pending: 0, failing: 0 } });
+    // The required context still gates: pending waits, red refuses, absent waits.
     const pending = observe([actions('Merge Gate', 'in_progress', null), actions('Docs PR', 'completed', 'skipped')]);
     await expect(pending).resolves.toMatchObject({ pullChecks: { pending: 1, failing: 0 } });
-    const failing = observe([actions('Merge Gate', 'completed', 'success'), actions('Dependency audit', 'completed', 'failure'), actions('Docs PR', 'completed', 'skipped')]);
+    const failing = observe([actions('Merge Gate', 'completed', 'failure'), actions('Docs PR', 'completed', 'skipped')]);
     await expect(failing).resolves.toMatchObject({ pullChecks: { pending: 0, failing: 1 } });
+    const absent = observe([actions('Dependency audit', 'completed', 'failure')]);
+    await expect(absent).resolves.toMatchObject({ pullChecks: { pending: 1, failing: 0 } });
+    // mergeable_state folds in advisory state; only the conflict signal decides.
+    const unstable = observe([actions('Merge Gate', 'completed', 'success')], false, 'unstable');
+    await expect(unstable).resolves.toMatchObject({ openReleasePr: { mergeable: 'MERGEABLE' } });
+    const conflicting = observe([actions('Merge Gate', 'completed', 'success')], false, 'dirty', false);
+    await expect(conflicting).resolves.toMatchObject({ openReleasePr: { mergeable: 'CONFLICTING' } });
+    const unknownMergeable = observe([actions('Merge Gate', 'completed', 'success')], false, 'clean', null);
+    await expect(unknownMergeable).resolves.toMatchObject({ openReleasePr: { mergeable: 'UNKNOWN' } });
+    // An already-queued PR is observed and plans no duplicate enqueue.
+    const queued = await observe([actions('Merge Gate', 'completed', 'success')], true);
+    expect(queued.openReleasePr?.queued).toBe(true);
+    const queuedPlan = buildTrain(queued);
+    expect(queuedPlan.writes.filter((write) => write.path === 'graphql')).toEqual([]);
+    const unqueuedPlan = buildTrain(await observe([actions('Merge Gate', 'completed', 'success')]));
+    expect(unqueuedPlan.writes.filter((write) => write.path === 'graphql')).toHaveLength(1);
+  });
+
+  it('reads merge-queue membership from GraphQL and fails closed', async () => {
+    const nodeId = 'PR_kwDO_test';
+    const reply = (payload: unknown) => () => JSON.stringify(payload);
+    await expect(releasePrMergeQueued(nodeId, reply({ data: { node: { isInMergeQueue: true } } }))).resolves.toBe(true);
+    await expect(releasePrMergeQueued(nodeId, reply({ data: { node: { isInMergeQueue: false } } }))).resolves.toBe(false);
+    await expect(releasePrMergeQueued(nodeId, reply({ data: { node: null } }))).rejects.toThrow('release queue state unavailable');
+    await expect(releasePrMergeQueued(nodeId, reply({ data: null, errors: [{ message: 'no' }] }))).rejects.toThrow('release queue state unavailable');
+    await expect(releasePrMergeQueued('not-a-node', reply({}))).rejects.toThrow('invalid release pull request');
   });
   it('maps only a 404 on the exact version tag ref to not-tagged', () => {
     // Train runs 43861440856 and 43861554608 failed with "github GET repos/ashlrai/phantom/git/ref/tags/v3.30.35 failed"
