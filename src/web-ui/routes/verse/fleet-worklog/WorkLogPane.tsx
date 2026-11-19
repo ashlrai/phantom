@@ -24,12 +24,12 @@ function Groups({ title, today, yesterday }: { title: string; today: Record<stri
   if (!names.length) return <p className={styles.meta}>No work recorded by {title.toLowerCase()} today or yesterday.</p>;
   // A name with no row on a recorded day did nothing that day, which is a counted zero. `yesterday` is null when it was not recorded.
   const count = (c: WorklogCounts | undefined, key: 'merged' | 'launches' | 'empty') => c ? shown(c[key]) : '0';
-  return <table className={styles.table}>
+  return <div className={styles.tableScroll} role="region" aria-label={`Work log by ${title.toLowerCase()}, scroll for all columns`} tabIndex={0}><table className={styles.table}>
     <caption>By {title.toLowerCase()}</caption>
     <thead><tr><th scope="col">{title}</th><th scope="col">Merged today</th><th scope="col">Merged yesterday</th><th scope="col">Launches today</th><th scope="col">No change today</th><th scope="col">Median minutes to merge today</th></tr></thead>
     <tbody>{names.map(name => <tr key={name}><th scope="row">{name}</th><td>{count(today[name], 'merged')}</td><td>{yesterday ? count(yesterday[name], 'merged') : 'unknown'}</td>
       <td>{count(today[name], 'launches')}</td><td>{count(today[name], 'empty')}</td><td>{minutes(today[name]?.median_ttm_s)}</td></tr>)}</tbody>
-  </table>;
+  </table></div>;
 }
 
 function Report({ report }: { report: FleetWorklogReport }) {

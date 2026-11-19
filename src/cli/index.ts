@@ -2255,6 +2255,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'needs-you': {
+        const { cmdNeedsYou } = await import('./needs-you.js');
+        process.exitCode = await cmdNeedsYou(rest);
+        break;
+      }
+
       case 'asks': {
         const { cmdAsks } = await import('./asks.js');
         process.exitCode = await cmdAsks(rest);
@@ -3137,7 +3143,8 @@ async function main(): Promise<void> {
         if (wantsHelp(rest)) {
           printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
             ['phm settings appearance [--json]', 'Read the four appearance settings'],
-            ['phm settings appearance set <key> <value> [--json]', 'Change one; a running app applies it live'],
+            ['phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]', 'Change any of them in one write; a running app applies it live'],
+            ['phm settings appearance --reset [--json]', 'Back to the defaults'],
           ]);
           process.exitCode = 0;
           break;

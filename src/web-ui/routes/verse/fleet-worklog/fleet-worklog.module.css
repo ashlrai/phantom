@@ -10,3 +10,8 @@
 .table caption { padding-bottom: var(--space-1); color: var(--text-secondary); font-weight: var(--font-weight-semibold); text-align: start; }
 .table th, .table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border-subtle); text-align: end; }
 .table th:first-child { text-align: start; }
+
+/* Keep labels readable on narrow panes; the named region supports keyboard scrolling. */
+.tableScroll { max-width: 100%; overflow-x: auto; }
+.tableScroll:focus-visible { outline: 2px solid var(--focus-ring, #2563eb); outline-offset: 2px; }
+.table { min-width: 42rem; overflow-wrap: normal; }

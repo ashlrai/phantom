@@ -1910,6 +1910,31 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/empties' && method === 'GET') {
+      // Why each empty run ended empty (fleet.empties.why.v1), the `why` block of `phm fleet empties --json`.
+      const { readEmptiesWhy } = await import('../fleet/empties-why.js');
+      const raw = getQueryParam(req.url ?? '', 'hours') ?? '24';
+      const hours = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+      if (!(hours > 0 && hours <= 2160)) { sendJson(res, 400, { error: 'Use a number of hours up to 2160, for example 24.' }); return true; }
+      const report = await readEmptiesWhy({ hours });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
+    if (path === '/api/fleet/stranded' && method === 'GET') {
+      // Finished work that never became a PR (fleet.stranded.work.v1), the report inside `phm fleet stranded --json`.
+      const { readStrandedWork, STRANDED_MAX_DAYS } = await import('../fleet/stranded-work.js');
+      const raw = getQueryParam(req.url ?? '', 'days') ?? '3';
+      const days = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+      const verify = getQueryParam(req.url ?? '', 'verify');
+      if (!(days >= 1 && days <= STRANDED_MAX_DAYS) || !['1', '0', undefined].includes(verify)) {
+        sendJson(res, 400, { error: `Use days from 1 to ${STRANDED_MAX_DAYS} and verify=1 to compare with the local main branch.` }); return true;
+      }
+      const report = await readStrandedWork({ days, verify: verify === '1' });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
     if (path === '/api/log' && method === 'GET') {
       // One row per job (joblog.v1), the report `phm log --json` prints.
       const { readJobLog } = await import('../fleet/job-log.js');
@@ -2323,6 +2348,33 @@ export async function handleApi(
     if (path === '/api/approvals' && method === 'GET') {
       const team = getQueryParam(req.url ?? '/', 'team');
       sendJson(res, 200, await buildApprovalsProjection(team || undefined));
+      return true;
+    }
+
+    // RQ-NEEDSYOUN19NQ8: what truly waits on Mason (same JSON as
+    // `phm needs-you --json`) plus the auto-resolve audit records. GET is read
+    // class; POST /api/needs-you/resolve {dryRun?} resolves auto items only and
+    // is gated like every dispatch mutation.
+    if (path === '/api/needs-you' && method === 'GET') {
+      const { listNeedsYou, readNeedsYouAudit } = await import('../needs-you/index.js');
+      sendJson(res, 200, { ...listNeedsYou(), audit: readNeedsYouAudit().slice(-50) });
+      return true;
+    }
+    if (path === '/api/needs-you/resolve' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let b: unknown = null;
+      try { b = JSON.parse(await readBody(req, 256)); } catch { /* refused below */ }
+      const body = b && typeof b === 'object' && !Array.isArray(b) ? b as Record<string, unknown> : null;
+      if (!body || Object.keys(body).some((k) => k !== 'dryRun') || (body['dryRun'] !== undefined && typeof body['dryRun'] !== 'boolean')) {
+        sendJson(res, 400, { error: 'expected {dryRun?: boolean}' });
+        return true;
+      }
+      const { resolveAutoNeedsYou } = await import('../needs-you/index.js');
+      sendJson(res, 200, resolveAutoNeedsYou({ dryRun: body['dryRun'] === true }));
       return true;
     }
 

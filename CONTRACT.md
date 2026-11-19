@@ -1323,6 +1323,20 @@ check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
 No HTTP feed endpoint is provided by this foundation.
 
+`readBusWorkFeed({root?, now?, claims?})` in `src/core/agents/bus-work-feed-read.ts`
+pages the bounded bus inbox without writes and returns ok/refused/unavailable/
+retryable/invalid with receipt count and `asOf`. With `claims:true` the ok result
+adds `claims:{source,holds,truncated}`: holds list each live coordination lease
+blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
+`leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is
+`missing`, `available` or `unavailable`, and holds are unknown, not empty, when
+the table is unavailable. Holds cap at 1024 with `truncated` set.
+`coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
+exported read-only overlap predicate; acquisition and observation now share one
+structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
+a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
+fabricated count.
+
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
