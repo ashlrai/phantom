@@ -22,6 +22,44 @@ Do not put prompts, credentials or task descriptions in these labels. Existing
 fleet events do not contain these timestamps: producers must record visits before
 the estimator can report them. The journal currently has no automatic retention.
 
+`phm queue visits-sync` is the fleet producer: it folds `metrics/jobs.jsonl`
+and the live `- READY` rows of `queue/router-queue.md` into visits and appends
+new or progressed snapshots to the journal. Dry run by default; `--apply`
+writes, `--json` prints a `queue.visits-sync.v1` report, and `--jobs`,
+`--queue`, `--journal` override the default paths. Re-running is idempotent:
+a visit appends again only when it gains a transition, and a candidate less
+complete than the journal's latest snapshot is refused.
+
+Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
+
+- **READY** — queue dwell. Arrival is the earliest `enqueue`/`queued` stamp
+  or `launch_failed` receipt with `action=retry` before the attempt's launch
+  (attempt 1 also accepts enqueue stamps; later attempts only retry receipts);
+  departure is the `launch` stamp, with `startedAt === completedAt` because
+  dispatch service is instantaneous. Jobs still listed `- READY` in
+  router-queue.md with zero recorded launches produce open visits (arrival
+  from the ledger enqueue stamp or the line's `enq=` epoch-seconds token). A
+  job resolved `DONE-NOOP` before any launch completes its READY visit at the
+  outcome stamp.
+- **claimed** — `launch` to the first of `finish`, `publish` or a matched
+  terminal outcome; service starts at launch (dedicated worker), so `wait` is
+  zero and `rho` measures mean concurrency.
+- **publish** — `finish` to `publish` (or an outcome `PUBLISHED` row); a
+  finish without publish stays open as publisher-slot WIP.
+- **pr-ci** — `publish` to `ci_complete`, a matched `MERGED`/`CLOSED` outcome,
+  or stays open; `ci_start` is the service start when the ledger carries it,
+  otherwise the whole dwell reports as wait.
+- **merge-queue** — `ci_complete` to `MERGED`/`CLOSED`; needs the CI boundary,
+  otherwise absent.
+- **merged** — zero-dwell marker at the merge stamp for throughput.
+
+Known gaps stay unknown: `planned`, `released`, `fix-main`, review and release
+stations have no ledger boundaries; re-queued attempts (a second launch after
+a non-launch-failure requeue) have no recorded re-arrival, so their READY wait
+is not emitted; `checkout`, `model` and check phases inside claimed/pr-ci are
+not split. URL-bearing outcomes match the attempt that published that PR;
+URL-less outcomes follow the dispatcher's current-attempt rule.
+
 Windows are half-open `[now - window, now)`. Arrivals divided by window seconds
 are `lambda`; `mu` is completed visits divided by their total service seconds
 (the observed per-worker service rate), and `rho = lambda / mu` is offered load
