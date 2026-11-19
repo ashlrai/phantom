@@ -66,4 +66,6 @@ hard_limit too. Everything else is **auto**: `phm needs-you resolve --auto
 [--dry-run]` (or `POST /api/needs-you/resolve`) takes its forward action (an
 approval's first option, else "go ahead") and appends `{item, action, at,
 reason}` to `needs-you-auto.jsonl` in the runs folder; `phm needs-you log`
-lists those records. Existing checks still run on every answer.
+lists those records. `phm needs-you batch` puts every hard_limit item in one
+message with a one-word reply each (`1 yes, 2 no`) for a single phone tap.
+Existing checks still run on every answer.
