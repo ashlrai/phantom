@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
 import { listCoordination } from '../src/core/agents/claim-store.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import { handleAgentBusApi } from '../src/core/verse/agent-bus-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
@@ -157,6 +158,55 @@ describe('listBusClaims', () => {
     writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
     expect(listBusClaims({ root, now: NOW })).toEqual({ status: 'unavailable', asOf: new Date(NOW).toISOString() });
     expect(listBusClaims({ root, now: NOW, key: 'repo:ashlrai/phantom' })).toMatchObject({ status: 'unavailable' });
+    expect(listBusClaims({ root, now: NOW, owner: 'dot-main' })).toMatchObject({ status: 'unavailable' });
+  });
+
+  it('filters live claims by owner, resolving every label of one identity', () => {
+    const root = tempDir('v2claim-list-');
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, { root }).status).toBe('created');
+    const atlasId = stableAgentId('atlas');
+    acquire('repo:ashlrai/phantom', 'atlas', 600_000, 'op-1', root);
+    acquire('queue:RQ-A', 'agent:atlas', 600_000, 'op-2', root);
+    acquire('pr:ashlrai/phantom#3', 'lane-atlas', 600_000, 'op-3', root);
+    acquire('queue:RQ-B', 'unregistered', 600_000, 'op-4', root);
+
+    for (const ref of ['atlas', 'agent:atlas', 'lane-atlas', atlasId]) {
+      const listed = listBusClaims({ root, now: NOW, owner: ref });
+      expect(listed).toMatchObject({ status: 'ok', source: 'available',
+        owner: { ref, identity: atlasId, registry: 'available' } });
+      if (listed.status !== 'ok') throw new Error('expected ok');
+      expect(listed.claims.map(row => row.owner).sort()).toEqual(['agent:atlas', 'atlas', 'lane-atlas']);
+    }
+    // An unregistered ref falls back to the exact owner label, and says so.
+    const labelOnly = listBusClaims({ root, now: NOW, owner: 'unregistered' });
+    expect(labelOnly).toMatchObject({ status: 'ok',
+      owner: { ref: 'unregistered', identity: null, registry: 'available' } });
+    if (labelOnly.status !== 'ok') throw new Error('expected ok');
+    expect(labelOnly.claims.map(row => row.owner)).toEqual(['unregistered']);
+    // Owner and key filters compose; a missing store stays an honest empty list.
+    expect(listBusClaims({ root, now: NOW, owner: 'atlas', key: 'repo:ashlrai/phantom' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'repo:ashlrai/phantom' }] });
+    expect(listBusClaims({ root, now: NOW, owner: 'atlas', key: 'queue:RQ-FREE' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    expect(listBusClaims({ root: tempDir('v2claim-list-'), now: NOW, owner: 'atlas' }))
+      .toMatchObject({ status: 'ok', source: 'missing', claims: [],
+        owner: { ref: 'atlas', identity: null, registry: 'missing' } });
+    // A malformed owner is invalid, never a silent empty list.
+    expect(listBusClaims({ root, now: NOW, owner: 'bad owner' })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, owner: '' })).toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches only the exact owner label when the registry is unreadable', () => {
+    const root = tempDir('v2claim-list-');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, { root });
+    acquire('repo:ashlrai/phantom', 'atlas', 600_000, 'op-1', root);
+    acquire('queue:RQ-A', 'agent:atlas', 600_000, 'op-2', root);
+    writeFileSync(join(root, 'agent-identities', 'registry.json'), 'corrupt');
+    const listed = listBusClaims({ root, now: NOW, owner: 'atlas' });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available',
+      owner: { ref: 'atlas', identity: null, registry: 'unavailable' } });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    expect(listed.claims.map(row => row.owner)).toEqual(['atlas']);
   });
 });
 

@@ -139,6 +139,41 @@ describe('phm agents bus (unified)', () => {
     expect(claimText.join('\n')).toContain('claims=1 source=available');
   });
 
+  it('filters claim list by owner through the identity registry', async () => {
+    expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json)
+      .toMatchObject({ status: 'created' });
+    for (const [key, owner, id] of [
+      ['repo:ashlrai/phantom', 'atlas', 'own-1'],
+      ['queue:RQ-A', 'agent:atlas', 'own-2'],
+      ['queue:RQ-B', 'lane-atlas', 'own-3'],
+      ['queue:RQ-C', 'other', 'own-4'],
+    ] as const) {
+      expect((await run(['claim', 'acquire', '--key', key, '--lease-ms', '600000', '--owner', owner, '--id', id])).json)
+        .toMatchObject({ status: 'acquired' });
+    }
+    const mine = await run(['claim', 'list', '--owner', 'atlas']);
+    expect(mine.code).toBe(0);
+    expect(mine.json.claims).toHaveLength(3);
+    expect(mine.json.owner).toMatchObject({ ref: 'atlas', registry: 'available' });
+    expect(mine.json.owner.identity).toMatch(/^agt_[a-f0-9]{20}$/);
+    for (const ref of ['agent:atlas', 'lane-atlas', mine.json.owner.identity]) {
+      expect((await run(['claim', 'list', '--owner', ref])).json.claims).toHaveLength(3);
+    }
+    const other = await run(['claim', 'list', '--owner', 'other']);
+    expect(other.json.owner).toMatchObject({ ref: 'other', identity: null, registry: 'available' });
+    expect(other.json.claims.map((row: { owner: string }) => row.owner)).toEqual(['other']);
+    expect((await run(['claim', 'list', '--owner', 'atlas', '--key', 'repo:ashlrai/phantom'])).json.claims)
+      .toEqual([expect.objectContaining({ key: 'repo:ashlrai/phantom' })]);
+    expect((await run(['claim', 'list', '--owner', 'atlas', '--key', 'queue:RQ-FREE'])).json.claims).toEqual([]);
+    expect(await run(['claim', 'list', '--owner', 'bad owner'])).toMatchObject({ code: 2, json: { status: 'invalid' } });
+
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--owner', 'atlas', '--root', root],
+      t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('claims=3 source=available owner=atlas');
+    expect(text.join('\n')).toContain('registry=available');
+  });
+
   it('refuses bad work verbs and flags with usage errors', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect(await run(['work', 'post', '--from', 'atlas', '--title', 'x', '--repo', 'a/b']))

@@ -10,6 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { acquireCoordination, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationView } from './claim-store.js';
 import { parseClaimKey, workClaimBodySchema, workReleaseBodySchema } from './bus-v2-schema.js';
+import { readAgentRegistry, resolveAgent } from './bus-identity.js';
 
 export interface BusClaimOptions {
   /** Coordination store root; defaults to the shared fleet root. */
@@ -25,6 +26,13 @@ export interface BusClaimsListOptions {
   now?: number;
   /** When set, only live claims that would block an acquire of this key. */
   key?: string;
+  /**
+   * When set, only live claims owned by this routing ref — a handle,
+   * `agent:<handle>`, stable id or alias. A ref that resolves through the
+   * identity registry matches every label of that identity; an unresolvable
+   * ref, or an unreadable registry, matches the exact owner label only.
+   */
+  owner?: string;
 }
 
 export type BusClaimResult =
@@ -135,6 +143,16 @@ export function newBusClaimOpId(): string {
   return `busclaim-${randomUUID()}`;
 }
 
+/** How an `owner` filter resolved, so a label match is never mistaken for identity proof. */
+export interface BusClaimsOwnerMatch {
+  /** The routing ref exactly as passed. */
+  ref: string;
+  /** Stable id the ref resolved to; null means claims matched the exact owner label only. */
+  identity: string | null;
+  /** Registry state behind the resolution; 'unavailable' means same-identity labels may be missed. */
+  registry: 'missing' | 'available' | 'unavailable';
+}
+
 /**
  * Read-side companion to `executeBusClaimBody`: the live coordination claims
  * every bus participant shares, before it acquires or checks overlap. `source`
@@ -142,19 +160,46 @@ export function newBusClaimOpId(): string {
  * `unavailable` means holds are unknown, not free. Expired rows are not holds.
  * Fencing tokens never leave the store. With `key`, the list narrows through
  * the same overlap rule an acquire applies, so it previews current blockers.
+ * With `owner`, the list narrows to one holder: a ref that resolves through
+ * the identity registry matches every label of that identity, while an
+ * unresolvable ref or unreadable registry falls back to the exact owner label.
  */
 export type BusClaimsListResult =
-  | { status: 'ok'; source: 'missing' | 'available'; claims: CoordinationView[]; asOf: string }
+  | { status: 'ok'; source: 'missing' | 'available'; claims: CoordinationView[]; asOf: string;
+      owner?: BusClaimsOwnerMatch }
   | { status: 'invalid' | 'unavailable'; asOf: string };
+
+const OWNER_LABEL = /^[\x21-\x7e]{1,256}$/;
 
 export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsListResult {
   const now = options.now ?? Date.now();
   const asOf = new Date(now).toISOString();
   const key = options.key;
   if (key !== undefined && parseClaimKey(key) === undefined) return { status: 'invalid', asOf };
+  const owner = options.owner;
+  if (owner !== undefined && !OWNER_LABEL.test(owner)) return { status: 'invalid', asOf };
   const listed = listCoordination(options.root, now);
   if (listed.source === 'unavailable') return { status: 'unavailable', asOf };
-  const live = listed.claims.filter(row => row.live);
-  return { status: 'ok', source: listed.source,
-    claims: key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key)), asOf };
+  let live = listed.claims.filter(row => row.live);
+  let ownerMatch: BusClaimsOwnerMatch | undefined;
+  if (owner !== undefined) {
+    const read = readAgentRegistry({ root: options.root });
+    const registry = read.status === 'ok' ? read.registry : undefined;
+    const identity = registry === undefined ? undefined : resolveAgent(registry, owner)?.id;
+    ownerMatch = { ref: owner, identity: identity ?? null,
+      registry: read.status === 'ok' ? read.source : 'unavailable' };
+    if (registry === undefined || identity === undefined) {
+      live = live.filter(row => row.owner === owner);
+    } else {
+      const resolved = new Map<string, string | undefined>();
+      const ownerId = (label: string): string | undefined => {
+        if (!resolved.has(label)) resolved.set(label, resolveAgent(registry, label)?.id);
+        return resolved.get(label);
+      };
+      live = live.filter(row => ownerId(row.owner) === identity);
+    }
+  }
+  const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
+  return { status: 'ok', source: listed.source, claims, asOf,
+    ...(ownerMatch === undefined ? {} : { owner: ownerMatch }) };
 }
