@@ -180,7 +180,7 @@ answer the gateway gives). The JSON is `models.check.v1` with `version: 1`; a
 registry that cannot be read gives `registry: "unknown"` and no models. Exit 0
 means nothing needs doing. `--diff` takes a provider release-notes page saved to
 disk (the command never fetches) and lists `new`, `renamed` and `retired` IDs
-for that provider as leads to confirm; it changes nothing. The Models card shows
+for that provider as leads to confirm; it changes nothing. The Models pane shows
 the same report from `GET /api/verse/fleet/control/models/check`.
 
 The check also compares the registry with what provider docs confirm, when a
