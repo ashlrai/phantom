@@ -434,6 +434,12 @@ dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD); when slots.json parses, a derived report recomputes
 per-lane `blocked` reason codes with the same eligibility rules as
 `contrib/mac/work_market.py`, reported as `derivedReasons: true`.
+`foldLaneOverrides(jsonl, nowMs, windowHours)` and `renderLaneOverrides(report)`
+in `src/core/fleet/lane-overrides.ts` back `phm fleet lane-overrides`
+(`fleet.lane-overrides.v1`): per-job lane-override accounting folded from the
+`route_decision` rows of `metrics/work-market.jsonl`; only each job's latest
+in-window decision counts and `overrideRate` stays null when nothing was
+hinted.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.

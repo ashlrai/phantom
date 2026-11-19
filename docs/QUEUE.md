@@ -279,6 +279,17 @@ phm route explain --json
 phm pool admission --json
 ```
 
+`phm fleet lane-overrides [--window <hours>] [--json]` folds the same
+`route_decision` rows into per-job override accounting over the last
+`--window` hours (default 24, at most 168): jobs evaluated, how many carried
+a `preferred_lane`, how many ran off it (`overrideRate`, null when nothing
+was hinted), the override reasons, the `preferred_lane_blocked_by` codes
+that refused each hint, the hinted-to-chosen lane pairs, and jobs whose
+latest decision found no runnable lane. Only each job's latest in-window
+decision counts; malformed rows are dropped, never guessed. It prints
+`fleet.lane-overrides.v1` and exits 1 when the journal is absent or
+unreadable. It is read-only.
+
 ## Utilization and unfed capacity
 
 An executor is unfed when it has free slots while runnable rows wait under
