@@ -96,8 +96,55 @@ describe('router outcome ledger (612S preservation)', () => {
     const fold = foldRouterOutcomes('{"job":"U1","phase":"VERIFIED","pr_url":"https://github.com/o/r/pull/3","ci_first_pass":"yes","cost_usd":-1}\n');
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
-      merged: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
+      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
     }]);
+  });
+
+  it('folds revert evidence from every recorded dialect, sticky-true', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"V1","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"V1","event":"revert","ts":"2026-11-02T00:00:00Z"}',
+      '{"job":"V1","reverted":false,"ts":"2026-11-03T00:00:00Z"}',
+      '{"job":"V2","phase":"MERGED","reverted":true}',
+      '{"job":"V3","phase":"MERGED","reverted":false}',
+      '{"job":"V4","outcome":"reverted"}',
+      '{"job":"V5","state":"REVERTED"}',
+      '{"job":"V6","kind":"reverted"}',
+      '{"job":"V7","reverted_at":"2026-11-04T00:00:00Z"}',
+      '{"job":"V8","revertedAt":"2026-11-04T00:00:00Z"}',
+      '{"job":"V9","phase":"MERGED"}',
+      '{"job":"V10","event":"revert_coverage","repo":"o/r"}',
+      '{"job":"V11","event":"revert-failed"}',
+      '{"job":"V12","reverted_at":"not-a-date"}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // A recorded revert is never contradicted by a later reverted:false.
+    expect(byId.get('V1')).toMatchObject({ merged: true, reverted: true });
+    expect(byId.get('V2')).toMatchObject({ merged: true, reverted: true });
+    // Explicit reverted:false stands only with no positive evidence.
+    expect(byId.get('V3')).toMatchObject({ merged: true, reverted: false });
+    for (const id of ['V4', 'V5', 'V6', 'V7', 'V8']) expect(byId.get(id)?.reverted).toBe(true);
+    // No evidence stays unknown; coverage markers and failed reverts are not reverts.
+    expect(byId.get('V9')?.reverted).toBeNull();
+    expect(byId.get('V10')?.reverted).toBeNull();
+    expect(byId.get('V11')?.reverted).toBeNull();
+    expect(byId.get('V12')?.reverted).toBeNull();
+  });
+
+  it('attaches a revert event to its job through an unambiguous PR URL only', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","pr_url":"https://github.com/o/r/pull/1","phase":"MERGED"}',
+      '{"pr_url":"https://github.com/o/r/pull/1","event":"revert"}',
+      '{"job":"A","pr_url":"https://github.com/o/r/pull/7"}',
+      '{"job":"B","pr_url":"https://github.com/o/r/pull/7"}',
+      '{"pr_url":"https://github.com/o/r/pull/7","event":"revert"}',
+      '{"pr_url":"https://github.com/o/r/pull/9","event":"revert"}',
+    ].join('\n'));
+    expect(fold.outcomes.find(o => o.job_id === 'J1')).toMatchObject({ merged: true, reverted: true });
+    // The ambiguous PR's revert row attaches to neither claimant.
+    for (const id of ['A', 'B']) expect(fold.outcomes.find(o => o.job_id === id)?.reverted).toBeNull();
+    // A revert row with no job or PR claim is unattached, never guessed.
+    expect(fold.unattached_rows).toBe(2);
   });
 
   it('preserves measured zero and false instead of coercing them to null', () => {

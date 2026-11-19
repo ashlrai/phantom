@@ -311,8 +311,13 @@ it is `null` whenever the ledger lacks lane/model, the projection is
 missing or degraded, the pair is duplicated, or the row's own pass^k is
 null — unknown stays null, never estimated. `RouterOutcomeRead.eval_state`
 reports the projection health (`healthy`/`missing`/`degraded`) so callers
-can distinguish absent eval evidence from a real score. The fold is
-read-only and advisory: it never routes, ranks, tunes or writes.
+can distinguish absent eval evidence from a real score. `reverted` folds
+explicit revert evidence — a `reverted` boolean, a revert event name or
+terminal REVERT/REVERTED state field, or a parseable `reverted_at`/
+`revertedAt` stamp — sticky-true like metrics-ingest, so a recorded revert
+is never contradicted by a later `reverted:false`; it is `null` when the
+ledger records nothing either way. The fold is read-only and advisory: it
+never routes, ranks, tunes or writes.
 
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
