@@ -1,0 +1,129 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { applyEmptyFamilies, runEmptyApplyTick, undoEmptyFamily, EMPTY_APPLY_SCHEMA } from '../src/core/fleet/empty-family-apply.js';
+import { cmdJobs } from '../src/cli/jobs-empty.js';
+import { summarizeEmptyFamilies } from '../src/core/fleet/empty-families.js';
+
+const now = Date.parse('2026-11-19T12:00:00Z');
+const HOUR = 3600;
+let dir: string;
+beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'empty-apply-')); await mkdir(join(dir, 'queue')); });
+afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
+
+const launches = (ids: string[], lane: string, reason: string) => ids.map(id => ({ id, lane, empty: true, reason }));
+const report = summarizeEmptyFamilies([
+  ...launches([1, 2, 3, 4, 5].map(n => `RQ-MD${n}A11180${n}Q8`), 'devin-flash', 'already-on-master'),
+  ...launches([1, 2, 3].map(n => `RQ-LOGIN${n}`), 'cursor', 'auth_failed'),
+  ...launches([1, 2, 3, 4, 5].map(n => `FIXUP-CI-fixer-${n}`), 'claude', 'already-on-master'),
+  ...launches([1, 2, 3, 4, 5].map(n => `RQ-RELEASE-WATCH${n}`), 'claude', 'already-on-master'),
+], 24);
+const readReport = async () => report;
+const queue = [
+  '- READY RQ-MD6A111806Q8 (P2, pool=devin-flash, tier=fast, repo=ashlr-md)',
+  '- READY RQ-MD7A111807Q8 (P2, tier=fast, repo=ashlr-md)',
+  '- READY RQ-MD8A111808Q8 (P2, pool=codex-cmp, tier=fast, repo=ashlr-md)',
+  '- CLAIMED RQ-MD9A111809Q8',
+  '- READY RQ-LOGIN4 (P1, pool=cursor)',
+  '- READY FIXUP-CI-fixer-6 (P0, pool=claude)',
+  '- READY RQ-RELEASE-WATCH6 (P1, pool=claude)',
+].join('\n') + '\n';
+const put = (name: string, text: string) => writeFile(join(dir, 'queue', name), text);
+const get = (name: string) => readFile(join(dir, 'queue', name), 'utf8').catch(() => null);
+
+it('stop: writes the exact READY ids with an expiry; other lanes, claimed and guarded jobs are left alone', async () => {
+  await put('router-queue.md', queue);
+  await put('RETIRED', 'RQ-OLD1\n');
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
+  expect(result.schema).toBe(EMPTY_APPLY_SCHEMA);
+  const stop = result.rows.find(r => r.action === 'stop')!;
+  expect(stop).toMatchObject({ family: 'RQ-MD*', lane: 'devin-flash', ids: ['RQ-MD6A111806Q8', 'RQ-MD7A111807Q8'], until: now / 1000 + 48 * HOUR });
+  expect(stop.reason).toContain('5of5-empty');
+  expect(await get('RETIRED')).toBe('RQ-OLD1\nRQ-MD6A111806Q8\nRQ-MD7A111807Q8\n');
+});
+
+it('reroute: writes a lane-avoid hint with expiry and reason', async () => {
+  await put('router-queue.md', queue);
+  await applyEmptyFamilies({ runsDir: dir, apply: true, now, ttlHours: 24, readReport });
+  expect(await get('lane-avoid.tsv')).toBe(`cursor\tRQ-LOGIN*\t${now / 1000 + 24 * HOUR}\t3of3-empty_auth_failed\n`);
+  expect(await get('RETIRED')).not.toContain('RQ-LOGIN4');
+});
+
+it('guarded: FIXUP- and RELEASE families are never stopped', async () => {
+  await put('router-queue.md', queue);
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
+  const guarded = result.rows.filter(r => r.family.startsWith('FIXUP-') || r.family.includes('RELEASE'));
+  expect(guarded.length).toBe(2);
+  expect(guarded.every(r => r.action === 'skip' && r.ids.length === 0)).toBe(true);
+  const retired = await get('RETIRED') ?? '';
+  expect(retired).not.toContain('FIXUP-');
+  expect(retired).not.toContain('RELEASE');
+});
+
+it('dry run writes nothing', async () => {
+  await put('router-queue.md', queue);
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: false, now, readReport });
+  expect(result).toMatchObject({ dry_run: true, written: false, known: true });
+  expect(result.rows.some(r => r.action === 'stop')).toBe(true);
+  for (const name of ['RETIRED', 'lane-avoid.tsv', 'empty-family-actions.json']) expect(await get(name)).toBeNull();
+});
+
+it('undo removes what was written and keeps hand-listed ids', async () => {
+  await put('router-queue.md', queue);
+  await put('RETIRED', 'RQ-MD7A111807Q8\nRQ-OLD1\n');
+  await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
+  expect(await get('RETIRED')).toBe('RQ-MD7A111807Q8\nRQ-OLD1\nRQ-MD6A111806Q8\n');
+  const undone = await undoEmptyFamily(dir, 'RQ-MD*');
+  expect(undone).toMatchObject({ known: true, removed_ids: ['RQ-MD6A111806Q8'], removed_hints: 0 });
+  expect(await get('RETIRED')).toBe('RQ-MD7A111807Q8\nRQ-OLD1\n');
+  const login = await undoEmptyFamily(dir, 'RQ-LOGIN*');
+  expect(login.removed_hints).toBe(1);
+  expect(await get('lane-avoid.tsv')).toBe('');
+});
+
+it('expired entries are removed on the next apply', async () => {
+  await put('router-queue.md', queue);
+  await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport });
+  const later = await applyEmptyFamilies({ runsDir: dir, apply: true, now: now + 49 * HOUR * 1000, readReport: async () => summarizeEmptyFamilies([], 24) });
+  expect(later.expired_removed).toBe(2);
+  expect(await get('RETIRED')).toBe('');
+  expect(await get('lane-avoid.tsv')).toBe('');
+});
+
+it('shows unknown as unknown: an unreadable report changes nothing', async () => {
+  await put('router-queue.md', queue);
+  const result = await applyEmptyFamilies({ runsDir: dir, apply: true, now, readReport: async () => null });
+  expect(result).toMatchObject({ known: false, written: false });
+  expect(await get('RETIRED')).toBeNull();
+});
+
+it('tick: skips when the kill switch is on or unknown, and runs at most once an hour', async () => {
+  await put('router-queue.md', queue);
+  const base = { runsDir: dir, apply: true, readReport };
+  expect((await runEmptyApplyTick({ ...base, now, readOff: async () => true })).reason).toBe('empty_stop off');
+  expect((await runEmptyApplyTick({ ...base, now, readOff: async () => null })).ran).toBe(false);
+  expect(await get('RETIRED')).toBeNull();
+  const first = await runEmptyApplyTick({ ...base, now, readOff: async () => false });
+  expect(first.ran).toBe(true);
+  expect((await runEmptyApplyTick({ ...base, now: now + 30 * 60_000, readOff: async () => false })).reason).toBe('ran within the last hour');
+  expect((await runEmptyApplyTick({ ...base, now: now + 61 * 60_000, readOff: async () => false })).ran).toBe(true);
+});
+
+it('cli: --apply is a dry run with --dry-run, --json carries the schema id, --undo removes', async () => {
+  vi.stubEnv('ASHLR_RUNS_DIR', dir);
+  await put('router-queue.md', queue);
+  const out: string[] = [];
+  vi.spyOn(console, 'log').mockImplementation((line: string) => { out.push(line); });
+  const read = (async () => null) as never;
+  expect(await cmdJobs(['empty', '--by-family', '--apply', '--dry-run', '--json'], read, async () => report)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ schema: EMPTY_APPLY_SCHEMA, dry_run: true, written: false });
+  expect(await get('RETIRED')).toBeNull();
+  expect(await cmdJobs(['empty', '--by-family', '--apply', '--json'], read, async () => report)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ dry_run: false, written: true });
+  expect(await get('RETIRED')).toContain('RQ-MD6A111806Q8');
+  expect(await cmdJobs(['empty', '--by-family', '--undo', 'RQ-MD*', '--json'], read, async () => report)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toMatchObject({ schema: 'jobs.empty.undo.v1', removed_ids: ['RQ-MD6A111806Q8', 'RQ-MD7A111807Q8'] });
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  expect(await cmdJobs(['empty', '--apply'], read, async () => report)).toBe(2);
+});
