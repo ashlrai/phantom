@@ -13,7 +13,13 @@ phm wire status --json
 
 Indexes: [docs/llms.txt](docs/llms.txt) and [docs/llms-full.txt](docs/llms-full.txt).
 
-This repository is part of the AshlrAI ecosystem. It is maintained by Phantom (`phm improve` / steward) and other coding agents, under the same standing authority that applies to `ashlrai/phantom` (see phantom `docs/STANDING-AUTHORITY.md`).
+## Mission and ecosystem
+
+Phantom's mission is chasing open-source RSI (recursive self-improvement): an open-source, fully autonomous, code-first software factory run by agents, with the human owner as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the owner sets direction and is needed only for the items in Article 1. The [strategy for recursive self-improvement and an open fleet](docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md) explains how improvements are tested.
+
+Phantom is the factory floor: console, CLI, MCP gateway, agent bus and fleet. Companions install separately, each with its own authorization boundary: [Phantom Secrets](https://github.com/ashlrai/phantom-secrets) (local vault and credential proxy), [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) (compact tool results), [Locus](https://github.com/ashlrai/locus) (account and tenant bindings), [Lexicon](https://github.com/ashlrai/lexicon) (speech-to-text corrections), [Ashlr MD](https://github.com/ashlrai/ashlr-md) (Markdown editing) and [Ashlr Stack](https://github.com/ashlrai/ashlr-stack) (development service setup). See [the Phantom ecosystem](README.md#the-phantom-ecosystem) and [the toolchain guide](docs/AGENT-TOOLCHAIN.md).
+
+This repository is maintained by Phantom (`phm improve` / steward) and other coding agents under the [standing authority](docs/STANDING-AUTHORITY.md).
 
 ## Article 1: Full autonomy, always forward
 
