@@ -107,6 +107,30 @@ zero. The same rows for agents:
 phm pools
 ```
 
+The Router pane answers "where would each kind of work go, and why?". Its route
+table has a row per task (code, review, plan, bulk, leader) and a column per
+difficulty; each cell names the seat the router would send that work to first,
+with the provider's mark and the seat it would try next, and a line above
+counts the cells by first seat. A cell reads "No seat" when nothing is
+eligible and "Unknown" when the server sent no answer for it. The whole table
+is one read, `GET /api/verse/budget/routes`, which runs the router's preview
+for every task and difficulty against a single usage reading, so the cells
+agree with each other; "Your request" reads the same table for interactive
+work instead of autonomous fleet work. Choose a cell (click, or arrow keys
+then Enter; Home and End jump along the row) to draw its answer as a numbered
+try order. Each seat has a bar of the share of its binding usage window
+already used and that window's reset time; seats the router holds back are
+listed underneath with its reason and when they become eligible again. Below,
+the last 200 recorded routing decisions are counted by chosen seat as ranked
+bars, with the six newest listed and any whose work ran on a different seat
+marked. A decision is the seat the router chose, not proof the work ran there.
+The pane decides nothing and launches nothing: besides the table it reads
+`GET /api/verse/budget` and `GET /api/verse/budget/decisions`, and refreshes
+every 30 seconds while visible. A seat with no usage reading gets a hatched bar
+and the word unknown, a local seat says it has no usage window, an unreadable
+decision log reads unknown rather than empty, and a failed refresh labels the
+reading as an old one.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being
