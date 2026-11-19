@@ -114,7 +114,11 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
     finishTakeaway();
     if (/^##(?:\s|$)/.test(line)) {
       finish();
-      const candidate = /^##\s+(S\S*)(?:\s+—(?:\s+(.*))?|\s*)$/.exec(line);
+      // A titled source is `## S<n> — title`; the em-dash separator is required so
+      // ordinary prose headings (`## Signals`, `## Summary`, `## Selected`) are not
+      // source candidates. A bare or glued S-token that starts with digits
+      // (`## S2`, `## S4—x`) remains a malformed candidate and is reported.
+      const candidate = /^##\s+(S\S*)\s+—(?:\s+(.*))?$/.exec(line) ?? /^##\s+(S\d\S*)$/.exec(line);
       if (!candidate) continue;
       const id = candidate[1]!;
       const title = candidate[2]?.trim() ?? '';
