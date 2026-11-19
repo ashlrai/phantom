@@ -4,27 +4,32 @@
  * `phm sessions thread <id>` (core/fleet/session-thread.ts joins it).
  *
  * Read only, and it needs a current read session like the session list. The
- * session map is shared for 5 seconds across callers; the activity, bus and
- * leader-reply reads happen only for a session the list holds.
+ * session map is shared for 5 seconds across callers and the order trace for
+ * 15; the activity, bus and leader-reply reads happen only for a session the
+ * list holds.
  *
  *   200 the thread · 400 bad query · 401 no read session · 404 no such session
  *   405 not GET · 503 the session list could not be read
  */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
+import { readOrderTrace, type OrderTraceV1 } from '../fleet/order-trace.js';
 import type { FleetSessionMap } from '../fleet/sessions-view.js';
 import { SESSION_ID_RE, type SessionThreadV1 } from '../fleet/session-thread.js';
 import { readSessionThread } from '../fleet/session-thread-read.js';
 import { throttledLiveMap } from './fleet-live-map-api.js';
 
 export const SESSION_THREAD_PATH = '/api/verse/fleet/control/session-thread';
+const ORDER_TRACE_MIN_INTERVAL_MS = 15_000;
 
 export type SessionThreadRead = (id: string) => Promise<SessionThreadV1>;
 
 /** The default read: one throttled session map, then that session's own records. */
 export function defaultSessionThreadRead(): SessionThreadRead {
   const map = throttledLiveMap<FleetSessionMap>(async () => (await import('../fleet/sessions-view.js')).readFleetSessionMap());
-  return id => readSessionThread(id, { readMap: () => map() });
+  // An open thread is polled every few seconds; the trace walks every job prompt, so callers share one reading.
+  const orders = throttledLiveMap<OrderTraceV1>(() => readOrderTrace(), Date.now, ORDER_TRACE_MIN_INTERVAL_MS);
+  return id => readSessionThread(id, { readMap: () => map(), readOrders: () => orders() });
 }
 
 export function createFleetSessionThreadApi(read: SessionThreadRead = defaultSessionThreadRead()): ApiModule {

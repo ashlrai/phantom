@@ -3,6 +3,7 @@ import { AGENT_MESSAGES_MAX_LIMIT, readAgentMessages, type AgentMessages } from 
 import { readLiveSessions } from './live-sessions-read.js';
 import { readInboxEntries } from './mason-inbox.js';
 import { readLeaderReplies, type LeaderRepliesV1 } from './mason-outbox.js';
+import { readOrderTrace, type OrderTraceV1 } from './order-trace.js';
 import { getFleetJobActivity, type FleetJobActivityV1 } from './runs-job-activity.js';
 import { isFleetJobId } from './runs-job-detail.js';
 import { buildSessionThread, THREAD_OWNER_WINDOW, THREAD_REPLIES_SHOWN, type SessionThreadOwnerRead, type SessionThreadV1 } from './session-thread.js';
@@ -20,6 +21,8 @@ export interface SessionThreadReadOptions {
   /** The Leader inbox, newest first. Asked for the leader and for a worker, never for a helper. */
   readOwner?: () => Promise<SessionThreadOwnerRead>;
   readReplies?: () => Promise<LeaderRepliesV1>;
+  /** Which jobs serve which of Mason's messages. Asked for the leader and for a worker with a job, never for a helper. */
+  readOrders?: () => Promise<OrderTraceV1>;
 }
 
 const guarded = <T>(read: () => T | Promise<T>): Promise<T | null> => Promise.resolve().then(read).catch(() => null);
@@ -39,12 +42,13 @@ export async function readSessionThread(id: string, options: SessionThreadReadOp
   if (!found.session) return sanitizePublicJson(found) as SessionThreadV1;
   const { jobId, kind } = found.session;
   const job = jobId !== null && isFleetJobId(jobId) ? jobId : null;
-  const [activity, bus, owner, replies] = await Promise.all([
+  const [activity, bus, owner, replies, orders] = await Promise.all([
     job === null ? undefined : guarded(() => (options.readActivity ?? (name => getFleetJobActivity(name)))(job)),
     guarded(options.readBus ?? (() => readAgentMessages({ limit: AGENT_MESSAGES_MAX_LIMIT }))),
     kind === 'subagent' ? undefined : guarded(options.readOwner ?? (() => readInboxEntries({ limit: THREAD_OWNER_WINDOW }))),
     kind !== 'leader' ? undefined : guarded(options.readReplies ?? (() => readLeaderReplies({ limit: THREAD_REPLIES_SHOWN }))),
+    kind === 'leader' || (kind === 'worker' && jobId !== null) ? guarded(options.readOrders ?? (() => readOrderTrace({ now: () => now }))) : undefined,
   ]);
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
-  return sanitizePublicJson(buildSessionThread(list, id, { sessionsRead, activity, bus, owner, replies }, now)) as SessionThreadV1;
+  return sanitizePublicJson(buildSessionThread(list, id, { sessionsRead, activity, bus, owner, replies, orders }, now)) as SessionThreadV1;
 }
