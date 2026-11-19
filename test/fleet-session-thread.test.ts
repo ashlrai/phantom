@@ -17,6 +17,7 @@ import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessio
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
+import { AGENT_COMMANDS } from '../src/cli/help.js';
 import { cmdSessions, cmdSessionThread } from '../src/cli/sessions.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -426,5 +427,15 @@ describe('phm sessions thread', () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     expect(await cmdSessions(['thread', '--help'])).toBe(0);
     expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--json]');
+  });
+
+  it('documents the JSON it prints: every top-level key, and every source the thread names', async () => {
+    const doc = AGENT_COMMANDS.find(command => command.usage === 'phm sessions thread <id> [--json]');
+    const shape = doc?.jsonShape ?? '';
+    const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW);
+    // The documented shape lists `sources` as `sources:{a,b,...}`; it must name the keys the builder returns, in order.
+    expect(/sources:\{([^}]*)\}/.exec(shape)?.[1]?.split(',')).toEqual(Object.keys(thread.sources));
+    for (const key of Object.keys(thread)) expect([key, shape.includes(key)]).toEqual([key, true]);
+    expect(doc?.description).toContain('routed');
   });
 });
