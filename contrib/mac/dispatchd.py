@@ -863,6 +863,17 @@ def _maxruntime_identity_alive(identity):
     except Exception: current_start = None
     return not current_start or current_start == start_time
 
+def _maxruntime_pid_absent(pid):
+    """Affirmative absence only: the pid has no process group. A missed
+    snapshot or failed start-time probe never counts as absence."""
+    try:
+        os.getpgid(pid)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
 def _maxruntime_identities(marker):
     identities = set()
     try:
@@ -921,11 +932,10 @@ def _maxruntime_pending_identity_alive(identity, leaders):
     pid, start_time = identity
     if isinstance(start_time, str) and start_time:
         return _maxruntime_identity_alive(identity)
-    # Unknown-start candidate: alive while its pid still leads the job or its
-    # start time reads back; a pid absent from both is gone.
+    # Unknown-start candidate: alive while its pid still leads the job; absent
+    # only on affirmative proof (no process group), never on a failed probe.
     if any(leader_pid == pid for leader_pid, _ in leaders): return True
-    try: return read_process_start_time(pid) is not None
-    except Exception: return True
+    return not _maxruntime_pid_absent(pid)
 def _write_maxruntime_identities(marker, identities, pending=()):
     with open(marker, "w") as f:
         for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
@@ -964,9 +974,7 @@ def job_watchdog():
                         gone_unknown = []
                         for pid, _start in retry_unknown:
                             if pid in leader_pids: continue
-                            try: gone = read_process_start_time(pid) is None
-                            except Exception: gone = False
-                            if gone: gone_unknown.append(pid)
+                            if _maxruntime_pid_absent(pid): gone_unknown.append(pid)
                         if gone_unknown:
                             with open(mk, "a") as f:
                                 for pid in gone_unknown:

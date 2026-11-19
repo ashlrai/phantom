@@ -335,13 +335,15 @@ class MaxRuntimeTests(unittest.TestCase):
         self.mock_watchdog(home, self.START_TIME)
         (home / 'mock-start-times.json').write_text(json.dumps({str(pid): start for pid, start in starts.items()}))
 
-    def write_ps_two(self, home, lane='codex-cmp', starts=None):
+    def write_ps_two(self, home, lane='codex-cmp', starts=None, include_pid2=True):
         starts = starts or (self.START_TIME, self.START_TIME2)
         def _inv(pid, start):
             return f'{pid} {start} /bin/bash' if start else f'{pid} /bin/bash'
-        inventory = _inv(self.PID, starts[0]) + '\n' + _inv(self.PID2, starts[1])
-        command = (f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work\n'
-                   f'{self.PID2} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work')
+        inventory = _inv(self.PID, starts[0])
+        command = f'{self.PID} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work'
+        if include_pid2:
+            inventory += '\n' + _inv(self.PID2, starts[1])
+            command += f'\n{self.PID2} /bin/bash {home}/.ashlr-runs/bin/launch.sh RQ-HUNG phantom {lane} work'
         (home / 'stubbin' / 'ps').write_text(
             '#!/bin/bash\n'
             'if [ "$1" = "-axo" ]; then\n'
@@ -571,6 +573,38 @@ class MaxRuntimeTests(unittest.TestCase):
             {'pid': self.PID2, 'signal': signal.SIGKILL},
         ])
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+
+    def test_pending_unknown_start_survives_failed_probe(self):
+        # A missed snapshot plus a failed start-time probe must not retire a
+        # live pending wrapper: absence requires affirmative proof (no process
+        # group). The candidate survives untouched and is retried once its
+        # identity becomes visible again.
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: None})
+        self.write_ps_two(home, starts=(self.START_TIME, None))
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)
+        marker = run / 'RQ-HUNG.maxruntime'
+        # Tick 2: the snapshot misses PID2 entirely and its start-time probe
+        # still fails; the pending candidate must survive with no verdict.
+        self.write_ps_two(home, starts=(self.START_TIME, None), include_pid2=False)
+        self.assertEqual(tick(home).returncode, 0)
+        rows = [json.loads(line) for line in marker.read_text().splitlines()]
+        self.assertIn({'pid': self.PID2, 'start': None, 'pending': True}, rows)
+        self.assertFalse(any(row.get('pid') == self.PID2 and not row.get('pending') for row in rows))
+        self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        # Tick 3: visibility restored; the pending wrapper is TERM'd and recorded.
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.write_ps_two(home)
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(self.killpg_calls(home), [
+            {'pid': self.PID, 'signal': signal.SIGTERM},
+            {'pid': self.PID2, 'signal': signal.SIGTERM},
+        ])
+        self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
 
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
