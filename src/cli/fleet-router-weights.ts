@@ -32,7 +32,7 @@ function parseArgs(args: string[]): { runsDir?: string; json: boolean } | null {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -43,7 +43,8 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
     ? `${p.work_class}/${p.lane}: proposed ${p.baseline_weight} -> ${p.proposed_weight} (known=${p.known_n})`
     : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged`);
   const none = report.proposals.length === 0 ? ['insufficient evidence: no classified known outcomes'] : [];
-  return [header, counts, `ledger ${report.ledger.path}`, ...rows, ...none];
+  const coverage = report.truncated ? ['coverage: retained tail only; older ledger rows were not read'] : [];
+  return [header, counts, `ledger ${report.ledger.path}`, ...coverage, ...rows, ...none];
 }
 
 export async function cmdFleetRouterWeights(

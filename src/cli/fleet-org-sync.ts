@@ -1,3 +1,11 @@
+/**
+ * `phm fleet org-sync [--runs-dir DIR] [--json] [--apply]` — delivers pending
+ * org.membership bus events recorded in an existing agents.json store.
+ * Default previews and never writes; --apply replays undelivered entries in
+ * revision order with their original stable event IDs. Events are planning
+ * metadata, not live staffing or an execution grant. Logic lives in
+ * src/core/org/agent-plane-outbox.ts; this file parses argv and renders.
+ */
 import { OrgStoreError, orgRunsRoot } from '../core/org/agent-plane-reader.js';
 import { applyOrgOutbox, previewOrgOutbox, type OutboxDeps, type OutboxEvent } from '../core/org/agent-plane-outbox.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';

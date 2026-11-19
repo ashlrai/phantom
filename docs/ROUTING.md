@@ -312,3 +312,18 @@ a lower bound on the full history. Unknown fields stay `null` in JSON and
 marker, and a PR URL claimed by two jobs attaches to neither. This is the
 per-job evidence surface outcome-driven router analysis reads; it does not
 feed weights, ranking or dispatch by itself.
+
+## Advisory router-weight proposals
+
+`phm fleet router-weights [--runs-dir <dir>] [--json]` folds the same
+`metrics/jobs.jsonl` outcomes into `router.weight-proposals.v1`: per
+`(work_class, lane)` group it compares the observed merge rate against a
+0.5 baseline and proposes a bounded shift — at least 20 known outcomes per
+group, shifts capped at 0.1 and clamped to [0, 1]. Groups below the evidence
+floor are refused and keep their baseline; `merged: null` outcomes count as
+unknown, never as failures. When the ledger exceeds the retained tail the
+report carries `truncated: true` and every count covers the newest bytes
+only. The report is advisory-only: it writes nothing, never touches
+`weights.json`, and changes no live routing, rank or admission. A missing or
+unreadable ledger reports `status: "unavailable"` with null counts rather
+than an empty success.
