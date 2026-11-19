@@ -124,7 +124,9 @@ export function classify(envelope: BusInboxReceipt['envelope'], body: Body | nul
 const JOB = /\b((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})\b/;
 const PR = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#|\/pull\/)([1-9][0-9]{0,8})\b|(?:^|[\s(])#([1-9][0-9]{0,8})\b/;
 function related(body: Body | null, text: string, jobId: string | null): { job: string | null; pr: string | null } {
-  const fields = body ? [body.rq, body.taskId, body.jobId, jobId, body.job, ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : [])] : [jobId];
+  const fields = body ? [body.rq, body.taskId, body.jobId, jobId, body.job,
+    ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : []),
+    ...(Array.isArray(body.refs) ? body.refs : [])] : [jobId];
   const haystack = [...fields.filter((v): v is string => typeof v === 'string'), text].join(' ');
   const job = JOB.exec(haystack)?.[1] ?? null;
   const pr = PR.exec(haystack);

@@ -73,6 +73,26 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'see the fix',
+      '--ref', 'RQ-CLI-REF', '--ref', 'pr:ashlrai/phantom#7310', '--id', 'ref-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'posted',
+      '--ref', 'ashlrai/phantom#7311', '--id', 'ref-ch'])).json).toMatchObject({ status: 'posted' });
+    const inbox = await run(['inbox', 'nova']);
+    const refs = new Map(inbox.json.messages.map((m: { envelope: { id: string; body: { refs?: string[] } } }) =>
+      [m.envelope.id, m.envelope.body.refs]));
+    expect(refs.get('ref-dm')).toEqual(['RQ-CLI-REF', 'pr:ashlrai/phantom#7310']);
+    expect(refs.get('ref-ch')).toEqual(['ashlrai/phantom#7311']);
+    // Refs stay bounded by the v2 note contract: an empty ref refuses the send.
+    expect(await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--ref=']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('sends v2 wake requests that land in the inbox and wakes', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

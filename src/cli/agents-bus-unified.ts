@@ -19,10 +19,10 @@ export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
-ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
-ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--priority ..] [--wake|--no-wake]
+ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--priority ..] [--wake|--no-wake]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
@@ -48,8 +48,8 @@ and need no identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome', '--reason',
-  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail']);
-const MULTI = new Set(['--alias', '--member', '--claim']);
+  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref']);
+const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs']);
 
 class UsageError extends Error {}
@@ -168,7 +168,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'dm') {
       noExtra(1);
       const result = await sendDirectMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
-        thread: one('--thread') }, options);
+        thread: one('--thread'), refs: p.values.get('--ref') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
     if (verb === 'channel' && arg !== undefined && extra.length === 0) {
@@ -182,7 +182,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'post') {
         const result = await postChannelMessage({ ...send, from: actor('--from'), channel: arg, topic: one('--topic'),
-          text: required('--text'), thread: one('--thread') }, options);
+          text: required('--text'), thread: one('--thread'), refs: p.values.get('--ref') }, options);
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
       }
     }

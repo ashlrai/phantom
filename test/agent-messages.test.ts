@@ -157,6 +157,18 @@ describe('phm messages projection', () => {
     expect(out).not.toContain('pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
   });
 
+  it('reads job and pr links from declared note refs ahead of prose mentions', () => {
+    const root = store();
+    post(root, T0, { id: 'r1', from: 'a', to: 'b',
+      body: { kind: 'note', text: 'unrelated mention of RQ-PROSE-1 and ashlrai/phantom#99',
+        refs: ['RQ-REF-1', 'pr:ashlrai/phantom#42'] } });
+    post(root, T0 + 1_000, { id: 'r2', from: 'a', to: 'b', body: { kind: 'note', text: 'no refs here' } });
+    const result = read(root);
+    const byId = new Map(result.messages.map(m => [m.id, m]));
+    expect(byId.get('r1')).toMatchObject({ job: 'RQ-REF-1', pr: 'ashlrai/phantom#42' });
+    expect(byId.get('r2')).toMatchObject({ job: null, pr: null });
+  });
+
   it('keeps unknown work fields honest: no jobId means no job thread, malformed falls back', () => {
     const root = store();
     post(root, T0, { id: 'u1', from: 'a', to: 'b', body: { kind: 'work.status', status: 'running' } });
