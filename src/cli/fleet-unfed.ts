@@ -13,7 +13,7 @@ const MAX_WINDOW_HOURS = 24 * 7;
 
 const USAGE = `Usage: phm fleet unfed [--window <hours>] [--json]
 Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl.
-Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md, HOLD and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Read-only: no writes, no child processes, no network.
+Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md, HOLD and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). The report carries status.json's last_tick as statusAsOf and flags statusFresh false when the tick is older than two minutes, in the future, or missing — the same freshness rule the spend projection uses; a stale snapshot is reported as the last published state, never as live. Read-only: no writes, no child processes, no network.
 Exit 1 when any lane is unfed now, 2 when status.json is unreadable.`;
 
 async function readBounded(path: string, maxBytes = MAX_FILE_BYTES): Promise<string | null> {

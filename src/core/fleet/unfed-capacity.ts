@@ -12,6 +12,8 @@ export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
 const CODE = /^[a-z][a-z0-9_]{0,63}$/;
 const LANE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const MAX_CODES = 32;
+/** Same freshness rule as the spend projection: a dispatcher tick in the last two minutes. */
+const STATUS_FRESH_MS = 120_000;
 
 export interface UnfedResource {
   lane: string;
@@ -89,6 +91,19 @@ export interface UnfedReport {
   source: 'dispatcher' | 'derived';
   /** True when a derived report also recomputed reason codes from market inputs (slots.json and friends). */
   derivedReasons: boolean;
+  /**
+   * status.json's `last_tick` as ISO-8601, or null when absent or unparseable.
+   * Every "now" figure in this report is only as current as this timestamp.
+   */
+  statusAsOf: string | null;
+  /**
+   * Whether the snapshot is fresh enough to describe now: `last_tick` parses,
+   * is not in the future, and is within STATUS_FRESH_MS of the evaluation
+   * instant — the same rule metrics-glance and the spend projection apply.
+   * Null when no evaluation clock was supplied (market.nowMs): freshness stays
+   * unknown rather than guessed.
+   */
+  statusFresh: boolean | null;
   /**
    * The fleet-wide stop in effect this tick, in the dispatcher's own codes:
    * `admission_stopped` when the launch gate (pause, disk hard stop or a
@@ -208,6 +223,11 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
 export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
+  const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
+  const statusAsOf = Number.isFinite(tickMs) ? new Date(tickMs).toISOString() : null;
+  const nowMs = market?.nowMs;
+  const statusFresh = nowMs === undefined || !Number.isFinite(nowMs) ? null
+    : data.schema === 'dispatchd.status.v1' && Number.isFinite(tickMs) && nowMs >= tickMs && nowMs - tickMs <= STATUS_FRESH_MS;
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
   const stop = published === null ? fleetStopVerdict(data) : null;
@@ -263,6 +283,8 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     readOnly: true,
     source: published ? 'dispatcher' : 'derived',
     derivedReasons: ctx !== null,
+    statusAsOf,
+    statusFresh,
     fleetStop: stop ?? publishedFleetStop(resources),
     waiting,
     invalidRows: strict.invalid,
@@ -385,6 +407,11 @@ export function renderUnfed(report: UnfedReport): string[] {
   lines.push(report.unfedLanes.length === 0
     ? `No unfed capacity: ${report.waiting} rows waiting.`
     : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+  if (report.statusFresh === false) {
+    lines.push(report.statusAsOf === null
+      ? 'Status snapshot age unknown: status.json has no readable last_tick; counts above are the last published state.'
+      : `Status snapshot is stale: last dispatcher tick ${report.statusAsOf}; counts above are the last published state, not live.`);
+  }
   if (report.invalidRows > 0) {
     lines.push(`${report.invalidRows} ready row(s) fail work-market validation (job id, tier or requirements) and can never launch; fix or drop them.`);
   }

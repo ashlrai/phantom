@@ -471,7 +471,12 @@ Reports also carry `fleetStop` (`admission_stopped` | `global_admission` | null)
 tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
 `paused`/`admission` verdict for a derived report (where it replaces the
 per-lane codes) or back out of the published `blocked` codes for a
-dispatcher one.
+dispatcher one. Every report carries `statusAsOf` (status.json's `last_tick`
+as ISO-8601, or null) and `statusFresh` (boolean, or null when no evaluation
+clock was supplied): fresh requires a `dispatchd.status.v1` schema, a
+parseable non-future `last_tick`, and an age within the same two-minute
+window the spend projection uses; a stale or untimestamped snapshot is
+reported as the last published state, flagged rather than hidden.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
