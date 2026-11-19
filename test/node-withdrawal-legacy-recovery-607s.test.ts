@@ -88,9 +88,12 @@ describe('legacy producer withdrawal recovery', () => {
   it('requeues a matching owner/scope manifest through the current bridge after reload', async () => {
     const root = directory();
     const host = { runsRoot: join(root, 'runs'), wtRoot: join(root, 'wt') };
-    for (const d of ['queue/run', 'queue/batches', 'bin']) mkdirSync(join(host.runsRoot, d), { recursive: true });
+    for (const d of ['queue/run', 'queue/batches', 'queue/prompts', 'bin']) mkdirSync(join(host.runsRoot, d), { recursive: true });
     copyFileSync(resolve('contrib/mac/dispatchd.py'), join(host.runsRoot, 'bin', 'dispatchd.py'));
-    const row = ['RQ-REVIEW-LEGACY', 'phantom', 'codex-cmp', 'work', '/prompts/review.md'].join('\t') + '\n';
+    // codex-file offload embeds the prompt, so the row's prompt cell must name a real file.
+    const promptPath = join(host.runsRoot, 'queue', 'prompts', 'review.md');
+    writeFileSync(promptPath, '# RQ-REVIEW-LEGACY\nBounded fixture task.\n', { mode: 0o600 });
+    const row = ['RQ-REVIEW-LEGACY', 'phantom', 'codex-cmp', 'work', promptPath].join('\t') + '\n';
     const ready = join(host.runsRoot, 'queue', 'ready.tsv');
     writeFileSync(ready, row);
     const storeDirectory = join(root, 'nodes');
