@@ -474,8 +474,10 @@ export function formatDiskReport(report: DiskReportV1): string[] {
 
 export async function cmdDisk(args: string[], deps: DiskDeps = {}): Promise<number> {
   const output = deps.output ?? { log: console.log, error: console.error };
+  if (args[0] === 'runway') return (await import('./disk-runway.js')).cmdDiskRunway(args.slice(1), { output });
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     output.log('phm disk [--plan] [--min-age-hours <n>] [--wt-dir <abs>] [--runs-dir <abs>] [--tmp-dir <abs>] [--json]\n' +
+      'phm disk runway [--json]   hours of free disk left before the 60 GB launch freeze\n' +
       'Read-only disk report for agent worktrees: each folder\'s size, its\n' +
       'lifecycle state from the jobs ledger and a plain safe-to-clean-up\n' +
       'verdict, plus quarantine, leftover temp folders and free space.\n' +

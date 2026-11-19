@@ -20,6 +20,7 @@ import { apiGet } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import type { FleetMachines } from '../../../../core/web/fleet-machines-route.js';
+import type { DiskRunwayV1 } from '../../../../core/fleet/disk-runway.js';
 import { formatRelative } from '../autonomy/format.js';
 import type { OptionalFleetRead } from '../autonomy/fleet-contract.js';
 import type { OvernightStatus } from '../autonomy/overnight-contract.js';
@@ -110,12 +111,18 @@ const machinesQuery: QueryDef<FleetMachines> = {
   fetch: (signal) => apiGet<FleetMachines>('/api/fleet/machines', signal),
 };
 
+const diskRunwayQuery: QueryDef<Pick<DiskRunwayV1, 'sentence' | 'status'>> = {
+  key: 'verse-fleet-disk-runway-glance',
+  fetch: (signal) => apiGet<Pick<DiskRunwayV1, 'sentence' | 'status'>>('/api/verse/fleet/disk-runway', signal),
+};
+
 const peerState = (online: unknown): 'online' | 'offline' | 'unknown' => (online === true ? 'online' : online === false ? 'offline' : 'unknown');
 const peerAge = (age: unknown) => (typeof age === 'number' ? formatRelative(new Date(Date.now() - age * 1000).toISOString()) : 'unknown');
 
 /** Which computer answers and which tailnet peers it sees; unknown stays "unknown". */
 function MachinesRow() {
   const { data, error } = useQuery(machinesQuery);
+  const disk = useQuery(diskRunwayQuery).data;
   if (!data) return error ? <p className={styles.muted}>machines: unavailable</p> : null;
   const a = data.answering;
   return (
@@ -124,6 +131,12 @@ function MachinesRow() {
         <span className={styles.laneName}>answering: {a.host} v{a.installedVersion}</span>
         {a.versionDrift === true ? <span className={styles.laneStuck} role="status">version drift (source v{a.sourceVersion})</span> : null}
       </li>
+      {disk ? (
+        <li className={styles.laneHealthRow}>
+          <span className={styles.laneName}>{disk.sentence}</span>
+          {disk.status === 'frozen' ? <span className={styles.laneStuck} role="status">launches frozen</span> : null}
+        </li>
+      ) : null}
       {data.peers.map((p) => {
         const state = peerState(p.online);
         return (
