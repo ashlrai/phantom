@@ -2,13 +2,15 @@
  * `phm bets list|launch|score|kill [--json]`: the bets lane ledger (RQ-BETS-LANE-1). Logic lives in core/metrics.
  * `phm bets suggest|explain`: read-only next-job suggestions; logic lives in core/fleet/next-bets.
  */
+import { checkGoal, goalTerms, helpItems, readApiRoutes, readDocHeadings, readPanes, type BetsCheckReport } from '../core/fleet/bets-check.js';
 import { explainBetLines, nextBetsLines, readNextBets, type BetReaders } from '../core/fleet/next-bets.js';
 import { BetInputError, type Bet, type BetDirection } from '../core/metrics/bets.js';
 import { killBet, launchBet, readBets, scoreCycle } from '../core/metrics/bets-store.js';
 import { defaultLoopReaders, type LoopReaders } from '../core/metrics/loop-collect.js';
 import { LOOP_METRIC_KEYS } from '../core/metrics/loop.js';
 
-export const BETS_USAGE = `Usage: phm bets <suggest|explain|list|launch|score|kill> [--json]
+export const BETS_USAGE = `Usage: phm bets <check|suggest|explain|list|launch|score|kill> [--json]
+  phm bets check "<goal text>" [--json]
   phm bets suggest [--json] [--limit N]
   phm bets explain <id> [--json]
   phm bets list [--json]
@@ -16,6 +18,8 @@ export const BETS_USAGE = `Usage: phm bets <suggest|explain|list|launch|score|ki
                   [--direction up|down] [--baseline <n>] [--min-delta <n>] [--kill <criterion>] [--json]
   phm bets score [--dry-run] [--json]
   phm bets kill <RQ-BET-id> --reason <text> [--json]
+check looks the goal up in this checkout's CLI help, API routes, web-ui panes and docs headings and says new, partial or
+exists with up to 10 matches and one suggested delta line (schema bets.check.v1). Read-only and offline: run it before queuing work.
 Ledger: $ASHLR_RUNS_DIR or ~/.ashlr-runs, file metrics/bets.jsonl (append-only).
 Metric keys: ${LOOP_METRIC_KEYS.join(', ')}.
 score runs one kill-fast cycle: kept when a bet job merged and the metric moved, killed when over budget without
@@ -24,7 +28,7 @@ suggest ranks the next jobs worth queuing from lane status, usage pace, launch y
 the autonomy score; explain shows one suggestion's inputs and score. Both only read: nothing is queued.
 Exit 0 ok, 1 read or write failure (or explain id not on the list), 2 bad usage or refused input.`;
 
-export interface BetsCliDeps { out?: (line: string) => void; err?: (line: string) => void; readers?: LoopReaders; now?: () => Date; betReaders?: BetReaders }
+export interface BetsCliDeps { root?: string; out?: (line: string) => void; err?: (line: string) => void; readers?: LoopReaders; now?: () => Date; betReaders?: BetReaders }
 
 function flags(args: string[], allowed: readonly string[], booleans: readonly string[] = ['--json']): Map<string, string> | null {
   const out = new Map<string, string>();
@@ -46,6 +50,13 @@ function line(b: Bet): string {
   return `${b.id}  ${b.status}  ${b.metric} ${b.direction} from ${b.baseline ?? 'unknown'}  cycles ${b.cycles}/${b.budget.maxCycles}${measured}${b.reason ? `  ${b.reason}` : ''}`;
 }
 
+function checkLines(r: BetsCheckReport): string[] {
+  const lines = [`${r.verdict}: ${r.goal}`];
+  for (const m of r.matches) lines.push(`  ${m.kind.padEnd(4)} ${m.name}  (${m.path})`);
+  if (r.suggestedDelta) lines.push(`suggested delta: ${r.suggestedDelta}`);
+  return lines;
+}
+
 export async function cmdBets(argv: string[], deps: BetsCliDeps = {}): Promise<number> {
   const out = deps.out ?? console.log, err = deps.err ?? console.error;
   const now = deps.now ?? (() => new Date());
@@ -59,6 +70,18 @@ export async function cmdBets(argv: string[], deps: BetsCliDeps = {}): Promise<n
   const usage = () => { err(BETS_USAGE); return 2; };
   try {
     switch (verb) {
+      case 'check': {
+        const json = rest.includes('--json');
+        const goal = rest.filter(a => a !== '--json').join(' ').trim();
+        if (!goal || rest.some(a => a.startsWith('--') && a !== '--json')) return usage();
+        const { searchHelpEntries } = await import('./help.js');
+        const entries = new Map<string, { cmd: string; desc: string }>();
+        for (const term of goalTerms(goal).terms) for (const e of searchHelpEntries(term)) entries.set(e.cmd, e);
+        const root = deps.root ?? process.cwd();
+        const report = checkGoal(goal, { cli: helpItems([...entries.values()]), api: readApiRoutes(root), pane: readPanes(root), doc: readDocHeadings(root) });
+        out(json ? JSON.stringify(report, null, 2) : checkLines(report).join('\n'));
+        return 0;
+      }
       case 'suggest': {
         const f = flags(rest, ['--limit']);
         const limit = f?.has('--limit') ? num(f.get('--limit')) : 10;

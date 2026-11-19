@@ -129,7 +129,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   admission: ['explain', '--json', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
   metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
-  bets: ['list', 'launch', 'score', 'kill', 'help'],
+  bets: ['check', 'list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],
   mcp: ['list', 'doctor', 'install', 'ecosystem', 'run'],
   run: ['show'],
