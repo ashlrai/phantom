@@ -44,6 +44,8 @@ const DOCS = [
   'docs/AUTOMATIC-OUTCOMES.md',
   'docs/AUTONOMY-SETUP.md',
   'docs/SUBAGENTS.md',
+  // The first-pull-request guide README.md and AGENTS.md send contributors to.
+  'docs/CONTRIBUTE-WITH-AN-AGENT.md',
 ];
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */

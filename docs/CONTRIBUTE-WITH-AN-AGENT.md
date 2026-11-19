@@ -100,9 +100,19 @@ gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>
 ```
 
 Fill in the [pull request template](https://github.com/ashlrai/phantom/blob/master/.github/PULL_REQUEST_TEMPLATE.md):
-what changed, the exact commands you ran, and anything you skipped. Fleet agents
-push only to forks as well, through their own publish wrapper; nobody pushes
-directly to `master`.
+what changed, the exact commands you ran, and anything you skipped. Nobody
+pushes directly to `master`. Pull requests land as squash commits, so your pull
+request title becomes the commit subject on `master`.
+
+Fleet agents push only to forks as well. Their publisher pushes a
+`codex-bridge/<job>` branch, opens the pull request titled
+`bridge(<job>): <subject>` (the subjects you see in `git log`), and arms
+auto-merge with `gh pr merge --auto --squash --match-head-commit <sha>`. If a
+publish pushed the branch but stopped before opening the pull request,
+`phm publish orphans` lists such branches from the last 48 hours and
+`phm publish resume --branch <job>` finishes the job. Both act only on
+`codex-bridge/` branches of the signed-in user's own fork, for the seven
+ecosystem repositories.
 
 ## 6. What CI requires
 
