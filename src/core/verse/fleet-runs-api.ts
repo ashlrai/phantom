@@ -2,6 +2,8 @@ import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { readThroughput, throughputOptions } from '../fleet/throughput.js';
+import { launchRateHours, readLaunchRate } from '../fleet/launch-rate.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
@@ -534,6 +536,15 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (!options) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes 1 to 168 and by takes lane, repo or tier' }); return true; }
       const runsDir = deps.runsDir ?? defaultRunsDir();
       sendJson(res, 200, await readThroughput({ ...options, runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), now: now() }));
+      return true;
+    }
+    // The Fleet view's start-rate card reads the same report as `phm fleet launches --json`.
+    if (path === '/api/verse/fleet/runs/launches') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const hours = launchRateHours(new URL(req.url ?? '/', 'http://localhost').searchParams.get('hours'));
+      if (hours === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes a whole number from 1 to 168' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, sanitizePublicJson(await readLaunchRate({ runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours, now: now() })));
       return true;
     }
     // The desktop Home view reads the same summary as `phm home`; leaderSeen is the reader's last-read time in epoch ms.
