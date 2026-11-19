@@ -6,15 +6,19 @@ import { dirname, join, resolve } from 'node:path';
 import { computeNodeCapacity, NODE_CAPACITY_SCHEMA, parseNodeCapacityDoc, type NodeCapacityDoc } from '../core/drive/nodes/capacity-model.js';
 import { measureNode } from '../core/drive/nodes/node-measure.js';
 import { planAutoscaleRoutes, type HarnessModelCost, type LaneOutcomes, type RouteJob, type RouteNode } from '../core/drive/nodes/autoscale-router.js';
+import { readRouteLaneOutcomes, type RouteLaneOutcomes } from '../core/drive/nodes/route-outcomes.js';
 
 export const NODE_CAPACITY_USAGE = `Usage: phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json]
-       phm node route --capacity <file> [--capacity <file>...] --costs <file> --jobs <file> [--outcomes <file>] [--nodes <file>] [--exhausted <provider[,provider]>] [--json]
+       phm node route --capacity <file> [--capacity <file>...] --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <provider[,provider]>] [--json]
 
 capacity measures this node (CPU, memory, swap, swap growth, per-harness session footprint)
 and prints agents runnable now per harness. --out writes the document atomically (mode 0600);
 the previous document (default: --out) supplies swap growth and learned footprints.
 route scores (node, provider, model) per job from capacity documents, a cost/latency file
-and lane outcomes. Both are local and read-only apart from --out: no network, no launches.`;
+and lane outcomes. --outcomes is a hand-maintained {provider: {attempts, merged}} file;
+--outcomes-ledger derives the same tallies from <runs-dir>/metrics/jobs.jsonl
+(default ASHLR_RUNS_DIR, then ~/.ashlr-runs) and --outcomes entries win per provider.
+Both are local and read-only apart from --out: no network, no launches.`;
 
 const MAX_INPUT = 1024 * 1024;
 
@@ -94,8 +98,12 @@ const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => 
 
 export async function cmdNodeRoute(args: string[]): Promise<number> {
   const json = args.includes('--json');
-  const problem = validate(args, ['--capacity', '--costs', '--jobs', '--outcomes', '--nodes', '--exhausted'], ['--json']);
+  const problem = validate(args, ['--capacity', '--costs', '--jobs', '--outcomes', '--runs-dir', '--nodes', '--exhausted'], ['--json', '--outcomes-ledger']);
   if (problem) return fail(json, `${problem}\n${NODE_CAPACITY_USAGE}`);
+  const runsDir = flagValues(args, '--runs-dir')[0];
+  if (runsDir !== undefined && !args.includes('--outcomes-ledger')) {
+    return fail(json, '--runs-dir only applies with --outcomes-ledger\n' + NODE_CAPACITY_USAGE);
+  }
   const capacity = flagValues(args, '--capacity'), costsPath = flagValues(args, '--costs')[0], jobsPath = flagValues(args, '--jobs')[0];
   if (!capacity.length || !costsPath || !jobsPath) return fail(json, `--capacity, --costs and --jobs are required\n${NODE_CAPACITY_USAGE}`);
   try {
@@ -115,6 +123,15 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
     }
     const outcomesRaw = flagValues(args, '--outcomes')[0] ? await readJsonFile(flagValues(args, '--outcomes')[0]!) : {};
     if (!record(outcomesRaw)) throw new Error('--outcomes must be an object of {provider: {attempts, merged}}');
+    let ledger: RouteLaneOutcomes | null = null;
+    if (args.includes('--outcomes-ledger')) {
+      ledger = await readRouteLaneOutcomes(runsDir === undefined ? {} : { runsDir });
+      if (ledger.state === 'unreadable' || ledger.state === 'not-file') {
+        return fail(json, `jobs ledger ${ledger.path} state=${ledger.state}; --outcomes-ledger needs a readable metrics/jobs.jsonl`, 2);
+      }
+    }
+    // Ledger tallies are the base; explicit --outcomes entries win per provider.
+    const outcomes = { ...(ledger?.outcomes ?? {}), ...(outcomesRaw as Record<string, LaneOutcomes>) };
     const meta = flagValues(args, '--nodes')[0] ? await readJsonFile(flagValues(args, '--nodes')[0]!) : {};
     if (!record(meta)) throw new Error('--nodes must be an object of {node: {providers?, localModels?, overheadMinutes?}}');
     const nodes: RouteNode[] = docs.map(doc => {
@@ -124,11 +141,17 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
     });
     const exhausted = flagValues(args, '--exhausted').flatMap(v => v.split(',')).filter(Boolean);
     const plan = planAutoscaleRoutes({ nodes, costs: costs as HarnessModelCost[], jobs: jobs as RouteJob[],
-      outcomes: outcomesRaw as Record<string, LaneOutcomes>, exhausted, nowMs: Date.now() });
-    if (json) console.log(JSON.stringify({ schema: 'phantom.node-route.v1', plan }));
-    else for (const p of plan) {
-      console.log(p.nodeId ? `${p.jobId} -> ${p.nodeId} ${p.provider}/${p.model} score ${p.score} (merge ${p.mergeRate}, ${p.mergesPerMTok}/Mtok, ${p.mergesPerHour}/h)`
-        : `${p.jobId}: unplaced ${JSON.stringify(p.rejected)}`);
+      outcomes, exhausted, nowMs: Date.now() });
+    if (json) {
+      console.log(JSON.stringify({ schema: 'phantom.node-route.v1', plan,
+        ...(ledger ? { outcomes_ledger: { state: ledger.state, truncated: ledger.truncated, path: ledger.path,
+          providers: Object.keys(ledger.outcomes).length } } : {}) }));
+    } else {
+      if (ledger) console.log(`lane outcomes: ${ledger.path} state=${ledger.state} providers=${Object.keys(ledger.outcomes).length} truncated=${ledger.truncated}`);
+      for (const p of plan) {
+        console.log(p.nodeId ? `${p.jobId} -> ${p.nodeId} ${p.provider}/${p.model} score ${p.score} (merge ${p.mergeRate}, ${p.mergesPerMTok}/Mtok, ${p.mergesPerHour}/h)`
+          : `${p.jobId}: unplaced ${JSON.stringify(p.rejected)}`);
+      }
     }
     return 0;
   } catch (error) {
