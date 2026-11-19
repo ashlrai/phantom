@@ -456,6 +456,15 @@ describe('CLI session adapters', () => {
     expect(busBodySummary({ kind: 'owner-thread', threadId: 'owner', channel: 'imessage', redacted: true }))
       .toBe('owner-thread imessage: redacted');
     expect(busBodySummary({ kind: 'comms-reply', text: 'drafted reply' })).toBe('comms-reply: drafted reply');
+    expect(busBodySummary({ kind: 'slack-coordination', trust: 'untrusted', messageType: 'request', routeMode: 'peer',
+      text: 'please review the fix', messageId: 'm-1', inReplyTo: null, workspaceId: 'T1', channelId: 'C1',
+      threadTs: '1.2', eventTs: '1.2', originBridge: 'b1', visitedBridges: ['b1', 'b2'],
+      context: { references: [{ id: 'r1', revision: 'v1', observedAt: 1, expiresAt: 2 }], trust: 'unverified-reference-claims', retrievalAuthorized: false } }))
+      .toBe('slack-coordination request peer: please review the fix');
+    expect(busBodySummary({ kind: 'slack-coordination', messageType: 'status', routeMode: 'group', text: 'shipped' }))
+      .toBe('slack-coordination status group: shipped');
+    expect(busBodySummary({ kind: 'slack-coordination', text: 'bare text' })).toBe('slack-coordination: bare text');
+    expect(busBodySummary({ kind: 'slack-coordination' })).toBeNull();
     expect(busBodySummary({ kind: 'leader-reply', requestId: 'r1', text: 'Leader: shipped' })).toBe('leader-reply r1: Leader: shipped');
     expect(busBodySummary({ kind: 'leader.reply', rq: 'RQ-X-1', text: 'done' })).toBe('leader.reply RQ-X-1: done');
     expect(busBodySummary({ kind: 'leader.escalation', rq: 'RQ-X-1', category: 'blocked', text: 'needs mason' }))

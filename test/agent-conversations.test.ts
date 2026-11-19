@@ -87,12 +87,15 @@ describe('conversations from messages', () => {
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function bus(rows: [number, string, string, string, Record<string, unknown>][] = []) {
+function bus(rows: [number, string, string, string, Record<string, unknown>, Record<string, unknown>?][] = []) {
   const root = mkdtempSync(join(tmpdir(), 'agent-conversations-'));
   roots.push(root);
-  for (const [at, id, from, to, body] of rows) expect(appendBusInbox({ id, from, to, priority: 'P2', ttl: 86_400_000, body }, { root, now: () => at }).status).toBe('posted');
+  for (const [at, id, from, to, body, extra] of rows) expect(appendBusInbox({ id, from, to, priority: 'P2', ttl: 86_400_000, body, ...extra }, { root, now: () => at }).status).toBe('posted');
   return root;
 }
+/** The channel metadata group every slack-coordination row carries. */
+const SLACK_META = { channel: 'slack', channel_ref: 'T1/C1/1.2',
+  sender: { agent_id: 'agent:peer-a', vendor: 'peer', human: false, team: true }, external: false, origin_bridge: 'remote-bridge' };
 const CHAT: [number, string, string, string, Record<string, unknown>][] = [
   [T0, 'm1', 'leader', 'claude', { text: 'can you look at the build?' }],
   [T0 + MIN, 'm2', 'claude', 'leader', { text: 'yes', replyTo: 'm1' }],
@@ -171,6 +174,27 @@ describe('phm agents conversations --json', () => {
     }
     // A label no identity proves still matches only itself.
     expect(readAgentConversations({ agent: 'zai' }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m4']);
+  });
+
+  it('a slack-coordination request waits for a reply; declared types set the state', () => {
+    const root = bus([
+      [T0, 's1', 'agent:peer-a', 'agent:peer-b', { kind: 'slack-coordination', trust: 'untrusted', messageType: 'request',
+        routeMode: 'peer', text: 'can you pick up the review?' }, SLACK_META],
+      [T0 + MIN, 's2', 'agent:peer-b', 'agent:peer-a', { kind: 'slack-coordination', trust: 'untrusted', messageType: 'reply',
+        routeMode: 'peer', text: 'on it', inReplyTo: 'remote-9' }, { ...SLACK_META, sender: { agent_id: 'agent:peer-b', vendor: 'peer', human: false, team: true } }],
+      [T0 + 2 * MIN, 's3', 'agent:peer-c', 'agent:peer-d', { kind: 'slack-coordination', trust: 'untrusted', messageType: 'status',
+        routeMode: 'group', text: 'shipped the fix' }, { ...SLACK_META, channel_ref: 'T1/C1/1.3',
+          sender: { agent_id: 'agent:peer-c', vendor: 'peer', human: false, team: true } }],
+    ]);
+    const result = readAgentConversations({}, { root, now: () => NOW });
+    const threads = Object.fromEntries(result.conversations!.map(c => [c.id, c]));
+    // in_reply_to is a remote correlation token, never a local envelope id, so
+    // each notice roots its own thread; the declared messageType still sets
+    // the state: request waits, reply answers, status is done.
+    expect(threads['s1']).toMatchObject({ state: 'waiting', waiting: { on: 'peer-b' } });
+    expect(threads['s2']).toMatchObject({ state: 'answered' });
+    expect(threads['s3']).toMatchObject({ state: 'done' });
+    expect(result.waiting).toBe(1);
   });
 
   it('the CLI prints that JSON, filters, and refuses unknown flags', async () => {

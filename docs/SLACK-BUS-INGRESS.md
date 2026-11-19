@@ -94,6 +94,10 @@ counts and `sendAuthorized: false`, never event content, handles or signing data
 The message ID hashes workspace, Slack event ID and recipient. Exact retries
 therefore deduplicate across restarted ingress instances. Changed content under
 the same identity conflicts instead of silently replacing a prior message.
+Bus read surfaces treat the row as one typed notice: inbox frames summarize it
+as `slack-coordination <messageType> <routeMode>: <text>` and the messages and
+conversations projections honor the declared `messageType` (`request` asks,
+`reply` answers) rather than guessing from the text.
 The six-minute bus retention exceeds the five-minute event admission window,
 including allowed skew, so pruning cannot make an admissible replay fresh.
 This is bounded deduplication, not eternal exactly-once delivery. Bus lifetime
