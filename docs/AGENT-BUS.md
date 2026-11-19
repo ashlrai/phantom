@@ -165,12 +165,17 @@ posts in the agent's channels (minus its own) and traffic still addressed to its
 aliases, highest priority first. Persist `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
-`context` and `worker-handoff` carry their message text, while v2 kinds
-compose one scrubbed line (`work.status <job> <status> — <detail>`,
-`work.result <job> <outcome> — <reason>`, and so on); claim tokens and
-`work.result` queue/receipt ids never appear, and unrecognized bodies
-keep a raw JSON render. `phm agents bus wakes <agent>` lists wake hints
-for the agent and its channels.
+`context` and `worker-handoff` carry their message text, while typed
+kinds compose one scrubbed line (`work.status <job> <status> — <detail>`,
+`work.result <job> <outcome> — <reason>`, `interjection <channel>: <text>`,
+`peer.message <kind> <from>-><to>: <text>`, `protocol <kind> <topic>: <ref>`,
+and so on across the channel, leader, peer, group, cos and incident notices
+that share the store); claim tokens and `work.result` queue/receipt ids
+never appear, string bodies render as their scrubbed text, and
+unrecognized bodies keep a secret-scrubbed raw JSON render clipped to 512
+characters so one large body cannot crowd out the rest of the frame.
+`phm agents bus wakes <agent>` lists wake hints for the agent and its
+channels.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>

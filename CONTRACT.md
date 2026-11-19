@@ -1526,11 +1526,14 @@ with a `reason`); they never throw for bad input or storage faults.
 `sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)`, `shouldWake(priority, requested, handoff?)`
-and `busBodySummary(body)` — a pure, secret-scrubbed one-line read of a bus body
-for inbox surfaces (`note`/`context`/`worker-handoff` return their message
-text, possibly multi-line; v2 kinds compose `<kind> <subject>: <payload>`),
-null when the body has no typed content; claim tokens and `work.result`
-queueId/receiptId never appear in a summary.
+and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
+inbox surfaces (`note`/`context`/`worker-handoff` return their message text,
+possibly multi-line; every other recognized kind — the v2 work/wake bodies
+plus the channel, leader, peer, group, cos and incident notices that share
+the store — composes one `<kind> <subject>: <payload>` line, and protocol-v1
+transport bodies summarize their `protocol` kind/topic/ref), null when the
+body has no typed content; claim tokens and `work.result` queueId/receiptId
+never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
@@ -1545,7 +1548,10 @@ dispatch, claim or execute.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
-`frameBusInbox(cli, messages)`. Identities are routing names and grant no authority.
+`frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
+falling back to a secret-scrubbed single-line read of string bodies or a
+bounded 512-character raw JSON render for unrecognized bodies. Identities
+are routing names and grant no authority.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
 
 `fleet.specialist-identity.v1` adds a read-only identity/outcome projection over
