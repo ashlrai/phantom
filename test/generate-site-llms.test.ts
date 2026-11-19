@@ -156,6 +156,12 @@ describe('renderLlmsFull', () => {
     expect(full).toContain('## Repository documentation');
     expect(full).toContain('README.md');
     expect(full).toContain('CONTRIBUTING.md');
+    expect(full).toContain('docs/CONTRIBUTE-WITH-AN-AGENT.md');
+  });
+
+  it('links the agent contributor guide from llms.txt', () => {
+    const outputs = buildSiteLlms(root);
+    expect(outputs['llms.txt']).toContain('(https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md)');
   });
 
   it('is larger than llms.txt', () => {
