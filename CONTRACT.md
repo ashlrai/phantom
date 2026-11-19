@@ -1225,6 +1225,21 @@ optional `providerBinaries`; `NodeRunnerDeps` gains `resolveBinary`.
 and `runCodexFilePack`, which writes a mode-0600 `node-results/<jobId>.json` artifact on success only.
 See [node runner](docs/NODES.md#reference-runner-security-review-before-installation).
 
+## Node route lane outcomes (`phantom.node-route-outcomes.v1`)
+
+`src/core/drive/nodes/route-outcomes.ts` exports `ROUTE_OUTCOMES_SCHEMA`,
+`foldRouteLaneOutcomes(outcomes)` and `readRouteLaneOutcomes({runsDir?})`.
+The fold turns `router.outcome.v1` records into the `{provider: {attempts,
+merged}}` tallies `planAutoscaleRoutes` consumes: one record is one attempt
+only when its merge verdict is known (`merged` true or false); `merged: null`
+is excluded from both sides, never counted as a failure. `readRouteLaneOutcomes`
+wraps the bounded `readRouterOutcomes` ledger read: 'read' carries the tallies,
+'missing' is an absent journal with empty tallies, and 'unreadable'/'not-file'
+report unusable evidence. `phm node route --outcomes-ledger [--runs-dir <dir>]`
+merges these tallies under any explicit `--outcomes` file (file wins per
+provider) and reports `outcomes_ledger` state in its JSON plan. See
+[measured capacity and routing](docs/NODE-ROUTER.md#measured-capacity-and-node-provider-model-routing).
+
 ## Ready queue to node bridge (`phantom.node-bridge.v1`)
 
 `src/core/drive/nodes/ready-bridge.ts` exports `runNodeBridge`, `planNodeBridge`,
