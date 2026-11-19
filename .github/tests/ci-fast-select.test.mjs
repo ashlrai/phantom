@@ -193,6 +193,27 @@ test('workflow and script edits select their node and m30 tests', (t) => {
   assert.deepEqual(r.node, ['.github/tests/ci-x.test.mjs']);
 });
 
+test('CLI registry edits select the anti-drift suite that reads the dispatch switch as text', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/cli/index.ts': 'export {};\n',
+    'src/cli/completions.ts': 'export const c = 1;\n',
+    'src/cli/help.ts': 'export const h = 1;\n',
+    'src/cli/outbox.ts': 'export const o = 1;\n',
+    'test/cli-registry-drift.test.ts': 'export {};\n',
+    'test/unrelated.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  // index.ts has no import edge into the suite — it parses the switch as
+  // text — so only the named rule can select it.
+  for (const path of ['src/cli/index.ts', 'src/cli/completions.ts', 'src/cli/help.ts']) {
+    const r = plan({ cwd: dir, paths: [path] });
+    assert.equal(r.mode, 'related');
+    assert.ok(r.tests.includes('test/cli-registry-drift.test.ts'), `${path} selects the drift suite`);
+  }
+  const impl = selectRelated({ cwd: dir, paths: ['src/cli/outbox.ts'] });
+  assert.ok(!impl.tests.includes('test/cli-registry-drift.test.ts'), 'a command implementation alone does not');
+});
+
 test('changedPaths uses the merge-base diff and rejects a mismatched checkout', (t) => {
   const { dir, commit, write } = repo(t, { 'a.txt': '1\n' });
   const base = commit('base');
