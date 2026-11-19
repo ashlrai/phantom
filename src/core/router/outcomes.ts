@@ -6,17 +6,24 @@ import { isAbsolute, join } from 'node:path';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
-// bytes of <runs>/metrics/jobs.jsonl. Recovered from the router-outcome slice of
-// #6794 (head f9e484e87ec2). Scope is deliberately bounded: no routing, ranking,
-// tuning, weights, or network. `passk` joins each outcome's (lane, model) to the
-// published eval.lane-scores.v1 projection — advisory evidence only; a missing,
-// degraded or ambiguous score leaves passk null. The ledger is append-only and
-// unbounded, so the read retains a tail window: an oversized ledger reports
-// truncated:true and folds only the retained rows, never a refused read.
+// bytes of <runs>/metrics/jobs.jsonl, joined with the per-call spend ledger
+// <runs>/metrics/api-spend.jsonl under the same bound. Recovered from the
+// router-outcome slice of #6794 (head f9e484e87ec2). Scope is deliberately
+// bounded: no routing, ranking, tuning, weights, or network. `passk` joins
+// each outcome's (lane, model) to the published eval.lane-scores.v1
+// projection — advisory evidence only; a missing, degraded or ambiguous
+// score leaves passk null. The ledgers are append-only and unbounded, so each
+// read retains a tail window: an oversized ledger reports truncated:true (or
+// spend_truncated for the spend source) and folds only the retained rows,
+// never a refused read. jobs.jsonl finish rows carry cost:null by design, so
+// cost_usd is populated from api-spend rows naming the job — the same
+// job|job_id|id attribution and cost_usd|usd|cost precedence the fleet spend
+// readers already use — and stays null when no call reported a cost.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
 export const ROUTER_OUTCOME_LEDGER_RELATIVE = join('metrics', 'jobs.jsonl');
+export const ROUTER_SPEND_LEDGER_RELATIVE = join('metrics', 'api-spend.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -37,6 +44,13 @@ export interface RouterOutcome {
   reverted: boolean | null;
   ci_first_pass: boolean | null;
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
+  /**
+   * USD cost recorded for the job: an explicit cost field on a jobs.jsonl row
+   * (cost_usd|usd|cost) wins; otherwise the sum of api-spend.jsonl call costs
+   * naming the job. Null when neither source reported a cost — a job whose
+   * calls carried no cost is unknown, never zero. May include
+   * collector-estimated costs (cost_estimated rows still report a USD figure).
+   */
   cost_usd: number | null;
   wall_s: number | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
@@ -225,7 +239,7 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       }
     }
     if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
-    o.cost_usd = num(r['cost_usd']) ?? o.cost_usd;
+    o.cost_usd = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']) ?? o.cost_usd;
     o.wall_s = num(r['wall_s']) ?? o.wall_s;
     const f = r['review_findings'];
     if (f !== null && typeof f === 'object' && !Array.isArray(f)) {
@@ -249,12 +263,54 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
   };
 }
 
+/**
+ * Folds api-spend.jsonl text into per-job USD cost sums — the dispatch
+ * collector's per-call spend feed. A row attributes to a job through
+ * job|job_id|id and reports cost as cost_usd|usd|cost, the precedence the
+ * fleet spend readers (runs-job-cost, runs-resource-ledger) already use.
+ * Rows that are not objects, name no job, or report no usable cost are
+ * skipped; a job whose calls never reported a cost stays absent from the map
+ * so its outcome keeps cost_usd null — unknown, never zero. Estimated costs
+ * (cost_estimated) still report a USD figure and count toward the sum.
+ */
+export function foldSpendCosts(text: string): Map<string, number> {
+  const costs = new Map<string, number>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const r = value as Row;
+    const j = str(r, 'job', 'job_id', 'id');
+    if (!j) continue;
+    const cost = num(r['cost_usd']) ?? num(r['usd']) ?? num(r['cost']);
+    if (cost === null) continue;
+    costs.set(j, (costs.get(j) ?? 0) + cost);
+  }
+  return costs;
+}
+
 export interface RouterOutcomeRead extends RouterOutcomeFold {
   /** 'read' is the only state with trustworthy outcomes; everything else is an unknown ledger. */
   state: LedgerReadState;
   path: string;
   /** Health of the eval.lane-scores.v1 projection behind `passk`; 'missing' or 'degraded' means every passk is null. */
   eval_state: LaneScoresRead['state'];
+  /**
+   * Health of the api-spend.jsonl tail behind spend-derived `cost_usd`.
+   * Anything but 'read' means no spend costs were joined — outcomes keep only
+   * explicit ledger cost fields, never a fabricated or zeroed figure.
+   */
+  spend_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the spend ledger exceeded the retained tail: joined per-job
+   * costs cover only the newest bytes and are lower bounds, never totals.
+   */
+  spend_truncated: boolean;
   /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -285,12 +341,17 @@ function laneScoreLookup(read: LaneScoresRead): ((lane: string, model: string) =
 
 /**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
- * <runsDir>/metrics/jobs.jsonl. `runsDir` defaults to ASHLR_RUNS_DIR, then
- * ~/.ashlr-runs, and must be absolute when given. `ashlarDir` is the ASHLR root
- * holding eval/passk/lane-scores.json (default ASHLR_HOME, then ~/.ashlr). A
- * missing or unreadable ledger yields state != 'read' with no outcomes, so
- * callers can tell unknown input from a successfully read empty ledger; a
- * ledger larger than the bound reads its tail and reports truncated:true.
+ * <runsDir>/metrics/jobs.jsonl plus the same bound of
+ * <runsDir>/metrics/api-spend.jsonl. `runsDir` defaults to ASHLR_RUNS_DIR,
+ * then ~/.ashlr-runs, and must be absolute when given. `ashlarDir` is the
+ * ASHLR root holding eval/passk/lane-scores.json (default ASHLR_HOME, then
+ * ~/.ashlr). A missing or unreadable jobs ledger yields state != 'read' with
+ * no outcomes, so callers can tell unknown input from a successfully read
+ * empty ledger; a ledger larger than the bound reads its tail and reports
+ * truncated:true. The spend ledger degrades independently: spend_state
+ * reports its health and spend-derived cost_usd fills only outcomes whose
+ * explicit ledger cost stayed null — a missing spend file never zeroes or
+ * blocks the jobs fold.
  */
 export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string; ashlarDir?: string } = {}): Promise<RouterOutcomeRead> {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
@@ -300,8 +361,23 @@ export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
   const read = await readLedgerTail(path);
   const empty: RouterOutcomeFold = { outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0 };
-  if (read.state !== 'read') return { ...empty, state: read.state, path, eval_state: laneScores.state, truncated: false };
+  const spendRead = await readLedgerTail(join(runsDir, ROUTER_SPEND_LEDGER_RELATIVE));
+  const spendState = spendRead.state;
+  const spendTruncated = spendRead.state === 'read' ? spendRead.truncated : false;
+  if (read.state !== 'read') {
+    return { ...empty, state: read.state, path, eval_state: laneScores.state,
+      spend_state: spendState, spend_truncated: spendTruncated, truncated: false };
+  }
   const folded = foldRouterOutcomes(read.text, { passkFor: laneScoreLookup(laneScores) });
+  if (spendRead.state === 'read') {
+    const costs = foldSpendCosts(spendRead.text);
+    for (const o of folded.outcomes) {
+      if (o.cost_usd !== null) continue;
+      const sum = costs.get(o.job_id);
+      if (sum !== undefined) o.cost_usd = sum;
+    }
+  }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
-  return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state, truncated: read.truncated };
+  return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state,
+    spend_state: spendState, spend_truncated: spendTruncated, truncated: read.truncated };
 }

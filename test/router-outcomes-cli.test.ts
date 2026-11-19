@@ -40,6 +40,7 @@ function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutco
 function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
   return {
     state: 'read', path: '/runs/metrics/jobs.jsonl', eval_state: 'missing',
+    spend_state: 'missing', spend_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, truncated: false,
     ...over,
   };
@@ -148,7 +149,7 @@ describe('phm router outcomes', () => {
       malformed_rows: 3, unattached_rows: 1, ambiguous_urls: 2,
     }), 100);
     const lines = routerOutcomeLines(report);
-    expect(lines[0]).toBe('router outcomes state=read eval=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2');
+    expect(lines[0]).toBe('router outcomes state=read eval=missing spend=missing jobs=2 shown=2 truncated=false malformed=3 unattached=1 ambiguous_urls=2');
     expect(lines[1]).toBe(`ledger ${report.path}`);
     expect(lines[3]).toContain('A lane=alpha model=m1 tier=work work_class=unknown merged=unknown reverted=true ci_first_pass=true review=fixed:2,rejected:1,ignored:0 cost_usd=unknown wall_s=unknown passk=unknown');
     expect(lines[2]).toContain('B lane=unknown model=unknown tier=unknown work_class=docs merged=true reverted=unknown');
@@ -164,6 +165,20 @@ describe('phm router outcomes', () => {
     const h = harness(canned(read({ outcomes: [outcome('A')], truncated: true })));
     expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
     expect(JSON.parse(h.out())).toMatchObject({ state: 'read', truncated: true, total: 1 });
+  });
+
+  it('surfaces spend ledger health and cut-tail coverage in JSON and text', async () => {
+    const report = buildRouterOutcomesReport(read({
+      outcomes: [outcome('A')], spend_state: 'read', spend_truncated: true,
+    }), 100);
+    expect(report).toMatchObject({ spend_state: 'read', spend_truncated: true });
+    const lines = routerOutcomeLines(report);
+    expect(lines[0]).toContain('spend=read');
+    expect(lines).toContain('spend coverage: retained tail only; per-job costs are lower bounds');
+
+    const h = harness(canned(read({ outcomes: [outcome('A')], spend_state: 'unreadable' })));
+    expect(await cmdRouterOutcomes(['--json'], h.readFn)).toBe(0);
+    expect(JSON.parse(h.out())).toMatchObject({ spend_state: 'unreadable', spend_truncated: false });
   });
 
   it('folds a real ledger end-to-end through cmdRouter and cmdRouterOutcomes', async () => {
