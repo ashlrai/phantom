@@ -327,6 +327,13 @@ when the market ran normally. For a derived report the verdict comes from
 status.json's own `paused` and `admission` fields and replaces the per-lane
 codes, which were never the binding constraint; for a dispatcher report it is
 read back from the published `blocked` codes.
+`--json` also carries `statusAsOf` (status.json's `last_tick` as ISO-8601, or
+null) and `statusFresh`: the snapshot is fresh only when `last_tick` parses,
+is not in the future, and is within the same two-minute window the spend
+projection applies; with no evaluation clock freshness stays `null` (unknown),
+and a stale or untimestamped snapshot is still reported — flagged, never
+hidden — as the dispatcher's last published state. Text output prints the same
+caveat after the utilization summary.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
 is read-only: no writes, no child processes, no network.
 

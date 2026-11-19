@@ -52,7 +52,7 @@ export interface UnfedMarketInputs {
   hold?: string | null;
   /** queue/router-queue.md: `(attrs)` envelopes resolve spec-less ready rows' requirements. */
   routerQueue?: string | null;
-  /** Evaluation instant (epoch ms); adaptive signals older than 300 s are ignored. */
+  /** Evaluation instant (epoch ms); adaptive signals older than 300 s are ignored, and status.json's last_tick freshness is judged against it. */
   nowMs?: number;
 }
 
