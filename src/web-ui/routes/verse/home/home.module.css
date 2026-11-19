@@ -3,12 +3,12 @@
 .headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
 .headline[data-health='red'] { color: var(--status-danger-fg); }
 .headline[data-health='stalled'] { color: var(--status-warning-fg); }
-/* A state mark before the health line or a repo row. Always beside the words that say the same thing, never alone.
+/* A state mark before the health line. Always beside the words that say the same thing, never alone.
    Unknown is a hollow ring, so a missing reading can never pass for a green one. */
-.root > .headline[data-health]::before, .marks li[data-state]::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-2); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
-.root > .headline[data-health='healthy']::before, .marks li[data-state='green']::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.root > .headline[data-health]::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-2); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
+.root > .headline[data-health='healthy']::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
 .root > .headline[data-health='stalled']::before { border-color: var(--status-warning-solid); background: var(--status-warning-solid); }
-.root > .headline[data-health='red']::before, .marks li[data-state='red']::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.root > .headline[data-health='red']::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
 /* When the summary was read, right under the headline. A failed refresh says so instead of passing an old reading off as current. */
 .asOf { margin: calc(var(--space-2) * -1) 0 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
 .asOf[data-stale] { color: var(--status-warning-fg); }

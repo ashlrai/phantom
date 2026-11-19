@@ -2,7 +2,6 @@
  * The headline carries a state mark and the time the summary was read; lanes with a target and repos draw their reading (a bar, a mark) beside the same words. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
-import { Meter } from '../../../components/primitives/Meter.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -22,6 +21,7 @@ import { PulseCard } from './PulseCard.js';
 import { FleetShippedCard } from './FleetShippedCard.js';
 import { ThisMacCard } from './ThisMacCard.js';
 import { WorkingNowCard } from './WorkingNowCard.js';
+import { MainRepos, RunningLanes } from './HomeReadings.js';
 import styles from './home.module.css';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
@@ -72,12 +72,10 @@ export function HomePane({ visible }: PaneProps) {
       <p>Median time to merge: <Value field={home.medianMergeSeconds}>{seconds => seconds < 90 ? `${Math.round(seconds)} seconds` : `${Math.round(seconds / 60)} minutes`}</Value></p>
     </Card>
     <Card title="Main" action="Open Fleet" onOpen={() => setVerseSection('fleet')}>
-      <Value field={home.main}>{repos => <ul className={styles.marks}>{repos.map(repo => <li key={repo.repo} data-state={repo.state}>{repo.repo}: {repo.state}</li>)}</ul>}</Value>
+      <Value field={home.main}>{repos => <MainRepos repos={repos} />}</Value>
     </Card>
     <Card title="Running jobs" action="Open Lanes" onOpen={() => openPane('fleet-lanes')}>
-      <Value field={home.running}>{lanes => <ul className={styles.meters}>{lanes.map(lane => <li key={lane.lane}>{lane.lane}: {lane.running}{lane.target === null ? '' : ` of ${lane.target}`}
-        {/* A lane with no recorded target has nothing to fill against, so it gets no bar. */}
-        {lane.target !== null && lane.target > 0 ? <Meter variant="line" tone="accent" value={lane.running} max={lane.target} aria-label={`${lane.lane} running of target`} /> : null}</li>)}</ul>}</Value>
+      <Value field={home.running}>{lanes => <RunningLanes lanes={lanes} />}</Value>
     </Card>
     <Card title="Most at risk of going unused" action="Open Usage" onOpen={() => openPane('fleet-usage')}>
       <p><Value field={home.atRisk}>{risk => risk ? `${risk.resource}. ${risk.reason}` : 'Nothing is set to expire unused.'}</Value></p>

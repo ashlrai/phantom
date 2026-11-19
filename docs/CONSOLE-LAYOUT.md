@@ -52,11 +52,22 @@ remain `null` in JSON and unknown in Home. Spent means subscription quota used,
 not a monetary cost estimate. Resource collection and lane diagnostics remain
 owned by their existing APIs.
 
+Home's **Running jobs** card is a tile per lane: the provider's mark and the
+lane name, the number of jobs running, and one square per target slot, filled
+for each running job (a lane with more than 24 slots draws one bar of the
+same share). A lane with no recorded target says "no target" and draws no
+squares; a lane running more than its target says how many are over. The
+line above the tiles adds up jobs running, lanes busy and target slots
+filled. Home's **Main** card is a mark per repository, red first, then
+unknown (a hollow ring on a dashed outline), then green, under one line that
+names the red ones. It says the default branches are green only when every
+one is. Both draw the lists `phm home` prints and read nothing else.
+
 Home's card column draws each reading beside the words that state it. The
 headline has a state mark (green healthy, amber stalled, red main, a hollow
 ring for unknown) and the time the summary was read underneath; if a refresh
 fails, that line says the reading is an old one. Each pool has a thin bar of
-the share used, and each lane with a recorded target has a bar of running
+the share used, and each lane with a recorded target has a meter of running
 jobs against it. A pool with no reading gets a hatched bar and a lane with no
 target gets none, so a missing number never looks like zero. Main lists one
 mark per repository.
