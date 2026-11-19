@@ -38,6 +38,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-pools` | Pools | none | `src/web-ui/routes/verse/fleet-pools/fleet-pools.pane.tsx` |
 | `fleet-queue` | Queue | `mod+alt+q` | `src/web-ui/routes/verse/fleet-queue/fleet-queue.pane.tsx` |
 | `fleet-releases` | Releases | — | `src/web-ui/routes/verse/fleet-releases/fleet-releases.pane.tsx` |
+| `fleet-scoreboard` | Scoreboard | none | `src/web-ui/routes/verse/fleet-scoreboard/fleet-scoreboard.pane.tsx` |
 | `fleet-sessions` | Sessions | none | `src/web-ui/routes/verse/fleet-sessions/fleet-sessions.pane.tsx` |
 | `fleet-skills` | Skills | none | `src/web-ui/routes/verse/fleet-installed/fleet-installed.pane.tsx` |
 | `fleet-steer` | Steer | none | `src/web-ui/routes/verse/fleet-steer/fleet-steer.pane.tsx` |

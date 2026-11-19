@@ -3,6 +3,7 @@ import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { readThroughput, throughputOptions } from '../fleet/throughput.js';
 import { launchRateHours, readLaunchRate } from '../fleet/launch-rate.js';
+import { readScoreboard, scoreboardDays } from '../fleet/scoreboard.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
 import { INVENTORY_KINDS, INVENTORY_PATH, parseInventoryKind, type Inventory } from '../fleet/inventory-schema.js';
@@ -548,6 +549,15 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (hours === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes a whole number from 1 to 168' }); return true; }
       const runsDir = deps.runsDir ?? defaultRunsDir();
       sendJson(res, 200, sanitizePublicJson(await readLaunchRate({ runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours, now: now() })));
+      return true;
+    }
+    // The Scoreboard view reads the same report as `phm fleet score --json`.
+    if (path === '/api/verse/fleet/runs/scoreboard') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const days = scoreboardDays(new URL(req.url ?? '/', 'http://localhost').searchParams.get('days'));
+      if (days === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'days takes a whole number from 1 to 30' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, sanitizePublicJson(await readScoreboard({ metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), days, now: now() })));
       return true;
     }
     // The desktop Home view reads the same summary as `phm home`; leaderSeen is the reader's last-read time in epoch ms.
