@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { getFleetLaneSnapshot } from './lane-console.js';
-import { readFleetQueue, readSource } from './runs-parked-queue.js';
+import { readFleetQueue, readSourceEnds } from './runs-parked-queue.js';
 
 export interface LaneQueueCountsRow {
   lane: string;
@@ -27,6 +27,12 @@ export interface LaneQueueCountsReport {
 const sum = (rows: readonly LaneQueueCountsRow[], key: 'ready' | 'parked' | 'running' | 'merges'): number =>
   rows.reduce((total, row) => total + (row[key] ?? 0), 0);
 
+/** Per-end bound on the metrics ledger read; the two windows can overlap on smaller files. */
+export const QUEUE_COUNTS_LEDGER_BYTES = 2 * 1024 * 1024;
+
+/** Queue-arrival event spellings in metrics/jobs.jsonl — dispatchd writes `enqueue`; `queued` is the older alias. */
+const ARRIVAL_EVENTS = new Set(['enqueue', 'queued']);
+
 /**
  * Per-lane ready / parked / running counts plus actual merges in the trailing
  * hour. Composes the existing readers so every count keeps their rules:
@@ -34,7 +40,7 @@ const sum = (rows: readonly LaneQueueCountsRow[], key: 'ready' | 'parked' | 'run
  * as merges, and duplicate merge events fold by PR, then job. Read-only.
  */
 export async function getLaneQueueCounts(
-  opts: { runsDir: string; now?: () => Date },
+  opts: { runsDir: string; now?: () => Date; ledgerBytes?: number },
 ): Promise<LaneQueueCountsReport> {
   const now = opts.now ?? (() => new Date());
   const queueDir = join(opts.runsDir, 'queue');
@@ -47,13 +53,14 @@ export async function getLaneQueueCounts(
     getFleetLaneSnapshot({
       queueDir, now: () => at, mergeWindowMs: 3_600_000, usageLogPaths: [], budgetsDir: join(queueDir, 'budgets'),
     }),
-    readSource(join(opts.runsDir, 'metrics', 'jobs.jsonl'), 2 * 1024 * 1024, false),
+    readSourceEnds(join(opts.runsDir, 'metrics', 'jobs.jsonl'), opts.ledgerBytes ?? QUEUE_COUNTS_LEDGER_BYTES),
   ]);
   const queued = new Map<string, Set<number>>();
   for (const line of metrics.text.split('\n')) {
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
-      if (!row || typeof row !== 'object' || (row.event ?? row.type) !== 'queued') continue;
+      const event = row?.event ?? row?.type;
+      if (!row || typeof row !== 'object' || (typeof event !== 'string' || !ARRIVAL_EVENTS.has(event))) continue;
       const id = row.job ?? row.job_id ?? row.jobId;
       const raw = row.ts ?? row.timestamp ?? row.at;
       const time = typeof raw === 'string' ? Date.parse(raw) : NaN;

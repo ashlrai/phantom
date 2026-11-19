@@ -185,6 +185,74 @@ export async function readSource(path: string, max: number, tail: boolean): Prom
   } finally { await file?.close().catch(() => undefined); }
 }
 
+export interface SourceEnds {
+  state: Source;
+  /**
+   * Complete lines from the first `max` bytes, then complete lines from the
+   * last `max` bytes. A file no larger than `max` is read whole. When the
+   * file exceeds `max` the windows can overlap, so a line may appear twice;
+   * the uncovered middle is never read and `truncated` says so.
+   */
+  text: string;
+  /** True when the file exceeded `max` and only the two end windows were read. */
+  truncated: boolean;
+}
+
+/**
+ * Bounded read of both ends of one regular file for append-only ledgers whose
+ * evidence sits at both extremes — the oldest events near the head and the
+ * newest at the tail — where either single window would miss one side. Each
+ * window is cut back to whole lines: the head drops its trailing partial
+ * line, the tail drops its leading partial line. Same missing/degraded
+ * contract as readSource.
+ */
+export async function readSourceEnds(path: string, max: number): Promise<SourceEnds> {
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    const before = await lstat(path);
+    if (!before.isFile()) throw new Error('invalid source');
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await file.stat();
+    if (!info.isFile()) throw new Error('invalid source');
+    const size = info.size;
+    if (size <= max) {
+      const buffer = Buffer.alloc(size);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      return { state: 'healthy', text: buffer.subarray(0, length).toString('utf8'), truncated: false };
+    }
+    const ends: string[] = [];
+    const head = Buffer.alloc(max);
+    let headLength = 0;
+    while (headLength < head.length) {
+      const { bytesRead } = await file.read(head, headLength, head.length - headLength, headLength);
+      if (!bytesRead) break;
+      headLength += bytesRead;
+    }
+    const headText = head.subarray(0, headLength).toString('utf8');
+    const headLastNewline = headText.lastIndexOf('\n');
+    ends.push(headLastNewline >= 0 ? headText.slice(0, headLastNewline) : '');
+    const tail = Buffer.alloc(max);
+    const tailStart = size - max;
+    let tailLength = 0;
+    while (tailLength < tail.length) {
+      const { bytesRead } = await file.read(tail, tailLength, tail.length - tailLength, tailStart + tailLength);
+      if (!bytesRead) break;
+      tailLength += bytesRead;
+    }
+    const tailText = tail.subarray(0, tailLength).toString('utf8');
+    const tailFirstNewline = tailText.indexOf('\n');
+    ends.push(tailFirstNewline >= 0 ? tailText.slice(tailFirstNewline + 1) : '');
+    return { state: 'healthy', text: ends.filter(part => part.length > 0).join('\n'), truncated: true };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded', text: '', truncated: false };
+  } finally { await file?.close().catch(() => undefined); }
+}
+
 export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; depDetail?: boolean; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
