@@ -1,3 +1,4 @@
+import { appActionEnvelopeSummary } from './app-action-envelope.js';
 import { peerEnvelopeSummary } from './peer-envelope.js';
 import { formatRelative } from '../autonomy/format.js';
 import type { AgentBusReceipt, AgentBusStatus } from './agent-bus-queries.js';
@@ -14,7 +15,7 @@ export function envelopeRows(messages: readonly AgentBusReceipt[], nowMs: number
       ? envelope.body as Record<string, unknown> : null;
     const kind = typeof body?.kind === 'string' && body.kind.length > 0 && body.kind.length <= 64 ? body.kind : 'message';
     const channel = typeof body?.channel === 'string' && channels.some(value => value === body.channel) ? body.channel as Channel : null;
-    const summary = peerEnvelopeSummary(envelope.body);
+    const summary = peerEnvelopeSummary(envelope.body) ?? appActionEnvelopeSummary(envelope);
     const text = summary ? `${summary.label} — ${summary.text}` : typeof body?.text === 'string' ? body.text : JSON.stringify(envelope.body);
     const at = new Date(receivedAt).toISOString();
     return { cursor, id: envelope.id, from: envelope.from, to: envelope.to, priority: envelope.priority, at,

@@ -1,4 +1,5 @@
 import type { AgentBusReceipt } from '../fleet-bus/agent-bus-queries.js';
+import { appActionEntry, type AppActionRow } from '../fleet-bus/app-action-envelope.js';
 import type { MergedLine } from './thread-merge-model.js';
 
 export interface BusReply {
@@ -15,7 +16,8 @@ export function busRepliesToMason(receipts: readonly AgentBusReceipt[], nowMs: n
   const seen = new Set<string>();
   const recordedReplies = new Set(outbox.map(entry => entry.text.trim()));
   return [...receipts].sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor).flatMap(({ receivedAt, envelope }) => {
-    if (envelope.to.toLowerCase() !== 'mason' || seen.has(envelope.id)) return [];
+    // App actions are receipts, not replies: the thread draws them as their own rows (AppActionLine).
+    if (envelope.to.toLowerCase() !== 'mason' || seen.has(envelope.id) || appActionEntry(envelope)) return [];
     seen.add(envelope.id);
     const body = envelope.body !== null && typeof envelope.body === 'object' && !Array.isArray(envelope.body)
       ? envelope.body as Record<string, unknown> : null;
@@ -34,20 +36,21 @@ export function busRepliesToMason(receipts: readonly AgentBusReceipt[], nowMs: n
   }).reverse();
 }
 
-export type ConversationItem = { type: 'line'; line: MergedLine } | { type: 'bus'; row: BusReply };
+export type ConversationItem = { type: 'line'; line: MergedLine } | { type: 'bus'; row: BusReply } | { type: 'app'; row: AppActionRow };
 
-/** Preserve the existing thread order, including ties and undated lines. */
-export function mergeByTime(threadItems: readonly MergedLine[], busRows: readonly BusReply[]): ConversationItem[] {
-  const replies = [...busRows].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+/** Preserve the existing thread order, including ties and undated lines; bus replies and app actions slot in by time. */
+export function mergeByTime(threadItems: readonly MergedLine[], busRows: readonly BusReply[], appRows: readonly AppActionRow[] = []): ConversationItem[] {
+  const extras = [
+    ...busRows.map(row => ({ at: Date.parse(row.at), item: { type: 'bus', row } as ConversationItem })),
+    ...appRows.map(row => ({ at: Date.parse(row.at), item: { type: 'app', row } as ConversationItem })),
+  ].sort((a, b) => a.at - b.at);
   const result: ConversationItem[] = [];
   let next = 0;
   for (const line of threadItems) {
-    while (next < replies.length && (!Number.isFinite(line.at) || Date.parse(replies[next]!.at) < line.at)) {
-      result.push({ type: 'bus', row: replies[next++]! });
-    }
+    while (next < extras.length && (!Number.isFinite(line.at) || extras[next]!.at < line.at)) result.push(extras[next++]!.item);
     result.push({ type: 'line', line });
   }
-  while (next < replies.length) result.push({ type: 'bus', row: replies[next++]! });
+  while (next < extras.length) result.push(extras[next++]!.item);
   return result;
 }
 

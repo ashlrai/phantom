@@ -34,6 +34,8 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import leaderStyles from '../leader/leader.module.css';
 import styles from './leader-thread.module.css';
 import { DotReplyAge } from './DotReplyAge.js';
+import { AppActionLine } from './AppActionLine.js';
+import { appActionRows, appActionWaitsOnYou } from '../fleet-bus/app-action-envelope.js';
 import { busRepliesToMason, mergeByTime, type BusReply } from './thread-bus-replies.js';
 import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneEvent } from './thread-lane-events.js';
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
@@ -258,6 +260,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const laneItems = useMemo(() => laneEventItems(laneEvents), [laneEvents]);
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
   const busRows = useMemo(() => busRepliesToMason(busPage.data?.messages ?? [], now, outbox), [busPage.data, now, outbox]);
+  const appRows = useMemo(() => appActionRows(busPage.data?.messages ?? [], now), [busPage.data, now]);
   const ownerRead = owner.data ?? NO_OWNER_THREAD;
   const ownerLines = useMemo(() => ownerRead.paused ? [] : ownerThreadLines(ownerRead.lines, merged.lines, ownerRead.receipts ?? {}), [ownerRead, merged.lines]);
   const trace = useMemo(() => (orders.error ? null : narrowOrderTrace(orders.data)), [orders.data, orders.error]);
@@ -271,8 +274,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const items = useMemo(() => {
     const out: ThreadFindItem[] = [];
     let day = '';
-    for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows)) {
-      if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && !item.line.quiet && item.line.ack?.state === 'waiting')))) continue;
+    for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows, appRows)) {
+      if (needsYouOnly && (item.type === 'app' ? !appActionWaitsOnYou(item.row.state) : item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && !item.line.quiet && item.line.ack?.state === 'waiting')))) continue;
       const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
       if (Number.isFinite(at)) {
         const d = new Date(at);
@@ -285,7 +288,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       out.push(item.type === 'line' ? { ...item, key: item.line.id } : { ...item, key: item.row.key });
     }
     return out;
-  }, [merged, ownerLines, busRows, now, needsYouOnly]);
+  }, [merged, ownerLines, busRows, appRows, now, needsYouOnly]);
 
   const matches = useMemo(() => threadMatches(items, findQuery), [items, findQuery]);
   const currentIndex = matches.length ? findIndex % matches.length : 0;
@@ -441,6 +444,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   } else {
     body = items.map(item => {
       if (item.type === 'day') return <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>;
+      if (item.type === 'app') return <AppActionLine key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />;
       if (item.type !== 'line') return <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />;
       const target = item.line.who === 'mason' ? steerTargetId(item.line.text) : null;
       return <Fragment key={item.key}>
@@ -474,6 +478,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <button type="button" className={styles.tool} onClick={() => setFindOpen(true)}>Find</button>
       <span className={styles.toolbarMeta}>
         <span>{busRows.length} bus replies</span>
+        {appRows.length ? <span>{appRows.length === 1 ? '1 app action' : `${appRows.length} app actions`}</span> : null}
         {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
       </span>
     </header>

@@ -1,0 +1,75 @@
+/* One app action in the Leader thread: a single quiet receipt line between the messages. */
+.row {
+  --tone: var(--status-unknown-solid);
+  --tone-fg: var(--status-unknown-fg);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--tone);
+  color: var(--text-secondary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+.row[data-tone='ok'] { --tone: var(--status-success-solid); --tone-fg: var(--status-success-fg); }
+.row[data-tone='live'] { --tone: var(--status-running-solid); --tone-fg: var(--status-running-fg); }
+.row[data-tone='warn'] { --tone: var(--status-warning-solid); --tone-fg: var(--status-warning-fg); }
+.row[data-tone='bad'] { --tone: var(--status-danger-solid); --tone-fg: var(--status-danger-fg); }
+
+.row[data-find-match] { background: var(--status-info-bg); }
+.row[data-find-current] { outline: 1px solid var(--border-focus); }
+
+.mark {
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+/* An action still in flight breathes; the mark is the only thing that moves. */
+.row[data-tone='live'] .mark { animation: app-action-live 1.4s ease-in-out infinite; }
+
+@keyframes app-action-live {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row[data-tone='live'] .mark { animation: none; }
+}
+
+.title {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state {
+  flex: none;
+  color: var(--tone-fg);
+}
+
+.detail {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.when {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-2);
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
