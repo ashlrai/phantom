@@ -1,6 +1,6 @@
 # Phantom
 
-> Open-source engineering agent workbench. Copy the blocks below. Do not add flags that are not on this page. `phm docs --agent --json` from the installed binary wins if it disagrees with this file. A zero exit code is not a merge, a release, or permission to spend.
+> Open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Mission: chasing open-source RSI (recursive self-improvement) as an agent-run software factory; agents follow `AGENTS.md` at the repository root. Copy the blocks below. Do not add flags that are not on this page. `phm docs --agent --json` from the installed binary wins if it disagrees with this file. A zero exit code is not a merge, a release, or permission to spend.
 
 ## Install
 
