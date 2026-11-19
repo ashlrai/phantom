@@ -36,8 +36,23 @@ test('checks the selected master sha for existing in-flight runs', () => {
   const paths = [];
   const decision = readReleasePrep('ashlrai/phantom', sha, (p) => {
     paths.push(p);
-    return p.includes('check-runs') ? { check_runs: [] } : { workflow_runs: [{ path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'queued' }] };
+    return p.includes('check-runs') ? { check_runs: [] } : { workflow_runs: [{ path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'queued', created_at: new Date().toISOString() }] };
   });
   assert.equal(decision.reason, 'release-run-in-flight');
-  assert.ok(paths.every((p) => p.includes(sha)));
+  // Per-sha inventories stay pinned to the selected sha; only the
+  // cross-sha dispatch coalescing read is master-wide.
+  const perSha = paths.filter((p) => !p.includes('event=workflow_dispatch&branch=master'));
+  assert.ok(perSha.every((p) => p.includes(sha)));
+  assert.ok(paths.includes('repos/ashlrai/phantom/actions/workflows/ci.yml/runs?event=workflow_dispatch&branch=master&per_page=50'));
+});
+
+test('a release-gate run outstanding on another master sha suppresses a duplicate dispatch', () => {
+  const sha = 'a'.repeat(40);
+  const other = { path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'in_progress', created_at: new Date().toISOString() };
+  const decision = readReleasePrep('ashlrai/phantom', sha, (p) => {
+    if (p.includes('check-runs')) return { check_runs: [] };
+    if (p.includes('event=workflow_dispatch&branch=master')) return { workflow_runs: [other] };
+    return { workflow_runs: [] };
+  });
+  assert.equal(decision.reason, 'release-run-in-flight');
 });
