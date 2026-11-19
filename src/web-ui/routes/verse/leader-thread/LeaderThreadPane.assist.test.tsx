@@ -11,7 +11,8 @@ import { assistSessions, noSessions } from './composer-assist.test-support.js';
 const inboxPath = '/api/verse/leader/inbox';
 const MIN = 60_000;
 
-beforeEach(() => { evictAll(); setMutationToken('a'.repeat(64)); });
+// The reply box keeps its unsent draft in localStorage, so each test starts without the last one's text.
+beforeEach(() => { evictAll(); window.localStorage.clear(); setMutationToken('a'.repeat(64)); });
 afterEach(() => { vi.unstubAllGlobals(); clearMutationToken(); });
 
 function serve(sessions: RouteAnswer | null = assistSessions()) {
