@@ -20,7 +20,15 @@ transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
 specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
 directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
 `.json`, assets) join the closure as leaves without recursion, and package
-imports track dependency manifests. A candidate that 404s tries the next
+imports track dependency manifests. Independence also unions the runner
+harness a test's own imports never see: each `vitest.config.*`/`vitest.workspace.*`
+file whose literal `include` globs cover the suite (a config with none governs
+every suite), that config's import closure, its `setupFiles`/`globalSetup`
+entries and their closures, the nearest `tsconfig.json`/`jsconfig.json`
+walking up from the test file, and the dependency manifests (which also cover
+suites running without bare imports). An unreadable governing config, an
+unresolvable or globbed setup entry, or a failed harness probe yields
+`unknown`, never independence. A candidate that 404s tries the next
 resolution; any other fetch failure, unresolvable spec, alias, or computed
 import prevents independence claims. Nonverbose pass output does not
 establish an individual test pass. The scan caps open PRs, runs, and jobs

@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, posix } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import type { CloudGh } from '../cloud/pr-actions.js';
+import { globMatches } from '../authority/protected-paths.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { defaultCiGh } from './ci-failure-groups.js';
 import { nextFixGeneration } from './ci-fix-generations.js';
@@ -173,6 +174,140 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     dependencyCache.set(file, task);
     return task;
   }
+
+  // ---------------------------------------------------------------------
+  // Harness dependencies
+  //
+  // A test's import closure misses everything the RUNNER injects: the vitest
+  // config itself (timeouts, lane membership, sequencer), its setupFiles and
+  // globalSetup entries, and whatever those import (HOME guards, mock shims,
+  // src helpers). It also misses toolchain configs (tsconfig/jsconfig) that
+  // change how sources transform, and manifests for suites running without
+  // bare imports (vitest globals mode). A PR touching only the harness fails
+  // suites whose own closures look untouched — without this union it is
+  // misread as a flake or a shared-baseline break.
+  //
+  // Harness deps resolve once per repo. An unreadable governing config, an
+  // unresolvable setup entry, or a failed probe yields null — the touched
+  // check then fails closed (unknown), never "unaffected".
+  //
+  // Runner configs are discovered by name, not probed: `vitest.config.web.ts`,
+  // `vitest.config.coverage.mjs` and friends all govern suites, so the root
+  // listing (one API call) is filtered for the vitest config/workspace shape.
+  const VITEST_CONFIG_NAME = /^vitest\.(?:config|workspace)(?:\.[\w-]+)*\.[cm]?[jt]sx?$/;
+  const HARNESS_AMBIENT_BASE = ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'tsconfig.json', 'jsconfig.json'];
+  const HARNESS_QUOTED = /'([^']*)'|"([^"]*)"|`([^`]*)`/g;
+  const HARNESS_GLOB_CHARS = /[*?[\]{}]/;
+
+  interface HarnessConfig { path: string; includes: string[]; setups: string[] }
+
+  function harnessLiterals(source: string, keyPattern: RegExp): string[] {
+    const out: string[] = [];
+    for (const m of source.matchAll(keyPattern)) {
+      for (const q of m[1]!.matchAll(HARNESS_QUOTED)) out.push(q[1] ?? q[2] ?? q[3] ?? '');
+    }
+    return out;
+  }
+
+  // Path strings in a config are relative to the config's directory. `..`
+  // escapes and glob setup entries cannot be enumerated without a tree listing,
+  // so they fail the whole harness closed rather than guess.
+  function harnessRepoPath(dir: string, entry: string): string | null {
+    const joined = posix.normalize(posix.join(dir === '.' ? '' : dir, entry));
+    return joined === '..' || joined.startsWith('../') || posix.isAbsolute(joined) ? null : joined;
+  }
+
+  function parseHarnessConfig(path: string, source: string): HarnessConfig | 'degraded' {
+    const dir = posix.dirname(path);
+    const setups = new Set<string>();
+    for (const entry of harnessLiterals(source, /(?:setupFiles|globalSetup)\s*:\s*(\[[^\]]*\]|['"`][^'"`]*['"`])/g)) {
+      if (!entry.startsWith('.')) continue; // bare specifier: package manifests are already ambient
+      if (HARNESS_GLOB_CHARS.test(entry)) return 'degraded';
+      const resolved = harnessRepoPath(dir, entry);
+      if (resolved === null) return 'degraded';
+      setups.add(resolved);
+    }
+    const includes = harnessLiterals(source, /\binclude\s*:\s*(\[[^\]]*\]|['"`][^'"`]*['"`])/g)
+      .map(g => harnessRepoPath(dir, g))
+      .filter((g): g is string => g !== null);
+    return { path, includes, setups: [...setups] };
+  }
+
+  let harnessDiscovery: Promise<HarnessConfig[] | null> | null = null;
+  function discoverHarnessConfigs(): Promise<HarnessConfig[] | null> {
+    harnessDiscovery ??= (async () => {
+      let names: string[];
+      try {
+        const r = await gh(['api', `repos/${repo}/contents/?ref=${ref}`]);
+        if (!r.ok) return null;
+        const entries = JSON.parse(r.stdout) as { name?: unknown; type?: unknown }[] | null;
+        if (!Array.isArray(entries)) return null;
+        names = entries
+          .filter(e => e?.type === 'file' && typeof e?.name === 'string' && VITEST_CONFIG_NAME.test(e.name))
+          .map(e => e.name as string)
+          .sort();
+      } catch {
+        return null;
+      }
+      const configs: HarnessConfig[] = [];
+      for (const name of names) {
+        const fetched = await contents(name);
+        if (fetched.ok && fetched.source !== null) {
+          const parsed = parseHarnessConfig(name, fetched.source);
+          if (parsed === 'degraded') return null;
+          configs.push(parsed);
+        } else if (!fetched.absent) {
+          return null;
+        }
+      }
+      return configs;
+    })();
+    return harnessDiscovery;
+  }
+
+  const harnessFileCache = new Map<string, Promise<Set<string> | null>>();
+  function harnessAmbient(file: string): Promise<Set<string> | null> {
+    let pending = harnessFileCache.get(file);
+    if (!pending) {
+      pending = (async () => {
+        const configs = await discoverHarnessConfigs();
+        if (configs === null) return null;
+        const out = new Set(HARNESS_AMBIENT_BASE);
+        for (const cfg of configs) {
+          // No literal includes means the config's collection scope cannot be
+          // proven narrow, so it governs every suite (conservative).
+          if (cfg.includes.length > 0 && !cfg.includes.some(g => globMatches(g, file))) continue;
+          const own = await dependencies(cfg.path);
+          if (own === null) return null;
+          for (const p of own) out.add(p);
+          for (const setup of cfg.setups) {
+            const closure = await dependencies(setup);
+            if (closure === null) return null;
+            for (const p of closure) out.add(p);
+          }
+        }
+        // Nearest toolchain config walking up from the test file: bundlers read
+        // the closest tsconfig/jsconfig per transformed file.
+        let dir = posix.dirname(file);
+        for (;;) {
+          for (const name of ['tsconfig.json', 'jsconfig.json']) {
+            const p = dir === '.' ? name : `${dir}/${name}`;
+            const fetched = await contents(p);
+            if (fetched.ok) out.add(p);
+            else if (!fetched.absent) return null;
+          }
+          if (dir === '.') break;
+          const parent = posix.dirname(dir);
+          if (parent === dir) break;
+          dir = parent;
+        }
+        return out;
+      })();
+      harnessFileCache.set(file, pending);
+    }
+    return pending;
+  }
+
   let prs: Pr[] = [];
   try {
     const r = await gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,headRefOid,headRefName,files']);
@@ -204,7 +339,8 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (!known) continue;
     for (const failure of found) {
       const deps = await dependencies(failure.file);
-      const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path)) : null;
+      const ambient = await harnessAmbient(failure.file);
+      const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }
   }
