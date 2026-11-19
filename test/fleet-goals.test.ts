@@ -158,7 +158,7 @@ describe('phm goals --json', () => {
     vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
     expect(await cmdGoals(['--json'], { runsDir: dir, now: () => NOW })).toBe(0);
     const card = JSON.parse(out[0]!) as GoalScorecard;
-    expect(Object.keys(card)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'goals']);
+    expect(Object.keys(card)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'endState', 'goals']);
     expect(card).toMatchObject({ schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: new Date(NOW).toISOString() });
     for (const g of card.goals) {
       for (const key of ['id', 'title', 'why', 'metric', 'unit', 'target', 'current', 'trend', 'updated_at', 'source'] as const) expect(g).toHaveProperty(key);

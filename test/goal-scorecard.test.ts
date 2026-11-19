@@ -138,9 +138,9 @@ describe('buildGoalScorecard', () => {
       releaseLines: [rel(300, 'ashlrai/locus'), rel(45, 'ashlrai/phantom')],
     }));
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
-    expect(Object.keys(a)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'goals']);
+    expect(Object.keys(a)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'endState', 'goals']);
     expect(Object.keys(a.goals[0]!)).toEqual(['id', 'title', 'why', 'metric', 'unit', 'target', 'targetText', 'better', 'current', 'currentText',
-      'trend', 'trend24h', 'trend7d', 'updated_at', 'source', 'status', 'statusText', 'reason', 'parts', 'evidencePane']);
+      'trend', 'trend24h', 'trend7d', 'updated_at', 'source', 'status', 'statusText', 'reason', 'parts', 'evidencePane', 'next']);
     expect(Object.keys(a.goals[0]!.trend24h)).toEqual(['points', 'direction', 'target']);
     expect(a).toMatchObject({ schema: 'fleet.goal-scorecard.v3', version: 3, targets: DEFAULT_GOAL_TARGETS });
   });
