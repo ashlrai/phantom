@@ -746,6 +746,7 @@ export function agentDocsText(): string {
     'or execution permission. JSON output is ANSI-free. Check each command description',
     'and help for result/exit semantics: exit 0 need not mean ready, delivered or accepted.',
     'Campaign supervision additionally returns 130 for caller cancellation.',
+    'Job runners: run `phm bets check "<your task text>" --json` first; when it says exists, deliver only its suggested delta.',
     '',
     'Legacy safety labels describe command categories, not authorization:',
     'read = inspection-oriented · append = writes or executes work (not append-only) ·',
@@ -1149,6 +1150,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'metrics merges', desc: 'Show hourly merges and median open-to-merge time by lane for the last 24 hours.', topic: 'autonomy' },
   { cmd: 'metrics ingest --jobs <file> --status <file>', desc: 'Read local lane and tier merge metrics and advisory routing priors; always JSON.', topic: 'autonomy' },
   { cmd: 'metrics loop [--dry-run] [--json]', desc: 'Self-awareness loop: merges and opens per hour, idea-to-merged-to-installed minutes, cost per merged PR, capacity per node; writes loop, selection-hint and bets-share files.', topic: 'autonomy' },
+  { cmd: 'bets check "<goal text>" [--json]', desc: 'Before queuing work: does it already exist? Looks the goal up in CLI help, API routes, web-ui panes and docs headings; says new, partial or exists with up to 10 matches and one suggested delta. Read-only, offline.', topic: 'autonomy' },
   { cmd: 'bets suggest [--json] [--limit N]', desc: 'Rank the next jobs worth queuing from idle lanes, expiring usage, red mains and unreleased repos, each with a queue line to copy; bets explain <id> shows the scoring. Read-only.', topic: 'autonomy' },
   { cmd: 'bets list|launch|score|kill [--json]', desc: 'Bets lane ledger: launch scored experiments, run the kill-fast scorer, kill by hand. Append-only metrics/bets.jsonl.', topic: 'autonomy' },
   { cmd: 'metrics levers [--window <7d|30d>] [--json]', desc: 'Rank three opportunity proxies from local activity and fleet rollups.', topic: 'autonomy' },
@@ -1232,6 +1234,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'pulse [--window 1d|7d|30d]',   desc: 'Local observability dashboard: tokens, cost, sessions, commits.', topic: 'observability' },
   { cmd: 'pulse --json',                 desc: 'Machine-readable ActivityRollup (+ additive .forecast field; Raycast Pulse view).', topic: 'observability' },
   { cmd: 'pulse --project <name>',       desc: 'Restrict pulse rollup to a single project.', topic: 'observability' },
+  { cmd: 'pulse merge-latency [--jobs <jobs.jsonl>] [--json]', desc: 'Merge latency diagnosis: observed time waiting for checks, running checks and waiting to merge, with the top wastes. Read-only; unknown stays unknown.', topic: 'observability' },
   { cmd: 'pulse-export',                 desc: 'Fleet→pulse OTLP backfill/manual export.', topic: 'observability' },
   { cmd: 'pulse-test',                   desc: 'Fleet→pulse connectivity + auth probe (read-only).', topic: 'observability' },
   { cmd: 'resource [--json] [--directory <fleet-directory>]', desc: 'Refresh the shared resource.v1 view in fleet.json from recorded inputs.', topic: 'observability' },
@@ -1493,6 +1496,12 @@ function renderAll(): void {
   console.log('');
 }
 
+/** The one help-table reader: entries whose command or description contains `term` (case-insensitive). Shared by `help --search` and `bets check`. */
+export function searchHelpEntries(term: string, entries: readonly HelpEntry[] = HELP_ENTRIES): HelpEntry[] {
+  const t = term.toLowerCase();
+  return entries.filter((e) => e.cmd.toLowerCase().includes(t) || e.desc.toLowerCase().includes(t));
+}
+
 /** `ashlr help [<topic>] [--search <term>] [--all]` — exit 0, except 2 for an unknown topic. */
 export async function cmdHelp(args: string[]): Promise<number> {
   const c = makeColors(isTty());
@@ -1509,9 +1518,7 @@ export async function cmdHelp(args: string[]): Promise<number> {
       console.log(c.dim('usage: ashlr help --search <term>'));
       return 0;
     }
-    const hits = HELP_ENTRIES.filter(
-      (e) => e.cmd.toLowerCase().includes(term) || e.desc.toLowerCase().includes(term),
-    );
+    const hits = searchHelpEntries(term);
     console.log('');
     if (hits.length === 0) {
       console.log(c.dim(`  no commands match "${term}" — try \`ashlr help --all\``));
