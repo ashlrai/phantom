@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   foldRouterOutcomes,
   readLedgerFile,
+  readLedgerTail,
   readRouterOutcomes,
   ROUTER_OUTCOME_LEDGER_LIMIT,
 } from '../src/core/router/outcomes.js';
@@ -154,19 +155,72 @@ describe('router outcome ledger (612S preservation)', () => {
     expect(result).toMatchObject({ state: 'unreadable', outcomes: [] });
   });
 
-  it('refuses over-limit input without parsing a truncated prefix', async () => {
+  it('reads the retained tail of an over-limit ledger instead of refusing it', async () => {
     const root = runsDir();
     mkdirSync(join(root, 'metrics'));
     writeFileSync(ledgerPath(root), '');
     truncateSync(ledgerPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1); // sparse; no 16 MiB write
     const result = await readRouterOutcomes({ runsDir: root });
-    expect(result).toMatchObject({ state: 'too-large', outcomes: [] });
+    expect(result).toMatchObject({ state: 'read', truncated: true, outcomes: [] });
+  });
+
+  it('folds rows inside the retained tail and drops the cut first line', async () => {
+    const root = runsDir();
+    mkdirSync(join(root, 'metrics'));
+    // One oversized first line fills the whole bound; only the rows after it
+    // survive the tail window, and the cut line prefix is never parsed.
+    const pad = 'x'.repeat(ROUTER_OUTCOME_LEDGER_LIMIT);
+    writeFileSync(ledgerPath(root), `${pad}\n{"job":"T1","phase":"MERGED"}\n{"job":"T2","phase":"CLOSED"}\n`);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result.state).toBe('read');
+    expect(result.truncated).toBe(true);
+    expect(result.malformed_rows).toBe(0);
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['T1', 'T2']);
+    expect(result.outcomes[0]).toMatchObject({ merged: true });
+    expect(result.outcomes[1]).toMatchObject({ merged: false });
+  });
+
+  it('reports truncated=false when the ledger fits the bound', async () => {
+    const root = runsDir('{"job":"S1","phase":"MERGED"}\n');
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', truncated: false });
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['S1']);
   });
 
   it('enforces the byte limit on the bounded reader itself', async () => {
     const root = runsDir('{"job":"L1"}\n{"job":"L2"}\n');
     expect(await readLedgerFile(ledgerPath(root), 4)).toEqual({ state: 'too-large' });
     expect(await readLedgerFile(ledgerPath(root), 1024)).toMatchObject({ state: 'read' });
+  });
+
+  it('tail-reads whole lines only and flags coverage honestly', async () => {
+    const root = runsDir('aaaa\nbbbb\ncccc\n');
+    // 15-byte file; a truncated window always drops its first line because it
+    // may be a cut suffix — here 'bbbb' is dropped even though it looks whole.
+    expect(await readLedgerTail(ledgerPath(root), 10)).toEqual({ state: 'read', text: 'cccc\n', truncated: true });
+    // A window starting mid-line drops the partial 'bbbb' suffix the same way.
+    expect(await readLedgerTail(ledgerPath(root), 9)).toEqual({ state: 'read', text: 'cccc\n', truncated: true });
+    // File fits the bound: whole text, no truncation.
+    expect(await readLedgerTail(ledgerPath(root), 15)).toEqual({ state: 'read', text: 'aaaa\nbbbb\ncccc\n', truncated: false });
+    expect(await readLedgerTail(ledgerPath(root))).toMatchObject({ state: 'read', truncated: false });
+  });
+
+  it('tail reader yields empty text when the window holds no newline', async () => {
+    const root = runsDir('x'.repeat(20)); // one unterminated line, no '\n'
+    expect(await readLedgerTail(ledgerPath(root), 10)).toEqual({ state: 'read', text: '', truncated: true });
+  });
+
+  it('tail reader keeps the same file refusals as the whole-file reader', async () => {
+    expect(await readLedgerTail(join(runsDir(), 'metrics', 'jobs.jsonl'))).toEqual({ state: 'missing' });
+    const dirRoot = runsDir();
+    mkdirSync(ledgerPath(dirRoot), { recursive: true });
+    expect(await readLedgerTail(ledgerPath(dirRoot))).toEqual({ state: 'not-file' });
+    const linkRoot = runsDir();
+    const target = join(linkRoot, 'real.jsonl');
+    writeFileSync(target, '{"job":"S1"}\n');
+    mkdirSync(join(linkRoot, 'metrics'));
+    symlinkSync(target, ledgerPath(linkRoot));
+    expect(await readLedgerTail(ledgerPath(linkRoot))).toEqual({ state: 'unreadable' });
   });
 
   it('leaves fixtures byte-identical and unmodified by reads', async () => {

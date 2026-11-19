@@ -5,12 +5,16 @@ import { isAbsolute, join } from 'node:path';
 
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 
-// Read-only recorded job outcomes from <runs>/metrics/jobs.jsonl. Recovered from the
-// router-outcome slice of #6794 (head f9e484e87ec2). Scope is deliberately bounded:
-// no routing, ranking, tuning, weights, or network. `passk` joins each outcome's
-// (lane, model) to the published eval.lane-scores.v1 projection — advisory evidence
-// only; a missing, degraded or ambiguous score leaves passk null.
+// Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
+// bytes of <runs>/metrics/jobs.jsonl. Recovered from the router-outcome slice of
+// #6794 (head f9e484e87ec2). Scope is deliberately bounded: no routing, ranking,
+// tuning, weights, or network. `passk` joins each outcome's (lane, model) to the
+// published eval.lane-scores.v1 projection — advisory evidence only; a missing,
+// degraded or ambiguous score leaves passk null. The ledger is append-only and
+// unbounded, so the read retains a tail window: an oversized ledger reports
+// truncated:true and folds only the retained rows, never a refused read.
 
+/** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
 export const ROUTER_OUTCOME_LEDGER_RELATIVE = join('metrics', 'jobs.jsonl');
 
@@ -34,6 +38,10 @@ export interface RouterOutcome {
 export type LedgerReadState = 'read' | 'missing' | 'unreadable' | 'not-file' | 'too-large';
 
 export type LedgerRead = { state: 'read'; text: string } | { state: Exclude<LedgerReadState, 'read'> };
+
+export type LedgerTailRead =
+  | { state: 'read'; text: string; truncated: boolean }
+  | { state: 'missing' | 'unreadable' | 'not-file' };
 
 /**
  * Bounded read of one regular file. O_NOFOLLOW refuses a symlink at the final path
@@ -59,6 +67,46 @@ export async function readLedgerFile(path: string, limit = ROUTER_OUTCOME_LEDGER
       length += bytesRead;
     }
     return length > limit ? { state: 'too-large' } : { state: 'read', text: bytes.subarray(0, length).toString('utf8') };
+  } catch {
+    return { state: 'unreadable' };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Bounded read of the newest `maxBytes` of one regular file, same symlink and
+ * file-type refusals as readLedgerFile. When the file exceeds the bound the
+ * first (cut) line is dropped so every returned line is whole; a window with no
+ * newline at all yields empty text. `truncated` is true exactly when older
+ * bytes were not read.
+ */
+export async function readLedgerTail(path: string, maxBytes = ROUTER_OUTCOME_LEDGER_LIMIT): Promise<LedgerTailRead> {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable' };
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) return { state: 'not-file' };
+    const truncated = stat.size > maxBytes;
+    const start = truncated ? stat.size - maxBytes : 0;
+    const length = stat.size - start;
+    const bytes = Buffer.alloc(length);
+    let offset = 0;
+    while (offset < length) {
+      const { bytesRead } = await handle.read(bytes, offset, length - offset, start + offset);
+      if (!bytesRead) break;
+      offset += bytesRead;
+    }
+    let text = bytes.subarray(0, offset).toString('utf8');
+    if (truncated) {
+      const newline = text.indexOf('\n');
+      text = newline < 0 ? '' : text.slice(newline + 1);
+    }
+    return { state: 'read', text, truncated };
   } catch {
     return { state: 'unreadable' };
   } finally {
@@ -171,6 +219,12 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
   path: string;
   /** Health of the eval.lane-scores.v1 projection behind `passk`; 'missing' or 'degraded' means every passk is null. */
   eval_state: LaneScoresRead['state'];
+  /**
+   * True when the ledger exceeded the retained tail: the fold, and so every
+   * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
+   * bytes — a lower bound on the full history, never a claimed total.
+   */
+  truncated: boolean;
 }
 
 /**
@@ -194,11 +248,13 @@ function laneScoreLookup(read: LaneScoresRead): ((lane: string, model: string) =
 }
 
 /**
- * Reads <runsDir>/metrics/jobs.jsonl. `runsDir` defaults to ASHLR_RUNS_DIR, then ~/.ashlr-runs,
- * and must be absolute when given. `ashlarDir` is the ASHLR root holding
- * eval/passk/lane-scores.json (default ASHLR_HOME, then ~/.ashlr). A missing or
- * unreadable ledger yields state != 'read' with no outcomes, so callers can tell
- * unknown input from a successfully read empty ledger.
+ * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
+ * <runsDir>/metrics/jobs.jsonl. `runsDir` defaults to ASHLR_RUNS_DIR, then
+ * ~/.ashlr-runs, and must be absolute when given. `ashlarDir` is the ASHLR root
+ * holding eval/passk/lane-scores.json (default ASHLR_HOME, then ~/.ashlr). A
+ * missing or unreadable ledger yields state != 'read' with no outcomes, so
+ * callers can tell unknown input from a successfully read empty ledger; a
+ * ledger larger than the bound reads its tail and reports truncated:true.
  */
 export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string; ashlarDir?: string } = {}): Promise<RouterOutcomeRead> {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
@@ -206,10 +262,10 @@ export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string
   if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
   const laneScores = readLaneScores({ rootDir: opts.ashlarDir });
   const path = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
-  const read = await readLedgerFile(path);
+  const read = await readLedgerTail(path);
   const empty: RouterOutcomeFold = { outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0 };
-  if (read.state !== 'read') return { ...empty, state: read.state, path, eval_state: laneScores.state };
+  if (read.state !== 'read') return { ...empty, state: read.state, path, eval_state: laneScores.state, truncated: false };
   const folded = foldRouterOutcomes(read.text, { passkFor: laneScoreLookup(laneScores) });
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
-  return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state };
+  return { ...folded, outcomes, state: 'read', path, eval_state: laneScores.state, truncated: read.truncated };
 }
