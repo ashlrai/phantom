@@ -51,7 +51,7 @@ function fixture(over: Partial<OpsFleetV1> = {}): OpsFleetV1 {
 const LANES = {
   schema: 'fleet.lanes.v1', generatedAt: '2026-10-30T10:04:50Z', mergeWindowMinutes: 60, lanes: [],
   sources: {
-    queue: { state: 'healthy', file: 'ready.tsv', rows: 2, dropped: 0 }, queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 1 },
+    queue: { state: 'healthy', file: 'ready.tsv', rows: 2, dropped: 0, unhinted: 0 }, queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 1 },
     ledger: { state: 'healthy', file: 'jobs.jsonl', events: 4, dropped: 0 }, usage: { state: 'healthy', files: ['usage-readings.log'], pools: 1, dropped: 0 },
     budgets: { state: 'healthy' },
   },
