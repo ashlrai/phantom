@@ -605,11 +605,16 @@ replies are read once, and the recorded activity once for each job shown.
   leader's holds every Leader inbox message, a worker's the ones naming it as
   `@<job>` (kind `owner`), and a helper's none. A worker's summary says how
   many were aimed at it.
-- `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`
-  and `replies` (`available`, `none` when the read answered and no shown
-  session has any, or `unavailable`). `gaps[]` holds the session list's own
-  gaps, a line counting the sessions left out past 40, and a failed bus or
-  inbox read.
+- Where the Leader routed a message is part of each thread too, from the same
+  order trace as the session thread: a `routing` record follows each routed
+  message in the leader's thread, and a worker with a job opens with the
+  message it serves (kind `order`) and says so in its summary. Helpers get
+  none. The trace is read once for the whole document.
+- `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
+  `replies` and `orders` (`available`, `none` when the read answered and no
+  shown session has any, or `unavailable`). `gaps[]` holds the session list's
+  own gaps, a line counting the sessions left out past 40, and a failed bus,
+  inbox or order trace read.
 
 Each read fails on its own: a job whose activity could not be read says so in
 its own `gaps` and the other threads are whole. The route answers 503 when the

@@ -1314,17 +1314,19 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 `THREADS_MESSAGES_SHOWN` (3) and `THREADS_TEXT_CHARS` (400), `THREAD_STATES`
 and the types `SessionThreadsV1`, `SessionThreadsEntry`,
 `SessionThreadsMessage` and `SessionThreadsParts`. `parts` is
-`{sessionsRead, bus, activity, replies?, owner?}`, where `activity` maps a job
-id to its activity read (null when that read failed, no key when it was not
-asked for) and `owner` is the Leader inbox, handed to the leader's and every
-worker's thread and to no helper's. Each entry is built by
+`{sessionsRead, bus, activity, replies?, owner?, orders?}`, where `activity`
+maps a job id to its activity read (null when that read failed, no key when it
+was not asked for), `owner` is the Leader inbox, handed to the leader's and
+every worker's thread and to no helper's, and `orders` is the order trace
+(`OrderTraceV1`), handed to the leader's thread and to every worker's that has
+a job. `SessionThreadsV1.sources` is `{sessions, bus, owner, replies, orders}`. Each entry is built by
 `buildSessionThread`, so its session, summary, sources and gaps equal the
 single-session thread for the same records.
 `src/core/fleet/session-threads-read.ts` exports `readSessionThreads(options)`
 with `lane`, `repo`, `live` and injectable `readMap`, `readSubagents`,
-`readLeader`, `readActivity`, `readBus`, `readOwner` and `readReplies`; the
-list, the bus, the Leader inbox and the leader's replies are read once and
-each shown job's activity once.
+`readLeader`, `readActivity`, `readBus`, `readOwner`, `readReplies` and
+`readOrders`; the list, the bus, the Leader inbox, the leader's replies and
+the order trace are read once and each shown job's activity once.
 `src/cli/sessions.ts` exports `cmdSessionThreads(args, read)` for
 `phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]` (exit
 0 read, 1 list unreadable, 2 usage).
