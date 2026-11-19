@@ -628,7 +628,13 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     description: 'One thread with Mason across iMessage, Slack, Telegram, email and desktop: his messages and the leader\'s replies in time order, the same request on two channels shown once, each of his messages tagged Received, Assigned, Running, Blocked or Verified with its linked jobs. Default window 1d (15m, 2h, 1d, epoch ms or ISO). A source that cannot be read is named in gaps and a state that cannot be known is UNKNOWN. Read-only: sends nothing. Prints "Nothing yet." when empty. Exit 0 read, 2 usage.',
     safety: 'read',
     jsonShape: 'MasonThread {schema:"phantom.mason.thread.v1", as_of, since, items:[{at, dir:"in"|"out", channel, text, state:"RECEIVED"|"ASSIGNED"|"RUNNING"|"BLOCKED"|"VERIFIED"|"UNKNOWN"|null, job_ids, also_on}], gaps}',
+  },  {
+    usage: 'phm mason digest [--since 1h] [--post] [--json]',
+    description: 'Mason\'s hourly update in plain words, at most six lines: PRs merged and median minutes to merge, releases published, lanes busy vs target, pools used % and hours to reset, wasted-launch rate, and open asks that truly need Mason (passwords, 2FA, device approval, payment). Dry run prints it. --post records it in Mason\'s own thread through the owner-thread writer and sends nothing to anyone else. The self-tick hook posts it at most once an hour and only when something changed; stop it with phm fleet config set mason.digest.off 1 --reason "<why>". A number that could not be read is "unknown", never 0. Default window 1h (up to 168h). Exit 0 ok, 1 when --post could not write, 2 usage.',
+    safety: 'append',
+    jsonShape: 'MasonDigest {schema:"phantom.mason.digest.v1", as_of, since, window_hours, merged, median_minutes_to_merge, releases_published, lanes_busy, lanes_target, pools:[{pool, used_percent, hours_to_reset}], wasted_launch_rate, asks, ask_kinds, lines, has_news, change_key, post:{state:"posted"|"duplicate"|"rate-limited"|"unavailable"|"refused", reason}|null}; unknown is null',
   },
+
   {
     usage: 'phm channels reply-state <request-id> [--json]',
     description: 'The one state read before any fleet reply about a work item: RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED with its as-of time and source, computed from the bus inbox and claim records. No record means RECEIVED, no owner yet. A repeat request in the same thread resolves to the first request id. Read-only. Exit 0 report, 2 bad usage.',
@@ -1213,6 +1219,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
   { cmd: 'mason thread [--since <dur>] [--json]', desc: 'Mason\'s one thread across every channel: messages and replies in time order, each tagged Received, Assigned, Running, Blocked or Verified with its jobs. Read-only.', topic: 'autonomy' },
+  { cmd: 'mason digest [--since 1h] [--post] [--json]', desc: 'Mason\'s hourly update in plain words (six lines at most): merges, releases, lanes, pools, wasted launches, asks that need him. --post writes it to his own thread only.', topic: 'autonomy' },
   { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
   { cmd: 'agentnet peers list|read|send | channels propose | identity register [--json]', desc: 'Session-bound team peer messages, verified inbox and Slack provisioning drafts.', topic: 'autonomy' },

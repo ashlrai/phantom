@@ -105,7 +105,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   desktopctl: ['capabilities', 'doctor', 'status', 'run', '--task', '--timeout', '--poll', '--json', '--help'],
   app: ['update', 'status', 'steer', '--text', 'restart', '--json', '--help'],
   radar: ['list', 'run', 'diff', '--json', '--help'],
-  mason: ['thread', '--since', '--json', '--help'],
+  mason: ['thread', 'digest', '--since', '--post', '--json', '--help'],
   'comms-agent': ['status', 'run', 'drafts', '--json', '--dir', '--lanes', '--help'],
   claim: ['acquire', 'release', '--lane', '--reason', '--json', '--help'],
   usage: ['sensors', 'spend', 'limits', 'live', 'resource-live', 'history', 'validate', '--lane', '--json', '--refresh', '--file', '--watch', '--force', '--show', '--browser', '--headed', '--interval', '--queue-dir', '--bus-dir', '--runs-dir', '--help'],
