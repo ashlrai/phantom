@@ -6,6 +6,7 @@ import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, seatMayCla
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
 import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { runBotsCli } from '../src/cli/bots.js';
@@ -215,4 +216,61 @@ it('seat reads and dry-run handoff do not initialize a missing node store on a f
   expect(await readdir(o.home, { recursive: true })).toEqual(before);
   await listSeats(opts);
   expect((await readdir(o.home, { recursive: true })).sort()).toEqual([...before, '.phantom/bots/seat-state.json'].sort());
+});
+it('counts claims held under any registered label of the seat identity and plans their handoff', async () => {
+  const o = await fixture({ ...seat(), participantId: 'helper-seat' });
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  expect(registerAgentIdentity({ handle: 'helper-seat', aliases: ['helper-alias'],
+    runtime: { cli: 'devin', provider: 'devin', model: null } }, { root: fleetRoot, now: () => now }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'other-bot' }, { root: fleetRoot, now: () => now }).status).toBe('created');
+  const claim = (key: string, owner: string, sourceId: string) => {
+    expect(acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId,
+      leaseMs: 10_000, leaseUntil: now + 10_000, now }).status).toBe('acquired');
+  };
+  claim('pr:o/r#7', 'helper-alias', 'alias-claim');
+  claim('pr:o/r#8', 'agent:helper-seat', 'address-claim');
+  claim('pr:o/r#9', 'helper-seat', 'exact-claim');
+  claim('pr:o/r#10', 'agent:other-bot', 'other-claim');
+  const row = (await listSeats({ ...o, readQuota: async () => measured })).seats[0]!;
+  expect(row.claimsOwner).toEqual({ ref: 'helper-seat', identity: stableAgentId('helper-seat'), registry: 'available' });
+  expect(row.claims.map(c => c.sourceId).sort()).toEqual(['address-claim', 'alias-claim', 'exact-claim']);
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
+  const plan = await planSeatHandoff('helper', { ...o, readQuota: async () => exhausted });
+  expect(plan.handoffs.map(h => h.work.ref).sort()).toEqual(['pr:o/r#7', 'pr:o/r#8', 'pr:o/r#9']);
+  expect(JSON.stringify(plan)).not.toContain('token');
+});
+it('reports missing and unreadable registries honestly while matching falls back to the exact label', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  const claim = (key: string, owner: string, sourceId: string) => {
+    expect(acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId,
+      leaseMs: 10_000, leaseUntil: now + 10_000, now }).status).toBe('acquired');
+  };
+  claim('pr:o/r#11', 'helper', 'exact');
+  claim('pr:o/r#12', 'helper-alias', 'alias');
+  let row = (await listSeats(o)).seats[0]!;
+  expect(row.claimsOwner).toEqual({ ref: 'helper', identity: null, registry: 'missing' });
+  expect(row.claims.map(c => c.sourceId)).toEqual(['exact']);
+  expect(registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: fleetRoot, now: () => now }).status).toBe('created');
+  row = (await listSeats(o)).seats[0]!;
+  expect(row.claimsOwner).toEqual({ ref: 'helper', identity: stableAgentId('helper'), registry: 'available' });
+  expect(row.claims.map(c => c.sourceId).sort()).toEqual(['alias', 'exact']);
+  await writeFile(join(fleetRoot, 'agent-identities', 'registry.json'), '{corrupt');
+  row = (await listSeats(o)).seats[0]!;
+  expect(row.claimsOwner).toEqual({ ref: 'helper', identity: null, registry: 'unavailable' });
+  expect(row.claims.map(c => c.sourceId)).toEqual(['exact']);
+});
+it('keeps exact-label matching when the registry cannot resolve the seat', async () => {
+  const o = await fixture({ ...seat(), participantId: 'unregistered-seat' });
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  expect(registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: fleetRoot, now: () => now }).status).toBe('created');
+  const claim = (key: string, owner: string, sourceId: string) => {
+    expect(acquireCoordination({ root: fleetRoot, origin: 'resource', key, owner, sourceId,
+      leaseMs: 10_000, leaseUntil: now + 10_000, now }).status).toBe('acquired');
+  };
+  claim('pr:o/r#13', 'helper-alias', 'alias');
+  claim('pr:o/r#14', 'unregistered-seat', 'exact');
+  const row = (await listSeats(o)).seats[0]!;
+  expect(row.claimsOwner).toEqual({ ref: 'unregistered-seat', identity: null, registry: 'available' });
+  expect(row.claims.map(c => c.sourceId)).toEqual(['exact']);
 });

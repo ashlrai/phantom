@@ -31,8 +31,18 @@ Exports:
   is inert; local is loopback-only.
 - `listSeats(opts?: SeatOptions)` returns `{schema:'phantom-bot-seats.v1', seats}`.
   Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
-  claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
-  transitions may persist during listing; missing node stores stay missing.
+  claims, claimsOwner, inFlight, recent handoffs and advisory adapter status.
+  Only lifecycle transitions may persist during listing; missing node stores
+  stay missing. A live claim counts as a seat's open work when its owner label
+  is the seat's `participantId` or resolves through the agent identity
+  registry to the same stable identity id, so claims taken under the seat's
+  handle, `agent:` address or alias still count. `claimsOwner` reports the
+  matching basis as `{ref, identity, registry}`: the participantId label, the
+  resolved stable identity id (null when unresolved) and the registry source
+  (`missing`, `available` or `unavailable`). An absent or unreadable registry,
+  or a `participantId` the registry cannot resolve, falls back to exact
+  participantId matching — no identity is ever guessed, and handoff planning
+  sees the same matched claims.
 - `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
   with measured quota. The module acquires no claims.
 - `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;

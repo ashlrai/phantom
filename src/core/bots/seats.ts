@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { BOT_ID_PATTERN } from '../agents/bot-templates.js';
 import { participantSchema, providerSchema, type Participant } from '../agents/bus-v2-schema.js';
 import { coordinationRoot, listCoordination, releaseCoordinationBySource, type CoordinationView } from '../agents/claim-store.js';
+import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { postChannelMessage, sendDirectMessage } from '../agents/bus-unified.js';
 import { assertMetadata } from '../connectors/profile.js';
 import { budgetEntryQuota } from '../fabric/lane-usage-self.js';
@@ -124,10 +125,49 @@ export function advisorySeatAdapter(s: BotSeat, usage: () => Promise<QuotaEviden
 function nodes(o: SeatOptions): NodesStore {
   return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes'))).transaction(fn) };
 }
-async function openWork(s: BotSeat, o: SeatOptions) {
+/**
+ * Claim-owner resolution through the agent identity registry beside the bus
+ * store (`<fleet>/agent-identities`). A label resolves to its stable identity
+ * id; an absent or unreadable registry resolves nothing, so matching degrades
+ * to the exact participantId label and `registry` says which happened. Labels
+ * are routing names, never authentication.
+ */
+interface SeatClaimOwners {
+  resolve(label: string): string | undefined;
+  registry: 'missing' | 'available' | 'unavailable';
+}
+
+function claimOwnerResolver(o: SeatOptions): SeatClaimOwners {
+  const read = readAgentRegistry({ root: fleet(o) });
+  if (read.status !== 'ok') return { registry: 'unavailable', resolve: () => undefined };
+  const cache = new Map<string, string | undefined>();
+  return {
+    registry: read.source,
+    resolve: label => {
+      if (!cache.has(label)) cache.set(label, resolveAgent(read.registry, label)?.id);
+      return cache.get(label);
+    },
+  };
+}
+
+/** How a seat's open claims were matched, so a label hit is never mistaken for identity proof. */
+interface SeatClaimsOwner {
+  ref: string;
+  identity: string | null;
+  registry: 'missing' | 'available' | 'unavailable';
+}
+
+async function openWork(s: BotSeat, o: SeatOptions, owners: SeatClaimOwners = claimOwnerResolver(o)) {
   const coordination = listCoordination(fleet(o), (o.now ?? Date.now)());
   if (coordination.source === 'unavailable') throw new Error('Coordination store unavailable.');
-  const claims = coordination.claims.filter(c => c.live && c.owner === s.participantId);
+  const seatIdentity = owners.resolve(s.participantId);
+  // With a resolved identity every label of that identity counts as the seat's
+  // open work; without one only the exact participantId label matches, the
+  // same fallback the work feed's owner-key matching applies.
+  const claims = coordination.claims.filter(c => c.live && (seatIdentity === undefined
+    ? c.owner === s.participantId
+    : owners.resolve(c.owner) === seatIdentity));
+  const claimsOwner: SeatClaimsOwner = { ref: s.participantId, identity: seatIdentity ?? null, registry: owners.registry };
   let jobs: QueueJobV1[] = [];
   if (s.nodeId) {
     const path = join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes', 'nodes.json');
@@ -139,14 +179,15 @@ async function openWork(s: BotSeat, o: SeatOptions) {
     if (exists) jobs = nodes(o).transaction(state => structuredClone(state.jobs));
     jobs = jobs.filter(j => j.state === 'running' && j.claim?.nodeId === s.nodeId);
   }
-  return { claims, jobs };
+  return { claims, jobs, claimsOwner };
 }
 async function snapshot(o: SeatOptions) {
   const states = JSON.parse(await read(o, 'seat-state.json') ?? '{}') as Record<string, SeatState>;
   const history = (await read(o, 'handoffs.jsonl') ?? '').split('\n').filter(Boolean).map(line => JSON.parse(line) as SeatHandoff);
   const now = new Date((o.now ?? Date.now)()).toISOString();
+  const owners = claimOwnerResolver(o);
   const seats = await Promise.all((await roster(o)).map(async seat => {
-    const evidence = await quota(seat, o), work = await openWork(seat, o);
+    const evidence = await quota(seat, o), work = await openWork(seat, o, owners);
     const state = nextSeatState(states[seat.id] ?? { state: 'active', since: now, exhaustedReset: null }, { quota: evidence, openWork: work.claims.length + work.jobs.length, now });
     return { seat, quota: evidence, work, state };
   }));
@@ -164,7 +205,8 @@ export async function listSeats(o: SeatOptions = {}) {
   const seats = await Promise.all(data.seats.map(async ({ seat, quota: evidence, state, work }) => {
     const adapter = seat.kind === 'devin-bot' ? createDevinBotAdapter({ ...seat, readUsage: async () => evidence }) : advisorySeatAdapter(seat, async () => evidence);
     return { ...seat, provider: provider(seat), participant: participant(seat, state), state: state.state, acceptsNewWork: state.state === 'active' && evidence.status === 'measured', quota: evidence,
-      claims: work.claims, inFlight: work.jobs.map(j => ({ id: j.id, state: j.state })), handoffs: data.history.filter(h => h.seatId === seat.id).slice(-20), adapter: await adapter.status() };
+      claims: work.claims, claimsOwner: work.claimsOwner,
+      inFlight: work.jobs.map(j => ({ id: j.id, state: j.state })), handoffs: data.history.filter(h => h.seatId === seat.id).slice(-20), adapter: await adapter.status() };
   }));
   const output = { schema: 'phantom-bot-seats.v1' as const, seats };
   assertMetadata(JSON.stringify({ ...output, seats: output.seats.map(s => ({ ...s, handoffs: s.handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
