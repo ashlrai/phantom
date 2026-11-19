@@ -309,6 +309,12 @@ export function recordLedgerUsage(runsDir: string, ledger: ResourceLedgerV1, now
   return run;
 }
 
+/** Stored readings for the burn rate (`phm pools`): read-only, empty when the file is absent or damaged. */
+export async function readUsageSamples(opts: { runsDir?: string; nowMs?: number } = {}): Promise<UsageReading[]> {
+  const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
+  return parseUsageHistory(await readHistoryFile(usageHistoryPath(runsDir)), opts.nowMs ?? Date.now());
+}
+
 /** Take a fresh ledger reading (recording it), then project every pool's current window. */
 export async function readUsageHistory(opts: { runsDir?: string; now?: () => number; pool?: string } = {}): Promise<UsageHistoryV1> {
   const runsDir = opts.runsDir ?? join(homedir(), '.ashlr-runs');
