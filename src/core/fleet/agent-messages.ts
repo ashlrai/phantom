@@ -14,6 +14,8 @@ export const AGENT_MESSAGE_KINDS = ['ask', 'reply', 'handoff', 'status', 'blocke
 export type AgentMessageKind = typeof AGENT_MESSAGE_KINDS[number];
 export const AGENT_MESSAGES_MAX_LIMIT = 1024;
 export const AGENT_MESSAGES_DEFAULT_LIMIT = 50;
+/** Conversation key prefix for messages about one job (`job:<jobId>`). */
+export const JOB_THREAD_PREFIX = 'job:';
 const SUMMARY_MAX = 160;
 
 export interface AgentRef { name: string; lane: string | null }
@@ -61,6 +63,40 @@ function bodyText(body: Body | null): string | null {
   return str(body.text) ?? str(peer?.text) ?? str(value?.text) ?? str(body.prompt) ?? str(body.reason) ?? str(body.summary) ?? str(body.title);
 }
 
+/** v2 work bodies carry their payload in typed fields, not free text; compose
+ * the one-line read from them. claim tokens, queueId and receiptId stay out. */
+function workText(body: Body | null): string | null {
+  if (!body) return null;
+  const kind = str(body.kind);
+  if (kind === 'work.status') {
+    const status = str(body.status), detail = str(body.detail);
+    return status === null ? detail : detail === null ? status : `${status}: ${detail}`;
+  }
+  if (kind === 'work.result') {
+    const outcome = str(body.outcome), reason = str(body.reason);
+    return outcome === null ? reason : reason === null ? outcome : `${outcome}: ${reason}`;
+  }
+  if (kind === 'work.claim' || kind === 'work.release') {
+    const op = kind === 'work.release' ? 'release' : str(body.op);
+    const key = str(body.claimKey), outcome = str(body.outcome);
+    const head = [op, key].filter((part): part is string => part !== null).join(' ');
+    if (head === '') return outcome;
+    return outcome === null ? head : `${head}: ${outcome}`;
+  }
+  return null;
+}
+
+/** The job a body belongs to: its own `jobId`, else the newest `work.post` in
+ * the scan listing its `claimKey` (work.claim renew and work.release carry no
+ * jobId). Real fields only; no match means no job, never a guess. */
+function jobIdOf(body: Body | null, jobByClaim: ReadonlyMap<string, string>): string | null {
+  if (!body) return null;
+  const direct = str(body.jobId);
+  if (direct !== null) return direct;
+  const key = str(body.claimKey);
+  return key === null ? null : jobByClaim.get(key) ?? null;
+}
+
 /** Map the bus's open-ended body kinds onto five plain words. */
 export function classify(envelope: BusInboxReceipt['envelope'], body: Body | null): AgentMessageKind {
   const kind = (str(body?.kind) ?? '').toLowerCase();
@@ -69,8 +105,9 @@ export function classify(envelope: BusInboxReceipt['envelope'], body: Body | nul
   const has = (...words: string[]) => words.some(word => tokens.has(word));
   const peerKind = str(record(body?.peer)?.kind);
   const status = (str(body?.status) ?? '').toLowerCase();
+  const outcome = (str(body?.outcome) ?? '').toLowerCase();
   if (envelope.channel === 'handoff' || has('handoff', 'assignment') || peerKind === 'handoff') return 'handoff';
-  if (has('blocked', 'blocker', 'escalation', 'failed', 'incident') || ['blocked', 'failed'].includes(status)) return 'blocker';
+  if (has('blocked', 'blocker', 'escalation', 'failed', 'incident') || ['blocked', 'failed'].includes(status) || outcome === 'failed') return 'blocker';
   if (has('reply', 'result', 'ack', 'exit') || str(body?.replyTo) || str(body?.inReplyTo)) return 'reply';
   if (['task', 'review', 'query'].includes(peerKind ?? '') || kind === 'work.post' || kind.endsWith('owner-message')
     || has('interjection', 'request', 'ask', 'question')) return 'ask';
@@ -79,16 +116,17 @@ export function classify(envelope: BusInboxReceipt['envelope'], body: Body | nul
 
 const JOB = /\b((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})\b/;
 const PR = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#|\/pull\/)([1-9][0-9]{0,8})\b|(?:^|[\s(])#([1-9][0-9]{0,8})\b/;
-function related(body: Body | null, text: string): { job: string | null; pr: string | null } {
-  const fields = body ? [body.rq, body.taskId, body.jobId, body.job, ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : [])] : [];
+function related(body: Body | null, text: string, jobId: string | null): { job: string | null; pr: string | null } {
+  const fields = body ? [body.rq, body.taskId, body.jobId, jobId, body.job, ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : [])] : [jobId];
   const haystack = [...fields.filter((v): v is string => typeof v === 'string'), text].join(' ');
   const job = JOB.exec(haystack)?.[1] ?? null;
   const pr = PR.exec(haystack);
   return { job: job && oneLine(job), pr: pr ? oneLine(pr[1] ? `${pr[1]}#${pr[2]}` : `#${pr[3]}`) : null };
 }
 
-function threadKey(body: Body | null): string | null {
-  return str(body?.thread) ?? str(body?.threadId) ?? str(record(body?.peer)?.threadId) ?? str(body?.origin);
+function threadKey(body: Body | null, jobId: string | null): string | null {
+  return str(body?.thread) ?? str(body?.threadId) ?? str(record(body?.peer)?.threadId)
+    ?? (jobId === null ? null : `${JOB_THREAD_PREFIX}${jobId}`) ?? str(body?.origin);
 }
 
 /** Pure projection, oldest-to-newest input in, newest-first messages out. */
@@ -97,21 +135,35 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
   const conversations = new Map<string, string>();
   const vendors = new Map<string, string>();
   for (const { envelope } of rows) if (envelope.sender && envelope.sender.agent_id === envelope.from) vendors.set(envelope.from, envelope.sender.vendor);
+  const sorted = [...rows].sort((a, b) => a.receivedAt - b.receivedAt || a.cursor - b.cursor);
+  // work.claim renew and work.release carry a claimKey, not a jobId; the newest
+  // work.post in the scan listing that key owns the thread.
+  const jobByClaim = new Map<string, string>();
+  for (const { envelope } of sorted) {
+    const body = record(envelope.body);
+    if (str(body?.kind) !== 'work.post') continue;
+    const jobId = str(body?.jobId);
+    if (jobId === null || !Array.isArray(body?.claimKeys)) continue;
+    for (const key of body.claimKeys) {
+      const claimKey = str(key);
+      if (claimKey !== null) jobByClaim.set(claimKey, jobId);
+    }
+  }
   const conversationOf = (row: BusInboxReceipt, depth = 0): string => {
     const known = conversations.get(row.envelope.id);
     if (known) return known;
     const body = record(row.envelope.body);
     const parentId = str(body?.replyTo) ?? str(body?.inReplyTo);
     const parent = parentId ? byId.get(parentId) : undefined;
-    const key = threadKey(body) ?? (parent && parent !== row && depth < 50 ? conversationOf(parent, depth + 1)
+    const key = threadKey(body, jobIdOf(body, jobByClaim)) ?? (parent && parent !== row && depth < 50 ? conversationOf(parent, depth + 1)
       : `pair:${[agentName(row.envelope.from), agentName(row.envelope.to)].sort().join('|')}`);
     conversations.set(row.envelope.id, key);
     return key;
   };
-  const sorted = [...rows].sort((a, b) => a.receivedAt - b.receivedAt || a.cursor - b.cursor);
   return sorted.map(row => {
     const { envelope } = row, body = record(envelope.body);
-    const raw = bodyText(body) ?? str(body?.kind) ?? (typeof envelope.body === 'string' ? envelope.body : null);
+    const jobId = jobIdOf(body, jobByClaim);
+    const raw = workText(body) ?? bodyText(body) ?? str(body?.kind) ?? (typeof envelope.body === 'string' ? envelope.body : null);
     const summary = raw ? clip(oneLine(raw)) : '';
     const from = agentName(envelope.from), to = agentName(envelope.to);
     return {
@@ -119,7 +171,7 @@ export function projectAgentMessages(rows: readonly BusInboxReceipt[]): AgentMes
       from: { name: from, lane: laneOf(from, vendors.get(envelope.from) ?? null) },
       to: { name: to, lane: laneOf(to, vendors.get(envelope.to) ?? null) },
       kind: classify(envelope, body), summary: summary || 'No text.', conversation: oneLine(conversationOf(row)),
-      ...related(body, raw ?? ''),
+      ...related(body, raw ?? '', jobId),
     };
   }).reverse();
 }

@@ -92,6 +92,59 @@ describe('phm messages projection', () => {
     expect(parsed.messages.map(m => [m.id, m.kind])).toEqual([['k2', 'status'], ['k1', 'blocker']]);
   });
 
+  it('summarizes v2 work bodies from typed fields, threads them by job, never prints tokens', () => {
+    const root = store();
+    post(root, T0, { id: 'w1', from: 'peer-a', to: 'peer-b',
+      body: { kind: 'work.post', jobId: 'RQ-PEER1', title: 'Fix the parser', repo: 'ashlrai/phantom', provider: 'devin',
+        claimKeys: ['repo:ashlrai/phantom', 'queue:peer-work-abc'],
+        dispatch: { tier: 'work', scope: 'scope text', acceptance: 'acceptance text' } } });
+    post(root, T0 + 1_000, { id: 'w2', from: 'peer-b', to: 'peer-a',
+      body: { kind: 'work.result', jobId: 'RQ-PEER1', claimKey: 'queue:peer-work-abc',
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        outcome: 'admitted' } });
+    post(root, T0 + 2_000, { id: 'w3', from: 'peer-b', to: 'peer-a',
+      body: { kind: 'work.result', jobId: 'RQ-PEER1', claimKey: 'queue:peer-work-abc',
+        queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        outcome: 'failed', reason: 'repo-not-allowed' } });
+    post(root, T0 + 3_000, { id: 'w4', from: 'peer-a', to: 'peer-b',
+      body: { kind: 'work.status', jobId: 'RQ-PEER1', status: 'blocked', detail: 'waiting on review' } });
+    post(root, T0 + 4_000, { id: 'w5', from: 'peer-b', to: 'peer-a',
+      body: { kind: 'work.claim', op: 'acquire', jobId: 'RQ-PEER1', claimKey: 'repo:ashlrai/phantom', owner: 'peer-b', leaseMs: 60_000 } });
+    post(root, T0 + 5_000, { id: 'w6', from: 'peer-b', to: 'peer-a',
+      body: { kind: 'work.claim', op: 'renew', claimKey: 'repo:ashlrai/phantom', token: 'e'.repeat(64), leaseMs: 60_000 } });
+    post(root, T0 + 6_000, { id: 'w7', from: 'peer-a', to: 'peer-b',
+      body: { kind: 'work.release', claimKey: 'repo:ashlrai/phantom', token: 'f'.repeat(64), outcome: 'released' } });
+    const result = read(root);
+    const byId = new Map(result.messages.map(m => [m.id, m]));
+    expect(byId.get('w1')).toMatchObject({ kind: 'ask', summary: 'Fix the parser', job: 'RQ-PEER1', conversation: 'job:RQ-PEER1' });
+    expect(byId.get('w2')).toMatchObject({ kind: 'reply', summary: 'admitted', conversation: 'job:RQ-PEER1', job: 'RQ-PEER1' });
+    expect(byId.get('w3')).toMatchObject({ kind: 'blocker', summary: 'failed: repo-not-allowed', conversation: 'job:RQ-PEER1', job: 'RQ-PEER1' });
+    expect(byId.get('w4')).toMatchObject({ kind: 'blocker', summary: 'blocked: waiting on review', conversation: 'job:RQ-PEER1' });
+    expect(byId.get('w5')).toMatchObject({ summary: 'acquire repo:ashlrai/phantom', conversation: 'job:RQ-PEER1' });
+    // work.claim renew and work.release name only a claimKey; the newest post
+    // listing it owns the job thread and the job link.
+    expect(byId.get('w6')).toMatchObject({ summary: 'renew repo:ashlrai/phantom', conversation: 'job:RQ-PEER1', job: 'RQ-PEER1' });
+    expect(byId.get('w7')).toMatchObject({ summary: 'release repo:ashlrai/phantom: released', conversation: 'job:RQ-PEER1', job: 'RQ-PEER1' });
+    // Claim tokens and dispatch internals never reach a summary or the read.
+    const out = JSON.stringify(result);
+    expect(out).not.toContain('e'.repeat(64));
+    expect(out).not.toContain('f'.repeat(64));
+    expect(out).not.toContain('pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  });
+
+  it('keeps unknown work fields honest: no jobId means no job thread, malformed falls back', () => {
+    const root = store();
+    post(root, T0, { id: 'u1', from: 'a', to: 'b', body: { kind: 'work.status', status: 'running' } });
+    post(root, T0 + 1_000, { id: 'u2', from: 'a', to: 'b', body: { kind: 'work.status' } });
+    post(root, T0 + 2_000, { id: 'u3', from: 'a', to: 'b',
+      body: { kind: 'work.result', outcome: 'complete', claimKey: 'repo:ashlrai/phantom' } });
+    const result = read(root);
+    const byId = new Map(result.messages.map(m => [m.id, m]));
+    expect(byId.get('u1')).toMatchObject({ summary: 'running', conversation: 'pair:a|b', job: null });
+    expect(byId.get('u2')).toMatchObject({ summary: 'work.status', conversation: 'pair:a|b' });
+    expect(byId.get('u3')).toMatchObject({ summary: 'complete', kind: 'reply', conversation: 'pair:a|b', job: null });
+  });
+
   it('validates flags and reads relative --since', () => {
     expect(parseSince('15m', T0)).toBe(T0 - 900_000);
     expect(parseSince('2026-11-17T00:00:00Z')).toBe(Date.UTC(2026, 10, 17));

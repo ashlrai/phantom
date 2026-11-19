@@ -10,7 +10,7 @@
  * is kept and read "unknown agent"; a reply to a message that is not on the
  * bus starts its own thread. Names are routing labels, not proven identities.
  */
-import { projectAgentMessages } from './agent-messages.js';
+import { JOB_THREAD_PREFIX, projectAgentMessages } from './agent-messages.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
 import { mapEdgeAgent } from './map-edges.js';
@@ -32,10 +32,13 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
   const raw = new Map(rows.map(row => [row.envelope.id, record(row.envelope.body)]));
   return projectAgentMessages(rows).map(m => {
     const body = raw.get(m.id) ?? null, status = (text(body?.status) ?? '').toLowerCase();
+    const outcome = (text(body?.outcome) ?? '').toLowerCase();
     return {
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
-      state: ['blocked', 'failed'].includes(status) ? 'blocked' : ['done', 'complete', 'completed'].includes(status) ? 'done' : null,
+      thread: m.conversation.startsWith(JOB_THREAD_PREFIX) ? m.conversation : null,
+      state: ['blocked', 'failed'].includes(status) || outcome === 'failed' ? 'blocked'
+        : ['done', 'complete', 'completed'].includes(status) || ['complete', 'completed'].includes(outcome) ? 'done' : null,
       lane: m.from.lane,
     };
   });

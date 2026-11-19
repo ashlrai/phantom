@@ -23,7 +23,12 @@ first, each with `id`, `ts`, `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
 `summary`, `conversation`, `job` and `pr`. Damaged records are skipped and
 counted in `skipped`, never fatal. It reads the same store; it is not a
-second bus.
+second bus. v2 `work.*` bodies summarize their typed fields — `work.status`
+as `status: detail`, `work.result` and `work.release` as `outcome: reason`,
+`work.claim` as `op claimKey` — and messages about one `jobId` share a
+`job:<jobId>` conversation; a claim or release that names only a `claimKey`
+joins the newest `work.post` in the read listing that key. Claim tokens and
+dispatch ids never appear in a summary.
 
 ## Write
 

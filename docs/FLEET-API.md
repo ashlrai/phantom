@@ -492,7 +492,10 @@ compute scene draws its message lines at the same thickness.
 
 `phm agents conversations [--agent <name>] [--waiting] [--json]` groups the
 same bus read into threads by reply chain, longest-waiting first and then
-newest first. `--json` prints `agents.conversations.v1` (`version` 1), and
+newest first. Messages about one v2 job — a `work.post`, its `work.status`,
+`work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
+claim-key-only body the post lists — form one `job:<id>` thread even without
+replies, and a `failed` or `complete` outcome marks it blocked or done. `--json` prints `agents.conversations.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
 serves the same read with a current read session.
 

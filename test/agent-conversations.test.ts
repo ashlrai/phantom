@@ -88,6 +88,45 @@ const CHAT: [number, string, string, string, Record<string, unknown>][] = [
   [T0 + 2 * MIN, 'm3', 'grok', 'zai', { text: 'need the docs?' }],
 ];
 
+describe('v2 work threads', () => {
+  const WORK: [number, string, string, string, Record<string, unknown>][] = [
+    [T0, 'p1', 'peer-a', 'peer-b', { kind: 'work.post', jobId: 'RQ-PEER9', title: 'Fix the parser', repo: 'ashlrai/phantom',
+      claimKeys: ['repo:ashlrai/phantom', 'queue:peer-work-abc'], dispatch: { tier: 'work', scope: 's', acceptance: 'a' } }],
+    [T0 + MIN, 'p2', 'peer-b', 'peer-a', { kind: 'note', text: 'looking at it', replyTo: 'p1' }],
+    [T0 + 2 * MIN, 'p3', 'peer-b', 'peer-a', { kind: 'work.result', jobId: 'RQ-PEER9', claimKey: 'queue:peer-work-abc',
+      queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      outcome: 'failed', reason: 'tier-ceiling' }],
+    [T0 + 3 * MIN, 'p4', 'peer-c', 'peer-d', { kind: 'work.post', jobId: 'RQ-PEER10', title: 'Docs pass', repo: 'ashlrai/phantom', claimKeys: ['repo:ashlrai/phantom'] }],
+    [T0 + 4 * MIN, 'p5', 'peer-d', 'peer-c', { kind: 'work.result', jobId: 'RQ-PEER10', claimKey: 'repo:ashlrai/phantom',
+      queueId: 'peer-work-cccccccccccccccccccccccccccccccc', receiptId: 'pw-dddddddddddddddddddddddddddddddd',
+      outcome: 'complete' }],
+    [T0 + 5 * MIN, 'p6', 'peer-d', 'peer-c', { kind: 'work.release', claimKey: 'repo:ashlrai/phantom', token: 'a'.repeat(64), outcome: 'completed' }],
+  ];
+
+  it('a job lifecycle is one thread by jobId, replies join it, outcomes set the state', () => {
+    const result = readAgentConversations({}, { root: bus(WORK), now: () => NOW });
+    const threads = Object.fromEntries(result.conversations!.map(c => [c.id, c]));
+    expect(threads['job:RQ-PEER9']).toMatchObject({ messageCount: 3, state: 'blocked', stateText: 'blocked',
+      subject: 'failed: tier-ceiling' });
+    expect(threads['job:RQ-PEER9']!.messages.map(m => m.id)).toEqual(['p1', 'p2', 'p3']);
+    // work.release carries no jobId; the claimKey resolves through the post.
+    expect(threads['job:RQ-PEER10']).toMatchObject({ messageCount: 3, state: 'done' });
+    expect(threads['job:RQ-PEER10']!.messages.map(m => m.id)).toEqual(['p4', 'p5', 'p6']);
+    expect(result.waiting).toBe(0);
+    // Claim tokens never reach the projection.
+    expect(JSON.stringify(result)).not.toContain('a'.repeat(64));
+  });
+
+  it('the pure model buckets an explicit thread key over reply chains', () => {
+    const list = buildConversations([
+      say('a', 'peer-a', 'peer-b', 0, { kind: 'ask', thread: 'job:RQ-X1' }),
+      say('b', 'peer-b', 'peer-a', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'peer-a', 'peer-b', 2, { kind: 'status', thread: 'job:RQ-X2' }),
+    ], NOW);
+    expect(list.map(x => [x.id, x.messageCount]).sort()).toEqual([['job:RQ-X1', 2], ['job:RQ-X2', 1]]);
+  });
+});
+
 describe('phm agents conversations --json', () => {
   it('has a stable shape and reads the bus', () => {
     const result = readAgentConversations({}, { root: bus(CHAT), now: () => NOW });
