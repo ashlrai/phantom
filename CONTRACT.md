@@ -1570,7 +1570,7 @@ no execution authority; the token returns only to its acquirer.
 with a `reason`); they never throw for bad input or storage faults.
 
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
-`sendHandoff`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`), `readAgentInbox(ref, {after, limit}, options?)`,
 `readAgentWakes(ref, sinceAt, options?)`, `shouldWake(priority, requested, handoff?)`
 and `busBodySummary(body)` — a pure, secret-scrubbed read of a bus body for
@@ -1591,7 +1591,12 @@ v2 `work.status` only for a job the feed shows, and only from the identity
 that announced it (resolved through any of its labels). Both read
 `readBusWorkFeed` before appending and propagate a refused, retryable,
 invalid or unavailable feed as a refusal — they never post unchecked and never
-dispatch, claim or execute.
+dispatch, claim or execute. `sendWakeRequest(WakeRequestInput)` posts a
+schema-checked v2 `wake` body to `agent:<handle>` for a registered recipient
+and always records the routing-only wake hint for that same address — the
+body's purpose is the hint, so `wake: false` is refused — with `reason` capped
+at 512 characters and an optional `jobId` that only threads the message, never
+a feed lookup.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,

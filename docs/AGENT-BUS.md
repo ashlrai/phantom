@@ -151,6 +151,7 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 | DM | `agent:<handle>` | `bus` | v2 `note` |
 | Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
+| Wake request | `agent:<handle>` | `bus` | v2 `wake` (`target`, `reason`, optional `jobId`) |
 
 `phm fleet handoff-receive` and `phm fleet handoff-reply` run one retained
 `worker-handoff` for the caller's `--to`. The flag names the recipient
@@ -175,6 +176,19 @@ the wake, which the queue deduplicates, so a failed wake is recovered without
 a second message. The file is capped (2 MiB by default); an append past the
 cap compacts it to the newest complete hints inside the 256 KiB window readers
 observe, so a busy bus keeps waking rather than reporting every wake failed.
+
+**Wake requests.** `phm agents bus wake --to <agent> --reason <text> [--job <id>]`
+posts a v2 `wake` body — the one body kind that is itself a request to look at
+the bus. The mail lands in the target's inbox like a DM, and the post always
+records the same routing-only hint for its addressee through the post-accept
+hook: the body's purpose is the hint, so the verb has no `--wake`/`--no-wake`
+(a `wake: false` send is refused, not ignored). `target` repeats the
+`agent:<handle>` address so body and hint name the same agent under every
+label `wakes` matches. `reason` is capped at 512 characters by the contract;
+`--job` names the job the wake concerns and joins its thread in the message
+projections — it is threading metadata, never a feed lookup, so a wake needs
+no announced job and reads no feed before posting. Like every send it is
+untrusted data: a wake is a hint to read the inbox and grants no authority.
 
 **Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
 posts in the agent's channels (minus its own) and traffic still addressed to
