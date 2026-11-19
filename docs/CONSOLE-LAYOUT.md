@@ -79,7 +79,14 @@ Home's Merged PRs card opens the Throughput pane. It leads with the report's
 headline and a Delivery flow chart: jobs launched, PRs published and PRs merged
 in the window, each with its exact count and its share of the step before. The
 counts are what happened inside the window, not one batch followed through, and
-the chart says so. Pick 6 hours, 24 hours (the default) or 7 days; each choice
+the chart says so. Above it a row of figures gives launched, published, merged,
+the share of finished jobs that changed nothing and the median time to merge,
+each over a line of its own hours, with the busiest hour named. Under the two
+hourly charts each lane has a card: the provider's mark, its merged count, a bar
+against the lane that merged most, its merges hour by hour and its launched,
+published, merge time and changed-nothing readings. A figure the report does
+not hold reads unknown and has no line under it.
+Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.

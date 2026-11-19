@@ -11,3 +11,8 @@
 .main[data-main='red']::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
 .main[data-main='red'] { color: var(--status-danger-fg); }
 .note[data-stale] { color: var(--status-warning-fg); }
+/* The two hourly charts sit side by side when the pane is wide enough for both. */
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: var(--space-3); }
+.pair > * { min-width: 0; }
+.unread { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.unread .meta { margin-top: 0; }
