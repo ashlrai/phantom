@@ -1375,6 +1375,26 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
 
+`phantom.inventory.v1` (`src/core/fleet/inventory.ts`, wire types in
+`inventory-schema.ts`): `buildInventory(sources)`, `readInventory({ home?,
+runsDir?, now?, readers? })`, `filterInventory(inventory, kind)` and
+`formatInventory(inventory)`. Everything the install can use in one list, joined
+from the channels overview, the connector profile, the plugins and skills
+panels, tool parity and the shared tool registry. Each item is `{ kind:
+channel|connector|plugin|skill|tool, id, name, state: ready|needs setup|off|
+error|unknown, detail, lastChecked, usedByLanes: string[]|all|unknown, next:
+{ text, command }|null }`. A source that cannot be read (null) yields one
+`unknown` row, never a guess. `counts` and `kinds[].counts` total the five
+states. `parity` compares every lane (`ORG_LANES`, then any other lane a source
+names) against each tool and connector that is not off: `{ compared, widestGap,
+lanes: [{ lane, has, lacks, unknown, gap }] }`. No credential name or value is
+included; connectors report only how many credential names they list. Read-only.
+Served by `phm inventory [--kind K] [--json]` and
+`GET /api/verse/fleet/runs/inventory[?kind=K]` (400 for an unknown kind) for the
+desktop Inventory pane. `installed-panels.ts` now exports
+`INVALID_MANIFEST_AGENTS` and `LEARNED_SKILLS_SOURCE`, and
+`connectors/mesh.ts` exports `executableAvailability(command, path)`.
+
 `tools.matrix.v1` (`src/core/fleet/tool-parity.ts`): `buildToolMatrix(report, lane?)`,
 `formatToolMatrix(matrix, lane?)` and `loadToolParity({ runsDir?, home?, readers? })`.
 Which lane has which tool. Rows are capabilities (GitHub read/write, web search,

@@ -18,6 +18,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-direct` | Direct | none | `src/web-ui/routes/verse/fleet-direct/fleet-direct.pane.tsx` |
 | `fleet-dispatch` | Dispatch | — | `src/web-ui/routes/verse/fleet-dispatch/fleet-dispatch.pane.tsx` |
 | `fleet-events` | Fleet events | `mod+alt+e` | `src/web-ui/routes/verse/fleet-events/fleet-events.pane.tsx` |
+| `fleet-inventory` | Inventory | none | `src/web-ui/routes/verse/inventory/inventory.pane.tsx` |
 | `fleet-forum` | Forum | none | `src/web-ui/routes/verse/fleet-forum/fleet-forum.pane.tsx` |
 | `fleet-goals` | Goals | — | `src/web-ui/routes/verse/fleet-goals/fleet-goals.pane.tsx` |
 | `fleet-graph` | Graph | — | `src/web-ui/routes/verse/fleet-graph/fleet-graph.pane.tsx` |
