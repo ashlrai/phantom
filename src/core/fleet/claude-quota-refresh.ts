@@ -25,6 +25,56 @@ export function findClaude(pathEnv = process.env.PATH ?? ''): string | null {
   return null;
 }
 
+export type PeriodicClaudeQuotaState = 'planned' | 'skipped-fresh' | 'probed' | 'unavailable';
+export interface PeriodicClaudeQuotaReport {
+  state: PeriodicClaudeQuotaState;
+  /** Only meaningful for 'planned' (dry-run): whether --apply would probe. */
+  wouldProbe?: boolean;
+  /** The all-models weekly percentage from a fresh structured reading; null means unknown, never 0. */
+  weeklyPct: number | null;
+  observedAt: string | null;
+  reason: string;
+}
+
+/**
+ * The self-tick quota stage: keeps the weekly reading current whether or not
+ * the lane is held. A persisted reading younger than maxAgeMs (default 30 min)
+ * is a cooldown and spawns nothing. A malformed, stale or future-dated reading
+ * never suppresses a refresh (readClaudeQuotaReading drops the malformed ones;
+ * a negative age is not fresh), so a bad clock cannot freeze the ledger.
+ * Dry-run (`apply` false) reads only: no command lookup, no probe, no write.
+ * Never throws; a failed probe is stored as a not-fresh reading with no
+ * windows, which stays unknown rather than 0% used.
+ */
+export async function refreshClaudeQuotaPeriodically(opts: {
+  runsDir: string; now: () => number; apply: boolean; probe?: Probe; findCommand?: () => string | null; maxAgeMs?: number;
+}): Promise<PeriodicClaudeQuotaReport> {
+  const unknown = (state: PeriodicClaudeQuotaState, reason: string, extra: Partial<PeriodicClaudeQuotaReport> = {}): PeriodicClaudeQuotaReport =>
+    ({ state, weeklyPct: null, observedAt: null, reason, ...extra });
+  try {
+    const nowMs = opts.now();
+    const existing = await readClaudeQuotaReading(opts.runsDir);
+    const age = existing ? nowMs - Date.parse(existing.observedAt) : Number.NaN;
+    const weeklyOf = (r: typeof existing) => r?.fresh ? (r.windows.find(w => w.id === 'seven_day')?.usedPct ?? null) : null;
+    if (existing && age >= 0 && age < (opts.maxAgeMs ?? DEFAULT_MAX_AGE_MS)) {
+      return { state: 'skipped-fresh', weeklyPct: weeklyOf(existing), observedAt: existing.observedAt, reason: existing.reason };
+    }
+    if (!opts.apply) return unknown('planned', 'dry-run', { wouldProbe: true });
+    const command = (opts.findCommand ?? findClaude)();
+    if (!command) return unknown('unavailable', 'claude-not-found');
+    const observedAt = new Date(nowMs).toISOString();
+    // A throwing probe is stored as the same unknown reading a failed one is, so
+    // the cooldown holds and the held-lane refresh after us cannot probe again.
+    const reading = await (opts.probe ?? probeClaudeAccountUsage)({ command: [command], cwd: opts.runsDir, timeoutMs: 20_000 })
+      .then(result => toClaudeQuotaReading(result, observedAt),
+        (): ReturnType<typeof toClaudeQuotaReading> => ({ v: 1, observedAt, reason: 'probe-failed', fresh: false, windows: [] }));
+    await writeClaudeQuotaReading(opts.runsDir, reading);
+    return { state: reading.fresh ? 'probed' : 'unavailable', weeklyPct: weeklyOf(reading), observedAt: reading.observedAt, reason: reading.reason };
+  } catch {
+    return unknown('unavailable', 'probe-or-write-failed');
+  }
+}
+
 export async function refreshHeldClaudeQuota(opts: {
   runsDir: string; now: () => number; probe?: Probe; findCommand?: () => string | null; maxAgeMs?: number;
 }): Promise<ClaudeProbeOutcome> {
