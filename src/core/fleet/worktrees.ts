@@ -15,7 +15,8 @@
  * remover and the removal log are injectable so tests never touch real repos.
  */
 import { execFile } from 'node:child_process';
-import { appendFile, lstat, mkdir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { appendFile, lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -25,6 +26,12 @@ import { readWtAudit, type WtAuditDeps, type WtAuditEntry, type WtAuditState } f
 export const WORKTREES_SAFE_AGE_HOURS = 6;
 /** Fleet warning level for job worktrees on one host. */
 export const WORKTREES_WARN_AT = 40;
+/** Safe worktrees with no reaper run for this long mean the reaper is stale. */
+export const REAPER_STALE_HOURS = 24;
+/** A publisher/reaper marker older than this with no finish is a stuck run. */
+export const STUCK_RUN_HOURS = 6;
+const REAP_LOG_TAIL_BYTES = 64 * 1024;
+const REAP_BATCH_MS = 10 * 60_000;
 const CLEAN_CHECK_BUDGET_MS = 60_000;
 const MEASURE_BUDGET_MS = 20_000;
 const CLEAN_CHECK_CONCURRENCY = 4;
@@ -57,6 +64,28 @@ export interface WorktreeRemoval {
   reason?: 'state-changed' | 'uncommitted-changes' | 'unsafe-path' | 'git-remove-failed';
 }
 
+export type ReaperReason =
+  | 'nothing-to-reap' | 'ran-recently' | 'never-ran' | 'last-run-old' | 'last-run-failed'
+  | 'stuck-run' | 'sources-unreadable' | 'log-unreadable';
+
+/** Read-only reaper diagnostics: is removal keeping up with what is eligible? */
+export interface ReaperHealth {
+  /** healthy: nothing waits or the reaper ran lately; stale: eligible work is waiting on a reaper that is not running; unknown: evidence unreadable. */
+  state: 'healthy' | 'stale' | 'unknown';
+  reason: ReaperReason;
+  /** Newest removal attempt in queue/worktree-reap.jsonl; null when none. */
+  lastRunAt: string | null;
+  lastRunAgeHours: number | null;
+  /** Outcomes of the newest batch of attempts (those within 10 minutes of the last one). */
+  lastRun: { removed: number; refused: number; failed: number } | null;
+  /** Safe-to-remove jobs (merged or empty, clean, old enough, unprotected). Never includes live, open, kept or dirty ones. */
+  eligible: string[];
+  /** Jobs whose publisher/reaper marker is older than 6 hours: diagnosed, never removed. */
+  stuckRuns: string[];
+  /** One plain next step, or null when nothing is needed. */
+  next: string | null;
+}
+
 export interface WorktreesReport {
   schema: 'worktrees.v1';
   generatedAt: string;
@@ -69,6 +98,7 @@ export interface WorktreesReport {
   reclaimableComplete: boolean;
   mode: 'list' | 'dry-run' | 'apply';
   rows: WorktreeRow[];
+  reaper: ReaperHealth;
   removals?: WorktreeRemoval[];
 }
 
@@ -81,6 +111,8 @@ export interface WorktreesDeps extends Pick<WtAuditDeps, 'fs' | 'readJobs' | 'ps
   /** true/false from `git status`; null when it could not be read. */
   isClean?: (path: string) => Promise<boolean | null>;
   measure?: (path: string) => WorktreeMeasurement | Promise<WorktreeMeasurement>;
+  /** Reaper removal log; 'missing' when it was never written, 'unreadable' on any other failure. */
+  readReapLog?: (runsRoot: string) => Promise<{ state: 'ok' | 'missing' | 'unreadable'; text: string }>;
   /** Removes one worktree with `git worktree remove` (never --force). */
   remove?: (path: string, wtRoot: string) => Promise<void>;
   /** Records one removal attempt; default appends to queue/worktree-reap.jsonl. */
@@ -129,6 +161,64 @@ async function defaultRemove(path: string, wtRoot: string): Promise<void> {
   await run('git', ['-C', path, 'worktree', 'remove', '--', path], { timeout: 60_000, maxBuffer: 64 * 1024 });
 }
 
+async function defaultReadReapLog(runsRoot: string): ReturnType<NonNullable<WorktreesDeps['readReapLog']>> {
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    file = await open(join(runsRoot, 'queue', 'worktree-reap.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await file.stat();
+    if (!info.isFile()) return { state: 'unreadable', text: '' };
+    const length = Math.min(info.size, REAP_LOG_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await file.read(buffer, 0, length, info.size - length);
+    return { state: 'ok', text: buffer.subarray(0, bytesRead).toString('utf8') };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable', text: '' };
+  } finally { await file?.close().catch(() => undefined); }
+}
+
+/** Newest removal batch from the log tail; skips a cut first line and bad rows. */
+export function parseReapLog(text: string): { lastAt: number; lastRun: NonNullable<ReaperHealth['lastRun']> } | null {
+  const rows: Array<{ at: number; status: string }> = [];
+  for (const line of text.split('\n')) {
+    try {
+      const row = JSON.parse(line) as { at?: unknown; status?: unknown };
+      const at = typeof row.at === 'string' ? Date.parse(row.at) : NaN;
+      if (Number.isFinite(at) && typeof row.status === 'string') rows.push({ at, status: row.status });
+    } catch { /* blank, partial or foreign line */ }
+  }
+  if (rows.length === 0) return null;
+  const lastAt = Math.max(...rows.map(r => r.at));
+  const lastRun = { removed: 0, refused: 0, failed: 0 };
+  for (const r of rows) {
+    if (lastAt - r.at <= REAP_BATCH_MS && (r.status === 'removed' || r.status === 'refused' || r.status === 'failed')) lastRun[r.status]++;
+  }
+  return { lastAt, lastRun };
+}
+
+/** Pure verdict from evidence. A healthy run (recent attempt, or nothing waiting) never reads as stale. */
+export function assessReaper(input: {
+  now: number; sourcesOk: boolean; eligible: string[]; stuckRuns: string[];
+  log: { state: 'ok' | 'missing' | 'unreadable'; text: string };
+}): ReaperHealth {
+  const { now, eligible, stuckRuns } = input;
+  const parsed = input.log.state === 'ok' ? parseReapLog(input.log.text) : null;
+  const lastRunAgeHours = parsed ? Math.max(0, Math.round(((now - parsed.lastAt) / 3_600_000) * 10) / 10) : null;
+  const apply = '`phm worktrees --reap --apply`';
+  const make = (state: ReaperHealth['state'], reason: ReaperReason, next: string | null): ReaperHealth => ({
+    state, reason,
+    lastRunAt: parsed ? new Date(parsed.lastAt).toISOString() : null,
+    lastRunAgeHours, lastRun: parsed?.lastRun ?? null, eligible, stuckRuns, next,
+  });
+  if (!input.sourcesOk) return make('unknown', 'sources-unreadable', 'Fix the unreadable records first; nothing is marked safe until they read.');
+  if (stuckRuns.length) return make('stale', 'stuck-run', `Check ${stuckRuns.join(', ')}: the publisher marker is over ${STUCK_RUN_HOURS} hours old. It is never removed automatically.`);
+  if (eligible.length === 0) return make('healthy', 'nothing-to-reap', null);
+  if (input.log.state === 'unreadable') return make('unknown', 'log-unreadable', 'The reap log could not be read; run ' + apply + ' to reap now.');
+  if (!parsed) return make('stale', 'never-ran', `${eligible.length} safe to remove and the reaper has never run. Run ${apply}.`);
+  if (lastRunAgeHours! >= REAPER_STALE_HOURS) return make('stale', 'last-run-old', `${eligible.length} safe to remove and the reaper last ran ${Math.round(lastRunAgeHours!)} hours ago. Run ${apply}.`);
+  if (parsed.lastRun.removed === 0 && parsed.lastRun.failed > 0) return make('stale', 'last-run-failed', `The last reaper run removed nothing and ${parsed.lastRun.failed} failed. Check git, then run ${apply}.`);
+  return make('healthy', 'ran-recently', null);
+}
+
 const defaultRunsRoot = (): string => process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
 const defaultWtRoot = (): string => process.env['ASHLR_WT_DIR'] ?? join(homedir(), 'Projects', 'ashlrai', 'wt');
 
@@ -174,17 +264,26 @@ export async function readWorktrees(mode: WorktreesReport['mode'] = 'list', deps
   const counts = { total: rows.length, safe: 0, live: 0, merged: 0, empty: 0, open: 0, kept: 0, unknown: 0 };
   for (const row of rows) { counts[row.state]++; if (row.safe) counts.safe++; }
   const s = audit.sources;
+  const sourcesOk = s.worktrees === 'healthy' && s.runs === 'healthy' && s.jobs === 'healthy' && s.ps === 'healthy'
+    && s.pins === 'valid' && ![s.queue, s.keep, s.run, s.status].includes('degraded');
+  const stuckRuns = audit.worktrees
+    .filter(e => (e.state === 'reaping' || e.state === 'publishing') && e.ageHours !== null && e.ageHours >= STUCK_RUN_HOURS)
+    .map(e => e.name).sort();
+  const reaper = assessReaper({
+    now, sourcesOk, stuckRuns, eligible: rows.filter(r => r.safe).map(r => r.job),
+    log: await (deps.readReapLog ?? defaultReadReapLog)(runsRoot).catch(() => ({ state: 'unreadable' as const, text: '' })),
+  });
   const report: WorktreesReport = {
     schema: 'worktrees.v1',
     generatedAt: new Date(now).toISOString(),
-    sourcesOk: s.worktrees === 'healthy' && s.runs === 'healthy' && s.jobs === 'healthy' && s.ps === 'healthy'
-      && s.pins === 'valid' && ![s.queue, s.keep, s.run, s.status].includes('degraded'),
+    sourcesOk,
     warnAt: WORKTREES_WARN_AT,
     counts,
     reclaimableBytes,
     reclaimableComplete,
     mode,
     rows,
+    reaper,
   };
   if (mode === 'apply') {
     // Git checks can take a while; a job relaunched or kept since then must win.
@@ -272,6 +371,10 @@ export function formatWorktrees(report: WorktreesReport): string[] {
     lines.push(`${c.total} job worktrees (warning at ${report.warnAt}): ${WORKTREE_STATES.filter(s => c[s]).map(s => `${c[s]} ${STATE_WORDS[s]}`).join(', ')}.`);
   }
   lines.push(`Safe to remove: ${c.safe} (${formatBytes(report.reclaimableBytes)}${report.reclaimableComplete ? '' : ' or more'}).`);
+  const r = report.reaper;
+  const last = r.lastRunAt === null ? 'never ran' : `last ran ${Math.round(r.lastRunAgeHours!)} h ago`;
+  if (r.reason !== 'nothing-to-reap') lines.push(`Reaper: ${r.state} (${last}).`);
+  if (r.next) lines.push(r.next);
   if (!report.sourcesOk) lines.push('Some records could not be read, so nothing is marked safe to remove.');
   for (const removal of report.removals ?? []) {
     lines.push(`${removal.job}: ${removal.status}${removal.reason ? ` (${removal.reason.replace(/-/g, ' ')})` : ''}.`);

@@ -25,15 +25,15 @@ const JOBS: Record<string, { rows: unknown[]; mtimeHours?: number }> = {
   'RQ-LIVEMERGED': { rows: merged('RQ-LIVEMERGED') },
 };
 
-interface Host { jobs?: typeof JOBS; keep?: string; pinsValid?: boolean; dirty?: Set<string> }
+interface Host { jobs?: typeof JOBS; keep?: string; pinsValid?: boolean; dirty?: Set<string>; runEntries?: string[] }
 
 /** Fully readable fake host; every reader, the clean check, the remover and the log are spies. */
-function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']) }: Host = {}) {
+function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']), runEntries = [] }: Host = {}) {
   const names = ['guardian-claude', ...Object.keys(jobs)];
   const files: Record<string, string> = { [`${RUNS}/queue/status.json`]: '{}', [`${RUNS}/queue/keep.txt`]: keep };
   const fs: WtAuditFs = {
     dirs: async path => (path === WT ? [...names] : []),
-    entries: async path => (path === RUNS ? ['queue', 'metrics'] : path === `${RUNS}/queue` ? ['status.json', 'keep.txt', 'run'] : path === `${RUNS}/queue/run` ? [] : null),
+    entries: async path => (path === RUNS ? ['queue', 'metrics'] : path === `${RUNS}/queue` ? ['status.json', 'keep.txt', 'run'] : path === `${RUNS}/queue/run` ? runEntries : null),
     text: async path => files[path] ?? null,
     mtime: async path => {
       const name = path.slice(WT.length + 1);
@@ -50,6 +50,7 @@ function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new S
     measure: vi.fn(() => ({ bytes: 2e9, complete: true })),
     remove: vi.fn(async () => undefined),
     logRemoval: vi.fn(async () => undefined),
+    readReapLog: vi.fn(async () => ({ state: 'missing' as const, text: '' })),
   } satisfies WorktreesDeps;
   return deps;
 }
@@ -111,7 +112,7 @@ describe('phm worktrees list', () => {
     const first = JSON.stringify(await readWorktrees('list', host()));
     expect(JSON.stringify(await readWorktrees('list', host()))).toBe(first);
     const parsed = JSON.parse(first) as WorktreesReport;
-    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows']);
+    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows', 'reaper']);
     expect(Object.keys(parsed.rows[0]!)).toEqual(['job', 'repo', 'state', 'ageHours', 'bytes', 'clean', 'safe', 'hold']);
     expect(parsed).toMatchObject({ schema: 'worktrees.v1', generatedAt: '2026-11-17T12:00:00.000Z', warnAt: 40, mode: 'list' });
   });
@@ -224,4 +225,70 @@ it('apply re-reads the records first: a job relaunched since the read is refused
   });
   expect(report.removals).toEqual([{ job: 'RQ-EMPTY', status: 'removed' }, { job: 'RQ-MERGED', status: 'refused', reason: 'state-changed' }]);
   expect(deps.remove.mock.calls.map(([path]) => path)).toEqual(['/wt/RQ-EMPTY']);
+});
+
+const logOf = (...rows: Array<[hoursAgo: number, status: string]>) => rows.map(([h, status]) => JSON.stringify({ job: 'RQ-X', status, at: iso(h) })).join('\n');
+const withLog = (text: string, state: 'ok' | 'missing' | 'unreadable' = 'ok') => ({ ...host(), readReapLog: vi.fn(async () => ({ state, text })) });
+
+describe('phm worktrees reaper health', () => {
+  it('reports a recent run as healthy and lists the eligible merged worktrees', async () => {
+    const deps = withLog(logOf([1, 'removed'], [30, 'failed']));
+    const { reaper, rows } = await readWorktrees('list', deps);
+    expect(reaper).toMatchObject({ state: 'healthy', reason: 'ran-recently', lastRunAgeHours: 1, lastRun: { removed: 1, refused: 0, failed: 0 }, stuckRuns: [], next: null });
+    expect(reaper.lastRunAt).toBe(iso(1));
+    expect(reaper.eligible).toEqual(['RQ-EMPTY', 'RQ-MERGED']);
+    // Never lists live, open, kept, dirty, too-new or unknown worktrees.
+    expect(reaper.eligible.every(job => rows.find(r => r.job === job)!.safe)).toBe(true);
+  });
+
+  it('flags a stale reaper: eligible work waiting and the last run is over 24 hours old', async () => {
+    const { reaper } = await readWorktrees('list', withLog(logOf([30, 'removed'])));
+    expect(reaper).toMatchObject({ state: 'stale', reason: 'last-run-old', lastRunAgeHours: 30, eligible: ['RQ-EMPTY', 'RQ-MERGED'] });
+    expect(reaper.next).toContain('phm worktrees --reap --apply');
+  });
+
+  it('flags a reaper that never ran, and one whose newest batch only failed', async () => {
+    expect((await readWorktrees('list', withLog('', 'missing'))).reaper).toMatchObject({ state: 'stale', reason: 'never-ran', lastRunAt: null });
+    const failed = (await readWorktrees('list', withLog(logOf([2, 'failed'], [2, 'refused'])))).reaper;
+    expect(failed).toMatchObject({ state: 'stale', reason: 'last-run-failed', lastRun: { removed: 0, refused: 1, failed: 1 } });
+  });
+
+  it('is healthy with nothing eligible even if the reaper never ran', async () => {
+    const jobs = { 'RQ-OPEN': JOBS['RQ-OPEN']! };
+    const deps = { ...host({ jobs }), readReapLog: async () => ({ state: 'missing' as const, text: '' }) };
+    expect((await readWorktrees('list', deps)).reaper).toMatchObject({ state: 'healthy', reason: 'nothing-to-reap', eligible: [] });
+  });
+
+  it('reports unknown, not stale, when records or the log cannot be read', async () => {
+    expect((await readWorktrees('list', { ...withLog(''), ps: () => null })).reaper).toMatchObject({ state: 'unknown', reason: 'sources-unreadable', eligible: [] });
+    expect((await readWorktrees('list', withLog('', 'unreadable'))).reaper).toMatchObject({ state: 'unknown', reason: 'log-unreadable' });
+  });
+
+  it('diagnoses a stuck publisher marker without touching or listing it for removal', async () => {
+    const jobs = { ...JOBS, 'RQ-STUCK': { rows: merged('RQ-STUCK'), mtimeHours: 10 } };
+    const deps = { ...host({ jobs, runEntries: ['RQ-STUCK.reaping'] }), readReapLog: async () => ({ state: 'ok' as const, text: logOf([1, 'removed']) }) };
+    const report = await readWorktrees('list', deps);
+    expect(report.reaper).toMatchObject({ state: 'stale', reason: 'stuck-run', stuckRuns: ['RQ-STUCK'] });
+    expect(report.reaper.eligible).not.toContain('RQ-STUCK');
+    expect(row(report, 'RQ-STUCK')).toMatchObject({ state: 'live', safe: false, hold: 'live-job' });
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('a read-only list and dry run delete nothing, even when the reaper is stale', async () => {
+    for (const mode of ['list', 'dry-run'] as const) {
+      const deps = withLog('', 'missing');
+      await readWorktrees(mode, deps);
+      expect(deps.remove).not.toHaveBeenCalled();
+      expect(deps.logRemoval).not.toHaveBeenCalled();
+    }
+  });
+
+  it('prints one plain reaper line and next step, and exposes the same data in --json', async () => {
+    const lines = formatWorktrees(await readWorktrees('list', withLog(logOf([30, 'removed']))));
+    expect(lines).toContain('Reaper: stale (last ran 30 h ago).');
+    expect(lines.some(l => l.includes('phm worktrees --reap --apply'))).toBe(true);
+    const logs: string[] = [];
+    await cmdWorktrees(['--json'], { ...withLog(''), output: { log: s => logs.push(s), error: () => undefined } });
+    expect(JSON.parse(logs[0]!).reaper.state).toBe('stale');
+  });
 });
