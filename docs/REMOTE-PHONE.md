@@ -76,6 +76,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 | `/api/verse/fleet/live/bus` | Fleet live bus streams real-time status updates |
 | `/api/verse/fleet/live/drop-jobs` | Fleet drop jobs waiting for a lane |
 | `/api/verse/agent-bus` | Agent bus messages |
+| `/api/verse/agent-bus/needs-mason/asks/batch` | Needs you: the asks only Mason can answer, one tap each (`phm asks list --json`) |
 | `/api/verse/fleet/live/queue` | Fleet live queue shows currently pending items |
 | `/api/verse/fleet/control/switches` | Fleet switches manages toggleable fleet controls |
 | `/api/verse/fleet/control/lanes` | Fleet lanes manages lane routing assignments |
