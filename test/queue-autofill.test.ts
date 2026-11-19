@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdQueueAutofill } from '../src/cli/queue-autofill.js';
 import type { BetsProposal } from '../src/core/fleet/bets-propose.js';
 import { planAutofill, QUEUE_AUTOFILL_SCHEMA } from '../src/core/fleet/queue-autofill.js';
+import { parseFollowUps, STEP_ZERO, SHIP_PARTIAL, type AutofillCandidate } from '../src/core/fleet/autofill-sources.js';
 import { QueueStore } from '../src/core/queue/store.js';
 
 const bet = (n: number): BetsProposal => ({
@@ -97,5 +98,72 @@ describe('phm queue autofill', () => {
   it('rejects a missing lane', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdQueueAutofill([])).toBe(2);
+  });
+});
+
+describe('autofill source order', () => {
+  const pick = (id: string, source: AutofillCandidate['source'], family = 'own*'): AutofillCandidate =>
+    ({ id, repo: 'phantom', goal: `Do the ${id} thing.`, acceptance: 'Acceptance: done.', why: 'Because.', source, family });
+  const plan = (over: Partial<Parameters<typeof planAutofill>[0]> = {}) =>
+    planAutofill({ ...base, min: 6, queued: 0, proposed: proposed(2), ...over });
+
+  it('takes ideas, then follow-ups, then bets, and says where each came from', () => {
+    const r = plan({ first: [pick('RQ-IDEA1', 'idea'), pick('RQ-FOLLOWUP-2', 'follow-up')] });
+    expect(r.drafted.map(d => [d.id, d.source])).toEqual([['RQ-IDEA1', 'idea'], ['RQ-FOLLOWUP-2', 'follow-up'], ['RQ-BET1', 'bet'], ['RQ-BET2', 'bet']]);
+  });
+
+  it('skips a candidate whose family is stopped', () => {
+    const r = plan({ first: [pick('RQ-IDEA1', 'idea', 'dead*'), pick('RQ-IDEA2', 'idea', 'live*')], stoppedFamilies: new Set(['dead*']) });
+    expect(r.drafted.map(d => d.id)).toEqual(['RQ-IDEA2', 'RQ-BET1', 'RQ-BET2']);
+    expect(r.skipped.map(s => s.reason)).toContain('Family dead* is stopped: most of its jobs end empty.');
+  });
+
+  it('skips an idea that is already shipped or queued', () => {
+    const r = plan({ first: [pick('RQ-IDEA1', 'idea')], shippedIdeas: ['Fix the slow lane.'], existing: [{ id: 'RQ-IDEA1', scope: 'x' }] });
+    expect(r.drafted.map(d => d.id)).toEqual(['RQ-BET1', 'RQ-BET2']);
+    expect(r.skipped.map(s => s.reason)).toEqual(['Already queued or shipped: the Ideas list says so.', 'Already queued as RQ-IDEA1.']);
+  });
+
+  it('starts every prompt with the Step-0 line and the ship-partial rule', () => {
+    const r = plan({ first: [pick('RQ-IDEA1', 'idea'), pick('RQ-FOLLOWUP-2', 'follow-up')] });
+    expect(r.drafted).toHaveLength(4);
+    for (const d of r.drafted) {
+      expect(d.prompt.startsWith(`${STEP_ZERO} ${SHIP_PARTIAL} `)).toBe(true);
+      expect(d.prompt.endsWith(d.goal)).toBe(true);
+    }
+  });
+
+  it('does not draft a prompt again once it is queued with the Step-0 prefix', () => {
+    const first = plan();
+    const existing = first.drafted.map(d => ({ id: `RQ-OTHER-${d.id}`, scope: d.prompt }));
+    const again = plan({ existing });
+    expect(again.drafted).toEqual([]);
+  });
+
+  it('reads Not built and Gaps notes from a log, inline or as bullets', () => {
+    const log = 'done\nNot built: the nightly retry for stuck lanes\nGaps:\n- show unknown disk as unknown\n- none\nGaps: n/a\n';
+    expect(parseFollowUps(log, 'RQ-X1').map(f => f.text)).toEqual(['the nightly retry for stuck lanes', 'show unknown disk as unknown']);
+  });
+
+  it('writes the Step-0 prompt and the source through the CLI with the seams', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'autofill-src-'));
+    const root = mkdtempSync(join(tmpdir(), 'autofill-src-root-'));
+    writeFileSync(join(root, 'package.json'), '{"name":"@ashlr/phantom"}');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const idea = { id: 'empty-launches:alpha', signal: 'empty-launches', title: 'Alpha jobs end empty', evidence: {}, payoff: { score: 5, text: 'saves slots' }, task: 'Cut the alpha job family.', why: 'w', lane: 'claude', status: 'proposed' } as const;
+      const shipped = { ...idea, id: 'empty-launches:beta', title: 'Beta jobs end empty', status: 'shipped' } as const;
+      const code = await cmdQueueAutofill(['--lane', 'claude', '--min', '2', '--apply', '--json', '--dir', dir], {
+        readLane: async () => ({ running: 0, target: 4, queued: 0 }), root,
+        sources: { readIdeas: async () => [idea, shipped], readFollowUps: async () => [{ text: 'build the quiet retry path', fromJob: 'RQ-ZED1' }], readStopped: async () => new Set<string>() },
+      });
+      const report = JSON.parse(String(log.mock.calls[0]![0]));
+      expect(code).toBe(0);
+      expect(report.schema).toBe(QUEUE_AUTOFILL_SCHEMA);
+      expect(report.drafted.map((d: { source: string }) => d.source)).toEqual(['idea', 'follow-up']);
+      expect(report.skipped[0].reason).toContain('Already queued or shipped');
+      const jobs = (await new QueueStore(dir).read()).jobs;
+      expect(jobs.every(j => j.scope.startsWith(STEP_ZERO))).toBe(true);
+    } finally { vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }); }
   });
 });

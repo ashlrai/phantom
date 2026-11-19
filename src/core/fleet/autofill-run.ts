@@ -11,7 +11,9 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { appendGuarded, eventClock } from '../queue/supersede.js';
 import { QueueStore } from '../queue/store.js';
-import { createConfigReader } from './dynconfig.js';
+import { createConfigReader, runsDirOf } from './dynconfig.js';
+import type { BottleneckIdea } from './bottleneck-ideas.js';
+import { followUpCandidates, ideaCandidates, readFollowUps, type FollowUp } from './autofill-sources.js';
 import { planAutofill, type QueueAutofillReport } from './queue-autofill.js';
 
 export const AUTOFILL_EVENT_SCHEMA = 'queue.autofill.event.v1' as const;
@@ -50,8 +52,29 @@ export interface RunAutofillOptions {
   root: string;
   /** Queue directory for the store; the store default when unset. */
   dir?: string;
+  /** Seams for the sources; the live reads when unset. */
+  readIdeas?: () => Promise<readonly BottleneckIdea[]>;
+  readFollowUps?: () => Promise<readonly FollowUp[]>;
+  /** Job families marked `stop`, or null when unknown (nothing is skipped on a guess). */
+  readStopped?: () => Promise<ReadonlySet<string> | null>;
+  /** Runs dir the follow-ups and empty families are read from; the usual runs dir when unset. */
+  runsDir?: string;
   /** Command list the bets check compares against (the CLI help entries). */
   entries: readonly { cmd: string; desc: string }[];
+}
+
+/** The Ideas items and EMPTY-job follow-ups tried before the bets, and the stopped families. Each read that fails adds nothing. */
+async function readFirstSources(o: RunAutofillOptions, repo: string) {
+  const runsDir = o.runsDir ?? runsDirOf({});
+  const now = Date.now();
+  const ideas = await (o.readIdeas ?? (async () => (await (await import('./bottleneck-ideas.js')).readIdeaList({ runsDir })).ideas))().catch(() => []);
+  const followUps = await (o.readFollowUps ?? (() => readFollowUps(runsDir, now)))().catch(() => []);
+  const stopped = await (o.readStopped ?? (async () => {
+    const report = await (await import('./empty-families.js')).readEmptyFamilies(24, runsDir, now);
+    return report ? new Set(report.families.filter(f => f.action === 'stop' && f.lane === o.lane).map(f => f.family)) : null;
+  }))().catch(() => null);
+  const { open, skipped } = ideaCandidates(ideas, repo);
+  return { first: [...open, ...followUpCandidates(followUps, repo)], shippedIdeas: skipped, stoppedFamilies: stopped ?? undefined };
 }
 
 /** Draft (and with `apply`, queue) the bets that fill one lane. Throws only on a real read or write failure. */
@@ -62,12 +85,15 @@ export async function runQueueAutofill(o: RunAutofillOptions): Promise<QueueAuto
   const existing = (await store.read().catch(() => ({ jobs: [] }))).jobs;
   const { gatherCandidates, MAX_PROPOSE_COUNT, proposeBets, readRepoName } = await import('./bets-propose.js');
   const { helpItems, readApiRoutes, readDocHeadings, readPanes } = await import('./bets-check.js');
+  const repo = readRepoName(o.root);
   const entries = o.entries.map(e => ({ cmd: e.cmd, desc: e.desc }));
   // Ask for the most proposals; the plan takes only the gap after dropping duplicates.
   const proposed = o.counts.queued !== null && want > o.counts.queued
-    ? proposeBets(gatherCandidates(o.root, entries), { cli: helpItems(entries), api: readApiRoutes(o.root), pane: readPanes(o.root), doc: readDocHeadings(o.root) }, { lane: o.lane, repo: readRepoName(o.root), count: MAX_PROPOSE_COUNT })
+    ? proposeBets(gatherCandidates(o.root, entries), { cli: helpItems(entries), api: readApiRoutes(o.root), pane: readPanes(o.root), doc: readDocHeadings(o.root) }, { lane: o.lane, repo, count: MAX_PROPOSE_COUNT })
     : { proposals: [], droppedGoals: [] };
-  let report = planAutofill({ lane: o.lane, min: want, ...o.counts, existing, proposed });
+  const gapOpen = o.counts.queued !== null && want > o.counts.queued;
+  const sources = gapOpen ? await readFirstSources(o, repo) : { first: [], shippedIdeas: [], stoppedFamilies: undefined };
+  let report = planAutofill({ lane: o.lane, min: want, ...o.counts, existing, proposed, ...sources });
   if (o.limit !== undefined && report.drafted.length > o.limit) {
     const over = report.drafted.slice(o.limit);
     report = {
@@ -78,7 +104,7 @@ export async function runQueueAutofill(o: RunAutofillOptions): Promise<QueueAuto
   }
   if (o.apply && report.drafted.length) {
     for (const d of report.drafted) {
-      await store.add({ id: d.id, status: 'READY', priority: 'P1', pool: o.lane, tier: d.tier, repo: d.repo, scope: d.goal, acceptance: d.acceptance, deps: [], claims: [] });
+      await store.add({ id: d.id, status: 'READY', priority: 'P1', pool: o.lane, tier: d.tier, repo: d.repo, scope: d.prompt, acceptance: d.acceptance, deps: [], claims: [] });
     }
     report = { ...report, applied: true };
   }
@@ -220,7 +246,7 @@ export async function runAutofillTick(o: AutofillTickOptions): Promise<AutofillT
     else if (allowed <= 0) event = run(0, 0, 0, 'hourly cap');
     else {
       try {
-        const result = await fill({ lane, counts: view.counts[lane] ?? { running: null, target: null, queued: null }, apply: o.apply, limit: allowed, root: o.root, dir: join(o.runsDir, 'queue'), entries: o.entries });
+        const result = await fill({ lane, counts: view.counts[lane] ?? { running: null, target: null, queued: null }, apply: o.apply, limit: allowed, root: o.root, runsDir: o.runsDir, dir: join(o.runsDir, 'queue'), entries: o.entries });
         if ('error' in result) event = run(0, 0, 0, 'The lane has no slot target.');
         else {
           const applied = result.applied ? result.drafted.length : 0;
