@@ -86,17 +86,23 @@ shows an empty flow, and a failed refresh labels the reading as an old one.
 
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
-empty with its reason when known), incidents (dispatch incidents, lane holds,
-parked jobs) and Leader replies. Each card has a kind icon, a relative time and
-one link. `phm feed --json --since 1h --kind merged` and
+empty with its reason when known), lanes (a lane hitting its plan limit, being
+paused, reset or running again, in plain words with the recorded line as
+`detail`), incidents (dispatch incidents, stopped and parked jobs) and Leader
+replies. Each card has a kind icon, a relative time and one link. Three or more
+merges in one repo in one clock hour are one card (“12 PRs merged in phantom in
+the last hour”) whose `group` lists them one tap away.
+`phm feed --json --since 1h --kind merged` and
 `GET /api/feed?since=1h&kind=merged` return the same `phantom.feed.v2` report
-(`version: 2`, `items`, `more`, `sources`); `--since` takes 1m to 7d or an ISO
-time within seven days, and `--limit` takes 1–1000 (default 30). The pane's kind
-filter and “Load more” call the same route. Per-tick dispatcher noise
+(`version: 2`, `items`, `more`, `next`, `sources`); `--since` takes 1m to 7d or
+an ISO time within seven days, and `--limit` takes 1–1000 (default 30). `next`
+is the cursor: pass it back as `since` to read only newer events. The pane's
+kind filter and “Load more” call the same route. Per-tick dispatcher noise
 (`EMPTY_SIGNAL`, `LOADGATE warn`) is dropped, and a notice that repeats is one
 card with a count. The Feed reads existing journals only (jobs ledger,
 dispatch events, Leader plan log, outbox, guardian state); missing sources stay
-unknown. Main recoveries have no recorded time, so only red is shown. Empty reads
+unknown. Main recoveries and incident closures have no recorded time, so only
+red and opened are shown. Empty reads
 show “Nothing new yet.”
 
 The phone Home screen brings the fleet glance, links to active sessions,
