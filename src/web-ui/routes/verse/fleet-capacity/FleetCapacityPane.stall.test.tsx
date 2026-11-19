@@ -25,8 +25,8 @@ it('shows a warning headline and stall minutes on the affected lane', async () =
   expect(headline.compareDocumentPosition(screen.getByRole('heading', { name: 'Lane capacity' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const personal = screen.getByRole('button', { name: 'Open codex-personal in Lanes' }).closest('li')!;
   const devin = screen.getByRole('button', { name: 'Open devin in Lanes' }).closest('li')!;
-  expect(within(personal).getByText(/30 min stalled/)).toBeInTheDocument();
-  expect(within(devin).queryByText(/min stalled/)).not.toBeInTheDocument();
+  expect(within(personal).getByTestId('lane-stalled')).toHaveTextContent('Stalled30 min');
+  expect(within(devin).queryByTestId('lane-stalled')).not.toBeInTheDocument();
 });
 
 it('omits the headline and suffix when no lane stalled', async () => {
@@ -34,5 +34,6 @@ it('omits the headline and suffix when no lane stalled', async () => {
   render(<FleetCapacityPane visible />);
   await screen.findByRole('heading', { name: 'Lane capacity' });
   expect(screen.queryByText(/Launch stall:/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/min stalled/)).not.toBeInTheDocument();
+  expect(screen.queryByTestId('lane-stalled')).not.toBeInTheDocument();
+  expect(within(screen.getByLabelText('Fleet totals')).getByText('Stalled').nextElementSibling).toHaveTextContent('0 min');
 });
