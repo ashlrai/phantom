@@ -4,6 +4,9 @@
  * message bodies are private, so it answers only the local dispatch session.
  * Also exports the best-effort mirror of a desktop inbox post onto the thread. */
 import { join } from 'node:path';
+import { ashlrHome } from '../cloud/store.js';
+import { MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
+import { parseSince } from '../fleet/agent-messages.js';
 import { readReceipts } from '../leader/delivery-receipts.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
@@ -15,6 +18,8 @@ export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 export const VERSE_OWNER_STATUS_PATH = `${VERSE_OWNER_THREAD_PATH}/status`;
 /** Read-only comms.toml confirmation for Settings. There is no write twin: the flag is Mason's alone. */
 export const VERSE_OWNER_COMMS_LIMITS_PATH = `${VERSE_OWNER_THREAD_PATH}/comms-limits`;
+/** Read-only one-timeline view for the Mason panel: same data as `phm mason thread --json`. */
+export const VERSE_MASON_THREAD_PATH = '/api/verse/comms/mason-thread';
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 
@@ -57,13 +62,29 @@ function parseLimit(raw: string | null): number | null {
 
 export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
-    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH) return false;
+    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH && path !== VERSE_MASON_THREAD_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The owner thread is read only here.' });
       return true;
     }
     if (!ctx.allowDispatch) {
       sendJson(res, 404, { error: 'not found' });
+      return true;
+    }
+    if (path === VERSE_MASON_THREAD_PATH) {
+      const now = deps.now?.() ?? Date.now();
+      let sinceMs: number | null = null;
+      try { sinceMs = parseSince(new URL(req.url ?? path, 'http://localhost').searchParams.get('since') ?? '1d', now); } catch { /* 400 below */ }
+      if (sinceMs === null) {
+        sendJson(res, 400, { error: 'since takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+        return true;
+      }
+      try {
+        const options = runtime(deps);
+        sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now }));
+      } catch {
+        sendJson(res, 200, { schema: MASON_THREAD_SCHEMA, unavailable: true });
+      }
       return true;
     }
     if (path === VERSE_OWNER_STATUS_PATH) {

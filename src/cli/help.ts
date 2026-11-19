@@ -622,6 +622,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
   { usage: 'phm agentnet channels propose <name> [--apply] [--json]', description: 'Preview a private collaboration channel draft; --apply records it locally. Never creates a Slack channel.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },
   { usage: 'phm agentnet identity register <callsign> [--json]', description: 'Record a stable callsign profile draft; never provisions credentials or grants a session binding.', safety: 'proposal', jsonShape: '{status, action, name, dryRun}' },
   {
+    usage: 'phm mason thread [--since <dur>] [--json]',
+    description: 'One thread with Mason across iMessage, Slack, Telegram, email and desktop: his messages and the leader\'s replies in time order, the same request on two channels shown once, each of his messages tagged Received, Assigned, Running, Blocked or Verified with its linked jobs. Default window 1d (15m, 2h, 1d, epoch ms or ISO). A source that cannot be read is named in gaps and a state that cannot be known is UNKNOWN. Read-only: sends nothing. Prints "Nothing yet." when empty. Exit 0 read, 2 usage.',
+    safety: 'read',
+    jsonShape: 'MasonThread {schema:"phantom.mason.thread.v1", as_of, since, items:[{at, dir:"in"|"out", channel, text, state:"RECEIVED"|"ASSIGNED"|"RUNNING"|"BLOCKED"|"VERIFIED"|"UNKNOWN"|null, job_ids, also_on}], gaps}',
+  },
+  {
     usage: 'phm channels reply-state <request-id> [--json]',
     description: 'The one state read before any fleet reply about a work item: RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED with its as-of time and source, computed from the bus inbox and claim records. No record means RECEIVED, no owner yet. A repeat request in the same thread resolves to the first request id. Read-only. Exit 0 report, 2 bad usage.',
     safety: 'read',
@@ -1202,6 +1208,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'manager [--apply-rejects]',    desc: 'Frontier judge scorecard over pending proposals (shadow mode by default; never merges).', topic: 'autonomy' },
   { cmd: 'best-of-n [--repo --title -n]', desc: 'Generate N candidate diffs (multi-model), critic-select, file the winner as a proposal (M142/M333).', topic: 'autonomy' },
   { cmd: 'context read | write [--json]', desc: 'Read current company context or save a sourced note.', topic: 'run' },
+  { cmd: 'mason thread [--since <dur>] [--json]', desc: 'Mason\'s one thread across every channel: messages and replies in time order, each tagged Received, Assigned, Running, Blocked or Verified with its jobs. Read-only.', topic: 'autonomy' },
   { cmd: 'comms <status|thread|send-owner|cycle|digest>',  desc: 'Operator comms. status --json, thread and send-owner are the one owner thread; replies go only to the configured owner. KILL halts adapters.', topic: 'autonomy' },
   { cmd: 'connectors add|list|remove|show|import|exec|config [--json]', desc: 'Manage credential-free connector profiles, launch connectors with phantom-injected credentials, and print client configs that hold no token.', topic: 'autonomy' },
   { cmd: 'agentnet peers list|read|send | channels propose | identity register [--json]', desc: 'Session-bound team peer messages, verified inbox and Slack provisioning drafts.', topic: 'autonomy' },
