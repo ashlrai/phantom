@@ -349,7 +349,15 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const poolParked = parseParkedState(row.pool);
     const parkedState = statusParked.parked ? statusParked : poolParked;
     if (!row.id || !JOB_ID.test(row.id) || (!parkedState.parked && row.status !== 'READY')) { malformed++; continue; }
-    const lane = (parkedState.parked ? parkedState.lane : null) ?? row.pool;
+    // The parser uppercases the whole PARKED marker inside `status`, so its
+    // lane capture can differ in case from the lane the row's own pool cell
+    // names (lane-column parked rows carry the marker's lane there verbatim).
+    // When both spellings name the same lane, keep the pool's file-original
+    // casing so every ready.tsv dialect attributes one lane key.
+    const markerLane = parkedState.lane;
+    const lane = markerLane !== null && markerLane.toLowerCase() === row.pool.toLowerCase()
+      ? row.pool
+      : markerLane ?? row.pool;
     opts.onWaitingJob?.(lane, row.id);
     const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0, phantom: 0, other: 0, otherRepos: new Set<string>() };
     lanes.set(lane, counts);
