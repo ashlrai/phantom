@@ -186,8 +186,12 @@ data, the same for every CLI: each line summarizes the body — `note`,
 kinds compose one scrubbed line (`work.status <job> <status> — <detail>`,
 `work.result <job> <outcome> — <reason>`, `interjection <channel>: <text>`,
 `peer.message <kind> <from>-><to>: <text>`, `protocol <kind> <topic>: <ref>`,
-and so on across the channel, leader, peer, group, cos and incident notices
-that share the store); claim tokens and `work.result` queue/receipt ids
+and so on across the channel, leader, peer, group, cos, incident and
+fleet-ops notices (`apps-watch.*.v1`, `reset-watch.*.v1`, `fleet-event`,
+`fleet-self-loop-pass`, `org.membership`, `work-board-notify`,
+`desktop.intent`, `apps-control`) that share the store — watcher error
+payloads summarize as counts only, never message text); claim tokens and
+`work.result` queue/receipt ids
 never appear, string bodies render as their scrubbed text, and
 unrecognized bodies keep a secret-scrubbed raw JSON render clipped to 512
 characters so one large body cannot crowd out the rest of the frame.

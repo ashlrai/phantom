@@ -549,6 +549,32 @@ describe('CLI session adapters', () => {
       .toBe('apps-changes.event.v1 summary: ok');
     expect(busBodySummary({ kind: 'apps-recovery-batch.progress.v1', batchRunId: 'run-1', invocationIds: ['a', 'b'], evidence: 'retained', liveProbe: false, verdicts: [{}, {}], outcome: 'done' }))
       .toBe('apps-recovery-batch progress run-1: 2 invocations 2 verdicts done');
+    expect(busBodySummary({ kind: 'apps-watch.observation.v1', cycle: 3, healthy: true, recoveries: 1,
+      consecutiveFailures: 0, totalFailedCycles: 0, observedState: [{ app: 'a', observedRunning: true }, { app: 'b', observedRunning: false }] }))
+      .toBe('apps-watch.observation.v1 healthy cycle 3 2 apps: 1 recoveries 0 consecutive failures 0 failed cycles');
+    expect(busBodySummary({ kind: 'apps-watch.summary.v1', apps: ['Codex'], outcome: 'failed', cycles: 2,
+      recoveries: 1, consecutiveFailures: 0, totalFailedCycles: 1, lastObservedState: null }))
+      .toBe('apps-watch.summary.v1 failed 2 cycles 1 app: 1 recoveries 0 consecutive failures 1 failed cycles');
+    expect(busBodySummary({ kind: 'fleet-self-loop-pass', runId: 'loop-1', pass: 2, exitCode: 0, state: 'ok', consecutiveFailures: 0, nextDelayMs: 5000 }))
+      .toBe('fleet-self-loop-pass loop-1 pass 2 exit 0: ok 0 consecutive failures next in 5000ms');
+    expect(busBodySummary({ kind: 'reset-watch.start.v1', invocationId: 'inv-1' })).toBe('reset-watch.start.v1');
+    expect(busBodySummary({ kind: 'reset-watch.pass.v1', invocationId: 'inv-1', healthy: true, checked: 5, released: 2, errors: ['aa', 'bb'] }))
+      .toBe('reset-watch.pass.v1 healthy 5 checked 2 released: 2 errors');
+    expect(busBodySummary({ kind: 'reset-watch.end.v1', invocationId: 'inv-1', outcome: 'completed', passes: 3, released: 4, errors: 1 }))
+      .toBe('reset-watch.end.v1 completed 3 passes 4 released: 1 errors');
+    expect(busBodySummary({ kind: 'org.membership', roleId: 'worker-1', revision: 7, tier: 'WORKER_SESSION',
+      reportsTo: 'lead', status: 'active', needs: ['a', 'b'], claimKey: 'org:worker-1', grantsExecutionAuthority: false }))
+      .toBe('org.membership worker-1 active WORKER_SESSION rev 7: 2 needs');
+    expect(busBodySummary({ kind: 'fleet-event', event: 'launch', at: '2026-01-01T00:00:00Z', text: 'job started', job: 'RQ-X-1', lane: 'claude' }))
+      .toBe('fleet-event launch: RQ-X-1 claude job started');
+    expect(busBodySummary({ kind: 'work-board-notify', state: 'sent', text: 'board updated' })).toBe('work-board-notify sent: board updated');
+    expect(busBodySummary({ kind: 'desktop.intent', verb: 'type', app: 'Safari', window: 'w1', chars: 12 }))
+      .toBe('desktop.intent type Safari: w1 12 chars');
+    expect(busBodySummary({ kind: 'apps-control', phase: 'result', action: 'open', app: 'Safari', outcome: 'done', detail: 'opened' }))
+      .toBe('apps-control result open Safari: done');
+    // Watcher error payloads never reach a summary: only counts are read.
+    expect(busBodySummary({ kind: 'reset-watch.end.v1', outcome: 'failed', passes: 1, released: 0,
+      errors: [{ lane: 'l', message: `token ghp_${'b'.repeat(36)}` }] })).not.toContain('ghp_');
     expect(busBodySummary({ kind: 'work', text: 'claimable job' })).toBe('work: claimable job');
     expect(busBodySummary({ protocol: { version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'ref-1' }, correlation_id: 'c', payload: { big: 'x'.repeat(5000) } }))
       .toBe('protocol task fleet.deploy: ref-1');
