@@ -10,7 +10,9 @@ top   What is using this Mac: fleet workers, the local model server, Docker, eac
       --groups adds the busiest processes in each bucket. --floor sets the GB floor the trend measures to (default ${HOST_DISK_FLOOR_GB});
       reaching it in under 12 hours is a warning.
 load  What is loading this computer, with fleet workers listed per job. --by-tree counts every job's builds, typechecks and tests
-      with it and says what share of CPU the fleet's own jobs use.
+      with it and says what share of CPU the fleet's own jobs use. --json has owners (schema host.load.owners.v1): load share by
+      producer (fleet jobs, Claude loop, Devin cloud, local model, main guardian, other), the admission guard's state from
+      queue/admission-ctl.json, jobs idle over 45 minutes that still use CPU, and one next step.
 Read-only: nothing is ever stopped or quit. Exits 0 with a report, 1 when the process list cannot be read, 2 on bad usage.`;
 
 export function formatHostTop(report: HostTopReport, groups = false): string {
@@ -43,6 +45,7 @@ export function formatHostLoad(report: HostLoadReport): string {
   const row = (name: string, load: number | null, cpu: number, mb: number, count: number) =>
     `${name.padEnd(34)} ${String(load ?? '-').padStart(4)} ${cpu.toFixed(1).padStart(7)} ${`${mb} MB`.padStart(10)} ${String(count).padStart(9)}`;
   const lines = [report.summary];
+  if (report.owners) lines.push(`Who: ${report.owners.summary}`, `Next: ${report.owners.nextStep}`);
   if (report.groups.length) lines.push(`${'Group'.padEnd(34)} Load    CPU%     Memory Processes`);
   for (const group of report.groups) {
     lines.push(row(group.name, group.loadPoints, group.cpuPercent, group.rssMb, group.processes));

@@ -23,7 +23,8 @@ export function HostLoadCard({ visible }: { visible: boolean }) {
   return <section className={styles.section} aria-label="Host">
     <h3 className={styles.title}>Host</h3>
     {read.status === 'error' ? <p className={styles.muted} role="status">Host load could not refresh. Showing the last reading.</p> : null}
-    <p className={styles.line}>{report.summary}</p>
+    <p className={styles.line}>{report.owners?.summary ?? report.summary}</p>
+    {report.owners ? <p className={styles.line}>Next: {report.owners.nextStep}</p> : null}
     {groups.length === 0 ? <p className={styles.muted}>{report.state === 'unknown' ? report.gaps[0] ?? 'Unknown' : 'Nothing is using the processor.'}</p> : <>
       <div className={styles.loadBar} role="img" aria-label={`Processor share: ${groups.map(group => `${group.name} ${Math.round((100 * group.cpuPercent) / report.cpuPercent)}%`).join(', ')}`}>
         {groups.map(group => <span key={group.id} data-group={group.id} title={group.name} style={{ flexGrow: group.cpuPercent, background: COLOR[group.id] ?? CHART_NEUTRAL }} />)}
