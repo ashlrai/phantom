@@ -11,7 +11,10 @@ const claim = { id: 'claim-fake-1', repo: 'ashlrai/phantom', task: 'fake task', 
 const threadKey = 'T000FAKE/C000FAKE/1700000000.000001';
 const board: FleetBoard = { schema: 'fleet.coordination.v1', state: 'known', claims: [claim],
   messages: [], proposals: [], expiredClaims: 0 };
-const dedupeKey = JSON.stringify(['ASSIGNED', claim.id, 'abcdef1234567890']);
+// A fresh acquisition (claimedAt after the previous snapshot) earns the
+// qualified [state, repo, id, agent, claimedAt, head] identity so owner
+// handoffs and distinct acquisitions cannot collide on the sent ledger.
+const dedupeKey = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, 'abcdef1234567890']);
 
 describe('fleet claim-notices', () => {
   let root: string;
@@ -62,7 +65,10 @@ describe('fleet claim-notices', () => {
     expect(String(send.mock.calls[0]![1])).toContain('ASSIGNED');
     const raw = readFileSync(paths().sent, 'utf8');
     expect(JSON.parse(raw)).toMatchObject({ v: 1, key: dedupeKey });
-    expect(raw).not.toContain('fake-owner');
+    // The ledger stores the opaque dedupeKey and timestamp only — never the
+    // message text or the thread reference the notice was delivered to.
+    expect(raw).not.toContain(threadKey);
+    expect(raw).not.toContain('claim acquired');
     expect(JSON.parse(readFileSync(paths().prev, 'utf8'))).toMatchObject({ v: 1, state: 'known', asOf: now });
     send.mockClear();
     expect(await run(['--json'], { send })).toBe(0);
