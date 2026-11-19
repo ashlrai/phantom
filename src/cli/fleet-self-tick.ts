@@ -96,6 +96,8 @@ interface Dependencies {
   claudeFindCommand?: () => string | null;
   /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
+  /** Empty-family stop seams for tests (kill switch, report); production reads the real config and ledger. */
+  emptyStop?: Partial<Pick<Parameters<typeof import('../core/fleet/empty-family-apply.js').runEmptyApplyTick>[0], 'readOff' | 'readReport'>>;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -246,6 +248,16 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return { reason: `autofill failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
     }
   };
+  // At most once an hour, retire READY jobs of empty-heavy families (off with empty_stop.off). Never fails the tick.
+  const runEmptyStopStage = async (): Promise<unknown> => {
+    if (!deps.emptyStop && root !== join(home, '.ashlr-runs')) return { reason: 'custom-runs-dir-no-empty-stop' };
+    try {
+      const { runEmptyApplyTick } = await import('../core/fleet/empty-family-apply.js');
+      return await runEmptyApplyTick({ runsDir: root, apply, now: now(), ...deps.emptyStop });
+    } catch (error) {
+      return { reason: `empty-stop failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
+    }
+  };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
     // plans from is current. It is a sub-stage rather than a new step name so the
@@ -303,11 +315,12 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     // refresh above it is a sub-stage, not a new step name, so the fixed order and report shape stay as they are.
     'planner-tick': async (argv) => {
       const autofill = await runAutofillStage();
+      const emptyStop = await runEmptyStopStage();
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;

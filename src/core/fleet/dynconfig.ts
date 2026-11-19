@@ -51,12 +51,14 @@ export function mutableKeySpec(key: string): KeySpec | null {
   if (key === 'hard_cap') return INT(512);
   // Autofill kill switch: 1 stops self-tick from filling starved lanes (cap and events live in autofill-run.ts).
   if (key === 'autofill.off') return INT(1);
+  // Empty-family stop kill switch: 1 stops self-tick from retiring READY jobs of empty-heavy families (empty-family-apply.ts).
+  if (key === 'empty_stop.off') return INT(1);
   if (key === 'compact.lanes.raise_freeze_below_gb' || key === 'compact.lanes.halve_below_gb') return GB;
   const m = /^lanes\.([^.]+)\.(target|floor|ceiling|hard_cap)$/.exec(key);
   return m && LANE_ID.test(m[1]!) ? INT(64) : null;
 }
 export const MUTABLE_KEY_PATTERNS: readonly string[] = [
-  'hard_cap', 'autofill.off', 'lanes.<lane>.target', 'lanes.<lane>.floor', 'lanes.<lane>.ceiling', 'lanes.<lane>.hard_cap',
+  'hard_cap', 'autofill.off', 'empty_stop.off', 'lanes.<lane>.target', 'lanes.<lane>.floor', 'lanes.<lane>.ceiling', 'lanes.<lane>.hard_cap',
   'compact.lanes.raise_freeze_below_gb', 'compact.lanes.halve_below_gb',
 ];
 

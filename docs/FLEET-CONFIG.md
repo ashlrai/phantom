@@ -30,7 +30,7 @@ phm fleet config restart-required [--json]
 
 ## Mutable keys
 
-`hard_cap`, `autofill.off` (1 stops self-tick autofill; see QUEUE.md), `lanes.<lane>.target|floor|ceiling|hard_cap`,
+`hard_cap`, `autofill.off` (1 stops self-tick autofill; see QUEUE.md), `empty_stop.off` (1 stops the hourly empty-family stop in self-tick), `lanes.<lane>.target|floor|ceiling|hard_cap`,
 `compact.lanes.raise_freeze_below_gb`, `compact.lanes.halve_below_gb`.
 Anything else is refused. Lane `target`/`floor`/`ceiling` writes are checked
 for coherence against the effective sibling values.

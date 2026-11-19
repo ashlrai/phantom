@@ -1,6 +1,6 @@
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by-family] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
+const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by-family [--apply [--dry-run] [--ttl-hours N] | --undo <family>]] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
 export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies: (hours: number) => ReturnType<typeof import('../core/fleet/empty-families.js').readEmptyFamilies> = async hours => (await import('../core/fleet/empty-families.js')).readEmptyFamilies(hours)): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
@@ -15,10 +15,19 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
   let json = false;
   let family: string | undefined;
   let lane: string | undefined;
-  let byFamily = false;
+  let byFamily = false, apply = false, dryRun = false, ttl: number | null = null, undo: string | undefined;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--json') json = true;
     else if (args[i] === '--by-family') byFamily = true;
+    else if (args[i] === '--apply' && !apply) apply = true;
+    else if (args[i] === '--dry-run' && !dryRun) dryRun = true;
+    else if (args[i] === '--ttl-hours' && ttl === null) {
+      ttl = /^\d+(\.\d+)?$/.test(args[++i] ?? '') ? Number(args[i]) : NaN;
+      if (!(ttl > 0 && ttl <= 168)) { console.error(usage); return 2; }
+    } else if (args[i] === '--undo' && undo === undefined) {
+      undo = args[++i];
+      if (!undo || !/^[A-Za-z0-9][A-Za-z0-9._*-]*$/.test(undo)) { console.error(usage); return 2; }
+    }
     else if (args[i] === '--help' || args[i] === '-h') { console.log(usage); return 0; }
     else if (args[i] === '--since') {
       const match = /^(\d+(?:\.\d+)?)h$/.exec(args[++i] ?? '');
@@ -31,6 +40,28 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
       lane = args[++i];
       if (!lane || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(lane)) { console.error(usage); return 2; }
     } else { console.error(usage); return 2; }
+  }
+  if (!byFamily && (apply || dryRun || ttl !== null || undo !== undefined)) { console.error(usage); return 2; }
+  if (byFamily && (dryRun || ttl !== null) && !apply) { console.error(usage); return 2; }
+  if (byFamily && apply && undo !== undefined) { console.error(usage); return 2; }
+  if (byFamily && undo !== undefined) {
+    if (family || lane) { console.error(usage); return 2; }
+    const { undoEmptyFamily } = await import('../core/fleet/empty-family-apply.js');
+    const { runsRoot } = await import('../core/metrics/loop-collect.js');
+    const undone = await undoEmptyFamily(runsRoot(), undo);
+    if (json) console.log(JSON.stringify(undone));
+    else if (!undone.known) console.error(undone.error);
+    else console.log(undone.removed_ids.length || undone.removed_hints ? `Undone ${undo}: ${undone.removed_ids.length} retired ${undone.removed_ids.length === 1 ? 'id' : 'ids'} and ${undone.removed_hints} lane-avoid ${undone.removed_hints === 1 ? 'hint' : 'hints'} removed.` : `Nothing recorded for ${undo}.`);
+    return undone.known ? 0 : 1;
+  }
+  if (byFamily && apply) {
+    if (family || lane) { console.error(usage); return 2; }
+    const { applyEmptyFamilies, formatEmptyApply, EMPTY_STOP_TTL_HOURS } = await import('../core/fleet/empty-family-apply.js');
+    const { runsRoot } = await import('../core/metrics/loop-collect.js');
+    const done = await applyEmptyFamilies({ runsDir: runsRoot(), apply: !dryRun, hours, ttlHours: ttl ?? EMPTY_STOP_TTL_HOURS, readReport: readFamilies });
+    if (json) console.log(JSON.stringify(done));
+    else for (const line of formatEmptyApply(done)) (done.known ? console.log : console.error)(line);
+    return done.known ? 0 : 1;
   }
   if (byFamily) {
     if (family || lane) { console.error(usage); return 2; }
