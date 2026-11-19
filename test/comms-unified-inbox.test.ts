@@ -57,10 +57,10 @@ function claim(id: string, leaseMs = 600_000, owner = 'worker') {
 }
 
 let v2seq = 0;
-function postV2Body(body: BusJsonValue, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number; from?: string } = {}) {
+function postV2Body(body: BusJsonValue, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number; from?: string; to?: string } = {}) {
   v2seq += 1;
   const receipt = appendBusInbox({
-    id: `v2-${v2seq}`, from: extra.from ?? 'agent:peer', to: 'leaders',
+    id: `v2-${v2seq}`, from: extra.from ?? 'agent:peer', to: extra.to ?? 'leaders',
     priority: extra.priority ?? 'P2', ttl: extra.ttl ?? 7 * 24 * 3_600_000, body,
   }, { root: busRoot, now: () => extra.at ?? now });
   expect(receipt.status).toBe('posted');
@@ -162,6 +162,31 @@ describe('readUnifiedInbox sources', () => {
     expect(table.source).toBe('available');
     expect(table.claims).toHaveLength(2);
     expect(table.claims.every(c => !('token' in c) && !('leaseMs' in c) && !('ttl' in c))).toBe(true);
+  });
+
+  it('lists exactly the bodies the claim contract accepts: protocol tasks in, disguised work out', async () => {
+    // A protocol-v1 transport task is claimable by `bus next` but carries no
+    // top-level kind, so the inbox must read the same isClaimableWork contract.
+    postV2Body({ protocol: { version: 1, kind: 'task' }, correlation_id: 'corr-1', payload: { note: 'fake task payload' } });
+    postV2Body({ protocol: { version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'deploy-ref-1' },
+      correlation_id: 'corr-2', payload: {} }, { to: 'fleet.deploy', priority: 'P1' });
+    // A kind:'work' body whose protocol is not a task is not claimable: the
+    // protocol branch of isClaimableWork decides, so it stays off the list.
+    postV2Body({ kind: 'work', text: 'fake disguised work', protocol: { version: 1, kind: 'status' } });
+    // A kind:'work' body with a task protocol is claimable and titles from text.
+    postV2Body({ kind: 'work', text: 'fake work with task protocol', protocol: { version: 1, kind: 'task' } });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual(['bus:v2-2', 'bus:v2-1', 'bus:v2-4']);
+    expect(items[0]).toMatchObject({
+      kind: 'bus-work', severity: 'warn',
+      title: 'protocol task fleet.deploy: deploy-ref-1',
+      detail: 'from agent:peer to fleet.deploy · P1 · cursor 2',
+      act: [`phm fleet bus-claim acquire --id v2-2 --owner <label> --lease-ms 600000`],
+    });
+    expect(items[1]).toMatchObject({ title: 'protocol task' });
+    expect(items[2]).toMatchObject({ title: 'fake work with task protocol' });
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 3 });
   });
 
   it('re-lists work whose claim lease has lapsed', async () => {
