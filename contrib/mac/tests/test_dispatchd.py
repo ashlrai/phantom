@@ -288,6 +288,19 @@ class MaxRuntimeTests(unittest.TestCase):
             'import process_snapshot\n'
             'home = Path(os.environ["HOME"])\n'
             'def fake_killpg(pid, sig):\n'
+            '    if sig == 0:\n'
+            '        try: groups = json.loads((home / "mock-groups.json").read_text())\n'
+            '        except Exception: groups = None\n'
+            '        if groups is not None and str(pid) in groups:\n'
+            '            alive = groups[str(pid)] is not None\n'
+            '        else:\n'
+            '            try:\n'
+            '                g = json.loads((home / "mock-pgids.json").read_text()).get(str(pid), pid)\n'
+            '                alive = g is not None\n'
+            '            except Exception:\n'
+            '                alive = True\n'
+            '        if not alive: raise ProcessLookupError(3, "no such process")\n'
+            '        return\n'
             '    with (home / "killpg.jsonl").open("a") as f:\n'
             '        f.write(json.dumps({"pid": pid, "signal": sig}) + "\\n")\n'
             'os.killpg = fake_killpg\n'
@@ -605,6 +618,41 @@ class MaxRuntimeTests(unittest.TestCase):
             {'pid': self.PID2, 'signal': signal.SIGTERM},
         ])
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
+
+    def test_exited_wrapper_with_surviving_group_stays_unresolved(self):
+        # An exited wrapper (getpgid ESRCH) with a surviving worker in its
+        # group must keep the group unresolved: only a non-signalling group
+        # check (killpg 0 -> ESRCH) may record it gone, and the dead leader
+        # is never signalled without verified identity.
+        tmp = build(); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.write_ps_two(home)
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)
+        marker = run / 'RQ-HUNG.maxruntime'
+        self.assertEqual(self.killpg_calls(home), [
+            {'pid': self.PID, 'signal': signal.SIGTERM},
+            {'pid': self.PID2, 'signal': signal.SIGTERM},
+        ])
+        # Tick 2 past grace: PID2's wrapper exited but a worker survives in
+        # its group (killpg 0 succeeds): no KILL, no SIGKILL for PID2.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID2): self.PID2}))
+        self.write_ps_two(home, include_pid2=False)
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
+        self.assertIn('REAP TIMEOUT RQ-HUNG identity-unknown retry', events(home))
+        self.assertFalse(any(c['pid'] == self.PID2 and c['signal'] == signal.SIGKILL
+                             for c in self.killpg_calls(home)))
+        # Tick 3: the group is finally empty (killpg 0 -> ESRCH); escalation completes.
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
 
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
