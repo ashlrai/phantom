@@ -388,6 +388,21 @@ reason, "Turned off (0 seats)", or what is queued. A lane with no jobs reads "id
 on when `lastActivityAt` is within the last 5 minutes. Selecting a job opens
 its detail sheet.
 
+#### Org groups
+
+`phm fleet org [--json]` prints who reports to whom: the leader, then each lane,
+then its jobs. `--json` is `fleet.org-groups.v1` and `GET
+/api/verse/fleet/control/org-groups` serves the same tree to a current read
+session. It groups the live map below and reads nothing else.
+
+- `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`), `label`, `parent`
+  (null for the root), `children` (ids) and `counts` (`running`, `queued`,
+  `idle`, `unknown`, summed over the leaves below). Parents come before children.
+- A node with no known parent sits under the group `group:unassigned`. A repeated
+  id keeps its first row and is listed in `duplicates`. Computers and pools are not
+  part of the org.
+- The Map pane's "By org" layout draws this tree and remembers the choice.
+
 #### Live map
 
 `phm map` shows the whole fleet as one graph: the leader, lanes, running jobs,

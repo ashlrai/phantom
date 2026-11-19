@@ -150,6 +150,21 @@ servers. Required lane tools remain unknown until checked in that lane.
 
 ## Check lane tool parity
 
+`phm inventory` is the one list of everything this install can use: messaging
+channels, connectors, plugins, skills and tools. Each item has a state in plain
+words (ready, needs setup, off, error, unknown), and an item that needs setup
+names one next step with a command to copy. It ends with the tool gap between
+lanes: how many tools and connectors each lane can use and how many it lacks.
+A source that cannot be read is shown as unknown, and no credential is ever
+printed. The desktop Inventory pane shows the same data from
+`GET /api/verse/fleet/runs/inventory` (`?kind=` for one kind).
+
+```bash
+phm inventory                    # every kind, then the lane gap
+phm inventory --kind connector   # one kind: channel, connector, plugin, skill or tool
+phm inventory --json             # schema phantom.inventory.v1
+```
+
 `phm tools` answers "which lane has what" in one view: every MCP server, CLI,
 skill and plugin a source names, plus GitHub, web search, browser and computer
 use, by lane. Each cell is yes, no or unknown with the source it was read from.

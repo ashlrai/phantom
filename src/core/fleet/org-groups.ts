@@ -1,0 +1,100 @@
+/**
+ * Who reports to whom, as one tree: the leader, then each lane, then each
+ * lane's jobs. `phm fleet org`, GET /api/verse/fleet/control/org-groups and the
+ * Map pane's "By org" layout all read this one function.
+ *
+ * Pure. It takes the live map's own nodes and edges and adds nothing:
+ *  - a node with no known parent goes under a group named "unassigned", never dropped or guessed;
+ *  - a repeated id keeps its first row and is listed in `duplicates`;
+ *  - computers and pools are infrastructure, not members of the org, so they are left out.
+ * Counts add up the leaves below a node (a lane with no jobs counts as itself). A state no source
+ * reported counts as `unknown`, never as idle.
+ */
+import type { FleetLiveMap, LiveMapNode } from './live-map.js';
+
+export type OrgGroupRole = 'leader' | 'group' | 'lane' | 'job';
+export interface OrgGroupCounts { running: number; queued: number; idle: number; unknown: number }
+export interface OrgGroupNode {
+  id: string; role: OrgGroupRole; label: string;
+  /** Null only for the root. */
+  parent: string | null;
+  children: string[];
+  counts: OrgGroupCounts;
+}
+export interface FleetOrgGroups {
+  schema: 'fleet.org-groups.v1';
+  generatedAt: string;
+  /** Id of the root (the leader). */
+  root: string;
+  /** Depth first from the root, so a parent always comes before its children. */
+  nodes: OrgGroupNode[];
+  /** Ids that appeared more than once in the map; only the first row of each was used. */
+  duplicates: string[];
+}
+
+export const UNASSIGNED_GROUP = 'group:unassigned';
+const ROLES: Partial<Record<LiveMapNode['kind'], OrgGroupRole>> = { leader: 'leader', lane: 'lane', job: 'job' };
+const empty = (): OrgGroupCounts => ({ running: 0, queued: 0, idle: 0, unknown: 0 });
+
+/** Which bucket one leaf falls in. Held and idle both mean "not working now". */
+export function orgGroupBucket(status: string): keyof OrgGroupCounts {
+  if (status === 'running' || status === 'launching' || status === 'publishing') return 'running';
+  if (status === 'queued') return 'queued';
+  if (status === 'idle' || status === 'held') return 'idle';
+  return 'unknown';
+}
+
+export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' | 'edges'>): FleetOrgGroups {
+  const rows = new Map<string, LiveMapNode>();
+  const duplicates: string[] = [];
+  for (const node of map.nodes) {
+    if (!ROLES[node.kind]) continue;
+    if (rows.has(node.id)) { if (!duplicates.includes(node.id)) duplicates.push(node.id); } else rows.set(node.id, node);
+  }
+  const rootRow = [...rows.values()].find(node => node.kind === 'leader');
+  const root = rootRow?.id ?? 'leader';
+  const made = new Map<string, OrgGroupNode>();
+  const make = (id: string, role: OrgGroupRole, label: string, parent: string | null) => {
+    const node: OrgGroupNode = { id, role, label, parent, children: [], counts: empty() };
+    made.set(id, node);
+    return node;
+  };
+  make(root, 'leader', rootRow?.label ?? 'Leader', null);
+
+  // First reports-to edge of a node wins.
+  const declared = new Map<string, string>();
+  for (const edge of map.edges) if (edge.kind === 'reports-to' && !declared.has(edge.from)) declared.set(edge.from, edge.to);
+  // A parent counts only when it is on the map and its chain of parents ends at the root (no loops).
+  const reachesRoot = (id: string): boolean => {
+    for (let at = id, hops = 0; hops <= rows.size; hops++) {
+      if (at === root) return true;
+      const up = declared.get(at);
+      if (up === undefined || !rows.has(up) || up === at) return false;
+      at = up;
+    }
+    return false;
+  };
+  const parentOf = (id: string): string => {
+    const up = declared.get(id);
+    return up !== undefined && rows.has(up) && reachesRoot(id) ? up : UNASSIGNED_GROUP;
+  };
+  for (const node of rows.values()) {
+    if (node.kind === 'leader') continue;
+    make(node.id, ROLES[node.kind]!, node.label, parentOf(node.id));
+  }
+  if ([...made.values()].some(node => node.parent === UNASSIGNED_GROUP)) make(UNASSIGNED_GROUP, 'group', 'unassigned', root);
+  for (const node of made.values()) if (node.parent !== null) made.get(node.parent)!.children.push(node.id);
+
+  const ordered: OrgGroupNode[] = [];
+  const walk = (node: OrgGroupNode): OrgGroupCounts => {
+    ordered.push(node);
+    for (const id of node.children) {
+      const sub = walk(made.get(id)!);
+      for (const key of Object.keys(sub) as (keyof OrgGroupCounts)[]) node.counts[key] += sub[key];
+    }
+    if (!node.children.length && node.role !== 'leader' && node.role !== 'group') node.counts[orgGroupBucket(rows.get(node.id)!.status)] += 1;
+    return node.counts;
+  };
+  walk(made.get(root)!);
+  return { schema: 'fleet.org-groups.v1', generatedAt: map.generatedAt, root, nodes: ordered, duplicates };
+}

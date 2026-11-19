@@ -8,16 +8,22 @@ The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
 Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
-Vitest FAIL lines identify tests; AssertionError summaries are scrubbed and capped
-at 2,000 characters per failure, with at most 100 failures per log.
+Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
+identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
+and capped at 2,000 characters per failure, with at most 100 failures per log.
 
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces
-`rerun-failed`. Other evidence stays `unknown`. Relative TypeScript imports are
-followed transitively from master (100-file cap); package imports track dependency
-manifests. Unresolved imports prevent independence claims. Nonverbose pass output
-does not establish an individual test pass. The scan caps open PRs, runs, and jobs
+`rerun-failed`. Other evidence stays `unknown`. Relative imports are followed
+transitively from master (100-file cap) with bundler resolution: `.js`/`.jsx`
+specifiers map to `.ts`/`.tsx` sources, extensionless specifiers try file then
+directory `index`, `?raw`/`?url`/`?inline` queries and non-code files (`.css`,
+`.json`, assets) join the closure as leaves without recursion, and package
+imports track dependency manifests. A candidate that 404s tries the next
+resolution; any other fetch failure, unresolvable spec, alias, or computed
+import prevents independence claims. Nonverbose pass output does not
+establish an individual test pass. The scan caps open PRs, runs, and jobs
 at 100 each and reports unknown rather than drawing conclusions from truncated
 run/job listings. Master reproduction remains an explicit step in the fix brief.
 

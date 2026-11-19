@@ -32,7 +32,7 @@ export interface FleetMemoryApiDeps {
   runsDir?: string;
   readDiskSources?: (root: string) => Promise<[string | null, string | null]>;
   /** Runs ps and reads the job claims; injected in tests. */
-  readHostLoad?: () => Promise<HostLoadReport>;
+  readHostLoad?: (opts?: { byTree?: boolean }) => Promise<HostLoadReport>;
   /** Reads ps, vm_stat, swap, pressure and the app in front; injected in tests. */
   readHostTop?: () => Promise<HostTopReport>;
   now?: () => number;
@@ -65,7 +65,8 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
     }
     if (path === VERSE_FLEET_HOST_LOAD_PATH) {
       if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
-      sendJson(res, 200, sanitizePublicJson(await (deps.readHostLoad ?? readHostLoadReport)()));
+      sendJson(res, 200, sanitizePublicJson(await (deps.readHostLoad ?? readHostLoadReport)(
+        { byTree: new URL(_req.url ?? '', 'http://local').searchParams.get('by') === 'tree' })));
       return true;
     }
     if (path === VERSE_FLEET_HOST_TOP_PATH) {

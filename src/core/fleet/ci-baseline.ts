@@ -15,11 +15,18 @@ type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: n
 const clean = (s: string) => scrubSecrets(stripVTControlCharacters(s)).slice(0, 2000);
 const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '').trim());
 
+// Vitest runs under named projects (unit, real-io, serial-cpu on the backend;
+// console, transcript on the web console), so failure and verbose pass lines
+// carry a `|project|` label between the marker and the repo-relative test
+// path. The vitest suites live under `test/` and `src/web-ui/`.
+const FAIL_LINE = /^FAIL\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s*>\s*(.+)$/;
+const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/\S+)\s*>\s*(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/;
+
 export function parseBaselineFailures(log: string): Failure[] {
   const result: Failure[] = [];
   let current: Failure | undefined;
   for (const line of lines(log)) {
-    const match = /^FAIL\s+(test\/[^\s>]+\.test\.[cm]?[jt]sx?)\s*>\s*(.+)$/.exec(line);
+    const match = FAIL_LINE.exec(line);
     if (match) {
       if (result.length >= 100) break;
       const file = match[1]!, names = clean(match[2]!);
@@ -74,10 +81,49 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text));
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
-    const m = /^[✓✔√]\s+(test\/\S+)\s*>\s*(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/.exec(line);
+    const m = PASS_LINE.exec(line);
     return m?.[1] === f.file && m[2] === f.names;
   }));
   const dependencyCache = new Map<string, Promise<Set<string> | null>>();
+  const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
+  const ref = branch?.commit?.sha ?? 'master';
+  // Bundler-resolution candidates for one normalized repo-relative spec base.
+  // Explicit extensions keep TypeScript precedence (.js -> .ts before .tsx,
+  // the literal spec last so a real .js/.mjs file still resolves); extensionless
+  // specs try file then directory index; every other extension (.json, css,
+  // assets, query-stripped specs) resolves to itself and joins the closure as
+  // a leaf without recursion.
+  function specCandidates(base: string): string[] {
+    if (base === '.') return ['index.ts', 'index.tsx'];
+    const ext = posix.extname(base).toLowerCase();
+    const stem = base.slice(0, base.length - ext.length);
+    switch (ext) {
+      case '.js': return [`${stem}.ts`, `${stem}.tsx`, base];
+      case '.jsx': return [`${stem}.tsx`, `${stem}.ts`, base];
+      case '.mjs': return [`${stem}.mts`, base];
+      case '.cjs': return [`${stem}.cts`, base];
+      case '': return [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`];
+      default: return [base];
+    }
+  }
+  const CODE_EXT = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
+  const isCode = (path: string) => CODE_EXT.has(posix.extname(path).toLowerCase());
+  async function contents(path: string) {
+    let pending = contentsCache.get(path);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const r = await gh(['api', `repos/${repo}/contents/${path}?ref=${ref}`]);
+          if (!r.ok) return { ok: false, absent: /404|not found/i.test(r.stderr ?? ''), source: null };
+          const data = JSON.parse(r.stdout) as { content?: unknown; encoding?: unknown };
+          if (data?.encoding !== 'base64' || typeof data.content !== 'string') return { ok: false, absent: false, source: null };
+          return { ok: true, absent: false, source: Buffer.from(data.content, 'base64').toString('utf8') };
+        } catch { return { ok: false, absent: false, source: null }; }
+      })();
+      contentsCache.set(path, pending);
+    }
+    return pending;
+  }
   function dependencies(file: string): Promise<Set<string> | null> {
     const cached = dependencyCache.get(file);
     if (cached) return cached;
@@ -87,9 +133,9 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         if (visited.has(path)) return true;
         if (visited.size >= 100 || path.startsWith('../')) return false;
         visited.add(path);
-        const data = await json<{ content: string; encoding: string }>(`repos/${repo}/contents/${path}?ref=${branch?.commit?.sha ?? 'master'}`);
-        if (data?.encoding !== 'base64' || typeof data.content !== 'string') return false;
-        const source = Buffer.from(data.content, 'base64').toString('utf8');
+        const fetched = await contents(path);
+        if (!fetched.ok || fetched.source === null) return false;
+        const source = fetched.source;
         // Computed imports cannot be proved independent of a PR diff.
         if (/import\s*\(\s*[^'"\s]/.test(source)) return false;
         for (const match of source.matchAll(/(?:from\s*|import\s*\(\s*|import\s*)['"]([^'"]+)['"]/g)) {
@@ -100,9 +146,24 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
             for (const manifest of ['package.json', 'package-lock.json', 'pnpm-lock.yaml']) visited.add(manifest);
             continue;
           }
-          let target = posix.normalize(posix.join(posix.dirname(path), spec));
-          if (target.endsWith('.js')) target = target.slice(0, -3) + '.ts';
-          if (!/\.[cm]?[jt]sx?$/.test(target) || !await visit(target)) return false;
+          const queryIndex = spec.indexOf('?');
+          const cleanSpec = queryIndex === -1 ? spec : spec.slice(0, queryIndex);
+          const query = queryIndex === -1 ? '' : spec.slice(queryIndex);
+          const base = posix.normalize(posix.join(posix.dirname(path), cleanSpec));
+          if (base.startsWith('../') || posix.isAbsolute(base)) return false;
+          let resolved: string | null = null;
+          for (const candidate of specCandidates(base)) {
+            const hit = await contents(candidate);
+            if (hit.ok) { resolved = candidate; break; }
+            // A definitive 404 tries the next candidate; any other failure
+            // (rate limit, 5xx, malformed body) fails the whole closure closed.
+            if (!hit.absent) return false;
+          }
+          if (resolved === null) return false;
+          // Asset queries (?raw/?url/?inline) embed file contents or URLs; the
+          // resolved file is a leaf dep and its own imports never execute.
+          if (!isCode(resolved) || /[?&](?:raw|url|inline)\b/.test(query)) { visited.add(resolved); continue; }
+          if (!await visit(resolved)) return false;
         }
         return true;
       }

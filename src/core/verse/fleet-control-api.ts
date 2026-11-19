@@ -359,6 +359,9 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/live-map' || path === '/api/verse/fleet/control/map-edges' || path === '/api/verse/fleet/control/agent-messages') {
     return (await import('./fleet-live-map-api.js')).handleFleetLiveMapApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/org-groups') {
+    return (await import('./fleet-org-groups-api.js')).handleFleetOrgGroupsApi(ctx, req, res, path, method);
+  }
   // Every running agent session, behind `phm sessions` and the Sessions pane.
   if (path === '/api/verse/fleet/control/live-sessions') {
     return (await import('./fleet-live-sessions-api.js')).handleFleetLiveSessionsApi(ctx, req, res, path, method);

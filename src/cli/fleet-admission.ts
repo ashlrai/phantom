@@ -3,11 +3,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-/** A lane blocked by the global cap is red once it has this many jobs queued. */
+/** A lane parked by a fleet-wide block is red once it has this many jobs queued. */
 export const FLEET_ADMISSION_RED_QUEUED = 5;
 export const FLEET_ADMISSION_SCHEMA = 'fleet.admission.v1';
 
-export type FleetAdmissionReason = 'held' | 'at target' | 'blocked by the global cap' | 'ok';
+export type FleetAdmissionReason = 'held' | 'at target' | 'admission closed' | 'blocked by the global cap' | 'ok';
 export type FleetAdmissionStatus = 'ok' | 'red';
 
 export interface FleetAdmissionGlobal {
@@ -17,6 +17,10 @@ export interface FleetAdmissionGlobal {
   admit_reason: string | null;
   /** True when global running is at or over the cap. */
   at_cap: boolean;
+  /** True when the dispatcher admits no new claims this tick: at the cap, load gate tripped, or paused. */
+  closed: boolean;
+  /** True when admission is closed by the load gate or a pause rather than only the global cap. */
+  non_cap_closed: boolean;
 }
 
 export interface FleetAdmissionLane {
@@ -41,7 +45,8 @@ export type FleetAdmissionReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet admission [--json]
 Read the global cap and why each lane is waiting. Read-only.
-A lane is blocked by the global cap when it has queued work, is under its target, and global running is at the cap.
+A lane is admission closed when it has queued work, is under its target, and the dispatcher is not admitting (load gate or pause).
+A lane is blocked by the global cap when it has queued work, is under its target, and global running is at the cap while admission is otherwise open.
 Exits 1 when any such lane has ${FLEET_ADMISSION_RED_QUEUED} or more queued.
 Other waits: ashlr fleet lane-idle.`;
 
@@ -76,18 +81,32 @@ function admitReason(value: unknown): string | null {
   return plain(value) || null;
 }
 
+/** The dispatcher's gate reasons, when present; anything else stays null. */
+function gateReason(value: unknown): string | null {
+  return typeof value === 'string' ? plain(value) || null : null;
+}
+
 /**
- * Held wins, then a full lane, then the global cap.
- * The cap applies only when queued is above 0 and running is still under target.
+ * Held wins, then a full lane, then a fleet-wide admission block.
+ * A non-cap block (load gate or pause) outranks the cap: freeing cap
+ * cannot launch work while admission is closed. The cap applies only
+ * when queued is above 0 and running is still under target.
  */
 function laneReason(
   lane: { held: boolean; running: number; target: number; queued: number },
   atCap: boolean,
+  nonCapClosed: boolean,
 ): FleetAdmissionReason {
   if (lane.held) return 'held';
   if (lane.running >= lane.target) return 'at target';
+  if (lane.queued > 0 && lane.running < lane.target && nonCapClosed) return 'admission closed';
   if (lane.queued > 0 && lane.running < lane.target && atCap) return 'blocked by the global cap';
   return 'ok';
+}
+
+/** Reasons that park queued work fleet-wide; either is red past the queued threshold. */
+function blockingReason(reason: FleetAdmissionReason): boolean {
+  return reason === 'admission closed' || reason === 'blocked by the global cap';
 }
 
 /** Project the admission block and each lane. Never copies the rest of the status file. */
@@ -97,6 +116,13 @@ export function explainFleetAdmission(value: unknown): FleetAdmissionReport {
   const cap = count(admission.cap);
   const running = count(admission.running);
   const atCap = running >= cap;
+  // Same verdict fleet lane-idle derives: the stored admit/decision flags, the
+  // gate reason, the pause flag, or the cap itself all mean nothing new launches.
+  const gate = gateReason(admission.gate_reason);
+  const paused = Boolean(status.paused);
+  const closed = atCap || admission.admit === false || admission.decision === 'stop' || gate !== null || paused;
+  // A block the cap cannot explain: gate reasons, a pause, or a stop verdict while under the cap.
+  const nonCapClosed = gate !== null || paused || ((admission.admit === false || admission.decision === 'stop') && !atCap);
   const lanes = Object.entries(record(status.lanes)).map(([name, row]): FleetAdmissionLane => {
     const lane = plain(name);
     if (!lane) throw new Error('Invalid lane');
@@ -105,17 +131,20 @@ export function explainFleetAdmission(value: unknown): FleetAdmissionReport {
     const target = count(fields.target);
     const queued = count(fields.queued);
     if (typeof fields.held !== 'boolean') throw new Error('Invalid hold');
-    const reason = laneReason({ held: fields.held, running: laneRunning, target, queued }, atCap);
+    const reason = laneReason({ held: fields.held, running: laneRunning, target, queued }, atCap, nonCapClosed);
     return {
       lane, running: laneRunning, target, queued, held: fields.held, reason,
-      status: reason === 'blocked by the global cap' && queued >= FLEET_ADMISSION_RED_QUEUED ? 'red' : 'ok',
+      status: blockingReason(reason) && queued >= FLEET_ADMISSION_RED_QUEUED ? 'red' : 'ok',
     };
   });
   return {
     schema: FLEET_ADMISSION_SCHEMA,
     readOnly: true,
     status: lanes.some(lane => lane.status === 'red') ? 'red' : 'ok',
-    global: { cap, running, load1: load(admission.load1), admit_reason: admitReason(admission.reason), at_cap: atCap },
+    global: {
+      cap, running, load1: load(admission.load1), admit_reason: admitReason(admission.reason), at_cap: atCap,
+      closed, non_cap_closed: nonCapClosed,
+    },
     lanes,
   };
 }
@@ -124,7 +153,7 @@ function formatFleetAdmission(report: FleetAdmissionReport): string {
   const global = report.global;
   const lines = [
     `Admission: ${report.status}`,
-    `Global cap ${global.cap}, running ${global.running} (${global.at_cap ? 'at the cap' : 'under the cap'}), load ${global.load1}, admit reason: ${global.admit_reason ?? 'none'}`,
+    `Global cap ${global.cap}, running ${global.running} (${global.at_cap ? 'at the cap' : 'under the cap'})${global.non_cap_closed ? ', admission closed' : ''}, load ${global.load1}, admit reason: ${global.admit_reason ?? 'none'}`,
   ];
   if (report.lanes.length === 0) lines.push('No lanes.');
   for (const lane of report.lanes) {

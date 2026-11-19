@@ -155,6 +155,17 @@ page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI. `phm agents bus wakes <agent>` lists wake hints
 for the agent and its channels.
 
+**Work view.** `phm agents bus work <agent>` is the one read for "what work
+involves me": the identity's inbox page, the v2 work-feed jobs it owns (owner
+labels resolved through the registry, so handle, `agent:<handle>`, stable id
+and aliases all match) with the live coordination holds blocking them, the
+live claims it holds, and its wake hints. `--after`/`--limit` page the inbox,
+`--since` filters wakes; jobs and claims always cover the retained snapshot.
+Every section reports its own source state — a refused feed, an unreadable
+claim table or a missing wake queue shows `refused`, `unavailable` or
+`missing`, never a fabricated empty — and the whole read is read-only: no
+writes, claims, dispatch or network, and labels still grant no authority.
+
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
 `PHM_AGENT_CLI`, else the runtime markers already used by team approvals, such

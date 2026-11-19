@@ -7,11 +7,12 @@ import {
 import {
   postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, type UnifiedBusOptions,
 } from '../core/agents/bus-unified.js';
+import { readAgentWorkView } from '../core/agents/bus-work-view.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'work', 'adapters']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -22,6 +23,7 @@ ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--since <epoch ms>]
+ashlr agents bus work [<agent>] [--after <cursor>] [--limit <1..100>] [--since <epoch ms>]
 ashlr agents bus adapters
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -186,6 +188,51 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const page = readAgentWakes(agent, integer(one('--since'), '--since'), options);
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
+      return 0;
+    }
+    if (verb === 'work') {
+      noExtra(2);
+      const agent = sub ?? self;
+      if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
+      const view = readAgentWorkView(agent, {
+        after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
+        since: integer(one('--since'), '--since'),
+      }, options);
+      if (view.status !== 'ok') return finish(view, '');
+      if (json) { out(JSON.stringify(view)); return 0; }
+      const lines = [`agent=${view.agent} identity=${view.identity} labels=${view.labels.join(',')}`];
+      lines.push(view.inbox.status === 'ok'
+        ? `inbox ok messages=${view.inbox.messages.length} nextCursor=${view.inbox.nextCursor}`
+        : `inbox ${view.inbox.status} ${view.inbox.reason}`);
+      if (view.inbox.status === 'ok') {
+        for (const m of view.inbox.messages) {
+          lines.push(`  ${m.priority} ${m.kind}${m.channel ? ` #${m.channel}` : ''} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`);
+        }
+      }
+      lines.push(view.jobs.status === 'ok'
+        ? `jobs ok jobs=${view.jobs.jobs.length} holds=${view.jobs.holds.length} claims=${view.jobs.claims.source}${view.jobs.claims.truncated ? ':truncated' : ''} as-of=${view.jobs.asOf}`
+        : `jobs ${view.jobs.status}${view.jobs.status === 'refused' ? ` ${view.jobs.reason}` : ''}`);
+      if (view.jobs.status === 'ok') {
+        for (const job of view.jobs.jobs) {
+          lines.push(`  ${job.id} ${job.status} provider=${job.provider} repo=${job.repo} updated=${new Date(job.updatedAt).toISOString()}`);
+        }
+        for (const hold of view.jobs.holds) {
+          lines.push(`  held ${hold.jobId} ${hold.claimKey} owner=${hold.owner} until=${new Date(hold.leaseUntil).toISOString()}`);
+        }
+      }
+      lines.push(`claims ${view.claims.source}${view.claims.source === 'available' ? ` live=${view.claims.claims.length}` : ''}`);
+      if (view.claims.source === 'available') {
+        for (const claim of view.claims.claims) {
+          lines.push(`  ${claim.origin}:${claim.key} owner=${claim.owner} until=${new Date(claim.leaseUntil).toISOString()}`);
+        }
+      }
+      lines.push(view.wakes.status === 'ok'
+        ? `wakes ok wakes=${view.wakes.wakes.length}`
+        : `wakes ${view.wakes.status}`);
+      if (view.wakes.status === 'ok') {
+        for (const w of view.wakes.wakes) lines.push(`  ${w.at} ${w.id} ${w.from} -> ${w.to}`);
+      }
+      out(lines.join('\n'));
       return 0;
     }
     throw new UsageError('Unknown agents bus command.');

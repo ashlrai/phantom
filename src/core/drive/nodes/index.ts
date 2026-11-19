@@ -1,4 +1,5 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
+import { validNodeTask, type EmbeddedNodeTask } from './task.js';
 import { nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
@@ -35,14 +36,17 @@ export interface NodeReport {
 }
 
 export interface JobSpec {
+  task?: EmbeddedNodeTask;
   owner: string;
   requires?: string[];
   pack?: string;
   secrets?: string[];
 }
 
-/** What a node may see of a job it is entitled to: references only, never values. */
+/** What a node may see of a job it is entitled to: references only, never values.
+ * Embedded task text is included only in the successful pull response. */
 export interface JobView {
+  task?: EmbeddedNodeTask;
   id: string;
   owner: string;
   state: 'pending' | 'running' | 'completed';
@@ -217,6 +221,7 @@ export class DriveNodes implements QueueV1 {
   }
 
   enqueue(jobId: string, spec?: JobSpec): boolean {
+    if (spec?.task !== undefined && (spec.pack !== 'codex-file' || !validNodeTask(spec.task))) throw new Error('Invalid embedded node task');
     if (!validId(jobId)) throw new Error('Invalid drive job ID');
     if (spec && !validId(spec.owner)) throw new Error('Invalid drive owner scope');
     if (spec?.pack !== undefined && !validId(spec.pack)) throw new Error('Invalid drive pack reference');
@@ -224,6 +229,7 @@ export class DriveNodes implements QueueV1 {
       owner: spec.owner, requires: names(spec.requires, validCap, 'capability'),
       ...(spec.pack === undefined ? {} : { pack: spec.pack }),
       secrets: names(spec.secrets, validSecretName, 'secret name (use the NAME, never the value)'),
+      ...(spec.task === undefined ? {} : { task: structuredClone(spec.task) }),
     };
     return this.transaction(state => {
       if (state.jobs.some(j => j.id === jobId)) return false;
@@ -259,7 +265,7 @@ export class DriveNodes implements QueueV1 {
       job.startedAt = now; delete job.completedAt;
       job.state = 'running';
       job.claim = claim;
-      return { claim, job: this.jobView(job) };
+      return { claim, job: { ...this.jobView(job), ...(job.task === undefined ? {} : { task: job.task }) } };
     });
   }
 

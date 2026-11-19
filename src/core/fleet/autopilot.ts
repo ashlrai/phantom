@@ -20,7 +20,7 @@
  * cannot get slots), stale-parked-deps (met gates never unparked), then
  * missing-restock (free slots with no ready supply). The planner emits the
  * full ranked gap list plus exactly one action for the top gap — even when
- * the honest answer is no-op (capacity-bound, dispatch-stall).
+ * the honest answer is no-op (capacity-bound, admission-closed, dispatch-stall).
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -130,7 +130,7 @@ export type AutopilotGapKind = 'uncovered-conflicts' | 'starved-lane' | 'stale-p
 const GAP_KIND_ORDER: Record<AutopilotGapKind, number> = {
   'uncovered-conflicts': 0, 'starved-lane': 1, 'stale-parked-deps': 2, 'missing-restock': 3,
 };
-export type AutopilotNoopReason = 'fleet-healthy' | 'capacity-bound' | 'dispatch-stall' | 'state-unreadable';
+export type AutopilotNoopReason = 'fleet-healthy' | 'capacity-bound' | 'dispatch-stall' | 'admission-closed' | 'state-unreadable';
 export type AutopilotEnqueueType = 'rebase' | 'restock' | 'unpark';
 
 export interface AutopilotGap {
@@ -174,7 +174,7 @@ export interface AutopilotReport {
   status: 'ok' | 'degraded' | 'unreadable';
   generatedAt: string;
   sources: AutopilotSources;
-  global: { cap: number | null; running: number | null; atCap: boolean | null; admitReason: string | null };
+  global: { cap: number | null; running: number | null; atCap: boolean | null; admitReason: string | null; closed: boolean | null; nonCapClosed: boolean | null };
   lanes: AutopilotLane[];
   /** Every measured gap, highest severity first. */
   gaps: AutopilotGap[];
@@ -228,7 +228,10 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
   });
 }
 
-function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], atCap: boolean): AutopilotAction {
+function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], atCap: boolean, nonCapClosed: boolean, admitReason: string | null): AutopilotAction {
+  if (nonCapClosed) {
+    return { kind: 'no-op', reason: 'admission-closed', detail: `'${lane.lane}' has launchable work and free slots, but fleet admission is closed${admitReason ? ` (${admitReason})` : ''}; nothing launches until it reopens.` };
+  }
   if (atCap) {
     // Free the cap for the starved lane: hold the running lane whose READY
     // depth can most afford a pause (over-deep queues outlive one pause).
@@ -254,6 +257,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
   const lanes = autopilotLanes(state);
   const admission = state.admission;
   const atCap = admission?.global.at_cap ?? null;
+  const nonCapClosed = admission?.global.non_cap_closed ?? null;
 
   // uncovered-conflicts: conflicting bridge PRs with no current rebase job.
   for (const repo of state.rebase ?? []) {
@@ -276,7 +280,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
       kind: 'starved-lane', lane: lane.lane,
       severity: 80 + Math.min(waiting, 15) + (lane.running === 0 ? 5 : 0),
       detail: `'${lane.lane}' runs ${lane.running} of target ${lane.target} with ${waiting} launchable job${waiting === 1 ? '' : 's'} waiting${atCap ? ' while the fleet sits at the cap' : ' under the cap'}.`,
-      evidence: { running: lane.running, target: lane.target, waiting, ready: lane.ready, queued: lane.queued, atCap },
+      evidence: { running: lane.running, target: lane.target, waiting, ready: lane.ready, queued: lane.queued, atCap, nonCapClosed },
     });
   }
 
@@ -326,7 +330,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
         break;
       }
       case 'starved-lane':
-        action = starvedAction(lanes.find((row) => row.lane === topGap.lane)!, lanes, atCap === true);
+        action = starvedAction(lanes.find((row) => row.lane === topGap.lane)!, lanes, atCap === true, nonCapClosed === true, admission?.global.admit_reason ?? null);
         break;
       case 'stale-parked-deps':
         action = {
@@ -359,6 +363,8 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
       running: admission?.global.running ?? null,
       atCap: admission?.global.at_cap ?? null,
       admitReason: admission?.global.admit_reason ?? null,
+      closed: admission?.global.closed ?? null,
+      nonCapClosed: admission?.global.non_cap_closed ?? null,
     },
     lanes,
     gaps,

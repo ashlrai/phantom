@@ -73,6 +73,32 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('serves one identity work view across inbox, jobs, claims and wakes', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'ping', '--priority', 'P0', '--id', 'wv-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const view = await run(['work', 'atlas']);
+    expect(view.code).toBe(0);
+    expect(view.json).toMatchObject({ v: 1, status: 'ok', agent: 'atlas', identity: expect.any(String) });
+    expect(view.json.labels).toEqual(['agent:atlas']);
+    expect(view.json.inbox.messages.map((m: { kind: string }) => m.kind)).toEqual(['dm']);
+    expect(view.json.jobs).toMatchObject({ status: 'ok', jobs: [], holds: [] });
+    expect(view.json.jobs.claims.source).toBe('missing');
+    expect(view.json.claims).toEqual({ source: 'missing', claims: [] });
+    expect(view.json.wakes.wakes.map((w: { id: string }) => w.id)).toEqual(['wv-dm']);
+
+    // Human output summarizes each section without failing on empty ones.
+    const human: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'atlas', '--root', root], t => human.push(t), () => {})).toBe(0);
+    expect(human.join('\n')).toContain('agent=atlas');
+    expect(human.join('\n')).toContain('jobs ok jobs=0');
+
+    expect(await run(['work', 'ghost'])).toMatchObject({ code: 1, json: { status: 'unknown-agent' } });
+    expect(await run(['work', 'atlas', 'extra'])).toMatchObject({ code: 2 });
+  });
+
   it('returns 1 for refusals and 2 for usage errors', async () => {
     expect(await run(['dm', '--to', 'nova', '--text', 'x'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
     expect(await run(['dm', '--from', 'ghost', '--to', 'nova', '--text', 'x'])).toMatchObject({ code: 1, json: { status: 'unknown-sender' } });
