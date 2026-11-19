@@ -1360,6 +1360,21 @@ structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
 a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
 fabricated count.
 
+`src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
+`BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result
+union: `acquired`/`renewed` carry claim details including the fencing `token`,
+`released`/`completed` carry `claimKey`, `conflict` carries `holder` without a
+token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
+are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
+undefined for non-claim bodies so opaque mail still appends),
+`BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
+`work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
+and `work.release` through `settleCoordination` on the one coordination table
+with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of
+claimKey>` so an operation id retried on the same key replaces its own lease
+while reuse on another key cannot relocate it. Claims coordinate only and grant
+no execution authority; the token returns only to its acquirer.
+
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),

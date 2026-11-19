@@ -1,0 +1,259 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Readable } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { executeBusClaimBody, type BusClaimResult } from '../src/core/agents/bus-claims.js';
+import { listCoordination } from '../src/core/agents/claim-store.js';
+import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
+import { handleAgentBusApi } from '../src/core/verse/agent-bus-api.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+
+const NOW = 1_800_000_000_000;
+const TOKEN_RE = /^[a-f0-9]{64}$/;
+
+const dirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  dirs.push(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+const acquire = (claimKey: string, owner = 'dot-main', leaseMs = 600_000, opId = 'op-1', root = tempDir('v2claim-'), now = NOW) =>
+  executeBusClaimBody({ kind: 'work.claim', op: 'acquire', claimKey, owner, leaseMs }, opId, { root, now });
+const renew = (claimKey: string, token: string, leaseMs = 600_000, root?: string, now = NOW) =>
+  executeBusClaimBody({ kind: 'work.claim', op: 'renew', claimKey, token, leaseMs }, 'op-renew', { root, now });
+const release = (claimKey: string, token: string, outcome: 'released' | 'completed' = 'released', root?: string, now = NOW) =>
+  executeBusClaimBody({ kind: 'work.release', claimKey, token, outcome }, 'op-release', { root, now });
+const tokenOf = (result: BusClaimResult | undefined): string => {
+  if (result?.status !== 'acquired') throw new Error(`expected acquired, got ${JSON.stringify(result)}`);
+  return result.claim.token;
+};
+
+describe('executeBusClaimBody', () => {
+  it('ignores non-claim bodies so opaque mail still appends', () => {
+    const root = tempDir('v2claim-');
+    for (const body of [
+      { kind: 'note', text: 'hi' },
+      { kind: 'work.post', jobId: 'J1', title: 't', repo: 'a/b', claimKeys: ['queue:J1'] },
+      { kind: 'work.status', jobId: 'J1', status: 'running' },
+      { kind: 'wake', target: 'x', reason: 'r' },
+      { kind: 'bogus' }, 'plain', 42, null, [],
+    ]) {
+      expect(executeBusClaimBody(body, 'op-x', { root, now: NOW })).toBeUndefined();
+    }
+  });
+
+  it('acquires a resource claim and lands it in the one coordination table', () => {
+    const root = tempDir('v2claim-');
+    const result = acquire('path:ashlrai/phantom:docs/**', 'dot-main', 600_000, 'op-1', root);
+    expect(result).toMatchObject({ v: 2, status: 'acquired', claim: { claimKey: 'path:ashlrai/phantom:docs/**', owner: 'dot-main', leaseMs: 600_000, leaseUntil: NOW + 600_000 } });
+    expect(tokenOf(result)).toMatch(TOKEN_RE);
+    const listed = listCoordination(root, NOW);
+    expect(listed.source).toBe('available');
+    expect(listed.claims).toHaveLength(1);
+    expect(listed.claims[0]).toMatchObject({ origin: 'resource', key: 'path:ashlrai/phantom:docs/**', owner: 'dot-main', live: true });
+  });
+
+  it('refuses an overlapping live claim with the holder and never the token', () => {
+    const root = tempDir('v2claim-');
+    const first = acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    const token = tokenOf(first);
+    const second = acquire('path:ashlrai/phantom:docs/**', 'other-seat', 600_000, 'op-2', root);
+    expect(second).toEqual({ v: 2, status: 'conflict', holder: { owner: 'dot-main', claimKey: 'repo:ashlrai/phantom', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(second)).not.toContain(token);
+    // A different op id on the same key conflicts; the same op id retries cleanly.
+    expect(acquire('repo:ashlrai/phantom', 'other-seat', 600_000, 'op-3', root)).toMatchObject({ status: 'conflict' });
+    const retry = acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    expect(retry).toMatchObject({ status: 'acquired' });
+    expect(tokenOf(retry)).not.toBe(token);
+  });
+
+  it('lets non-overlapping keys coexist across claim forms', () => {
+    const root = tempDir('v2claim-');
+    expect(acquire('repo:ashlrai/phantom', 'a', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
+    expect(acquire('queue:RQ-OTHER', 'b', 600_000, 'op-2', root)).toMatchObject({ status: 'acquired' });
+    expect(acquire('pr:ashlrai/phantom#12', 'c', 600_000, 'op-3', root)).toMatchObject({ status: 'acquired' });
+  });
+
+  it('renews, rejects wrong tokens, and frees expired claims', () => {
+    const root = tempDir('v2claim-');
+    const key = 'queue:RQ-V2-1';
+    const token = tokenOf(acquire(key, 'dot-main', 1_000, 'op-1', root));
+    expect(renew(key, token, 1_000, root, NOW + 500)).toEqual({ v: 2, status: 'renewed', claim: { claimKey: key, leaseUntil: NOW + 1_500 } });
+    expect(renew(key, 'f'.repeat(64), 1_000, root, NOW + 500)).toEqual({ v: 2, status: 'mismatched-token' });
+    // A renewal longer than the acquired lease is refused by the store.
+    expect(renew(key, token, 2_000, root, NOW + 500)).toEqual({ v: 2, status: 'invalid' });
+    expect(release(key, token, 'released', root, NOW + 1_500)).toEqual({ v: 2, status: 'expired' });
+    // Expired claims are free: a new owner can acquire the same key.
+    const again = acquire(key, 'other-seat', 1_000, 'op-2', root, NOW + 1_500);
+    expect(again).toMatchObject({ status: 'acquired', claim: { owner: 'other-seat' } });
+    expect(release(key, tokenOf(again), 'completed', root, NOW + 1_600)).toEqual({ v: 2, status: 'completed', claimKey: key });
+    expect(release(key, 'e'.repeat(64), 'released', root, NOW + 1_600)).toEqual({ v: 2, status: 'lost' });
+  });
+
+  it('rejects malformed claim and release bodies as invalid', () => {
+    const root = tempDir('v2claim-');
+    for (const body of [
+      { kind: 'work.claim', op: 'acquire', claimKey: 'bogus', owner: 'a', leaseMs: 1 },
+      { kind: 'work.claim', op: 'acquire', claimKey: 'queue:Q', owner: 'a', leaseMs: 0 },
+      { kind: 'work.claim', op: 'acquire', claimKey: 'queue:Q', owner: 'a', leaseMs: 3_600_001 },
+      { kind: 'work.claim', op: 'acquire', claimKey: 'queue:Q', leaseMs: 1 },
+      { kind: 'work.claim', op: 'acquire', claimKey: 'queue:Q', owner: 'a', leaseMs: 1, extra: 1 },
+      { kind: 'work.claim', op: 'bogus', claimKey: 'queue:Q', owner: 'a', leaseMs: 1 },
+      { kind: 'work.claim', op: 'renew', claimKey: 'queue:Q', token: 'not-hex', leaseMs: 1 },
+      { kind: 'work.release', claimKey: 'queue:Q', token: 'a'.repeat(64), outcome: 'bogus' },
+      { kind: 'work.release', claimKey: 'queue:Q', token: 'a'.repeat(64) },
+    ]) {
+      expect(executeBusClaimBody(body, 'op-bad', { root, now: NOW })).toEqual({ v: 2, status: 'invalid' });
+    }
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+});
+
+// ─── HTTP surface ────────────────────────────────────────────────────
+
+const HTTP_PATH = '/api/verse/agent-bus';
+const HTTP_TOKEN = 'fake-http-token';
+
+describe('POST /api/verse/agent-bus claim operations', () => {
+  let home: string;
+  let now: number;
+  beforeEach(() => {
+    home = tempDir('v2claim-http-');
+    vi.stubEnv('ASHLR_HOME', join(home, 'ashlr'));
+    now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+  });
+
+  async function http(method: 'GET' | 'POST', body?: unknown, authorized = true, allowDispatch = true) {
+    const req = Readable.from(body === undefined ? [] : [JSON.stringify(body)]) as unknown as IncomingMessage;
+    req.url = HTTP_PATH;
+    req.method = method;
+    req.headers = { 'content-type': 'application/json', ...(authorized ? { 'x-ashlr-token': HTTP_TOKEN } : {}) };
+    let status = 0;
+    let wire: unknown;
+    const res = {
+      headersSent: false,
+      writeHead(code: number) { status = code; this.headersSent = true; },
+      end(payload: string) { wire = JSON.parse(payload); },
+    } as unknown as ServerResponse;
+    const ctx = { cfg: {}, token: HTTP_TOKEN, allowDispatch, readSession: { id: 'fake-session', expiresAt: now + 60_000 } } as VerseApiContext;
+    expect(await handleAgentBusApi(ctx, req, res, HTTP_PATH, method)).toBe(true);
+    return { status, wire };
+  }
+
+  const envelope = (id: string, body: unknown) => ({ id, from: 'dot-main', to: 'leaders', priority: 'P2', ttl: 3_600_000, body });
+
+  it('executes acquire/renew/release and returns the unsanitized fencing token', async () => {
+    const acquireBody = { kind: 'work.claim', op: 'acquire', claimKey: 'path:ashlrai/phantom:docs/**', owner: 'dot-main', leaseMs: 600_000 };
+    const first = await http('POST', envelope('claim-0001', acquireBody));
+    expect(first.status).toBe(201);
+    expect(first.wire).toMatchObject({ v: 2, status: 'acquired', claim: { claimKey: 'path:ashlrai/phantom:docs/**', owner: 'dot-main', leaseUntil: now + 600_000 } });
+    const token = (first.wire as { claim: { token: string } }).claim.token;
+    expect(token).toMatch(TOKEN_RE);
+
+    const conflict = await http('POST', envelope('claim-0002', { ...acquireBody, owner: 'other-seat' }));
+    expect(conflict.status).toBe(409);
+    expect(conflict.wire).toEqual({ v: 2, status: 'conflict', holder: { owner: 'dot-main', claimKey: 'path:ashlrai/phantom:docs/**', leaseUntil: now + 600_000 } });
+    expect(JSON.stringify(conflict.wire)).not.toContain(token);
+
+    const renewed = await http('POST', envelope('claim-0003', { kind: 'work.claim', op: 'renew', claimKey: 'path:ashlrai/phantom:docs/**', token, leaseMs: 600_000 }));
+    expect(renewed).toMatchObject({ status: 200, wire: { v: 2, status: 'renewed' } });
+
+    const released = await http('POST', envelope('claim-0004', { kind: 'work.release', claimKey: 'path:ashlrai/phantom:docs/**', token, outcome: 'released' }));
+    expect(released).toMatchObject({ status: 200, wire: { v: 2, status: 'released', claimKey: 'path:ashlrai/phantom:docs/**' } });
+  });
+
+  it('maps invalid claim bodies to 400 and keeps ordinary mail on the append path', async () => {
+    const bad = await http('POST', envelope('claim-bad', { kind: 'work.claim', op: 'acquire', claimKey: 'bogus', owner: 'a', leaseMs: 1 }));
+    expect(bad).toMatchObject({ status: 400, wire: { v: 2, status: 'invalid' } });
+
+    const note = envelope('note-0001', { kind: 'note', text: 'hello' });
+    expect(await http('POST', note)).toMatchObject({ status: 201, wire: { v: 1, status: 'posted', cursor: 1 } });
+    // Claim operations never append: the inbox still holds only the note.
+    const page = (await http('GET', undefined)).wire as { status: string; nextCursor: number; messages: unknown[] };
+    expect(page).toMatchObject({ status: 'ok', nextCursor: 1 });
+    expect(page.messages).toHaveLength(1);
+
+    // The mutation gate still applies to claim operations.
+    expect(await http('POST', envelope('claim-denied', { kind: 'work.claim', op: 'acquire', claimKey: 'queue:Q', owner: 'a', leaseMs: 1 }), false))
+      .toMatchObject({ status: 401 });
+    expect(await http('POST', envelope('claim-nodisp', { kind: 'work.claim', op: 'acquire', claimKey: 'queue:Q', owner: 'a', leaseMs: 1 }), true, false))
+      .toMatchObject({ status: 404 });
+  });
+});
+
+// ─── CLI surface ─────────────────────────────────────────────────────
+
+describe('phm agents bus claim', () => {
+  let cliBase: string;
+  let cliRoot: string;
+  let previousRuns: string | undefined;
+  beforeEach(() => {
+    cliBase = tempDir('v2claim-cli-');
+    cliRoot = join(cliBase, 'fleet');
+    previousRuns = process.env['ASHLR_RUNS_DIR'];
+    process.env['ASHLR_RUNS_DIR'] = join(cliBase, 'runs');
+  });
+  afterEach(() => {
+    if (previousRuns === undefined) delete process.env['ASHLR_RUNS_DIR'];
+    else process.env['ASHLR_RUNS_DIR'] = previousRuns;
+  });
+
+  async function cli(args: string[], env: NodeJS.ProcessEnv = {}, json = true) {
+    const out: string[] = [], err: string[] = [];
+    const code = await runAgentsBusUnified([...args, ...(json ? ['--json'] : []), '--root', cliRoot], t => out.push(t), t => err.push(t), env);
+    const text = out.length ? out.join('\n') : err.join('\n');
+    return { code, json: json && out.length ? JSON.parse(text) : undefined, text };
+  }
+
+  it('acquires, conflicts, renews and releases through the shared table', async () => {
+    const first = await cli(['claim', 'acquire', '--key', 'repo:ashlrai/phantom', '--lease-ms', '600000', '--owner', 'dot-main', '--id', 'cli-op-1'], { PHM_AGENT_ID: 'dot-main' });
+    expect(first.code).toBe(0);
+    expect(first.json).toMatchObject({ v: 2, status: 'acquired', claim: { claimKey: 'repo:ashlrai/phantom', owner: 'dot-main' } });
+    expect(first.json.claim.token).toMatch(TOKEN_RE);
+
+    const conflict = await cli(['claim', 'acquire', '--key', 'path:ashlrai/phantom:src/**', '--lease-ms', '600000', '--owner', 'other'], { PHM_AGENT_ID: 'other' });
+    expect(conflict.code).toBe(1);
+    expect(conflict.json).toMatchObject({ v: 2, status: 'conflict', holder: { owner: 'dot-main', claimKey: 'repo:ashlrai/phantom' } });
+
+    const renewed = await cli(['claim', 'renew', '--key', 'repo:ashlrai/phantom', '--token', first.json.claim.token, '--lease-ms', '600000']);
+    expect(renewed.code).toBe(0);
+    expect(renewed.json).toMatchObject({ v: 2, status: 'renewed' });
+
+    const wrongToken = await cli(['claim', 'release', '--key', 'repo:ashlrai/phantom', '--token', 'f'.repeat(64), '--outcome', 'released']);
+    expect(wrongToken.code).toBe(1);
+    expect(wrongToken.json).toMatchObject({ v: 2, status: 'mismatched-token' });
+
+    const released = await cli(['claim', 'release', '--key', 'repo:ashlrai/phantom', '--token', first.json.claim.token, '--outcome', 'completed']);
+    expect(released.code).toBe(0);
+    expect(released.json).toMatchObject({ v: 2, status: 'completed', claimKey: 'repo:ashlrai/phantom' });
+
+    const lost = await cli(['claim', 'release', '--key', 'repo:ashlrai/phantom', '--token', first.json.claim.token, '--outcome', 'released']);
+    expect(lost.code).toBe(1);
+    expect(lost.json).toMatchObject({ v: 2, status: 'lost' });
+  });
+
+  it('defaults the claim owner to PHM_AGENT_ID and prints a human line without --json', async () => {
+    const result = await cli(['claim', 'acquire', '--key', 'queue:RQ-CLI', '--lease-ms', '60000'], { PHM_AGENT_ID: 'nova' }, false);
+    expect(result.code).toBe(0);
+    expect(result.text).toContain('acquired queue:RQ-CLI owner=nova');
+    expect(result.text).toContain('token=');
+  });
+
+  it('returns 2 for usage errors and invalid claim arguments', async () => {
+    expect(await cli(['claim', 'acquire', '--lease-ms', '60000'])).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'bogus', '--key', 'queue:Q'])).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'acquire', '--key', 'queue:Q'])).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'renew', '--key', 'queue:Q', '--token', 'a'.repeat(64)])).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'acquire', '--key', 'bogus', '--lease-ms', '60000', '--owner', 'a'], {})).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'acquire', '--key', 'queue:Q', '--lease-ms', '60000'])).toMatchObject({ code: 2 });
+  });
+});
