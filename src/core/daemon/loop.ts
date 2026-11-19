@@ -4643,6 +4643,7 @@ export async function tick(
           postMergeCreditReleased: postMergeCreditSweepResult.released,
           postMergeCreditSkipped: postMergeCreditSweepResult.skipped,
           postMergeCreditSourceComplete: postMergeCreditSweepResult.sourceComplete,
+          postMergeCreditSkippedByReason: postMergeCreditSweepResult.skippedByReason,
         }
         : {}),
       ...(producerMaintenanceSkippedByCadence ? { skippedByCadence: true } : {}),
