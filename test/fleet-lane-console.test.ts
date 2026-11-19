@@ -150,7 +150,7 @@ describe('parseReadyTsv', () => {
     // these rows and surface the repo name as a lane — or drop owner/name
     // repos outright. The requirements' preferred_lane is the only honest
     // lane left; a row naming none is lane-open work, counted as unhinted.
-    const { rows, dropped, unhinted } = parseReadyTsv([
+    const { rows, dropped, unhinted, unhintedRows } = parseReadyTsv([
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
       'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
       'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
@@ -159,6 +159,14 @@ describe('parseReadyTsv', () => {
     ].join('\n'));
     expect(dropped).toBe(0);
     expect(unhinted).toBe(4);
+    // Lane-open rows keep their validated id and repo for supply counts; the
+    // row that resolved a preferred_lane is not among them.
+    expect(unhintedRows).toEqual([
+      { id: 'RQ-OPEN-A', repo: 'phantom' },
+      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom' },
+      { id: 'RQ-OPEN-D', repo: 'phantom' },
+      { id: 'RQ-OPEN-E', repo: 'phantom' },
+    ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
     expect(rows.map(r => r.pool)).not.toContain('phantom');
