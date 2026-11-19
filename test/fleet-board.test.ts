@@ -143,6 +143,21 @@ describe('the conflict proxy and tier counts are pure', () => {
     expect([...ids].sort()).toEqual(['PHANTOM-1234', 'SECRETS-7']);
   });
 
+  it('counts every member PR of batch rebase rows and unknown-head singles', () => {
+    const ids = conflictingPrIds([
+      'READY\tRQ-REBASE-BATCH-PHANTOM-4021-4023-a1b2c3\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-phantom-secrets-168-418-abcdef\tcodex\twork',
+      'READY\tRQ-REBASE-PHANTOM-4021-u3f2a1b\tdevin\twork', // unknown-head tag still counts, deduped with the batch member
+      'PARKED-DEP.devin\tRQ-REBASE-BATCH-PHANTOM-4021-4023-a1b2c3\tdevin\twork',
+      'READY\tRQ-REBASE-BATCH-PHANTOM-4021-4023-a1b2cX\tdevin\twork', // non-hex hash tail: not a rebase row
+      'READY\tRQ-REBASE-BATCH-PHANTOM-4021\tdevin\twork', // no member/hash tail
+      'READY\tRQ-TEST-1\tdevin\twork',
+    ].join('\n'));
+    expect([...ids].sort()).toEqual([
+      'PHANTOM-4021', 'PHANTOM-4023', 'PHANTOM-SECRETS-168', 'PHANTOM-SECRETS-418',
+    ]);
+  });
+
   it('drops both parked-row encodings from the READY depth parse', () => {
     const text = [
       row('READY', 'RQ-TEST-1', 'devin', 'work'),

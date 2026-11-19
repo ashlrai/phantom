@@ -10,9 +10,9 @@
  * landing, whether conflicting PRs are piling up, and what is blocked on
  * Mason.
  *
- * RECOVERY STATUS. This restores the #4070 writer path only — the protected
- * leader.ts tick hook and CLI dialect were not recovered, so nothing calls
- * this at runtime yet; wiring the tick is an explicit owner follow-up.
+ * RUNTIME WIRING. leader.ts's leaderTick records one board per tick through
+ * recordLeaderBoardTick (an injected deps.board.record wins when present);
+ * `phm fleet board --leader` and the fleet-board API serve the file.
  *
  * LOOPBACK-SAFE AND BOUNDED. Every input is a local file under the runs dir
  * (queue/ready.tsv, queue/jobs.jsonl, NEEDS-MASON.md) through the same
@@ -26,6 +26,11 @@
  * `RQ-REBASE-<REPO>-<pr>-<sha7>` job only for PRs GitHub reports DIRTY, so a
  * distinct-PR count over ready.tsv's rebase rows is the fleet's own honest
  * local conflict view — it drops to zero as rebase jobs launch and land.
+ * The rebase-plan writer emits two more shapes the count must see:
+ * `RQ-REBASE-<repo>-<pr>-u<hash6>` singles whose head SHA was unknown at
+ * plan time, and `RQ-REBASE-BATCH-<repo>-<pr>-<pr>-…-<hash6>` rows that cover
+ * every member PR of one file-overlap cluster — each member is its own
+ * conflicting PR.
  */
 import { constants } from 'node:fs';
 import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
@@ -49,8 +54,21 @@ const MAX_HISTORY = 96;
 const MAX_NEEDS_ITEMS = 10;
 const MAX_TIER_KEYS = 16;
 const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
-/** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId), anywhere in a queue row. */
-const REBASE_JOB_RE = /RQ-REBASE-([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-[0-9a-f]{7,40}/i;
+/**
+ * RQ-REBASE-<REPO>-<pr number>-<head> from queuegen (queuegen.rebaseId) or
+ * merge-batch-runner, anywhere in a queue row. The head tag is a hex sha
+ * slice, or rebase-plan's `u<hash6>` stand-in when the PR's head SHA was
+ * unknown at plan time (rebase-plan.ts headTag).
+ */
+const REBASE_JOB_RE = /RQ-REBASE-([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})/i;
+/**
+ * RQ-REBASE-BATCH-<repo>-<pr>(-<pr>)*-<hash6> from rebase-plan emitJob: one
+ * row covering every member PR of a file-overlap cluster. The repo group is
+ * lazy so the numeric member list anchors the split; fleet repo shorts never
+ * end in `-<digits>`, and a trailing hex/hyphen lookahead keeps a longer or
+ * suffixed token from matching a prefix.
+ */
+const REBASE_BATCH_RE = /RQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}(?![0-9a-f-])/i;
 
 export interface LeaderBoardLane {
   lane: string;
@@ -77,7 +95,7 @@ export interface LeaderBoardV1 {
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
   mergesLastHour: number | null;
   conflictingPrs: {
-    /** Distinct PRs with an RQ-REBASE row queued; null when ready.tsv was unreadable. */
+    /** Distinct PRs covered by RQ-REBASE rows queued — batch rows contribute each member PR; null when ready.tsv was unreadable. */
     count: number | null;
     /** count minus the previous recorded sample; null without one. */
     delta: number | null;
@@ -166,6 +184,11 @@ export function conflictingPrIds(readyTsvText: string): Set<string> {
   const prs = new Set<string>();
   for (const raw of readyTsvText.split('\n')) {
     if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
+    const batch = REBASE_BATCH_RE.exec(raw);
+    if (batch) {
+      const repo = batch[1]!.toUpperCase();
+      for (const pr of batch[2]!.split('-')) prs.add(`${repo}-${pr}`);
+    }
     const match = REBASE_JOB_RE.exec(raw);
     if (match) prs.add(`${match[1]!.toUpperCase()}-${match[2]!}`);
   }
