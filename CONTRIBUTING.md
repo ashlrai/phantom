@@ -2,6 +2,11 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+**First contribution?** Start with [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md):
+the short path from clone to merged pull request (fork remote, local checks,
+what `Merge Gate` requires, auto-merge and owner-protected paths). This file
+holds the full conventions it links to.
+
 ---
 
 ## Prerequisites
@@ -21,9 +26,12 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+npm ci                    # a single checkout; also what CI and release packaging use
+npm run install:worktree  # several trusted local worktrees sharing one store; requires pnpm 10.28.2
 ```
+
+Use `npm ci` unless you run many agent worktrees on one machine; see
+[Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees).
 
 Run focused verification locally while developing. Pull requests and default-branch
 pushes run the repository's CI and Dependency Audit workflows. Check the actual
@@ -346,10 +354,27 @@ Comms transports live in `src/core/integrations/` (`telegram.ts`, `imessage.ts`)
 ## Commit style
 
 - Keep commits focused and atomic; one logical change per commit.
-- Use a concise, imperative subject line (e.g. `add genome embedding rerank fallback`), with a body explaining the "why" when it is not obvious.
+- Use a [Conventional Commits](https://www.conventionalcommits.org/) subject, `type(scope): summary` in the imperative (e.g. `docs(contribute): link the agent guide`), with a body explaining the "why" when it is not obvious. Release notes are generated from these types by [release-please](release-please-config.json): `feat`, `fix`, `perf`, `refactor`, `chore`, `docs`, `test`, `ci`, `build`, and `bridge` for fleet bridge jobs.
+- Pull requests are squash-merged, so the pull request title becomes the commit subject on `master`; give it the same form.
 - A commit must preserve the [local verification gates](#definition-of-green), including web and documentation checks when those surfaces change.
 - Do not commit `dist/` (it is git-ignored) or machine-specific paths.
 - Milestone commits follow the pattern: `feat: M<N> <short description>` and update the milestone row in the relevant `docs/SPEC-V*.md`.
+
+## Pull requests and merging
+
+Push your branch to your fork and open the pull request against `master`; nobody,
+including fleet agents, pushes directly to `master`. Fill in the
+[pull request template](.github/PULL_REQUEST_TEMPLATE.md) with the exact commands
+you ran and anything you skipped.
+
+`Merge Gate` is the single required check. On a pull request it runs the secret
+scans, the generated-files check and a fast gate (type check plus tests selected
+from your diff); the full backend, Windows and macOS suites run on the scheduled
+`master` run. The repository merges through GitHub's merge queue with auto-merge,
+except that changes to paths listed in [`.github/CODEOWNERS`](.github/CODEOWNERS)
+also wait for the owner's review. Details:
+[what CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires) and
+[auto-merge](docs/CONTRIBUTE-WITH-AN-AGENT.md#7-auto-merge).
 
 ---
 
