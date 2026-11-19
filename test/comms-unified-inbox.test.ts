@@ -10,9 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
+import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { readUnifiedInbox, UNIFIED_INBOX_MAX_ITEMS, type UnifiedInbox } from '../src/core/comms/unified-inbox.js';
 import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms/imessage-teammate-inbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import type { BusJsonValue } from '../src/core/fleet/bus-envelope.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import { createCommsInboxCommand } from '../src/cli/comms-inbox.js';
@@ -52,6 +54,29 @@ function claim(id: string, leaseMs = 600_000, owner = 'worker') {
   const result = mutateBusWorkClaim({ action: 'acquire', id, owner, leaseMs, root: busRoot });
   expect(result.status).toBe('acquired');
   return result;
+}
+
+let v2seq = 0;
+function postV2Body(body: BusJsonValue, extra: { priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number; from?: string } = {}) {
+  v2seq += 1;
+  const receipt = appendBusInbox({
+    id: `v2-${v2seq}`, from: extra.from ?? 'agent:peer', to: 'leaders',
+    priority: extra.priority ?? 'P2', ttl: extra.ttl ?? 7 * 24 * 3_600_000, body,
+  }, { root: busRoot, now: () => extra.at ?? now });
+  expect(receipt.status).toBe('posted');
+}
+function postJob(jobId: string, over: { title?: string; claimKeys?: string[]; provider?: string; priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number } = {}) {
+  postV2Body({ kind: 'work.post', jobId, title: over.title ?? `fake job ${jobId}`,
+    provider: over.provider ?? 'codex-cmp', repo: 'ashlrai/phantom',
+    claimKeys: over.claimKeys ?? [`queue:${jobId}`] }, over);
+}
+function postStatus(jobId: string, status: string, from = 'agent:peer') {
+  postV2Body({ kind: 'work.status', jobId, status }, { from });
+}
+function holdKey(key: string, owner = 'worker') {
+  const result = acquireCoordination({ root: busRoot, origin: 'resource', key, owner,
+    leaseMs: 600_000, leaseUntil: now + 600_000, sourceId: `test:${key}`, now });
+  expect(result.status).toBe('acquired');
 }
 
 describe('readUnifiedInbox sources', () => {
@@ -144,6 +169,70 @@ describe('readUnifiedInbox sources', () => {
     expect((await read()).items.filter(i => i.source === 'bus')).toHaveLength(0);
     now += 2_000;
     expect((await read()).items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:stale']);
+  });
+});
+
+describe('v2 work-feed jobs in the bus source', () => {
+  it('lists open feed jobs with real titles, priorities and claim acts', async () => {
+    postJob('RQ-OPEN', { title: 'fake open job', priority: 'P1', claimKeys: ['queue:RQ-OPEN', 'path:ashlrai/phantom:docs/**'] });
+    postJob('RQ-DONE'); postStatus('RQ-DONE', 'done');
+    postJob('RQ-RUN'); postStatus('RQ-RUN', 'running');
+    postJob('RQ-RESCHED'); postStatus('RQ-RESCHED', 'rescheduled');
+    postJob('RQ-EMPTY', { claimKeys: [] });
+    postV2Body({ kind: 'work.post', jobId: 'RQ-OLD', title: 'fake old job', provider: 'codex-cmp',
+      repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-OLD'] }, { ttl: 1, at: now - 10_000 });
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-OPEN', 'bus-feed:RQ-RESCHED']);
+    const open = items.find(i => i.id === 'bus-feed:RQ-OPEN')!;
+    expect(open).toMatchObject({
+      kind: 'bus-work', severity: 'warn', blocking: false,
+      title: 'fake open job',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · queued · 0/2 claim keys held',
+      since: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 24 * 3_600_000).toISOString(),
+      act: ['phm agents bus claim acquire --key queue:RQ-OPEN --owner <label> --lease-ms 600000',
+        'phm agents bus work feed --claims'],
+    });
+    expect(items.find(i => i.id === 'bus-feed:RQ-RESCHED')!.detail).toContain('rescheduled');
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('hides fully held jobs and reports partial holds honestly', async () => {
+    postJob('RQ-HELD'); holdKey('queue:RQ-HELD');
+    postJob('RQ-PART', { claimKeys: ['queue:RQ-PART', 'path:ashlrai/phantom:src/**'] });
+    holdKey('queue:RQ-PART');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id)).toEqual(['bus-feed:RQ-PART']);
+    expect(items[0]!.detail).toContain('1/2 claim keys held');
+    expect(items[0]!.act[0]).toBe('phm agents bus claim acquire --key path:ashlrai/phantom:src/** --owner <label> --lease-ms 600000');
+  });
+
+  it('degrades the bus source on a refused feed while legacy items still list', async () => {
+    postWork('legacy-ok', { priority: 'P1' });
+    postJob('RQ-POISON'); postStatus('RQ-POISON', 'done', 'agent:other');
+    const inbox = await read();
+    expect(inbox.sources.bus.state).toBe('degraded');
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual(['bus:legacy-ok']);
+  });
+
+  it('degrades rather than guessing when a post cannot resolve a provider', async () => {
+    postV2Body({ kind: 'work.post', jobId: 'RQ-NOPROV', title: 'fake', repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-NOPROV'] });
+    const inbox = await read();
+    expect(inbox.sources.bus).toEqual({ state: 'degraded', pending: 0 });
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
+  });
+
+  it('lists feed candidates as degraded when the coordination table is unreadable', async () => {
+    postJob('RQ-BLIND');
+    mkdirSync(join(busRoot, 'coordination'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(busRoot, 'coordination', 'claims.json'), '{"version":1,"claims":{},"statuses":[]}', { mode: 0o600 });
+    const inbox = await read();
+    expect(inbox.sources.bus.state).toBe('degraded');
+    const item = inbox.items.find(i => i.id === 'bus-feed:RQ-BLIND')!;
+    expect(item.detail).toContain('claim holds unknown');
+    expect(item.act[0]).toBe('phm agents bus claim acquire --key queue:RQ-BLIND --owner <label> --lease-ms 600000');
   });
 });
 
