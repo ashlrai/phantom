@@ -1,0 +1,12 @@
+.root { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; font-size: var(--text-xs-size); }
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.top h2 { margin: 0; font-size: var(--text-sm-size); }
+.note { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+/* One card per line in a 390 px column; two or more side by side on a wide pane. */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.card { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.card h3 { margin: 0; font-size: var(--text-xs-size); font-weight: 600; }
+.value { display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--text-lg-size); font-variant-numeric: tabular-nums; }
+.trend { font-size: var(--text-xs-size); color: var(--text-secondary); }
+.trend[data-trend='unknown'] { font-style: italic; }
+.caption { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
