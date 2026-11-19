@@ -29,7 +29,10 @@ npm run gate              # build, static checks and related tests together
 
 Before a PR, automated workers run `node scripts/verify-changed.mjs` once in
 the foreground instead of full lint and typecheck; do not poll it. Also run the
-documentation check and affected tests. Merge Gate stays the full check.
+documentation check and affected tests. On pull requests the required Merge
+Gate check runs secret scans, generated files, a type check and affected tests,
+but no lint: `verify-changed` is the only lint before merge. Full lint and test
+suites run on the six-hour `master` schedule and are fixed forward.
 
 ## Companion tools
 

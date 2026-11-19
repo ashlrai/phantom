@@ -96,7 +96,9 @@ when these jobs succeed:
 | Check generated files | Regenerated docs indexes and launcher digests match what you committed. |
 | Fast gate (typecheck + affected tests) | Type check plus the tests your diff selects; docs-only diffs run no tests. |
 
-Quick typecheck also runs but is advisory. The full backend, Windows and macOS
+Quick typecheck and Check authority drift also run but are advisory. No lint
+job runs on pull requests, so `verify-changed` in step 4 is the only lint your
+change gets before it merges. Full lint and the full backend, Windows and macOS
 suites do not run on pull requests; they run on the six-hour scheduled
 `master` run, and failures there are fixed forward. Read the actual check run
 for your commit; a workflow file is not evidence that it passed. GitHub may
