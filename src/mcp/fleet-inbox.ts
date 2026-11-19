@@ -8,6 +8,7 @@ import {
   BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter,
 } from '../core/fleet/bus-inbox.js';
 import { validateBusEnvelope } from '../core/fleet/bus-envelope.js';
+import { agentAddressMatcher, agentIdentityKeys } from '../core/agents/bus-identity.js';
 
 export const MAX_FLEET_BUS_INBOX_READ = BUS_INBOX_MAX_READ;
 export const DEFAULT_FLEET_BUS_INBOX_READ = 50;
@@ -17,9 +18,9 @@ export interface FleetBusInboxArgs {
   after: number;
   /** Cap on scanned live records, applied before the to/from filters. */
   limit: number;
-  /** Exact case-sensitive recipient routing label. */
+  /** Recipient routing label; matches any label of the same registered agent identity. */
   to?: string;
-  /** Exact case-sensitive sender routing label. */
+  /** Sender routing label; matches any label of the same registered agent identity. */
   from?: string;
 }
 
@@ -60,8 +61,13 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
 }
 
 /**
- * One durable page after `after`, filtered by exact routing labels. The limit
- * counts scanned live records before filtering (the CLI's contract), so an
+ * One durable page after `after`, filtered by routing labels resolved through
+ * the agent identity registry beside the bus store: a `to`/`from` naming any
+ * label of a registered identity matches every label of that identity, the
+ * same read `phm comms bus read|watch` and `bus next` use; an unresolvable
+ * label or an unreadable registry keeps exact-label matching, so unknown
+ * identity state never widens a page. The limit counts scanned live records
+ * before filtering (the CLI's contract), so an
  * unmatched page still advances nextCursor without replay; expired records
  * advance it unseen and never count. `sourceState` stays honest: missing,
  * unavailable and retryable stores surface as themselves, never as an
@@ -87,9 +93,12 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
   if (page.status !== 'ok') {
     return { ...base, sourceState: page.status, messages: null, returnedMessages: null, nextCursor: null };
   }
+  const identityOf = input.to === undefined && input.from === undefined ? undefined : agentIdentityKeys();
+  const to = input.to === undefined ? undefined : agentAddressMatcher(identityOf, input.to);
+  const from = input.from === undefined ? undefined : agentAddressMatcher(identityOf, input.from);
   const messages = page.messages.filter(({ envelope }) =>
-    (input.to === undefined || envelope.to === input.to) &&
-    (input.from === undefined || envelope.from === input.from));
+    (to === undefined || to(envelope.to)) &&
+    (from === undefined || from(envelope.from)));
   return {
     ...base, sourceState: 'ok' as const, messages,
     returnedMessages: messages.length, nextCursor: page.nextCursor,

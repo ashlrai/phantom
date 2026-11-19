@@ -228,6 +228,20 @@ export function agentIdentityKeys(options: AgentRegistryOptions = {}): AgentIden
   };
 }
 
+/**
+ * One address filter as a predicate over envelope routing labels: the literal
+ * label, or any other label of the same registered identity when `label`
+ * resolves through `identityOf` — a filter naming `agent:<handle>` also
+ * matches the bare handle, stable id and aliases. A label that resolves to no
+ * identity, and an unreadable registry (`identityOf` undefined), keep
+ * exact-label matching: unknown identity state never widens a filter.
+ */
+export function agentAddressMatcher(identityOf: AgentIdentityKeyFor | undefined, label: string): (value: string) => boolean {
+  const key = identityOf?.(label);
+  if (key === undefined) return value => value === label;
+  return value => value === label || identityOf?.(value) === key;
+}
+
 type Mutation<T> = (registry: AgentRegistry, now: number) => RegistryFailure | { registry: AgentRegistry; value: T; changed: boolean };
 
 /** Lock, reload, apply, validate, atomically replace. Nothing is written on refusal. */

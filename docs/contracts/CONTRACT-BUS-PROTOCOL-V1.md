@@ -43,8 +43,12 @@ status.
   but not `fleetx.deploy`. Patterns must be a valid name or a namespace
   prefix. Anything else exits 2.
 - `--kind <task|result|review|status|question>` matches `protocol.kind`.
-- `--to`, `--from`, `--id`, `--in-reply-to`, `--exclude-from` and `--priority`
-  keep their exact, case-sensitive meaning. Filters combine with AND.
+- `--to`, `--from` and `--exclude-from` match the literal routing label or
+  any other label of the same registered agent identity (handle, `agent:`
+  address, stable id or alias), resolved once when the read starts; an
+  unresolvable label or an unreadable identity registry keeps exact-label
+  matching. `--id`, `--in-reply-to` and `--priority` keep their exact,
+  case-sensitive meaning. Filters combine with AND.
 - Filtered reads keep the cursor, limit and checkpoint semantics documented in
   `phm comms bus --help`. Checkpoints bind the new filters into their identity.
 

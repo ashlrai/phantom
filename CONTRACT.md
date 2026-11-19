@@ -1601,6 +1601,7 @@ no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
 `agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
+`agentIdentityKeys(options?)`, `agentAddressMatcher(identityOf, label)`,
 `readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
 `createAgentChannel(input, options?)`, `joinAgentChannel(name, agent, options?)`,
 `leaveAgentChannel(name, agent, options?)`. Results are status objects
