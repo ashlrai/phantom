@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { buildSessionTree, sessionRecords, type SessionNode, type SessionRecord } from '../src/core/fleet/session-tree.js';
-import { buildLiveSessions, flatTree, renderLiveSessionsText } from '../src/core/fleet/live-sessions.js';
-import { readLiveSessions } from '../src/core/fleet/live-sessions-read.js';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildSessionTree, leaderRecord, sessionRecords, type LeaderSessionFacts, type SessionNode, type SessionRecord } from '../src/core/fleet/session-tree.js';
+import { buildLiveSessions, flatTree, leaderGaps, renderLiveSessionsText } from '../src/core/fleet/live-sessions.js';
+import { readLeaderSessionFacts, readLiveSessions } from '../src/core/fleet/live-sessions-read.js';
 import type { FleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import type { SubagentRecord } from '../src/core/subagent/spawn.js';
 import { createFleetLiveSessionsApi } from '../src/core/verse/fleet-live-sessions-api.js';
@@ -135,5 +138,66 @@ describe('the tree in fleet.live-sessions.v1', () => {
     expect(ok.status).toBe(200);
     expect(ok.apiRead).toHaveBeenCalledWith({ lane: 'claude', repo: null, live: true });
     expect((await api('/api/verse/fleet/control/live-sessions?live=yes')).status).toBe(400);
+  });
+});
+
+describe('the leader row, from the leader\'s own records', () => {
+  const facts: LeaderSessionFacts = { lastPassAt: ago(20), lastReplyAt: ago(30), lastReply: 'Queued two jobs\nfor the desk lanes.' };
+  const nothing: LeaderSessionFacts = { lastPassAt: null, lastReplyAt: null, lastReply: null };
+
+  it('reads as idle between passes with its last reply on one line, and names only what is still unknown', () => {
+    const list = buildLiveSessions(map, NOW, { subagents, leader: facts });
+    expect(list.tree.roots[0]).toMatchObject({ id: 'leader', kind: 'leader', state: 'idle', lane: 'unknown', model: 'unknown', startedAt: null,
+      lastMessageAt: ago(30), lastMessageAgeSeconds: 1800, lastMessage: 'Queued two jobs for the desk lanes.' });
+    expect(list.tree.line).toBe('4 sessions running: 2 workers, 2 subagents; 1 failed in the last hour; 1 under unknown parent');
+    expect(list.tree.counts).toMatchObject({ idle: 2, unknown: 0, leaders: 1 });
+    expect(list.gaps).toEqual(['Leader model unknown: no source records the model its passes run on.']);
+    expect(renderLiveSessionsText(list)).toContain('\nleader | model unknown | repo unknown | idle | spoke 30m ago | Queued two jobs for the desk lanes.\n');
+  });
+
+  it('keeps the state unknown when the last pass is old, missing or dated ahead, and never guesses a reply time', () => {
+    const stale = buildLiveSessions(map, NOW, { subagents, leader: { ...facts, lastPassAt: ago(185) } });
+    expect(stale.tree.roots[0]).toMatchObject({ state: 'unknown', lastMessage: 'Queued two jobs for the desk lanes.', lastMessageAgeSeconds: 1800 });
+    expect(stale.tree.line).toContain('1 with state unknown');
+    expect(stale.gaps).toEqual(['Leader state unknown: its last recorded pass ended 3h 5m ago.', 'Leader model unknown: no source records the model its passes run on.']);
+    expect(leaderRecord({ lastPassAt: ago(-5), lastReplyAt: ago(-5), lastReply: 'Ahead of the clock' }, NOW)).toMatchObject({ state: 'unknown', lastMessageAt: null, lastMessage: 'Ahead of the clock' });
+    expect(leaderRecord({ ...facts, lastReplyAt: 'not a time' }, NOW)).toMatchObject({ state: 'idle', lastMessageAt: null });
+    expect(leaderGaps({ lastPassAt: null, lastReplyAt: null, lastReply: 'A reply' }, NOW)).toEqual(['Leader state unknown: its plan log records no pass with a readable time.', 'Leader model unknown: no source records the model its passes run on.']);
+    expect(leaderGaps({ lastPassAt: ago(5), lastReplyAt: null, lastReply: null }, NOW)).toEqual(['Leader messages unknown: no reply to you is recorded yet.', 'Leader model unknown: no source records the model its passes run on.']);
+    const long = leaderRecord({ ...facts, lastReply: 'y'.repeat(400) }, NOW).lastMessage!;
+    expect([long.length, long.endsWith('…')]).toEqual([240, true]);
+    expect(leaderRecord({ ...facts, lastReply: ' \n ' }, NOW)).toMatchObject({ lastMessage: null, lastMessageAt: null });
+    // No fact at all is the list older readers print, byte for byte.
+    expect(JSON.stringify(buildLiveSessions(map, NOW, { subagents, leader: nothing }))).toBe(JSON.stringify(buildLiveSessions(map, NOW, { subagents })));
+    expect(leaderGaps(nothing, NOW)).toEqual(['Leader state, model and messages unknown: no source records the leader session yet.']);
+  });
+
+  it('lists the leader alone when it has records and no worker runs, but not under a lane or repo filter', () => {
+    const none = { ...map, sessions: [], mapSessions: [], recent: [] } as unknown as FleetSessionMap;
+    const alone = buildLiveSessions(none, NOW, { leader: facts });
+    expect(shape(alone.tree.roots)).toEqual([['leader', 'leader', 'idle']]);
+    expect(alone.tree.line).toBe('No agent sessions running');
+    expect(alone.counts.sessions).toBe(0);
+    expect(buildLiveSessions(none, NOW, { leader: facts, lane: 'claude' }).tree.roots).toEqual([]);
+    expect(buildLiveSessions(none, NOW, { leader: nothing }).tree.roots).toEqual([]);
+    expect(buildLiveSessions(none, NOW).gaps).toEqual([]);
+  });
+
+  it('reads the last pass and the newest reply from the leader files, and stays unknown when they are absent or unreadable', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'leader-session-'));
+    vi.stubEnv('PHANTOM_PLAN_LOG', '');
+    try {
+      expect(await readLeaderSessionFacts({ runsDir, now: NOW })).toEqual(nothing);
+      mkdirSync(join(runsDir, 'leader'));
+      writeFileSync(join(runsDir, 'leader', 'PLAN-LOG.md'), '# Plan\n## 2026-11-18T11:10:00Z\n- earlier pass\n## 2026-11-18T11:40:00Z\n- planning only\n');
+      writeFileSync(join(runsDir, 'leader', 'MASON-OUTBOX.md'), '## 2026-11-18T11:15:00Z\nOlder answer\n## 2026-11-18T11:30:00Z\nQueued two jobs\nfor the desk lanes.\n');
+      expect(await readLeaderSessionFacts({ runsDir, now: NOW })).toEqual(facts);
+      const base = { now: NOW, readMap: async () => map, readSubagents: async () => subagents };
+      const list = await readLiveSessions({ ...base, readLeader: at => readLeaderSessionFacts({ runsDir, now: at }) });
+      expect(JSON.stringify(list)).toBe(JSON.stringify(buildLiveSessions(map, NOW, { subagents, leader: facts })));
+      const unread = await readLiveSessions({ ...base, readLeader: async () => { throw new Error('unreadable'); } });
+      expect(unread.tree.roots[0]).toMatchObject({ state: 'unknown', lastMessage: null });
+      expect(unread.gaps).toEqual(['Leader state, model and messages unknown: no source records the leader session yet.']);
+    } finally { vi.unstubAllEnvs(); rmSync(runsDir, { recursive: true, force: true }); }
   });
 });

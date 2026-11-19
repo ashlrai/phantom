@@ -24,6 +24,12 @@ computer it runs on. A session with no output for 10 minutes is marked quiet,
 and finished sessions stay for an hour. Narrow it with `--lane <lane>`,
 `--repo <repo>` or `--live` (running only), and add `--json` for the
 `fleet.live-sessions.v1` document. The desktop Sessions pane shows the same tree.
+
+The leader's row shows what the leader last told you and when. It reads
+`idle` while its last planning pass is under two hours old; with an older
+pass, or none on record, its state stays unknown and a note below the tree
+says which record is missing. Its model is not recorded anywhere yet. In the
+Sessions pane, selecting the leader's row opens the Leader chat.
 See [live sessions](FLEET-API.md#live-sessions).
 
 To see what one session is doing right now, run `phm sessions tail <id>`

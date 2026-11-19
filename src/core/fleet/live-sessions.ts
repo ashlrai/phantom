@@ -23,7 +23,7 @@ import { ORG_LANES } from './org-map.js';
 import type { FleetSessionMap, MapSession } from './sessions-view.js';
 import type { FleetSessionV1 } from './runs-sessions.js';
 import type { SubagentRecord } from '../subagent/spawn.js';
-import { buildSessionTree, sessionRecords, type SessionNode, type SessionTreeV1 } from './session-tree.js';
+import { buildSessionTree, leaderPassFresh, sessionRecords, type LeaderSessionFacts, type SessionNode, type SessionTreeV1 } from './session-tree.js';
 
 export const LIVE_SESSIONS_SCHEMA = 'fleet.live-sessions.v1';
 /** A running session with no new output for longer than this is "quiet". */
@@ -73,7 +73,26 @@ export interface LiveSessionsV1 {
   /** Every session as one tree: leader, workers, subagents. Finished ones stay for an hour unless `live`. */
   tree: SessionTreeV1;
 }
-export interface LiveSessionsFilter { lane?: string | null; repo?: string | null; live?: boolean; subagents?: readonly SubagentRecord[] | null }
+export interface LiveSessionsFilter {
+  lane?: string | null; repo?: string | null; live?: boolean; subagents?: readonly SubagentRecord[] | null;
+  /** What the leader's own files record; null or absent when they were not read. */
+  leader?: LeaderSessionFacts | null;
+}
+
+/** Plain words for what the leader's row could not show. With no fact at all it is the one line older readers print. */
+export function leaderGaps(facts: LeaderSessionFacts | null | undefined, now: number): string[] {
+  if (!facts || (facts.lastPassAt === null && facts.lastReply === null)) return ['Leader state, model and messages unknown: no source records the leader session yet.'];
+  const gaps: string[] = [];
+  if (!leaderPassFresh(facts, now)) {
+    const passed = facts.lastPassAt === null ? NaN : Date.parse(facts.lastPassAt);
+    gaps.push(Number.isFinite(passed) && passed <= now
+      ? `Leader state unknown: its last recorded pass ended ${sessionAge(Math.floor((now - passed) / 1000))} ago.`
+      : 'Leader state unknown: its plan log records no pass with a readable time.');
+  }
+  if (facts.lastReply === null) gaps.push('Leader messages unknown: no reply to you is recorded yet.');
+  gaps.push('Leader model unknown: no source records the model its passes run on.');
+  return gaps;
+}
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const valid = (at: string | null | undefined): at is string => !!at && Number.isFinite(Date.parse(at));
@@ -131,8 +150,8 @@ export function buildLiveSessions(map: FleetSessionMap | null, now: number, filt
     if (map.truncated) gaps.push('The list was cut at its size limit; some sessions are not shown.');
   }
   if (filter.subagents === null) gaps.push('Subagents unknown: the subagent records could not be read.');
-  const tree = buildSessionTree(sessionRecords(sessions, map, filter.subagents ?? [], now, { live: filter.live, lane, repo }), now);
-  if (tree.roots.some(node => node.id === 'leader')) gaps.push('Leader state, model and messages unknown: no source records the leader session yet.');
+  const tree = buildSessionTree(sessionRecords(sessions, map, filter.subagents ?? [], now, { live: filter.live, lane, repo, leader: filter.leader }), now);
+  if (tree.roots.some(node => node.id === 'leader')) gaps.push(...leaderGaps(filter.leader, now));
   const quiet = sessions.filter(session => session.quiet).length;
   return { schema: LIVE_SESSIONS_SCHEMA, generatedAt: new Date(now).toISOString(), quietAfterMinutes: SESSION_QUIET_MINUTES,
     filter: { lane, repo },
