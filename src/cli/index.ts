@@ -2255,6 +2255,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'needs-you': {
+        const { cmdNeedsYou } = await import('./needs-you.js');
+        process.exitCode = await cmdNeedsYou(rest);
+        break;
+      }
+
       case 'asks': {
         const { cmdAsks } = await import('./asks.js');
         process.exitCode = await cmdAsks(rest);
