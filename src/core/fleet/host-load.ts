@@ -3,6 +3,7 @@ import { readdirSync } from 'node:fs';
 import { cpus, homedir, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { readLoadOwnerInputs, summarizeLoadOwners, type LoadOwnerInputs, type LoadOwners } from './load-owners.js';
 
 export interface HostLoad {
   load1: number | null; load5: number | null; load15: number | null;
@@ -71,6 +72,8 @@ export interface HostLoadReport {
   gaps: string[];
   /** Present only in by-tree mode (`phm host load --by-tree`, `?by=tree`). */
   trees?: HostLoadTrees;
+  /** Who owns the load, by producer, with the admission guard's state and any idle-but-busy job. */
+  owners?: LoadOwners;
 }
 
 // ── By tree: every process counted under the root it descends from ─────────────────────────────────────────────
@@ -272,6 +275,8 @@ export interface HostLoadDeps {
   jobRoots?: () => HostLoadJobRoot[] | null;
   load?: () => HostLoad;
   now?: () => number;
+  /** Admission state and job log times; tests inject them. */
+  owners?: (report: HostLoadReport) => LoadOwnerInputs;
 }
 
 export const readHostPs = (full = false): Promise<string | null> => new Promise(resolve => execFile('/bin/ps', full ? HOST_LOAD_TREE_PS_ARGS : HOST_LOAD_PS_ARGS,
@@ -302,6 +307,7 @@ export async function readHostLoadReport(deps: HostLoadDeps = {}, opts: { byTree
   try { roots = (deps.jobRoots ?? readHostLoadJobRoots)(); } catch { /* Unknown job roots. */ }
   const load = (deps.load ?? readHostLoad)();
   const report = groupHostLoad(psText, roots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
+  try { report.owners = summarizeLoadOwners(report, { ...(deps.owners ?? readLoadOwnerInputs)(report), now: (deps.now ?? Date.now)() }); } catch { /* Owners are optional. */ }
   if (opts.byTree) report.trees = attributeProcessTrees(parseProcessList(psText), defaultTreeMatchers(roots));
   return report;
 }
