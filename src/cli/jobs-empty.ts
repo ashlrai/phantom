@@ -1,10 +1,11 @@
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by-family] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
+const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by-family] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
 export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies: (hours: number) => ReturnType<typeof import('../core/fleet/empty-families.js').readEmptyFamilies> = async hours => (await import('../core/fleet/empty-families.js')).readEmptyFamilies(hours)): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
   if (args[0] === 'empty-why') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1), undefined, Date.now(), true);
+  if (args[0] === 'tokens') return (await import('./jobs-tokens.js')).cmdJobsTokens(args.slice(1));
   if (args[0] === 'producers') return (await import('./jobs-producers.js')).cmdJobsProducers(args.slice(1));
   if (args[0] === 'stranded') return (await import('./jobs-stranded.js')).cmdJobsStranded(args.slice(1));
   if (args[0] === 'state') return cmdJobsState(args.slice(1));
