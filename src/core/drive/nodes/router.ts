@@ -86,7 +86,9 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     const known = !unplacedClaims && measured.length > 0 && measured.length === live.length;
     const slots = held ? 0 : known ? Math.min(...measured.map(n => n.capacity!.slots)) : null;
     const running = state === null ? 0 : state.jobs.filter(j => actionableClaim(state, j, now) && onHost(j)).length;
-    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && onHost(j) &&
+    // A producer withdrawal completes without executing: its startedAt→completedAt
+    // span is claim-hold plus detection lag, not runner time, so it is no latency evidence.
+    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && onHost(j) &&
       j.startedAt !== undefined && j.completedAt !== undefined && j.startedAt <= j.completedAt &&
       j.completedAt <= now && now - j.completedAt <= 86_400_000).map(j => j.completedAt! - j.startedAt!).sort((a, b) => a - b);
     const median = durations.length ? (durations[Math.floor((durations.length - 1) / 2)]! + durations[Math.floor(durations.length / 2)]!) / 2 : null;
