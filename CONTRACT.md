@@ -468,13 +468,15 @@ invalid intake fails without mutation. The two-argument claim contract is unchan
 `queue/decompose.ts` exports its existing `promptText(field, value, max): string`
 validator for shared bounded, printable, secret-free queue prompt validation.
 
-`PeerRequest.work?: z.infer<typeof workPostBodySchema>` is accepted only for a
-directed task; its authenticated bus body is `work.post`, with the same enrollment
-and audience checks. The send verifies the shared work feed first: provider must
-be named or resolvable through the sender callsign's registered runtime, the job
-id must be unannounced, and an unreadable feed refuses — so a peer proposal
-cannot post the body that would poison the projection for every reader. The CLI
-adds `phm agentnet peers post <to> <work-post-json>` and
+`PeerRequest.work` is a `work.post` or `work.status` body, accepted only for a
+directed task; it becomes the authenticated bus body with the same enrollment
+and audience checks. The send verifies the shared work feed first: a proposal's
+provider must be named or resolvable through the sender callsign's registered
+runtime and its job id must be unannounced; a status must name a job the feed
+shows and only the job owner — by label or shared registered identity, the
+projection's own rule — may move it. An unreadable feed refuses — so a peer
+body cannot post the receipt that would poison the projection for every reader.
+The CLI adds `phm agentnet peers post <to> <work-json>` and
 `phm agentnet peers dispatch [--after <cursor>] [--apply] [--json]`.
 Dispatch is a read-only preview unless apply is exactly true. Results use only
 the local bus and its current comms/participant allowlist, never a Slack send.

@@ -510,11 +510,16 @@ the queue lock. The message cannot choose policy files, commands, lanes or crede
 
 A work proposal joins the shared work-feed projection, which refuses its whole
 read on an unattributable provider or a duplicate job id until the receipt
-expires. `peers post` therefore verifies the live feed before appending: the
-body must carry `provider` (or the sender callsign must resolve to a registered
-identity runtime, the same hint the feed uses), the `jobId` must not already be
-announced, and an unreadable feed refuses the send. Refusals are
-`work-provider-required`, `work-job-exists` and `work-feed-<status>`.
+expires; a work status joins it too, and the projection refuses its whole read
+on a status from anyone but the job owner. `peers post` therefore verifies the
+live feed before appending either body: a `work.post` must carry `provider` (or
+the sender callsign must resolve to a registered identity runtime, the same
+hint the feed uses) and its `jobId` must not already be announced; a
+`work.status` must name a job the feed shows and only the announcing callsign —
+or a callsign resolving to the same registered identity — may move it. An
+unreadable feed refuses the send. Refusals are `work-provider-required`,
+`work-job-exists`, `work-job-unknown`, `work-status-not-owner` and
+`work-feed-<status>`.
 
 Example work body (JSON data, never shell input):
 
@@ -523,6 +528,12 @@ Example work body (JSON data, never shell input):
  "claimKeys":["queue:RQ-DOCS","path:ashlrai/phantom:docs/AGENT-BUS.md"],
  "provider":"codex-cmp",
  "dispatch":{"tier":"fast","scope":"Fix spelling in the bus guide.","acceptance":"Documentation links pass."}}
+```
+
+The announcing peer reports feed progress the same way once the job exists:
+
+```json
+{"kind":"work.status","jobId":"RQ-DOCS","status":"done","detail":"Optional bounded note."}
 ```
 
 Dispatch requires one `queue:<jobId>` key and at least one exact file key in the
@@ -550,7 +561,10 @@ earlier outcomes stay bus-local. The raw durable bus cursor API still shows
 every retained reply. They carry no claim token. Queue DONE/BLOCKED with a
 finished matching claim produces complete/failed, including when the feed
 cursor has advanced; peer work.status
-does not prove completion. Uncertain reservations remain visible and retryable.
+does not prove completion — it is the announcing peer's own feed report, sent
+through `peers post` under the same owner rule as `updateWorkStatus`, and it
+carries no claim token or queue evidence. Uncertain reservations remain visible
+and retryable.
 Comms-disabled or revoked peers receive no sends. Results stay on the local bus;
 Slack delivery is not part of this consumer.
 

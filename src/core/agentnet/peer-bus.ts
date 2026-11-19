@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { workPostBodySchema } from '../agents/bus-v2-schema.js';
+import { workPostBodySchema, workStatusBodySchema } from '../agents/bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider } from '../agents/bus-work-feed-read.js';
 import { readAgentRegistry, resolveAgent } from '../agents/bus-identity.js';
 import { localWriteGate } from '../agents/send-gate.js';
@@ -26,7 +26,7 @@ export const peerRequestSchema = z.object({
   toAgent: callsignSchema.optional(), channel: z.string().regex(/^[CG][A-Z0-9]{2,32}(?![\s\S])/).optional(),
   kind: z.enum(['task', 'review', 'handoff', 'query', 'social']), text: z.string().trim().min(1).max(12_000),
   refs: z.array(reference).max(32).default([]), threadId: reference.optional(), replyTo: idSchema.optional(),
-  work: workPostBodySchema.optional(),
+  work: z.discriminatedUnion('kind', [workPostBodySchema, workStatusBodySchema]).optional(),
 }).strict().refine(r => Boolean(r.toAgent) !== Boolean(r.channel))
   .refine(r => !r.work || (r.kind === 'task' && Boolean(r.toAgent) && scrubSecrets(JSON.stringify(r.work)) === JSON.stringify(r.work)));
 export type PeerRequest = z.input<typeof peerRequestSchema>;
@@ -40,6 +40,19 @@ export interface PeerBusOptions {
   call?: SlackCall; readPolicy?: typeof readSlackDeliveryPolicy;
 }
 export interface PeerResult { status: string; reason?: string; id?: string; origin?: string; hopCount?: number; slack?: string }
+
+/** The owner rule the shared work-feed projection applies: the job owner's own
+ * label, or any label resolving to the same registered identity. An unreadable
+ * registry resolves nothing, so only exact label equality can pass — the same
+ * answer the feed gives, which means an admitted status can never poison the
+ * projection for every reader. */
+function peerOwnsFeedJob(owner: string, callsign: string, busRoot: string): boolean {
+  if (owner === callsign) return true;
+  const registry = readAgentRegistry({ root: busRoot });
+  if (registry.status !== 'ok') return false;
+  const ownerId = resolveAgent(registry.registry, owner)?.id;
+  return ownerId !== undefined && ownerId === resolveAgent(registry.registry, callsign)?.id;
+}
 
 export async function sendPeerMessage(input: unknown, session: PeerSession, options: PeerBusOptions = {}): Promise<PeerResult> {
   const parsed = peerRequestSchema.safeParse(input);
@@ -55,10 +68,12 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
     if (request.toAgent && (!recipient || recipient.teamId !== sender.teamId || recipient.callsign === sender.callsign)) return { status: 'refused', reason: 'unknown-peer' };
     // A work.post joins the shared feed projection, which refuses its whole
     // read on an unattributable provider or a duplicate job id — the same
-    // poison announceWork guards against. Verify against the live feed first.
+    // poison announceWork guards against. A work.status moves a job the feed
+    // already shows, and the projection refuses its whole read on a foreign
+    // owner's status. Verify both against the live feed first.
     const work = request.work;
     if (work !== undefined) {
-      if (work.provider === undefined) {
+      if (work.kind === 'work.post' && work.provider === undefined) {
         const registry = readAgentRegistry({ root: paths.busRoot });
         const identity = registry.status === 'ok' ? resolveAgent(registry.registry, sender.callsign) : undefined;
         if (identity === undefined || runtimeProvider(identity) === undefined) {
@@ -67,7 +82,15 @@ export async function sendPeerMessage(input: unknown, session: PeerSession, opti
       }
       const feed = readBusWorkFeed({ root: paths.busRoot, now: () => now });
       if (feed.status !== 'ok') return { status: 'refused', reason: `work-feed-${feed.status}` };
-      if (feed.jobs.some(job => job.id === work.jobId)) return { status: 'refused', reason: 'work-job-exists' };
+      if (work.kind === 'work.post') {
+        if (feed.jobs.some(job => job.id === work.jobId)) return { status: 'refused', reason: 'work-job-exists' };
+      } else {
+        const job = feed.jobs.find(candidate => candidate.id === work.jobId);
+        if (job === undefined) return { status: 'refused', reason: 'work-job-unknown' };
+        if (!peerOwnsFeedJob(job.owner, sender.callsign, paths.busRoot)) {
+          return { status: 'refused', reason: 'work-status-not-owner' };
+        }
+      }
     }
     const policyReader = options.readPolicy ?? (() => {
       const base = readSlackDeliveryPolicy();
