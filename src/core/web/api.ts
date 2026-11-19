@@ -2317,6 +2317,33 @@ export async function handleApi(
       return true;
     }
 
+    // RQ-NEEDSYOUN19NQ8: what truly waits on Mason (same JSON as
+    // `phm needs-you --json`) plus the auto-resolve audit records. GET is read
+    // class; POST /api/needs-you/resolve {dryRun?} resolves auto items only and
+    // is gated like every dispatch mutation.
+    if (path === '/api/needs-you' && method === 'GET') {
+      const { listNeedsYou, readNeedsYouAudit } = await import('../needs-you/index.js');
+      sendJson(res, 200, { ...listNeedsYou(), audit: readNeedsYouAudit().slice(-50) });
+      return true;
+    }
+    if (path === '/api/needs-you/resolve' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let b: unknown = null;
+      try { b = JSON.parse(await readBody(req, 256)); } catch { /* refused below */ }
+      const body = b && typeof b === 'object' && !Array.isArray(b) ? b as Record<string, unknown> : null;
+      if (!body || Object.keys(body).some((k) => k !== 'dryRun') || (body['dryRun'] !== undefined && typeof body['dryRun'] !== 'boolean')) {
+        sendJson(res, 400, { error: 'expected {dryRun?: boolean}' });
+        return true;
+      }
+      const { resolveAutoNeedsYou } = await import('../needs-you/index.js');
+      sendJson(res, 200, resolveAutoNeedsYou({ dryRun: body['dryRun'] === true }));
+      return true;
+    }
+
     // RQ-CHANNELSN18BQ8: the messaging-channel overview (same JSON as
     // `phm channels --json`, schema phantom.channels.v1). Read class, behind
     // the read-session gate; addresses arrive masked and no secret is read.
