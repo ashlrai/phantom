@@ -6,7 +6,10 @@
  * It only reads: the node view (nodes-view.ts: tailnet, registry, this
  * computer's sample) and the launch-order queue (queue/order.ts). It never
  * launches, moves, kills or reserves anything. A fact that cannot be read
- * stays "unknown"; an offline computer is suggested 0 slots.
+ * stays "unknown"; an offline computer is suggested 0 slots, and one whose
+ * state is unconfirmed (for example a live heartbeat with reachability the
+ * tailnet cannot vouch for) is suggested "unknown" — never slots the plan's
+ * own assignment rule would refuse.
  */
 import { chooseNodeForLane, readNodesView, type NodeRow, type NodesView, type NodesViewDeps } from './nodes-view.js';
 import { UNKNOWN } from './runtime-identity.js';
@@ -24,7 +27,7 @@ export interface PlanNode {
   free_mem_pct: number | Unknown;
   load: number | Unknown;
   lanes: string[] | Unknown;
-  /** How many more jobs this computer could take now; 0 when offline or held; "unknown" when not measured. */
+  /** How many more jobs this computer could take now; 0 when offline or held; "unknown" when not measured or its state is unconfirmed. */
   suggested_slots: number | Unknown;
   /** Plain words. */
   why: string;
@@ -43,7 +46,12 @@ export interface NodesPlan {
 
 function planNode(node: NodeRow): PlanNode {
   const down = node.reachable === false || node.stateCode === 'offline';
-  const slots: number | Unknown = down || node.phantom === 'not-running' || node.stateCode === 'held' ? 0 : node.freeSlots;
+  // An unconfirmed state (stateCode 'unknown': e.g. a live registry heartbeat
+  // whose reachability the tailnet cannot vouch for) cannot promise slots —
+  // chooseNodeForLane would refuse the node, so the plan must not advertise
+  // capacity it can never assign.
+  const slots: number | Unknown = down || node.phantom === 'not-running' || node.stateCode === 'held' ? 0
+    : node.stateCode === 'unknown' ? UNKNOWN : node.freeSlots;
   const why = down ? `${node.state}; no jobs suggested`
     : slots === UNKNOWN ? `${node.state}; free slots unknown`
       : slots === 0 ? node.state

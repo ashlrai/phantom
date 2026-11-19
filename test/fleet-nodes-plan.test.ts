@@ -68,6 +68,19 @@ describe('readNodesPlan', () => {
     expect(plan.reasons).toContain('queue unreadable; job assignments unknown');
   });
 
+  it('a live heartbeat with unconfirmed reachability suggests unknown slots, never assignable room', async () => {
+    // node-d heartbeats into the registry but is absent from the tailnet read,
+    // so its state is unconfirmed: the plan must not advertise slots it cannot assign.
+    const view = deps(() => tailnet([peer('node-b', true)]),
+      registry([node('node-a', { slots: 1 }), node('node-b'), node('node-d', { caps: ['gemini'] })]));
+    const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('j1', 'gemini', 1)]) });
+    const dark = plan.nodes.find(n => n.name === 'node-d')!;
+    expect(dark).toMatchObject({ suggested_slots: 'unknown' });
+    expect(dark.why).toContain('reachability unknown');
+    expect(plan.assignable).toEqual([]);
+    expect(plan.unassigned).toBe(1);
+  });
+
   it('missing Tailscale CLI: says so in plain words and plans this computer only', async () => {
     const view = deps(() => { throw Object.assign(new Error('spawn tailscale ENOENT'), { code: 'ENOENT' }); }, registry([node('node-a')]));
     const plan = await readNodesPlan({ view, readQueue: async () => queueOf([job('j1', 'claude', 1)]) });
