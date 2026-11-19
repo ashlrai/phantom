@@ -4,6 +4,7 @@
  * runnable rows wait under another lane's hint. Pure: text in, report out.
  * Counts and reason codes only; no job ids, task text or credentials.
  */
+import { parseLedgerTs } from '../metrics/loop.js';
 import { derivedRowCodes, marketContext, marketLaneView, parseReadyMarketRows, stoppedReadyHints, type ReadyMarketRow, type UnfedMarketInputs } from './unfed-market.js';
 
 export const FLEET_UNFED_SCHEMA = 'fleet.unfed.v1';
@@ -78,6 +79,34 @@ export interface UnfedOverrides {
   lanes: UnfedOverrideLane[];
 }
 
+/** One hinted->launched lane pair a claim override took, with its reason. */
+export interface UnfedClaimLane {
+  /** Hinted lane, or null when the claim carried an open (undeclared) hint. */
+  from: string | null;
+  /** Lane the job actually launched on. */
+  to: string;
+  /** Why the claim left the hint: batch_session, resource_fit, preferred_lane_fallback or unknown_preference. */
+  reason: string;
+  /** Claim launches that took this route. */
+  claims: number;
+}
+
+/** lane_override accounting over the window's jobs.jsonl claim events. */
+export interface UnfedClaims {
+  /** False when metrics/jobs.jsonl is absent or unreadable. */
+  available: boolean;
+  /** True when the ledger exceeded the retained tail: counts are a lower bound. */
+  truncated: boolean;
+  /** Claim launches in the window (claim + batch_claim events). */
+  claimed: number;
+  /** Of those, launches that left their hinted lane (a lane_override was recorded). */
+  overridden: number;
+  /** overridden count by lane_override reason. */
+  byReason: Record<string, number>;
+  /** overridden count by hinted->launched lane and reason, largest first. */
+  lanes: UnfedClaimLane[];
+}
+
 export type FleetStopCode = 'admission_stopped' | 'global_admission';
 
 export interface UnfedReport {
@@ -133,6 +162,8 @@ export interface UnfedReport {
   history: UnfedHistory;
   /** lane_override accounting over the same window's route_decision rows. */
   overrides: UnfedOverrides;
+  /** lane_override accounting over the same window's jobs.jsonl claim events. */
+  claims: UnfedClaims;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -220,7 +251,7 @@ function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode 
  * dispatcher's own input files; when present and slots.json parses, a derived
  * report recomputes per-lane reason codes instead of leaving them unknown.
  */
-export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides'> {
+export function currentUnfed(statusJson: string, readyTsv: string, market?: UnfedMarketInputs): Omit<UnfedReport, 'history' | 'overrides' | 'claims'> {
   const data: unknown = JSON.parse(statusJson);
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const tickMs = typeof data.last_tick === 'string' ? Date.parse(data.last_tick) : NaN;
@@ -390,6 +421,65 @@ export function foldMarketOverrides(jsonl: string | null, nowMs: number, windowH
   return tally;
 }
 
+/**
+ * Fold `claim`/`batch_claim` rows from metrics/jobs.jsonl over a window:
+ * lane_override accounting at launch time — the record the dispatcher writes
+ * when a claim actually leaves its hinted lane. `overrides` counts market
+ * decisions; this counts what launched, including `batch_session` moves a
+ * combined session makes after each member's own decision. Claim events, not
+ * distinct jobs: a re-launched attempt is another real launch. Timestamps are
+ * the ledger's ISO strings (parseLedgerTs handles dispatchd's %z offset);
+ * rows outside the window, malformed fields and non-claim events are skipped.
+ * Null text means the file was absent or unreadable. Counts and lane/reason
+ * codes only; no job ids, task text or credentials.
+ */
+export function foldClaimOverrides(
+  jsonl: string | null, nowMs: number, windowHours: number, truncated = false,
+): UnfedClaims {
+  const tally: UnfedClaims = {
+    available: jsonl !== null, truncated: jsonl !== null && truncated,
+    claimed: 0, overridden: 0, byReason: {}, lanes: [],
+  };
+  if (jsonl === null) return tally;
+  const since = nowMs - windowHours * 3_600_000;
+  const until = nowMs + 300_000;
+  const pairs = new Map<string, UnfedClaimLane>();
+  for (const line of jsonl.split('\n')) {
+    // Cheap prefilter: claim events are a minority of the ledger.
+    if (!line.includes('claim')) continue;
+    let row: unknown;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!isRecord(row) || (row.event !== 'claim' && row.event !== 'batch_claim')) continue;
+    const job = row.job;
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const lane = row.lane;
+    if (typeof lane !== 'string' || !LANE.test(lane)) continue;
+    const at = parseLedgerTs(row.ts);
+    if (at === null || at < since || at > until) continue;
+    tally.claimed++;
+    const reason = row.lane_override;
+    if (typeof reason !== 'string' || !CODE.test(reason)) continue;
+    // lane_override is only meaningful with its recorded origin: absent or
+    // malformed lane_hint means the pair cannot be named honestly.
+    const hint = row.lane_hint;
+    if (hint !== null && (typeof hint !== 'string' || !LANE.test(hint))) continue;
+    tally.overridden++;
+    if (tally.byReason[reason] !== undefined || Object.keys(tally.byReason).length < MAX_CODES) {
+      tally.byReason[reason] = (tally.byReason[reason] ?? 0) + 1;
+    }
+    const from = typeof hint === 'string' ? hint : null;
+    const key = `${from ?? ''}\t${lane}\t${reason}`;
+    const entry = pairs.get(key) ?? { from, to: lane, reason, claims: 0 };
+    entry.claims++;
+    pairs.set(key, entry);
+  }
+  tally.lanes = [...pairs.values()]
+    .sort((a, b) => b.claims - a.claims || (a.from ?? '').localeCompare(b.from ?? '')
+      || a.to.localeCompare(b.to) || a.reason.localeCompare(b.reason))
+    .slice(0, MAX_OVERRIDE_LANES);
+  return tally;
+}
+
 const MAX_OVERRIDE_LANES = 16;
 
 const topCodes = (blocked: Record<string, number>): string =>
@@ -445,6 +535,19 @@ export function renderUnfed(report: UnfedReport): string[] {
         lines.push(`  override reasons: ${topCodes(o.byReason)}`);
         for (const l of o.lanes.slice(0, 3)) {
           lines.push(`  ${l.from ?? 'open'} -> ${l.to} (${l.reason}): ${l.jobs} job(s)`);
+        }
+      }
+    }
+  }
+  const c = report.claims;
+  if (c.available) {
+    if (c.claimed === 0) lines.push(`Last ${h.windowHours}h: no claims recorded.`);
+    else {
+      lines.push(`Last ${h.windowHours}h: ${c.claimed} claim(s) launched, ${c.overridden} left their hinted lane${c.truncated ? ' (ledger tail only)' : ''}.`);
+      if (c.overridden > 0) {
+        lines.push(`  claim override reasons: ${topCodes(c.byReason)}`);
+        for (const l of c.lanes.slice(0, 3)) {
+          lines.push(`  ${l.from ?? 'open'} -> ${l.to} (${l.reason}): ${l.claims} claim(s)`);
         }
       }
     }

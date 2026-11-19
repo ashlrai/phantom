@@ -306,7 +306,15 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane.
+hinted-to-chosen lane. The same window's `claim` and `batch_claim` rows in
+`metrics/jobs.jsonl` fold into `claims`: launches that actually left their
+hinted lane, counted as events — a re-launched attempt is another real
+launch — by `lane_override` reason and by hinted-to-launched lane. This is
+the launch record the decision fold cannot see: `batch_session` moves a
+combined session makes after each member's own decision appear here and
+nowhere in `overrides`, and a decision overridden on paper but deferred
+before launch never counts. `claims.truncated` is true when the ledger
+exceeded the retained tail, so those counts are a lower bound.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when

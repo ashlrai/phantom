@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { currentUnfed, foldMarketOverrides, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldMarketOverrides, foldUnfedHistory, renderUnfed, FLEET_UNFED_SCHEMA, type UnfedReport } from '../core/fleet/unfed-capacity.js';
 import { readTail, runsRoot } from '../core/metrics/loop-collect.js';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -8,12 +8,14 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
 /** The market log is mostly route decisions; the tail bounds the read. */
 const HISTORY_TAIL_BYTES = 32 * 1024 * 1024;
+/** The jobs ledger carries every lifecycle event; claims fold from its tail. */
+const CLAIMS_TAIL_BYTES = 32 * 1024 * 1024;
 const DEFAULT_WINDOW_HOURS = 24;
 const MAX_WINDOW_HOURS = 24 * 7;
 
 const USAGE = `Usage: phm fleet unfed [--window <hours>] [--json]
-Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl.
-Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md, HOLD and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). The report carries status.json's last_tick as statusAsOf and flags statusFresh false when the tick is older than two minutes, in the future, or missing — the same freshness rule the spend projection uses; a stale snapshot is reported as the last published state, never as live. Read-only: no writes, no child processes, no network.
+Per-resource utilization of the shared work queue, unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes, and lane-override accounting over the window — once over market decisions and once over recorded claim launches. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks and route decisions from metrics/work-market.jsonl, and claim launches from the tail of metrics/jobs.jsonl.
+Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, queue/router-queue.md, HOLD, metrics/work-market.jsonl and metrics/jobs.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). The report carries status.json's last_tick as statusAsOf and flags statusFresh false when the tick is older than two minutes, in the future, or missing — the same freshness rule the spend projection uses; a stale snapshot is reported as the last published state, never as live. Read-only: no writes, no child processes, no network.
 Exit 1 when any lane is unfed now, 2 when status.json is unreadable.`;
 
 async function readBounded(path: string, maxBytes = MAX_FILE_BYTES): Promise<string | null> {
@@ -66,12 +68,19 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
       readOptional(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
     ]);
     const history = await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES);
+    const jobsPath = join(root, 'metrics', 'jobs.jsonl');
+    const jobsText = await readTail(jobsPath, CLAIMS_TAIL_BYTES);
+    // Stat after the tail read: the append-only ledger only grows, so a size
+    // over the bound here means the folded claims are a lower bound.
+    const jobsInfo = await stat(jobsPath).catch(() => null);
     const nowMs = Date.now();
     const window = windowHours ?? DEFAULT_WINDOW_HOURS;
     report = {
       ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs }),
       history: foldUnfedHistory(history, nowMs, window),
       overrides: foldMarketOverrides(history, nowMs, window),
+      claims: foldClaimOverrides(jobsText, nowMs, window,
+        jobsInfo !== null && jobsInfo.isFile() && jobsInfo.size > CLAIMS_TAIL_BYTES),
     };
   } catch {
     const error = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';
