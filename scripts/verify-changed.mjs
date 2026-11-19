@@ -21,6 +21,18 @@ export function affectsAuthorityDrift(path) {
  */
 const DOC_MARKDOWN = /\.md$/i;
 
+/**
+ * Test/spec file shape and ledger path mirrored from
+ * scripts/check-quarantine-ledger.mjs (TEST_FILE, LEDGER_PATH). The basename
+ * class is deliberately wider here — whitespace names the checker ignores can
+ * only over-select, never under-select, and the checker stays authoritative
+ * for violations. A change can introduce a quarantine violation only by
+ * touching a test file (added skip markers, or a deleted file that stales a
+ * ledger row) or the ledger itself, so anything else skips the check.
+ */
+const QUARANTINE_TEST_FILE = /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const QUARANTINE_LEDGER = 'queue/quarantine.tsv';
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -31,6 +43,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     authorityDrift: changed.some(affectsAuthorityDrift),
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
     docsCheck: changed.some((path) => DOC_MARKDOWN.test(path) || !existing.has(path)),
+    quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
   };
 }
 
@@ -86,10 +99,15 @@ export function emptyChangedTests(existingChangedPaths, read = (p) => readFileSy
   });
 }
 
+/** Merge-base of HEAD and origin/master — the diff anchor base-scoped checks share. */
+export function masterMergeBase(root, exec = execFileSync) {
+  return exec('git', ['merge-base', 'HEAD', 'origin/master'], { cwd: root, encoding: 'utf8' }).trim();
+}
+
 /** Include committed changes, index/worktree edits, deletions and untracked files. */
 export function collectChangedPaths(root) {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
-  const base = git('merge-base', 'HEAD', 'origin/master').trim();
+  const base = masterMergeBase(root);
   // NUL delimiters preserve whitespace/newlines; disabling renames includes both sides.
   return [
     ...git('diff', '--name-only', '--no-renames', '-z', base, 'HEAD', '--').split('\0'),
@@ -591,6 +609,16 @@ function main() {
     run('eslint changed files', 'node_modules/eslint/bin/eslint.js', ['--no-warn-ignored', '--', ...selection.lintFiles.map((path) => `./${path}`)]);
   } else {
     console.log('PASS eslint skipped: no lintable file changed');
+  }
+  if (selection.quarantineCheck) {
+    try {
+      run('quarantine ledger', 'scripts/check-quarantine-ledger.mjs', ['--base', masterMergeBase(root)]);
+    } catch (error) {
+      console.log(`FAIL quarantine ledger: ${error.message}`);
+      process.exitCode = 1;
+    }
+  } else {
+    console.log('PASS quarantine ledger skipped: no test file or quarantine ledger change');
   }
   try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
