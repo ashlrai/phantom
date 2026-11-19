@@ -50,6 +50,8 @@ export interface UnfedHistory {
   lanes: UnfedHistoryLane[];
 }
 
+export type FleetStopCode = 'admission_stopped' | 'global_admission';
+
 export interface UnfedReport {
   schema: typeof FLEET_UNFED_SCHEMA;
   readOnly: true;
@@ -61,6 +63,16 @@ export interface UnfedReport {
   source: 'dispatcher' | 'derived';
   /** True when a derived report also recomputed reason codes from market inputs (slots.json and friends). */
   derivedReasons: boolean;
+  /**
+   * The fleet-wide stop in effect this tick, in the dispatcher's own codes:
+   * `admission_stopped` when the launch gate (pause, disk hard stop or a
+   * tripped load gate) kept the market from running, `global_admission` when
+   * the per-tick launch budget or fleet-wide cap was spent. Read back from
+   * published blocked codes for a dispatcher report, or from status.json's
+   * own admission verdict for a derived one. Null when the market ran
+   * normally or no verdict exists.
+   */
+  fleetStop: FleetStopCode | null;
   /** Ready rows still waiting. */
   waiting: number;
   unfedLanes: string[];
@@ -108,6 +120,44 @@ export function readyHints(readyTsv: string): { waiting: number; byLane: Map<str
 }
 
 /**
+ * The fleet-stop verdict status.json carries, in the dispatcher's own codes.
+ * `admission_stopped`: dispatchd's launch gate (PAUSE file, disk hard stop or
+ * a tripped load gate — disk feeds the gate's reasons) failed before the
+ * market ran, so every waiting row recorded admission_stopped on every unfed
+ * lane. `global_admission`: the market ran but the per-tick launch budget or
+ * the fleet-wide cap was spent; rows evaluated after the limit record
+ * global_admission on every lane. Null when the tick admitted work or
+ * published no admission verdict (older dispatcher).
+ */
+function fleetStopVerdict(data: Record<string, unknown>): FleetStopCode | null {
+  if (data.paused) return 'admission_stopped';
+  const admission = isRecord(data.admission) ? data.admission : null;
+  const gateReason = admission?.gate_reason;
+  if (typeof gateReason === 'string' && gateReason.trim().length > 0) return 'admission_stopped';
+  if (admission === null) return null;
+  const cap = count(admission.cap) ? admission.cap : null;
+  const running = count(admission.running) ? admission.running : null;
+  const launched = Array.isArray(data.launched_this_tick) ? data.launched_this_tick.length : null;
+  const claimLimit = count(admission.claim_limit) ? admission.claim_limit : null;
+  if ((cap !== null && running !== null && running >= cap)
+      || (launched !== null && claimLimit !== null && launched >= claimLimit)
+      || admission.admit === false || admission.decision === 'stop') {
+    return 'global_admission';
+  }
+  return null;
+}
+
+/** Read the fleet-stop code back out of dispatcher-published blocked reasons. */
+function publishedFleetStop(resources: readonly UnfedResource[]): FleetStopCode | null {
+  let global = false;
+  for (const r of resources) {
+    if (r.blocked['admission_stopped']) return 'admission_stopped';
+    if (r.blocked['global_admission']) global = true;
+  }
+  return global ? 'global_admission' : null;
+}
+
+/**
  * The current picture from queue/status.json and queue/ready.tsv ('' when absent).
  * Throws when status.json has no usable lanes map. `market` carries the
  * dispatcher's own input files; when present and slots.json parses, a derived
@@ -119,6 +169,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
   const hints = readyHints(readyTsv);
   const published = isRecord(data.unfed_capacity) && isRecord(data.unfed_capacity.lanes) ? data.unfed_capacity : null;
   const ctx = published === null ? marketContext(market) : null;
+  const stop = published === null ? fleetStopVerdict(data) : null;
   const publishedLanes = published && isRecord(published.lanes) ? published.lanes : {};
   const waiting = published && count(published.waiting) ? published.waiting : hints.waiting;
   const resources: UnfedResource[] = [];
@@ -139,7 +190,12 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     } else if (!published) {
       if (headroom > 0 && !held) {
         waitingElsewhere = hints.waiting - readyHinted;
-        if (ctx !== null) {
+        // A fleet stop outranks every per-lane code: the dispatcher never ran
+        // (or never launched past) the market, so eligibility was not the
+        // binding constraint for the rows still waiting.
+        if (stop !== null) {
+          if (waitingElsewhere > 0) blocked[stop] = waitingElsewhere;
+        } else if (ctx !== null) {
           const view = marketLaneView(lane, value.running, target, held, ctx);
           for (const row of hints.rows) {
             if (row.hint === lane) continue;
@@ -160,6 +216,7 @@ export function currentUnfed(statusJson: string, readyTsv: string, market?: Unfe
     readOnly: true,
     source: published ? 'dispatcher' : 'derived',
     derivedReasons: ctx !== null,
+    fleetStop: stop ?? publishedFleetStop(resources),
     waiting,
     unfedLanes: unfed.map(r => r.lane),
     unfedSlots: unfed.reduce((sum, r) => sum + Math.min(r.headroom, r.waitingElsewhere), 0),
@@ -220,10 +277,17 @@ export function renderUnfed(report: UnfedReport): string[] {
   lines.push(report.unfedLanes.length === 0
     ? `No unfed capacity: ${report.waiting} rows waiting.`
     : `${report.unfedSlots} slot(s) could be filled now across ${report.unfedLanes.join(', ')}; ${report.waiting} rows waiting.`);
+  if (report.fleetStop !== null) {
+    lines.push(report.fleetStop === 'admission_stopped'
+      ? 'Fleet admission stopped (pause, disk guard or load gate): the market was not evaluated this tick.'
+      : 'Fleet admission closed at the global cap or launch budget: rows evaluated after the limit record global_admission.');
+  }
   if (report.source === 'derived') {
     lines.push(report.derivedReasons
       ? 'Derived from lane counts, ready.tsv requirements and slots.json advertisements: the dispatcher did not publish its verdict.'
-      : 'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
+      : report.fleetStop !== null
+        ? 'Derived from lane counts, ready.tsv hints and the status.json admission verdict: the dispatcher did not publish reasons, but the fleet stop above is its own record.'
+        : 'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.');
   }
   const h = report.history;
   if (!h.available) lines.push(`Last ${h.windowHours}h: no metrics/work-market.jsonl history.`);

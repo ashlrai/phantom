@@ -258,3 +258,70 @@ describe('derived market reasons', () => {
     expect(report.resources.find(r => r.lane === 'codex-cmp')!.blocked).toEqual({ saturated: 1 });
   });
 });
+
+describe('fleet stop verdicts', () => {
+  const STOP_LANES = { a: { running: 0, target: 2, held: false }, b: { running: 1, target: 1, held: false } };
+  const TWO_WAITING = [row('RQ-A', 'b'), row('RQ-B', 'b')].join('\n');
+
+  it('reports admission_stopped from a pause marker or a tripped admission gate', () => {
+    for (const extra of [
+      { paused: 'maintenance window' },
+      { admission: { gate_reason: 'loadavg 8.0 > 4.0 (2 x ncpu)', admit: false, decision: 'stop' } },
+    ]) {
+      const report = currentUnfed(JSON.stringify({ lanes: STOP_LANES, ...extra }), TWO_WAITING);
+      expect(report.source).toBe('derived');
+      expect(report.fleetStop).toBe('admission_stopped');
+      expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({ admission_stopped: 2 });
+      expect(report.resources.find(r => r.lane === 'b')!.blocked).toEqual({});
+    }
+  });
+
+  it('reports global_admission when the fleet cap or launch budget was spent', () => {
+    for (const extra of [
+      { admission: { running: 4, cap: 4, claim_limit: 8, admit: false, decision: 'stop' } },
+      { admission: { running: 1, cap: 9, claim_limit: 8, admit: false, decision: 'stop' }, launched_this_tick: ['RQ-1', 'RQ-2', 'RQ-3', 'RQ-4', 'RQ-5', 'RQ-6', 'RQ-7', 'RQ-8'] },
+      { admission: { admit: false, decision: 'stop' } },
+    ]) {
+      const report = currentUnfed(JSON.stringify({ lanes: STOP_LANES, ...extra }), TWO_WAITING);
+      expect(report.fleetStop).toBe('global_admission');
+      expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({ global_admission: 2 });
+    }
+  });
+
+  it('leaves per-lane derivation alone when the tick admitted work', () => {
+    const status = JSON.stringify({
+      lanes: STOP_LANES,
+      admission: { running: 1, cap: 9, claim_limit: 8, admit: true, decision: 'admit', gate_reason: null },
+      launched_this_tick: ['RQ-1'],
+    });
+    const report = currentUnfed(status, TWO_WAITING);
+    expect(report.fleetStop).toBeNull();
+    expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({});
+  });
+
+  it('reads the stop code back from dispatcher-published blocked reasons', () => {
+    const status = JSON.stringify({
+      lanes: STOP_LANES,
+      unfed_capacity: {
+        waiting: 2,
+        lanes: {
+          a: { waiting_elsewhere: 2, blocked: { admission_stopped: 2 } },
+          b: { waiting_elsewhere: 0, blocked: {} },
+        },
+      },
+    });
+    const report = currentUnfed(status, TWO_WAITING);
+    expect(report.source).toBe('dispatcher');
+    expect(report.fleetStop).toBe('admission_stopped');
+  });
+
+  it('prints the fleet stop line in text output', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: STOP_LANES, paused: 'hold' }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), TWO_WAITING);
+    const result = await run([]);
+    expect(result.code).toBe(1);
+    expect(result.lines).toContain('a  0/2 running (0%), 0 hinted here  UNFED: 2 free, 2 rows waiting elsewhere (admission_stopped 2)');
+    expect(result.lines.join('\n')).toContain('Fleet admission stopped (pause, disk guard or load gate)');
+    expect(result.lines.join('\n')).toContain('status.json admission verdict');
+  });
+});

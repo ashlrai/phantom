@@ -449,7 +449,12 @@ nowMs, windowHours)` and `renderUnfed(report)` in
 dispatcher's own input files (slots.json, models.json, budget-overrides.json,
 adaptive.json, HOLD); when slots.json parses, a derived report recomputes
 per-lane `blocked` reason codes with the same eligibility rules as
-`contrib/mac/work_market.py`, reported as `derivedReasons: true`.
+`contrib/mac/work_market.py`, reported as `derivedReasons: true`. Reports also
+carry `fleetStop` (`admission_stopped` | `global_admission` | null): the
+tick's fleet-wide stop in the dispatcher's own codes, read from status.json's
+`paused`/`admission` verdict for a derived report (where it replaces the
+per-lane codes) or back out of the published `blocked` codes for a
+dispatcher one.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
