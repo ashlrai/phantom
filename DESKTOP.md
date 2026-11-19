@@ -41,6 +41,11 @@ Use Ops ▸ Live runs to watch workers and Fleet ▸ Tell the leaders to append 
 `~/.ashlr-runs/leader/MASON-INBOX.md`. Updates and kill switches are covered in
 [Watch and steer the fleet](docs/VERSE.md#watch-and-steer-the-fleet-330).
 
+To see where work would be sent, open the **Router** pane from the command
+palette (⌘K, "Open pane: Router"). It shows the order the router would try
+seats for a task, each seat's usage and reset, and where recent decisions went;
+see [Console layout](docs/CONSOLE-LAYOUT.md).
+
 ## Desktop control ("computer use", macOS)
 
 Chat seats can drive apps on this Mac through the `computer_*` tools

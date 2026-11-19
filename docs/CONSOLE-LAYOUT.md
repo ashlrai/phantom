@@ -84,6 +84,23 @@ asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
 
+The Router pane answers "where would the next task go, and why?". Pick a task
+(code, review, plan, bulk or leader) and a difficulty; the pane asks the
+router's preview for autonomous fleet work and draws the answer as a numbered
+try order. Each seat has its provider mark, a bar of the share of its binding
+usage window already used and that window's reset time; seats the router holds
+back are listed underneath with its reason and when they become eligible
+again. Below, the last 200 recorded routing decisions are counted by chosen
+seat as ranked bars, with the six newest listed and any whose work ran on a
+different seat marked. A decision is the seat the router chose, not proof the
+work ran there. The pane decides nothing and launches nothing: it reads
+`GET /api/verse/budget/preview`, `GET /api/verse/budget` and
+`GET /api/verse/budget/decisions`, and refreshes every 30 seconds while
+visible. A seat with no usage reading gets a hatched bar and the word unknown,
+a local seat says it has no usage window, an unreadable decision log reads
+unknown rather than empty, and a failed refresh labels the reading as an old
+one.
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being
