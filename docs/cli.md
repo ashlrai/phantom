@@ -356,6 +356,7 @@ Every command, grouped by topic.
     recut prompt <job-id> --lane <lane> --tier <tier>                                                       Print a recut prompt from stdin with the standard task line first.
     jobs state <id> [--json]                                                                                Show whether a job is running or done, with the evidence.
     jobs empty [--since 24h] [--family F] [--json]                                                          Explain empty jobs with family and lane suggestions.
+    jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json]               Who queued the jobs that started, per hour over the last 6 hours.
     jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]                                          Why jobs ended empty, ranked by recorded wasted tokens.
     radar list|run|diff [--json]                                                                            Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.
     observe [--json]                                                                                        Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.
