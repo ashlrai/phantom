@@ -2150,6 +2150,11 @@ async function main(): Promise<void> {
         process.exitCode = await cmdPools(rest);
         break;
       }
+      case 'inventory': {
+        const { cmdInventory } = await import('./inventory.js');
+        process.exitCode = await cmdInventory(rest);
+        break;
+      }
       case 'tools': {
         const { cmdTools } = await import('./tools.js');
         process.exitCode = await cmdTools(rest);
@@ -2252,6 +2257,12 @@ async function main(): Promise<void> {
       case 'subagent': {
         const { cmdSubagent } = await import('./subagent.js');
         process.exitCode = await cmdSubagent(rest);
+        break;
+      }
+
+      case 'needs-you': {
+        const { cmdNeedsYou } = await import('./needs-you.js');
+        process.exitCode = await cmdNeedsYou(rest);
         break;
       }
 
@@ -3137,7 +3148,8 @@ async function main(): Promise<void> {
         if (wantsHelp(rest)) {
           printCoreUsage('settings', 'Desktop and phone app appearance: theme, accent, density, font size.', [
             ['phm settings appearance [--json]', 'Read the four appearance settings'],
-            ['phm settings appearance set <key> <value> [--json]', 'Change one; a running app applies it live'],
+            ['phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]', 'Change any of them in one write; a running app applies it live'],
+            ['phm settings appearance --reset [--json]', 'Back to the defaults'],
           ]);
           process.exitCode = 0;
           break;

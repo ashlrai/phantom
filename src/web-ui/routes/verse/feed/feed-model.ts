@@ -253,10 +253,10 @@ export function isSharedFeedReport(value: unknown): value is FeedReport {
     && FEED_SOURCES.every(key => sources[key] === 'available' || sources[key] === 'unknown');
 }
 
-const SHARED_KINDS: Record<string, FeedKind> = { merged: 'merge', released: 'update', failed: 'alert', incident: 'alert', leader: 'leader' };
+const SHARED_KINDS: Record<string, FeedKind> = { merged: 'merge', released: 'update', failed: 'alert', lane: 'alert', incident: 'alert', leader: 'leader' };
 /** Exported for the Feed cards, which follow the same allowlist. */
 export const sharedLink = (href: unknown): href is string => typeof href === 'string' &&
-  (/^\/verse\/\?pane=(?:fleet-merges|fleet-events|fleet-bus|leader-thread|worker-log)$/.test(href)
+  (/^\/verse\/\?pane=(?:fleet-merges|fleet-events|fleet-bus|fleet-lanes|leader-thread|worker-log)$/.test(href)
     || /^https:\/\/github\.com\/[a-z\d_.-]+\/[a-z\d_.-]+\/(?:pull\/[1-9]\d*|releases\/tag\/[a-z\d_.%+-]+|commits)\/?$/i.test(href));
 
 /** Validate network data before it reaches a link or the legacy adapters. */

@@ -501,6 +501,7 @@
 /test/fleet-sticky-loop.test.ts @masonwyatt23
 /test/fleet-stray-slots-gate-sole3.test.ts @masonwyatt23
 /test/fleet-superseded-read.test.ts @masonwyatt23
+/test/fleet-vitals-leader-liveness.test.ts @masonwyatt23
 /test/fleet-write-budget-cli.test.ts @masonwyatt23
 /test/fleet/merge-confidence.test.ts @masonwyatt23
 /test/friction-planner.test.ts @masonwyatt23
@@ -632,6 +633,7 @@
 /test/leader-founder-mode-315.test.ts @masonwyatt23
 /test/leader-integration-310b.test.ts @masonwyatt23
 /test/leader-lessons-315.test.ts @masonwyatt23
+/test/leader-liveness-preserved-608s.test.ts @masonwyatt23
 /test/leader-local-transport-314.test.ts @masonwyatt23
 /test/leader-memo-310b.test.ts @masonwyatt23
 /test/leader-network-routing.test.ts @masonwyatt23

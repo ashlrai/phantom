@@ -2,7 +2,10 @@ import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { readThroughput, throughputOptions } from '../fleet/throughput.js';
+import { launchRateHours, readLaunchRate } from '../fleet/launch-rate.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
+import { INVENTORY_KINDS, INVENTORY_PATH, parseInventoryKind, type Inventory } from '../fleet/inventory-schema.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
@@ -112,6 +115,8 @@ const VERSE_FLEET_SUPERSEDED_PATH: typeof import('../fleet/superseded-read.js').
 
 export interface FleetRunsApiDeps {
   laneModels?: () => Promise<LaneModelSnapshot>;
+  /** Inventory pane; default is readInventory from core/fleet/inventory. */
+  readInventory?: () => Promise<Inventory>;
   /** Home's Disk card; default is readWorktrees('list') from core/fleet/worktrees. */
   readWorktrees?: () => Promise<WorktreesReport>;
   /** Home's Running build line; default is readSelfDrift() from core/release/drift (`phm self drift --json`). */
@@ -536,6 +541,15 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readThroughput({ ...options, runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), now: now() }));
       return true;
     }
+    // The Fleet view's start-rate card reads the same report as `phm fleet launches --json`.
+    if (path === '/api/verse/fleet/runs/launches') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const hours = launchRateHours(new URL(req.url ?? '/', 'http://localhost').searchParams.get('hours'));
+      if (hours === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes a whole number from 1 to 168' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, sanitizePublicJson(await readLaunchRate({ runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours, now: now() })));
+      return true;
+    }
     // The desktop Home view reads the same summary as `phm home`; leaderSeen is the reader's last-read time in epoch ms.
     if (path === '/api/verse/fleet/runs/home') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
@@ -592,6 +606,17 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/plugins' || path === '/api/verse/fleet/runs/skills') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, path.endsWith('/plugins') ? readPluginsPanel() : readSkillsPanel());
+      return true;
+    }
+    // The Inventory pane reads the same data as `phm inventory --json`; ?kind= narrows to one kind. Read-only.
+    if (path === INVENTORY_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('kind');
+      const kind = asked === null ? null : parseInventoryKind(asked);
+      if (asked !== null && !kind) { sendJson(res, 400, { code: 'INVENTORY_KIND', error: `kind must be one of: ${INVENTORY_KINDS.join(', ')}` }); return true; }
+      const { filterInventory, readInventory } = await import('../fleet/inventory.js');
+      const inventory = await (deps.readInventory ?? (() => readInventory({ now: () => new Date(now()), ...(deps.runsDir ? { runsDir: deps.runsDir } : {}) })))();
+      sendJson(res, 200, kind ? filterInventory(inventory, kind) : inventory);
       return true;
     }
     // The Tools pane reads the same data as `phm tools --json` and, under /parity, `phm tools parity --json`. Read-only.

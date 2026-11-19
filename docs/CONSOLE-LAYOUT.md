@@ -75,6 +75,27 @@ says it may be stale. The same list for agents:
 phm sessions --json
 ```
 
+**Agent threads** (⌘⌥A, or the **Agent threads** button in the Leader
+conversation) shows every agent session as a conversation on one screen. The
+list has one row per session: the leader first, then quiet sessions, running
+ones and any that failed in the last hour, each with its state, when it last
+spoke and its last message. Select a row to read its thread: a short summary,
+then the brief it was given, its recorded steps, the commands it ran, the files
+it changed, its notes, the bus messages about it and the last thing it said.
+The leader's thread shows its newest replies and opens the Leader conversation.
+The summary is assembled from those records, not written by a model, and a fact
+no record holds reads unknown. J/K or the arrow keys move between threads,
+Enter opens the session's full log in the Worker log (where pause, stop and
+steer live) and `/` filters the list. The pane is read-only; it reads the
+sessions list, each job's recorded activity and the bus messages, and in a
+narrow column it shows the list or the open thread, one at a time. The same
+reads for agents:
+
+```sh
+phm sessions --json
+phm messages
+```
+
 Home's Merged PRs card opens the Throughput pane. It leads with the report's
 headline and a Delivery flow chart: jobs launched, PRs published and PRs merged
 in the window, each with its exact count and its share of the step before. The
@@ -86,17 +107,23 @@ shows an empty flow, and a failed refresh labels the reading as an old one.
 
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
-empty with its reason when known), incidents (dispatch incidents, lane holds,
-parked jobs) and Leader replies. Each card has a kind icon, a relative time and
-one link. `phm feed --json --since 1h --kind merged` and
+empty with its reason when known), lanes (a lane hitting its plan limit, being
+paused, reset or running again, in plain words with the recorded line as
+`detail`), incidents (dispatch incidents, stopped and parked jobs) and Leader
+replies. Each card has a kind icon, a relative time and one link. Three or more
+merges in one repo in one clock hour are one card (“12 PRs merged in phantom in
+the last hour”) whose `group` lists them one tap away.
+`phm feed --json --since 1h --kind merged` and
 `GET /api/feed?since=1h&kind=merged` return the same `phantom.feed.v2` report
-(`version: 2`, `items`, `more`, `sources`); `--since` takes 1m to 7d or an ISO
-time within seven days, and `--limit` takes 1–1000 (default 30). The pane's kind
-filter and “Load more” call the same route. Per-tick dispatcher noise
+(`version: 2`, `items`, `more`, `next`, `sources`); `--since` takes 1m to 7d or
+an ISO time within seven days, and `--limit` takes 1–1000 (default 30). `next`
+is the cursor: pass it back as `since` to read only newer events. The pane's
+kind filter and “Load more” call the same route. Per-tick dispatcher noise
 (`EMPTY_SIGNAL`, `LOADGATE warn`) is dropped, and a notice that repeats is one
 card with a count. The Feed reads existing journals only (jobs ledger,
 dispatch events, Leader plan log, outbox, guardian state); missing sources stay
-unknown. Main recoveries have no recorded time, so only red is shown. Empty reads
+unknown. Main recoveries and incident closures have no recorded time, so only
+red and opened are shown. Empty reads
 show “Nothing new yet.”
 
 The phone Home screen brings the fleet glance, links to active sessions,

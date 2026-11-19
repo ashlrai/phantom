@@ -10,11 +10,11 @@
  *   theme     ↔ theme                     system | light | dark | high-contrast
  *   accent    ↔ accentH/accentS/accentL   '#rrggbb' (stored as integer HSL)
  *   density   ↔ density                   comfortable | compact
- *   fontSize  ↔ uiScale                   default | large | xlarge
+ *   fontSize  ↔ uiScale                   default | large | xlarge (or 100-125 %)
  *
  * Unlike the record's normalizer (which coerces silently, because a drag in
  * the UI must never fail), this module VALIDATES: an unknown key, a bad hex,
- * or a font size outside the three steps is an error with a plain message,
+ * or a font size outside the three steps (or 100-125 %) is an error with a plain message,
  * so an agent learns what it did wrong instead of seeing a silent fallback.
  *
  * The accent is stored as integer hue/saturation/lightness, so a hex read back
@@ -119,8 +119,10 @@ export function validateAppearanceSetting(key: string, value: string): Appearanc
       return error ? { ok: false, error } : { ok: true, patch: { density: value as UiDensity } };
     }
     case 'fontSize': {
-      const error = oneOf(key, value, UI_SCALES);
-      return error ? { ok: false, error } : { ok: true, patch: { uiScale: value as UiScale } };
+      const uiScale = parseFontSize(value);
+      return uiScale
+        ? { ok: true, patch: { uiScale } }
+        : { ok: false, error: `fontSize must be one of: ${UI_SCALES.join(', ')}, or a percent ${FONT_SIZE_MIN}-${FONT_SIZE_MAX} (got "${value}").` };
     }
     case 'accent': {
       const hsl = hexToHsl(value);
@@ -164,4 +166,79 @@ export function resolveAppearanceTheme(
   if (theme !== 'system') return theme;
   if (osPrefersDark === null) return 'unknown';
   return osPrefersDark ? 'dark' : 'light';
+}
+
+/**
+ * Font size as a number: the percent of the default text size each step
+ * paints (the --ui-text-scale of each [data-ui-scale] block in
+ * web-ui/design/tokens.css). A number in range snaps to the nearest step.
+ */
+export const FONT_SIZE_PERCENT: Readonly<Record<UiScale, number>> = { default: 100, large: 112.5, xlarge: 125 };
+const FONT_SIZE_MIN = 100;
+const FONT_SIZE_MAX = 125;
+
+/** `default|large|xlarge`, or a percent 100-125 snapped to the nearest step; null when neither. */
+export function parseFontSize(value: string): UiScale | null {
+  if ((UI_SCALES as readonly string[]).includes(value)) return value as UiScale;
+  const raw = value.trim().replace(/%$/, '');
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) return null;
+  const n = Number(raw);
+  if (n < FONT_SIZE_MIN || n > FONT_SIZE_MAX) return null;
+  let best: UiScale = 'default';
+  for (const scale of UI_SCALES) {
+    if (Math.abs(FONT_SIZE_PERCENT[scale] - n) < Math.abs(FONT_SIZE_PERCENT[best] - n)) best = scale;
+  }
+  return best;
+}
+
+/**
+ * The lenient read: any input (a stored blob, a hand-edited file, null)
+ * becomes four valid settings. Each value that does not validate falls back
+ * to ITS default; this never throws. Writes use the strict validators above.
+ */
+export function normalizeAppearanceSettings(input: unknown): AppearanceSettings {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return defaultAppearanceSettings();
+  const record = input as Record<string, unknown>;
+  let patch: AppearancePatch = {};
+  for (const key of APPEARANCE_SETTING_KEYS) {
+    const value = record[key];
+    const checked = typeof value === 'string' ? validateAppearanceSetting(key, value) : null;
+    if (checked?.ok) patch = { ...patch, ...checked.patch };
+  }
+  return appearanceSettingsFrom({ ...defaultUiAppearance(), ...patch });
+}
+
+/** CLI flag → setting key, for `phm settings appearance --theme dark …`. */
+export const APPEARANCE_FLAGS: Readonly<Record<string, AppearanceSettingKey>> = {
+  '--theme': 'theme',
+  '--accent': 'accent',
+  '--density': 'density',
+  '--font-size': 'fontSize',
+};
+
+/**
+ * Parse `--theme <v> --accent <v> --density <v> --font-size <v>` (also the
+ * `--flag=value` form) into ONE validated record patch, so several settings
+ * land in a single write. `settings` lists the keys given, in order.
+ */
+export function parseAppearanceFlags(
+  args: readonly string[],
+): { ok: true; patch: AppearancePatch; settings: AppearanceSettingKey[] } | { ok: false; error: string } {
+  let patch: AppearancePatch = {};
+  const settings: AppearanceSettingKey[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    const eq = arg.indexOf('=');
+    const flag = eq > 0 ? arg.slice(0, eq) : arg;
+    const key = APPEARANCE_FLAGS[flag];
+    if (key === undefined) return { ok: false, error: `unknown option "${arg}"; use ${Object.keys(APPEARANCE_FLAGS).join(', ')}.` };
+    const value = eq > 0 ? arg.slice(eq + 1) : args[++i];
+    if (value === undefined || value === '' || (eq < 0 && value.startsWith('--'))) return { ok: false, error: `${flag} needs a value.` };
+    if (settings.includes(key)) return { ok: false, error: `${flag} was given twice.` };
+    const checked = validateAppearanceSetting(key, value);
+    if (!checked.ok) return checked;
+    patch = { ...patch, ...checked.patch };
+    settings.push(key);
+  }
+  return { ok: true, patch, settings };
 }

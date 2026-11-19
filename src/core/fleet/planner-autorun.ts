@@ -19,8 +19,8 @@
  * The queued supply comes from ready-supply.ts — the canonical summary that
  * already knows every parked-row form ready.tsv carries (headered status,
  * `status=` cell, dotted pool, and the dispatcher's native five-column
- * `id repo PARKED-lane work /path` via normalizeLegacyRows). The checks run
- * in a fixed order and each yields one reason:
+ * `id repo PARKED-lane work /path`, recognized by parseReadyTsv itself). The
+ * checks run in a fixed order and each yields one reason:
  *   orch-off → planner-failing → no-free-slots → enough-supply → too-soon
  *   → low-supply | supply-floor (run).
  *

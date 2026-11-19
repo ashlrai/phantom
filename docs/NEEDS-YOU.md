@@ -55,3 +55,15 @@ The drawer does **not** currently flag:
 - a cloud PR that has been idle for many days without checks (covered only when blocking or green)
 - a leader with a single old inbox entry (leader-overdue requires 30-min silence)
 - a host with disk > 20 GB and memory > 10 % (below all thresholds)
+
+## Who is asked
+
+`phm needs-you [--json]` (and `GET /api/needs-you`) splits every open
+NEEDS-MASON.md line into two classes. **hard_limit** waits on Mason: secrets
+or keys, money or billing, a message to someone outside the team, deleting
+data, or a password, 2FA code or device approval. Unclear wording is
+hard_limit too. Everything else is **auto**: `phm needs-you resolve --auto
+[--dry-run]` (or `POST /api/needs-you/resolve`) takes its forward action (an
+approval's first option, else "go ahead") and appends `{item, action, at,
+reason}` to `needs-you-auto.jsonl` in the runs folder; `phm needs-you log`
+lists those records. Existing checks still run on every answer.

@@ -23,7 +23,8 @@ has its model, repo, state, when it last spoke, its last message, PR and the
 computer it runs on. A session with no output for 10 minutes is marked quiet,
 and finished sessions stay for an hour. Narrow it with `--lane <lane>`,
 `--repo <repo>` or `--live` (running only), and add `--json` for the
-`fleet.live-sessions.v1` document. The desktop Sessions pane shows the same tree.
+`fleet.live-sessions.v1` document. The desktop Sessions pane shows the same tree,
+and the Agent threads pane (⌘⌥A) shows each session as a conversation.
 See [live sessions](FLEET-API.md#live-sessions).
 
 To see what one session is doing right now, run `phm sessions tail <id>`

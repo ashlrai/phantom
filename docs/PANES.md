@@ -4,6 +4,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 
 | Id | Title | Chord | Source file |
 | --- | --- | --- | --- |
+| `agent-threads` | Agent threads | `mod+alt+a` | `src/web-ui/routes/verse/agent-threads/agent-threads.pane.tsx` |
 | `channels` | Channels | none | `src/web-ui/routes/verse/channels/channels.pane.tsx` |
 | `checks` | Checks | — | `src/web-ui/routes/verse/agents/checks.pane.tsx` |
 | `company` | Company | none | `src/web-ui/routes/verse/company/company.pane.tsx` |
@@ -18,6 +19,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-direct` | Direct | none | `src/web-ui/routes/verse/fleet-direct/fleet-direct.pane.tsx` |
 | `fleet-dispatch` | Dispatch | — | `src/web-ui/routes/verse/fleet-dispatch/fleet-dispatch.pane.tsx` |
 | `fleet-events` | Fleet events | `mod+alt+e` | `src/web-ui/routes/verse/fleet-events/fleet-events.pane.tsx` |
+| `fleet-inventory` | Inventory | none | `src/web-ui/routes/verse/inventory/inventory.pane.tsx` |
 | `fleet-forum` | Forum | none | `src/web-ui/routes/verse/fleet-forum/fleet-forum.pane.tsx` |
 | `fleet-goals` | Goals | — | `src/web-ui/routes/verse/fleet-goals/fleet-goals.pane.tsx` |
 | `fleet-graph` | Graph | — | `src/web-ui/routes/verse/fleet-graph/fleet-graph.pane.tsx` |
@@ -47,6 +49,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-timeline` | Worker timeline | `mod+alt+t` | `src/web-ui/routes/verse/fleet-timeline/fleet-timeline.pane.tsx` |
 | `fleet-tools` | Tools | none | `src/web-ui/routes/verse/fleet-tools/fleet-tools.pane.tsx` |
 | `fleet-usage` | Usage | — | `src/web-ui/routes/verse/fleet-usage/fleet-usage.pane.tsx` |
+| `fleet-worklog` | Work log | — | `src/web-ui/routes/verse/fleet-worklog/fleet-worklog.pane.tsx` |
 | `goals` | Goals | — | `src/web-ui/routes/verse/goals-pane/goals.pane.tsx` |
 | `home` | Home | none | `src/web-ui/routes/verse/home/home.pane.tsx` |
 | `ideas` | Ideas | — | `src/web-ui/routes/verse/ideas/ideas.pane.tsx` |

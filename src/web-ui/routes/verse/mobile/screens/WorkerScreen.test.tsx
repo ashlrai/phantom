@@ -16,6 +16,12 @@ const fixture = {
   log: { tail: ['first fake line', 'newest fake line'] },
 };
 
+// The job window route is newer than the detail route; answer 404 like an older hub so the card builds from the detail.
+const noWindow = (path: string) => {
+  if (path.startsWith('/api/fleet/job/window')) throw new ApiError('fake missing', 404, path);
+};
+const detailCalls = () => vi.mocked(apiGet).mock.calls.filter((call) => call[0].startsWith('/api/fleet/job?')).length;
+
 afterEach(() => {
   evictAll();
   vi.resetAllMocks();
@@ -25,21 +31,28 @@ afterEach(() => {
 
 describe('WorkerScreen', () => {
   it('renders facts, a safe PR and ordered tail lines', async () => {
-    vi.mocked(apiGet).mockResolvedValue(fixture);
+    vi.mocked(apiGet).mockImplementation(async (path) => { noWindow(path); return fixture; });
     renderMobile(<WorkerScreen job="RQ-FAKE" />);
     expect(await screen.findByText('fake-lane')).toBeInTheDocument();
-    expect(screen.getByText('running', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'PR #31' })).toHaveAttribute('href', fixture.publish.prUrl);
+    expect(screen.getByRole('status')).toHaveTextContent('Running now.');
+    expect(screen.getByText('fake-model')).toBeInTheDocument();
+    expect(screen.getByText('work')).toBeInTheDocument();
+    expect(screen.getByText('2026-10-31T00:00:00Z')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: fixture.publish.prUrl })).toHaveAttribute('href', fixture.publish.prUrl);
     expect(screen.getByLabelText('Worker log tail').textContent).toBe('first fake line\nnewest fake line');
   });
 
   it('refreshes the running tail every four seconds', async () => {
     vi.useFakeTimers();
-    vi.mocked(apiGet).mockResolvedValueOnce(fixture).mockResolvedValue({ ...fixture, log: { tail: ['updated fake line'] } });
+    let served = 0;
+    vi.mocked(apiGet).mockImplementation(async (path) => {
+      noWindow(path);
+      return served++ === 0 ? fixture : { ...fixture, log: { tail: ['updated fake line'] } };
+    });
     renderMobile(<WorkerScreen job="RQ-FAKE" />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
-    expect(apiGet).toHaveBeenCalledTimes(2);
+    expect(detailCalls()).toBe(2);
     expect(screen.getByLabelText('Worker log tail')).toHaveTextContent('updated fake line');
   });
 

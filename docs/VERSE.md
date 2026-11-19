@@ -80,6 +80,14 @@ running), `text`, `pr`, `url` and `mergeSeconds`. A field that was not recorded
 is null and shown as unknown. Each entry of `worklog.v3` also carries `goal`
 and `detail`, and a PR closed without merging is a `closed` entry.
 
+The **Work log** pane (`fleet-worklog`) counts that ledger: one sentence and
+one hourly trend line per number, today against yesterday ("186 merged today,
+240 yesterday"), then a table by lane and by repo. Agents read it with
+`phm fleet worklog --json` or `GET /api/fleet/worklog?hours=24&by=hour`. The
+`fleet.worklog.v1` report has `hourly` and `daily` buckets, `totals` and
+`compare`; a PR counts once however often its job launched, and a value that
+was not measured is null and shown as unknown.
+
 ## Workspaces and resources
 
 The two primary workspaces are **Work with me** and **Work for me**.

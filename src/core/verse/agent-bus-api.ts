@@ -3,6 +3,9 @@
  * GET /api/verse/agent-bus[?after=0&limit=50] reads a cursor page (limit 1..100).
  * POST /api/verse/agent-bus appends exactly one BusEnvelope, with the normal
  * dispatch/token gate. GET /api/verse/agent-bus/status inspects retained capacity.
+ * GET /api/verse/agent-bus/work-feed is the v2 work projection (`phm fleet
+ * work-feed --json`): ok and refused answers return 200 with the projection's
+ * own status; unreadable or invalid storage returns 503.
  * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
@@ -21,6 +24,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFleetEdges } from '../fleet/fleet-edges.js';
 import { parseBusEnvelope } from '../fleet/bus-envelope.js';
 import { appendBusInbox, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter } from '../fleet/bus-inbox.js';
+import { readBusWorkFeed } from '../agents/bus-work-feed-read.js';
 import { parseAgentMessagesQuery, readAgentMessages } from '../fleet/agent-messages.js';
 import { getBusMirrorState, startBusMirrorLoop } from '../fleet/bus-mirror-dispatch.js';
 import { mirrorLeaderPostToInbox } from '../fleet/bus-leader-inbox.js';
@@ -36,6 +40,7 @@ import type { ApiModule } from './api-modules.js';
 const PATH = '/api/verse/agent-bus';
 const NEEDS_MASON = `${PATH}/needs-mason`;
 const MESSAGES = `${PATH}/messages`;
+const WORK_FEED = `${PATH}/work-feed`;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
@@ -47,6 +52,7 @@ export interface AgentBusApiDeps {
   list?: typeof listBusInboxAfter;
   inspect?: typeof inspectBusInbox;
   messages?: typeof readAgentMessages;
+  workFeed?: typeof readBusWorkFeed;
   mirrorToInbox?: typeof mirrorLeaderPostToInbox;
   startMirror?: () => void;
   needsMason?: {
@@ -67,7 +73,7 @@ const ASK_STATUS_HTTP: Record<AskAnswerResult['status'], number> = {
 export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
   let mirrorStarted = false;
   return async (ctx, req: IncomingMessage, res: ServerResponse, path, method) => {
-    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_ANSWER && path !== APPROVALS && path !== APPROVALS_ANSWER) return false;
+    if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/edges` && path !== MESSAGES && path !== WORK_FEED && path !== NEEDS_MASON && path !== NEEDS_MASON_RESOLVE && path !== ASKS && path !== ASKS_ANSWER && path !== APPROVALS && path !== APPROVALS_ANSWER) return false;
     if (method !== (path === NEEDS_MASON_RESOLVE || path === ASKS_ANSWER || path === APPROVALS_ANSWER ? 'POST' : 'GET') && !(method === 'POST' && path === PATH)) {
       sendJson(res, 404, { error: 'not found' }); return true;
     }
@@ -91,6 +97,9 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
       if (path === `${PATH}/edges`) {
         const result = readFleetEdges();
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
+      } else if (path === WORK_FEED) {
+        const result = (deps.workFeed ?? readBusWorkFeed)();
+        sendJson(res, result.status === 'ok' || result.status === 'refused' ? 200 : 503, { v: 1, ...result });
       } else if (path === MESSAGES) {
         const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
           agent: params.get('agent') ?? undefined, with: params.get('with') ?? undefined, limit: params.get('limit') ?? undefined });

@@ -56,7 +56,8 @@ const EVENT_LABELS: Partial<Record<BusFeedEvent['kind'], string>> = { incident: 
 /** Incidents, lane holds and parked jobs from the dispatch events reader. Launches and publishes come from the ledger. */
 export function eventRows(events: BusFeedEvent[]): WorklogRow[] {
   return events.flatMap(event => {
-    const label = EVENT_LABELS[event.kind];
+    // LANE_UNHOLD shares the lane-hold kind; it is the lane running again.
+    const label = event.text.startsWith('LANE_UNHOLD') ? 'Lane released' : EVENT_LABELS[event.kind];
     if (!label || !event.atIso) return [];
     const rest = event.text.replace(/^\S+\s*/, '');
     const job = (event.kind === 'blocked' ? /^([A-Za-z0-9][A-Za-z0-9._-]{2,79})(?=\s|$)/ : /\bstopped ([A-Za-z0-9][A-Za-z0-9._-]{2,79}) by\b/).exec(rest)?.[1] ?? null;

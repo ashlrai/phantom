@@ -304,7 +304,10 @@ now, then folds the unfed ticks of the last `--window` hours (default 24, at
 most 168): ticks unfed and slot-ticks lost per lane, with the leading reasons.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
-derived report compares lane counts with `ready.tsv` hints and has no reasons.
+derived report compares lane counts with `ready.tsv` hints; when
+`queue/slots.json` also parses it recomputes the same eligibility reason codes
+the dispatcher would record (`derivedReasons: true` in `--json`), otherwise
+reasons stay unknown.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
 is read-only: no writes, no child processes, no network.
 

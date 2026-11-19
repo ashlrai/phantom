@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import * as client from '../../../data/client.js';
 import type { FleetRuns } from '../ops/ops-runs-model.js';
@@ -45,7 +45,8 @@ it('pauses on Follow off and offers Jump to latest even with no new lines', asyn
   vi.spyOn(client, 'apiGet').mockImplementation(async (path: string) => path === '/api/verse/fleet/runs' ? runs : { ...base, lane: 'codex', model: 'model-x', log: { source: 'live', bytes: 4, tail: ['done'] } });
   render(<WorkerLogPane visible />);
   const log = await screen.findByRole('log');
-  expect(screen.getByText(/model-x/)).toBeInTheDocument();
+  expect(screen.getByText(/model-x/, { ignore: 'script, style, [aria-label="Job window"] *' })).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Job window' })).getByText('model-x')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Jump to latest ↓' })).not.toBeInTheDocument();
   Object.defineProperty(log, 'scrollHeight', { configurable: true, value: 50 });
   fireEvent.click(screen.getByRole('checkbox', { name: 'Follow' }));

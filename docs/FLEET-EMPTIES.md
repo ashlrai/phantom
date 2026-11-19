@@ -20,11 +20,14 @@ The Work log's **Why jobs end empty** section reads the same report through
 `GET /api/fleet/empty-jobs` (24 hours, all families), also shown on Fleet.
 
 This extends the existing empty-job report, using the `phm empties` newest-finish
-reader and `phm fleet yield` family normalizer. The latter strips cycle numbers
+reader and the slot-yield family normalizer (`jobFamily`). The latter strips cycle numbers
 and groups generated recuts by kind: RECUTCOREC541 and RECUTCOREC544 are RECUT*.
 No second ledger is created. Counts cover distinct job ids, not individual retries.
 Only a newest empty finish is included; a later productive finish removes that id.
 
+To see which recurring families waste launches, run `phm fleet yield`: it prints
+merged per launch for each family, most wasted tokens first, and a ready job stop
+file row for each `stop` family.
 To see which kinds of jobs are worth launching at all, run `phm jobs yield --json`.
 It gives each job kind a keep, watch or stop verdict and names the five to stop
 first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).
@@ -99,7 +102,26 @@ The recommendation is `suppress` only above 60% empty with at least five finishe
 
 ## Fleet finish report
 
-Run `phm fleet empties` for JSON, or `phm fleet empties --human` for a short table and the top five families by empty launches. `--since 24h` selects a trailing window (default 24 hours, maximum 2160); `--jobs <jobs.jsonl>` selects a metrics file. `--runs-dir <directory>` sets the default ledger and result-notes root (default `~/.ashlr-runs`).
+Run `phm fleet empties` for JSON, or `phm fleet empties --human` for a short table and the top five families by empty launches. `--hours 24` (or `--since 24h`) selects a trailing window (default 24 hours, maximum 2160); `--jobs <jobs.jsonl>` selects a metrics file. `--runs-dir <directory>` sets the default ledger and result-notes root (default `~/.ashlr-runs`).
+
+### Why runs ended empty: the `why` block
+
+`phm fleet empties --hours 24` (JSON) adds `why` (schema `fleet.empties.why.v1`); `--human` adds plain lines after the table. The same report is served read-only at `GET /api/fleet/empties?hours=24`. It covers every job whose newest finish in the window was empty, precheck skips included, and gives each one `{job, lane, tier, family, reason, evidence, tokens_total}`. Rollups count jobs and tokens `by_reason`, `by_lane` and `by_family`; `costliest` lists the 10 empty runs with the most recorded tokens. Tokens that were never recorded stay `null` (unknown), never zero, and such runs are not ranked as costly.
+
+Reasons are checked in this order across the job's metric rows, the last 40 lines of `<job>.log`, `<job>.publish` and `<job>.launch`; the first match wins:
+
+| Reason | Evidence |
+| --- | --- |
+| `plan_limit` | a `pool_error` on a finish row, or usage, plan, rate or quota limit wording (or HTTP 429) |
+| `held` | the launch note starts with `HELD` |
+| `precheck_skip` | a `precheck_skip` or `skipped_empty` metrics row, with its code |
+| `publish_abort` | the publish result's last `RESULT` line is `ABORT` or `DENIED`, naming the gate or step |
+| `already_done` | the final lines say the change is already on main or merged, or there is nothing to do |
+| `blocked` | the final lines name a missing tool or file, a permission or sandbox denial, or no network |
+| `no_output` | no log, an empty log, or a finish that exited mid-run (timeout or interrupt exit code) |
+| `unknown` | none of the above; evidence is the log's last line so new rules can be added |
+
+`evidence` is one short line (at most 160 characters) with secret-shaped text and home paths scrubbed. Reasons come from text, not proof: check master before trusting `already_done`.
 
 `fleet.empties.v2` includes every EMPTY finish, family/lane counts, `byCause`, and `topFamilies`. A family is the job ID without trailing digits. `--json` remains accepted. MCP `fleet_empties` returns the same report with optional `hours`, no paths. Its existing 64 KiB limit applies; use fewer hours or the CLI for large windows.
 

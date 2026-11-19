@@ -1,8 +1,9 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
+import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { cmdFleetWorkFeed } from '../src/cli/fleet-work-feed.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
@@ -71,7 +72,7 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root])).toBe(1);
     expect(log.mock.calls).toHaveLength(1);
-    expect(log.mock.calls[0]?.[0]).toContain('jobs=0 receipts=2 feed=refused:owner-mismatch');
+    expect(log.mock.calls[0]?.[0]).toContain('jobs=unknown receipts=2 feed=refused:owner-mismatch');
     expect(await cmdFleetWorkFeed(['--root', root, '--json'])).toBe(1);
     expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'refused', reason: 'owner-mismatch' });
   });
@@ -95,18 +96,48 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(readBusWorkFeed({ root })).toEqual({ status: 'unavailable', asOf: new Date(now).toISOString() });
     const log = output();
     expect(await cmdFleetWorkFeed(['--root', root])).toBe(1);
-    expect(log.mock.calls[0]?.[0]).toContain('jobs=0 receipts=0 feed=unavailable');
+    expect(log.mock.calls[0]?.[0]).toContain('jobs=unknown receipts=unknown feed=unavailable');
+  });
+
+  it('joins live coordination holds with --claims and keeps hold state honest', async () => {
+    append(post);
+    const claim = { root, origin: 'resource' as const, key: 'repo:fake/repo', owner: 'fake-holder',
+      leaseMs: 60_000, leaseUntil: now + 60_000, sourceId: 'work:fake-claim', now };
+    expect(acquireCoordination(claim).status).toBe('acquired');
+    const held = readBusWorkFeed({ root, claims: true });
+    expect(held).toMatchObject({ status: 'ok', claims: { source: 'available', truncated: false,
+      holds: [{ jobId: post.jobId, claimKey: 'repo:fake/repo', owner: 'fake-holder',
+        origin: 'resource', sourceId: 'work:fake-claim' }] } });
+    expect(JSON.stringify(held)).not.toContain('token');
+    const plain = readBusWorkFeed({ root });
+    expect(plain.status === 'ok' && plain.claims).toBeUndefined();
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root, '--claims'])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`held ${post.jobId} repo:fake/repo owner=fake-holder`))).toBe(true);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('claims=available');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--claims', '--status', 'done', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'ok', jobs: [],
+      claims: { source: 'available', holds: [] } });
+    rmSync(join(root, 'coordination'), { recursive: true, force: true });
+    mkdirSync(join(root, 'coordination'), { mode: 0o700 });
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    expect(readBusWorkFeed({ root, claims: true })).toMatchObject({ status: 'ok',
+      claims: { source: 'unavailable', holds: [] } });
+    rmSync(join(root, 'coordination'), { recursive: true, force: true });
+    expect(readBusWorkFeed({ root, claims: true })).toMatchObject({ status: 'ok',
+      claims: { source: 'missing', holds: [] } });
   });
 
   it('rejects relative roots and invalid flags with usage on stderr and exit 2', async () => {
     const log = output();
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     for (const args of [['--root', 'relative/path'], ['--status', 'unknown'], ['--root'],
-      ['--status', 'queued', '--status', 'done'], ['--json', '--json'], ['--bogus']]) {
+      ['--status', 'queued', '--status', 'done'], ['--json', '--json'], ['--claims', '--claims'], ['--bogus']]) {
       expect(await cmdFleetWorkFeed(args)).toBe(2);
     }
     expect(log).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledTimes(6);
+    expect(error).toHaveBeenCalledTimes(7);
     expect(error.mock.calls[0]?.[0]).toContain('Usage: ashlr fleet work-feed');
     expect(await cmdFleetWorkFeed(['--help'])).toBe(0);
   });

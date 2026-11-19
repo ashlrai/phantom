@@ -19,7 +19,7 @@ import { makeColors, isTty } from './ui.js';
  */
 export const TOP_LEVEL_COMMANDS: string[] = [
   'graph',
-  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'home', 'asks', 'subagent', 'init',
+  'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'home', 'asks', 'needs-you', 'subagent', 'init',
   'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'browser', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
@@ -31,7 +31,7 @@ export const TOP_LEVEL_COMMANDS: string[] = [
   'onboard', 'demo', 'orient', 'docs', 'completions', 'plugins', 'x', 'comms', 'comms-agent',
   'agentnet', 'amplify', 'channels', 'context', 'connectors', 'imessage', 'memory', 'route', 'radar', 'observe', 'growth', 'world', 'settings', 'drafts',
   'director', 'best-of-n', 'invent', 'ideas', 'resource', 'resources', 'repos', 'usage', 'version', 'help',
-  'skills', 'universe', 'runtime', 'tune', 'tools', 'pools', 'messages', 'map',
+  'skills', 'universe', 'runtime', 'tune', 'tools', 'inventory', 'pools', 'messages', 'map',
   // Dispatched by index.ts but previously missing here, so completion and
   // "did you mean" were blind to them (caught by cli-registry-drift).
   'verse', 'console', 'local-runtime',
@@ -161,7 +161,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot',
+    'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot', 'launches',
   ],
   bus: ['thread', 'task', 'send', 'inbox', 'ack', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],

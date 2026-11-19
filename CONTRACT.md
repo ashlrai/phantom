@@ -426,9 +426,14 @@ is invoked. Queue task strings remain untrusted data under existing worker gates
 (`bulk|standard|judgment`) beside `preferred_lane`, `needs`, `min_tier`,
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
-`--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
+`--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
 nowMs, windowHours)` and `renderUnfed(report)` in
-`src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
+`src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
+`phm fleet unfed` (`fleet.unfed.v1`). The optional `market` carries the
+dispatcher's own input files (slots.json, models.json, budget-overrides.json,
+adaptive.json, HOLD); when slots.json parses, a derived report recomputes
+per-lane `blocked` reason codes with the same eligibility rules as
+`contrib/mac/work_market.py`, reported as `derivedReasons: true`.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.
@@ -1321,7 +1326,26 @@ Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
 This is a pure retained-snapshot projection, not a historical ledger or identity
 check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
-No HTTP feed endpoint is provided by this foundation.
+`readBusWorkFeed` (`src/core/agents/bus-work-feed-read.ts`) is the bounded
+read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
+(`src/core/verse/agent-bus-api.ts`, read session required, no parameters)
+serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
+200 with the projection's own status, `unavailable`/`retryable`/`invalid`
+answer 503.
+
+`readBusWorkFeed({root?, now?, claims?})` in `src/core/agents/bus-work-feed-read.ts`
+pages the bounded bus inbox without writes and returns ok/refused/unavailable/
+retryable/invalid with receipt count and `asOf`. With `claims:true` the ok result
+adds `claims:{source,holds,truncated}`: holds list each live coordination lease
+blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
+`leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is
+`missing`, `available` or `unavailable`, and holds are unknown, not empty, when
+the table is unavailable. Holds cap at 1024 with `truncated` set.
+`coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
+exported read-only overlap predicate; acquisition and observation now share one
+structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
+a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
+fabricated count.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 
@@ -1360,6 +1384,26 @@ Claude Code installed plugins; Claude Code, Codex and learned skills. Each row h
 `read`, `none` or `unknown`; an unreadable source adds no rows. Served by
 `phm plugins list --all --json`, `phm skills list --all --json` and
 `GET /api/verse/fleet/runs/plugins|skills` for the desktop Plugins and Skills panes.
+
+`phantom.inventory.v1` (`src/core/fleet/inventory.ts`, wire types in
+`inventory-schema.ts`): `buildInventory(sources)`, `readInventory({ home?,
+runsDir?, now?, readers? })`, `filterInventory(inventory, kind)` and
+`formatInventory(inventory)`. Everything the install can use in one list, joined
+from the channels overview, the connector profile, the plugins and skills
+panels, tool parity and the shared tool registry. Each item is `{ kind:
+channel|connector|plugin|skill|tool, id, name, state: ready|needs setup|off|
+error|unknown, detail, lastChecked, usedByLanes: string[]|all|unknown, next:
+{ text, command }|null }`. A source that cannot be read (null) yields one
+`unknown` row, never a guess. `counts` and `kinds[].counts` total the five
+states. `parity` compares every lane (`ORG_LANES`, then any other lane a source
+names) against each tool and connector that is not off: `{ compared, widestGap,
+lanes: [{ lane, has, lacks, unknown, gap }] }`. No credential name or value is
+included; connectors report only how many credential names they list. Read-only.
+Served by `phm inventory [--kind K] [--json]` and
+`GET /api/verse/fleet/runs/inventory[?kind=K]` (400 for an unknown kind) for the
+desktop Inventory pane. `installed-panels.ts` now exports
+`INVALID_MANIFEST_AGENTS` and `LEARNED_SKILLS_SOURCE`, and
+`connectors/mesh.ts` exports `executableAvailability(command, path)`.
 
 `tools.matrix.v1` (`src/core/fleet/tool-parity.ts`): `buildToolMatrix(report, lane?)`,
 `formatToolMatrix(matrix, lane?)` and `loadToolParity({ runsDir?, home?, readers? })`.

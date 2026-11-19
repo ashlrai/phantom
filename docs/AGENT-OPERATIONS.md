@@ -1045,6 +1045,17 @@ changes nothing. Each PR counts once. A value that was not measured is `null`
 Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`)
 for 6 hours, 24 hours or 7 days, with launched, published and merged drawn as one flow.
 
+`phm fleet launches --json` answers the question that comes before throughput: how
+many jobs the fleet starts per hour and which lanes those starts go to. It prints
+starts per hour, the longest stretch with no start, starts and merged PRs per start
+by lane, and wasted starts (starts on a lane with 10 or more starts in the last 24
+hours that merged under 0.1 per start). It also prints a short list of changes in plain
+words, such as "zai took 21 of 60 starts in 24 h and merged 0; send its rows to
+claude (9% used, 48 h left)". Plan use and reset come from
+`~/.ashlr-runs/queue/resources.json`; without it they read as unknown. `--hours N`
+sets the window (1 to 168, default 24). The desktop Fleet view's "Job starts" card
+shows the same report (`GET /api/verse/fleet/runs/launches`).
+
 `phm metrics` shows how well the self-improving loop is running, in one glance:
 PRs merged per hour over the last 1, 6 and 24 hours, the median time from publish
 to merge, the empty rate, each lane's jobs, merged PRs, empty rate and merge

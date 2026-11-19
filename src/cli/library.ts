@@ -1,6 +1,6 @@
 import { listLeaderFiles } from '../core/fleet/library-files.js';
 import { LIBRARY_ID, parseLibraryFilter, readLibrary, readLibraryItem, type LibraryItem } from '../core/fleet/library.js';
-const usage = 'phm library [--json|--text] [--kind file|memory|message|context] [--since 1h] [--q text]';
+const usage = 'phm library [--json|--text] [--kind file|media|memory|message|context] [--since 1h] [--q text]';
 const showUsage = 'phm library show <id> [--json]';
 /** Reader seams so tests drive the CLI from fixtures. */
 export interface LibraryCliDeps { read?: typeof readLibrary; readItem?: typeof readLibraryItem }
