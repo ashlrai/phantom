@@ -69,15 +69,22 @@ export const CADENCE_MAX_ATTEMPTS = 3;
 async function planAtLiveTip({ base, repository, minutes, now, read }) {
   const tip = (await read(`${base}/branches/master`)).commit?.sha;
   assert.match(tip ?? '', SHA);
-  const content = async path => {
-    const response = await read(`${base}/contents/${path}?ref=${tip}`);
+  const content = response => {
     assert.equal(response.encoding, 'base64');
     return JSON.parse(Buffer.from(response.content, 'base64').toString('utf8'));
   };
-  const pkg = await content('package.json');
+  // Independent inputs pinned to the same tip are read together: every
+  // concurrent round trip widens the still-tip window a merge can hit, and
+  // halving the rounds is what lets the bounded re-verify actually engage
+  // during merge bursts. Nothing here is cached across attempts.
+  const [pkgResponse, manifestResponse] = await Promise.all([
+    read(`${base}/contents/package.json?ref=${tip}`),
+    read(`${base}/contents/.release-please-manifest.json?ref=${tip}`),
+  ]);
+  const pkg = content(pkgResponse);
   assert.equal(pkg.name, '@ashlr/phantom');
   const version = nextPatch(pkg.version);
-  const manifest = await content('.release-please-manifest.json');
+  const manifest = content(manifestResponse);
   assert.equal(manifest['.'], pkg.version, 'source and release-please manifest differ');
   // A merged bump owes its own tag first. Never create endless version-only
   // successors while the previous candidate is still awaiting its first tag.
@@ -86,10 +93,14 @@ async function planAtLiveTip({ base, repository, minutes, now, read }) {
   assert.equal(tag.ref, `refs/tags/v${pkg.version}`);
   const tagSha = await peeledCommit(read, base, tag.object);
   if (tagSha === tip) return { due: false, reason: 'no-new-commits' };
-  const compare = await read(`${base}/compare/${tagSha}...${tip}`);
+  // The tagged commit's timestamp and the tip distance are independent once
+  // the tag sha is known; read them in the same round.
+  const [tagged, compare] = await Promise.all([
+    read(`${base}/commits/${tagSha}`),
+    read(`${base}/compare/${tagSha}...${tip}`),
+  ]);
   assert.equal(compare.status, 'ahead', 'current version tag is not an ancestor of master');
   assert.ok(Number.isSafeInteger(compare.ahead_by) && compare.ahead_by > 0);
-  const tagged = await read(`${base}/commits/${tagSha}`);
   const taggedAt = Date.parse(tagged.commit?.committer?.date);
   assert.ok(Number.isFinite(taggedAt) && taggedAt <= now, 'invalid tagged commit timestamp');
   if (now - taggedAt < minutes * 60_000) return { due: false, reason: 'cadence-not-due' };
