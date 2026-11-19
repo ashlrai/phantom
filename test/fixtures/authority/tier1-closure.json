@@ -543,6 +543,7 @@
     "src/core/fleet/channel-envelope.ts",
     "src/core/fleet/ci-baseline.ts",
     "src/core/fleet/ci-failure-groups.ts",
+    "src/core/fleet/ci-fix-generations.ts",
     "src/core/fleet/ci-flakes.ts",
     "src/core/fleet/ci-rerun.ts",
     "src/core/fleet/claude-quota-reading.ts",

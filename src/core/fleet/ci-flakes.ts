@@ -13,14 +13,19 @@
  *
  * The window keeps the signal honest: a flake that was fixed stops producing
  * attempts, and once its attempts age out of the window the test is no longer
- * recurring, so a merged fix is never re-queued on stale evidence. Rows
- * without a test id (written before the field existed) and rows outside the
- * window simply do not count — unknown stays unknown, never zero.
+ * recurring, so a merged fix is never re-queued on stale evidence. When the
+ * flake does keep recurring after earlier stabilization rows reached DONE,
+ * `enqueueFlakeFixes` queues the next `-G<n>` generation (see
+ * ci-fix-generations.ts) so a fix that did not hold becomes fresh work
+ * instead of a permanently deduplicated row. Rows without a test id (written
+ * before the field existed) and rows outside the window simply do not count
+ * — unknown stays unknown, never zero.
  */
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { nextFixGeneration } from './ci-fix-generations.js';
 
 /** Attempt rows older than this no longer count toward recurrence. */
 export const RECURRING_FLAKE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -97,25 +102,32 @@ export function flakeJobId(repo: string, test: string): string {
   return `RQ-CIFLAKE-${createHash('sha256').update(`${repo}:${test}`).digest('hex').slice(0, 16).toUpperCase()}`;
 }
 
-function flakeFixBrief(flake: RecurringFlake, jobId: string): string {
+function flakeFixBrief(flake: RecurringFlake, jobId: string, generation: number): string {
   const shown = flake.heads.slice(0, BRIEF_HEADS);
   const headList = shown.join(', ') + (flake.heads.length > shown.length ? `, and ${flake.heads.length - shown.length} more` : '');
   const test = scrubSecrets(flake.test).replace(/[\r\n]+/g, ' ').slice(0, JOURNAL_TEST_MAX);
+  const retry = generation > 1
+    ? ` This is stabilization attempt ${generation}: earlier attempts for this test reached DONE and the flake still recurs on the heads above.`
+    : '';
   return scrubSecrets(
     `Stabilize flaky test ${test} in ${flake.repo}: the CI baseline analyzer classified it probable-flake ` +
     `and the rerun loop attempted it on ${flake.heads.length} distinct heads (${headList}). ` +
     `Reproduce the flake locally, find the nondeterminism (test ordering, timing, shared state, ports or temp paths, unawaited work), ` +
     `and make the test deterministic; if it cannot be made reliable, quarantine it behind an explicit skip that names ${jobId}. ` +
-    `Never weaken the assertion, delete coverage, or edit Security GATES v3 files. Run the affected suite. ` +
-    `Include ${jobId} in the fix PR body.`,
+    `Never weaken the assertion, delete coverage, or edit Security GATES v3 files. Run the affected suite.` +
+    retry +
+    ` Include ${jobId} in the fix PR body.`,
   ).replace(/[\r\n]+/g, ' ');
 }
 
 /**
- * Append one READY stabilization row per recurring flake, deduplicated by job
- * id against the current queue file text and capped at MAX_FLAKE_FIX_ROWS new
- * rows per call. Returns the queued job ids. Queueing is an explicit local
- * write; callers own the standing-authority and KILL gates.
+ * Append one READY stabilization row per recurring flake. Queue state decides
+ * deduplication: an open row suppresses queueing, a family whose generations
+ * all reached DONE re-queues as the next `-G<n>` id while the flake still
+ * recurs (capped by MAX_FIX_GENERATIONS), and dropped or retired rows stay
+ * suppressed. Capped at MAX_FLAKE_FIX_ROWS new rows per call. Returns the
+ * queued job ids. Queueing is an explicit local write; callers own the
+ * standing-authority and KILL gates.
  */
 export function enqueueFlakeFixes(flakes: readonly RecurringFlake[], queuePath: string): string[] {
   if (!isAbsolute(queuePath)) throw new Error('queue-file must be absolute');
@@ -123,12 +135,13 @@ export function enqueueFlakeFixes(flakes: readonly RecurringFlake[], queuePath: 
   let existing = existsSync(queuePath) ? readFileSync(queuePath, 'utf8') : '';
   const queued: string[] = [];
   for (const flake of flakes.slice(0, MAX_FLAKE_FIX_ROWS)) {
-    const jobId = flakeJobId(flake.repo, flake.test);
-    if (existing.includes(jobId)) continue;
-    const line = `\n- READY ${jobId} (P1, repo=${flake.repo.split('/')[1]}, tier=work, needs=git|gh|node): ${flakeFixBrief(flake, jobId)}\n`;
+    const base = flakeJobId(flake.repo, flake.test);
+    const retry = nextFixGeneration(existing, base);
+    if (!retry) continue;
+    const line = `\n- READY ${retry.jobId} (P1, repo=${flake.repo.split('/')[1]}, tier=work, needs=git|gh|node): ${flakeFixBrief(flake, retry.jobId, retry.generation)}\n`;
     appendFileSync(queuePath, line, 'utf8');
     existing += line;
-    queued.push(jobId);
+    queued.push(retry.jobId);
   }
   return queued;
 }

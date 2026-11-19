@@ -5,6 +5,7 @@ import { stripVTControlCharacters } from 'node:util';
 import type { CloudGh } from '../cloud/pr-actions.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { defaultCiGh } from './ci-failure-groups.js';
+import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
@@ -232,9 +233,13 @@ export function enqueueBaselineFixes(report: Awaited<ReturnType<typeof analyzeCi
   const queued: string[] = [];
   let existing = existsSync(queuePath) ? readFileSync(queuePath, 'utf8') : '';
   for (const group of report.groups) {
-    if (group.action !== 'queue-master-fix' || !group.brief || existing.includes(group.jobId)) continue;
-    const line = `\n- READY ${group.jobId} (P1, repo=${report.repo.split('/')[1]}, tier=work, needs=git|gh|node): ${group.brief}\n`;
-    appendFileSync(queuePath, line, 'utf8'); existing += line; queued.push(group.jobId);
+    if (group.action !== 'queue-master-fix' || !group.brief) continue;
+    const retry = nextFixGeneration(existing, group.jobId);
+    if (!retry) continue;
+    const brief = retry.generation === 1 ? group.brief
+      : `${group.brief} Stabilization attempt ${retry.generation}: earlier attempts for this test reached DONE and the failure is still observed on current evidence; queue id ${retry.jobId} — include ${retry.jobId} in the fix PR body.`;
+    const line = `\n- READY ${retry.jobId} (P1, repo=${report.repo.split('/')[1]}, tier=work, needs=git|gh|node): ${brief}\n`;
+    appendFileSync(queuePath, line, 'utf8'); existing += line; queued.push(retry.jobId);
   }
   return queued;
 }
