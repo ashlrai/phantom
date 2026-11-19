@@ -6,14 +6,19 @@ import { z } from 'zod';
 import { BOT_ID_PATTERN } from '../agents/bot-templates.js';
 import { participantSchema, providerSchema, type Participant } from '../agents/bus-v2-schema.js';
 import { coordinationRoot, listCoordination, releaseCoordinationBySource, type CoordinationView } from '../agents/claim-store.js';
-import { postChannelMessage, sendDirectMessage } from '../agents/bus-unified.js';
+import { sendDirectMessage } from '../agents/bus-unified.js';
+import { localWriteGate } from '../agents/send-gate.js';
 import { assertMetadata } from '../connectors/profile.js';
 import { budgetEntryQuota } from '../fabric/lane-usage-self.js';
 import { DriveNodes, LocalNodesStore, type NodesStore } from '../drive/nodes/index.js';
 import type { QueueJobV1 } from '../drive/nodes/queue-v1.js';
 import { ashlrHome } from '../cloud/store.js';
 import { privateDirectory } from '../universe/artifacts.js';
+import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
+import { appendBusInbox } from '../fleet/bus-inbox.js';
+import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../comms/owner-channel.js';
 import { liveOwnerTransports } from '../comms/owner-live-transport.js';
@@ -210,6 +215,32 @@ async function noticeStatus(send: () => Promise<unknown>): Promise<NoticeStatus>
     return ['posted', 'accepted', 'sent', 'duplicate', 'halted', 'refused', 'unavailable'].includes(String(status)) ? status as NoticeStatus : 'unknown';
   } catch { return 'failed'; }
 }
+/**
+ * The per-record bus note: one system envelope on the shared bus addressed to
+ * the fleet work sink (`leaders`), the same place work announcements and peer
+ * escalations land. A seat participantId is a bus label, not a registered
+ * identity, so this cannot go through postChannelMessage (which requires a
+ * registered sender and channel membership); it follows the owner-thread
+ * mirror instead — appendBusInbox with the channel metadata group, KILL and
+ * the comms pause honored, no wake for a P2 notice. The handoff id is the
+ * envelope id, so a crash-retry dedupes to `duplicate` rather than doubling.
+ */
+async function seatHandoffBusNotice(input: { from: string; text: string; id: string }, o: SeatOptions) {
+  const blocked = localWriteGate();
+  if (blocked) return { status: blocked.status };
+  if (scrubSecrets(input.text) !== input.text) return { status: 'refused' };
+  const posted = appendBusInbox({
+    id: input.id, from: input.from, to: LEADERS_ADDRESS, priority: 'P2', ttl: CHANNEL_BUS_TTL_MS,
+    body: { kind: 'note', text: input.text },
+    channel: 'bus', channel_ref: `seat-handoff:${input.id}`,
+    sender: { agent_id: input.from, vendor: 'phantom', human: false, team: true },
+    external: false, origin_bridge: 'bot-seats',
+  }, { root: fleet(o), now: o.now });
+  return { status: posted.status === 'posted' || posted.status === 'duplicate' ? posted.status
+    : posted.status === 'unavailable' || posted.status === 'retryable' || posted.status === 'full'
+      ? 'unavailable' : 'refused' };
+}
+
 async function saveReceipts(receipts: Record<string, NoticeReceipt>, o: SeatOptions) {
   const path = await safe(o, 'handoff-notices.json');
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -258,7 +289,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       receipts[record.handoffId] = notifications;
       if (!notifications.bus) {
         notifications.bus = await noticeStatus(() => o.busPost ? o.busPost({ from: row.seat.participantId, text: notice.text, id: record.handoffId })
-          : postChannelMessage({ from: row.seat.participantId, channel: 'general', text: notice.text, id: record.handoffId }, { runsRoot: runs(o) }));
+          : seatHandoffBusNotice({ from: row.seat.participantId, text: notice.text, id: record.handoffId }, o));
         await saveReceipts(receipts, o);
       }
       if (!notifications.owner) {
