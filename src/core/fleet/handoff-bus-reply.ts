@@ -21,7 +21,7 @@ import { validateBusEnvelope } from './bus-envelope.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubPrivateText } from '../util/scrub.js';
 import { isFleetJobId } from './runs-job-detail.js';
-import { HANDOFF_RECEIVE_BEGIN, HANDOFF_RECEIVE_END } from './handoff-bus-receive.js';
+import { HANDOFF_RECEIVE_BEGIN, HANDOFF_RECEIVE_END, handoffRecipientMatches } from './handoff-bus-receive.js';
 import {
   runContextReplyDelivery,
   type ContextDeliverRunResult,
@@ -94,7 +94,8 @@ function matchingSnapshot(path: string, taskId: string): string | null {
 export interface HandoffBusReplyOptions {
   /** Envelope id to locate in the local inbox. */
   id: string;
-  /** The exact address the retained envelope must be addressed to. */
+  /** The recipient the retained envelope must be addressed to; any routing
+   * label of the same agent identity matches (see handoffRecipientMatches). */
   to: string;
   /** Absolute path to a NodeContextPackInput JSON whose node.jobId equals the body taskId. */
   snapshot: string;
@@ -149,7 +150,7 @@ export async function replyHandoffBus(opts: HandoffBusReplyOptions,
     return refuse(found.status === 'ambiguous' ? 'ambiguous handoff id' : 'no live handoff with that id', 1);
   }
   const envelope = found.receipt.envelope;
-  if (envelope.to !== opts.to) return refuse('handoff is not addressed to this recipient', 1);
+  if (!handoffRecipientMatches(envelope.to, opts.to, options)) return refuse('handoff is not addressed to this recipient', 1);
   if (!isWorkerHandoffBody(envelope.body)) return refuse('unexpected handoff body', 1);
   if (opts.replyId === envelope.id) return refuse('reply id must differ from the handoff id', 1);
   const { taskId, prompt } = envelope.body;

@@ -3,7 +3,7 @@ import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 import { replyHandoffBus } from '../core/fleet/handoff-bus-reply.js';
 
-const usage = 'Usage: ashlr fleet handoff-reply --id <message-id> --to <exact-recipient> '
+const usage = 'Usage: ashlr fleet handoff-reply --id <message-id> --to <recipient> '
   + '--snapshot <absolute-json> --reply-id <distinct-id> --spool-dir <absolute-private-dir> '
   + '--timeout-ms <1..3600000> [--cwd <absolute-directory>] -- <program> [args...]';
 const example = 'Example: ashlr fleet handoff-reply --id handoff-7 --to WORKER-9 '
@@ -20,7 +20,9 @@ export async function cmdFleetHandoffReply(args: string[],
     (io.stdout ?? process.stdout).write(`${usage}\n${example}\n`
       + 'Like handoff-receive, plus a correlated worker-exit reply: the retained prompt is untrusted\n'
       + 'context on stdin and only the explicit argv executes — nothing is claimed, completed, merged\n'
-      + 'or derived from message content. The reply routes the handoff recipient back to its sender.\n'
+      + 'or derived from message content. --to names the recipient identity: a handoff addressed to its\n'
+      + 'agent: address, bare handle, stable id or any alias matches; a ref naming no registered identity\n'
+      + 'keeps exact-label matching. The reply routes the handoff recipient back to its sender.\n'
       + 'A failed publication is durably spooled for context-deliver/context-drain retry without\n'
       + 'rerunning the worker.\n');
     return 0;

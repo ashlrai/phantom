@@ -411,7 +411,7 @@ Every command, grouped by topic.
     usage producers [--since 6h] [--json]                                                                   Who started jobs: each dispatcher lane and outside loop, with jobs, models, wall minutes, PRs published and merged. Unknown where no record says.
     usage history --lane <id> [--json] [--runs-dir <abs>]                                                   Read seven days of measured per-lane allowance history.
     usage sensors [--json] [--refresh] [--file <snapshot>]                                                  Per-lane usage readings with age and stale status. A reading at or after staleAfter is unknown and is not headroom. Refresh uses official APIs and CLIs only.
-    pools [--text]                                                                                          What would go unused at reset, per resource: used percent, hours left, burn and waste risk. JSON by default.
+    pools [--text]                                                                                          Per resource: burn from the last 6 h of readings, when it runs empty or how much goes unused, and a plain verdict (slow down, add work). JSON (pools.v1) by default.
     queue wait [--events <file>] [--json]                                                                   Show the oldest recorded queued PR and why it is waiting; required checks stay enforced.
     queue stats [--json] [--window <seconds>]                                                               Sliding-window arrival/service rates, occupancy, wait and Little’s law drift.
     queue batches [--runs <directory>] [--json]                                                             Show each batch line’s PR, empty reason, failure or unknown result.

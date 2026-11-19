@@ -6,6 +6,7 @@ import { Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetHandoffReply } from '../src/cli/fleet-handoff-reply.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxOptions } from '../src/core/fleet/bus-inbox.js';
 import { requestBusRoundtrip } from '../src/core/fleet/bus-request-roundtrip.js';
 import { CONTEXT_END, CONTEXT_START } from '../src/core/fleet/context-worker-run.js';
@@ -90,6 +91,27 @@ describe('fleet handoff-reply', () => {
     expect(existsSync(pwned())).toBe(false);
     expect(err).not.toContain('marker-6q');
     expect(err).toContain('"workerExit":{"status":"returned","exitCode":0}');
+    expect(err).toContain('"delivery":{"status":"posted"}');
+    expect(await tmpFiles()).toEqual([]);
+  }, 30000);
+
+  it('accepts a handoff addressed to any label of the recipient identity', async () => {
+    expect(registerAgentIdentity({ handle: 'worker-9', aliases: ['w9-alias'] }, { root: busRoot }).status).toBe('created');
+    // The unified bus addresses handoffs to agent:<handle>; --to may name any
+    // label of the same identity, and the reply routes back to the sender.
+    expect(appendBusInbox({ ...request(), to: 'agent:worker-9' }, bus()).status).toBe('posted');
+    const aliased = args(['--', process.execPath, '-e',
+      'process.stdin.resume();process.stdin.on("end",()=>process.exit(0))'])
+      .map(a => (a === 'WORKER-9' ? 'w9-alias' : a));
+    const [code, round] = await Promise.all([
+      cmdFleetHandoffReply(aliased, bus(), io()),
+      requestBusRoundtrip({ ...request(), to: 'agent:worker-9' }, 20000, 100, bus()),
+    ]);
+    expect(code).toBe(0);
+    expect(round.outcome).toBe('replied');
+    expect(round.reply!.envelope.from).toBe('agent:worker-9');
+    expect(round.reply!.envelope.to).toBe('planner');
+    expect(round.reply!.envelope.body).toMatchObject({ inReplyTo: 'msg-1', kind: 'worker-exit', exitCode: 0 });
     expect(err).toContain('"delivery":{"status":"posted"}');
     expect(await tmpFiles()).toEqual([]);
   }, 30000);
