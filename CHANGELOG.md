@@ -18,6 +18,57 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ## [Unreleased]
 
+### Since v3.30.40
+
+Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left out.
+
+**Desktop**
+
+- Show a health badge for each lane in the fleet map and lane views (#7309).
+- Show a "what is loading this computer" card in the fleet host pane (#7260).
+- Show every computer as one pool, with free memory, load and free slots (#7353).
+- Show job outcomes per lane instead of raw exit codes (#7284).
+- Show a spend-down chart for each resource pool (#7306).
+- Add an org map that groups lanes and machines in the fleet view (#7332).
+- Show app open, focus, quit and restart history in the fleet host pane.
+- Show fleet throughput in the Home pulse strip (#7371).
+
+**Mobile**
+
+- Add a phone layout for the Org view (#7355).
+- Let the phone Asks card answer several asks in one go (#7327).
+
+**CLI**
+
+- Add `phm release notes --markdown` to print plain-words release notes for readers (#7348).
+- Add `phm publish resume` to finish a half-done publish and `phm publish orphans` to find stuck branches (#7335).
+- Add `phm bets check` to see whether new work already exists before you queue it (#7250, #7285).
+- Add `phm bets propose` so a lane can suggest its own next work (#7325).
+- Add `phm plan dup` to catch a bet that has already shipped, and `phm plan check` for leader plans (#7349).
+- Add `phm asks` to list what only you can do and answer each with one word (#7293).
+- Add `phm host load` to show which jobs, models and apps are loading the machine (#7260).
+- Add `phm leader seat` to show where the leader runs now and where it moves next (#7369).
+- Add `phm queue autofill` to top up a short lane queue from proposed bets (#7384).
+- Add `phm jobs empty` to explain why jobs ended with no change (#7351).
+- Add `phm channels reply-state` to read one work item's state before replying (#7370).
+- Send an hourly leader reply into the outbox from the log (#7307).
+- Make `phm pools` show burn from real readings and a plain verdict (#7283).
+
+**Fleet**
+
+- Add a lane health verdict to `phm fleet` and the live map data (#7309).
+- Add `phm fleet starved` to show which lanes are starved of work and why (#7280).
+- Add `phm fleet outcomes` and `phm router outcomes` to read job results per lane (#7284).
+- Count throughput per lane in `phm fleet pulse` (#7371).
+- Add a live merge-queue latency read and a merge recovery verb (#7265).
+- Add offline coding-CLI tools: spend ledger append and score, cooldown evidence, adapter contract, regret report.
+- Add offline posterior sampling, comparison and update for coding-CLI routing (#7336, #7292, #7319).
+
+**Docs**
+
+- Document empty jobs in `docs/FLEET-EMPTIES.md` and reply states in `docs/WORK-ORDERS.md`.
+- Update the CLI reference and agent operations guide for every new verb above.
+
 ### Added
 
 - Add `phm devin autoland` with capped dry-run/apply passes, principal filtering, bundle deduplication, retry backoff, superseding PRs, pause/resume and a single-flight resident timer. Successful landings terminate and archive their Devin sessions.
