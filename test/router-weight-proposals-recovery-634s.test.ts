@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cmdFleetRouterWeights, FLEET_ROUTER_WEIGHTS_USAGE } from '../src/cli/fleet-router-weights.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
+import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import { foldRouterOutcomes, ROUTER_OUTCOME_LEDGER_LIMIT, type RouterOutcome } from '../src/core/router/outcomes.js';
 import { proposeRouterWeights } from '../src/core/router/weight-proposals.js';
 
@@ -52,6 +55,14 @@ async function run(args: string[]): Promise<{ code: number; out: string; err: st
   logged = [];
   errored = [];
   const code = await cmdFleetRouterWeights(args);
+  return { code, out: logged.join('\n'), err: errored.join('\n') };
+}
+
+/** The production path: `phm fleet router-weights ...` through cmdFleet and the generated registry. */
+async function runFleet(args: string[]): Promise<{ code: number; out: string; err: string }> {
+  logged = [];
+  errored = [];
+  const code = await cmdFleet(['router-weights', ...args]);
   return { code, out: logged.join('\n'), err: errored.join('\n') };
 }
 
@@ -191,15 +202,30 @@ describe('missing, unreadable and oversized input', () => {
     expect(report).toMatchObject({ status: 'unavailable', ledger: { state: 'unreadable' }, proposals: [] });
   });
 
-  it('refuses an oversized ledger instead of parsing a truncated prefix', async () => {
-    writeFileSync(ledgerPath(), '');
-    truncateSync(ledgerPath(), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+  it('reads the retained tail of an oversized ledger and reports truncated coverage', async () => {
+    // One oversized pad line fills the bound; the tail window keeps the newest
+    // rows, drops the cut line and flags the coverage as partial.
+    const pad = 'x'.repeat(ROUTER_OUTCOME_LEDGER_LIMIT);
+    writeFileSync(ledgerPath(), `${pad}\n${merged(20).map(r => JSON.stringify(r)).join('\n')}\n`);
     const { code, report } = await runJson();
-    expect(code).toBe(1);
-    expect(report).toMatchObject({ status: 'unavailable', ledger: { state: 'too-large' }, known_outcomes: null });
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', truncated: true, known_outcomes: 20,
+      ledger: { state: 'read' },
+    });
+    expect(report.proposals[0]).toMatchObject({ status: 'proposed', proposed_weight: 0.6 });
     const human = await run(['--runs-dir', runs]);
-    expect(human.code).toBe(1);
-    expect(human.out).toContain('unavailable: ledger state=too-large');
+    expect(human.code).toBe(0);
+    expect(human.out).toContain('truncated=true');
+    expect(human.out).toContain('coverage: retained tail only');
+  });
+
+  it('reports an oversized ledger with no retained rows as insufficient evidence, not a refusal', async () => {
+    writeFileSync(ledgerPath(), '');
+    truncateSync(ledgerPath(), ROUTER_OUTCOME_LEDGER_LIMIT + 1); // sparse; no 16 MiB write
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ status: 'insufficient-evidence', truncated: true, known_outcomes: 0, ledger: { state: 'read' } });
   });
 });
 
@@ -223,6 +249,26 @@ describe('CLI arguments', () => {
       expect(out).toBe('');
       expect(err).toBe(FLEET_ROUTER_WEIGHTS_USAGE);
     }
+  });
+});
+
+describe('fleet dispatch', () => {
+  it('is registered in the generated registry and resolves by convention', () => {
+    expect(FLEET_SUBCOMMAND_LOADERS).toHaveProperty('router-weights');
+    expect(resolveFleetSubcommand('router-weights')).toEqual({
+      module: './fleet-router-weights.js', exportName: 'cmdFleetRouterWeights',
+    });
+  });
+
+  it('answers --help and serves a real read through cmdFleet', async () => {
+    const help = await runFleet(['--help']);
+    expect(help.code).toBe(0);
+    expect(help.out).toBe(FLEET_ROUTER_WEIGHTS_USAGE);
+
+    writeLedger(merged(20));
+    const { code, out } = await runFleet(['--runs-dir', runs, '--json']);
+    expect(code).toBe(0);
+    expect(JSON.parse(out)).toMatchObject({ schema: 'router.weight-proposals.v1', status: 'proposed', known_outcomes: 20 });
   });
 });
 
