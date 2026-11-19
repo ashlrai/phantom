@@ -1522,7 +1522,8 @@ token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
 are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
 undefined for non-claim bodies so opaque mail still appends),
 `BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
-`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`) is the
+`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
+`jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
@@ -1534,7 +1535,12 @@ resolves through the identity registry matches every label of that identity;
 an unresolvable ref or unreadable registry falls back to the exact owner
 label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
-mistaken for identity proof. `phm agents bus claim list [--key] [--owner]`
+mistaken for identity proof. With `jobs:true` each claim gains an optional
+`jobs` list of the announced work-feed jobs its keys block (`{id, owner,
+status}` per job, the reverse of the feed's `--claims` hold join) and the
+result's `feed` field reports the feed read state; a non-`ok` feed leaves
+`jobs` absent so blocked work stays unknown, never an empty list.
+`phm agents bus claim list [--key] [--owner] [--jobs]`
 prints it.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table

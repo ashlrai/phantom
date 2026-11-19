@@ -9,8 +9,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { acquireCoordination, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationView } from './claim-store.js';
-import { parseClaimKey, workClaimBodySchema, workReleaseBodySchema } from './bus-v2-schema.js';
+import { parseClaimKey, workClaimBodySchema, workReleaseBodySchema, type WorkJob } from './bus-v2-schema.js';
 import { readAgentRegistry, resolveAgent } from './bus-identity.js';
+import { readBusWorkFeed } from './bus-work-feed-read.js';
 
 export interface BusClaimOptions {
   /** Coordination store root; defaults to the shared fleet root. */
@@ -33,6 +34,13 @@ export interface BusClaimsListOptions {
    * ref, or an unreadable registry, matches the exact owner label only.
    */
   owner?: string;
+  /**
+   * When true, join each returned claim with the announced work-feed jobs its
+   * keys block (the reverse of `work feed --claims`). Read-only; an
+   * unreadable feed reports its state and leaves `jobs` absent — blocked work
+   * stays unknown, never an empty list.
+   */
+  jobs?: boolean;
 }
 
 export type BusClaimResult =
@@ -153,6 +161,15 @@ export interface BusClaimsOwnerMatch {
   registry: 'missing' | 'available' | 'unavailable';
 }
 
+/** An announced work-feed job a claim's keys overlap; the job's own status, never a guess. */
+export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status'] }
+
+/** A live claim plus, when `jobs` was requested and the feed read ok, the jobs it blocks. */
+export type BusClaimsListClaim = CoordinationView & { jobs?: BusClaimJobRef[] };
+
+/** Feed read state behind a `jobs` request; a non-ok state means blocked jobs are unknown, not absent. */
+export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' | 'invalid';
+
 /**
  * Read-side companion to `executeBusClaimBody`: the live coordination claims
  * every bus participant shares, before it acquires or checks overlap. `source`
@@ -163,10 +180,12 @@ export interface BusClaimsOwnerMatch {
  * With `owner`, the list narrows to one holder: a ref that resolves through
  * the identity registry matches every label of that identity, while an
  * unresolvable ref or unreadable registry falls back to the exact owner label.
+ * With `jobs`, each claim also names the announced feed jobs it blocks and
+ * `feed` reports the read state; a non-ok feed leaves `jobs` absent.
  */
 export type BusClaimsListResult =
-  | { status: 'ok'; source: 'missing' | 'available'; claims: CoordinationView[]; asOf: string;
-      owner?: BusClaimsOwnerMatch }
+  | { status: 'ok'; source: 'missing' | 'available'; claims: BusClaimsListClaim[]; asOf: string;
+      owner?: BusClaimsOwnerMatch; feed?: BusClaimsFeedState }
   | { status: 'invalid' | 'unavailable'; asOf: string };
 
 const OWNER_LABEL = /^[\x21-\x7e]{1,256}$/;
@@ -200,6 +219,23 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
     }
   }
   const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
-  return { status: 'ok', source: listed.source, claims, asOf,
-    ...(ownerMatch === undefined ? {} : { owner: ownerMatch }) };
+  let feed: BusClaimsFeedState | undefined;
+  let annotated: BusClaimsListClaim[] = claims;
+  if (options.jobs === true) {
+    let result: ReturnType<typeof readBusWorkFeed>;
+    try { result = readBusWorkFeed({ root: options.root, now: () => now }); }
+    catch { result = { status: 'unavailable', asOf }; }
+    feed = result.status;
+    if (result.status === 'ok') {
+      annotated = claims.map(row => ({
+        ...row,
+        jobs: result.jobs
+          .filter(job => job.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
+          .map(job => ({ id: job.id, owner: job.owner, status: job.status })),
+      }));
+    }
+  }
+  return { status: 'ok', source: listed.source, claims: annotated, asOf,
+    ...(ownerMatch === undefined ? {} : { owner: ownerMatch }),
+    ...(feed === undefined ? {} : { feed }) };
 }

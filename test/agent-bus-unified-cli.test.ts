@@ -128,6 +128,15 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['work', 'feed', '--claims'])).json.claims.holds)
       .toEqual([expect.objectContaining({ jobId: 'RQ-FEED', claimKey: 'repo:ashlrai/phantom', owner: 'atlas' })]);
 
+    // --jobs is the reverse join: the claim names the feed job it blocks.
+    const withJobs = await run(['claim', 'list', '--jobs']);
+    expect(withJobs.json).toMatchObject({ status: 'ok', source: 'available', feed: 'ok' });
+    expect(withJobs.json.claims[0].jobs)
+      .toEqual([{ id: 'RQ-FEED', owner: 'agent:atlas', status: 'running' }]);
+    // Without --jobs no feed join or feed state is reported.
+    expect(claims.json.feed).toBeUndefined();
+    expect(claims.json.claims[0].jobs).toBeUndefined();
+
     // Human output shares the fleet feed lines; reads need no identity.
     const text: string[] = [];
     expect(await runAgentsBusUnified(['work', 'feed', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
@@ -137,6 +146,10 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['claim', 'list', '--root', root], t => claimText.push(t), () => {}, {})).toBe(0);
     expect(claimText.join('\n')).toContain('repo:ashlrai/phantom owner=atlas origin=resource');
     expect(claimText.join('\n')).toContain('claims=1 source=available');
+    const claimJobsText: string[] = [];
+    expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
+    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running)');
+    expect(claimJobsText.join('\n')).toContain('feed=ok');
   });
 
   it('filters claim list by owner through the identity registry', async () => {
