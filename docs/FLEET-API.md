@@ -575,6 +575,43 @@ the same order. The server reads the session map at most once every 5 seconds.
 Selecting a session in the pane opens the worker log, which has the existing
 pause and stop controls.
 
+### Session threads
+
+`phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]` reads
+every session as a short conversation, and
+`GET /api/verse/fleet/control/session-threads[?lane=L][&repo=R][&live=1]`
+serves the same `fleet.session-threads.v1` document with a current read
+session. It is the read for a screen that shows every session at once: one
+request instead of one [session thread](#session-thread) per session. It adds
+no source. The session list, the agent bus and the leader's replies are read
+once, and the recorded activity once for each job shown.
+
+- `filter`: `lane`, `repo` (null when not set) and `live` (true when only
+  running sessions were asked for). They work as they do for the session list.
+- `counts`: `sessions` (every session in the list), `shown` (the ones in
+  `threads`) and `states`, a count of the shown sessions under each of
+  `running`, `quiet`, `idle`, `done`, `failed` and `unknown`.
+- `threads[]` in the order of the session tree: the leader, then each worker
+  followed by its helpers. At most 40. Each has `session` and `summary[]`
+  exactly as the session thread gives them, `messages[]` (the newest 3
+  messages of that thread, oldest of them first, each with the session thread's
+  fields plus `truncated`, true when `text` was cut at 400 characters),
+  `messageCount` (how many messages the whole thread holds), and that thread's
+  own `sources` and `gaps[]`.
+- `sources`: `sessions` (`available` or `unavailable`), and `bus` and
+  `replies` (`available`, `none` when the read answered and no shown session
+  has any, or `unavailable`). `gaps[]` holds the session list's own gaps, a
+  line counting the sessions left out past 40, and a failed bus read.
+
+Each read fails on its own: a job whose activity could not be read says so in
+its own `gaps` and the other threads are whole. The route answers 503 when the
+session list cannot be read, so an unreadable list never looks like a fleet
+with no sessions, and 400 for anything but `lane`, `repo` and `live=1`, once
+each. One build per filter serves every caller for 5 seconds. The CLI exits 1
+when the list cannot be read; with `--json` it still prints the document, with
+`sources.sessions` `unavailable` and no threads. Text is scrubbed the same way
+as the session list.
+
 ### Session thread
 
 `phm sessions thread <id> [--json]` reads one session as a conversation, and

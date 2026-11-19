@@ -1,6 +1,7 @@
 /**
  * `phm sessions`: the tree of every fleet agent session (no verb), one session's
- * live log (tail; cmdJobTail in job.ts), one session as a conversation (thread), MCP gateway
+ * live log (tail; cmdJobTail in job.ts), one session as a conversation (thread), every
+ * session as a short conversation (threads), MCP gateway
  * sessions (list, revoke) and resumable agent sessions (create, show, resume,
  * terminate; list shows both kinds). Thin handler: logic lives in
  * src/core/fleet/live-sessions.ts, src/core/gateway-sessions.ts and
@@ -17,6 +18,8 @@ import { readLiveSessions } from '../core/fleet/live-sessions-read.js';
 import { getFleetSessions } from '../core/fleet/runs-sessions.js';
 import { renderSessionThreadText, SESSION_ID_RE, type SessionThreadV1 } from '../core/fleet/session-thread.js';
 import { readSessionThread } from '../core/fleet/session-thread-read.js';
+import { renderSessionThreadsText, type SessionThreadsV1 } from '../core/fleet/session-threads.js';
+import { readSessionThreads } from '../core/fleet/session-threads-read.js';
 import { reconcileSessions, renderSessionReconciliation } from '../core/fleet/session-reconciliation.js';
 
 const USAGE = `Usage:
@@ -35,6 +38,11 @@ const USAGE = `Usage:
                                       messages about it and its last message. The id is
                                       leader, a job id or a subagent id. Read only; exit 2
                                       for an unknown id.
+  phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]
+                                      Every session as a short conversation on one screen:
+                                      its summary and its newest 3 messages, leader first.
+                                      Up to 40 sessions. Read only; exit 1 when the session
+                                      list could not be read.
   phm sessions list [--json]          Show gateway sessions and agent sessions
   phm sessions reconcile [--json]     Check local runs: live, finished or unknown. Read only.
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
@@ -165,6 +173,33 @@ export async function cmdSessionThread(args: string[], read: (id: string) => Pro
   return unreadable ? 1 : 2;
 }
 
+const THREADS_USAGE = 'Usage: phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]\n';
+
+/** `phm sessions threads [--lane L] [--repo R] [--live] [--json]`: every session as a short conversation. Exit 0 read, 1 sessions unreadable, 2 usage. */
+export async function cmdSessionThreads(args: string[],
+  read: (filter: { lane: string | null; repo: string | null; live?: boolean }) => Promise<SessionThreadsV1> = filter => readSessionThreads(filter)): Promise<number> {
+  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string };
+  try {
+    ({ values } = parseArgs({ args, strict: true, allowPositionals: false,
+      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${THREADS_USAGE}`);
+    return 2;
+  }
+  for (const key of ['lane', 'repo'] as const) {
+    if (values[key] !== undefined && !SESSION_FILTER_RE.test(values[key])) {
+      process.stderr.write(`--${key} takes a ${key} name such as claude or phantom.\n${THREADS_USAGE}`);
+      return 2;
+    }
+  }
+  const threads = await read({ lane: values.lane ?? null, repo: values.repo ?? null, ...(values.live ? { live: true } : {}) });
+  const unreadable = threads.sources.sessions === 'unavailable';
+  if (values.json) console.log(JSON.stringify(threads, null, 2));
+  else if (unreadable) process.stderr.write(`${threads.gaps.join('\n')}\n`);
+  else console.log(renderSessionThreadsText(threads));
+  return unreadable ? 1 : 0;
+}
+
 export async function cmdReconcileSessions(args: string[], read: typeof getFleetSessions = getFleetSessions): Promise<number> {
   let values;
   try {
@@ -188,6 +223,7 @@ export async function cmdSessions(args: string[]): Promise<number> {
   if (more.includes('--help') || more.includes('-h')) { process.stdout.write(USAGE); return 0; }
   if (sub === 'reconcile') return cmdReconcileSessions(args.slice(1));
   if (sub === 'thread') return cmdSessionThread(args.slice(1));
+  if (sub === 'threads') return cmdSessionThreads(args.slice(1));
   if (sub === 'tail') return (await import('./job.js')).cmdJobTail(args.slice(1), {}, 'session');
 
   if (sub === 'list' && more.length === 0) {
