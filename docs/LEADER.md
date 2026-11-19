@@ -174,6 +174,16 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   0600, one scrubbed message per line). Above 1 MiB it is archived to
   `thread.1.jsonl`, keeping the newest 1,000 lines. Secrets, home paths and
   emails are scrubbed from your text and from the Leader's.
+- **Earlier messages:** the desktop Leader pane opens on the newest 50 thread
+  messages. When there are more, a row at the top of the conversation says how
+  many are shown and offers **Load earlier messages**, 50 at a time, from
+  `GET /api/verse/leader/thread?limit=50&before=<oldest id>`. With the
+  conversation focused and scrolled to its top, Up, Page Up or Home loads the
+  next page. Your reading position is kept, Find searches the loaded pages, and
+  **Show newest only** returns to the newest 50. The row marks the start of the
+  conversation held on this computer; messages archived to `thread.1.jsonl`
+  are not loaded. Inbox posts, owner-channel lines and bus replies keep their
+  own windows and do not reach further back.
 - **Channels:** Phantom, Telegram, CLI and System, shown as a badge on every
   message.
 - **Replies** use the same provider-neutral account/model routing as planning.
