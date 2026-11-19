@@ -57,12 +57,15 @@ so docs, configs and data files get their readers too; `gate:full` remains the
 backstop for readers neither finds. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and quick typecheck with
-CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
-all on Ubuntu. `Merge Gate` is the one
-required check and fails unless exactly that selection ran and every full lane
-was skipped. No pull request or merge-queue commit may occupy a macOS or
+**Hosted CI.** A pull request or merge-queue commit runs only the fast
+selection, all on Ubuntu and including docs-only changes. `Merge Gate` is the
+one required check. It fails unless the secret-shape scan, the diff secret
+scan, lane classification, `Check generated files` and
+`Fast gate (typecheck + affected tests)` all succeed and every full lane was
+skipped. `Quick typecheck` still runs but is advisory there, and
+`Check authority drift (hermetic)` (the CODEOWNERS and Tier-1 import-closure
+checks) reports on every pull request outside `Merge Gate`; Auto-tag and the
+release gate require it green on the exact commit. No pull request or merge-queue commit may occupy a macOS or
 Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
 native-broker lanes, and the Windows service authority run only in the daily
@@ -74,9 +77,11 @@ including its Windows portability legs, stays the release's native gate
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
-**Tests.** Backend suites live in `test/` and are named after the milestone or
-release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
-`test/h<N>.*.test.ts`, and `test/<topic>-<release>.test.ts`. Web tests sit next
+**Tests.** Backend suites live in `test/`. Most are named by topic,
+`test/<topic>.test.ts`, often with a request or release suffix
+(`test/authority-codeowners-310b.test.ts`). Older suites carry the milestone
+that introduced them (`test/m<N>.<topic>.test.ts`), and safety-invariant suites
+are `test/h<N>.*.test.ts`. Web tests sit next
 to their components as `src/web-ui/**/*.test.{ts,tsx}`. Tests that do real I/O
 must be listed in `test/config/realio-lane-membership.mjs` (`npm run lint`
 checks this). Every test runs with an isolated `HOME` (`test/setup/home.ts`),
