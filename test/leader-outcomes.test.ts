@@ -50,6 +50,18 @@ function mustApply(f: ReturnType<typeof fixture>, actionId = 'action-1') {
   const result = f.port.refine(actionId, f.params, AT); if (!result.ok) throw new Error(result.reason); return result.applied;
 }
 
+vi.mock('../src/core/resources/local-memory-fit.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/resources/local-memory-fit.js')>();
+  return {
+    ...actual,
+    // The seat chain's local memory gate reads the host snapshot; fixtures
+    // provide a fitting machine so routing decisions stay deterministic.
+    localModelFit: () => actual.memoryFit('qwen', 8 * 1024 ** 3, 65536,
+      { totalBytes: 64 * 1024 ** 3, freeBytes: 48 * 1024 ** 3, swapGrowth: 0 }),
+  };
+});
+
+
 describe('Leader desired outcome planning bridge', () => {
   it('discovers an unplanned durable outcome without requiring an existing Goal', () => {
     const f = fixture(); const read = readOutcomeInventory();
