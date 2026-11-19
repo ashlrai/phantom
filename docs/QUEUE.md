@@ -703,6 +703,13 @@ is below its target while the admission reason starts with `at_cap`, then one li
 with the admission running, cap and reason. It exits 1 when any lane has 10 or
 more jobs queued and none running.
 
+`ashlr fleet lane-starve [--json]` lists the lanes running below target while work
+is queued and splits each lane's `queue/ready.tsv` rows into filler and real,
+using the same non-parked row rule as the dispatcher's queue depth: rows whose
+status or lane cell leads with `PARKED-` are not queued work and never count.
+It also reports when `queue/FILLER_HOLD` is set, and exits 1 while any lane is
+starved.
+
 Locks are never stolen on age or PID heuristics. If a writer crashes, an operator
 must confirm that no writer is running before removing its orphaned
 `queue.v1.lock`. A busy lock leaves the snapshot unchanged. A crash before rename

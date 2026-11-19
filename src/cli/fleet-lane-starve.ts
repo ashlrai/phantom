@@ -14,7 +14,7 @@ export interface StarvedLane {
   running: number;
   target: number;
   queued: number;
-  /** Rows in queue/ready.tsv for this lane. */
+  /** Non-parked rows in queue/ready.tsv for this lane (the dispatcher's queue-depth rule). */
   ready: number;
   filler: number;
   real: number;
@@ -43,7 +43,11 @@ export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedL
   if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
   const split = new Map<string, { filler: number; real: number }>();
   for (const line of readyTsv.split('\n')) {
+    if (!line.trim() || line.startsWith('#')) continue;
     const cols = line.split('\t');
+    // dispatchd's parked_row rule: PARKED- leading the status or lane cell
+    // marks a row that is not queued work, whatever lane it names.
+    if ((cols[0] ?? '').startsWith('PARKED-') || (cols[2] ?? '').startsWith('PARKED-')) continue;
     const id = cols[0]?.trim() ?? '';
     const lane = cols[2]?.trim();
     if (!id || !lane) continue;
