@@ -1912,6 +1912,20 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/stranded' && method === 'GET') {
+      // Finished work that never became a PR (fleet.stranded.work.v1), the report inside `phm fleet stranded --json`.
+      const { readStrandedWork, STRANDED_MAX_DAYS } = await import('../fleet/stranded-work.js');
+      const raw = getQueryParam(req.url ?? '', 'days') ?? '3';
+      const days = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+      const verify = getQueryParam(req.url ?? '', 'verify');
+      if (!(days >= 1 && days <= STRANDED_MAX_DAYS) || !['1', '0', undefined].includes(verify)) {
+        sendJson(res, 400, { error: `Use days from 1 to ${STRANDED_MAX_DAYS} and verify=1 to compare with the local main branch.` }); return true;
+      }
+      const report = await readStrandedWork({ days, verify: verify === '1' });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
     if (path === '/api/log' && method === 'GET') {
       // One row per job (joblog.v1), the report `phm log --json` prints.
       const { readJobLog } = await import('../fleet/job-log.js');
