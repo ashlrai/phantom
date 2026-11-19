@@ -42,8 +42,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
-import type { WorkJob } from '../agents/bus-v2-schema.js';
+import { busFeedHoldsKnown, BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -195,9 +194,6 @@ interface BusFeedPost {
   expiresAt: number;
 }
 
-/** Statuses that still mean "open for a worker"; running/idle/blocked are progress reports, the rest are terminal. */
-const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
-
 /**
  * Open v2 work-feed jobs with claimable scope, from the same read-only
  * projection `phm agents bus work feed` serves. A job counts as pending while
@@ -215,7 +211,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
   if (feed.status === 'unavailable') return { state: 'unavailable', items: [] };
   if (feed.status !== 'ok') return { state: 'degraded', items: [] };
 
-  const holdsKnown = feed.claims?.source !== 'unavailable';
+  const holdsKnown = busFeedHoldsKnown(feed.claims);
   const heldKeys = new Map<string, Set<string>>();
   if (feed.claims) {
     for (const hold of feed.claims.holds) {

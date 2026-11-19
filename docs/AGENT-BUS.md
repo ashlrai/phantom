@@ -210,10 +210,13 @@ that announced it, under any of its labels. A refused, retryable, invalid or
 unavailable feed refuses the send rather than posting a receipt that would
 poison the projection. Neither verb dispatches, claims or executes anything;
 the bodies remain untrusted contract data until a consumer admits them.
-`phm agents bus work feed [--status <s>] [--claims]` reads the same projection
-back — jobs newest-first, optionally filtered and joined with the live
-coordination holds — so the whole post/status/feed loop stays on this surface
-without dropping to `phm fleet work-feed`.
+`phm agents bus work feed [--status <s>] [--claims] [--open]` reads the same
+projection back — jobs newest-first, optionally filtered and joined with the
+live coordination holds — so the whole post/status/feed loop stays on this
+surface without dropping to `phm fleet work-feed`. `--open` keeps only jobs
+still open for a worker (queued or rescheduled with at least one claimable
+claim key, the same rule the unified inbox applies) and implies `--claims`, so
+one read answers "what can I claim" without cross-referencing holds by hand.
 
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
@@ -497,7 +500,7 @@ authentication check; labels grant no authority.
 `phm fleet work-feed --json`, `phm agents bus work feed` and GET
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
-newest-first order, hold regrouping and human rendering. The
+open filter, newest-first order, hold regrouping and human rendering. The
 endpoint needs a current read session and accepts only `claims=true` (any
 other parameter or value is a 400), and answers 200
 for `ok` and `refused` — the projection's own status and reason stay in the
@@ -524,6 +527,17 @@ lease end, origin, source id; tokens never leave the store), with
 claim table means holds are unknown, not absent. GET
 `/api/verse/agent-bus/work-feed?claims=true` serves the same join to
 HTTP-only implementers; without the parameter the response omits `claims`.
+
+`--open` on either feed CLI (and the `open` argument of
+`projectBusWorkFeedView`) narrows the view to jobs still open for a worker:
+status queued or rescheduled (`BUS_FEED_OPEN_STATUSES`), at least one declared
+claim key, and — when `busFeedHoldsKnown` proves hold state — at least one key
+no live lease blocks. The flag implies the claims join. An unavailable or
+truncated hold list leaves holds unknown, so candidates are listed rather than
+proven closed; `missing` is a verified-empty table and every declared key is
+free. This is the same open-job rule `phm comms inbox` applies to its bus
+source, so the agent-facing feed and the owner aggregate never disagree about
+what work is claimable.
 
 ### Bounded peer dispatch
 

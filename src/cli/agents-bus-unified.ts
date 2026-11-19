@@ -36,19 +36,21 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--claims]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--claims] [--open]
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
 wakes, P1 and handoffs wake by default. work feed and claim list are read-only
-and need no identity. No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
+and need no identity. --open keeps only jobs still open for a worker (queued or
+rescheduled with a claimable claim key) and implies --claims. No network, no
+engine runs. Spec: docs/AGENT-BUS.md.`;
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail']);
 const MULTI = new Set(['--alias', '--member', '--claim']);
-const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs']);
+const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--jobs', '--open']);
 
 class UsageError extends Error {}
 
@@ -221,8 +223,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         throw new UsageError(`--status must be one of ${WORK_STATUSES.join(', ')}.`);
       }
       const result = projectBusWorkFeedView(
-        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') }),
-        status as WorkJob['status'] | undefined);
+        readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || p.bools.has('--open') }),
+        status as WorkJob['status'] | undefined, p.bools.has('--open'));
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
       return result.status === 'ok' ? 0 : 1;
     }

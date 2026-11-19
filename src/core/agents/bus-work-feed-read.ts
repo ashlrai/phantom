@@ -42,6 +42,19 @@ export type BusWorkFeedReadResult =
 
 const HOLDS_MAX = 1024;
 
+/** Statuses that still mean "open for a worker"; running/idle/blocked are progress reports, the rest are terminal. */
+export const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
+
+/**
+ * True when the claims join can prove which keys are held: a verified-empty
+ * (`missing`) or fully listed (`available`, untruncated) table. An unavailable
+ * or truncated table leaves holds unknown — open jobs stay candidates, never
+ * proven closed or proven free.
+ */
+export function busFeedHoldsKnown(claims: BusWorkFeedClaims | undefined): boolean {
+  return claims !== undefined && claims.source !== 'unavailable' && !claims.truncated;
+}
+
 /** Provider of the identity's most recently seen runtime; undefined when it has none. */
 export function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
   let provider: Participant['provider'] | undefined;
@@ -134,15 +147,36 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
 }
 
 /**
- * Client-side `--status` filter and newest-first ordering shared by the feed
- * CLIs. With claims, holds regroup under the jobs still shown so a filtered
- * view never lists a hold for a hidden job. Non-ok results pass through
+ * Client-side `--status` filter, `--open` worker-availability filter and
+ * newest-first ordering shared by the feed CLIs. With claims, holds regroup
+ * under the jobs still shown so a filtered view never lists a hold for a
+ * hidden job. `open` keeps only jobs still open for a worker — a queued or
+ * rescheduled status, at least one declared claim key, and (when hold state
+ * is known) at least one key no live lease blocks; unknown holds keep
+ * candidates rather than proving them closed. Non-ok results pass through
  * untouched; nothing is fabricated for a refused or unavailable read.
  */
-export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: WorkJob['status']): BusWorkFeedReadResult {
+export function projectBusWorkFeedView(result: BusWorkFeedReadResult, status?: WorkJob['status'], open = false): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
+  const claims = result.claims;
+  const holdsKnown = open && busFeedHoldsKnown(claims);
+  const heldByJob = new Map<string, Set<string>>();
+  if (holdsKnown && claims !== undefined) {
+    for (const hold of claims.holds) {
+      const set = heldByJob.get(hold.jobId) ?? new Set<string>();
+      set.add(hold.claimKey);
+      heldByJob.set(hold.jobId, set);
+    }
+  }
   const jobs = result.jobs
     .filter(job => status === undefined || job.status === status)
+    .filter(job => {
+      if (!open) return true;
+      if (!BUS_FEED_OPEN_STATUSES.has(job.status) || job.claimKeys.length === 0) return false;
+      if (!holdsKnown) return true;
+      const held = heldByJob.get(job.id);
+      return job.claimKeys.some(key => !held?.has(key));
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
   if (result.claims !== undefined) {

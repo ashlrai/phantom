@@ -1517,12 +1517,18 @@ blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 the table is unavailable. Holds cap at 1024 with `truncated` set.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
-structural overlap rule. `projectBusWorkFeedView(result, status?)` applies the
-client-side status filter, newest-first order and per-job hold regrouping, and
-`formatBusWorkFeed(result)` renders the shared human lines; both feed CLIs use
-them. `phm fleet work-feed [--claims]` and `phm agents bus work feed
-[--status] [--claims]` print the same projection — hold lines plus a `claims=`
-footer — and non-ok reads print `jobs=unknown` rather than a fabricated count.
+structural overlap rule. `projectBusWorkFeedView(result, status?, open?)` applies
+the client-side status filter, the `open` worker-availability filter, newest-first
+order and per-job hold regrouping, and `formatBusWorkFeed(result)` renders the
+shared human lines; both feed CLIs use them. `open` keeps only jobs still open
+for a worker — a queued or rescheduled `BUS_FEED_OPEN_STATUSES` status, at least
+one declared claim key, and (when `busFeedHoldsKnown(claims)` proves hold state)
+at least one key no live lease blocks; unknown or truncated holds keep
+candidates rather than proving them closed. `phm fleet work-feed [--claims]
+[--open]` and `phm agents bus work feed [--status] [--claims] [--open]` print
+the same projection — hold lines plus a `claims=` footer — and non-ok reads
+print `jobs=unknown` rather than a fabricated count; `--open` implies the
+claims join.
 
 `src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
 `BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result
