@@ -51,18 +51,14 @@ export function summarizeReadySupply(
   };
 }
 
-/** Recognize the router's five-column id/repo/lane/work/path form. */
-export function normalizeLegacyRows(text: string): string {
-  return text.replace(/^([A-Za-z0-9][A-Za-z0-9_.:/@-]{0,127}|)\t([^\t\r\n]+)\t([^\t\r\n]+)\twork\t\/[^\t\r\n]*(\r?)$/gm,
-    '$1\t$3\t$2\twork\t$4');
-}
-
 export async function readReadySupply(opts: { runsDir?: string; now?: () => Date } = {}): Promise<ReadySupplyV1> {
   const now = opts.now ?? (() => new Date());
   try {
     const root = opts.runsDir ?? (process.env['ASHLR_RUNS_DIR'] || join(homedir(), '.ashlr-runs'));
     const source = await readSource(join(root, 'queue', 'ready.tsv'), 2 * 1024 * 1024, false);
-    const parsed = parseReadyTsv(normalizeLegacyRows(source.text));
+    // parseReadyTsv recognizes the dispatcher's job/repo/lane/tier/prompt
+    // dialect natively, including its PARKED-<reason>[.<lane>] encodings.
+    const parsed = parseReadyTsv(source.text);
     return summarizeReadySupply(parsed.rows, { ...parsed, sourceState: source.state, now });
   } catch {
     // Even a faulty injected clock or invalid path cannot make the reader throw.

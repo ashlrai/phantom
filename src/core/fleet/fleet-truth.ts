@@ -227,7 +227,9 @@ async function readQueue(root: string): Promise<{ ready: number; blocked: number
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
     return {
       ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
-      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool)).length,
+      // PARKED-<reason>[.<lane>] statuses are held work too — parked rows no
+      // longer hide inside READY once the dispatcher dialect parses natively.
+      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
     };
   } catch {
     return null;

@@ -141,6 +141,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/memory/`
 - `src/core/metrics/`
 - `src/core/mobile/`
+- `src/core/needs-you/`
 - `src/core/nodes/`
 - `src/core/observability/`
 - `src/core/observe/`

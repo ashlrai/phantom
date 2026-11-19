@@ -10,8 +10,8 @@ const DEFAULT_WINDOW_HOURS = 24;
 const MAX_WINDOW_HOURS = 24 * 7;
 
 const USAGE = `Usage: phm fleet unfed [--window <hours>] [--json]
-Per-resource utilization of the shared work queue, and unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with the dispatcher's reason codes. Also folds the last <hours> (default 24, max 168) of unfed ticks from metrics/work-market.jsonl.
-Reads queue/status.json, queue/ready.tsv and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Read-only: no writes, no child processes, no network.
+Per-resource utilization of the shared work queue, and unfed capacity: lanes with free slots while ready rows wait under another lane's hint, with reason codes. When the dispatcher does not publish its own verdict, codes are recomputed from queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json and HOLD under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Also folds the last <hours> (default 24, max 168) of unfed ticks from metrics/work-market.jsonl.
+Reads queue/status.json, queue/ready.tsv, queue/slots.json, models.json, queue/budget-overrides.json, queue/adaptive.json, HOLD and metrics/work-market.jsonl under ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Read-only: no writes, no child processes, no network.
 Exit 1 when any lane is unfed now, 2 when status.json is unreadable.`;
 
 async function readBounded(path: string): Promise<string | null> {
@@ -22,6 +22,15 @@ async function readBounded(path: string): Promise<string | null> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
+  }
+}
+
+/** Optional market inputs: any read failure degrades to "reasons unknown", never to a wrong answer. */
+async function readOptional(path: string): Promise<string | null> {
+  try {
+    return await readBounded(path);
+  } catch {
+    return null;
   }
 }
 
@@ -46,8 +55,18 @@ export async function cmdFleetUnfed(args: string[]): Promise<number> {
     const status = await readBounded(join(root, 'queue', 'status.json'));
     if (status === null) throw new Error('no status');
     const ready = (await readBounded(join(root, 'queue', 'ready.tsv'))) ?? '';
+    const [slots, models, budget, adaptive, hold] = await Promise.all([
+      readOptional(join(root, 'queue', 'slots.json')),
+      readOptional(join(root, 'models.json')),
+      readOptional(join(root, 'queue', 'budget-overrides.json')),
+      readOptional(join(root, 'queue', 'adaptive.json')),
+      readOptional(join(root, 'HOLD')),
+    ]);
     const history = await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES);
-    report = { ...currentUnfed(status, ready), history: foldUnfedHistory(history, Date.now(), windowHours ?? DEFAULT_WINDOW_HOURS) };
+    report = {
+      ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, nowMs: Date.now() }),
+      history: foldUnfedHistory(history, Date.now(), windowHours ?? DEFAULT_WINDOW_HOURS),
+    };
   } catch {
     const error = 'Cannot read lane status. Expected lanes with running and target in queue/status.json.';
     console.log(json ? JSON.stringify({ schema: FLEET_UNFED_SCHEMA, readOnly: true, error }) : error);

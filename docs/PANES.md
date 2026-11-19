@@ -47,6 +47,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-timeline` | Worker timeline | `mod+alt+t` | `src/web-ui/routes/verse/fleet-timeline/fleet-timeline.pane.tsx` |
 | `fleet-tools` | Tools | none | `src/web-ui/routes/verse/fleet-tools/fleet-tools.pane.tsx` |
 | `fleet-usage` | Usage | — | `src/web-ui/routes/verse/fleet-usage/fleet-usage.pane.tsx` |
+| `fleet-worklog` | Work log | — | `src/web-ui/routes/verse/fleet-worklog/fleet-worklog.pane.tsx` |
 | `goals` | Goals | — | `src/web-ui/routes/verse/goals-pane/goals.pane.tsx` |
 | `home` | Home | none | `src/web-ui/routes/verse/home/home.pane.tsx` |
 | `ideas` | Ideas | — | `src/web-ui/routes/verse/ideas/ideas.pane.tsx` |

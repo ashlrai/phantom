@@ -426,9 +426,14 @@ is invoked. Queue task strings remain untrusted data under existing worker gates
 (`bulk|standard|judgment`) beside `preferred_lane`, `needs`, `min_tier`,
 `max_cost_class`, `exclusive` and `impact`; `validateQueue` refuses unknown
 values, and `phm queue add` takes `--max-tier`, `--data-class` and
-`--work-class`. `currentUnfed(statusJson, readyTsv)`, `foldUnfedHistory(jsonl,
+`--work-class`. `currentUnfed(statusJson, readyTsv, market?)`, `foldUnfedHistory(jsonl,
 nowMs, windowHours)` and `renderUnfed(report)` in
-`src/core/fleet/unfed-capacity.ts` back `phm fleet unfed` (`fleet.unfed.v1`).
+`src/core/fleet/unfed-capacity.ts` and `src/core/fleet/unfed-market.ts` back
+`phm fleet unfed` (`fleet.unfed.v1`). The optional `market` carries the
+dispatcher's own input files (slots.json, models.json, budget-overrides.json,
+adaptive.json, HOLD); when slots.json parses, a derived report recomputes
+per-lane `blocked` reason codes with the same eligibility rules as
+`contrib/mac/work_market.py`, reported as `derivedReasons: true`.
 
 `QueueStore.claim(id, owner, intake?: {job: QueueJob; guard: () => void})` may
 atomically insert a new READY job and claim it under the existing queue lock.

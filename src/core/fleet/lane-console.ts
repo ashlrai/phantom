@@ -25,7 +25,11 @@
  *                        an optional `key=value` TSV row or a positional row
  *                        `status id pool tier repo title` (or `id pool tier
  *                        repo title` when the status column is absent), with
- *                        an optional header line naming the columns. READY
+ *                        an optional header line naming the columns. The live
+ *                        dispatcher's own dialect — `job repo lane tier
+ *                        prompt-path [requirements-json]` plus its two
+ *                        PARKED-<reason>[.<lane>] encodings — is recognized
+ *                        natively so the lane column lands on `pool`. READY
  *                        rows give queue depth; in-flight statuses give live
  *                        jobs; timestamped LAND rows give merges/hour.
  *   queue.v1.json        DRIVER-1 queue document (schema 'queue.v1', jobs[]
@@ -207,6 +211,21 @@ const COLUMN_ALIASES: Readonly<Record<string, keyof FleetLaneQueueRow>> = {
 /** Positional order for bare cells once a leading status word is consumed. */
 const POSITIONAL_FIELDS: readonly (keyof FleetLaneQueueRow)[] = ['id', 'pool', 'tier', 'repo', 'title'];
 
+/** Repo cell in the dispatcher's positional dialect (bare name or owner/name). */
+const REPO_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/;
+/** dispatchd TIERS plus 'low' and the bets lane's `bet:<tier>` experiment rows. */
+const QUEUE_TIERS = new Set(['frontier', 'work', 'mid', 'fast', 'low']);
+function isQueueTier(cell: string): boolean {
+  const tier = cell.toLowerCase();
+  return QUEUE_TIERS.has(tier) || tier.startsWith('bet:');
+}
+/** PARKED-<reason>[.<lane>] lane marker; also accepts the dotted PARKED.<lane> spelling. */
+const PARKED_MARKER = /^PARKED(?:-[A-Za-z0-9_-]+)?(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
+/** The prompt cell is a path or at least a filename with an extension. */
+function promptCell(cell: string): boolean {
+  return cell.includes('/') || /\.[a-z][a-z0-9]{0,9}$/i.test(cell);
+}
+
 // ---------------------------------------------------------------------------
 // Small guards
 // ---------------------------------------------------------------------------
@@ -250,6 +269,44 @@ interface ParsedTsv {
 }
 
 /**
+ * dispatchd's own ready.tsv dialects (contrib/mac/dispatchd.py, restock.py),
+ * all headerless. The lane hint sits right of the repo and the tier right of
+ * the lane; parked rows carry a PARKED-<reason>[.<lane>] marker either in the
+ * lane cell or leading the row, and a trailing requirements cell is JSON:
+ *   job repo lane tier prompt [requirements]                     ready row
+ *   job repo PARKED-<reason>[.<lane>] tier prompt [requirements] lane-column parked
+ *   PARKED-<reason>[.<lane>] job lane tier repo prompt [req]     status-first parked
+ * Returns null unless every cell validates — the generic positional reader
+ * then applies its own contract to the line.
+ */
+function dispatcherQueueRow(cells: string[]): FleetLaneQueueRow | null {
+  const first = cells[0] ?? '';
+  if (PARKED_MARKER.test(first)) {
+    // Status-first parked: marker, job, lane, tier, repo, prompt[, requirements].
+    if (cells.length !== 6 && cells.length !== 7) return null;
+    const [id, pool, tier, repo, prompt, extra] = [cells[1]!, cells[2]!, cells[3]!, cells[4]!, cells[5]!, cells[6]];
+    if (!JOB_ID.test(id) || !LANE_ID.test(pool) || !isQueueTier(tier) || !REPO_ID.test(repo) || !promptCell(prompt)) return null;
+    if (extra !== undefined && !extra.startsWith('{')) return null;
+    return { id, status: first.toUpperCase(), pool, tier, repo, title: prompt };
+  }
+  if (cells.length !== 5 && cells.length !== 6) return null;
+  if (!JOB_ID.test(first) || KNOWN_STATUSES.has(first.toUpperCase())) return null;
+  const extra = cells[5];
+  if (extra !== undefined && !extra.startsWith('{')) return null;
+  const laneMarker = PARKED_MARKER.exec(cells[2] ?? '');
+  if (laneMarker) {
+    // Lane-column parked: job, repo, marker, tier, prompt[, requirements].
+    const [id, repo, tier, prompt] = [cells[0]!, cells[1]!, cells[3]!, cells[4]!];
+    if (!REPO_ID.test(repo) || !isQueueTier(tier) || !promptCell(prompt)) return null;
+    return { id, status: cells[2]!.toUpperCase(), pool: laneMarker[1] ?? cells[2]!, tier, repo, title: prompt };
+  }
+  // Ready row: job, repo, lane, tier, prompt[, requirements].
+  const [id, repo, pool, tier, prompt] = [cells[0]!, cells[1]!, cells[2]!, cells[3]!, cells[4]!];
+  if (!REPO_ID.test(repo) || !LANE_ID.test(pool) || isQueueTier(pool) || !isQueueTier(tier) || !promptCell(prompt)) return null;
+  return { id, status: 'READY', pool, tier, repo, title: prompt };
+}
+
+/**
  * Tolerant reader for the router's queue TSV. A row yields whatever fields it
  * honestly carries; a row that cannot name its pool is dropped (counted),
  * never attributed to a lane by guessing.
@@ -278,6 +335,17 @@ export function parseReadyTsv(text: string): ParsedTsv {
         mapped.some(m => m === 'pool' || m === 'status')
       ) {
         header = mapped as (keyof FleetLaneQueueRow)[];
+        continue;
+      }
+    }
+
+    // Headerless rows in the dispatcher's own dialect carry the lane hint in
+    // a different column order than the generic positional export; recognize
+    // them before the generic reader can misattribute repo names as lanes.
+    if (header === null) {
+      const dialect = dispatcherQueueRow(cells);
+      if (dialect !== null) {
+        rows.push(dialect);
         continue;
       }
     }
