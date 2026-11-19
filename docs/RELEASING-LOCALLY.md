@@ -168,8 +168,10 @@ macOS and the login keychain.
 `GATE PASS` or `GATE FAIL`:
 
 - in parallel: the root build (tsc, then `scripts/copy-assets.mjs` from `npm run build`, so
-  `dist/core/web/public/` exists in a fresh worktree), the web typecheck, eslint (cached), the
-  real-I/O lane guard and the docs check;
+  `dist/core/web/public/` exists in a fresh worktree), the typecheck
+  (`npm run typecheck:fast` — the native compiler on both tsconfig projects), eslint
+  (cached), the real-I/O lane guard, the Verse sync-I/O guard, the quarantine-ledger
+  verifier, the docs check and the test-name check;
 - then the web build and the first-paint budget;
 - then backend and web vitest in parallel, limited to the tests whose import graph reaches a
   file changed since the merge-base with `origin/master` (`--base <ref>` to change that),
