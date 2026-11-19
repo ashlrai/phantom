@@ -1,0 +1,73 @@
+/**
+ * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
+ * proposals from recorded outcomes (metrics/jobs.jsonl). Read-only: never writes weights.json and never
+ * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
+ * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
+ * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
+ */
+import { isAbsolute } from 'node:path';
+
+import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
+import { buildRouterWeightProposalReport, type RouterWeightProposalReport } from '../core/router/weight-proposals.js';
+
+export const FLEET_ROUTER_WEIGHTS_USAGE =
+  'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
+  'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs). ' +
+  'Proposes bounded weight shifts per work_class/lane from merged outcomes (20 known outcomes required, ' +
+  'shifts capped at 0.1). Writes nothing and changes no live routing. Exit 0 for a read, 1 for an ' +
+  'unavailable ledger, 2 for usage.';
+
+function parseArgs(args: string[]): { runsDir?: string; json: boolean } | null {
+  const parsed: { runsDir?: string; json: boolean } = { json: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--json' && !parsed.json) parsed.json = true;
+    else if (arg === '--runs-dir' && parsed.runsDir === undefined) {
+      const value = args[++i];
+      if (value === undefined || !isAbsolute(value)) return null;
+      parsed.runsDir = value;
+    } else return null;
+  }
+  return parsed;
+}
+
+function proposalLines(report: RouterWeightProposalReport): string[] {
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} as_of=${report.as_of} ` +
+    'advisory-only: not applied to routing or weights.json';
+  if (report.status === 'unavailable') {
+    return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
+  }
+  const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
+    `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
+  const rows = report.proposals.map(p => p.status === 'proposed'
+    ? `${p.work_class}/${p.lane}: proposed ${p.baseline_weight} -> ${p.proposed_weight} (known=${p.known_n})`
+    : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged`);
+  const none = report.proposals.length === 0 ? ['insufficient evidence: no classified known outcomes'] : [];
+  return [header, counts, `ledger ${report.ledger.path}`, ...rows, ...none];
+}
+
+export async function cmdFleetRouterWeights(
+  args: string[],
+  read: (opts: { runsDir?: string }) => Promise<RouterOutcomeRead> = readRouterOutcomes,
+  now: () => string = () => new Date().toISOString(),
+): Promise<number> {
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
+    console.log(FLEET_ROUTER_WEIGHTS_USAGE);
+    return 0;
+  }
+  const parsed = parseArgs(args);
+  if (!parsed) {
+    console.error(FLEET_ROUTER_WEIGHTS_USAGE);
+    return 2;
+  }
+  let result: RouterOutcomeRead;
+  try {
+    result = await read(parsed.runsDir === undefined ? {} : { runsDir: parsed.runsDir });
+  } catch {
+    console.error('Router weight proposals unavailable.');
+    return 1;
+  }
+  const report = buildRouterWeightProposalReport(result, now());
+  console.log(parsed.json ? JSON.stringify(report) : proposalLines(report).join('\n'));
+  return result.state === 'read' ? 0 : 1;
+}
