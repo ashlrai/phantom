@@ -31,12 +31,47 @@ function repo(t, files) {
   return { dir, commit, write };
 }
 
-test('docs-only diffs select zero tests', () => {
+test('docs-only diffs still classify as docs but select the suites that read them', (t) => {
   assert.equal(classifyPaths(['docs/guide.md', 'README.md']).mode, 'docs');
   assert.equal(classifyPaths([]).mode, 'docs');
   assert.equal(classifyPaths(['docs/guide.md', 'src/a.ts']).mode, 'related');
-  const r = plan({ cwd: process.cwd(), paths: ['docs/guide.md'] });
-  assert.deepEqual([r.mode, r.tests, r.node, r.shards], ['docs', [], [], []]);
+  const { dir, commit } = repo(t, {
+    'docs/guide.md': '# Guide\n',
+    'docs/other.md': '# Other\n',
+    'test/docs-repo-links.test.ts': 'export {};\n',
+    'test/guide-reader.test.ts': "import { readFileSync } from 'node:fs';\nreadFileSync('docs/guide.md', 'utf8');\n",
+    'test/join-reader.test.ts': "import { readFileSync } from 'node:fs';\nreadFileSync(join('docs', 'other.md'), 'utf8');\n",
+    'test/unrelated.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  const r = plan({ cwd: dir, paths: ['docs/guide.md'] });
+  assert.equal(r.mode, 'related');
+  assert.deepEqual(r.tests, ['test/docs-repo-links.test.ts', 'test/guide-reader.test.ts']);
+  const joined = plan({ cwd: dir, paths: ['docs/other.md'] });
+  assert.equal(joined.mode, 'related');
+  assert.deepEqual(joined.tests, ['test/docs-repo-links.test.ts', 'test/join-reader.test.ts']);
+  const empty = plan({ cwd: dir, paths: [] });
+  assert.deepEqual([empty.mode, empty.tests, empty.node, empty.shards], ['docs', [], [], []]);
+});
+
+test('docs selection defers dist-bound readers and caps like related selection', (t) => {
+  const files = {
+    'docs/guide.md': '# Guide\n',
+    'test/docs-repo-links.test.ts': 'export {};\n',
+    'test/guide-dist-reader.test.ts': "import './helpers/require-built-dist.js';\nreadFileSync('docs/guide.md', 'utf8');\n",
+  };
+  for (let i = 0; i < MAX_RELATED_TESTS + 5; i += 1) {
+    files[`test/guide-reader-${String(i).padStart(3, '0')}.test.ts`] = "readFileSync('docs/guide.md', 'utf8');\n";
+  }
+  const { dir, commit } = repo(t, files);
+  commit('seed');
+  const r = plan({ cwd: dir, paths: ['docs/guide.md'] });
+  assert.equal(r.mode, 'related');
+  assert.ok(r.tests.includes('test/docs-repo-links.test.ts'));
+  assert.ok(!r.tests.includes('test/guide-dist-reader.test.ts'));
+  assert.deepEqual(r.deferred, ['test/guide-dist-reader.test.ts']);
+  assert.equal(r.tests.length, MAX_RELATED_TESTS);
+  assert.ok(r.capped > 0);
 });
 
 test('global inputs fall back to a bounded broader set instead of skipping', () => {
