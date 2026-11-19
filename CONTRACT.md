@@ -288,6 +288,18 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})` and
+`readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
+`router.outcome.v1` records folded from `metrics/jobs.jsonl`. `passk` is the
+lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
+projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
+it is `null` whenever the ledger lacks lane/model, the projection is
+missing or degraded, the pair is duplicated, or the row's own pass^k is
+null — unknown stays null, never estimated. `RouterOutcomeRead.eval_state`
+reports the projection health (`healthy`/`missing`/`degraded`) so callers
+can distinguish absent eval evidence from a real score. The fold is
+read-only and advisory: it never routes, ranks, tunes or writes.
+
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
 following). Its `lanes` map contains `posture`, `postureReason`, nullable
