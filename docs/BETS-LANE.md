@@ -36,7 +36,7 @@ Score is the sum of `min(value, cap) x weight` over these terms; ties sort by id
 | --- | --- | --- | --- |
 | `redMain` | 1 for a red main branch (always ranks first) | 1000 | 1 |
 | `fixAttempt` | guardian fix attempts that did not clear it | 10 | 10 |
-| `idleSlot` | free slots on a lane with nothing queued and no hold | 40 | 5 |
+| `idleSlot` | free slots on a lane with nothing queued and no hold, counted against the launch target (configured target tightened by the controller's `effective_target` shed) | 40 | 5 |
 | `poolWastePct` | percent of usage projected to expire unused (from 20 up) | 2 | 100 |
 | `releaseAgeDay` | days since the last tag, when commits follow it | 4 | 30 |
 | `unreleasedCommit` | commits since the last tag | 1 | 40 |

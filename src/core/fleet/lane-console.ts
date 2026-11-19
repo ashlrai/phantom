@@ -968,6 +968,26 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     }, now.getTime());
   }
 
+  for (const view of views) {
+    const row = starved.lanes[view.lane];
+    view.health = laneHealthFor({
+      lane: view.lane,
+      remainingPct: view.credit.remainingPct,
+      held: view.hold?.held === true,
+      heldReason: view.hold?.reason ?? null,
+      slotTarget: view.slotTarget,
+      starved: row?.starved === true,
+      freeSlots: row?.free_slots ?? null,
+      readyRows: view.queueDepth,
+      starvedSince: row?.starved_since ?? null,
+      starts: view.startsInWindow,
+      // Merges are per hour over the window; convert back to a count.
+      merged: view.mergesPerHour === null ? null : Math.round(view.mergesPerHour * (mergeWindowMs / 3_600_000)),
+      windowMinutes: Math.round(mergeWindowMs / 60_000),
+      liveJobs: view.liveJobs,
+    }, now.getTime());
+  }
+
   return {
     schema: 'fleet.lanes.v1',
     generatedAt: now.toISOString(),

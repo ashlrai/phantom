@@ -37,6 +37,16 @@ describe('suggestBets', () => {
     expect(report.signals.filter(signal => signal.status === 'ok').map(signal => signal.name)).toEqual(['lanes']);
   });
 
+  it('counts free slots against the shed launch target, not the configured target', () => {
+    const shed: FleetRunsLane = { ...lane('claude', 3, 8), effectiveTarget: 4 };
+    const report = suggestBets({ ...NONE, lanes: [shed, lane('zai', 0, 2)], mains: [red('ashlrai/phantom')] }, NOW);
+    const idle = report.suggestions.find(bet => bet.id === 'idle-lane:claude')!;
+    expect(idle.goal).toBe('Give claude work: 1 of 4 slots free and nothing queued');
+    expect(idle.numbers).toMatchObject({ running: 3, target: 8, effectiveTarget: 4, freeSlots: 1 });
+    // The shed lane is no longer the roomiest pick for repo work.
+    expect(report.suggestions.find(bet => bet.id === 'red-main:ashlrai-phantom')!.lane).toBe('zai');
+  });
+
   it('adds usage that will expire unused, and suggests a pool with no free slot on that alone', () => {
     const report = suggestBets({ ...NONE, lanes: [lane('claude', 1, 2), lane('zai', 1, 1)], pace: [pace('claude', 30), pace('zai', 55, 3.4), pace('gemini', 10), pace('grok', null)] }, NOW);
     expect(report.suggestions.map(bet => [bet.id, bet.score])).toEqual([['pool-waste:zai', 110], ['idle-lane:claude', 100]]);
@@ -132,7 +142,7 @@ describe('phm bets suggest and explain', () => {
     expect(text.out.split('\n')).toEqual([
       'idle-lane:claude: Give claude work: 2 of 2 slots free and nothing queued',
       'Lane claude, tier work, repo any, job family leader.',
-      'Inputs: running=0, target=2, queued=0, freeSlots=2, unusedPercent=unknown, hoursToReset=unknown',
+      'Inputs: running=0, target=2, effectiveTarget=unknown, queued=0, freeSlots=2, unusedPercent=unknown, hoursToReset=unknown',
       '  idleSlot: 2 x 40 = 80', 'Score: 80',
       'Queue line: - READY RQ-NEXT-IDLE-LANE-CLAUDE (P1, pool=claude, tier=work, src=bets): Give claude work: 2 of 2 slots free and nothing queued',
     ]);

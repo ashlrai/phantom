@@ -890,7 +890,11 @@ last tick; `generatedAt` is the read time. Recent outcomes are the producer's
 24-hour lane merge counts and the number of publication records in the last hour
 (null at the underlying 50-record cap). No free text, environment,
 credentials, paths, or job contents are returned. Partial source health must be
-checked before interpreting observations as complete.
+checked before interpreting observations as complete. Each lane also carries
+`effectiveTarget`, the fleet controller's load-shed ceiling from the
+dispatcher's `effective_target` (null when the producer does not publish it).
+Available slots count against the launch target — the configured target
+tightened by `effectiveTarget` — so a shed lane never reports phantom room.
 
 ## Persistent fleet worker sessions (RQ-CMP-ORG-RUNTIME-1)
 

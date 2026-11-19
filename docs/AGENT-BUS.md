@@ -163,6 +163,16 @@ exact-label matching, so unknown identity state never widens which handoffs
 run. The check still only proves the envelope's addressee; routing labels are
 never authenticated identities.
 
+`phm fleet handoff-receive` and `phm fleet handoff-reply` run one retained
+`worker-handoff` for the caller's `--to`. The flag names the recipient
+identity, not one literal label: a handoff addressed to the `agent:` address,
+bare handle, stable id or any alias of that identity all match, through the
+same registry read the inbox, wakes and `bus next` claims use. A `--to`
+naming no registered identity — and an unreadable registry — keeps
+exact-label matching, so unknown identity state never widens which handoffs
+run. The check still only proves the envelope's addressee; routing labels are
+never authenticated identities.
+
 Channel posts are refused unless the sender is a member
 (`phm agents bus channel create|join|leave`). Because channel addresses are
 bus-group addresses, existing `subscribeGroup` readers see the same posts.
