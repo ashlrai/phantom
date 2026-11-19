@@ -2,6 +2,8 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+**First contribution?** Start with [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md). It covers clone, install, local checks run once, pushing to your fork, what `Merge Gate` requires and how auto-merge and owner-protected paths work. This page is the full reference behind it.
+
 ---
 
 ## Prerequisites
@@ -21,8 +23,8 @@ list in a guide.
 ## Setup
 
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+npm ci                    # a single checkout; also what CI and release packaging use
+npm run install:worktree  # several trusted local worktrees on one machine; requires pnpm 10.28.2
 ```
 
 Run focused verification locally while developing. Pull requests and default-branch
@@ -59,7 +61,7 @@ To install the CLI while developing:
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
-| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, and run the documentation link check when the diff touches markdown or deletes files; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, and run the documentation link check when the diff touches markdown or deletes files; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). The hosted `Merge Gate` check is still required. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
@@ -72,7 +74,7 @@ For explicit Bun-compatible test inventories, see the standalone
 [Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
 is separate from these scripts.
 
-Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite, so the full CI check remains the merge gate. When the diff changes a markdown file or deletes any path, it also runs the same documentation link and anchor check as `npm run check:docs`; run `npm run check:docs` yourself when you want the report without the rest of the gate. A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
+Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite, so the hosted `Merge Gate` check remains required. When the diff changes a markdown file or deletes any path, it also runs the same documentation link and anchor check as `npm run check:docs`; run `npm run check:docs` yourself when you want the report without the rest of the gate. A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
 
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
@@ -221,13 +223,14 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
-and hosted checks prove different environments. Inspect each actual run and report unavailable or
+broker checks. None of these suites runs on pull requests, the merge queue or
+`master` pushes. There `Merge Gate` requires the two secret scans,
+classification, the generated-files check and (on pull requests and the merge
+queue) the fast gate of type check plus affected tests; Quick typecheck is
+advisory. See [what CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires).
+The exhaustive suites run on the six-hour scheduled `master` run (the Mac work
+rotates over seven daily slices) and on manual dispatch, and failures there are
+fixed forward. Local tests and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
 The optional [qualified build handoff](docs/RELEASING.md#qualified-ci-build-handoff)
