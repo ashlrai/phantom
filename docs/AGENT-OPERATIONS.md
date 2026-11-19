@@ -45,8 +45,9 @@ The command consumes route evidence because invoking the legacy router can publi
 | Release-readiness subset | `npm run check:release` |
 
 `npm run gate` writes to `.ashlr-gate/` and `dist/`. It selects tests through
-the import graph, so a test that reads a changed file as text is not selected;
-name it explicitly or use `gate:full`. Neither replaces hosted CI or the
+the import graph plus a grep for test files that read a changed path as text,
+so docs, configs and data files get their readers too; `gate:full` remains the
+backstop for readers neither finds. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
 **Hosted CI.** A pull request or merge-queue commit runs only the fast gate:

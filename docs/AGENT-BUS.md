@@ -31,7 +31,10 @@ POST `/api/verse/agent-bus` sends one envelope; the caller needs
 `--allow-dispatch` and must pass the mutation gate.  Reply codes: 201
 posted, 200 duplicate, 400 invalid, 409 conflict, 507 full, 503
 unavailable, 404 when dispatch is off.  Responses carry `{ v: 1,
-status, id?, cursor? }`.
+status, id?, cursor? }`.  A body whose `kind` is `work.claim` or
+`work.release` is a claim operation, not mail: it executes against the
+coordination table and answers `{ v: 2, ... }` (see Claim protocol)
+instead of appending; every other body appends unchanged.
 
 ## Envelope fields
 
@@ -374,6 +377,19 @@ issued on acquire, `leaseUntil` is epoch milliseconds.
 - Claims coordinate; they grant no execution authority. Holding one never
   permits a merge, a push, or spending.
 
+`POST /api/verse/agent-bus` executes these bodies: `work.claim` acquire and
+renew, and `work.release` (outcome `released` or `completed`). The response is
+the v2 result — `201` acquired, `200` renewed/released/completed, `409`
+conflict (with `holder`, never the token) or `mismatched-token`/`expired`,
+`404` lost, `400` invalid, `507` full, `503` unavailable. Claim operations do
+not append to the inbox; the coordination table row keyed by the envelope id
+(`sourceId` `agentbus:<id>:<key-hash>`) is the record, so a retried acquire on
+the same key replaces its own lease. Renew `leaseMs` is the new lease length
+from now and may not exceed the acquired length. `phm agents bus claim
+acquire|renew|release` runs the same core path locally with `--key`,
+`--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
+and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
+
 Example (replace `FAKE-TOKEN`):
 `curl -X POST -H "Authorization: Bearer FAKE-TOKEN" -H "Content-Type: application/json" http://localhost:8787/api/verse/agent-bus -d '{"id":"claim-0001","from":"dot-main","to":"leaders","priority":"P2","ttl":3600000,"body":{"kind":"work.claim","op":"acquire","claimKey":"path:ashlrai/phantom:docs/**","owner":"dot-main","leaseMs":600000}}'`
 
@@ -492,6 +508,7 @@ Outside implementers (Dot included) call only the HTTP contract above.
 | --- | --- |
 | Schemas, claim key parsing, overlap rules | `src/core/agents/bus-v2-schema.ts` |
 | Coordination claim and status table | `src/core/agents/claim-store.ts` |
+| v2 claim/release body executor | `src/core/agents/bus-claims.ts` |
 | Bus store, caps, cursor reads, HTTP endpoints | the v1 store behind `/api/verse/agent-bus` |
 | Message-id claims | `src/core/fleet/bus-work-claims.ts` (writes through the coordination table) |
 | Team leases and board task claims | `src/core/teams/state.ts`, `src/core/fleet/bus-board.ts` (write through the same table) |

@@ -288,6 +288,18 @@ History reads only the bounded 256 KiB regular-file tail, newest last, max three
 matching rows or null. `explainRoutes` adds nullable `fallback_chain` (non-fusion
 decisions only) and `fallback_used` (job receipts). See [gates and inert status](docs/ROUTING.md#failover-chains).
 
+`router/outcomes.ts` exports `foldRouterOutcomes(text, {passkFor?})` and
+`readRouterOutcomes({runsDir?, lane?, ashlarDir?})`, producing
+`router.outcome.v1` records folded from `metrics/jobs.jsonl`. `passk` is the
+lane+model's pass^k (`passPowK`) from the published `eval.lane-scores.v1`
+projection (`~/.ashlr/eval/passk/lane-scores.json`, `ASHLR_HOME` honored);
+it is `null` whenever the ledger lacks lane/model, the projection is
+missing or degraded, the pair is duplicated, or the row's own pass^k is
+null — unknown stays null, never estimated. `RouterOutcomeRead.eval_state`
+reports the projection health (`healthy`/`missing`/`degraded`) so callers
+can distinguish absent eval evidence from a real score. The fold is
+read-only and advisory: it never routes, ranks, tunes or writes.
+
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded
 256 KiB tail of `metrics/work-market.jsonl` (regular files only, no symlink
 following). Its `lanes` map contains `posture`, `postureReason`, nullable
@@ -1201,7 +1213,7 @@ without withdrawing or requeueing those leases.
 with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;
 that marker, not the result or node ID, distinguishes a producer withdrawal
 from an accepted completion. `JobView.producerWithdrawn` exposes the marker,
-and `JobView.claimedBy` names the holder of a running claim.
+and `JobView.claimedBy` names the node whose live session can still act on a running claim.
 `src/core/drive/nodes/runner-packs.ts` exports
 `probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
 `<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and
@@ -1267,7 +1279,21 @@ workers, then subagents, running first and then most recent, with sessions
 whose parent is missing under `unknown parent`. The filter gains `live` and
 `subagents` (null means unreadable). `src/core/subagent/spawn.ts` exports
 `readSubagentRecords(options, limit)`. It projects the session map above;
-it adds no source. The session map gains `localNodeId`, and
+the only source it adds is the leader's own files, for the leader row.
+The filter takes an optional `leader` (`LeaderSessionFacts` from
+`session-tree.ts`: `lastPassAt`, `lastReplyAt`, `lastReply`, each null when
+unknown; null or absent when unread), and `sessionRecords` takes the same as
+`options.leader`. The pure `leaderRecord(facts, now)` builds the row: `idle`
+while the newest plan-log pass is at most `LEADER_PASS_FRESH_MINUTES` (120)
+old (`leaderPassFresh`), otherwise `unknown`; `lastMessage` is the newest
+reply to the owner on one line, at most `LEADER_REPLY_EXCERPT_CHARS` (240);
+lane, model and start stay unknown. With facts and no lane or repo filter the
+leader is listed even when no worker is. `leaderGaps(facts, now)` in
+`live-sessions.ts` words what the row could not show; with no fact it is the
+single line older readers print. `readLiveSessions` gains an injectable
+`readLeader`, defaulting to `readLeaderSessionFacts(options)` in
+`live-sessions-read.ts` (plan-log heading time and `leader.replies.v1`,
+bounded tails, never throws); the HTTP route reads it at most once per 15 s. The session map gains `localNodeId`, and
 `fleet.sessions.v1` rows gain optional `lastOutputAt` (the `<job>.log` lstat
 mtime; absent from older servers). Rows cover launching, running, publishing
 and claim-only (`unknown`) sessions. Unknown text fields read `unknown`, unknown
@@ -1359,6 +1385,21 @@ exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `phm fleet work-feed [--claims]` prints hold lines and
 a `claims=` footer, and non-ok reads print `jobs=unknown` rather than a
 fabricated count.
+
+`src/core/agents/bus-claims.ts` executes the v2 claim protocol bodies. Exports:
+`BusClaimOptions` (`root?`, `now?`), `BusClaimResult` (the `{v:2, ...}` result
+union: `acquired`/`renewed` carry claim details including the fencing `token`,
+`released`/`completed` carry `claimKey`, `conflict` carries `holder` without a
+token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
+are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
+undefined for non-claim bodies so opaque mail still appends),
+`BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
+`work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
+and `work.release` through `settleCoordination` on the one coordination table
+with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of
+claimKey>` so an operation id retried on the same key replaces its own lease
+while reuse on another key cannot relocate it. Claims coordinate only and grant
+no execution authority; the token returns only to its acquirer.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

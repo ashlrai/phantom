@@ -17,6 +17,20 @@ export const SESSION_RECENT_MINUTES = 60;
 export const UNKNOWN_PARENT_ID = 'unknown parent';
 export type SessionState = 'running' | 'idle' | 'done' | 'failed' | 'unknown';
 export type SessionKind = 'leader' | 'worker' | 'subagent';
+/** The leader reads as idle (between passes) while its newest recorded pass is at most this old; past it, its state is unknown. */
+export const LEADER_PASS_FRESH_MINUTES = 120;
+/** The leader's last reply is one line in the tree, cut at this length. */
+export const LEADER_REPLY_EXCERPT_CHARS = 240;
+
+/** What the fleet's own files record about the leader. Every field is null when no record holds it. */
+export interface LeaderSessionFacts {
+  /** When the leader last finished a planning pass: the newest dated heading of its plan log. */
+  lastPassAt: string | null;
+  /** When it last wrote to the owner; null when that reply's heading has no readable time. */
+  lastReplyAt: string | null;
+  /** The newest reply it wrote to the owner. */
+  lastReply: string | null;
+}
 
 export interface SessionRecord {
   id: string;
@@ -106,11 +120,14 @@ const SUBAGENT_STATE: Record<SubagentRecord['state'], SessionState> = { planned:
 /**
  * Records from what the fleet already writes. Workers: `rows` (running, already
  * filtered) plus, unless `live`, sessions that finished in the last hour. All
- * report to one leader row whose own state no source records yet. Subagents:
- * `subagent.v1` records.
+ * report to one leader row. Subagents: `subagent.v1` records.
+ *
+ * The leader row is filled from `options.leader` (see `leaderRecord`); without
+ * it the row's state and messages stay unknown. With it and no lane or repo
+ * filter, the leader is listed even when no worker is.
  */
 export function sessionRecords(rows: readonly LiveSessionRow[], map: FleetSessionMap | null, subagents: readonly SubagentRecord[], now: number,
-  options: { live?: boolean; lane?: string | null; repo?: string | null } = {}): SessionRecord[] {
+  options: { live?: boolean; lane?: string | null; repo?: string | null; leader?: LeaderSessionFacts | null } = {}): SessionRecord[] {
   const recent = (iso: string | null | undefined) => now - at(iso ?? null) <= SESSION_RECENT_MINUTES * 60_000;
   const activity = new Map((map?.mapSessions ?? []).map(session => [session.job, session.activity]));
   const workers: SessionRecord[] = rows.map(row => ({ id: row.job, parentId: 'leader', kind: 'worker', agent: row.lane, lane: row.lane, model: row.model,
@@ -137,7 +154,30 @@ export function sessionRecords(rows: readonly LiveSessionRow[], map: FleetSessio
     children.push({ id: sub.id, parentId: sub.parent_id, kind: 'subagent', agent: 'subagent', lane: sub.lane ?? 'unknown', model: sub.model ?? 'unknown',
       repo: repoOf.get(sub.id)!, jobId: null, state, startedAt: sub.created_at, lastMessageAt: null, lastMessage: null });
   }
-  if (!workers.length && !children.some(child => child.parentId === 'leader')) return children;
-  return [{ id: 'leader', parentId: null, kind: 'leader', agent: 'leader', lane: 'unknown', model: 'unknown', repo: 'unknown', jobId: null,
-    state: 'unknown', startedAt: null, lastMessageAt: null, lastMessage: null }, ...workers, ...children];
+  const leader = leaderRecord(options.leader ?? null, now);
+  const leaderKnown = leader.state !== 'unknown' || leader.lastMessage !== null;
+  if (!workers.length && !children.some(child => child.parentId === 'leader') && (filtered || !leaderKnown)) return children;
+  return [leader, ...workers, ...children];
+}
+
+/** True when `facts` records a pass that ended in the last LEADER_PASS_FRESH_MINUTES (a pass dated after `now` is not trusted). */
+export function leaderPassFresh(facts: LeaderSessionFacts | null | undefined, now: number): boolean {
+  const age = now - at(facts?.lastPassAt ?? null);
+  return age >= 0 && age <= LEADER_PASS_FRESH_MINUTES * 60_000;
+}
+
+/**
+ * The leader's row. It runs in passes, not as one long process, so a recent
+ * pass reads as `idle` (between passes) and anything older, or no pass at all,
+ * stays `unknown`: no record says whether it is still alive. Its last message
+ * is the newest reply it wrote to the owner, on one line. Lane, model and
+ * start time are recorded nowhere yet and stay unknown.
+ */
+export function leaderRecord(facts: LeaderSessionFacts | null, now: number): SessionRecord {
+  const reply = facts?.lastReply?.replace(/\s+/g, ' ').trim() || null;
+  const repliedAt = at(facts?.lastReplyAt ?? null);
+  return { id: 'leader', parentId: null, kind: 'leader', agent: 'leader', lane: 'unknown', model: 'unknown', repo: 'unknown', jobId: null,
+    state: leaderPassFresh(facts, now) ? 'idle' : 'unknown', startedAt: null,
+    lastMessageAt: reply !== null && repliedAt !== -Infinity && repliedAt <= now ? new Date(repliedAt).toISOString() : null,
+    lastMessage: reply === null ? null : reply.length > LEADER_REPLY_EXCERPT_CHARS ? `${reply.slice(0, LEADER_REPLY_EXCERPT_CHARS - 1)}…` : reply };
 }

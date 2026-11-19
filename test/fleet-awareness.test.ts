@@ -58,6 +58,19 @@ test('unknown, stale, future and expired reports never become pool capacity; exa
   expect(projectFleetAwareness(legacy.state, legacy.now()).hosts[0]?.freeSlots).toBeNull();
 });
 
+test('a claim fenced by a rejoined session frees its host slots at once', () => {
+  const f = fixture();
+  const n = f.add('worker', { hostId: 'mac', slots: 2 });
+  f.enqueue();
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  expect(nodes.pull(n)!.claim.jobId).toBe('job');
+  f.run('leave', ['--node', 'worker', '--session', String(n.session)]);
+  f.add('worker', { hostId: 'mac', slots: 2 });
+  const report = projectFleetAwareness(f.state, f.now());
+  expect(report.hosts).toHaveLength(1);
+  expect(report.hosts[0]).toMatchObject({ hostId: 'mac', slots: 2, running: 0, freeSlots: 2 });
+});
+
 test.each(['memory-pressure', 'disk-pressure', 'memory-unmeasured', 'disk-unmeasured'] as const)('hold %s blocks siblings and direct claims', held => {
   const f = fixture(); const a = f.add('a', { hostId: 'mac' }); f.add('b', { hostId: 'mac', slots: 0, held }); f.enqueue();
   expect(f.plan()[0]?.nodeId).toBeNull();

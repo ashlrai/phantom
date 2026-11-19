@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { buildLiveSessions, type LiveSessionsV1 } from '../../../../core/fleet/live-sessions.js';
 import type { FleetSessionMap, MapSession } from '../../../../core/fleet/sessions-view.js';
 import type { FleetSessionV1 } from '../../../../core/fleet/runs-sessions.js';
+import type { LeaderSessionFacts } from '../../../../core/fleet/session-tree.js';
 import type { SubagentRecord } from '../../../../core/subagent/spawn.js';
 import { evictAll } from '../../../data/cache.js';
 import { getPane } from '../panes/pane-registry.js';
@@ -21,7 +22,7 @@ const placed = (job: string, lane: string | null, nodeId: string | null, over: P
   placement: nodeId ? 'claim' : 'unknown', mapState: 'running', branch: null, worktree: null, activity: null, detailSources: null, ...over });
 
 /** The pane's fixture is the core projection itself, so the JSON matches what `phm sessions --json` prints. */
-function fleet(): LiveSessionsV1 {
+function fleet(leader?: LeaderSessionFacts): LiveSessionsV1 {
   const map = {
     schema: 'fleet.sessions.v1', runsDirPresent: true, sourceState: 'healthy', sources: {}, truncated: false, localNodeId: 'node-here',
     sessions: [local('RQ-A', 'claude'), local('RQ-QUIET', 'claude', { lastOutputAt: ago(14), startedAt: ago(40) }),
@@ -32,7 +33,7 @@ function fleet(): LiveSessionsV1 {
   } as unknown as FleetSessionMap;
   map.mapSessions[0]!.activity = 'Running the tests';
   const helper = (id: string, parent_id: string) => ({ id, parent_id, depth: 1, lane: 'claude', model: 'small-model', state: 'running', created_at: ago(3) }) as SubagentRecord;
-  return buildLiveSessions(map, NOW, { subagents: [helper('helper-a', 'RQ-A'), helper('helper-lost', 'RQ-GONE')] });
+  return buildLiveSessions(map, NOW, { subagents: [helper('helper-a', 'RQ-A'), helper('helper-lost', 'RQ-GONE')], leader });
 }
 const empty = (): LiveSessionsV1 => buildLiveSessions({ schema: 'fleet.sessions.v1', runsDirPresent: true, sourceState: 'healthy', sources: {},
   truncated: false, localNodeId: 'node-here', sessions: [], mapSessions: [] } as unknown as FleetSessionMap, NOW);
@@ -97,6 +98,28 @@ it('opens the session clicked in the existing worker log (its messages, with pau
   expect(openPane).toHaveBeenCalledWith('worker-log');
   expect(takeRequestedWorkerLogJob()).toBe('RQ-QUIET');
   expect(String((fetch.mock.calls[0] as unknown[])[0])).toContain('/api/verse/fleet/control/live-sessions');
+});
+
+it('shows the leader between passes with its last reply, and opens the Leader chat from its row', async () => {
+  const list = fleet({ lastPassAt: ago(4), lastReplyAt: ago(6), lastReply: 'Routed the desk work\nto two lanes.' });
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(list), { status: 200, headers: { 'content-type': 'application/json' } })));
+  const openPane = vi.fn();
+  render(<SessionsPane visible host={{ openPane } as never} />);
+  const row = await screen.findByRole('button', { name: 'Open the Leader chat' });
+  expect(row.querySelector('[data-state="idle"]')?.textContent).toBe('idle');
+  for (const fact of ['leader', 'model unknown', 'spoke 6m ago', 'Routed the desk work to two lanes.', '4 of 6 below running']) expect(row.textContent).toContain(fact);
+  expect(screen.getByText(/^5 sessions running: 3 workers, 2 subagents; 1 failed in the last hour; 1 with state unknown; 1 under unknown parent/)).toBeTruthy();
+  expect(within(screen.getByRole('list', { name: 'Unknown' })).getAllByRole('listitem').map(item => item.textContent)).toEqual(['Leader model unknown: no source records the model its passes run on.']);
+  fireEvent.click(row);
+  expect(openPane).toHaveBeenCalledWith('leader-thread');
+  expect(takeRequestedWorkerLogJob()).toBeNull();
+});
+
+it('keeps the leader row plain when its state is unknown and nothing can open', () => {
+  render(<SessionsView list={narrowLiveSessions(JSON.parse(JSON.stringify(fleet({ lastPassAt: ago(200), lastReplyAt: null, lastReply: null }))))!} onOpen={() => {}} />);
+  expect(screen.queryByRole('button', { name: 'Open the Leader chat' })).toBeNull();
+  expect(screen.getByText('Leader state unknown: its last recorded pass ended 3h 20m ago.')).toBeTruthy();
+  expect(screen.getByText('Leader messages unknown: no reply to you is recorded yet.')).toBeTruthy();
 });
 
 it('reads an unexpected payload as unavailable and drops malformed rows', async () => {

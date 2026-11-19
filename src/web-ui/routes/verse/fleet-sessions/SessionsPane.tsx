@@ -21,7 +21,9 @@ const FIELD_WORD: Readonly<Record<(typeof SESSION_FIELDS)[number], string>> = {
 };
 
 /** One tree row. `row` is the running session's entry in `sessions[]` (quiet, computer, PR, unknown reasons), when it has one. */
-function SessionRow({ node, depth, row, onOpen }: { node: SessionNode; depth: number; row: LiveSessionRow | undefined; onOpen: (job: string) => void }) {
+function SessionRow({ node, depth, row, onOpen, onOpenLeader }: {
+  node: SessionNode; depth: number; row: LiveSessionRow | undefined; onOpen: (job: string) => void; onOpenLeader?: () => void;
+}) {
   const indent = { marginLeft: `calc(${Math.min(depth, 4)} * var(--space-3))` };
   if (node.kind === 'unknown-parent') return <li className={styles.group} style={indent}>Unknown parent <span className={styles.muted}>{node.counts.below}</span></li>;
   const reasons = SESSION_FIELDS.filter(field => row?.unknown[field]);
@@ -44,21 +46,23 @@ function SessionRow({ node, depth, row, onOpen }: { node: SessionNode; depth: nu
     </span>}
   </>;
   return <li className={styles.row} style={indent} data-quiet={row?.quiet ? 'true' : undefined} data-kind={node.kind}>
-    {node.jobId === null ? <div className={styles.open} aria-label={`${node.id}, ${node.kind}`}>{body}</div>
+    {node.kind === 'leader' && onOpenLeader ? <button type="button" className={styles.open} onClick={onOpenLeader} aria-label="Open the Leader chat">{body}</button>
+      : node.jobId === null ? <div className={styles.open} aria-label={`${node.id}, ${node.kind}`}>{body}</div>
       : <button type="button" className={styles.open} onClick={() => onOpen(node.jobId!)}
         aria-label={`Open messages for ${node.id}${row?.quiet ? ', quiet' : ''}`}>{body}</button>}
     {row?.prUrl && <a className={styles.pr} href={row.prUrl} target="_blank" rel="noopener noreferrer" aria-label={`Pull request for ${node.id}`}>PR</a>}
   </li>;
 }
 
-export function SessionsView({ list, onOpen }: { list: LiveSessionsV1; onOpen: (job: string) => void }) {
+/** `onOpenLeader`, when given, makes the leader's row open the Leader chat (its conversation lives there, not in a worker log). */
+export function SessionsView({ list, onOpen, onOpenLeader }: { list: LiveSessionsV1; onOpen: (job: string) => void; onOpenLeader?: () => void }) {
   const rows = new Map(list.sessions.map(row => [row.job, row]));
   const tree = flatTree(list.tree.roots);
   return <section className={styles.root} aria-label="Agent sessions">
     <p className={styles.headline}>{sessionsHeadline(list)}</p>
     {tree.length === 0 ? <p className={styles.notice} role="status">No agent sessions running.</p>
       : <ul className={styles.list} aria-label="Session tree">{tree.map(({ node, depth }) =>
-        <SessionRow key={node.id} node={node} depth={depth} row={node.jobId === null ? undefined : rows.get(node.jobId)} onOpen={onOpen} />)}</ul>}
+        <SessionRow key={node.id} node={node} depth={depth} row={node.jobId === null ? undefined : rows.get(node.jobId)} onOpen={onOpen} onOpenLeader={onOpenLeader} />)}</ul>}
     {list.gaps.length > 0 && <ul className={styles.gaps} aria-label="Unknown">{list.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
     <p className={styles.notice}>Quiet: no output for {list.quietAfterMinutes} minutes. Finished sessions stay for an hour. Same tree for agents: <code>phm sessions --json</code></p>
   </section>;
@@ -74,6 +78,6 @@ export function SessionsPane({ visible, host }: Pick<PaneProps, 'visible' | 'hos
   if (!read.data) return <div className={styles.root}><p className={styles.notice} role="status">Sessions unavailable right now. It retries every few seconds.</p></div>;
   return <>
     {read.error && <p className={styles.notice} role="status">Refresh failed; showing the last list, which may be stale.</p>}
-    <SessionsView list={read.data} onOpen={open} />
+    <SessionsView list={read.data} onOpen={open} onOpenLeader={() => host.openPane('leader-thread')} />
   </>;
 }

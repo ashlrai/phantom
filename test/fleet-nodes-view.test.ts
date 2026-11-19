@@ -73,6 +73,21 @@ describe('readNodesView', () => {
     expect(nodesThatCanTake(view, 'gemini')).toEqual([]);
   });
 
+  it('frees slots for claims no live session can still act on', () => {
+    const view = readNodesView(deps(tailnet([peer('node-b', true)]), registry(
+      [node('node-a', { slots: 1 }), node('node-b', { session: 2, slots: 1 })],
+      [
+        { id: 'held', state: 'running', claim: { jobId: 'held', nodeId: 'node-a', session: 1, token: 2, leaderToken: 1, expiresAt: NOW + 5_000 } },
+        { id: 'lapsed', state: 'running', claim: { jobId: 'lapsed', nodeId: 'node-b', session: 2, token: 3, leaderToken: 1, expiresAt: NOW - 1 } },
+        { id: 'fenced', state: 'running', claim: { jobId: 'fenced', nodeId: 'node-b', session: 1, token: 4, leaderToken: 1, expiresAt: NOW + 5_000 } },
+        { id: 'queued', state: 'pending' },
+      ],
+    )));
+    expect(view.nodes.find(row => row.name === 'node-a')).toMatchObject({ jobsRunning: ['held'], freeSlots: 0, stateCode: 'busy' });
+    expect(view.nodes.find(row => row.name === 'node-b')).toMatchObject({ jobsRunning: [], freeSlots: 1, stateCode: 'ready' });
+    expect(nodesThatCanTake(view, 'codex').map(row => row.name)).toEqual(['node-b']);
+  });
+
   it('one offline: says since when, today and on an earlier day', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', false), peer('node-c', false, '2026-11-14T08:05:00Z'), peer('node-d', false, '0001-01-01T00:00:00Z')]),
       registry([node('node-a'), node('node-b', { expiresAt: NOW - 60_000 })])));
@@ -116,7 +131,7 @@ describe('readNodesView', () => {
     const mirror = registry([node('node-a'), node('node-b', { heartbeatAt: NOW - 600_000, expiresAt: NOW - 590_000 })], [], { source: 'pool-mirror' });
     mirror.state!.observedAt = NOW - 600_000;
     const stale = readNodesView(deps(tailnet([peer('node-b', true)]), mirror));
-    expect(stale.nodes[1]).toMatchObject({ phantom: 'unknown', stateCode: 'unknown' });
+    expect(stale.nodes[1]).toMatchObject({ phantom: 'unknown', stateCode: 'unknown', jobsRunning: 'unknown' });
     expect(stale.reasons).toEqual(['pool mirror last updated 11:50; newer node state unknown']);
   });
 });

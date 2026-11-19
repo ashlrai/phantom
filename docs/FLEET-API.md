@@ -531,6 +531,17 @@ computers in `fleet.compute.v1`) and adds the `subagent.v1` records under
   parent is not in the list sits under the `unknown parent` row. Finished
   sessions stay for an hour; `--live` (`live=1`) leaves them out.
 
+  The leader's row comes from the leader's own files. Its `state` is `idle`
+  (between passes) while the newest dated heading of its plan log is at most
+  two hours old, and `unknown` otherwise: no record says whether an older
+  leader is still alive. `lastMessage` is the newest reply it wrote you (the
+  same source as `phm leader replies`), on one line and cut at 240
+  characters, with `lastMessageAt` from that reply's heading. Its lane, model
+  and start time are recorded nowhere and read `unknown` or null. When a pass
+  or reply is on record and no lane or repo filter is set, the leader is
+  listed even with no worker running. `gaps[]` names what the row could not
+  show.
+
 - `sessions[]`: `job`, `lane`, `model`, `repo`, `tier`, `status` (`launching`,
   `running`, `publishing`, or `unknown` for a job only another computer's claim
   names), `startedAt`, `ageSeconds`, `lastOutputAt` (the worker log's last

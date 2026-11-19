@@ -232,6 +232,37 @@ describe('drive node leases', () => {
       producerWithdrawn: true,
     });
   });
+
+  it('a rejoined session frees the slot its fenced claim held, while the job stays fenced', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader = f.a.heartbeat(worker)!.leader!;
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    const first = f.a.claim(leader, worker, 'job1')!;
+    expect(first.jobId).toBe('job1');
+    expect(f.a.claim(leader, worker, 'job2')).toBeNull();
+    f.a.leave(worker);
+    const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader2 = f.a.heartbeat(again)!.leader!;
+    const second = f.a.claim(leader2, again, 'job2')!;
+    expect(second.jobId).toBe('job2');
+    expect(f.a.renewClaim(first)).toBeNull();
+    expect(f.a.snapshot().jobs.find(j => j.id === 'job1')!.state).toBe('running');
+  });
+
+  it('pull plans past a claim fenced by a rejoined session', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    expect(f.a.pull(worker)!.claim.jobId).toBe('job1');
+    f.a.leave(worker);
+    const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.heartbeat(again);
+    expect(f.a.pull(again)!.claim.jobId).toBe('job2');
+  });
 });
 
 describe('release: decline versus retry (CLI + router)', () => {
