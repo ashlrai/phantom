@@ -7,9 +7,10 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, shouldWake,
-  type UnifiedBusOptions,
+  announceWork, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, shouldWake,
+  updateWorkStatus, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
+import { readBusWorkFeed } from '../src/core/agents/bus-work-feed-read.js';
 import {
   attachBusCliSession, busSelfFromEnv, detectBusCli, frameBusInbox, getBusCliAdapter, listBusCliAdapters,
   BUS_INBOX_FRAME_BEGIN, BUS_INBOX_FRAME_END,
@@ -219,6 +220,119 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     options.clock.now += 61_000;
     const later = readAgentInbox('nova', {}, options);
     expect(later.status === 'ok' && later.messages.map(m => m.envelope.id)).toEqual(['m-p0', 'm-p2']);
+  });
+});
+
+describe('v2 work announcements and statuses on the one bus store', () => {
+  const announce = { jobId: 'RQ-W-1', title: 'Triage the queue', repo: 'ashlrai/phantom',
+    claimKeys: ['repo:ashlrai/phantom'] };
+
+  it('posts a work.post to the leaders sink that the feed projects queued', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: 'opus' } }, options);
+    const sent = await announceWork({ from: 'atlas', ...announce, id: 'w-post-1' }, options);
+    expect(sent).toMatchObject({ status: 'posted', to: 'leaders', wake: 'not-requested' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    expect(raw.messages[0]!.envelope).toMatchObject({
+      from: 'agent:atlas', to: 'leaders', priority: 'P2', channel: 'bus', channel_ref: 'work:RQ-W-1',
+      sender: { agent_id: stableAgentId('atlas'), vendor: 'claude' },
+      body: { kind: 'work.post', jobId: 'RQ-W-1', title: 'Triage the queue', provider: 'claude',
+        repo: 'ashlrai/phantom', claimKeys: ['repo:ashlrai/phantom'] },
+    });
+    const feed = readBusWorkFeed({ root: options.root, now: options.now });
+    expect(feed).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-W-1', owner: 'agent:atlas', provider: 'claude',
+      repo: 'ashlrai/phantom', status: 'queued' }] });
+  });
+
+  it('fills the provider from the newest runtime, honors an explicit one and refuses a missing one', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    options.clock.now = 2_000;
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    const newest = await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-newest' }, options);
+    expect(newest.status).toBe('posted');
+    // An explicit provider wins over the runtime hint and is schema-checked.
+    expect(await announceWork({ from: 'nova', ...announce, jobId: 'RQ-W-explicit', provider: 'devin' }, options))
+      .toMatchObject({ status: 'posted' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    const bodies = raw.messages.map(row => row.envelope.body as { jobId: string; provider?: string });
+    expect(bodies.find(body => body.jobId === 'RQ-W-newest')?.provider).toBe('codex-personal');
+    expect(bodies.find(body => body.jobId === 'RQ-W-explicit')?.provider).toBe('devin');
+    // No runtime and no explicit provider: refuse rather than post a feed-poisoning receipt.
+    expect(await announceWork({ from: 'orion', ...announce, jobId: 'RQ-W-noprovider' }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await announceWork({ from: 'nova', ...announce, jobId: 'RQ-W-badprovider', provider: 'bogus' as never }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await announceWork({ from: 'ghost', ...announce, jobId: 'RQ-W-ghost' }, options))
+      .toMatchObject({ status: 'unknown-sender' });
+  });
+
+  it('lets only the announcing identity move a job, under any of its labels', async () => {
+    const options = setup();
+    registerAgentIdentity({ handle: 'atlas', aliases: ['dot-main'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    register(options, 'nova');
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-2', dispatch: {
+      tier: 'work', scope: 'bus lane', acceptance: 'feed shows done' } }, options)).toMatchObject({ status: 'posted' });
+    // The same job id cannot be announced twice while the feed shows it.
+    expect(await announceWork({ from: 'nova', ...announce, jobId: 'RQ-W-2', provider: 'devin' }, options))
+      .toMatchObject({ status: 'conflict' });
+    // An alias of the owner resolves to the same identity and may post status.
+    expect(await updateWorkStatus({ from: 'dot-main', jobId: 'RQ-W-2', status: 'running', id: 'w-st-1' }, options))
+      .toMatchObject({ status: 'posted', to: 'leaders' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    expect(raw.messages.at(-1)!.envelope).toMatchObject({
+      from: 'agent:atlas', channel_ref: 'work:RQ-W-2',
+      body: { kind: 'work.status', jobId: 'RQ-W-2', status: 'running' },
+    });
+    const feed = readBusWorkFeed({ root: options.root, now: options.now });
+    expect(feed).toMatchObject({ status: 'ok', jobs: [{ id: 'RQ-W-2', status: 'running' }] });
+    // A different identity and an unknown job are both refused before append.
+    expect(await updateWorkStatus({ from: 'nova', jobId: 'RQ-W-2', status: 'done' }, options))
+      .toMatchObject({ status: 'refused' });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-GONE', status: 'done' }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await updateWorkStatus({ from: 'ghost', jobId: 'RQ-W-2', status: 'done' }, options))
+      .toMatchObject({ status: 'unknown-sender' });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-2', status: 'bogus' as never }, options))
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('honors a custom work address and refuses unsafe ones', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-3', to: 'work-queue' }, options))
+      .toMatchObject({ status: 'posted', to: 'work-queue' });
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-4', to: 'bad address' }, options))
+      .toMatchObject({ status: 'invalid' });
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-5',
+      claimKeys: ['path:ashlrai/phantom:../escape'] }, options)).toMatchObject({ status: 'invalid' });
+  });
+
+  it('refuses the send when the feed is refused or unreadable rather than posting unchecked', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    // A retained post with no resolvable provider makes the whole projection refused.
+    expect(appendBusInbox({ id: 'poison-1', from: 'agent:ghost', to: 'leaders', priority: 'P2', ttl: 60_000,
+      body: { kind: 'work.post', jobId: 'RQ-POISON', title: 'x', repo: 'a/b', claimKeys: [] } }, options).status).toBe('posted');
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-6' }, options))
+      .toMatchObject({ status: 'refused', reason: expect.stringContaining('missing-provider') });
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-W-6', status: 'done' }, options))
+      .toMatchObject({ status: 'refused' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    expect(raw.messages).toHaveLength(1);
+    // A damaged store reads unavailable, never an empty feed.
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(await announceWork({ from: 'atlas', ...announce, jobId: 'RQ-W-7' }, options))
+      .toMatchObject({ status: 'unavailable' });
   });
 });
 

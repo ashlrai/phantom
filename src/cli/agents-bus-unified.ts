@@ -5,14 +5,16 @@ import {
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
-  postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, type UnifiedBusOptions,
+  announceWork, postChannelMessage, readAgentInbox, readAgentWakes, sendDirectMessage, sendHandoff, updateWorkStatus,
+  type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
+import { WORK_STATUSES } from '../core/agents/bus-v2-schema.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, executeBusClaimBody, newBusClaimOpId, type BusClaimResult } from '../core/agents/bus-claims.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters', 'claim']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'channel', 'handoff', 'inbox', 'wakes', 'adapters', 'claim', 'work']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -27,6 +29,11 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
+ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
+    [--provider <p>] [--tier <fast|mid|work|frontier> --scope <text> --acceptance <text>]
+    [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
+    [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
 names, never authentication. Messages land in the one local bus store; P0 always
@@ -34,8 +41,9 @@ wakes, P1 and handoffs wake by default. No network, no engine runs. Spec: docs/A
 
 const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread', '--id', '--ttl', '--cli', '--provider',
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
-  '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome']);
-const MULTI = new Set(['--alias', '--member']);
+  '--frame', '--since', '--root', '--key', '--owner', '--lease-ms', '--token', '--outcome',
+  '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail']);
+const MULTI = new Set(['--alias', '--member', '--claim']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake']);
 
 class UsageError extends Error {}
@@ -201,6 +209,34 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (page.status !== 'ok') return finish(page, '');
       out(json ? JSON.stringify(page) : page.wakes.map(w => `${w.at} ${w.id} ${w.from} -> ${w.to}`).join('\n') || 'No wakes.');
       return 0;
+    }
+    if (verb === 'work' && (sub === 'post' || sub === 'status')) {
+      noExtra(2);
+      const from = actor('--from');
+      const routed = { ...send, from, to: one('--to') };
+      if (sub === 'post') {
+        const tier = one('--tier'), scope = one('--scope'), acceptance = one('--acceptance');
+        if ([tier, scope, acceptance].some(value => value !== undefined) &&
+            [tier, scope, acceptance].some(value => value === undefined)) {
+          throw new UsageError('--tier, --scope and --acceptance are required together.');
+        }
+        if (tier !== undefined && !['fast', 'mid', 'work', 'frontier'].includes(tier)) {
+          throw new UsageError('--tier must be fast, mid, work or frontier.');
+        }
+        const result = await announceWork({ ...routed, jobId: required('--job'), title: required('--title'),
+          repo: required('--repo'), claimKeys: p.values.get('--claim') ?? [],
+          provider: one('--provider') as BusProvider | undefined,
+          dispatch: tier === undefined ? undefined : { tier: tier as 'fast' | 'mid' | 'work' | 'frontier',
+            scope: scope!, acceptance: acceptance! } }, options);
+        return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
+      }
+      const status = required('--status');
+      if (!(WORK_STATUSES as readonly string[]).includes(status)) {
+        throw new UsageError(`--status must be one of ${WORK_STATUSES.join(', ')}.`);
+      }
+      const result = await updateWorkStatus({ ...routed, jobId: required('--job'),
+        status: status as WorkStatusInput['status'], detail: one('--detail') }, options);
+      return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
     if (verb === 'claim') {
       noExtra(2);

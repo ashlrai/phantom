@@ -73,6 +73,42 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('announces and updates v2 work on the same bus, owner-only for status', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-W', '--title', 'Ship it',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'cli-w'])).json)
+      .toMatchObject({ status: 'posted', to: 'leaders', wake: 'not-requested' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-W2', '--title', 'Second',
+      '--repo', 'ashlrai/phantom', '--provider', 'devin',
+      '--tier', 'work', '--scope', 'bus lane', '--acceptance', 'feed shows done', '--id', 'cli-w2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-CLI-W', '--status', 'running',
+      '--detail', 'picked up', '--id', 'cli-ws'])).json).toMatchObject({ status: 'posted', to: 'leaders' });
+    // Only the announcing identity may move the job.
+    expect(await run(['work', 'status', '--from', 'nova', '--job', 'RQ-CLI-W', '--status', 'done']))
+      .toMatchObject({ code: 1, json: { status: 'refused' } });
+    expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-GONE', '--status', 'done'])).json)
+      .toMatchObject({ status: 'invalid' });
+  });
+
+  it('refuses bad work verbs and flags with usage errors', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect(await run(['work', 'post', '--from', 'atlas', '--title', 'x', '--repo', 'a/b']))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-X', '--status', 'bogus']))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-X', '--title', 'x', '--repo', 'a/b',
+      '--tier', 'work'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'frobnicate'])).toMatchObject({ code: 2 });
+    // An identity with no runtime and no --provider cannot announce.
+    expect((await run(['id', 'register', 'orion'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'orion', '--job', 'RQ-X', '--title', 'x',
+      '--repo', 'a/b'])).json).toMatchObject({ status: 'invalid' });
+    expect((await run(['work', 'post', '--from', 'orion', '--job', 'RQ-X', '--title', 'x',
+      '--repo', 'a/b', '--provider', 'local'])).json).toMatchObject({ status: 'posted' });
+  });
+
   it('returns 1 for refusals and 2 for usage errors', async () => {
     expect(await run(['dm', '--to', 'nova', '--text', 'x'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
     expect(await run(['dm', '--from', 'ghost', '--to', 'nova', '--text', 'x'])).toMatchObject({ code: 1, json: { status: 'unknown-sender' } });

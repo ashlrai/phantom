@@ -43,7 +43,7 @@ export type BusWorkFeedReadResult =
 const HOLDS_MAX = 1024;
 
 /** Provider of the identity's most recently seen runtime; undefined when it has none. */
-function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
+export function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
   let provider: Participant['provider'] | undefined;
   let seen = -1;
   for (const runtime of identity.runtimes) {
