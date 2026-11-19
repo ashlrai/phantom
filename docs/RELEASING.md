@@ -170,8 +170,12 @@ woke the workflow, reads its independent tip-pinned inputs concurrently to
 keep the still-tip window small, and a merge landing mid-check re-verifies
 at the new tip a bounded number of times instead of starving the release;
 green evidence is the newest decisive completed master push CI run on the
-tip or a bounded ancestor, and the release PR's own required checks remain
-the merge gate for the exact head that ships. It requests a patch bump,
+tip or a bounded ancestor whose required checks — read from the branch
+ruleset and protection and judged on that run's SHA through the check-runs
+API — are green, so an advisory job failure (for example authority drift,
+which is deliberately off Merge Gate needs) cannot starve a release while
+the merge queue's own authority stays green, and the release PR's own
+required checks remain the merge gate for the exact head that ships. It requests a patch bump,
 then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
 release PR. Auto-tag creates the tag and draft only after the exact commit's

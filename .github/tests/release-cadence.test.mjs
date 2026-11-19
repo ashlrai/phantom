@@ -10,6 +10,7 @@ import { normalizeReleaseNotes } from '../../scripts/sync-release-notes.mjs';
 
 const revision = 'a'.repeat(40), tagged = 'b'.repeat(40);
 const RUNS_KEY = '/actions/workflows/ci.yml/runs?event=push&branch=master&status=completed&per_page=100';
+const CHECK_RUNS_KEY = (sha, page = 1) => `/commits/${sha}/check-runs?filter=latest&app_id=15368&per_page=100&page=${page}`;
 const repo = { full_name: 'ashlrai/phantom', id: 1263526319, node_id: 'R_kgDOS0_hrw',
   owner: { id: 258113726, login: 'ashlrai' }, default_branch: 'master', private: false, visibility: 'public' };
 const now = Date.parse('2026-11-05T04:00:00Z');
@@ -18,6 +19,10 @@ function fixture(overrides = {}) {
     repository: repo, head_branch: 'master', event: 'push', status: 'completed', conclusion: 'success' };
   const data = {
     '': repo, '/branches/master': { commit: { sha: revision } },
+    '/rules/branches/master': [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'Merge Gate' }] } }],
+    // Default required-check evidence on the fixture run SHA is red, so a
+    // non-success run conclusion keeps failing closed unless a test opts in.
+    [CHECK_RUNS_KEY(revision)]: { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } }] },
     [`/contents/package.json?ref=${revision}`]: { encoding: 'base64', content: Buffer.from(JSON.stringify({ name: '@ashlr/phantom', version: '3.30.1' })).toString('base64') },
     [`/contents/.release-please-manifest.json?ref=${revision}`]: { encoding: 'base64', content: Buffer.from('{".":"3.30.1"}').toString('base64') },
     '/git/ref/tags/v3.30.1': { ref: 'refs/tags/v3.30.1', object: { type: 'commit', sha: tagged } },
@@ -207,6 +212,93 @@ test('green evidence must cover the live tip within a bounded commit window', as
   assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-stale' });
   f.data[`/compare/${ancestor}...${revision}`] = { status: 'diverged', ahead_by: 3, behind_by: 1 };
   assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-stale' });
+});
+
+test('a whole-run failure still counts when the required checks on its SHA are green', async () => {
+  const f = fixture();
+  // authority-drift is advisory and off Merge Gate needs: the run concludes
+  // failure while the only required context stays green.
+  f.run.conclusion = 'failure';
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+    { name: 'Check authority drift (hermetic)', status: 'completed', conclusion: 'failure', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input),
+    { due: true, reason: 'green-master-cadence-due', version: '3.30.2', revision, ciRunId: 123, ciRunAttempt: 1 });
+  const timedOut = fixture();
+  timedOut.run.conclusion = 'timed_out';
+  timedOut.data[CHECK_RUNS_KEY(revision)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(timedOut.input)).due, true);
+});
+
+test('required-check evidence fails closed on pending, red, foreign-app, empty and inconsistent inventories', async () => {
+  const green = { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } };
+  for (const inventory of [
+    { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } }] },
+    { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } }] },
+    { total_count: 1, check_runs: [{ name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 1 } }] },
+    { total_count: 0, check_runs: [] },
+    { total_count: 2, check_runs: [green] },
+    { total_count: 1 },
+  ]) {
+    const f = fixture();
+    f.run.conclusion = 'failure';
+    f.data[CHECK_RUNS_KEY(revision)] = inventory;
+    assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+  }
+});
+
+test('an empty required-check set or missing names can never prove green evidence', async () => {
+  const f = fixture();
+  f.run.conclusion = 'failure';
+  f.data['/rules/branches/master'] = [];
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+});
+
+test('branch protection contexts count when the ruleset lists no required checks', async () => {
+  const f = fixture();
+  f.data['/branches/master'] = { commit: { sha: revision }, protection: { required_status_checks: { contexts: ['Merge Gate'] } } };
+  f.data['/rules/branches/master'] = [];
+  f.run.conclusion = 'failure';
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+});
+
+test('required-check evidence pages through the full check-run inventory', async () => {
+  const f = fixture();
+  f.run.conclusion = 'failure';
+  const filler = Array.from({ length: 100 }, (_, i) => ({ name: `advisory-${i}`, status: 'completed', conclusion: 'success', app: { id: 15368 } }));
+  f.data[CHECK_RUNS_KEY(revision, 1)] = { total_count: 101, check_runs: filler };
+  f.data[CHECK_RUNS_KEY(revision, 2)] = { total_count: 101, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  f.data[CHECK_RUNS_KEY(revision, 2)] = { total_count: 102, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
+});
+
+test('a settled re-run failure does not override an earlier required-check success, but an unsettled one does', async () => {
+  const f = fixture();
+  f.run.conclusion = 'failure';
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+    { name: 'Merge Gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  f.data[CHECK_RUNS_KEY(revision)] = { total_count: 2, check_runs: [
+    { name: 'Merge Gate', status: 'completed', conclusion: 'success', app: { id: 15368 } },
+    { name: 'Merge Gate', status: 'in_progress', conclusion: null, app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'push-ci-not-green' });
 });
 
 test('failed, running, absent, foreign and ambiguous CI evidence fails closed', async () => {
