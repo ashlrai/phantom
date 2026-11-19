@@ -1,0 +1,259 @@
+/**
+ * `fleet.session-thread.v1`: one session as a conversation, behind
+ * `phm sessions thread <id>` and GET /api/verse/fleet/control/session-thread.
+ * Fixtures only: no runs directory, bus or plan log is read.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { AgentMessage, AgentMessages } from '../src/core/fleet/agent-messages.js';
+import type { FleetCompute } from '../src/core/fleet/compute-view.js';
+import type { LeaderRepliesV1 } from '../src/core/fleet/mason-outbox.js';
+import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
+import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
+import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
+import { buildSessionThread, renderSessionThreadText, sessionBusMessages, THREAD_BUS_SHOWN } from '../src/core/fleet/session-thread.js';
+import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
+import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
+import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
+import { cmdSessions, cmdSessionThread } from '../src/cli/sessions.js';
+
+const NOW = Date.parse('2026-11-17T12:00:00Z');
+const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
+const session = (job: string, over: Partial<FleetSessionV1> = {}): FleetSessionV1 => ({
+  job, repo: 'phantom', lane: 'claude', tier: 'frontier', status: 'running', model: 'fixture-model', batchId: null, pid: null, live: 'yes',
+  exitCode: null, timedOut: false, enqueuedAt: ago(40), claimedAt: ago(31), launchedAt: ago(30), startedAt: ago(30), finishedAt: null,
+  elapsedSeconds: 1800, durationSeconds: null, queueWaitSeconds: 540, tokensTotal: null, wallSeconds: null, diffLines: null,
+  outcome: null, prUrl: null, lastOutputAt: ago(2), ...over,
+});
+const inventory = (sessions: FleetSessionV1[]): FleetSessionsV1 => ({
+  schema: 'fleet.sessions.v1', generatedAt: ago(0), runsDirPresent: true, sourceState: 'healthy',
+  sources: { runDir: 'healthy', ready: 'healthy', claimed: 'healthy', precheck: 'healthy', status: 'healthy', metrics: 'healthy', live: 'healthy' },
+  dispatcher: null, sessions, recent: [], counts: { queued: 0, parked: 0, launching: 0, running: sessions.length, publishing: 0, exited: 0, stale: 0 },
+  malformed: 0, truncated: false,
+});
+const compute: FleetCompute = { schema: 'fleet.compute.v1', generatedAt: ago(0), localNodeId: 'node-here', truncated: false, nodes: [], sources: {}, dispatcherAt: null, lanes: {} };
+const fleetMap = () => readFleetSessionMap({
+  compute, now: NOW, readDetail: async () => { throw new Error('no details'); },
+  sessions: inventory([session('RQ-A', { prUrl: 'https://github.com/ashlrai/phantom/pull/9' }), session('RQ-QUIET', { lastOutputAt: ago(25) })]),
+});
+
+const activity = (over: Partial<FleetJobActivityV1> = {}): FleetJobActivityV1 => ({
+  schema: 'fleet.job.activity.v1', generatedAt: ago(0), job: 'RQ-A', state: 'running', lane: 'claude', tier: 'frontier', model: 'fixture-model',
+  sources: { events: 'healthy', commands: 'healthy', files: 'healthy', reports: 'healthy' }, counts: { events: 2, commands: 10, files: 1, reports: 2 }, truncated: false,
+  entries: [
+    { kind: 'report', name: 'brief', state: 'ok', source: 'prompt', bytes: 20, truncated: false, text: 'Fix the reply box.' },
+    { kind: 'event', at: ago(30), event: 'launch', summary: 'lane=claude' },
+    { kind: 'event', at: null, event: 'publish', summary: 'pr=9' },
+    ...Array.from({ length: 10 }, (_, index) => ({ kind: 'command' as const, text: `npm run step-${index}`, line: index + 1 })),
+    { kind: 'files', state: 'ok', baseSha: 'abc', truncated: false, refusals: [], totals: { files: 1, added: 12, removed: 3 },
+      files: [{ path: 'src/a.ts', added: 12, removed: 3, status: 'modified' }] },
+    { kind: 'report', name: 'notes', state: 'ok', source: 'notes', bytes: 9, truncated: true, text: 'Done.' },
+  ] as FleetJobActivityV1['entries'],
+  ...over,
+});
+const message = (id: string, from: string, to: string, over: Partial<AgentMessage> = {}): AgentMessage => ({
+  id, ts: ago(5), from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
+});
+const bus = (messages: AgentMessage[], source: AgentMessages['source'] = 'available'): AgentMessages => ({ schema: 'agent-messages.v1', source, messages, matched: messages.length, skipped: 0 });
+const replies = (texts: string[], sourceState: LeaderRepliesV1['sourceState'] = 'healthy'): LeaderRepliesV1 => ({
+  schema: 'leader.replies.v1', version: 1, sourceState, entries: [], replies: texts.map((text, index) => ({ at: index === 0 ? 'unknown' : '2026-11-17 06:5' + index, text, source: 'plan-log' })),
+});
+const liveList = async () => buildLiveSessions(await fleetMap(), NOW, { subagents: [] });
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('buildSessionThread', () => {
+  it('reads a worker as a conversation in order, with a summary from its records', async () => {
+    const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([
+      message('m2', 'RQ-A', 'leader', { ts: ago(3) }), message('m1', 'leader', 'rq-a', { ts: ago(8), kind: 'ask' }),
+      message('m3', 'codex-1', 'leader', { job: 'RQ-A', ts: ago(1) }), message('m4', 'codex-1', 'leader'),
+    ]) }, NOW);
+    expect(thread).toMatchObject({ schema: 'fleet.session-thread.v1', generatedAt: ago(0), id: 'RQ-A',
+      session: { id: 'RQ-A', kind: 'worker', lane: 'claude', model: 'fixture-model', repo: 'phantom', jobId: 'RQ-A', parentId: 'leader', state: 'running',
+        ageSeconds: 1800, prUrl: 'https://github.com/ashlrai/phantom/pull/9', helpers: { below: 0, running: 0, failed: 0 } },
+      sources: { sessions: 'available', activity: 'available', bus: 'available', replies: 'none' }, gaps: [] });
+    expect(thread.summary).toEqual([
+      'Worker on claude, fixture-model, in phantom.', 'Running for 30m; spoke 2m ago.', 'Pull request: https://github.com/ashlrai/phantom/pull/9',
+      '10 commands seen, 1 file changed (+12 −3).', 'Latest step: publish pr=9.',
+    ]);
+    expect(thread.messages.map(m => `${m.key}|${m.side}`)).toEqual([
+      'brief|other', 'step:0|record', 'step:1|record', 'commands|session', 'files|session', 'notes|session', 'bus:m1|other', 'bus:m2|session', 'bus:m3|other',
+    ]);
+    const byKey = Object.fromEntries(thread.messages.map(m => [m.key, m]));
+    expect(byKey['step:0']).toMatchObject({ label: 'launch', at: ago(30), text: 'lane=claude' });
+    expect(byKey['step:1']!.at).toBeNull();
+    expect(byKey.commands).toMatchObject({ label: 'Ran 10 commands, last 8 shown', format: 'mono' });
+    expect(byKey.commands!.text.split('\n')).toHaveLength(8);
+    expect(byKey.commands!.text).not.toContain('step-1\n');
+    expect(byKey.files).toMatchObject({ label: 'Changed 1 file, +12 −3', text: 'src/a.ts' });
+    expect(byKey.notes!.label).toBe('Notes (truncated)');
+    expect(byKey['bus:m1']!.label).toBe('leader to rq-a, ask');
+  });
+
+  it('marks a quiet session and says "unknown" for what no record holds', async () => {
+    const thread = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, activity: null, bus: null }, NOW);
+    expect(thread.session!.state).toBe('quiet');
+    expect(thread.summary).toEqual(['Worker on claude, fixture-model, in phantom.', 'Quiet: no output for 25m.']);
+    expect(thread.messages).toEqual([]);
+    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', replies: 'none' });
+    expect(thread.gaps).toEqual(['Activity unknown: this session\'s recorded activity could not be read.', 'Bus messages unknown: the agent bus could not be read.']);
+    const partial = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([], 'missing'),
+      activity: activity({ truncated: true, sources: { events: 'missing', commands: 'missing', files: 'missing', reports: 'missing' }, counts: { events: 0, commands: 0, files: 0, reports: 0 }, entries: [] }) }, NOW);
+    expect(partial.summary.at(-1)).toBe('Commands unknown, changed files unknown.');
+    expect(partial.sources).toMatchObject({ activity: 'none', bus: 'none' });
+    expect(partial.gaps).toEqual(['Older activity is outside the recorded window.']);
+  });
+
+  it('gives the leader its replies oldest first and the bus messages to it', async () => {
+    const thread = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([message('m1', 'RQ-A', 'Leader')]), replies: replies(['newest', 'older']) }, NOW);
+    expect(thread.session).toMatchObject({ kind: 'leader', parentId: null, jobId: null, helpers: { below: 2, running: 2, failed: 0 } });
+    expect(thread.summary).toContain('2 of 2 helpers running.');
+    expect(thread.messages.map(m => [m.key, m.side, m.text, m.at])).toEqual([
+      ['bus:m1', 'other', 'RQ-A says m1', ago(5)], ['reply:0', 'session', 'older', '2026-11-17 06:51'], ['reply:1', 'session', 'newest', null],
+    ]);
+    expect(thread.sources.replies).toBe('available');
+    const unread = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]), replies: replies([], 'unknown') }, NOW);
+    expect(unread.sources.replies).toBe('unavailable');
+    expect(unread.gaps).toEqual(['Leader replies unknown: the plan log could not be read.']);
+  });
+
+  it('shows only the newest bus messages and says how many are left out', async () => {
+    const many = Array.from({ length: THREAD_BUS_SHOWN + 3 }, (_, index) => message(`m${index}`, 'RQ-A', 'leader', { ts: ago(200 - index) }));
+    const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus(many) }, NOW);
+    expect(thread.messages.filter(m => m.kind === 'bus')).toHaveLength(THREAD_BUS_SHOWN);
+    expect(thread.messages[0]!.key).toBe('bus:m3');
+    expect(thread.gaps).toEqual(['3 earlier bus messages not shown.']);
+    expect(sessionBusMessages({ id: 'RQ-A', jobId: 'RQ-A' }, many)).toHaveLength(THREAD_BUS_SHOWN + 3);
+  });
+
+  it('never invents a session: an unknown id and an unreadable list are told apart', async () => {
+    const missing = buildSessionThread(await liveList(), 'RQ-NOPE', { sessionsRead: true, bus: null }, NOW);
+    expect(missing).toMatchObject({ session: null, summary: [], messages: [], sources: { sessions: 'available' }, gaps: ['No session RQ-NOPE in the list. Finished sessions stay for an hour.'] });
+    const unreadable = buildSessionThread(buildLiveSessions(null, NOW), 'RQ-A', { sessionsRead: false, bus: null }, NOW);
+    expect(unreadable).toMatchObject({ session: null, sources: { sessions: 'unavailable' }, gaps: ['Sessions unknown: the session list could not be read.'] });
+    expect(buildSessionThread(await liveList(), 'unknown parent', { sessionsRead: true, bus: null }, NOW).session).toBeNull();
+  });
+
+  it('renders the thread for people', async () => {
+    const text = renderSessionThreadText(buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([message('m1', 'leader', 'RQ-A')]) }, NOW));
+    const lines = text.split('\n');
+    expect(lines[0]).toBe('RQ-A | worker | running');
+    expect(lines[1]).toBe('  Worker on claude, fixture-model, in phantom.');
+    expect(text).toContain('> Brief\n    Fix the reply box.');
+    expect(text).toContain(`- launch [${ago(30)}]\n    lane=claude`);
+    expect(text).toContain(`> leader to RQ-A, status [${ago(5)}]\n    leader says m1`);
+    expect(lines.at(-1)).toBe(`Full log: phm sessions tail RQ-A. Every session: phm sessions. Updated ${ago(0)}.`);
+    const empty = renderSessionThreadText(buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]), replies: replies([]) }, NOW));
+    expect(empty).toContain('Nothing is recorded for this session yet.');
+    expect(empty).not.toContain('Full log');
+  });
+});
+
+describe('readSessionThread', () => {
+  const reads = () => ({
+    readMap: vi.fn(fleetMap), readSubagents: vi.fn(async () => []), readActivity: vi.fn(async () => activity()),
+    readBus: vi.fn(() => bus([message('m1', 'leader', 'RQ-A')])), readReplies: vi.fn(async () => replies(['hello'])),
+  });
+
+  it('reads only what the session needs', async () => {
+    const worker = reads();
+    const thread = await readSessionThread('RQ-A', { now: NOW, ...worker });
+    expect(thread.messages.map(m => m.kind)).toEqual(['brief', 'step', 'step', 'commands', 'files', 'notes', 'bus']);
+    expect(worker.readActivity).toHaveBeenCalledWith('RQ-A');
+    expect(worker.readReplies).not.toHaveBeenCalled();
+    const leader = reads();
+    expect((await readSessionThread('leader', { now: NOW, ...leader })).messages.map(m => `${m.kind}|${m.side}`)).toEqual(['bus|session', 'reply|session']);
+    expect(leader.readActivity).not.toHaveBeenCalled();
+    const unknown = reads();
+    expect((await readSessionThread('RQ-NOPE', { now: NOW, ...unknown })).session).toBeNull();
+    expect(unknown.readBus).not.toHaveBeenCalled();
+  });
+
+  it('keeps the thread when one read fails, and reads an unreadable list as unknown', async () => {
+    const thread = await readSessionThread('RQ-A', { now: NOW, ...reads(), readActivity: async () => { throw new Error('x'); }, readBus: () => { throw new Error('y'); } });
+    expect(thread.session!.id).toBe('RQ-A');
+    expect(thread.sources).toMatchObject({ activity: 'unavailable', bus: 'unavailable' });
+    const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readMap: async () => { throw new Error('runs dir unreadable'); } });
+    expect(down).toMatchObject({ session: null, sources: { sessions: 'unavailable' } });
+  });
+
+  it('scrubs secret-shaped text from the thread', async () => {
+    const secret = `ghp_${'a'.repeat(36)}`;
+    const thread = await readSessionThread('RQ-A', { now: NOW, ...reads(), readBus: () => bus([message('m1', 'leader', 'RQ-A', { summary: `token ${secret}` })]) });
+    expect(JSON.stringify(thread)).not.toContain(secret);
+  });
+});
+
+describe('GET /api/verse/fleet/control/session-thread', () => {
+  const call = async (url: string, opts: { session?: boolean; method?: string; read?: (id: string) => Promise<unknown> } = {}) => {
+    const read = vi.fn(opts.read ?? (async (id: string) => buildSessionThread(await liveList(), id, { sessionsRead: true, bus: bus([]) }, NOW)));
+    let status = 0, body = '';
+    const res = { writeHead: (code: number) => { status = code; return res; }, setHeader: () => res, end: (chunk?: string) => { body = chunk ?? ''; } } as unknown as ServerResponse;
+    const ctx = { readSession: opts.session === false ? undefined : { expiresAt: Date.now() + 60_000 } } as never;
+    const handled = await createFleetSessionThreadApi(read as never)(ctx, { url } as IncomingMessage, res, url.split('?')[0]!, opts.method ?? 'GET');
+    return { handled, status, body: body ? JSON.parse(body) : null, read };
+  };
+  const PATH = '/api/verse/fleet/control/session-thread';
+
+  it('serves one thread with a read session and validates the query', async () => {
+    const ok = await call(`${PATH}?id=RQ-A`);
+    expect(ok).toMatchObject({ handled: true, status: 200, body: { schema: 'fleet.session-thread.v1', id: 'RQ-A' } });
+    expect(ok.read).toHaveBeenCalledWith('RQ-A');
+    expect((await call(`${PATH}?id=leader`)).body.session.kind).toBe('leader');
+    expect((await call(`${PATH}?id=RQ-A`, { session: false })).status).toBe(401);
+    expect((await call(`${PATH}?id=RQ-A`, { method: 'POST' })).status).toBe(405);
+    for (const bad of ['', '?id=a&id=b', '?id=RQ-A&lane=x', '?id=..%2Fetc', '?id=', `?id=${'a'.repeat(129)}`]) {
+      const refused = await call(`${PATH}${bad}`);
+      expect([bad, refused.status]).toEqual([bad, 400]);
+      expect(refused.read).not.toHaveBeenCalled();
+    }
+    expect((await call('/api/verse/fleet/control/live-sessions')).handled).toBe(false);
+  });
+
+  it('answers 404 for an unknown session and 503 when sessions cannot be read', async () => {
+    expect(await call(`${PATH}?id=RQ-NOPE`)).toMatchObject({ status: 404, body: { error: 'No session RQ-NOPE in the list. Finished sessions stay for an hour.' } });
+    expect((await call(`${PATH}?id=RQ-A`, { read: async id => buildSessionThread(buildLiveSessions(null, NOW), id, { sessionsRead: false, bus: null }, NOW) })).status).toBe(503);
+    expect((await call(`${PATH}?id=RQ-A`, { read: async () => { throw new Error('x'); } })).status).toBe(503);
+  });
+});
+
+describe('phm sessions thread', () => {
+  const run = async (args: string[], read = async (id: string) => buildSessionThread(await liveList(), id, { sessionsRead: true, activity: activity(), bus: bus([]) }, NOW)) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const code = await cmdSessionThread(args, read);
+    return { code, out: log.mock.calls.map(call => String(call[0])).join('\n'), err: stderr.mock.calls.map(call => String(call[0])).join('') };
+  };
+
+  it('prints the thread as text or JSON', async () => {
+    const text = await run(['RQ-A']);
+    expect(text.code).toBe(0);
+    expect(text.out.split('\n')[0]).toBe('RQ-A | worker | running');
+    vi.restoreAllMocks();
+    const json = await run(['RQ-A', '--json']);
+    expect(JSON.parse(json.out)).toMatchObject({ schema: 'fleet.session-thread.v1', id: 'RQ-A', session: { id: 'RQ-A' } });
+  });
+
+  it('exits 2 for an unknown id or bad usage, and 1 when sessions cannot be read', async () => {
+    const unknown = await run(['RQ-NOPE']);
+    expect(unknown).toMatchObject({ code: 2, out: '' });
+    expect(unknown.err).toBe('No session RQ-NOPE in the list. Finished sessions stay for an hour.\nSee every session: phm sessions\n');
+    vi.restoreAllMocks();
+    expect(JSON.parse((await run(['RQ-NOPE', '--json'])).out).session).toBeNull();
+    for (const args of [[], ['a', 'b'], ['../etc'], ['RQ-A', '--follow']]) {
+      vi.restoreAllMocks();
+      const read = vi.fn();
+      expect([args, (await run(args, read)).code]).toEqual([args, 2]);
+      expect(read).not.toHaveBeenCalled();
+    }
+    vi.restoreAllMocks();
+    const down = await run(['RQ-A'], async id => buildSessionThread(buildLiveSessions(null, NOW), id, { sessionsRead: false, bus: null }, NOW));
+    expect(down).toMatchObject({ code: 1, err: 'Sessions unknown: the session list could not be read.\n' });
+  });
+
+  it('is listed in the sessions help', async () => {
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    expect(await cmdSessions(['thread', '--help'])).toBe(0);
+    expect(String(out.mock.calls[0]![0])).toContain('phm sessions thread <id> [--json]');
+  });
+});

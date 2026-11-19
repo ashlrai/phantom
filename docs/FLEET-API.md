@@ -575,6 +575,43 @@ the same order. The server reads the session map at most once every 5 seconds.
 Selecting a session in the pane opens the worker log, which has the existing
 pause and stop controls.
 
+### Session thread
+
+`phm sessions thread <id> [--json]` reads one session as a conversation, and
+`GET /api/verse/fleet/control/session-thread?id=<id>` serves the same
+`fleet.session-thread.v1` document with a current read session. The id is
+`leader`, a job id or a subagent id from the session tree. It adds no source:
+it joins the session's row in `fleet.live-sessions.v1`, the job's
+`fleet.job.activity.v1`, the agent bus messages (`phm agents messages`) and,
+for the leader, `leader.replies.v1`.
+
+- `session`: `id`, `kind`, `agent`, `lane`, `model`, `repo`, `jobId`,
+  `parentId` (null for the leader), `state` (`quiet` for a running session
+  with no output for 10 minutes, otherwise the tree's state), `startedAt`,
+  `ageSeconds`, `lastMessageAt`, `lastMessageAgeSeconds`, `prUrl`, `computer`
+  and `helpers` (`below`, `running`, `failed`).
+- `summary[]`: short sentences assembled from those records: what it is and
+  where, its state and when it last spoke, its helpers, its pull request,
+  commands seen and files changed, and its latest recorded step. No model
+  writes it, and a fact no record holds reads "unknown".
+- `messages[]` in reading order: the brief it was given, each recorded step,
+  the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
+  messages that name its job or were sent by or to it, the leader's last 5
+  replies (leader only), then its last message. Each has `key`, `kind`
+  (`brief`, `step`, `commands`, `files`, `notes`, `bus`, `reply`, `latest`),
+  `side` (`session` when it speaks, `other` when someone speaks to it,
+  `record` for a recorded step), `label`, `at` (null when the record has no
+  time), `text` and `format` (`plain`, `mono` or `markdown`).
+- `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
+  `replies` (`available`, `none` when the read answered with nothing for this
+  session, or `unavailable`). `gaps[]` says in plain words what is missing.
+
+Each read fails on its own, so a thread with an unreadable bus still shows the
+rest. The route answers 404 for an id the list does not hold (finished
+sessions leave after an hour), 503 when the session list cannot be read, and
+400 for anything but one `id`. The CLI exits 2 for an unknown id and 1 when
+the list cannot be read. Text is scrubbed the same way as the session list.
+
 ### Desktop workbench actions (WB-4)
 
 `POST /api/wb/v1/action` requires dispatch enabled, the existing mutation
