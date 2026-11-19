@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { CLI_REFERENCE_PATH, syncCliReference } from '../core/commands/cli-reference.js';
+import { CLI_REFERENCE_PATH, NO_HELP_TEXT, syncCliReference } from '../core/commands/cli-reference.js';
 import type { CommandRow } from '../core/commands/catalog.js';
 import { buildFleetVerbCatalog } from '../core/fleet/fleet-verb-catalog.js';
 import { FLEET_SUBCOMMAND_LOADERS } from './fleet-subcommand-registry.js';
@@ -13,7 +13,7 @@ export function cliReferenceRows(help: readonly CommandRow[]): CommandRow[] {
     if (help.some(row => row.cmd === name || row.cmd.startsWith(`${name} `))) continue;
     const usage = entry.usage?.replace(/^(?:phm|ashlr|phantom)\s+/, '').split(/\\[rn]/)[0];
     rows.push({ cmd: usage === name || usage?.startsWith(`${name} `) ? usage : name,
-      desc: entry.summary ?? `Summary not registered; run phm ${name} --help for details.` });
+      desc: entry.summary ?? NO_HELP_TEXT(name) });
   }
   return rows;
 }
