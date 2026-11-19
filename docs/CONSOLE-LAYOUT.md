@@ -100,6 +100,23 @@ zero. The same rows for agents:
 phm pools
 ```
 
+The Lanes pane is one board of every lane's slots. The headline counts slots
+running against slots asked for and how many lanes are held; the line under it
+gives merges in the last hour and the dispatcher's last tick, each reading
+unknown when the snapshot does not hold it. A strip lays every lane's slots end
+to end, a segment as wide as the lane's target and filled by what is running.
+Each lane is a card: its provider mark and name, a Down or Held badge or the
+state in words (Full, how many open, how many over target, Target 0), one
+square per slot (filled when a worker holds it; a lane with more than 32 slots
+draws one bar instead), the running/target and queued counts, and labelled
+readings for tokens in the last hour, merges in 24 hours and merge rate, where
+a missing reading says unknown, never zero. The target stepper, Pause and the
+hold release sit under the readings. The same data for agents:
+
+```sh
+phm fleet runs --json
+```
+
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending
 empty with its reason when known), lanes (a lane hitting its plan limit, being
