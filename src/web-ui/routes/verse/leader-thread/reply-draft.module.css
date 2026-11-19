@@ -1,0 +1,78 @@
+/* The kept draft: one quiet line under the Leader reply box, shown only when there is something to say. */
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  font-variant-numeric: tabular-nums;
+  animation: draft-line-in var(--duration-base) var(--ease-standard);
+}
+
+/* The line arrives with the text it describes, so the restored draft reads as put back, not as typed by someone else. */
+@keyframes draft-line-in {
+  from { opacity: 0; transform: translateY(var(--space-1)); }
+  to { opacity: 1; transform: none; }
+}
+
+.line[data-kind='restored'] { color: var(--text-secondary); }
+.line[data-kind='near'],
+.line[data-kind='unsaved'] { color: var(--status-warning-fg); }
+.line[data-kind='full'] { color: var(--status-danger-fg); }
+
+.dot {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent-500);
+}
+
+.action {
+  flex: none;
+  min-height: var(--control-h-xs);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.action:hover { color: var(--text-primary); }
+.action:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+/* The last stretch before the limit, filling as the room runs out. */
+.meter {
+  flex: none;
+  inline-size: calc(var(--space-4) * 3);
+  block-size: 2px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--border-subtle);
+}
+
+.fill {
+  display: block;
+  block-size: 100%;
+  background: currentColor;
+  transition: inline-size var(--duration-fast) var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line { animation: none; }
+  .action, .fill { transition: none; }
+}
