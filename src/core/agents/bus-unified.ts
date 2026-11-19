@@ -390,7 +390,9 @@ function summaryNumber(source: Record<string, unknown>, key: string): string | n
  * incident notices that share the store (`interjection`, `owner-thread`,
  * `comms-reply`, `leader.*`, `peer.*`, `group.*`, `cos-*`, `order-merged`,
  * `inbox-ack`, `ci.failed-scheduled-run`, `worker-exit`, `selector.picks`,
- * `browser`, `slack-coordination`, `apps-*.v1`, legacy `work` and
+ * `browser`, `slack-coordination`, `apps-*.v1`, `reset-watch.*.v1`,
+ * `fleet-event`, `fleet-self-loop-pass`, `org.membership`,
+ * `work-board-notify`, `desktop.intent`, `apps-control`, legacy `work` and
  * protocol-v1 transport bodies).
  * Claim tokens and `work.result` queueId/receiptId never appear: they are
  * private coordination data, not message content, so the secret-bearing kinds
@@ -607,6 +609,79 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
       if (head === 'browser' && outcome === null && detailText === null) return null;
       return composed(head ?? 'browser', pair(outcome, detailText));
     }
+    case 'apps-watch.observation.v1':
+    case 'apps-watch.summary.v1': {
+      // Watched-app lists are arrays of untrusted rows; only their count is summarized.
+      const watched = Array.isArray(record['apps']) ? record['apps']
+        : Array.isArray(record['observedState']) ? record['observedState']
+        : Array.isArray(record['lastObservedState']) ? record['lastObservedState'] : null;
+      const healthy = record['healthy'];
+      const head = parts(kind,
+        healthy === true ? 'healthy' : healthy === false ? 'unhealthy' : field('outcome'),
+        num('cycle') === null ? null : `cycle ${num('cycle')}`,
+        num('cycles') === null ? null : `${num('cycles')} cycles`,
+        watched === null ? null : `${watched.length} app${watched.length === 1 ? '' : 's'}`);
+      const detail = parts(
+        num('recoveries') === null ? null : `${num('recoveries')} recoveries`,
+        num('consecutiveFailures') === null ? null : `${num('consecutiveFailures')} consecutive failures`,
+        num('totalFailedCycles') === null ? null : `${num('totalFailedCycles')} failed cycles`);
+      if (head === kind && detail === null) return null;
+      return composed(head ?? kind, detail);
+    }
+    case 'fleet-self-loop-pass': {
+      const head = parts(kind, field('runId'),
+        num('pass') === null ? null : `pass ${num('pass')}`,
+        num('exitCode') === null ? null : `exit ${num('exitCode')}`);
+      const detail = parts(field('state'),
+        num('consecutiveFailures') === null ? null : `${num('consecutiveFailures')} consecutive failures`,
+        num('nextDelayMs') === null ? null : `next in ${num('nextDelayMs')}ms`);
+      if (head === kind && detail === null) return null;
+      return composed(head ?? kind, detail);
+    }
+    case 'reset-watch.start.v1':
+      return kind;
+    case 'reset-watch.pass.v1':
+    case 'reset-watch.end.v1': {
+      // pass errors are per-lane hashes and end errors are {lane,message}
+      // records: provider text never enters a summary, only the count.
+      const errors = record['errors'];
+      const errorCount = Array.isArray(errors) ? String(errors.length) : num('errors');
+      const healthy = record['healthy'];
+      const head = parts(kind,
+        healthy === true ? 'healthy' : healthy === false ? 'unhealthy' : field('outcome'),
+        num('checked') === null ? null : `${num('checked')} checked`,
+        num('passes') === null ? null : `${num('passes')} passes`,
+        num('released') === null ? null : `${num('released')} released`);
+      const detail = errorCount === null ? null : `${errorCount} errors`;
+      if (head === kind && detail === null) return null;
+      return composed(head ?? kind, detail);
+    }
+    case 'org.membership': {
+      const revision = num('revision');
+      const needs = record['needs'];
+      const head = parts(kind, field('roleId'), field('status'), field('tier'),
+        revision === null ? null : `rev ${revision}`);
+      const detail = Array.isArray(needs) ? `${needs.length} need${needs.length === 1 ? '' : 's'}` : null;
+      if (head === kind && detail === null) return null;
+      return composed(head ?? kind, detail);
+    }
+    case 'fleet-event': {
+      const head = parts(kind, field('event'));
+      const detail = parts(field('job'), field('lane'), field('text'));
+      if (head === kind && detail === null) return null;
+      return composed(head ?? kind, detail);
+    }
+    case 'work-board-notify':
+      return simple('work-board-notify', ['state'], 'text');
+    case 'desktop.intent': {
+      const chars = num('chars');
+      const head = parts(kind, field('verb'), field('app'));
+      const detail = parts(field('window'), chars === null ? null : `${chars} chars`);
+      if (head === kind && detail === null) return null;
+      return composed(head ?? kind, detail);
+    }
+    case 'apps-control':
+      return simple('apps-control', ['phase', 'action', 'app'], ['outcome', 'detail']);
     default: {
       // `apps-recovery-batch.<stage>.v1` is the one parameterized kind on the bus.
       if (kind.startsWith('apps-recovery-batch.')) {
