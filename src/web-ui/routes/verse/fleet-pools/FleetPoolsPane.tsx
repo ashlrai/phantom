@@ -1,15 +1,19 @@
 /**
- * routes/verse/fleet-pools/FleetPoolsPane.tsx — one bar per resource: used
- * against time elapsed in its window, with a plain-words line. Rows, order and
- * wording come from GET /api/app/pools (pools.v1), the same view `phm pools`
- * prints, so the pane decides nothing an agent cannot read.
+ * routes/verse/fleet-pools/FleetPoolsPane.tsx — the Pools board: every resource as one row with its bar and its
+ * labelled readings (used, left, reset, burn, unused at reset, running jobs, when it was read; a balance for credits), narrowed
+ * by state from the keyboard. Rows, order and wording come from GET /api/app/pools (pools.v1), the same view
+ * `phm pools` prints, so the pane decides nothing an agent cannot read.
  */
-import { POOLS_PATH, POOLS_SCHEMA, type PoolRow, type PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+import { useState } from 'react';
+import { POOLS_PATH, POOLS_SCHEMA, type PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
+import { Segmented } from '../../../components/primitives/Segmented.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { localTime, PoolItem } from './PoolItem.js';
+import { nextReset, poolCounts, poolGroup, poolsHeadline, span, type PoolFilter } from './pools-board-model.js';
 import styles from './fleet-pools.module.css';
 
 export const fleetPoolsQuery: QueryDef<PoolsViewV1> = {
@@ -18,53 +22,41 @@ export const fleetPoolsQuery: QueryDef<PoolsViewV1> = {
     const data = await apiGet<PoolsViewV1>(POOLS_PATH, signal);
     // A drifted payload is loud, not a blank list.
     if (data?.schema !== POOLS_SCHEMA || !Array.isArray(data.pools)) throw new Error(`Expected ${POOLS_SCHEMA}`);
-    return data;
+    // An older server sends rows without the newer fields: absent is unknown (or none), never a number.
+    return { ...data, pools: data.pools.map(row => ({ ...row, running: row.running ?? null, target: row.target ?? null, source: row.source ?? null, scopes: Array.isArray(row.scopes) ? row.scopes : [] })) };
   },
 };
 
-const localTime = (iso: string | null): string => {
-  const ms = iso === null ? NaN : Date.parse(iso);
-  return Number.isFinite(ms) ? new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'unknown';
-};
-
-function PoolBar({ row }: { row: PoolRow }) {
-  if (row.usedPct === null) return <div className={styles.track} data-unknown role="img" aria-label={`${row.id} usage unknown`} />;
-  const label = `${row.id}: ${row.usedPct}% used${row.elapsedPct === null ? '' : `, ${row.elapsedPct}% of the window elapsed`}`;
-  return <div className={styles.track} role="img" aria-label={label}>
-    <span className={styles.fill} style={{ width: `${row.usedPct}%` }} />
-    {row.elapsedPct === null ? null : <span className={styles.marker} style={{ left: `${row.elapsedPct}%` }} />}
-  </div>;
-}
-
-function PoolItem({ row }: { row: PoolRow }) {
-  return <li className={styles.row} data-risk={row.wasteRisk} aria-label={`${row.id} pool`}>
-    <div className={styles.head}><strong>{row.id}</strong><span className={styles.summary}>{row.summary}</span></div>
-    <PoolBar row={row} />
-    <p className={styles.facts}>
-      {row.usedPct === null ? 'Used unknown' : `${row.usedPct}% used`}
-      {row.hoursLeft === null ? null : ` · resets ${localTime(row.resetAt)} (${row.hoursLeft} h left)`}
-      {row.burnPctPerHour === null ? null : ` · ${row.burnPctPerHour}%/h`}
-      {` · read ${localTime(row.asOf)}`}
-    </p>
-  </li>;
-}
+const FILTERS: readonly { value: PoolFilter; word: string; none: string }[] = [
+  { value: 'all', word: 'All', none: '' },
+  { value: 'behind', word: 'Behind', none: 'No pool is behind.' },
+  { value: 'pace', word: 'On pace', none: 'No pool is known to be on pace.' },
+  { value: 'unknown', word: 'Unknown', none: 'Every pool has a current reading.' },
+];
 
 export function FleetPoolsPane({ visible }: PaneProps) {
+  const [filter, setFilter] = useState<PoolFilter>('all');
   const read = useQuery(fleetPoolsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(fleetPoolsQuery);
   usePollWhileVisible(refetch, 30_000, { enabled: visible });
   const view = read.data;
   if (!view) return <p className={styles.message} role="status">{read.status === 'error' ? 'Pools are unavailable.' : 'Reading pools…'}</p>;
-  const unknown = view.pools.filter(row => row.wasteRisk === 'unknown').length;
-  const behind = view.pools.filter(row => row.wasteRisk === 'high' || row.wasteRisk === 'medium').length;
-  const headline = view.pools.length === 0 ? 'No resources reported.'
-    : unknown === view.pools.length ? 'No current reading for any resource. Nothing here is known to be on pace.'
-      : `${behind === 0 ? 'Nothing is behind' : `${behind} behind`}${unknown ? `, ${unknown} unknown` : ''}.`;
+  const counts = poolCounts(view.pools);
+  const shown = filter === 'all' ? view.pools : view.pools.filter(row => poolGroup(row) === filter);
+  const next = nextReset(view);
+  const stale = read.status === 'error';
   return <section className={styles.root} aria-label="Pools">
-    <p className={styles.headline}>{headline}</p>
-    {read.status === 'error' ? <p className={styles.message} role="alert">Could not refresh. Showing the reading from {localTime(view.generatedAt)}.</p> : null}
-    <ul className={styles.list}>{view.pools.map(row => <PoolItem key={row.id} row={row} />)}</ul>
-    <p className={styles.message}>Bar: used so far. Marker: time elapsed in the window. A bar short of the marker is behind. Same data: <code>phm pools</code>.</p>
+    <p className={styles.headline}>{poolsHeadline(view.pools)}</p>
+    {/* A failed refresh keeps the last reading on screen; it must not read as current. */}
+    {stale ? <p className={styles.meta} data-stale role="alert">Could not refresh. Showing the reading from {localTime(view.generatedAt)}.</p> : null}
+    {view.pools.length > 0 ? <>
+      <p className={styles.meta}>{next ? `Next reset: ${next.id} in ${span(next.hours)}.` : 'Next reset unknown.'}{stale ? '' : ` Read ${localTime(view.generatedAt)}.`}</p>
+      <Segmented size="sm" aria-label="Show pools" value={filter} onChange={setFilter}
+        options={FILTERS.map(({ value, word }) => ({ value, label: `${word} ${counts[value]}` }))} />
+      {shown.length > 0 ? <ul className={styles.list} aria-label="Pools list">{shown.map(row => <PoolItem key={row.id} row={row} view={view} />)}</ul>
+        : <p className={styles.message} role="status">{FILTERS.find(item => item.value === filter)!.none}</p>}
+      <p className={styles.message}>Bar: used so far. Lighter: where this burn ends by reset. Marker: time elapsed in the window. A bar short of the marker is behind. Same data: <code>phm pools</code>.</p>
+    </> : null}
     {view.gaps.map(gap => <p key={gap} className={styles.message}>Not covered: {gap}</p>)}
   </section>;
 }
