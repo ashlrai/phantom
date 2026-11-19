@@ -4,7 +4,7 @@
  * read's `starved` object, the plain line, `phm fleet starved --json`, and the
  * 30 minute / 6 hour Leader-chat notice. Fixtures use a temp dir only.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,6 +77,24 @@ describe('readStarved', () => {
     expect(readStarved([input({ ready: 1 }), drained], {}, NOW).waiting_elsewhere).toBe(0);
   });
 
+  it('does not call a lane starved while lane-open rows wait as open supply', () => {
+    // The market may place unhinted READY rows on any lane, so a positive
+    // open-row count means no lane is out of work — matching fleet unfed,
+    // which counts the same rows as waitingElsewhere for every lane.
+    const read = readStarved([input()], { claude: minutesAgo(42) }, NOW, 2);
+    expect(read.lanes.claude).toMatchObject({ free_slots: 8, ready_rows: 0, starved: false, starved_since: null, line: null });
+    expect(read.waiting_elsewhere).toBe(0);
+    expect(read.open_rows).toBe(2);
+  });
+
+  it('still calls a lane starved when the open-row count is zero or unknown', () => {
+    expect(readStarved([input()], {}, NOW, 0).lanes.claude!.starved).toBe(true);
+    expect(readStarved([input()], {}, NOW, 0).open_rows).toBe(0);
+    const unknown = readStarved([input()], {}, NOW);
+    expect(unknown.lanes.claude!.starved).toBe(true);
+    expect(unknown.open_rows).toBeNull();
+  });
+
   it('ignores a first sighting in the future', () => {
     expect(readStarved([input()], { claude: new Date(NOW + 60_000).toISOString() }, NOW).lanes.claude!.starved_since).toBeNull();
     expect(starvedLine('claude', { free_slots: 2, ready_rows: 0, starved_since: minutesAgo(180) }, NOW)).toContain('for 3 h;');
@@ -116,6 +134,33 @@ describe('lanes read: starved object', () => {
     const snap = await getFleetLaneSnapshot({ queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root });
     expect(Object.values(snap.starved.lanes).every(row => !row.starved && row.free_slots === null)).toBe(true);
   });
+
+  it('does not call a lane starved while lane-open ready.tsv rows wait as open supply', async () => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir, { recursive: true });
+    // Dispatcher dialect: an empty lane cell is the market's open hint.
+    await writeFile(join(queueDir, 'ready.tsv'), [
+      'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
+      'RQ-OPEN-B\tphantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-HINTED\tphantom\tdevin\twork\tprompts/c.md',
+    ].join('\n'));
+    await writeFile(join(queueDir, 'slots.json'), JSON.stringify({
+      claude: { target: 8, floor: 8, ceiling: 12 },
+      devin: { target: 4, floor: 4, ceiling: 4 },
+    }), { mode: 0o600 });
+    const stateDir = await scratch();
+    await writeFile(join(stateDir, STARVED_STATE_FILE), JSON.stringify({ since: { claude: minutesAgo(42) }, noticed: {} }));
+    const snap = await getFleetLaneSnapshot({
+      queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: stateDir,
+    });
+    // claude has 8 free slots and no hinted ready rows, but two lane-open
+    // rows are supply the market may place on it — fed, not starved.
+    expect(snap.starved.lanes.claude).toMatchObject({ free_slots: 8, ready_rows: 0, starved: false, starved_since: null, line: null });
+    expect(snap.starved.lanes.devin).toMatchObject({ ready_rows: 1, starved: false });
+    expect(snap.starved.open_rows).toBe(2);
+    expect(snap.sources.queue).toMatchObject({ state: 'healthy', unhinted: 2 });
+  });
 });
 
 describe('phm fleet starved', () => {
@@ -128,6 +173,7 @@ describe('phm fleet starved', () => {
     const body = JSON.parse(String(log.mock.calls[0]![0]));
     expect(body.schema).toBe(FLEET_STARVED_SCHEMA);
     expect(body.waiting_elsewhere).toBe(3);
+    expect(body.open_rows).toBeNull();
     expect(body.starved_lanes).toEqual([{
       lane: 'claude', free_slots: 8, ready_rows: 0, starved: true, starved_since: minutesAgo(42),
       line: 'claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude',
@@ -137,6 +183,15 @@ describe('phm fleet starved', () => {
       'claude: 8 free slots, 0 ready rows for 42 min; next step: add work for claude',
       '3 READY rows are waiting on a held or drained pool and could run on a starved lane instead.',
     ]);
+  });
+
+  it('reports open_rows and stays quiet while lane-open supply waits', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const open = readStarved([input()], { claude: minutesAgo(42) }, NOW, 3);
+    expect(await cmdFleetStarved(['--json'], async () => status, async () => open)).toBe(0);
+    const body = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(body.starved_lanes).toEqual([]);
+    expect(body.open_rows).toBe(3);
   });
 
   it('stays quiet and exits 0 for a held or full fleet, and survives an unreadable lanes read', async () => {

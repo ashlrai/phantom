@@ -68,6 +68,7 @@ describe('OpsLaneConsole', () => {
     stub(() => Promise.resolve(Response.json(snapshot({
       starved: {
         waiting_elsewhere: 0,
+        open_rows: null,
         lanes: {
           'codex-personal': { free_slots: 8, ready_rows: 0, starved: true, starved_since: null, line },
           'local-omlx': { free_slots: 0, ready_rows: 0, starved: false, starved_since: null, line: null },

@@ -748,11 +748,15 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
 
   // ── 1. ready.tsv — queue depth (+ live/merge fallback evidence) ──────────
   let queueRows: FleetLaneQueueRow[] = [];
+  // Lane-open READY rows: open market supply any lane may claim. Null until
+  // ready.tsv parses — an unread queue cannot say whether open work waits.
+  let openQueueRows: number | null = null;
   try {
     const text = await readBounded(join(queueDir, 'ready.tsv'), MAX_QUEUE_FILE_BYTES);
     if (text !== null) {
       const parsed = parseReadyTsv(text);
       queueRows = parsed.rows;
+      openQueueRows = parsed.unhinted;
       sources.queue = {
         state: parsed.dropped > 0 ? 'degraded' : 'healthy',
         file: 'ready.tsv', rows: parsed.rows.length, dropped: parsed.dropped,
@@ -932,6 +936,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   });
 
   // Starved = free slots and no ready rows. A held lane is waiting, not starved; a drained one cannot run what it is given.
+  // Lane-open rows are open supply the market may place on any lane, so they keep a free lane from reading as starved.
   let stateText: string | null = null;
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
   const starved = readStarved(views.map(view => ({
@@ -941,7 +946,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     ready: view.queueDepth,
     held: view.hold?.held === true,
     drained: view.credit.remainingPct !== null && view.credit.remainingPct <= 0,
-  })), parseStarvedState(stateText).since, now.getTime());
+  })), parseStarvedState(stateText).since, now.getTime(), openQueueRows);
 
   for (const view of views) {
     const row = starved.lanes[view.lane];
