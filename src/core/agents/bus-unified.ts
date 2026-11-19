@@ -434,11 +434,16 @@ function summaryNumber(source: Record<string, unknown>, key: string): string | n
  * the v2 work/wake bodies plus the channel, leader, peer, group, cos and
  * incident notices that share the store (`interjection`, `owner-thread`,
  * `comms-reply`, `leader.*`, `peer.*`, `group.*`, `cos-*`, `order-merged`,
- * `inbox-ack`, `ci.failed-scheduled-run`, `worker-exit`, `selector.picks`,
- * `browser`, `slack-coordination`, `apps-*.v1`, `reset-watch.*.v1`,
- * `fleet-event`, `fleet-self-loop-pass`, `org.membership`,
- * `work-board-notify`, `desktop.intent`, `apps-control`, legacy `work` and
- * protocol-v1 transport bodies).
+ * `inbox-ack`, `needs_mason.resolved`, `ci.failed-scheduled-run`,
+ * `worker-exit`, `selector.picks`, `browser`, `slack-coordination`,
+ * `waste-high`, `meter-flat`, `lane-released`, `forum.mention`,
+ * `desktopctl`, `apps-*.v1`, `reset-watch.*.v1`, `fleet-event`,
+ * `fleet-self-loop-pass`, `org.membership`, `work-board-notify`,
+ * `desktop.intent`, `apps-control`, `planner-cycle-result.v1`,
+ * `fleet.graph-observe.v1`, `guardian-drain.v1`, `locus-peers`, legacy
+ * `work`, kindless `{inReplyTo, text}` replies and protocol-v1 transport
+ * bodies). Notices that key their discriminator as `type` or `schema`
+ * instead of `kind` lend it to the same switch.
  * Claim tokens and `work.result` queueId/receiptId never appear: they are
  * private coordination data, not message content, so the secret-bearing kinds
  * return at least their kind literal rather than ever falling back to a raw
@@ -478,16 +483,35 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
     if (head === kind && detailText === null) return null;
     return composed(head ?? kind, detailText);
   };
-  const kind = str('kind');
+  let kind = str('kind');
   if (kind === null) {
     // Bus-transport v1 bodies carry protocol.kind with no top-level kind; the
     // payload stays opaque (it can be large), only its printable ref is read.
     const proto = record['protocol'];
-    if (proto === null || typeof proto !== 'object' || Array.isArray(proto)) return null;
-    const p = proto as Record<string, unknown>;
-    const pk = summaryField(p, 'kind');
-    if (pk === null) return null;
-    return composed(parts('protocol', pk, summaryField(p, 'topic')) ?? 'protocol', summaryField(p, 'payload_ref'));
+    if (proto !== null && typeof proto === 'object' && !Array.isArray(proto)) {
+      const p = proto as Record<string, unknown>;
+      const pk = summaryField(p, 'kind');
+      if (pk !== null) {
+        return composed(parts('protocol', pk, summaryField(p, 'topic')) ?? 'protocol', summaryField(p, 'payload_ref'));
+      }
+    }
+    // Kindless notices key their discriminator as `type` or `schema`
+    // (forum.mention, planner-cycle-result.v1, fleet.graph-observe.v1,
+    // guardian-drain.v1); lend it to the same switch.
+    kind = str('type') ?? str('schema') ?? '';
+    if (kind === '') {
+      // The locus peer relay keys its untrusted payload by `source`; `data` is
+      // opaque peer content and never enters a summary.
+      if (str('source') === 'locus-peers') {
+        const head = parts('locus-peers', field('sessionId'));
+        const trust = field('trust');
+        return head === 'locus-peers' && trust === null ? 'locus-peers' : composed(head ?? 'locus-peers', trust);
+      }
+      // Kindless text bodies — `phm comms bus reply` posts {inReplyTo, text} —
+      // render as their message text, the same read `note` gets.
+      const plain = str('text');
+      return plain === null ? null : scrubSecrets(plain);
+    }
   }
   switch (kind) {
     case 'note':
@@ -557,6 +581,8 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
       return simple('order-merged', ['channel'], 'text');
     case 'inbox-ack':
       return simple('inbox-ack', ['channel'], 'text');
+    case 'needs_mason.resolved':
+      return simple('needs_mason.resolved', ['itemId'], ['reply', 'item']);
     case 'leader-reply':
       return simple('leader-reply', ['requestId'], 'text');
     case 'leader.reply':
@@ -619,6 +645,8 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
       }
       return composed('group.message', inner);
     }
+    case 'forum.mention':
+      return simple('forum.mention', ['channelId'], 'excerpt');
     case 'ci.failed-scheduled-run': {
       const runId = num('runId'), attempt = num('attempt'), failed = num('failedJobCount');
       const workflow = field('workflow'), branch = field('branch');
@@ -716,6 +744,11 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
       if (head === kind && detail === null) return null;
       return composed(head ?? kind, detail);
     }
+    case 'waste-high':
+    case 'meter-flat':
+    case 'lane-released':
+      // Fleet lane/incident notices carry their one-line read in `text`.
+      return simple(kind, [], 'text');
     case 'work-board-notify':
       return simple('work-board-notify', ['state'], 'text');
     case 'desktop.intent': {
@@ -724,6 +757,47 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
       const detail = parts(field('window'), chars === null ? null : `${chars} chars`);
       if (head === kind && detail === null) return null;
       return composed(head ?? kind, detail);
+    }
+    case 'desktopctl': {
+      const head = parts('desktopctl', field('phase'), field('action'), field('resource'));
+      const detail = pair(field('outcome'), field('detail'));
+      if (head === 'desktopctl' && detail === null) return null;
+      return composed(head ?? 'desktopctl', detail);
+    }
+    case 'planner-cycle-result.v1': {
+      const head = parts('planner-cycle-result', field('runId'), field('verdict'));
+      const execution = record['execution'];
+      const ex = execution !== null && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution as Record<string, unknown> : null;
+      const evidence = record['evidence'];
+      const ev = evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence)
+        ? evidence as Record<string, unknown> : null;
+      const exitCode = ex === null ? null : summaryNumber(ex, 'exitCode');
+      const state = ev === null ? null : summaryField(ev, 'state');
+      const detail = parts(
+        ex === null ? null : summaryField(ex, 'outcome'),
+        ex === null ? null : summaryField(ex, 'provider'),
+        exitCode === null ? null : `exit ${exitCode}`,
+        state === null ? null : `evidence ${state}`);
+      if (head === 'planner-cycle-result' && detail === null) return null;
+      return composed(head ?? 'planner-cycle-result', detail);
+    }
+    case 'fleet.graph-observe.v1': {
+      const head = parts('fleet.graph-observe', field('runId'), field('status'));
+      const nodes = record['nodes'];
+      const detail = Array.isArray(nodes) ? `${nodes.length} node${nodes.length === 1 ? '' : 's'}` : null;
+      if (head === 'fleet.graph-observe' && detail === null) return null;
+      return composed(head ?? 'fleet.graph-observe', detail);
+    }
+    case 'guardian-drain.v1': {
+      const head = parts('guardian-drain', field('record'), num('sequence'));
+      const attempts = num('attempts'), verified = num('verified'), refused = num('refused');
+      const detail = parts(field('outcome'), field('termination'),
+        attempts === null ? null : `${attempts} attempts`,
+        verified === null ? null : `${verified} verified`,
+        refused === null ? null : `${refused} refused`);
+      if (head === 'guardian-drain' && detail === null) return null;
+      return composed(head ?? 'guardian-drain', detail);
     }
     case 'apps-control':
       return simple('apps-control', ['phase', 'action', 'app'], ['outcome', 'detail']);
