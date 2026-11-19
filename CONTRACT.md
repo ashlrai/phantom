@@ -1479,13 +1479,20 @@ token, and `mismatched-token`/`expired`/`lost`/`invalid`/`unavailable`/`full`
 are bare statuses), `executeBusClaimBody(body, opId, options?)` (returns
 undefined for non-claim bodies so opaque mail still appends),
 `BUS_CLAIM_HTTP_STATUS`, `busClaimExitCode(result)` and `newBusClaimOpId()`.
-`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`) is the read-side
-companion: it returns the live coordination claims as `CoordinationView` rows
-(fencing tokens never leave the store) with `source` of `missing` (verified
-empty), `available` or `unavailable` (holds unknown, not free), plus `asOf`.
-A malformed `key` answers `invalid`; a set `key` narrows the list through the
-same `coordinationRowBlocks` overlap rule an acquire applies, previewing the
-claims that would block it. `phm agents bus claim list [--key]` prints it.
+`listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`) is the
+read-side companion: it returns the live coordination claims as
+`CoordinationView` rows (fencing tokens never leave the store) with `source`
+of `missing` (verified empty), `available` or `unavailable` (holds unknown,
+not free), plus `asOf`. A malformed `key` or `owner` answers `invalid`; a set
+`key` narrows the list through the same `coordinationRowBlocks` overlap rule
+an acquire applies, previewing the claims that would block it. A set `owner`
+narrows to one holder: a handle, `agent:<handle>`, stable id or alias that
+resolves through the identity registry matches every label of that identity;
+an unresolvable ref or unreadable registry falls back to the exact owner
+label, and the result's `owner` field (`ref`, resolved `identity` or null,
+`registry` state) reports which mode applied so a label match is never
+mistaken for identity proof. `phm agents bus claim list [--key] [--owner]`
+prints it.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
 with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of

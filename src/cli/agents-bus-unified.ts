@@ -30,7 +30,7 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>]
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
     [--provider <p>] [--tier <fast|mid|work|frontier> --scope <text> --acceptance <text>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
@@ -257,18 +257,20 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'claim') {
       noExtra(2);
       if (sub === 'list') {
-        const result = listBusClaims({ root: options.root, key: one('--key') });
+        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner') });
         if (result.status === 'invalid') {
-          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:)');
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner must be a printable label');
           return 2;
         }
         if (result.status !== 'ok') {
           out(json ? JSON.stringify(result) : `${result.status} claims=unknown as-of=${result.asOf}`);
           return 1;
         }
+        const ownerNote = result.owner === undefined ? '' :
+          ` owner=${result.owner.ref} identity=${result.owner.identity ?? 'label'} registry=${result.owner.registry}`;
         out(json ? JSON.stringify(result) : [
           ...result.claims.map(row => `${row.key} owner=${row.owner} origin=${row.origin} until=${new Date(row.leaseUntil).toISOString()} source=${row.sourceId}`),
-          `claims=${result.claims.length} source=${result.source} as-of=${result.asOf}`,
+          `claims=${result.claims.length} source=${result.source}${ownerNote} as-of=${result.asOf}`,
         ].join('\n'));
         return 0;
       }
