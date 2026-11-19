@@ -4,7 +4,11 @@
 // schedule rarely fires, so Auto-tag waits. This decides whether to dispatch
 // ci.yml with release_gate=true. It reads check runs and workflow runs for
 // one exact sha. It does not sign, publish, or create tags.
+// A sha whose package.json version is already tagged AND published owes no
+// release-gate run — Auto-tag's own nothing-to-do proof — so the decide job
+// skips the dispatch instead of spending a macOS smoke per merge.
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, realpathSync } from 'node:fs';
 import process from 'node:process';
@@ -14,6 +18,7 @@ export const ACTIONS_APP_ID = 15368;
 export const SMOKE = 'Desktop release smoke';
 export const SUITES = 'Release suites (build + signing path)';
 const SHA = /^[a-f0-9]{40}$/;
+const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 
 export function releasePrepDecision({ checks, runs }) {
   assert.ok(Array.isArray(checks) && Array.isArray(runs), 'missing release prep inventory');
@@ -43,7 +48,7 @@ export function rateLimitDelay(status, headers, body, attempt, now = Date.now())
 // One shared budget covers all inventory requests in this invocation.
 let waited = 0;
 export function githubJson(path, invoke = execFileSync, sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)) {
-  assert.match(path, /^repos\/ashlrai\/phantom\/(?:commits\/[a-f0-9]{40}\/check-runs\?|actions\/workflows\/ci\.yml\/runs\?|commits\/master$)/);
+  assert.match(path, /^repos\/ashlrai\/phantom\/(?:commits\/[a-f0-9]{40}\/check-runs\?|actions\/workflows\/ci\.yml\/runs\?|commits\/master$|contents\/package\.json\?ref=[a-f0-9]{40}$|git\/ref\/tags\/v[0-9]+\.[0-9]+\.[0-9]+$|releases\/tags\/v[0-9]+\.[0-9]+\.[0-9]+$)/);
   for (let attempt = 1; attempt <= 4; attempt++) {
     let response;
     try {
@@ -74,6 +79,49 @@ export function githubJson(path, invoke = execFileSync, sleep = (ms) => Atomics.
 
 }
 
+// A tolerant read for existence checks: HTTP 404 means absent, any other
+// failure means unknown — both leave the sha a candidate, so release prep
+// keeps dispatching exactly as before whenever evidence is incomplete.
+function readOrNull(read, path) {
+  try {
+    return read(path);
+  } catch (error) {
+    if (error instanceof Error && /HTTP 404/.test(error.message)) return null;
+    return undefined;
+  }
+}
+
+// True only when the version package.json carries at this sha is already
+// released: tag v<version> exists AND releases/tags/v<version> answers with a
+// published release (that endpoint 404s drafts, the same proof auto-tag's
+// nothing-to-do step uses). A tag without a published release — draft pending
+// or release leg still owed — stays a candidate so Auto-tag's heal path keeps
+// its per-sha release-gate evidence.
+export function masterReleaseSettled(repo, sha, read = githubJson) {
+  assert.equal(repo, 'ashlrai/phantom');
+  assert.match(sha, SHA);
+  let pkg;
+  try {
+    pkg = read(`repos/${repo}/contents/package.json?ref=${sha}`);
+  } catch {
+    return false;
+  }
+  let version;
+  try {
+    const content = pkg !== null && typeof pkg === 'object' ? pkg.content : null;
+    if (pkg?.encoding !== 'base64' || typeof content !== 'string') return false;
+    version = JSON.parse(Buffer.from(content, 'base64').toString('utf8'))?.version;
+  } catch {
+    return false;
+  }
+  if (typeof version !== 'string' || !VERSION.test(version)) return false;
+  const tag = `v${version}`;
+  const ref = readOrNull(read, `repos/${repo}/git/ref/tags/${tag}`);
+  if (ref === null || ref === undefined) return false;
+  const release = readOrNull(read, `repos/${repo}/releases/tags/${tag}`);
+  return release !== null && release !== undefined;
+}
+
 export function readReleasePrep(repo, sha, read = githubJson) {
   assert.equal(repo, 'ashlrai/phantom');
   assert.match(sha, SHA);
@@ -91,12 +139,17 @@ export function readReleasePrep(repo, sha, read = githubJson) {
   });
 }
 
+export function releasePrepPlan(repo, sha, read = githubJson) {
+  if (masterReleaseSettled(repo, sha, read)) return { dispatch: false, reason: 'release-settled' };
+  return readReleasePrep(repo, sha, read);
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     assert.equal(process.env.REPO, 'ashlrai/phantom');
     const sha = githubJson(`repos/${process.env.REPO}/commits/master`).sha;
     assert.match(sha ?? '', SHA);
-    const decision = readReleasePrep(process.env.REPO, sha);
+    const decision = releasePrepPlan(process.env.REPO, sha);
     appendFileSync(process.env.GITHUB_OUTPUT, `dispatch=${decision.dispatch}\n`);
     process.stdout.write(`${JSON.stringify(decision)}\n`);
   } catch (error) {
