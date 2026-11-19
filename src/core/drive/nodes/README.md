@@ -51,10 +51,12 @@ effects and infer safety from a lease check before the effect.
 
 `queue-v1.ts` is the explicitly provisional `queue.v1` interface for
 RQ-PHANTOM-DRIVER-1-QUEUE, which is absent from this checkout. Its adapter here
-owns queue status in the same transaction as lease state. When the real queue
-lands, replace the stub only with an adapter that atomically checks the fence
-and commits queue completion at its authority. Calling a remote completion API
-after releasing the local lock would violate this contract.
+owns queue status in the same transaction as lease state. The leader `claim`
+path applies the same eligibility fence as `plan`/`pull`: owner scope, sessions
+that declined the job, required capabilities and local `gh` auth. When the real
+queue lands, replace the stub only with an adapter that atomically checks the
+fence and commits queue completion at its authority. Calling a remote
+completion API after releasing the local lock would violate this contract.
 
 This backend coordinates processes on one host and one private local directory.
 It is not an NFS or multi-host consensus protocol. A remote store must supply

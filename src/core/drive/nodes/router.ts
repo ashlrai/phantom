@@ -46,7 +46,10 @@ function activeClaims(state: NodesState, node: NodeRecord, now: number): number 
     j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
 }
 
-function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
+/** Why a node cannot take a job, or null when eligible: owner scope, a session
+ * that declined it, missing capabilities, or a `gh` requirement without a live
+ * local auth heartbeat. The single eligibility fence for plan, pull and claim. */
+export function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   if (!node.owners?.includes(job.owner!)) return 'owner';
   if (job.declined?.includes(node.session)) return 'declined';
   const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));

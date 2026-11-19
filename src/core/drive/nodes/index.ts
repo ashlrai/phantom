@@ -1,6 +1,6 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
 import { validNodeTask, type EmbeddedNodeTask } from './task.js';
-import { actionableClaim, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
+import { actionableClaim, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, shortfall, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
@@ -317,6 +317,9 @@ export class DriveNodes implements QueueV1 {
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
+      // The leader's push path honors the same eligibility fence as plan and pull:
+      // owner scope, declined sessions, capabilities and local gh auth.
+      if (shortfall(node, job) !== null) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
       job.executionHostId = node.capacity?.hostId;

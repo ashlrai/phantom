@@ -19,8 +19,8 @@ function fixture() {
   const options = { now: () => now, nodeTtlMs: 100, leaderTtlMs: 20, claimTtlMs: 40 };
   const a = new DriveNodes(store, options);
   const b = new DriveNodes(store, options);
-  const alice = a.join('alice')!;
-  const bob = b.join('bob')!;
+  const alice = a.join('alice', { owners: ['o'] })!;
+  const bob = b.join('bob', { owners: ['o'] })!;
   return { a, b, store, alice, bob, advance: (ms: number) => { now += ms; } };
 }
 
@@ -40,7 +40,7 @@ describe('drive node leases', () => {
   it('fails over at the exact expiry boundary and refuses the old leader', () => {
     const f = fixture();
     const old = f.a.heartbeat(f.alice)!.leader!;
-    f.a.enqueue('job');
+    f.a.enqueue('job', { owner: 'o' });
     f.advance(20);
     const next = f.b.heartbeat(f.bob)!.leader!;
     expect(next.nodeId).toBe('bob');
@@ -75,7 +75,7 @@ describe('drive node leases', () => {
   it('renews claims and rejects expired claims at the exact boundary', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
-    f.a.enqueue('job');
+    f.a.enqueue('job', { owner: 'o' });
     const claim = f.a.claim(leader, f.bob, 'job')!;
     expect(f.b.claim(leader, f.alice, 'job')).toBeNull();
     f.advance(10);
@@ -124,36 +124,37 @@ describe('drive node leases', () => {
     expect(f.a.claim(leader, f.bob, 'job')!.token).toBeGreaterThan(claim.token);
   });
 
-  it('a declining release is keyed by session, bounded, and does not duplicate', () => {
+  it('a declining release is keyed by session and bars that session from re-claiming', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
     f.a.enqueue('job', { owner: 'o' });
     const c1 = f.a.claim(leader, f.bob, 'job')!;
     expect(f.a.release(c1, true)).toBe(true);
     expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending', declined: [f.bob.session] });
-    const c2 = f.a.claim(leader, f.bob, 'job')!;
+    expect(f.a.claim(leader, f.bob, 'job')).toBeNull();
+    const c2 = f.a.claim(leader, f.alice, 'job')!;
     expect(f.a.release(c2, true)).toBe(true);
-    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session]);
+    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session, f.alice.session]);
   });
 
   it('does not re-route a released job to the session that declined it', () => {
     const f = fixture();
-    const alice = f.a.join('alice2', { owners: ['o'] })!, bob = f.b.join('bob2', { owners: ['o'] })!;
+    const alice = f.a.join('alice2', { owners: ['o2'] })!, bob = f.b.join('bob2', { owners: ['o2'] })!;
     f.a.heartbeat(alice); f.b.heartbeat(bob);
-    f.a.enqueue('job', { owner: 'o', requires: [], secrets: [] });
+    f.a.enqueue('job', { owner: 'o2', requires: [], secrets: [] });
     const claim = (f.b.pull(bob) ?? f.a.pull(alice))!.claim;
     const [holder, other, otherNode] = claim.nodeId === 'bob2' ? [f.b, f.a, alice] : [f.a, f.b, bob];
     const self = claim.nodeId === 'bob2' ? bob : alice;
     expect(holder.release(claim, true)).toBe(true);
     expect(holder.pull(self)).toBeNull();
-    expect(other.plan('o')[0]!.nodeId).toBe(otherNode.nodeId);
+    expect(other.plan('o2')[0]!.nodeId).toBe(otherNode.nodeId);
     expect(other.pull(otherNode)!.claim.jobId).toBe('job');
   });
 
   it('split brain: only the higher fencing token can complete the same job', () => {
     const f = fixture();
     const oldLeader = f.a.heartbeat(f.alice)!.leader!;
-    f.a.enqueue('job');
+    f.a.enqueue('job', { owner: 'o' });
     const oldClaim = f.a.claim(oldLeader, f.alice, 'job')!;
     f.advance(20); // old worker still believes it leads, and its claim has not expired
     const newLeader = f.b.heartbeat(f.bob)!.leader!;
@@ -173,7 +174,7 @@ describe('drive node leases', () => {
   it('does not trust caller expiry, owner, epoch or a fabricated higher token', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
-    f.a.enqueue('job');
+    f.a.enqueue('job', { owner: 'o' });
     const claim = f.a.claim(leader, f.bob, 'job')!;
     for (const patch of [{ token: claim.token + 100 }, { nodeId: 'alice' },
       { session: f.alice.session }, { leaderToken: leader.token + 1 }, { jobId: 'other' }]) {
@@ -186,7 +187,7 @@ describe('drive node leases', () => {
   it('invalidates a departed worker claim and allows reassignment', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
-    f.a.enqueue('job');
+    f.a.enqueue('job', { owner: 'o' });
     const old = f.a.claim(leader, f.bob, 'job')!;
     f.b.leave(f.bob);
     expect(f.a.complete(old, 'stale')).toBe(false);
@@ -212,7 +213,7 @@ describe('drive node leases', () => {
     expect(() => f.a.join('')).toThrow('ID');
     expect(() => f.a.enqueue('bad\njob')).toThrow('ID');
     const leader = f.a.heartbeat(f.alice)!.leader!;
-    f.a.enqueue('job');
+    f.a.enqueue('job', { owner: 'o' });
     const claim = f.a.claim(leader, f.alice, 'job')!;
     expect(() => f.a.complete(claim, 'x'.repeat(65537))).toThrow('result');
     expect(parseState(f.a.snapshot())).toEqual(f.a.snapshot());
@@ -253,15 +254,51 @@ describe('drive node leases', () => {
 
   it('pull plans past a claim fenced by a rejoined session', () => {
     const f = fixture();
-    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const worker = f.a.join('worker', { owners: ['o2'], slots: 1 })!;
     f.a.heartbeat(worker);
-    f.a.enqueue('job1', { owner: 'o' });
-    f.a.enqueue('job2', { owner: 'o' });
+    f.a.enqueue('job1', { owner: 'o2' });
+    f.a.enqueue('job2', { owner: 'o2' });
     expect(f.a.pull(worker)!.claim.jobId).toBe('job1');
     f.a.leave(worker);
-    const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const again = f.a.join('worker', { owners: ['o2'], slots: 1 })!;
     f.a.heartbeat(again);
     expect(f.a.pull(again)!.claim.jobId).toBe('job2');
+  });
+
+  it('claim refuses jobs outside the worker owner scope, including ownerless jobs', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('foreign', { owner: 'x' });
+    f.a.enqueue('open');
+    expect(f.a.claim(leader, f.bob, 'foreign')).toBeNull();
+    expect(f.a.claim(leader, f.bob, 'open')).toBeNull();
+    expect(f.a.snapshot().jobs.every(j => j.state === 'pending')).toBe(true);
+  });
+
+  it('claim refuses missing capabilities and gh work without a live local auth', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('cap', { owner: 'o', requires: ['build'] });
+    expect(f.a.claim(leader, f.bob, 'cap')).toBeNull();
+    const carol = f.a.join('carol', { owners: ['o'], caps: ['build'] })!;
+    f.a.heartbeat(carol);
+    expect(f.a.claim(leader, carol, 'cap')!.jobId).toBe('cap');
+    f.a.enqueue('gh', { owner: 'o', requires: ['gh'] });
+    const dave = f.a.join('dave', { owners: ['o'], caps: ['gh'] })!;
+    f.a.heartbeat(dave);
+    expect(f.a.claim(leader, dave, 'gh')).toBeNull();
+    f.a.heartbeat(dave, { auth: 'ok' });
+    expect(f.a.claim(leader, dave, 'gh')!.jobId).toBe('gh');
+  });
+
+  it('claim does not re-assign a job its session declined', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('job', { owner: 'o' });
+    const claim = f.a.claim(leader, f.bob, 'job')!;
+    expect(f.a.release(claim, true)).toBe(true);
+    expect(f.a.claim(leader, f.bob, 'job')).toBeNull();
+    expect(f.a.claim(leader, f.alice, 'job')!.jobId).toBe('job');
   });
 });
 
@@ -270,21 +307,21 @@ describe('release: decline versus retry (CLI + router)', () => {
     ['--job', c.jobId, '--node', c.nodeId, '--session', String(c.session), '--token', String(c.token), '--leader-token', String(c.leaderToken)];
   function one() {
     const f = fixture();
-    const node = f.a.join('solo', { owners: ['o'] })!;
+    const node = f.a.join('solo', { owners: ['o2'] })!;
     f.a.heartbeat(node);
-    f.a.enqueue('job', { owner: 'o', requires: [], secrets: [] });
+    f.a.enqueue('job', { owner: 'o2', requires: [], secrets: [] });
     return { f, node, claim: f.a.pull(node)!.claim };
   }
   it('plain release over the CLI is retryable: the same node is planned the job again', () => {
     const { f, node, claim } = one();
     expect(executeNodeFleet('release', lease(claim), f.a)).toMatchObject({ released: true, declined: false });
     expect(f.a.snapshot().jobs[0].declined).toBeUndefined();
-    expect(f.a.plan('o')[0]).toMatchObject({ nodeId: node.nodeId });
+    expect(f.a.plan('o2')[0]).toMatchObject({ nodeId: node.nodeId });
   });
   it('--decline over the CLI is permanent for that session and plans the genuine all-declined fix', () => {
     const { f, claim } = one();
     expect(executeNodeFleet('release', [...lease(claim), '--decline'], f.a)).toMatchObject({ released: true, declined: true });
-    const plan = f.a.plan('o')[0]!;
+    const plan = f.a.plan('o2')[0]!;
     expect(plan.nodeId).toBeNull();
     expect(plan.fix).toContain('released');
     expect(plan.fix).toContain('unrun');

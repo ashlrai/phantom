@@ -80,9 +80,9 @@ it('plans read-only and hands each live bus claim and fenced node job off once',
   const state = emptyState();
   const store: NodesStore = { transaction: fn => fn(state) };
   const router = new DriveNodes(store, { now: o.now });
-  const node = router.join('helper-node')!;
+  const node = router.join('helper-node', { owners: ['o'] })!;
   const leader = router.heartbeat(node)!.leader!;
-  router.enqueue('job'); router.claim(leader, node, 'job');
+  router.enqueue('job', { owner: 'o' }); router.claim(leader, node, 'job');
   expect(acquireCoordination({ root: join(o.home, '.ashlr', 'fleet'), origin: 'resource', key: 'pr:o/r#3', owner: 'helper', sourceId: 'claim-one', leaseMs: 10000, leaseUntil: now + 10000, now }).status).toBe('acquired');
   const ownerNotice = vi.fn(async () => undefined), busPost = vi.fn(async () => undefined);
   const opts: SeatOptions = { ...o, nodesStore: store, readQuota: async () => exhausted, ownerNotice, busPost };
@@ -169,9 +169,9 @@ it('recovers a crash after the durable journal append without duplicate release 
   const state = emptyState();
   const store: NodesStore = { transaction: fn => fn(state) };
   const router = new DriveNodes(store, { now: o.now });
-  const node = router.join('helper-node')!;
+  const node = router.join('helper-node', { owners: ['o'] })!;
   const leader = router.heartbeat(node)!.leader!;
-  router.enqueue('crash-job'); router.claim(leader, node, 'crash-job');
+  router.enqueue('crash-job', { owner: 'o' }); router.claim(leader, node, 'crash-job');
   const ownerNotice = vi.fn(async () => ({ status: 'accepted' }));
   const busPost = vi.fn(async () => ({ status: 'posted' }));
   const release = vi.spyOn(router, 'release');

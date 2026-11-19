@@ -644,13 +644,13 @@ describe('local drive authority', () => {
   it('persists fencing, registry and completed jobs across store instances', () => {
     const root = driveNodeDirectory();
     const a = new DriveNodes(new LocalNodesStore(root), { now: () => 1000 });
-    const session = a.join('a')!;
+    const session = a.join('a', { owners: ['o'] })!;
     const leader = a.heartbeat(session)!.leader!;
-    a.enqueue('job');
+    a.enqueue('job', { owner: 'o' });
     const claim = a.claim(leader, session, 'job')!;
     expect(a.complete(claim, 'done')).toBe(true);
     const b = new DriveNodes(new LocalNodesStore(root), { now: () => 40000 });
-    const rejoined = b.join('a')!;
+    const rejoined = b.join('a', { owners: ['o'] })!;
     const next = b.heartbeat(rejoined)!.leader!;
     expect(next.token).toBeGreaterThan(claim.token);
     expect(b.claim(next, rejoined, 'job')).toBeNull();
@@ -696,9 +696,9 @@ describe('local drive authority', () => {
   it('serializes independent processes racing to claim and complete one job', async () => {
     const root = driveNodeDirectory();
     const nodes = new DriveNodes(new LocalNodesStore(root), { nodeTtlMs: 60_000, leaderTtlMs: 60_000 });
-    const owner = nodes.join('owner')!;
+    const owner = nodes.join('owner', { owners: ['o'] })!;
     const leader = nodes.heartbeat(owner)!.leader!;
-    nodes.enqueue('race');
+    nodes.enqueue('race', { owner: 'o' });
     const modulePath = pathToFileURL(resolve('src/core/drive/nodes/index.ts')).href;
     const run = () => new Promise<string>((resolveOutput, reject) => {
       const code = `import { DriveNodes, LocalNodesStore } from ${JSON.stringify(modulePath)};
