@@ -50,7 +50,10 @@ steps, what it ran and changed, its notes, the agent bus messages about it,
 what you wrote to it and its last message. For a worker, "what you wrote" is
 every message in the Leader inbox that names it as `@<job id>`; for the
 leader it is every message you sent, placed between the leader's replies in
-time order. A message aimed at a worker goes to the leader, and nothing
+time order. The thread also shows where your work went: a worker opens with
+the message of yours it serves, and in the leader's thread each message is
+followed by a "Routed to" line listing its jobs with lane, state and pull
+request. A job counts only when its prompt cites your message's time. A message aimed at a worker goes to the leader, and nothing
 records the worker reading it, so its label says "Mason to the Leader, aimed
 at" the job. Lines starting `>` were said to the session, `<` is the
 session speaking and `-` is a recorded step. The summary is assembled from the

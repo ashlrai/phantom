@@ -600,8 +600,8 @@ messages Mason wrote in the Leader inbox and, for the leader,
   messages that name its job or were sent by or to it, the newest 10 messages
   from Mason, the leader's last 5 replies (leader only), then its last
   message. Each has `key`, `kind`
-  (`brief`, `step`, `commands`, `files`, `notes`, `bus`, `owner`, `reply`,
-  `latest`),
+  (`order`, `routing`, `brief`, `step`, `commands`, `files`, `notes`, `bus`,
+  `owner`, `reply`, `latest`),
   `side` (`session` when it speaks, `other` when someone speaks to it,
   `record` for a recorded step), `label`, `at` (null when the record has no
   time), `text` and `format` (`plain`, `mono` or `markdown`).
@@ -614,8 +614,22 @@ messages Mason wrote in the Leader inbox and, for the leader,
   time to the minute, so `at` is that minute as ISO. In the leader's thread
   these messages and the replies are put in time order when every one of them
   has a time; otherwise Mason's come first, then the replies.
+- Routing (`order`, `routing`) comes from the order trace behind
+  `GET /api/verse/leader/orders`, which ties a job to one of Mason's messages
+  when the job's prompt cites that message's time. A worker's thread opens
+  with the message it serves (`order`, the newest 3), labelled "Mason to the
+  Leader, served by <job>", followed by a `routing` record when other jobs
+  serve the same message. In the leader's thread a `routing` record follows
+  each of Mason's messages that has jobs. A routing record has one line per
+  job, up to 8: the job id, its lane or "lane unknown", the trace's state
+  (`queued`, `launched`, `published`, `merged`) and the pull request link
+  when there is one. A message no job cites gets no record, and a session no
+  message is tied to gets no `order`: nothing is guessed from timing. When
+  the served message is outside the inbox entries read, the `order` names
+  its time and says its text was not read. The server reads the trace at
+  most once every 15 seconds.
 - `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
-  `owner`, `replies` (`available`, `none` when the read answered with nothing for this
+  `owner`, `replies`, `orders` (`available`, `none` when the read answered with nothing for this
   session, or `unavailable`). `gaps[]` says in plain words what is missing.
 
 Each read fails on its own, so a thread with an unreadable bus still shows the

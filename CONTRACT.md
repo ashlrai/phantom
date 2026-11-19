@@ -1320,6 +1320,11 @@ times are null, and `unknown` names the reason for each. `quiet` is true after
 failed, absent means it was not asked for. `owner` is the Leader inbox as
 `readInboxEntries` returns it. Additive: messages gain the kind `owner` (key
 `owner:<id>`) and `sources` gains `owner`; no field was removed.
+Routing (additive): `parts` gains optional `orders` (`OrderTraceV1 | null`,
+from `readOrderTrace`), messages gain the kinds `order` and `routing` (keys
+`order:<id>`, `routing:<id>`), `sources` gains `orders`, the module exports
+`THREAD_ORDERS_SHOWN` and `THREAD_ROUTED_SHOWN`, and `readSessionThread`
+takes an injectable `readOrders`.
 `src/core/fleet/session-thread-read.ts` exports `readSessionThread(id,
 options)` with injectable `readMap`, `readSubagents`, `readActivity`,
 `readBus`, `readOwner` and `readReplies`; each read is guarded on its own and the result is

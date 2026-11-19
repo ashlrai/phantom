@@ -9,10 +9,11 @@ import type { AgentMessage, AgentMessages } from '../src/core/fleet/agent-messag
 import type { FleetCompute } from '../src/core/fleet/compute-view.js';
 import type { InboxEntry } from '../src/core/fleet/mason-inbox.js';
 import type { LeaderRepliesV1 } from '../src/core/fleet/mason-outbox.js';
+import type { OrderTraceJob, OrderTraceV1 } from '../src/core/fleet/order-trace.js';
 import type { FleetJobActivityV1 } from '../src/core/fleet/runs-job-activity.js';
 import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
-import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOwnerMessages, THREAD_BUS_SHOWN, THREAD_OWNER_SHOWN, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
+import { buildSessionThread, renderSessionThreadText, sessionBusMessages, sessionOwnerMessages, THREAD_BUS_SHOWN, THREAD_ORDERS_SHOWN, THREAD_OWNER_SHOWN, THREAD_ROUTED_SHOWN, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import { readSessionThread } from '../src/core/fleet/session-thread-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
 import { createFleetSessionThreadApi } from '../src/core/verse/fleet-session-thread-api.js';
@@ -62,6 +63,12 @@ const replies = (texts: string[], sourceState: LeaderRepliesV1['sourceState'] = 
 /** Inbox entries as the reader returns them: newest first, Eastern wall time to the minute (06:40 ET is 11:40Z on this day). */
 const wrote = (at: string, text: string, over: Partial<InboxEntry> = {}): InboxEntry => ({ at: `2026-11-17 ${at}`, source: 'desktop', priority: null, text, ...over });
 const inbox = (entries: InboxEntry[], sourceState: SessionThreadOwnerRead['sourceState'] = 'healthy'): SessionThreadOwnerRead => ({ sourceState, entries });
+const routedJob = (id: string, state: OrderTraceJob['state'], over: Partial<OrderTraceJob> = {}): OrderTraceJob => ({ id, lane: 'claude', state, url: null, ...over });
+/** The order trace as `readOrderTrace` returns it: one order per inbox entry, newest first, with the jobs whose prompts cite it. */
+const trace = (orders: Array<[entry: InboxEntry, jobs: OrderTraceJob[]]>, sources: Partial<OrderTraceV1['sources']> = {}): OrderTraceV1 => ({
+  v: 1, generatedAt: ago(0), sources: { inbox: 'healthy', prompts: 'healthy', publishes: 'healthy', queue: 'healthy', ...sources },
+  orders: orders.map(([entry, jobs]) => ({ at: entry.at, source: entry.source, key: entry.at.slice(5), jobs })),
+});
 const liveList = async () => buildLiveSessions(await fleetMap(), NOW, { subagents: [] });
 
 afterEach(() => vi.restoreAllMocks());
@@ -99,7 +106,7 @@ describe('buildSessionThread', () => {
     expect(thread.session!.state).toBe('quiet');
     expect(thread.summary).toEqual(['Worker on claude, fixture-model, in phantom.', 'Quiet: no output for 25m.']);
     expect(thread.messages).toEqual([]);
-    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', owner: 'none', replies: 'none' });
+    expect(thread.sources).toEqual({ sessions: 'available', activity: 'unavailable', bus: 'unavailable', owner: 'none', replies: 'none', orders: 'none' });
     expect(thread.gaps).toEqual(['Activity unknown: this session\'s recorded activity could not be read.', 'Bus messages unknown: the agent bus could not be read.']);
     const partial = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([], 'missing'),
       activity: activity({ truncated: true, sources: { events: 'missing', commands: 'missing', files: 'missing', reports: 'missing' }, counts: { events: 0, commands: 0, files: 0, reports: 0 }, entries: [] }) }, NOW);
@@ -186,6 +193,80 @@ describe('buildSessionThread', () => {
     expect(long.gaps).toEqual(['Earlier messages from Mason are not shown here; the Leader chat holds them.']);
   });
 
+  it('opens a worker with the message of Mason\'s it serves and where that message was routed', async () => {
+    const ask = wrote('06:20', 'Fix the reply box and the draft.', { channel: 'desktop', id: 'desk-0' }), other = wrote('06:10', 'Unrelated.', { id: 'desk-x' });
+    const orders = trace([[ask, [routedJob('RQ-A', 'published', { url: 'https://github.com/ashlrai/phantom/pull/9' }), routedJob('RQ-B', 'queued', { lane: null }),
+      routedJob('RQ-C', 'launched', { lane: 'codex', endedEmptyAt: ago(4) })]], [other, [routedJob('RQ-Z', 'merged')]]]);
+    const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, activity: activity(), bus: bus([]), owner: inbox([ask, other]), orders }, NOW);
+    expect(thread.messages.slice(0, 3).map(m => [m.key, m.kind, m.side, m.label, m.at])).toEqual([
+      ['order:desk-0', 'order', 'other', 'Mason to the Leader, served by RQ-A, from desktop', '2026-11-17T11:20:00.000Z'],
+      ['routing:desk-0', 'routing', 'record', 'Routed to 3 jobs', null],
+      ['brief', 'brief', 'other', 'Brief', null],
+    ]);
+    expect(thread.messages[0]!.text).toBe('Fix the reply box and the draft.');
+    expect(thread.messages[1]!.text.split('\n')).toEqual([
+      'RQ-A (this session), on claude: published https://github.com/ashlrai/phantom/pull/9', 'RQ-B, lane unknown: queued',
+      'RQ-C, on codex: launched, then ended with nothing to publish',
+    ]);
+    expect(thread.summary.slice(0, 2)).toEqual(['Worker on claude, fixture-model, in phantom.', 'Serves Mason\'s message of 2026-11-17 06:20 ET, with 2 other jobs.']);
+    expect([thread.sources.orders, thread.sources.owner, thread.gaps]).toEqual(['available', 'none', []]);
+    expect(renderSessionThreadText(thread)).toContain('- Routed to 3 jobs\n    RQ-A (this session), on claude: published');
+
+    // The only job of its order needs no routing line; a session no prompt ties to a message gets nothing invented.
+    const alone = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox([ask]), orders: trace([[ask, [routedJob('RQ-A', 'launched')]]]) }, NOW);
+    expect(alone.messages.map(m => m.key)).toEqual(['order:desk-0']);
+    expect(alone.summary[1]).toBe('Serves Mason\'s message of 2026-11-17 06:20 ET.');
+    const untied = buildSessionThread(await liveList(), 'RQ-QUIET', { sessionsRead: true, bus: bus([]), owner: inbox([ask, other]), orders }, NOW);
+    expect([untied.messages, untied.sources.orders, untied.summary.join(' ').includes('Serves')]).toEqual([[], 'none', false]);
+  });
+
+  it('names a served message whose text it did not read, and keeps to the newest few', async () => {
+    const ask = wrote('06:20', 'Fix the reply box.');
+    const blind = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: null, orders: trace([[ask, [routedJob('RQ-A', 'launched')]]]) }, NOW);
+    expect(blind.messages).toEqual([{ key: 'order:2026-11-17 06:20#desktop', kind: 'order', side: 'record', label: 'Serves Mason\'s message of 2026-11-17 06:20 ET, from desktop',
+      at: '2026-11-17T11:20:00.000Z', text: 'Its text is not among the inbox messages this thread read.', format: 'plain' }]);
+    expect(JSON.stringify(blind)).not.toContain('Fix the reply box.');
+
+    const asks = Array.from({ length: THREAD_ORDERS_SHOWN + 2 }, (_, index) => wrote(`06:1${index}`, `ask ${index}`, { id: `d-${index}` })).reverse();
+    const many = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox(asks),
+      orders: trace(asks.map(entry => [entry, [routedJob('RQ-A', 'launched')]])) }, NOW);
+    expect(many.messages.map(m => m.text)).toEqual(['ask 2', 'ask 3', 'ask 4']);
+    expect(many.gaps).toEqual(['2 earlier messages from Mason that this session serves not shown.']);
+    expect(many.summary[1]).toBe('Serves 5 of Mason\'s messages, the newest of 2026-11-17 06:14 ET.');
+  });
+
+  it('shows the leader where each of Mason\'s messages was routed', async () => {
+    const dated: LeaderRepliesV1 = { schema: 'leader.replies.v1', version: 1, sourceState: 'healthy', entries: [], replies: [{ at: '2026-11-17T11:45:00Z', text: 'On it.', source: 'outbox' }] };
+    const first = wrote('06:40', 'Fix the reply box.', { id: 'desk-1' }), chat = wrote('06:50', 'Thanks.', { id: 'desk-2' }), second = wrote('06:55', 'And the draft.', { id: 'desk-3' });
+    const jobs = Array.from({ length: THREAD_ROUTED_SHOWN + 2 }, (_, index) => routedJob(`RQ-N${index}`, 'queued'));
+    const orders = trace([[second, jobs], [chat, []], [first, [routedJob('RQ-A', 'merged', { url: 'https://github.com/ashlrai/phantom/pull/9' }), routedJob('RQ-N0', 'queued')]]]);
+    const thread = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]), owner: inbox([second, chat, first]), replies: dated, orders }, NOW);
+    expect(thread.messages.map(m => `${m.key}|${m.side}`)).toEqual([
+      'owner:desk-1|other', 'routing:desk-1|record', 'reply:0|session', 'owner:desk-2|other', 'owner:desk-3|other', 'routing:desk-3|record',
+    ]);
+    expect(thread.messages[1]).toMatchObject({ label: 'Routed to 2 jobs', text: 'RQ-A, on claude: merged https://github.com/ashlrai/phantom/pull/9\nRQ-N0, on claude: queued' });
+    expect(thread.messages.at(-1)!.text.split('\n')).toHaveLength(THREAD_ROUTED_SHOWN + 1);
+    expect(thread.messages.at(-1)!.text).toMatch(/\nand 2 more$/);
+    // RQ-N0 serves both messages and is counted once.
+    expect(thread.summary[1]).toBe(`Routed 2 of the 3 messages shown from Mason to ${THREAD_ROUTED_SHOWN + 3} jobs: 1 merged, ${THREAD_ROUTED_SHOWN + 2} queued.`);
+    expect(thread.sources.orders).toBe('available');
+
+    const none = buildSessionThread(await liveList(), 'leader', { sessionsRead: true, bus: bus([]), owner: inbox([chat]), orders: trace([[chat, []]]) }, NOW);
+    expect([none.messages.map(m => m.key), none.sources.orders, none.summary.join(' ').includes('Routed')]).toEqual([['owner:desk-2'], 'none', false]);
+  });
+
+  it('tells unread routing from no routing', async () => {
+    const ask = wrote('06:20', 'Fix the reply box.', { id: 'desk-0' }), served = [[ask, [routedJob('RQ-A', 'launched')]]] as Array<[InboxEntry, OrderTraceJob[]]>;
+    for (const orders of [null, trace(served, { inbox: 'degraded' })]) {
+      const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox([ask]), orders }, NOW);
+      expect([thread.messages, thread.sources.orders, thread.gaps]).toEqual([[], 'unavailable', ['Routing unknown: the order trace could not be read.']]);
+    }
+    const partial = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox([ask]), orders: trace(served, { prompts: 'degraded' }) }, NOW);
+    expect([partial.sources.orders, partial.gaps]).toEqual(['available', ['Routing may be incomplete: not every job prompt could be read.']]);
+    const notAsked = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus([]), owner: inbox([ask]) }, NOW);
+    expect([notAsked.messages, notAsked.sources.orders, notAsked.gaps]).toEqual([[], 'none', []]);
+  });
+
   it('shows only the newest bus messages and says how many are left out', async () => {
     const many = Array.from({ length: THREAD_BUS_SHOWN + 3 }, (_, index) => message(`m${index}`, 'RQ-A', 'leader', { ts: ago(200 - index) }));
     const thread = buildSessionThread(await liveList(), 'RQ-A', { sessionsRead: true, bus: bus(many) }, NOW);
@@ -223,6 +304,7 @@ describe('readSessionThread', () => {
     readMap: vi.fn(fleetMap), readSubagents: vi.fn(async () => []), readActivity: vi.fn(async () => activity()),
     readBus: vi.fn(() => bus([message('m1', 'leader', 'RQ-A')])), readReplies: vi.fn(async () => replies(['hello'])),
     readOwner: vi.fn(async () => inbox([wrote('06:40', '@RQ-A use the shared form', { id: 'desk-1', channel: 'desktop' })])),
+    readOrders: vi.fn(async () => trace([])),
   });
 
   it('reads only what the session needs', async () => {
@@ -238,6 +320,18 @@ describe('readSessionThread', () => {
     const unknown = reads();
     expect((await readSessionThread('RQ-NOPE', { now: NOW, ...unknown })).session).toBeNull();
     expect(unknown.readBus).not.toHaveBeenCalled();
+    expect([worker.readOrders.mock.calls.length, leader.readOrders.mock.calls.length, unknown.readOrders.mock.calls.length]).toEqual([1, 1, 0]);
+  });
+
+  it('joins the order trace, and keeps the thread when it cannot be read', async () => {
+    const ask = wrote('06:20', 'Fix the reply box.', { id: 'desk-0' });
+    const served = { readOwner: async () => inbox([ask]), readOrders: async () => trace([[ask, [routedJob('RQ-A', 'launched'), routedJob('RQ-B', 'queued')]]]) };
+    const thread = await readSessionThread('RQ-A', { now: NOW, ...reads(), ...served });
+    expect(thread.messages.slice(0, 2).map(m => m.key)).toEqual(['order:desk-0', 'routing:desk-0']);
+    expect((await readSessionThread('leader', { now: NOW, ...reads(), ...served })).messages.map(m => m.key)).toEqual(['bus:m1', 'owner:desk-0', 'routing:desk-0', 'reply:0']);
+    const down = await readSessionThread('RQ-A', { now: NOW, ...reads(), readOrders: async () => { throw new Error('trace unreadable'); } });
+    expect(down.messages.map(m => m.kind)).toEqual(['brief', 'step', 'step', 'commands', 'files', 'notes', 'bus', 'owner']);
+    expect([down.sources.orders, down.gaps]).toEqual(['unavailable', ['Routing unknown: the order trace could not be read.']]);
   });
 
   it('keeps the thread when one read fails, and reads an unreadable list as unknown', async () => {
