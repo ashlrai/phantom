@@ -716,6 +716,7 @@
     "src/core/fleet/task-source.ts",
     "src/core/fleet/taste-critic.ts",
     "src/core/fleet/tick-hooks-live.ts",
+    "src/core/fleet/unfed-market.ts",
     "src/core/fleet/usage-history.ts",
     "src/core/fleet/verdict-score.ts",
     "src/core/fleet/verify-check-run.ts",

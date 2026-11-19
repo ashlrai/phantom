@@ -1019,9 +1019,14 @@ re-pinning before dispatcher installation; no live cutover is part of this chang
 Run `phm fleet parked --json` for the read-only `health` summary
 (`fleet.queue-health.v1`). It separates ready and parked counts and groups
 repeated precheck skips, including `RESTOCK`, by job, code and reason over the
-last 24 hours. READY rows whose lane cell is empty or names no lane are the
-market's open hint: they count in `ready`/`total`/`unhinted` and in the health
-ready count, but stay unattributed in `byLane` and `nextUp`. A repeat means at
+last 24 hours. A READY row's lane hint resolves like `work_market.requirements`:
+the requirements JSON's `preferred_lane` wins over the lane cell and explicit
+`null` is lane-open, while an absent key falls back to the lane cell. Rows with
+no honest lane — empty lane cell and no spec preference — are the market's open
+hint: they count in `ready`/`total`/`unhinted` and in the health ready count,
+but stay unattributed in `byLane` and `nextUp`. A row the market rejects
+(`invalid_requirements`: malformed spec, invalid `preferred_lane` or lane cell)
+is dead work — counted in `malformed`, never open supply. A repeat means at
 least two matching records; it does not prove
 a job is still blocked. `phm fleet ready-supply` reports the same lane-open
 rows as `unhinted` (`total`, `phantom`, `filler` split by the `RQ-PHX-` id

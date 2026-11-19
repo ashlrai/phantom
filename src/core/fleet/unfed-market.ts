@@ -31,7 +31,8 @@ const MARKET_BUILTIN = new Set(['codex-cmp', 'codex-personal', 'claude', 'devin'
 const MARKET_LOCAL = new Set(['codex-local', 'omlx']);
 const MARKET_CAP = /^(?:[a-z][a-z0-9-]*|secrets:[A-Za-z0-9_.-]+)$/;
 const MARKET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const MARKET_PREF = /^[a-z][a-z0-9-]*$/;
+/** work_market preferred_lane spelling: lowercase lane ids only. */
+export const MARKET_LANE_ID = /^[a-z][a-z0-9-]*$/;
 const MAX_REQUIREMENTS = 8192;
 
 const rank = (table: Readonly<Record<string, number>>, key: string): number | undefined => table[key];
@@ -145,9 +146,10 @@ function envelopeAttrs(routerQueue: string | null | undefined, job: string): str
  * Strict port of work_market.requirements: returns the row's resolved fields,
  * or null where the Python raises (unknown key, malformed field, tier order,
  * repo disagreement). The dispatcher drops such rows before the market sees
- * them, so they are invalid rather than open.
+ * them, so they are invalid rather than open. Exported for lane-console's
+ * ready.tsv dialect, which must resolve the same effective lane hint.
  */
-function resolveRow(cols: string[], spec: Record<string, unknown>):
+export function resolveReadyMarketRow(cols: string[], spec: Record<string, unknown>):
   Omit<ReadyMarketRow, 'tier'> | null {
   if (Object.keys(spec).some(key => !SPEC_KEYS.has(key))) return null;
   const has = (key: string): boolean => Object.hasOwn(spec, key);
@@ -155,12 +157,12 @@ function resolveRow(cols: string[], spec: Record<string, unknown>):
   if (has('preferred_lane')) {
     const value = spec.preferred_lane;
     if (value === null) hint = null;
-    else if (typeof value === 'string' && MARKET_PREF.test(value)) hint = value;
+    else if (typeof value === 'string' && MARKET_LANE_ID.test(value)) hint = value;
     else return null;
   } else {
     const lane = cols[2] ?? '';
     if (lane === '') hint = null;
-    else if (MARKET_PREF.test(lane)) hint = lane;
+    else if (MARKET_LANE_ID.test(lane)) hint = lane;
     else return null;
   }
   let needs: string[] = [];
@@ -202,6 +204,21 @@ function resolveRow(cols: string[], spec: Record<string, unknown>):
 }
 
 /**
+ * The requirements JSON cell of a dispatcher ready row: the parsed spec
+ * record, 'invalid' where work_market.requirements would reject it before
+ * the market sees the row (not JSON, not an object, over the size bound), or
+ * null when the row carries no requirements column.
+ */
+export function readySpecCell(cell: string | undefined): Record<string, unknown> | 'invalid' | null {
+  if (cell === undefined) return null;
+  if ([...cell].length > MAX_REQUIREMENTS) return 'invalid';
+  try {
+    const value: unknown = JSON.parse(cell);
+    return isRecord(value) ? value : 'invalid';
+  } catch { return 'invalid'; }
+}
+
+/**
  * Parse dispatcher ready.tsv rows (job, repo, lane hint, tier, prompt[, requirements]).
  * Parked rows, comments and short rows are skipped exactly like readyHints; rows
  * the dispatcher's ok-check or work_market.requirements would reject are counted
@@ -223,19 +240,15 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
     if (!known(MARKET_TIERS, tier)) { invalid++; continue; }
     let spec: Record<string, unknown> = {};
     if (cols.length > 5) {
-      const raw = cols[5]!;
-      if ([...raw].length > MAX_REQUIREMENTS) { invalid++; continue; }
-      try {
-        const value: unknown = JSON.parse(raw);
-        if (!isRecord(value)) { invalid++; continue; }
-        spec = value;
-      } catch { invalid++; continue; }
+      const cell = readySpecCell(cols[5]);
+      if (cell === 'invalid' || cell === null) { invalid++; continue; }
+      spec = cell;
     } else {
       // Spec-less rows are validated like work_market.requirements first: the
       // lane column defaults to preferred_lane, so a non-empty cell that is
       // not a lane id rejects the row before its router-queue envelope is read.
       const laneCell = cols[2] ?? '';
-      if (laneCell !== '' && !MARKET_PREF.test(laneCell)) { invalid++; continue; }
+      if (laneCell !== '' && !MARKET_LANE_ID.test(laneCell)) { invalid++; continue; }
       const attrs = envelopeAttrs(routerQueue, job);
       if (attrs !== null) {
         const env = envelopeSpec(attrs);
@@ -243,7 +256,7 @@ export function parseReadyMarketRows(readyTsv: string, routerQueue?: string | nu
         spec = env;
       }
     }
-    const row = resolveRow(cols, spec);
+    const row = resolveReadyMarketRow(cols, spec);
     if (row === null) { invalid++; continue; }
     rows.push({ ...row, tier });
   }

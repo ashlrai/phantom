@@ -19,20 +19,24 @@ describe('fleet queue lane-open rows', () => {
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
       'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
       'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
+      // Restock rows: the requirements spec is authoritative over the lane
+      // cell — explicit null reopens the row, a named lane overrides it.
+      'RQ-SPEC-OPEN\tphantom\tdevin\twork\tprompts/s1.md\t{"preferred_lane":null}',
+      'RQ-SPEC-LANE\tphantom\tdevin\twork\tprompts/s2.md\t{"preferred_lane":"claude"}',
       'RQ-LANED\tphantom\tdevin\twork\t/Users/x/prompts/d.md',
     ].join('\n'));
     try {
       const result = await readFleetQueue({ runsDir: dir, now: () => now });
-      // The two rows naming no lane are open market work: runnable, counted,
+      // The rows naming no lane are open market work: runnable, counted,
       // but never attributed. The requirements' preferred_lane is the honest
-      // lane when it names one.
+      // lane when it names one — ahead of the legacy lane cell.
       expect(result).toMatchObject({
-        total: 4, ready: 4, parked: 0, malformed: 0, unhinted: 2,
+        total: 6, ready: 6, parked: 0, malformed: 0, unhinted: 3,
         sources: { ready: 'healthy' },
       });
       expect(result.byLane.map((row) => row.lane)).toEqual(['claude', 'devin']);
       expect(result.nextUp?.map((row) => row.lane)).toEqual(['claude', 'devin']);
-      expect(result.health?.counts.ready).toBe(4);
+      expect(result.health?.counts.ready).toBe(6);
       expect(JSON.stringify(result)).not.toContain('/Users/');
       expect(JSON.stringify(result)).not.toContain('prompts/');
     } finally { await rm(dir, { recursive: true, force: true }); }
@@ -40,17 +44,18 @@ describe('fleet queue lane-open rows', () => {
 
   it('keeps an open-shaped row malformed when the dialect guards fail, never repo-as-lane', async () => {
     const dir = await queueWith([
-      'RQ-OPEN-D\tphantom\tnot a lane!\twork\tprompts/d.md',
+      'RQ-OPEN-D\tphantom\t\twork\tprompts/d.md',
+      'RQ-BADLANE\tphantom\tnot a lane!\twork\tprompts/b.md',
       'RQ-BADPROMPT\tphantom\tnot a lane!\twork\tNOEXTENSION',
       'RQ-NORMAL\tphantom\tdevin\tmid\tprompts/n.md',
     ].join('\n'));
     try {
       const result = await readFleetQueue({ runsDir: dir, now: () => now });
-      // RQ-OPEN-D is genuinely lane-open; RQ-BADPROMPT fails the dialect's
-      // prompt guard too, so it stays malformed instead of surfacing under a
-      // guessed lane.
+      // RQ-OPEN-D is genuinely lane-open; RQ-BADLANE's lane cell is not a
+      // lane id the market accepts (invalid_requirements), and RQ-BADPROMPT
+      // fails the dialect's prompt guard too — neither is open supply.
       expect(result).toMatchObject({
-        total: 2, ready: 2, parked: 0, malformed: 1, unhinted: 1,
+        total: 2, ready: 2, parked: 0, malformed: 2, unhinted: 1,
         sources: { ready: 'degraded' },
       });
       expect(result.byLane.map((row) => row.lane)).toEqual(['devin']);
