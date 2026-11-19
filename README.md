@@ -191,7 +191,7 @@ To watch it work, run `phm org --text` for the live leader, lanes and running jo
 
 [Documentation map](docs/README.md) · [User guide](docs/VERSE.md) · [Product direction](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) · [Fleet lanes](docs/lanes.md) · [Self-hosting](docs/SELF-HOSTING.md) · [Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) · [Kernel reference](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) · [Changelog](CHANGELOG.md).
 
-Contributors: start with [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md). Coding agents also follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
+Contributors: start with [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#contribute-with-an-agent), the clone-to-merge path in CONTRIBUTING.md. Coding agents also follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
 
 If Phantom helps you coordinate your agents, [star the repository](https://github.com/ashlrai/phantom) so others can find it.
 

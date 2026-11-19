@@ -2,6 +2,79 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+Phantom is built mostly by agents: the fleet opens and verifies its own pull
+requests through the same checks, and the owner reviews protected paths.
+Outside contributors and their coding agents follow the path described next.
+
+---
+
+## Contribute with an agent
+
+The shortest path from a fresh clone to a mergeable pull request. It works the
+same whether you or a coding agent (Claude Code, Codex, Cursor and others) does
+the typing.
+
+1. **Clone upstream, push to your fork.** `scripts/verify-changed.mjs` diffs
+   against `origin/master`, so keep `origin` pointing at this repository and
+   add your fork as a second remote:
+
+   ```sh
+   git clone https://github.com/ashlrai/phantom.git && cd phantom
+   git remote add fork https://github.com/<you>/phantom.git
+   git switch -c <topic-branch>
+   ```
+
+2. **Install.** Node 22.15+. Either `npm ci`, or the shared-store install for
+   local worktrees (see [Shared installs](#shared-installs-for-trusted-local-worktrees)):
+
+   ```sh
+   npm install -g pnpm@10.28.2 && npm run install:worktree
+   ```
+
+3. **Brief the agent.** Point it at [AGENTS.md](AGENTS.md) (the constitution and
+   "Working in this repository"); Claude Code also loads [CLAUDE.md](CLAUDE.md).
+   Keep one coherent change per pull request: logic in `src/core/`, thin
+   handlers in `src/cli/`, `.js` import extensions, hermetic tests, and contract
+   files updated with any exported signature ([conventions](#conventions)).
+
+4. **Verify locally**, once, in the foreground:
+
+   ```sh
+   node scripts/verify-changed.mjs                # lint changed files + one typecheck
+   npm run test:ci -- test/<affected>.test.ts     # affected backend suites, isolated HOME
+   npm run test:web                               # only when src/web-ui changed
+   npm run check:docs                             # links and anchors
+   npx vitest run test/doc-facts.test.ts          # when docs name commands, flags or scripts
+   ```
+
+   `npm run gate` runs build, static checks and related tests together if you
+   prefer one command. Never weaken a test to make a check pass.
+
+5. **Commit and open the pull request.** Use a short conventional subject
+   (`docs(readme): ...`, `fix(cli): ...`), push the branch to `fork`, and open
+   the pull request against `master`. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md)
+   includes the safety checklist for changes to the autonomous path.
+
+6. **What hosted CI requires.** Pull requests and merge-queue commits run only
+   the Ubuntu fast gate: secret-shape scan, typecheck plus affected tests,
+   generated-file and authority-drift checks. `Merge Gate` is the one required
+   check. macOS, Windows and exhaustive suites run on master's six-hour
+   schedule after merge; a red full run opens a fix-forward issue for the
+   failing commit. See [hosted CI](docs/AGENT-OPERATIONS.md) for details.
+   GitHub may hold workflow runs on a first-time contributor's fork pull
+   request until a maintainer approves them.
+
+7. **How it merges.** Pull requests land through GitHub's merge queue, which
+   reruns the fast gate on the combined commit; a maintainer or the fleet
+   queues yours once `Merge Gate` is green. Paths listed in
+   [CODEOWNERS](.github/CODEOWNERS) (CI configuration, authority and safety
+   surfaces) also need the owner's review. If authority drift fails, run
+   `npm run authority:regen` and list each new Tier-1 root in the pull
+   request body.
+
+Changes that weaken a [safety invariant](#safety-invariants-contributors-must-never-weaken)
+are refused regardless of who opens them.
+
 ---
 
 ## Prerequisites
