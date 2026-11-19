@@ -31,8 +31,8 @@ describe('Pools card', () => {
     const claude = await screen.findByRole('button', { name: 'Claude: 3% left, runs out in about 4 h, resets in 50 h' });
     expect(claude).toHaveAttribute('data-warn', 'true');
     expect(screen.getAllByRole('button')).toHaveLength(8);
-    expect(screen.getByText('Local: free, limited by memory')).toBeVisible();
-    expect(screen.getByText('CMP Codex: usage unknown, runway unknown, reset unknown')).not.toHaveAttribute('data-warn');
+    expect(screen.getByRole('button', { name: 'Local: free, limited by memory' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'CMP Codex: usage unknown, runway unknown, reset unknown' })).not.toHaveAttribute('data-warn');
     expect(calls.calls.map(call => call.path)).toEqual(['/api/usage/runway']);
     // The bar repeats the row's own reading: 97% used is drawn, an unread pool is unknown (never 0), and Local has no window to draw.
     expect(screen.getByRole('meter', { name: 'Claude used' })).toHaveAttribute('aria-valuenow', '97');
@@ -59,7 +59,8 @@ describe('Pools card', () => {
     render(<PoolsCard onOpenJob={vi.fn()} />);
     expect(await screen.findByRole('status')).toHaveTextContent('Pool readings unavailable');
     expect(within(screen.getByRole('region', { name: 'Pools' })).getAllByRole('button')).toHaveLength(8);
-    expect(screen.getByText(/^Claude:/)).toHaveTextContent('usage unknown, runway unknown, reset unknown');
+    expect(screen.getByRole('button', { name: 'Claude: usage unknown, runway unknown, reset unknown' })).toHaveTextContent(/usage unknown.*runway unknown.*reset unknown/);
+    expect(screen.queryByText(/% left|Next reset|^Read /)).toBeNull();
     for (const meter of screen.getAllByRole('meter')) expect(meter.getAttribute('aria-valuenow')).toBeNull();
   });
 });

@@ -62,7 +62,7 @@ it.each(['failed', 'malformed', 'missing pool'] as const)('keeps %s usage unknow
   if (kind !== 'missing pool') expect(await screen.findByText(/Pool readings unavailable/)).toBeVisible();
   const pool = screen.getByRole('button', { name: 'Claude: usage unknown, runway unknown, reset unknown' });
   expect(pool).not.toHaveAttribute('data-warn');
-  expect(screen.getByText('Local: free, limited by memory')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Local: free, limited by memory' })).toBeVisible();
   expect(requests.calls.filter(call => call.path === FLEET_RUNS_PATH)).toHaveLength(0);
   fireEvent.click(pool);
   expect(await screen.findByRole('button', { name: 'fixture-build' })).toBeVisible();

@@ -1,8 +1,7 @@
-/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view; the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, and the Disk card (`phm worktrees`) closes the column.
+/** Home: the Pulse card (`phm fleet pulse`) on top, then the `phm home` summary as one column of plain cards. Each card has one action, which opens the existing detailed view (the Pools card is a bar of pool tiles above its action); the Approvals card (`phm approvals`) leads when Mason is needed, the From your leader card (`phm leader replies`) follows it, the Working now card (`phm sessions`) lists each live session, and the Disk card (`phm worktrees`) closes the column.
  * The headline carries a state mark and the time the summary was read; lanes with a target and repos draw their reading (a bar, a mark) beside the same words. */
 import type { ReactNode } from 'react';
 import type { HomeField, HomeSummary } from '../../../../core/fleet/home.js';
-import { Meter } from '../../../components/primitives/Meter.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -22,6 +21,7 @@ import { PulseCard } from './PulseCard.js';
 import { FleetShippedCard } from './FleetShippedCard.js';
 import { ThisMacCard } from './ThisMacCard.js';
 import { WorkingNowCard } from './WorkingNowCard.js';
+import { MainRepos, RunningLanes } from './HomeReadings.js';
 import styles from './home.module.css';
 
 // Unread is counted against this window's own last-read time, the same one the Leader chip uses.
@@ -29,6 +29,7 @@ const query: QueryDef<HomeSummary> = { key: 'fleet-home', fetch: signal => apiGe
 const openPane = (paneId: string) => { setFocusMode(false); setVerseSection('chat'); openDockPane(paneId); };
 
 const openPoolJob = (job: string) => { requestWorkerLogJob(job); openPane('worker-log'); };
+const openPools = () => openPane('fleet-pools');
 // What each session is doing, on its own read like Approvals: keyed so the list survives the summary arriving.
 const working = (visible: boolean) => <WorkingNowCard key="working-now" visible={visible} onOpenJob={openPoolJob} onOpenSessions={() => openPane('fleet-sessions')} />;
 
@@ -51,7 +52,7 @@ export function HomePane({ visible }: PaneProps) {
   // Any other payload (an older server, an error body) is not a summary.
   const home = read.data?.schema === 'home.v1' ? read.data : null;
   // Approvals come first and stand on their own API: what only Mason can do should not wait on the health summary.
-  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} /></section>;
+  if (!home) return <section className={styles.root} aria-label="Home"><PulseCard visible={visible} /><p className={styles.headline}>{read.status === 'error' || read.data ? 'Fleet health: unknown (the summary could not be read).' : 'Reading fleet health…'}</p><ApprovalsCard key="approvals" visible={visible} /><LeaderRepliesCard key="leader-replies" visible={visible} />{working(visible)}<PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} /></section>;
   // A failed refresh keeps the last summary on screen; it must not read as current.
   const stale = read.status === 'error';
   const at = readAt(home.asOf);
@@ -64,7 +65,7 @@ export function HomePane({ visible }: PaneProps) {
     <ApprovalsCard key="approvals" visible={visible} />
     <LeaderRepliesCard key="leader-replies" visible={visible} />
     {working(visible)}
-    <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} />
+    <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} />
     <ThisMacCard visible={visible} className={styles.card} />
     <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>
       <p>Last hour: <Value field={home.mergedLastHour}>{String}</Value></p>
@@ -72,12 +73,10 @@ export function HomePane({ visible }: PaneProps) {
       <p>Median time to merge: <Value field={home.medianMergeSeconds}>{seconds => seconds < 90 ? `${Math.round(seconds)} seconds` : `${Math.round(seconds / 60)} minutes`}</Value></p>
     </Card>
     <Card title="Main" action="Open Fleet" onOpen={() => setVerseSection('fleet')}>
-      <Value field={home.main}>{repos => <ul className={styles.marks}>{repos.map(repo => <li key={repo.repo} data-state={repo.state}>{repo.repo}: {repo.state}</li>)}</ul>}</Value>
+      <Value field={home.main}>{repos => <MainRepos repos={repos} />}</Value>
     </Card>
     <Card title="Running jobs" action="Open Lanes" onOpen={() => openPane('fleet-lanes')}>
-      <Value field={home.running}>{lanes => <ul className={styles.meters}>{lanes.map(lane => <li key={lane.lane}>{lane.lane}: {lane.running}{lane.target === null ? '' : ` of ${lane.target}`}
-        {/* A lane with no recorded target has nothing to fill against, so it gets no bar. */}
-        {lane.target !== null && lane.target > 0 ? <Meter variant="line" tone="accent" value={lane.running} max={lane.target} aria-label={`${lane.lane} running of target`} /> : null}</li>)}</ul>}</Value>
+      <Value field={home.running}>{lanes => <RunningLanes lanes={lanes} />}</Value>
     </Card>
     <Card title="Most at risk of going unused" action="Open Usage" onOpen={() => openPane('fleet-usage')}>
       <p><Value field={home.atRisk}>{risk => risk ? `${risk.resource}. ${risk.reason}` : 'Nothing is set to expire unused.'}</Value></p>
