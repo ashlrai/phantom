@@ -118,6 +118,7 @@ function missionLines() {
     `- [Strategy for recursive self-improvement and an open fleet](${REPO}/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials`,
     `- [How agents work on Phantom](${REPO}/README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims`,
     `- [AGENTS.md](${REPO}/AGENTS.md): the agent constitution`,
+    `- [Contribute with an agent](${REPO}/docs/CONTRIBUTE-WITH-AN-AGENT.md): join with your own agent; clone, verify locally, open a pull request from a fork, auto-merge through Merge Gate`,
     '',
   ];
 }
@@ -313,6 +314,7 @@ function renderLlmsFull(data) {
   lines.push('- [README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview');
   lines.push('- [docs/README.md](https://github.com/ashlrai/phantom/blob/master/docs/README.md): task-indexed guide map');
   lines.push('- [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide');
+  lines.push('- [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request with a coding agent, from fork to auto-merge');
   lines.push('- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations');
   lines.push('- [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md): component boundaries');
   lines.push('- [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): first useful turn');

@@ -2,6 +2,8 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+First pull request, with or without a coding agent? Follow [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md): clone, verify locally once, push to your fork, and auto-merge through the required `Merge Gate` check. The rest of this page holds the full conventions behind each step.
+
 ---
 
 ## Prerequisites
