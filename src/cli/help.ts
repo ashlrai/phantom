@@ -345,7 +345,7 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     usage: 'ashlr agents bus channels list|test <id> [--json]',
     description: 'List registered channel adapters. bus and handoff probes write one local envelope; other channels stay refused. No network.',
     safety: 'append',
-    jsonShape: '{dryRun, channels:[{id, adapterRegistered, healthy}]} | {id, dryRun, status, reason}',
+    jsonShape: '{dryRun, channels:[{id, adapterRegistered, healthy:true|false|"unknown"}]} | {id, dryRun, status, reason}',
   },
   {
     usage: 'ashlr agents bus contract [--json]',
