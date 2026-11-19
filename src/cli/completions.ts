@@ -113,7 +113,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   chain: ['verify', '--json', '--help'],
   incident: ['report', 'receipts', '--json', '--help'],
   browser: ['doctor', 'open', 'tabs', 'shot', 'close', '--browser', '--json', '--help'],
-  apps: ['list', 'open', 'quit', 'focus', 'status', 'suggest', 'request', '--pressure', '--need-mb', '--json', '--help'],
+  apps: ['list', 'log', 'open', 'quit', 'focus', 'status', 'suggest', 'request', '--pressure', '--need-mb', '--limit', '--json', '--help'],
   // Mirrors the verb check in src/cli/repos-rank.ts (cmdReposRank).
   repos: ['rank', 'proposals', '--json', '--recompute', '--help'],
   'release-articles': ['status', 'enable', 'disable', 'import', 'sync', '--help'],
