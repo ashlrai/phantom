@@ -2,6 +2,13 @@
 
 Phantom (source repository `ashlrai/phantom`, formerly `ashlr-hub`) is the local kernel for Ashlr Universe, built contract-first in TypeScript with a React operations console. This guide covers source development and local verification, not provider commissioning or production publication. See the [documentation map](docs/README.md) for the current runtime and operator guides.
 
+Phantom is built mostly by coding agents, with the human owner as a passive
+board member. Outside contributors, human or agent, follow the same path as the
+fleet: one focused branch, local checks run once, a pull request from a fork,
+and the required `Merge Gate` check. For that path from clone to auto-merge, read
+[Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md) first; this guide
+holds the full conventions behind it. Agents also follow [AGENTS.md](AGENTS.md).
+
 ---
 
 ## Prerequisites
@@ -20,14 +27,28 @@ list in a guide.
 
 ## Setup
 
+Clone the upstream repository as `origin` and add your fork as a second remote.
+`node scripts/verify-changed.mjs` diffs against `origin/master`, so `origin`
+must be `ashlrai/phantom`, not your fork:
+
 ```sh
-npm run install:worktree  # trusted local worktrees; requires pnpm 10.28.2
-# CI and release packaging: npm ci
+git clone https://github.com/ashlrai/phantom.git
+cd phantom
+git remote add fork https://github.com/<you>/phantom.git
+git switch -c <topic-branch>
+npm ci                    # default install; CI and release packaging use it too
 ```
 
-Run focused verification locally while developing. Pull requests and default-branch
-pushes run the repository's CI and Dependency Audit workflows. Check the actual
-run for your commit; workflow source alone is not evidence that it passed.
+If you run several agents in parallel local worktrees, use
+`npm run install:worktree` in each one instead of `npm ci`. It requires pnpm
+10.28.2 and shares one dependency store across worktrees; see
+[Shared installs for trusted local worktrees](#shared-installs-for-trusted-local-worktrees).
+
+Run focused verification locally while developing. Every pull request runs the
+CI workflow, whose required `Merge Gate` check decides whether it can merge; the
+Dependency Audit workflow also runs when a pull request changes a dependency
+manifest or lockfile. Check the actual run for your commit; workflow source
+alone is not evidence that it passed.
 Dependency changes must keep the
 affected manifest and lockfile consistent, including separately packaged Raycast
 or desktop dependencies when those are in scope.
