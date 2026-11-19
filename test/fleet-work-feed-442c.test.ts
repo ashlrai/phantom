@@ -166,3 +166,25 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkFeed(['--help'])).toBe(0);
   });
 });
+
+describe('work-feed owner matching through the identity registry', () => {
+  it('lets one identity status its job from any registered label, and refuses other identities', () => {
+    append(post, 1, 'agent:worker-bot');
+    append({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 2, 'lane-7');
+    // No registry yet: sibling labels are different routing owners, feed refuses.
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'owner-mismatch', receipts: 2 });
+    expect(registerAgentIdentity({ handle: 'worker-bot', aliases: ['lane-7'],
+      runtime: { cli: 'codex', provider: 'codex-cmp', model: null } }, { root, now: () => now }).status).toBe('created');
+    // Handle address and alias now name one owner; the job keeps its posting label.
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'ok',
+      jobs: [{ id: post.jobId, owner: 'agent:worker-bot', status: 'running' }] });
+    // A different registered identity still cannot move the job.
+    expect(registerAgentIdentity({ handle: 'other-bot',
+      runtime: { cli: 'devin', provider: 'devin', model: null } }, { root, now: () => now }).status).toBe('created');
+    append({ kind: 'work.status', jobId: post.jobId, status: 'done' }, 3, 'agent:other-bot');
+    expect(readBusWorkFeed({ root })).toMatchObject({ status: 'refused', reason: 'owner-mismatch', receipts: 3 });
+    // An injected ownerKeyFor replaces the registry fallback entirely.
+    expect(readBusWorkFeed({ root, ownerKeyFor: () => 'same-owner' })).toMatchObject({ status: 'ok',
+      jobs: [{ id: post.jobId, status: 'done' }] });
+  });
+});

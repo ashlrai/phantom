@@ -1314,18 +1314,20 @@ claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2).
 Routing labels, repo slugs and claim tokens reject trailing newlines; claim keys
 reject ASCII controls including DEL. Claims grant no execution authority.
 
-`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor)`
+`projectBusWorkFeed(receipts: readonly unknown[], participants?: readonly Participant[], providerFor?: WorkFeedProviderFor, ownerKeyFor?: WorkFeedOwnerKeyFor)`
 in `src/core/agents/bus-work-feed.ts` returns `WorkFeedResult`: either
 `{status:'ok', feed:{v:2,jobs:WorkJob[]}}` or `{status:'refused',reason}`.
 It validates at most 1024 retained receipts in strictly increasing cursor order;
 legacy and unrelated bodies stay opaque. Posts start queued with `owner=from`;
 provider comes from the post, explicit participant metadata, or the
 injected `providerFor` resolver — schema-checked, never guessed (missing is refused).
-Statuses update only retained jobs from the same routing owner; orphan statuses
-are ignored. Duplicate job posts and malformed work bodies refuse the projection.
-Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
-This is a pure retained-snapshot projection, not a historical ledger or identity
-check. It performs no I/O, transport, claim mutation or execution. Existing v1
+Statuses update only retained jobs from the same owner: exact sender-label
+equality, or — when the injected `ownerKeyFor` resolver maps both labels to one
+nonempty key — any labels of that identity; labels the resolver cannot place
+still require exact label equality. Orphan statuses are ignored. Duplicate job
+posts and malformed work bodies refuse the projection. Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+This is a pure retained-snapshot projection, not a historical ledger or
+authentication check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
 `readBusWorkFeed` (`src/core/agents/bus-work-feed-read.ts`) is the bounded
 read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
@@ -1334,13 +1336,15 @@ serves its `BusWorkFeedReadResult` as `{v:1, ...}` — `ok` and `refused` answer
 200 with the projection's own status, `unavailable`/`retryable`/`invalid`
 answer 503.
 
-`readBusWorkFeed({root?, now?, claims?, participants?, providerFor?})` in `src/core/agents/bus-work-feed-read.ts`
+`readBusWorkFeed({root?, now?, claims?, participants?, providerFor?, ownerKeyFor?})` in `src/core/agents/bus-work-feed-read.ts`
 pages the bounded bus inbox without writes and returns ok/refused/unavailable/
 retryable/invalid with receipt count and `asOf`. Omitted post providers fall back
 to the sender identity's newest registered runtime in the agent registry beside
 the bus store (`resolveAgent` over handle, `agent:<handle>`, stable id and
-aliases); an absent or unreadable registry hints nothing, and an explicit
-`providerFor` replaces the registry fallback. With `claims:true` the ok result
+aliases), and `ownerKeyFor` falls back to that identity's stable id so statuses
+posted under any of one identity's labels update its jobs; an absent or
+unreadable registry hints nothing, and explicit `providerFor`/`ownerKeyFor`
+replace the registry fallbacks. With `claims:true` the ok result
 adds `claims:{source,holds,truncated}`: holds list each live coordination lease
 blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 `leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is

@@ -1,7 +1,7 @@
 /** Read the bounded local work feed. Labels grant no execution authority. */
 import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
-import { projectBusWorkFeed, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
+import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedResult } from './bus-work-feed.js';
 import { readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import type { Participant, WorkJob } from './bus-v2-schema.js';
 
@@ -31,6 +31,8 @@ export interface BusWorkFeedReadOptions {
   participants?: readonly Participant[];
   /** Provider fallback for sender labels; defaults to the identity registry's newest runtime. */
   providerFor?: WorkFeedProviderFor;
+  /** Owner-key fallback for sender labels; defaults to the identity registry's stable id. */
+  ownerKeyFor?: WorkFeedOwnerKeyFor;
 }
 
 export type BusWorkFeedReadResult =
@@ -50,23 +52,40 @@ function runtimeProvider(identity: AgentIdentity): Participant['provider'] | und
   return provider;
 }
 
+interface RegistryHints {
+  providerFor: WorkFeedProviderFor;
+  ownerKeyFor: WorkFeedOwnerKeyFor;
+}
+
 /**
- * Provider hints from the identity registry beside the bus store: a sender
- * label that resolves to a registered identity takes that identity's newest
- * runtime provider. An absent or unreadable registry hints nothing, so provider
- * stays unknown and the projection still refuses rather than guessing.
+ * Sender-label hints from the identity registry beside the bus store: a label
+ * that resolves to a registered identity takes that identity's newest runtime
+ * provider and its stable id as the owner key, so one agent's handle, address
+ * and aliases count as the same job owner. An absent or unreadable registry
+ * hints nothing, so provider stays unknown and owner matching stays strict —
+ * the projection still refuses rather than guessing.
  */
-function registryProviderFor(root: string | undefined): WorkFeedProviderFor | undefined {
+function registryHints(root: string | undefined): RegistryHints | undefined {
   const read = readAgentRegistry({ root });
   if (read.status !== 'ok') return undefined;
   const registry = read.registry;
-  const cache = new Map<string, Participant['provider'] | undefined>();
-  return (from) => {
-    if (!cache.has(from)) {
-      const identity = resolveAgent(registry, from);
-      cache.set(from, identity ? runtimeProvider(identity) : undefined);
-    }
-    return cache.get(from);
+  const providers = new Map<string, Participant['provider'] | undefined>();
+  const owners = new Map<string, string | undefined>();
+  return {
+    providerFor: (from) => {
+      if (!providers.has(from)) {
+        const identity = resolveAgent(registry, from);
+        providers.set(from, identity ? runtimeProvider(identity) : undefined);
+      }
+      return providers.get(from);
+    },
+    ownerKeyFor: (from) => {
+      if (!owners.has(from)) {
+        const identity = resolveAgent(registry, from);
+        owners.set(from, identity?.id);
+      }
+      return owners.get(from);
+    },
   };
 }
 
@@ -90,8 +109,9 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
     if (page.messages.length < 100 || page.nextCursor <= cursor) break;
     cursor = page.nextCursor;
   }
+  const hints = registryHints(options.root);
   const result = projectBusWorkFeed(receipts, options.participants ?? [],
-    options.providerFor ?? registryProviderFor(options.root));
+    options.providerFor ?? hints?.providerFor, options.ownerKeyFor ?? hints?.ownerKeyFor);
   if (result.status !== 'ok') return { ...result, receipts: receipts.length, asOf };
   const ok: BusWorkFeedReadResult = { status: 'ok', jobs: result.feed.jobs, receipts: receipts.length, asOf };
   if (!options.claims) return ok;
