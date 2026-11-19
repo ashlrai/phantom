@@ -118,6 +118,27 @@ describe('cmdFleetLaneMerges', () => {
     expect(JSON.parse(String(output.mock.calls[0]![0])).lanes[0]).toMatchObject({ launches: 2 });
   });
 
+  it('counts repeated launches of two merged jobs as two merges, not four', async () => {
+    // Fixture: RQ-A is relaunched twice and merged without a PR url; RQ-B is
+    // relaunched twice and merged with one. Launches add up per attempt, but
+    // a merge is per job (or per PR), so the lane reports two merges.
+    const jobs = [
+      row({ event: 'launch', job: 'RQ-A', lane: 'codex-local', ts: at('09:00') }),
+      row({ event: 'launch', job: 'RQ-A', lane: 'codex-local', ts: at('09:45') }),
+      row({ event: 'launch', job: 'RQ-B', lane: 'codex-local', ts: at('09:30') }),
+      row({ event: 'launch', job: 'RQ-B', lane: 'codex-local', ts: at('10:15') }),
+      row({ event: 'publish', job: 'RQ-B', url: 'https://github.com/ashlrai/phantom/pull/21', ts: at('10:20') }),
+      row({ event: 'outcome', job: 'RQ-A', outcome: 'merged', ts: at('10:30') }),
+      row({ event: 'outcome', job: 'RQ-B', outcome: 'merged', pr: 'ashlrai/phantom#21', ts: at('10:40') }),
+    ].join('\n');
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetLaneMerges(['--json'], deps(jobs))).toBe(0);
+    const report = JSON.parse(String(output.mock.calls[0]![0]));
+    expect(report.lanes).toEqual([
+      { lane: 'codex-local', launches: 4, prs: 1, prUrls: ['ashlrai/phantom#21'], merges: 2, limit: null },
+    ]);
+  });
+
   it('counts malformed lines and marks the source degraded', async () => {
     const jobs = [
       row({ event: 'launch', job: 'RQ-A', lane: 'devin', ts: at('10:00') }),
