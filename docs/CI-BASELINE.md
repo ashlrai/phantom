@@ -28,9 +28,13 @@ at 100 each and reports unknown rather than drawing conclusions from truncated
 run/job listings. Master reproduction remains an explicit step in the fix brief.
 
 `phm ci baseline --queue --json` appends only master-fix briefs to
-`~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by repository
-and test id. `--queue-file /absolute/path` overrides that file. Queueing is an
-explicit local write independent of `--apply`; no other group is queued.
+`~/.ashlr-runs/queue/router-queue.md`, at tier `work`, deduplicated by queue
+state per repository and test id: an open row suppresses queueing, and when
+every earlier fix generation for the same test reached DONE while the failure
+is still observed on current evidence, the next `RQ-CIBASE-*-G<n>` generation
+is queued (at most three attempts per test). `--queue-file /absolute/path`
+overrides that file. Queueing is an explicit local write independent of
+`--apply`; no other group is queued.
 
 Update-branch commands are always plans by default. `--apply` executes them only
 when the exact test explicitly passes on current master and a merged master PR
@@ -62,10 +66,15 @@ records an attempt durably before calling GitHub, then records its outcome.
 Attempt rows carry the failing test id (bounded to 400 characters), so the same
 test flaking on unrelated commits is visible over time. A test that was
 rerun-attempted on at least three distinct heads within the last seven days is
-a recurring flake: maintenance appends one deduplicated `RQ-CIFLAKE-*`
+a recurring flake: maintenance appends one `RQ-CIFLAKE-*`
 stabilization brief (tier `work`) per (repository, test) to the router queue,
 capped at ten new rows per run, under the same standing-authority and KILL
-gates as shared-baseline fixes. The window keeps the signal honest — a fixed
+gates as shared-baseline fixes. Deduplication is generation-aware like the
+master fixes: an open row suppresses queueing, dropped or retired rows stay
+suppressed, and a flake that keeps recurring after earlier stabilization
+generations reached DONE re-queues as the next `RQ-CIFLAKE-*-G<n>` id (at
+most three attempts per test) — a fix that did not hold becomes fresh work
+instead of a permanently deduplicated row. The window keeps the signal honest — a fixed
 flake stops producing attempts and ages out instead of being re-queued on stale
 evidence, and journal rows written before the test field existed never count.
 The repository, head SHA and run ID prevent repeated attempts even after a

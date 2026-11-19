@@ -112,6 +112,31 @@ describe('enqueueFlakeFixes', () => {
     expect(enqueueFlakeFixes([flake()], queue)).toEqual([]);
   });
 
+  it('re-queues a still-recurring flake as the next generation after DONE', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-flakes-')); dirs.push(dir);
+    const queue = join(dir, 'queue.md');
+    const base = flakeJobId('org/repo', 'test/a.test.ts > suite > flaky case');
+    writeFileSync(queue, `- DONE ${base} (P1, repo=repo, tier=work, needs=git|gh|node): earlier stabilization\n`);
+    const queued = enqueueFlakeFixes([flake()], queue);
+    expect(queued).toEqual([`${base}-G2`]);
+    const text = readFileSync(queue, 'utf8');
+    expect(text).toContain(`- READY ${base}-G2 (P1, repo=repo, tier=work, needs=git|gh|node): `);
+    expect(text).toContain('stabilization attempt 2');
+    expect(text).toContain(`${base}-G2`);
+    expect(enqueueFlakeFixes([flake()], queue)).toEqual([]);
+  });
+
+  it('keeps dropped and in-flight flake rows suppressed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-flakes-')); dirs.push(dir);
+    const queue = join(dir, 'queue.md');
+    const base = flakeJobId('org/repo', 'test/a.test.ts > suite > flaky case');
+    writeFileSync(queue, `- DROPPED ${base} (P1, repo=repo, tier=work, needs=git|gh|node): abandoned\n`);
+    expect(enqueueFlakeFixes([flake()], queue)).toEqual([]);
+    writeFileSync(queue, `- CLAIMED ${base} (P1, repo=repo, tier=work, needs=git|gh|node): in flight\n`);
+    expect(enqueueFlakeFixes([flake()], queue)).toEqual([]);
+    expect(readFileSync(queue, 'utf8')).not.toContain('-G2');
+  });
+
   it('keeps the brief on one line and caps new rows per call', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ci-flakes-')); dirs.push(dir);
     const queue = join(dir, 'queue.md');

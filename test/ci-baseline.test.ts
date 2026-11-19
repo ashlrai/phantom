@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -163,6 +163,24 @@ describe('CI baseline evidence', () => {
     const caused = await analyzeCiBaseline('owner/repo', github({ touched: 'test/example.test.ts' }).gh);
     expect(enqueueBaselineFixes(caused, path)).toEqual([]);
     expect(() => enqueueBaselineFixes(report, 'relative')).toThrow('absolute');
+  });
+  it('re-queues a persistent shared-baseline failure as the next generation after DONE', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-baseline-')); dirs.push(dir);
+    const path = join(dir, 'router-queue.md');
+    const report = await analyzeCiBaseline('owner/repo', github().gh);
+    const jobId = report.groups.find(g => g.action === 'queue-master-fix')!.jobId;
+    expect(enqueueBaselineFixes(report, path)).toEqual([jobId]);
+    const queued = readFileSync(path, 'utf8');
+    writeFileSync(path, queued.replace(`- READY ${jobId} `, `- DONE ${jobId} `));
+    expect(enqueueBaselineFixes(report, path)).toEqual([`${jobId}-G2`]);
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain(`- READY ${jobId}-G2 (P1, repo=repo, tier=work, needs=git|gh|node): `);
+    expect(text).toContain('Stabilization attempt 2');
+    expect(text).toContain(`${jobId}-G2`);
+    writeFileSync(path, text.replace(`- READY ${jobId}-G2 `, `- DONE ${jobId}-G2 `));
+    expect(enqueueBaselineFixes(report, path)).toEqual([`${jobId}-G3`]);
+    writeFileSync(path, readFileSync(path, 'utf8').replace(`- READY ${jobId}-G3 `, `- DONE ${jobId}-G3 `));
+    expect(enqueueBaselineFixes(report, path)).toEqual([]);
   });
   it('plans updates without mutation, applies only after verified merged fix', async () => {
     const { gh, calls } = github({ pass: true, merged: true });
