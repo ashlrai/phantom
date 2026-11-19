@@ -127,6 +127,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'doctor': () => import('./fleet-doctor.js'),
   'done-evaluate': () => import('./fleet-done-evaluate.js'),
   'done-plan': () => import('./fleet-done-plan.js'),
+  'dot-evidence': () => import('./fleet-dot-evidence.js'),
   'dot-handoff': () => import('./fleet-dot-handoff.js'),
   'draft-check': () => import('./fleet-draft-check.js'),
   'drip': () => import('./fleet-drip.js'),
