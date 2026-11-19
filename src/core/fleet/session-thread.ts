@@ -6,14 +6,16 @@
  * Pure: it only joins reads the fleet already has. The session's row comes from
  * `fleet.live-sessions.v1`, its brief, recorded steps, commands, changed files
  * and notes from `fleet.job.activity.v1`, the messages about it from the agent
- * bus (`agent-messages.v1`), and the leader's replies from `leader.replies.v1`.
+ * bus (`agent-messages.v1`), what Mason wrote from the Leader inbox
+ * (`MASON-INBOX.md`), and the leader's replies from `leader.replies.v1`.
  * The summary is assembled from those records, never written by a model, and a
  * fact no record holds reads "unknown". The reader lives in
  * session-thread-read.ts.
  */
 import type { AgentMessage, AgentMessages } from './agent-messages.js';
 import { flatTree, sessionAge, spoke, type LiveSessionRow, type LiveSessionsV1 } from './live-sessions.js';
-import type { LeaderRepliesV1 } from './mason-outbox.js';
+import type { InboxEntry } from './mason-inbox.js';
+import { replyTime, type LeaderRepliesV1 } from './mason-outbox.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { SessionKind, SessionNode, SessionState } from './session-tree.js';
 
@@ -22,6 +24,8 @@ export const SESSION_THREAD_SCHEMA = 'fleet.session-thread.v1';
 export const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 /** The newest bus messages, commands, changed files and leader replies a thread shows. */
 export const THREAD_BUS_SHOWN = 50, THREAD_COMMANDS_SHOWN = 8, THREAD_FILES_SHOWN = 6, THREAD_REPLIES_SHOWN = 5;
+/** The newest messages from Mason a thread shows, and how many inbox entries the reader looks through for them. */
+export const THREAD_OWNER_SHOWN = 10, THREAD_OWNER_WINDOW = 200;
 
 /** `quiet` is a running session with no output for the list's quiet window. */
 export type SessionThreadState = 'quiet' | SessionState;
@@ -29,9 +33,10 @@ export type SessionThreadSource = 'available' | 'none' | 'unavailable';
 
 /** Key order is the JSON contract. */
 export interface SessionThreadMessage {
-  /** Stable inside one thread: `brief`, `step:<n>`, `commands`, `files`, `notes`, `bus:<id>`, `reply:<n>`, `latest`. */
+  /** Stable inside one thread: `brief`, `step:<n>`, `commands`, `files`, `notes`, `bus:<id>`, `owner:<id>`, `reply:<n>`, `latest`. */
   key: string;
-  kind: 'brief' | 'step' | 'commands' | 'files' | 'notes' | 'bus' | 'reply' | 'latest';
+  /** `owner` is a message Mason wrote in the Leader inbox: any of them for the leader, the ones aimed `@<job>` for a worker. */
+  kind: 'brief' | 'step' | 'commands' | 'files' | 'notes' | 'bus' | 'owner' | 'reply' | 'latest';
   /** `session` is this session speaking, `other` is someone speaking to it, `record` is a recorded step. */
   side: 'session' | 'other' | 'record';
   label: string;
@@ -65,10 +70,13 @@ export interface SessionThreadV1 {
   session: SessionThreadSession | null;
   /** Short sentences assembled from the records. Empty when `session` is null. */
   summary: string[];
-  /** The conversation in reading order: brief, recorded steps, commands, changed files, notes, bus messages, leader replies, the latest line. */
+  /**
+   * The conversation in reading order: brief, recorded steps, commands, changed files, notes, bus messages, Mason's messages,
+   * leader replies, the latest line. For the leader, Mason's messages and the replies are interleaved by time when every one is dated.
+   */
   messages: SessionThreadMessage[];
   /** `none` means the read answered and holds nothing for this session; `unavailable` means it could not be read. */
-  sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; replies: SessionThreadSource };
+  sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource };
   /** Plain words for every part the thread could not show. */
   gaps: string[];
 }
@@ -81,9 +89,12 @@ export interface SessionThreadParts {
   activity?: FleetJobActivityV1 | null;
   /** Null when the read failed. */
   bus: AgentMessages | null;
+  /** The Leader inbox, newest first (`readInboxEntries`). Null when the read failed; `degraded` reads the same way. */
+  owner?: SessionThreadOwnerRead | null;
   /** Null when the read failed. */
   replies?: LeaderRepliesV1 | null;
 }
+export interface SessionThreadOwnerRead { sourceState: 'healthy' | 'missing' | 'degraded'; entries: readonly InboxEntry[] }
 
 const named = (word: string, value: string) => (value === 'unknown' ? `${word} unknown` : value);
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -98,7 +109,7 @@ function sessionOf(node: SessionNode, row: LiveSessionRow | undefined): SessionT
   };
 }
 
-function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSessionRow | undefined, activity: FleetJobActivityV1 | null | undefined): string[] {
+function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSessionRow | undefined, activity: FleetJobActivityV1 | null | undefined, aimed: readonly InboxEntry[]): string[] {
   const kind = session.kind === 'subagent' ? 'Helper' : session.kind === 'leader' ? 'Leader' : 'Worker';
   const lines = [`${kind} on ${named('lane', session.lane)}, ${named('model', session.model)}, in ${named('repo', session.repo)}.`];
   const said = spoke(node), { state } = session;
@@ -116,7 +127,29 @@ function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSe
     const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
     if (last) lines.push(`Latest step: ${[last.event, last.summary].filter(Boolean).join(' ')}${when(last.at) ? ` at ${last.at}` : ''}.`);
   }
+  // The inbox is the Leader's: an aimed message is on record there, and nothing records the worker reading it.
+  if (session.kind === 'worker' && aimed.length > 0) {
+    const newest = ownerAt(aimed.at(-1)!);
+    lines.push(`Mason aimed ${plural(aimed.length, 'message')} at it through the Leader inbox${newest ? `, the newest at ${newest}` : ''}.`);
+  }
   return lines;
+}
+
+/** An inbox entry's time as ISO. The inbox keeps Eastern wall time to the minute; anything else reads as no time. */
+function ownerAt(entry: InboxEntry): string | null {
+  const at = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(entry.at) ? replyTime(entry.at) : Number.NaN;
+  return Number.isFinite(at) ? new Date(at).toISOString() : null;
+}
+
+/**
+ * Mason's Leader inbox messages for one session, oldest first: every one for the leader, the ones aimed
+ * `@<job>` for a worker (the mention the desktop reply boxes write), none for a helper. `entries` is newest first.
+ */
+export function sessionOwnerMessages(session: Pick<SessionThreadSession, 'kind' | 'jobId'>, entries: readonly InboxEntry[]): InboxEntry[] {
+  if (session.kind === 'leader') return [...entries].reverse();
+  if (session.kind !== 'worker' || session.jobId === null) return [];
+  const aimed = new RegExp(`(?:^|\\s)@${session.jobId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9-])`);
+  return entries.filter(entry => aimed.test(entry.text)).reverse();
 }
 
 /** The bus messages about one session, oldest first: the ones naming its job, or sent by or to it. */
@@ -161,7 +194,7 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const base = { schema: SESSION_THREAD_SCHEMA, generatedAt: new Date(now).toISOString(), id } as const;
   if (!node) {
     return { ...base, session: null, summary: [], messages: [],
-      sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', replies: 'none' },
+      sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none' },
       gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'] };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
@@ -189,21 +222,43 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
     if (about.length > 0) bus = 'available';
   }
 
+  // Mason's side of the conversation. A missing inbox file is an inbox nobody has written to yet.
+  let owner: SessionThreadSource = 'none', aimed: InboxEntry[] = [];
+  const said: SessionThreadMessage[] = [];
+  if (parts.owner === null || parts.owner?.sourceState === 'degraded') { owner = 'unavailable'; gaps.push('Messages from Mason unknown: the Leader inbox could not be read.'); }
+  else if (parts.owner) {
+    aimed = sessionOwnerMessages(session, parts.owner.entries);
+    if (aimed.length > THREAD_OWNER_SHOWN) {
+      gaps.push(leader ? 'Earlier messages from Mason are not shown here; the Leader chat holds them.' : `${plural(aimed.length - THREAD_OWNER_SHOWN, 'earlier message')} from Mason not shown.`);
+    }
+    aimed.slice(-THREAD_OWNER_SHOWN).forEach((entry, index) => said.push({
+      key: `owner:${entry.id ?? `${entry.at}#${index}`}`, kind: 'owner', side: 'other', at: ownerAt(entry), text: entry.text, format: 'plain',
+      label: `${leader ? 'Mason to Leader' : `Mason to the Leader, aimed at ${session.jobId}`}${entry.channel ? `, from ${entry.channel}` : ''}`,
+    }));
+    if (aimed.length > 0) owner = 'available';
+  }
+
   let replies: SessionThreadSource = 'none';
+  const answered: SessionThreadMessage[] = [];
   if (leader) {
     if (parts.replies === null || parts.replies?.sourceState === 'unknown') { replies = 'unavailable'; gaps.push('Leader replies unknown: the plan log could not be read.'); }
     else if (parts.replies) {
       // Newest first in the read; a conversation reads oldest first.
-      [...parts.replies.replies.slice(0, THREAD_REPLIES_SHOWN)].reverse().forEach((reply, index) => messages.push({
+      [...parts.replies.replies.slice(0, THREAD_REPLIES_SHOWN)].reverse().forEach((reply, index) => answered.push({
         key: `reply:${index}`, kind: 'reply', side: 'session', label: 'Leader to Mason', at: reply.at === 'unknown' || reply.at === '' ? null : reply.at, text: reply.text, format: 'plain',
       }));
       if (parts.replies.replies.length > 0) replies = 'available';
     }
   }
+  // Question then answer, when every line carries a time; otherwise each side keeps its own order, Mason first.
+  const spoken = [...said, ...answered], times = spoken.map(m => (m.at === null ? Number.NaN : replyTime(m.at)));
+  if (said.length > 0 && answered.length > 0 && times.every(Number.isFinite)) {
+    messages.push(...spoken.map((m, index) => ({ m, index })).sort((a, b) => times[a.index]! - times[b.index]! || a.index - b.index).map(entry => entry.m));
+  } else messages.push(...spoken);
 
   if (node.lastMessage !== null) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: summaryOf(session, node, row, parts.activity), messages, sources: { sessions: 'available', activity, bus, replies }, gaps };
+  return { ...base, session, summary: summaryOf(session, node, row, parts.activity, aimed), messages, sources: { sessions: 'available', activity, bus, owner, replies }, gaps };
 }
 
 const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { session: '<', other: '>', record: '-' };

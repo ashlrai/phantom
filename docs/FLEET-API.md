@@ -582,8 +582,9 @@ pause and stop controls.
 `fleet.session-thread.v1` document with a current read session. The id is
 `leader`, a job id or a subagent id from the session tree. It adds no source:
 it joins the session's row in `fleet.live-sessions.v1`, the job's
-`fleet.job.activity.v1`, the agent bus messages (`phm agents messages`) and,
-for the leader, `leader.replies.v1`.
+`fleet.job.activity.v1`, the agent bus messages (`phm agents messages`), the
+messages Mason wrote in the Leader inbox and, for the leader,
+`leader.replies.v1`.
 
 - `session`: `id`, `kind`, `agent`, `lane`, `model`, `repo`, `jobId`,
   `parentId` (null for the leader), `state` (`quiet` for a running session
@@ -596,14 +597,25 @@ for the leader, `leader.replies.v1`.
   writes it, and a fact no record holds reads "unknown".
 - `messages[]` in reading order: the brief it was given, each recorded step,
   the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
-  messages that name its job or were sent by or to it, the leader's last 5
-  replies (leader only), then its last message. Each has `key`, `kind`
-  (`brief`, `step`, `commands`, `files`, `notes`, `bus`, `reply`, `latest`),
+  messages that name its job or were sent by or to it, the newest 10 messages
+  from Mason, the leader's last 5 replies (leader only), then its last
+  message. Each has `key`, `kind`
+  (`brief`, `step`, `commands`, `files`, `notes`, `bus`, `owner`, `reply`,
+  `latest`),
   `side` (`session` when it speaks, `other` when someone speaks to it,
   `record` for a recorded step), `label`, `at` (null when the record has no
   time), `text` and `format` (`plain`, `mono` or `markdown`).
+- Messages from Mason (`owner`) come from the Leader inbox, the newest 200
+  entries of it. The leader's thread holds every one. A worker's thread holds
+  the ones that name it as `@<job id>`, which is what the desktop reply boxes
+  write. The inbox belongs to the leader, so the label reads "Mason to the
+  Leader, aimed at <job>": the message is on record there, and no record says
+  the worker read it. A helper's thread holds none. The inbox keeps Eastern
+  time to the minute, so `at` is that minute as ISO. In the leader's thread
+  these messages and the replies are put in time order when every one of them
+  has a time; otherwise Mason's come first, then the replies.
 - `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
-  `replies` (`available`, `none` when the read answered with nothing for this
+  `owner`, `replies` (`available`, `none` when the read answered with nothing for this
   session, or `unavailable`). `gaps[]` says in plain words what is missing.
 
 Each read fails on its own, so a thread with an unreadable bus still shows the
