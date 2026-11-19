@@ -192,6 +192,10 @@ export async function cmdUsage(args: string[]): Promise<number> {
     const { cmdFleetSpend } = await import('./fleet-spend.js');
     return cmdFleetSpend(args.slice(1));
   }
+  if (args[0] === 'producers') {
+    const { cmdUsageProducers } = await import('./usage-producers.js');
+    return cmdUsageProducers(args.slice(1));
+  }
   if (args[0] === 'pace') {
     if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage pace [--json]'); return 2; }
     const { readUsagePace } = await import('../core/usage/pace.js');
@@ -278,6 +282,7 @@ function printUsage(): void {
   console.log('  --json also includes spend: the desktop pool usage, reset, burn and unused forecast.');
   console.log('  phm usage spend [--json] shows measured burn and unused capacity at reset.');
   console.log('  phm usage pace [--json] shows included-quota forecasts by pool.');
+  console.log('  phm usage producers [--since 6h] [--json] shows who started jobs: each lane and outside loop.');
   console.log('  phm usage validate <file> [--json] checks usage-reading.v1 JSONL records.');
   console.log('  phm usage sensors --json [--refresh] [--file <snapshot>]');
   console.log('  prints each lane reading, its age and whether it is stale.');

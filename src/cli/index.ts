@@ -3489,6 +3489,7 @@ async function main(): Promise<void> {
         if (wantsHelp(rest)) {
           printCoreUsage('usage', 'Usage readings.', [
             ['phm usage spend [--json]', 'Same as phm spend: is every pool spent before it resets'],
+            ['phm usage producers [--since 6h] [--json]', 'Who started jobs: each dispatcher lane and outside loop'],
             ['phm usage validate', 'Validate a usage reading'],
             ['phm usage resource-live [--json] [--watch] [--show]', 'Read every allowance and write state/resource-live.json'],
           ]);
