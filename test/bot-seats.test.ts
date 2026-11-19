@@ -6,6 +6,7 @@ import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, seatMayCla
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
 import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
+import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { runBotsCli } from '../src/cli/bots.js';
@@ -215,4 +216,42 @@ it('seat reads and dry-run handoff do not initialize a missing node store on a f
   expect(await readdir(o.home, { recursive: true })).toEqual(before);
   await listSeats(opts);
   expect((await readdir(o.home, { recursive: true })).sort()).toEqual([...before, '.phantom/bots/seat-state.json'].sort());
+});
+
+it('posts a real bus note to leaders for each handed-off record by default', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#6', owner: 'helper', sourceId: 'bus-note-claim', leaseMs: 3600000, leaseUntil: Date.now() + 3600000, now: Date.now() });
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
+  const ownerNotice = vi.fn(async () => ({ status: 'accepted' }));
+  const opts: SeatOptions = { ...o, readQuota: async () => exhausted, ownerNotice };
+  const result = await applySeatHandoff('helper', opts);
+  expect(result.handoffs).toHaveLength(1);
+  expect(result.handoffs[0]!.notifications).toEqual({ bus: 'posted', owner: 'accepted' });
+  const page = listBusInboxAfter(0, 100, { root: fleetRoot });
+  expect(page.status).toBe('ok');
+  const rows = page.status === 'ok' ? page.messages : [];
+  expect(rows).toHaveLength(1);
+  const envelope = rows[0]!.envelope;
+  expect(envelope.id).toBe(result.handoffs[0]!.handoffId);
+  expect(envelope.from).toBe('helper');
+  expect(envelope.to).toBe('leaders');
+  expect(envelope.priority).toBe('P2');
+  expect(envelope.channel).toBe('bus');
+  expect(envelope.origin_bridge).toBe('bot-seats');
+  expect(envelope.body).toEqual({ kind: 'note', text: 'Seat helper handed off bus-claim pr:o/r#6. Done: unknown; left: unknown.' });
+  // A replayed apply neither re-appends nor re-notifies.
+  expect((await applySeatHandoff('helper', opts)).handoffs).toEqual([]);
+  const again = listBusInboxAfter(0, 100, { root: fleetRoot });
+  expect(again.status === 'ok' ? again.messages : []).toHaveLength(1);
+});
+it('reports an unavailable bus store honestly instead of claiming a posted note', async () => {
+  const o = await fixture();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#7', owner: 'helper', sourceId: 'bus-down-claim', leaseMs: 3600000, leaseUntil: Date.now() + 3600000, now: Date.now() });
+  await writeFile(join(fleetRoot, 'bus-inbox'), 'not a directory');
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(), exhaustedReset: null } }));
+  const result = await applySeatHandoff('helper', { ...o, readQuota: async () => exhausted,
+    ownerNotice: async () => ({ status: 'accepted' }) });
+  expect(result.handoffs[0]!.notifications).toEqual({ bus: 'unavailable', owner: 'accepted' });
 });

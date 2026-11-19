@@ -113,8 +113,13 @@ that another agent has started the work, and it does not stop a remote bot.
 
 Each record has a bus note and owner-thread notice with stable deduplication
 keys. Private `handoff-notices.json` receipts suppress repeated attempts; a crash
-between sending and saving a receipt retries with the same key. Notification
-failures do not undo release or expose exception text: apply reports per-record
+between sending and saving a receipt retries with the same key. The bus note
+is one `note` envelope appended to the shared bus store addressed to `leaders`
+— a system post from the seat's participant id with `origin_bridge`
+`bot-seats`, not a channel message, so no bus identity registration or channel
+membership is required. KILL and the comms pause refuse it like every other
+local bus write; an unavailable store reports `unavailable`, never a claimed
+post. Notification failures do not undo release or expose exception text: apply reports per-record
 `notifications.bus` and `notifications.owner` statuses. A failed/halted attempt
 is recorded, not automatically retried. Owner notices use the configured owner
 thread, honor KILL and comms pause, and are local desktop notices, not proof of
