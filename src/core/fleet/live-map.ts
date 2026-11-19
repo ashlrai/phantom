@@ -53,6 +53,10 @@ export interface LiveMapNode {
   live: boolean | null;
   /** Lanes: ok | held | starved | wasteful | drained with a plain reason (lane-badge.ts). Absent when the lanes read failed or from older servers. */
   health?: LaneHealth;
+  /** Lanes: merged PRs per hour from the lanes read; null when that read had no number. Absent from older servers. */
+  mergedPerHour?: number | null;
+  /** Pools: percent of the plan used (0..100); null when no reading. Absent from older servers. */
+  usedPct?: number | null;
 }
 export interface LiveMapEdge {
   id: string;
@@ -162,6 +166,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
     const detail = row.window === 'credits' && row.creditsRemaining !== null ? `${row.creditsRemaining} credits left`
       : pct === null ? 'usage unknown' : `${pct}% used`;
     const id = node('resource', `resource:${row.lane}`, `${row.lane} ${what}`, status, detail);
+    nodes.get(id)!.usedPct = pct;
     edge('uses-resource', nodes.has(laneId(row.lane)) ? laneId(row.lane) : addLane(row.lane), id);
   }
 
@@ -183,6 +188,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   for (const view of lanes?.lanes ?? []) {
     const lane = nodes.get(laneId(view.lane));
     if (lane && view.health) lane.health = view.health;
+    if (lane) lane.mergedPerHour = view.mergesPerHour ?? null;
   }
 
   const order = (kind: LiveMapNodeKind) => LIVE_MAP_LEVEL[kind];

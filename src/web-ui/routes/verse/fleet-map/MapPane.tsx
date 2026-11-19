@@ -33,6 +33,8 @@ import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, mess
 import { useViewport } from '../shell/viewport.js';
 import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
 import { MapStage3D } from './MapStage3D.js';
+import { PhoneOrg, type OrgAsk } from './PhoneOrg.js';
+import { fleetOrgGroups } from '../../../../core/fleet/org-groups.js';
 import { layoutByOrg, orgBoxLabel, readMapLayout, saveMapLayout, type MapLayoutMode } from './org-layout-model.js';
 import styles from './fleet-map.module.css';
 
@@ -59,17 +61,22 @@ interface MapViewProps {
   conversations?: Conversation[] | null;
   /** No pulse animation; lines keep their thickness. */
   reducedMotion?: boolean;
+  /** Phone layout only: what waits on the owner, pinned on top. */
+  asks?: readonly OrgAsk[];
 }
-export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, reducedMotion = false }: MapViewProps) {
+export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, reducedMotion = false, asks }: MapViewProps) {
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
   const [showMessages, setShowMessages] = useState(true);
   const [hovered, setHovered] = useState<string | null>(null);
   const [chosen, setChosen] = useState<MapViewMode>(readMapViewMode);
   const { compact } = useViewport();
+  const [phoneMap, setPhoneMap] = useState(false);
   const [arrangement, setArrangement] = useState<MapLayoutMode>(readMapLayout);
   const mode: MapViewMode = compact ? '2d' : chosen;
   const arrange = (next: MapLayoutMode) => { setArrangement(next); setHovered(null); saveMapLayout(next); };
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
+  if (compact && !phoneMap) return <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} onShowMap={() => setPhoneMap(true)}
+    onOpenJob={job => { const node = map.nodes.find(row => row.kind === 'job' && row.label === job); if (node) onOpen(node); }} />;
   const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
   const layout = orgLayout ?? layoutLiveMap(map);
   const pulse = (edge: LiveMapEdge) => pulsing(edge, map, now, reducedMotion) ? 'true' : undefined;
@@ -93,6 +100,7 @@ export function MapView({ map, now, onOpen, edges, onOpenMessages = () => {}, pa
   return <div className={styles.withPanel}><section className={styles.root} aria-label="Fleet map">
     <div className={styles.toolbar} role="toolbar" aria-label="Map">
       <p className={styles.headline}>{mapHeadline(map)}</p>
+      {compact && <button type="button" onClick={() => setPhoneMap(false)}>Back to the list</button>}
       {!compact && <Segmented<MapViewMode> options={VIEW_OPTIONS} value={mode} onChange={choose} size="sm" aria-label="Map view" />}
       {mode === '2d' && <Segmented<MapLayoutMode> options={LAYOUT_OPTIONS} value={arrangement} onChange={arrange} size="sm" aria-label="Map layout" />}
       <button type="button" aria-pressed={showMessages} onClick={() => { setShowMessages(on => !on); setHovered(null); }}>Messages</button>

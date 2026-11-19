@@ -11,6 +11,7 @@
  * reported counts as `unknown`, never as idle.
  */
 import type { FleetLiveMap, LiveMapNode } from './live-map.js';
+import type { LaneHealth } from './lane-badge.js';
 
 export type OrgGroupRole = 'leader' | 'group' | 'lane' | 'job';
 export interface OrgGroupCounts { running: number; queued: number; idle: number; unknown: number }
@@ -20,6 +21,24 @@ export interface OrgGroupNode {
   parent: string | null;
   children: string[];
   counts: OrgGroupCounts;
+  /** The live map's state code for this node; absent on groups. */
+  status?: string;
+  /** Jobs: activity in the last 5 minutes; null when no time is known. */
+  live?: boolean | null;
+  /** Lanes: the lane's health verdict, when the server sent one. */
+  health?: LaneHealth;
+  /** Lanes: merged PRs per hour; null when unknown. */
+  mergedPerHour?: number | null;
+  /** Lanes: percent of the plan used, 0..100; null when no usage reading ("Usage unknown"). */
+  usedPct?: number | null;
+}
+/** The one-line summary a phone shows first. `stuck` is running jobs with no activity in the last 5 minutes. */
+export interface OrgHeadline {
+  running: number; queued: number; stuck: number;
+  /** Merged PRs in the last hour, summed over lanes that reported; null when no lane did. */
+  mergedLastHour: number | null;
+  /** "6 running, 2 stuck, 14 merged in the last hour"; "Nothing running." when idle. */
+  text: string;
 }
 export interface FleetOrgGroups {
   schema: 'fleet.org-groups.v1';
@@ -30,6 +49,7 @@ export interface FleetOrgGroups {
   nodes: OrgGroupNode[];
   /** Ids that appeared more than once in the map; only the first row of each was used. */
   duplicates: string[];
+  headline: OrgHeadline;
 }
 
 export const UNASSIGNED_GROUP = 'group:unassigned';
@@ -96,5 +116,27 @@ export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' |
     return node.counts;
   };
   walk(made.get(root)!);
-  return { schema: 'fleet.org-groups.v1', generatedAt: map.generatedAt, root, nodes: ordered, duplicates };
+
+  const used = new Map<string, number | null>();
+  for (const node of map.nodes) if (node.kind === 'resource') used.set(node.id.replace(/^resource:/, 'lane:'), node.usedPct ?? null);
+  let stuck = 0, merged: number | null = null;
+  for (const node of ordered) {
+    const row = rows.get(node.id);
+    if (!row) continue;
+    node.status = row.status;
+    if (node.role === 'job') {
+      node.live = row.live;
+      if (orgGroupBucket(row.status) === 'running' && row.live === false) stuck++;
+    } else if (node.role === 'lane') {
+      if (row.health) node.health = row.health;
+      node.mergedPerHour = row.mergedPerHour ?? null;
+      node.usedPct = used.get(node.id) ?? null;
+      if (node.mergedPerHour !== null) merged = (merged ?? 0) + node.mergedPerHour;
+    }
+  }
+  const { running, queued } = made.get(root)!.counts;
+  const mergedLastHour = merged === null ? null : Math.round(merged);
+  const text = running === 0 ? 'Nothing running.'
+    : [`${running} running`, `${stuck} stuck`, mergedLastHour === null ? 'merged unknown' : `${mergedLastHour} merged in the last hour`].join(', ');
+  return { schema: 'fleet.org-groups.v1', generatedAt: map.generatedAt, root, nodes: ordered, duplicates, headline: { running, queued, stuck, mergedLastHour, text } };
 }
