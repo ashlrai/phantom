@@ -2194,6 +2194,10 @@ async function main(): Promise<void> {
           process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
           break;
         }
+        if (rest[0] === 'pack') {
+          process.exitCode = (await import('./context-pack.js')).cmdContextPack(rest.slice(1));
+          break;
+        }
         const { cmdCompanyContext } = await import('./company-context.js');
         cmdCompanyContext(rest);
         break;
