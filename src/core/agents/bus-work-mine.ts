@@ -16,7 +16,7 @@
  */
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
-import { agentLabels, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
+import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { agentName } from '../fleet/agent-messages.js';
 import { readAgentConversations, type AgentConversations } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
@@ -429,11 +429,10 @@ type PendingWorkScanFail = { status: 'unavailable' | 'retryable' | 'invalid'; re
  * The pending work `fleet bus-next` and `fleet handoff-receive` would find for
  * this agent, from one bounded walk of the retained store: every live envelope
  * whose body is claimable work (`kind:'work'` or a protocol-v1 `task`) or a
- * receivable `worker-handoff`, and whose `to` label resolves to the agent
- * under the same identity matching the feed `--to` filter and `bus next` use
- * or names a `group:<channel>:<topic>` address of a channel the resolved
- * identity belongs to — the same membership rule the inbox and wake reads
- * apply, minus the agent's own channel posts — ordered the way
+ * receivable `worker-handoff`, and whose `to`/`from` pair satisfies the shared
+ * `agentPendingAddressMatcher` rule `bus next` claims by — any label of the
+ * resolved identity or a `group:<channel>:<topic>` address of a channel the
+ * identity belongs to, minus the agent's own channel posts — ordered the way
  * `claimNextBusWork` claims — priority band, then cursor.
  * Each item reports its hold state against the same two stores the unified
  * inbox consults: a taken message-id claim row (live lease or completed) on
@@ -446,20 +445,11 @@ type PendingWorkScanFail = { status: 'unavailable' | 'retryable' | 'invalid'; re
 function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: number,
   registry: AgentRegistry | undefined): { next: BusWorkMineNext; handoffs: BusWorkMineHandoffs } {
   const scanFail = (result: PendingWorkScanFail) => ({ next: result, handoffs: result });
-  const toMatch = busWorkFeedToMatcher(agent, { root: options.root });
-  // Channel membership widens "addressed to this agent" exactly the way the
-  // inbox and wake reads do: `group:<name>:` prefixes of channels whose member
-  // list holds the resolved handle, excluding posts the agent sent itself. A
-  // missing or unreadable registry — or a ref resolving to no identity —
-  // contributes no channels, so matching never widens on unknown state.
-  const identity = registry === undefined ? undefined : resolveAgent(registry, agent);
-  const selfLabels = new Set(identity === undefined ? [] : agentLabels(identity));
-  const channelPrefixes = registry === undefined || identity === undefined ? [] : registry.channels
-    .filter(channel => channel.members.includes(identity.handle))
-    .map(channel => `group:${channel.name}:`);
-  const pendingAddress = (to: string, from: string): boolean =>
-    toMatch(to) || (channelPrefixes.length > 0 && !selfLabels.has(from) &&
-      channelPrefixes.some(prefix => to.startsWith(prefix)));
+  // "Addressed to this agent" is the shared pending-work rule `bus next`
+  // claims by: any label of the resolved identity or a member channel's
+  // `group:<name>:` address, minus the agent's own channel posts — never
+  // widened on an unreadable registry or unresolvable ref.
+  const pendingAddress = agentPendingAddressMatcher(agent, registry);
   const nextCandidates: NextCandidate[] = [];
   const handoffCandidates: HandoffCandidate[] = [];
   const sender = (from: string): string | null =>

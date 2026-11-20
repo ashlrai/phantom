@@ -1,7 +1,8 @@
 import { validBusWaitClaimRequest, waitClaimBusWork, type BusWaitClaimRequest } from '../core/fleet/bus-wait-claim.js';
 
 const usage = `Usage: ashlr fleet bus-wait-claim --to <exact-address> --owner <label> --lease-ms <1..3600000> --wait-ms <1..300000> [--root <absolute>] --json
-Local coordination only; labels are not identity or authority.`;
+Local coordination only; labels are not identity or authority.
+--to matches work under every label of a registered agent identity and group:<channel>:<topic> addresses of channels it belongs to, minus its own channel posts; an unresolvable --to or unreadable registry keeps exact-label matching.`;
 
 /** Waits for one real claim; message bodies are never executed. */
 export async function cmdFleetBusWaitClaim(args: string[]): Promise<number> {

@@ -1777,11 +1777,12 @@ open with claim keys appears in both `jobs` (the claimable view) and
 `refused`/`unavailable`/`retryable`/`invalid` state, never an empty list.
 `next` lists the
 claimable work envelopes addressed to the agent — every live receipt whose
-`isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`
-label resolves through the same identity matching `bus next` and the feed
-`--to` filter use, or names a `group:<channel>:<topic>` address of a
-registry channel the resolved identity belongs to (the same membership rule
-the inbox and wake reads apply, minus the agent's own channel posts; an
+`isClaimableWork` body (`kind:'work'` or a protocol-v1 `task`) and whose `to`/`from`
+pair satisfies the shared `agentPendingAddressMatcher` rule `bus next` claims
+by: the literal ref or any label of the resolved identity through the same
+matching the feed `--to` filter uses, or a `group:<channel>:<topic>` address
+of a registry channel the resolved identity belongs to (the same membership
+rule the inbox and wake reads apply, minus the agent's own channel posts; an
 unreadable or missing registry and an unresolvable ref contribute no
 channels, so matching never widens) — in `claimNextBusWork` claim order
 (priority band, then
@@ -1879,6 +1880,14 @@ an invalid agent.
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
 `agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
 `agentIdentityKeys(options?)`, `agentAddressMatcher(identityOf, label)`,
+`agentPendingAddressMatcher(ref, registry)` (the shared addressed-to-agent
+predicate the `bus next` claim scan and the `work mine` next/handoffs
+sections apply: the literal ref or any label of its resolved identity, or a
+`group:<channel>:<topic>` address of a registry channel the identity belongs
+to — minus channel posts the identity sent itself; an unreadable registry
+passed as undefined or a ref resolving to no identity contributes no channels
+and no labels beyond the literal ref, so matching never widens on unknown
+state; the predicate takes the envelope's `to` and `from` labels),
 `RESERVED_PREFIXES` (the `agent:`/`group:`/`dm:`/`handoff:` label prefixes no
 alias and no label post may claim),
 `readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
