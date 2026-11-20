@@ -21,12 +21,19 @@ export const MAP_REPLAY_SCHEMA = 'fleet.map-replay.v1';
 export const MAP_REPLAY_DEFAULT_SINCE = '6h';
 export const MAP_REPLAY_DEFAULT_STEP = '5m';
 export const MAP_REPLAY_MAX_FRAMES = 288;
-/** Jobs launched earlier than this before the window start are not looked for. */
-export const MAP_REPLAY_LOOKBACK_HOURS = 24;
+/**
+ * Launches this far before the window start are read, so a job started days ago and still
+ * running shows as running. Bounded: the read is also capped in bytes (map-replay-build.ts).
+ */
+export const MAP_REPLAY_LOOKBACK_HOURS = 168;
+/** A pool reading older than this before a frame is not used for it: the pool shows unknown. */
+export const MAP_REPLAY_SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
 
 export type ReplayFrameState = 'known' | 'partly-unknown' | 'unknown';
 /** Key order is the JSON contract. */
 export interface ReplayJob { job: string; lane: string | null; repo: string | null }
+export interface ReplayLane { lane: string; running: number }
+export interface ReplayPool { pool: string; usedPct: number | null }
 export interface ReplayPr extends ReplayJob { url: string | null }
 export interface MapReplayFrame {
   /** The frame covers `from` up to (not including) `at`; the last frame includes `at`. */
@@ -40,6 +47,10 @@ export interface MapReplayFrame {
   merged: ReplayPr[] | null;
   /** Message lines inside the frame, from buildMapEdges. Null when the bus history is unknown. */
   messages: MapEdge[] | null;
+  /** Running jobs per lane at the end of the frame (from `running`). Null when the jobs history is unknown. */
+  lanes: ReplayLane[] | null;
+  /** Pool used % from the nearest recorded reading at or before the frame end; `usedPct` null when none is within 30 minutes. Null when no pool history exists. */
+  pools: ReplayPool[] | null;
 }
 export interface MapReplay {
   schema: typeof MAP_REPLAY_SCHEMA;
@@ -48,7 +59,7 @@ export interface MapReplay {
   since: string;
   until: string;
   stepSeconds: number;
-  sources: { jobs: 'available' | 'unknown'; messages: MapEdges['source'] };
+  sources: { jobs: 'available' | 'unknown'; messages: MapEdges['source']; pools: 'available' | 'unknown' };
   /** Oldest first. */
   frames: MapReplayFrame[];
   /** Plain words for every part of the history that could not be shown. */
@@ -73,13 +84,14 @@ export function formatMapReplayText(replay: MapReplay): string {
 }
 
 /**
- * The live map as it looked in one frame: the same leader, lanes, computers and pools
- * (their numbers are today's, not replayed), the frame's running jobs, and the frame's message lines.
+ * The live map as it looked in one frame: the same leader, lanes, computers and pools, with
+ * the frame's lane running counts, pool used %, running jobs and message lines. Computers keep
+ * today's state (no history is recorded for them) and the gaps say so.
  * A frame whose history is unknown keeps no jobs or messages and says so in `gaps`.
  */
 export function replayMap(live: FleetLiveMap, frame: MapReplayFrame, stepSeconds: number): FleetLiveMap {
   const at = Date.parse(frame.at);
-  const nodes: LiveMapNode[] = live.nodes.filter(node => node.kind !== 'job');
+  const nodes: LiveMapNode[] = live.nodes.filter(node => node.kind !== 'job').map(node => ({ ...node }));
   const ids = new Set(nodes.map(node => node.id));
   const edges: LiveMapEdge[] = live.edges.filter(edge => edge.kind !== 'messaged-in-last-15-min' && ids.has(edge.from) && ids.has(edge.to));
   for (const row of frame.running ?? []) {
@@ -88,6 +100,15 @@ export function replayMap(live: FleetLiveMap, frame: MapReplayFrame, stepSeconds
       detail: `${row.repo ?? 'repo unknown'} · running then`, live: null, lane: row.lane, repo: row.repo, state: 'running' });
     ids.add(id);
     if (row.lane && ids.has(`lane:${row.lane}`)) edges.push({ id: `reports-to:${id}->lane:${row.lane}`, kind: 'reports-to', from: id, to: `lane:${row.lane}`, messages: null, lastMessageAt: null, pulse: false });
+  }
+  for (const node of nodes) {
+    if (node.kind === 'lane') {
+      const n = frame.lanes === null ? null : frame.lanes.find(row => row.lane === node.label)?.running ?? 0;
+      Object.assign(node, { status: n === null ? 'unknown' : n > 0 ? 'running' : 'idle', detail: n === null ? 'counts unknown then' : `${n} running then` });
+    } else if (node.kind === 'resource') {
+      const pct = frame.pools?.find(row => `resource:${row.pool}` === node.id)?.usedPct ?? null;
+      Object.assign(node, { usedPct: pct, status: pct === null ? 'unknown' : pct >= 100 ? 'exhausted' : 'available', detail: pct === null ? 'usage unknown then' : `${pct}% used then` });
+    }
   }
   let mapped = 0;
   for (const line of frame.messages ?? []) {
@@ -102,6 +123,7 @@ export function replayMap(live: FleetLiveMap, frame: MapReplayFrame, stepSeconds
   edges.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const count = (kind: LiveMapNode['kind']) => nodes.filter(node => node.kind === kind).length;
   const gaps = [...live.gaps.filter(gap => !/^(Running jobs|Messages|\d+ messages? could not)/.test(gap)),
+    ...(live.nodes.some(node => node.kind === 'computer') ? ['Computers show their state now: no history is recorded for them.'] : []),
     ...(frame.running === null ? ['Jobs unknown: nothing recorded for this time.'] : []),
     ...(frame.messages === null ? ['Messages unknown: nothing recorded for this time.'] : []),
     ...(total !== null && total > mapped ? [`${total - mapped} message${total - mapped === 1 ? '' : 's'} could not be matched to a node on this map.`] : [])];
