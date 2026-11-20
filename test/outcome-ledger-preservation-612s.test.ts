@@ -120,7 +120,8 @@ describe('router outcome ledger (612S preservation)', () => {
     const fold = foldRouterOutcomes('{"job":"U1","phase":"VERIFIED","pr_url":"https://github.com/o/r/pull/3","ci_first_pass":"yes","cost_usd":-1}\n');
     expect(fold.outcomes).toEqual([{
       schema: 'router.outcome.v1', job_id: 'U1', lane: null, model: null, tier: null, work_class: null,
-      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null, passk: null,
+      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
+      empty: null, exit_code: null, failure_class: null, passk: null,
     }]);
   });
 
@@ -182,6 +183,26 @@ describe('router outcome ledger (612S preservation)', () => {
   it('rejects non-integer or negative review counts instead of recording them', () => {
     const [o] = foldRouterOutcomes('{"job":"R1","review_findings":{"fixed":1.5,"rejected":0,"ignored":0}}').outcomes;
     expect(o!.review_findings).toBeNull();
+  });
+
+  it('folds finish-row productivity verdicts, newest explicit value wins', () => {
+    const fold = foldRouterOutcomes([
+      '{"job":"F1","event":"finish","empty":true,"exit_code":1,"failure_class":"quota","wall_s":10}',
+      '{"job":"F1","event":"finish","empty":false,"exit_code":0,"wall_s":20}',
+      '{"job":"F2","event":"finish","empty":false,"exit_code":-9,"failureClass":"authentication"}',
+      '{"job":"F3","event":"finish","empty":"yes","exit_code":"1","failure_class":"Not A Label!"}',
+      '{"job":"F4","event":"claim"}',
+      '{"job":"F5","exitCode":3}',
+    ].join('\n'));
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // The newest finish row wins per field; an explicit empty:false and exit 0 are measured values.
+    expect(byId.get('F1')).toMatchObject({ empty: false, exit_code: 0, failure_class: 'quota', wall_s: 20 });
+    // Negative signal exits stay recorded; the camelCase alias joins too.
+    expect(byId.get('F2')).toMatchObject({ empty: false, exit_code: -9, failure_class: 'authentication' });
+    // Wrong types and out-of-shape labels are skipped, never coerced or recorded raw.
+    expect(byId.get('F3')).toMatchObject({ empty: null, exit_code: null, failure_class: null });
+    expect(byId.get('F4')).toMatchObject({ empty: null, exit_code: null, failure_class: null });
+    expect(byId.get('F5')).toMatchObject({ exit_code: 3 });
   });
 
   it('reads the real folder and filters by lane', async () => {

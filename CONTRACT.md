@@ -377,7 +377,13 @@ to no join; `authorityEvidence: null` skips the join and an explicit
 array is used as given. Revert evidence is sticky-true like
 metrics-ingest, so a recorded revert is never contradicted by a later
 `reverted:false`; it is `null` when neither source records anything
-either way. The fold is read-only and advisory: it
+either way. Finish rows also fold three productivity verdicts, newest
+explicit row wins: `empty` (the recorded no-diff boolean), `exit_code`
+(the worker's recorded exit status, negative signal exits included) and
+`failure_class` (only bounded identifier-shaped labels; anything else is
+skipped). All stay `null` when no jobs row recorded them — the fold
+never infers a finish verdict from merge state, PR URLs or event names.
+The fold is read-only and advisory: it
 never routes, ranks, tunes or writes.
 
 `explainRoutes(root, nowSeconds)` returns nullable `posture` from the bounded

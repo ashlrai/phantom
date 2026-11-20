@@ -53,6 +53,12 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   }
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
+  const resolution = report.unknown_unresolved === null ? [] : [
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} unresolved=${report.unknown_unresolved}` +
+      (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
+        ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
+        : ''),
+  ];
   const rows = report.proposals.map(p => {
     const reverted = p.reverted_n > 0 ? ` reverted=${p.reverted_n}` : '';
     const evidence = evidenceSuffix(p.evidence);
@@ -69,7 +75,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
         ? ['market coverage: retained tail only; work_class joins cover the newest bytes']
         : []),
   ];
-  return [header, counts, `ledger ${report.ledger.path}`, ...coverage, ...rows, ...none];
+  return [header, counts, ...resolution, `ledger ${report.ledger.path}`, ...coverage, ...rows, ...none];
 }
 
 export async function cmdFleetRouterWeights(
