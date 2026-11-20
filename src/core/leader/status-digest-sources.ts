@@ -81,9 +81,9 @@ const defaults: StatusDigestSources = {
     return supplyLowLine(await readQueueSupply({ runsDir, now: () => nowMs }));
   },
   wasteLine: async (runsDir, nowMs) => {
-    const { readPoolsWaste, raiseWasteAsk, wasteDigestLine } = await import('../fleet/pools-waste.js');
+    const { readPoolsWaste, wasteDigestLine } = await import('../fleet/pools-waste.js');
     const waste = await readPoolsWaste({ runsDir, now: () => nowMs });
-    await raiseWasteAsk(waste, { runsDir, now: () => nowMs });
+    await (await import('../fleet/asks-sync.js')).syncAsks({ runsDir, now: () => nowMs }).catch(() => null);
     return wasteDigestLine(waste);
   },
   notLiveLine: async runsDir => {
