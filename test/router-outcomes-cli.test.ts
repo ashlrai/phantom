@@ -32,7 +32,8 @@ function runsDir(ledger?: string): string {
 function outcome(job_id: string, over: Partial<RouterOutcome> = {}): RouterOutcome {
   return {
     schema: 'router.outcome.v1', job_id, lane: 'alpha', model: 'm1', tier: 'work', work_class: null,
-    merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600, passk: null,
+    merged: true, reverted: null, ci_first_pass: true, review_findings: null, cost_usd: 1.5, wall_s: 600,
+    empty: null, exit_code: null, failure_class: null, passk: null,
     ...over,
   };
 }
