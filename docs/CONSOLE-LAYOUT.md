@@ -143,6 +143,15 @@ Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
 shows an empty flow, and a failed refresh labels the reading as an old one.
+The card on Home draws the last 24 hours from that same report under its three
+figures (last hour, last 24 hours, median time to merge): one bar per hour of
+PRs merged with the current hour in full colour, the busiest hour named in
+words, the launched, published and merged counts in order, and one row per
+lane that merged (up to five, most first) with the provider's mark and a bar
+against the lane that merged most. An hour with no merge is a grey stub and an
+hour with no count is a gap. If the report cannot be read the card says the
+hourly merges are unknown and keeps its figures; a failed refresh keeps the
+last drawing and gives the time it was read.
 
 The Capacity pane is one board of how full the lanes ran against their slot
 targets over 6, 24 (the default) or 72 hours. The headline is the share of

@@ -14,6 +14,7 @@ import { readLastSeen } from '../shell/last-seen-store.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { setVerseSection } from '../verse-ui-store.js';
 import { ApprovalsCard } from './ApprovalsCard.js';
+import { DeliveryCard } from './DeliveryCard.js';
 import { DiskCard } from './DiskCard.js';
 import { MachinesCard } from './MachinesCard.js';
 import { LeaderRepliesCard } from './LeaderRepliesCard.js';
@@ -70,11 +71,8 @@ export function HomePane({ visible }: PaneProps) {
     <PoolsCard key="pools" visible={visible} onOpenJob={openPoolJob} onOpenPools={openPools} />
     <MachinesCard key="machines" visible={visible} className={styles.card} />
     <ThisMacCard visible={visible} className={styles.card} />
-    <Card title="Merged PRs" action="Open Throughput" onOpen={() => openPane('fleet-throughput')}>
-      <p>Last hour: <Value field={home.mergedLastHour}>{String}</Value></p>
-      <p>Last 24 hours: <Value field={home.merged24h}>{String}</Value></p>
-      <p>Median time to merge: <Value field={home.medianMergeSeconds}>{seconds => seconds < 90 ? `${Math.round(seconds)} seconds` : `${Math.round(seconds / 60)} minutes`}</Value></p>
-    </Card>
+    {/* The day's merges drawn by the hour, on the Throughput pane's own 24 hour read. */}
+    <DeliveryCard summary={home} visible={visible} onOpen={() => openPane('fleet-throughput')} />
     <Card title="Main" action="Open Fleet" onOpen={() => setVerseSection('fleet')}>
       <Value field={home.main}>{repos => <MainRepos repos={repos} />}</Value>
     </Card>
