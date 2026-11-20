@@ -1327,7 +1327,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'estates [--json] [--repo <repo-id>]', desc: 'Per-repo estate cards: health, CI, security. Read-only portfolio view.', topic: 'observability' },
   { cmd: 'main blame --good <sha> --check "<cmd>" [--bad <sha>] [--repo <path>] [--json]', desc: 'Name the first merge that turned the default branch red. Bisects in a temp worktree; read-only.', topic: 'observability' },
   { cmd: 'ci baseline [--repo owner/repo] [--json] [--queue] [--queue-file /absolute/path] [--apply]', desc: 'Analyze shared CI baselines; plan master fixes and post-merge branch updates.', topic: 'observability' },
-  { cmd: 'ci reruns [--json]', desc: 'Read resident CI rerun journal and hourly counts.', topic: 'observability' },
+  { cmd: 'ci reruns [--json]', desc: 'Read resident CI rerun journal, verdicts and hourly counts.', topic: 'observability' },
   { cmd: 'ci-metrics [--json]', desc: 'Per-repo daily turn-time (red to green) metrics; writes ~/.ashlr/ci-metrics.json.', topic: 'observability' },
   { cmd: 'daily-fix validate|filter|dispatch|parse-fixup [--json]', desc: 'Daily CI re-run helper: validate dispatch inputs against the allowlist, preview the job/test filter, emit the gh workflow command, or aggregate fixup-queue lines.', topic: 'observability' },
   { cmd: 'wb <secrets|steer|reprioritize|stop> [--apply] [--json]', desc: 'Workbench actions from the terminal: read secret custody, append a steer note, re-prioritize an unclaimed queue line, or stop a job. Mutating verbs are a dry run unless --apply.', topic: 'observability' },

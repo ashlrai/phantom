@@ -89,9 +89,36 @@ The repository, head SHA and run ID prevent repeated attempts even after a
 crash or failed call; a new head is eligible. Reads tolerate malformed rows and
 are bounded to the last 4 MiB, so deduplication, counts and recurrence cover
 that retained read window. `phm ci reruns --json` shows the latest 100 entries,
-counts in that window, the last-hour attempt count and the recurring flakes.
+counts in that window, the last-hour attempt count, the recurring flakes and
+the rerun verdicts.
+
+## Rerun verdicts
+
+An `ok` journal row only proves the `gh run rerun` call succeeded, not that the
+flake passed. On each maintenance pass, after queueing work, the loop resolves
+pending reruns by reading `repos/<repo>/actions/runs/<runId>`: a completed run
+with conclusion `success` journals a `pass` verdict, `failure` or `timed_out`
+a `fail`, and any other completed conclusion (cancelled, skipped, neutral,
+startup failure, stale) an `inconclusive` one. A run still in progress, a read
+whose `updated_at` predates the rerun call, or a head SHA mismatch stays
+pending for a later pass. Attempts younger than five minutes are not checked
+yet so a stale pre-rerun read cannot be mistaken for the new attempt's result;
+unresolved attempts older than 24 hours stop being polled. Each pass performs
+at most eight verdict reads per repository inside the same five-minute
+deadline, and transient read failures leave the rerun pending rather than
+recording a guess.
+
+`phm ci reruns --json` reports `verdicts` tallies over the retained journal
+window: `pass`/`fail`/`inconclusive` counts, `pending` fired reruns still
+awaiting an outcome inside 24 hours, and `resolutionRate` (pass over
+pass+fail, null when nothing has resolved). Recurring-flake entries carry the
+same per-test verdict tallies and the `RQ-CIFLAKE-*` brief names them, so a
+test whose reruns keep failing reads differently from one that passes on
+rerun. A `fail` verdict is evidence the classification may be wrong, not proof;
+rerun firing rules are unchanged.
 `ci-reruns/status.json` contains the last
-maintenance time, per-repository counts (including `recurringFlakes` detected
-and `flakeFixesQueued` appended), errors and queue-blocked reason;
+maintenance time, per-repository counts (including `recurringFlakes` detected,
+`flakeFixesQueued` appended, `verdictsPending` and `verdictsResolved`), errors
+and queue-blocked reason;
 `phm daemon status --json` exposes it as `ciReruns` (null before the first run).
 Cancellation stops further GitHub calls and records status `aborted`.
