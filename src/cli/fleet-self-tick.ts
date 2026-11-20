@@ -128,7 +128,9 @@ function summary(step: string, report: unknown): string {
     const runs = Array.isArray(autofill?.['runs']) ? autofill['runs'] as Record<string, unknown>[] : [];
     const applied = runs.reduce((sum, r) => sum + (typeof r['applied'] === 'number' ? r['applied'] : 0), 0);
     const base = typeof (row['reason'] ?? row['outcome']) === 'string' ? String(row['reason'] ?? row['outcome']) : '';
-    return runs.length ? `${base}  autofill=${applied} applied across ${runs.length} starved ${runs.length === 1 ? 'lane' : 'lanes'}`.trim() : base;
+    const gaps = autofill?.['gaps'] as Record<string, unknown> | null | undefined;
+    const gapNote = gaps && typeof gaps['queued'] === 'number' ? `  gaps=${gaps['queued']} queued of ${gaps['candidates']}${gaps['unknown'] === true ? ' (some sources unknown)' : ''}` : '';
+    return runs.length ? `${base}  autofill=${applied} applied across ${runs.length} starved ${runs.length === 1 ? 'lane' : 'lanes'}${gapNote}`.trim() : base;
   }
   if (step === 'reset-release') {
     const quota = row['claudeQuota'] as Record<string, unknown> | null | undefined;
