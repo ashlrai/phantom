@@ -55,6 +55,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `leader-journal` | Leader journal | `mod+alt+j` | `src/web-ui/routes/verse/leader-journal/leader-journal.pane.tsx` |
 | `leader-thread` | Leaders | `mod+alt+l` | `src/web-ui/routes/verse/leader-thread/leader-thread.pane.tsx` |
 | `library` | Library | — | `src/web-ui/routes/verse/library/library.pane.tsx` |
+| `mason-thread` | Mason | none | `src/web-ui/routes/verse/mason-thread/mason-thread.pane.tsx` |
 | `models` | Models | none | `src/web-ui/routes/verse/models/models.pane.tsx` |
 | `reasoning` | Reasoning | — | `src/web-ui/routes/verse/reasoning/reasoning.pane.tsx` |
 | `session-wall` | Conversations | none | `src/web-ui/routes/verse/session-wall/session-wall.pane.tsx` |
