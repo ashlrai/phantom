@@ -9,7 +9,7 @@ import {
   readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
 import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
-import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
+import { busWorkFeedOwnerMatcher, busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult } from '../core/agents/bus-claims.js';
@@ -44,7 +44,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--to <label>] [--claims]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--to <label>] [--owner <agent>] [--claims]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>]
 ashlr agents bus status
@@ -62,7 +62,9 @@ needs no identity.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
-routing label under every label of one agent identity. work claim takes one of
+routing label and --owner keeps jobs announced by that agent, each under
+every label of one agent identity, while --job keeps one job id. work claim
+takes one of
 a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
@@ -347,14 +349,19 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (status !== undefined && !(WORK_STATUSES as readonly string[]).includes(status)) {
         throw new UsageError(`--status must be one of ${WORK_STATUSES.join(', ')}.`);
       }
-      const to = one('--to');
-      if (to !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(to)) {
-        throw new UsageError('--to must be a printable routing label of 1-128 characters.');
-      }
-      const toMatch = to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root });
+      const labelArg = (flag: string): string | undefined => {
+        const value = one(flag);
+        if (value !== undefined && !/^[\x21-\x7e]{1,128}(?![\s\S])/.test(value)) {
+          throw new UsageError(`${flag} must be a printable routing label of 1-128 characters.`);
+        }
+        return value;
+      };
+      const to = labelArg('--to'), owner = labelArg('--owner'), jobId = labelArg('--job');
       const result = projectBusWorkFeedView(
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') }),
-        status as WorkJob['status'] | undefined, toMatch);
+        { status: status as WorkJob['status'] | undefined, jobId,
+          toMatch: to === undefined ? undefined : busWorkFeedToMatcher(to, { root: options.root }),
+          ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
       return result.status === 'ok' ? 0 : 1;
     }
