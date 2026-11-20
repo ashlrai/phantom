@@ -1685,10 +1685,11 @@ no execution authority; the token returns only to its acquirer.
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
-across all three reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, wakes}` or `{status:'invalid', reason}` for a ref outside
-the printable-label rule. `agent` echoes `ref`, resolved `handle`/`identity`
-(null when unregistered) and the `registry` state. `claims` reuses
+across all four reads) returns `BusWorkMineResult`: `{status:'ok', agent,
+asOf, claims, jobs, wakes, inbox}` or `{status:'invalid', reason}` for a ref
+outside the printable-label rule. `agent` echoes `ref`, resolved
+`handle`/`identity` (null when unregistered) and the `registry` state.
+`claims` reuses
 `listBusClaims({owner})` — identity-aware owner matching with exact-label
 fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
 each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
@@ -1703,7 +1704,20 @@ only when every declared key is provably held, `null` when coverage is
 addressed)` is the exported pure rule. A non-ok feed collapses the section to
 its own status (`refused` keeps `reason`/`receipts`). `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `truncated`, or
-`unknown-agent`/`unavailable` with `reason`. `formatBusWorkMine(result)`
+`unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
+for the next page of mail addressed to the agent — same matching, order and
+owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
+messages, nextCursor, truncated}`: each `BusWorkMineInboxMessage` carries
+`cursor`, envelope `id`, `ts`, `priority`, `kind`, `channel`, raw `from`,
+resolved `fromAgent` (null when unregistered) and a `summary` through
+`busBodySummary`/`busBodyFallbackSummary`, scrubbed, single-lined and clipped
+to 200 characters for both JSON and human output. The read asks
+for one row past the 20-message cap so `truncated` is definitive — a full
+window proves mail remains beyond `nextCursor`, a short one proves the scan
+reached the store's end — and on overflow the newest scanned row is the one
+dropped, so `nextCursor` resumes strictly before it. A non-ok inbox read
+reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
+`formatBusWorkMine(result)`
 renders the shared human lines — titles and key lists scrubbed, single-lined
 and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on
 an invalid agent.
@@ -1744,8 +1758,11 @@ possibly multi-line; every other recognized kind — the v2 work/wake bodies
 plus the channel, leader, peer, group, cos and incident notices that share
 the store — composes one `<kind> <subject>: <payload>` line, and protocol-v1
 transport bodies summarize their `protocol` kind/topic/ref), null when the
-body has no typed content; claim tokens and `work.result` queueId/receiptId
-never appear in a summary.
+body has no typed content; `busBodyFallbackSummary(body)` is the shared
+bounded fallback for bodies it does not know — string bodies as their
+scrubbed single-line text, anything else as a secret-scrubbed raw JSON
+render clipped to 512 characters. Claim tokens and `work.result`
+queueId/receiptId never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
@@ -1772,8 +1789,7 @@ a feed lookup.
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
-falling back to a secret-scrubbed single-line read of string bodies or a
-bounded 512-character raw JSON render for unrecognized bodies. Identities
+falling back to `busBodyFallbackSummary` for unrecognized bodies. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

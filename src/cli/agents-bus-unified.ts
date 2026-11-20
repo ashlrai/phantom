@@ -61,8 +61,9 @@ a shown job's declared claim keys — queue:<jobId> preferred, --key picks
 another declared key — into the shared coordination table; claims coordinate,
 never authenticate. work mine is a read-only per-agent digest — the live
 claims it holds under any of its labels, the open feed jobs still claimable
-for it and its pending wake hints — where every section reports its own read
-state and unknown stays unknown. status is a read-only
+for it, its pending wake hints and the next page of mail addressed to it —
+where every section reports its own read state and unknown stays unknown.
+status is a read-only
 probe of the store, registry, wake queue, coordination table and work feed;
 a section that cannot be read reports unavailable or unknown, never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;

@@ -1,19 +1,22 @@
 /**
  * `agents bus work mine`: one read answering "what is pending for this agent" —
  * the live claims it holds under any of its labels, the open work-feed jobs it
- * could still claim, and the wake hints addressed to it. Each section reads the
- * same projection the dedicated verb serves and keeps its honesty rules: an
- * unreadable store, coordination table, registry or wake queue narrows the
- * match or reports unknown, never an empty list passed off as fact. Routing
- * labels are not authentication; claims coordinate scope and grant no
- * execution authority. Read-only: no writes, no claims, no dispatch.
+ * could still claim, the wake hints addressed to it and the next page of mail
+ * in its inbox. Each section reads the same projection the dedicated verb
+ * serves and keeps its honesty rules: an unreadable store, coordination table,
+ * registry or wake queue narrows the match or reports unknown, never an empty
+ * list passed off as fact. Routing labels are not authentication; claims
+ * coordinate scope and grant no execution authority. Read-only: no writes, no
+ * claims, no dispatch.
  */
 import { coordinationRowBlocks } from './claim-store.js';
 import { listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { readAgentRegistry, resolveAgent } from './bus-identity.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedToMatcher, readBusWorkFeed,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { readAgentWakes } from './bus-unified.js';
+import { busBodyFallbackSummary, busBodySummary, readAgentInbox, readAgentWakes,
+  type InboxKind } from './bus-unified.js';
+import type { BusPriority } from '../fleet/bus-envelope.js';
 import type { BusWakeRow } from '../fleet/bus-wake-queue.js';
 import type { WorkJob } from './bus-v2-schema.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -69,14 +72,42 @@ export type BusWorkMineWakes =
   | { status: 'ok'; agent: string; wakes: BusWakeRow[]; truncated: boolean }
   | { status: 'unknown-agent' | 'unavailable'; reason: string };
 
+/** One mail row addressed to the agent, summarized the way the inbox frame reads it. */
+export interface BusWorkMineInboxMessage {
+  cursor: number;
+  /** Envelope id — the handle the message-id claim verbs take. */
+  id: string;
+  ts: string;
+  priority: BusPriority;
+  kind: InboxKind;
+  /** Channel name for channel posts; null otherwise. */
+  channel: string | null;
+  /** Raw sender routing label; `fromAgent` is its resolved handle or null. */
+  from: string;
+  fromAgent: string | null;
+  /** Scrubbed, single-line body summary, clipped to the digest bound. */
+  summary: string;
+}
+
+export type BusWorkMineInbox =
+  | { status: 'ok'; agent: string; messages: BusWorkMineInboxMessage[];
+      /** Resume cursor for `agents bus inbox --after`; covers every scanned row. */
+      nextCursor: number;
+      /** True only when mail beyond the shown page provably exists. */
+      truncated: boolean }
+  | { status: 'unknown-agent' | 'unavailable' | 'retryable' | 'invalid'; reason: string };
+
 export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
-      claims: BusWorkMineClaims; jobs: BusWorkMineJobs; wakes: BusWorkMineWakes }
+      claims: BusWorkMineClaims; jobs: BusWorkMineJobs; wakes: BusWorkMineWakes; inbox: BusWorkMineInbox }
   | { status: 'invalid'; reason: string };
 
-/** Newest open jobs and newest wake hints a digest shows; totals stay honest via `open`/`truncated`. */
+/** Newest open jobs, newest wake hints and next inbox page a digest shows; totals stay honest via `open`/`truncated`. */
 const WORK_MINE_JOBS_MAX = 50;
 const WORK_MINE_WAKES_MAX = 20;
+const WORK_MINE_INBOX_MAX = 20;
+/** Display clip for one mail summary; the digest carries no raw body, so JSON and human output share it. */
+const WORK_MINE_SUMMARY_MAX = 200;
 
 const AGENT_REF = /^[\x21-\x7e]{1,128}$/;
 
@@ -126,12 +157,48 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
 }
 
 /**
- * Compose the three reads one agent otherwise runs separately — `claim list
- * --owner`, `work feed` and `wakes` — into one snapshot. The claims join names
- * the announced jobs each held claim's keys block, from the same feed read the
- * jobs section annotates, so the two views cannot disagree. A non-ok feed
- * leaves `jobs` absent on claims and reports its own state in the jobs
- * section; a non-ok claims read reports `unavailable` rather than zero.
+ * The next page of mail addressed to the agent — the same matching, order and
+ * owner-share receipt checks `agents bus inbox` applies, capped at the oldest
+ * WORK_MINE_INBOX_MAX pending messages. One extra row is read past the cap so
+ * `truncated` is definitive: a full window proves mail remains beyond
+ * `nextCursor`, a short one proves the scan reached the store's end. When the
+ * window overflows the newest row is the one dropped, so `nextCursor` resumes
+ * strictly before it and `agents bus inbox --after` redelivers nothing shown
+ * and skips nothing pending.
+ */
+function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number): BusWorkMineInbox {
+  const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1 }, { root: options.root, now: () => nowMs });
+  if (page.status !== 'ok') return { status: page.status, reason: page.reason };
+  let shown = page.messages, nextCursor = page.nextCursor, truncated = false;
+  if (page.messages.length > WORK_MINE_INBOX_MAX) {
+    truncated = true;
+    let newest = 0;
+    for (let i = 1; i < page.messages.length; i += 1) {
+      if (page.messages[i]!.cursor > page.messages[newest]!.cursor) newest = i;
+    }
+    shown = page.messages.filter((_, index) => index !== newest);
+    nextCursor = Math.max(...shown.map(message => message.cursor));
+  }
+  return {
+    status: 'ok', agent: page.agent, nextCursor, truncated,
+    messages: shown.map(message => ({
+      cursor: message.cursor, id: message.envelope.id, ts: new Date(message.receivedAt).toISOString(),
+      priority: message.priority, kind: message.kind, channel: message.channel,
+      from: message.envelope.from, fromAgent: message.fromAgent,
+      summary: mineField(busBodySummary(message.envelope.body) ?? busBodyFallbackSummary(message.envelope.body),
+        WORK_MINE_SUMMARY_MAX),
+    })),
+  };
+}
+
+/**
+ * Compose the reads one agent otherwise runs separately — `claim list
+ * --owner`, `work feed`, `wakes` and `inbox` — into one snapshot. The claims
+ * join names the announced jobs each held claim's keys block, from the same
+ * feed read the jobs section annotates, so the two views cannot disagree. A
+ * non-ok feed leaves `jobs` absent on claims and reports its own state in the
+ * jobs section; non-ok claims, wakes or inbox reads report their own state
+ * rather than zero or an empty list.
  */
 export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {}): BusWorkMineResult {
   if (!AGENT_REF.test(agent)) return { status: 'invalid', reason: 'invalid-agent' };
@@ -167,7 +234,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
         wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
 
-  return { status: 'ok', agent: who, asOf, claims, jobs, wakes };
+  const inbox = inboxSection(agent, options, nowMs);
+
+  return { status: 'ok', agent: who, asOf, claims, jobs, wakes, inbox };
 }
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -223,6 +292,18 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     lines.push(`wakes=${wakes.wakes.length}${wakes.truncated ? '+truncated' : ''}`);
     for (const wake of wakes.wakes) {
       lines.push(`  ${new Date(wake.at).toISOString()} ${wake.id} ${wake.from} -> ${wake.to}`);
+    }
+  }
+
+  const inbox = result.inbox;
+  if (inbox.status !== 'ok') {
+    lines.push(`inbox=unknown ${inbox.status}`);
+  } else {
+    lines.push(`inbox=${inbox.messages.length}${inbox.truncated ? '+truncated' : ''} nextCursor=${inbox.nextCursor}`);
+    for (const message of inbox.messages) {
+      const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
+      const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.from}`;
+      lines.push(`  [${message.priority} ${where} id=${message.id} from ${from}] ${message.summary}`);
     }
   }
   return lines;
