@@ -12,6 +12,13 @@
           ],
           "command": "npx"
         },
+        "context7": {
+          "args": [
+            "-y",
+            "@upstash/context7-mcp@4.7.1"
+          ],
+          "command": "npx"
+        },
         "lexicon": {
           "args": [
             "-y",
@@ -168,6 +175,13 @@
         "-p",
         "ashlr-plugin@1.36.4",
         "ashlr-mcp"
+      ],
+      "command": "npx"
+    },
+    "context7": {
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.7.1"
       ],
       "command": "npx"
     },
