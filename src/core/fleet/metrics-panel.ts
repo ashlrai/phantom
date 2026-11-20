@@ -2,6 +2,7 @@ import { readGeneratorYield } from '../queue/generator-yield.js';
 import { readGoals } from './goals.js';
 import { readFleetRunsDirState } from './runs-dir-state.js';
 import { join } from 'node:path';
+import { readLeverageReport } from '../metrics/leverage-class.js';
 import { runsRoot } from '../metrics/loop-collect.js';
 import { readJobYield, readMetricsSeries } from './metrics-series.js';
 import { metricsReader, readMetrics } from './metrics-glance.js';
@@ -23,6 +24,8 @@ export async function readMetricsPanel(runsDir = runsRoot(), now = Date.now(), s
     jobYield,
     /** Live rows of the job stop file, soonest to expire first. Null when the file is unknown. */
     stopped: stops && stoppedFamilies(stops, now).sort((a, b) => a.until - b.until),
+    /** The `phm metrics leverage` report: merges per class per hour, from job ids only (no PR titles here). */
+    leverage: readLeverageReport({ runsDir, now }),
     series,
     hourlyMerges: series.known ? series.hours.map(hour => hour.merged!) : null,
     lanes: [...names].sort().map(lane => {

@@ -8,6 +8,7 @@ import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { JobYieldCard } from './JobYieldCard.js';
+import { LeverageTile } from './LeverageTile.js';
 import { MetricsGlance } from './MetricsGlance.js';
 import { ReleasesCard } from './ReleasesCard.js';
 
@@ -31,6 +32,7 @@ export function MetricsPane({ visible }: PaneProps) {
   return <section aria-label="Metrics"><h2>Metrics</h2>
     {!data ? <p>{read.status === 'error' ? 'Metrics are unknown.' : 'Reading metrics…'}</p> : null}
     <MetricsGlance report={data?.glance} capacity={capacity} />
+    <LeverageTile report={data?.leverage} />
     <JobYieldCard report={data?.jobYield} stopped={data?.stopped} />
     <ReleasesCard report={releases.data} />
     <p>Merged PRs: {history?.mergesLastHour ?? 'unknown'} in the last hour · {history?.mergesLast24h ?? 'unknown'} in the last 24 hours.</p>
