@@ -1053,6 +1053,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'config path',                  desc: 'Print the path to config.json.', topic: 'core' },
   { cmd: 'doctor merge-path --repo owner/name', desc: 'Read-only required-check sentinel for recent PR heads.', topic: 'core' },
   { cmd: 'doctor worktree [--repair] [--json]', desc: 'Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each. Also shows the source checkout (branch, commits behind, lockfile) and its repair log; --repair runs npm ci in this worktree only.', topic: 'core' },
+  { cmd: 'doctor supply [--json]', desc: 'Is self-supply landing jobs? Per source in the host ingest log: last ingest and jobs in 24 h; rejected drops by reason; whether the self-tick gap hook is on; one verdict line. Gap jobs show as source gap. Missing files read as unknown with the path.', topic: 'core' },
   { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]', desc: 'Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.', topic: 'core' },
