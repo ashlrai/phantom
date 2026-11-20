@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractAllGaps, extractGaps, JOB_GAPS_SCHEMA, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
+import { DROP_QUEUE_REPOS, extractAllGaps, extractGaps, JOB_GAPS_SCHEMA, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
 import { cmdJobsGaps } from '../src/cli/jobs-gaps.js';
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
@@ -67,7 +67,7 @@ describe('readJobGaps', () => {
   it('with propose writes survivors once as drop jobs and finds them again', async () => {
     await seed({ 'RQ-A': '## Gaps\n- Wire the digest into the weekly report\n' });
     const first = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
-    expect(first.proposed).toMatchObject([{ queued: true, skipped: null }]);
+    expect(first.proposed).toMatchObject([{ queued: true, skipped: null, refused: null, path: expect.stringMatching(/RQ-PHX-[A-Z0-9]+\.md$/) }]);
     const files = await readdir(join(root, 'leader', 'drop', 'claude'));
     expect(files).toHaveLength(1);
     const body = await readFile(join(root, 'leader', 'drop', 'claude', files[0]!), 'utf8');
@@ -112,33 +112,68 @@ describe('phm jobs gaps', () => {
 });
 
 describe('prose gaps and the drop queue', () => {
-  const dropFiles = async () => (await readdir(join(root, 'leader', 'drop', 'claude')).catch(() => [])).filter(f => f.endsWith('.md'));
-  it('extracts a prose gap and a heading gap, one candidate per sentence, trimmed to 120 characters', async () => {
-    await seed({ JOBA: `# Notes\nThe one gap is the retry flag on the export command. Everything else is done.\n\n## Remaining gaps\n- Show unknown sizes as unknown in the report\n` });
+  const dropDir = join('leader', 'drop', 'claude');
+  const dropFiles = async () => (await readdir(join(root, dropDir)).catch(() => [])).filter(f => f.endsWith('.md'));
+  const headerOf = async (file: string) => (await readFile(join(root, dropDir, file), 'utf8')).split('\n')[0];
+  const seedRepos = async (rows: Record<string, string>) => {
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${Object.entries(rows).map(([job, repo]) =>
+      JSON.stringify({ event: 'outcome', lane: 'claude', empty: true, ts: iso(2), job, repo })).join('\n')}\n`);
+  };
+  it('extracts a final-message prose gap and a heading gap, one candidate per sentence, trimmed to 120 characters', async () => {
+    await seed({ JOBA: '# Notes\n\n## Remaining gaps\n- Show unknown sizes as unknown in the report\n' });
+    await writeFile(join(root, 'JOBA.log'), 'working\n\nThe one gap is the retry flag on the export command. Everything else is done.\n');
     const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, ...none });
     expect(report.candidates.map(c => c.title)).toEqual(['Show unknown sizes as unknown in the report', 'The one gap is the retry flag on the export command.']);
-    const long = extractAllGaps(`The gap is ${'very '.repeat(40)}long.`);
+    const long = extractAllGaps('', `The gap is ${'very '.repeat(40)}long.`);
     expect(long[0]!.title.length).toBeLessThanOrEqual(120);
-    expect(extractAllGaps('There are no gaps. Nothing is missing here.')).toEqual([]);
+    expect(extractAllGaps('', 'There are no gaps. Nothing is missing here.')).toEqual([]);
   });
   it('reads the final message in the job log too', async () => {
     await seed({ JOBB: null });
-    await writeFile(join(root, 'JOBB.log'), 'working\nTwo parts of your spec aren\'t there: the sort flag and the page size.\n');
+    await writeFile(join(root, 'JOBB.log'), 'working\n\nTwo parts of your spec aren\'t there: the sort flag and the page size.\n');
     const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, ...none });
     expect(report.candidates).toHaveLength(1);
     expect(report.candidates[0]!.sourceJob).toBe('JOBB');
   });
-  it('drops a duplicate gap, queues a phantom gap and skips a repo with no drop queue with a reason', async () => {
-    await seed({ JOBC: 'We left it for you to decide: the retry flag name.\n', JOBE: 'I left it for you to decide: the retry flag name.\n', JOBD: 'The gap is the sort flag on the list command.\n' });
-    await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${[
-      { job: 'JOBC', repo: 'phantom' }, { job: 'JOBE', repo: 'phantom' }, { job: 'JOBD', repo: 'ashlr-md' },
-    ].map(r => JSON.stringify({ event: 'outcome', lane: 'claude', empty: true, ts: iso(2), ...r })).join('\n')}\n`);
+  it('ignores a "missing" sentence outside a gap section, in the notes and in earlier log lines', async () => {
+    await seed({ JOBN: '# Notes\nThe retry flag is missing from the export command.\n\n## Commands\n- The cache gap is missing too\n' });
+    await writeFile(join(root, 'JOBN.log'), 'step 1: a config file is missing, using defaults\nthe gap in coverage is noted\n\nAll done, nothing else to report.\n');
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, ...none });
+    expect(report.candidates).toEqual([]);
+    expect(report.jobsWithoutGaps).toEqual(['JOBN']);
+  });
+  it('drops a duplicate gap and queues a gap with the repo named in its header', async () => {
+    await seed({ JOBC: '## Remaining gaps\nWe left it for you to decide: the retry flag name.\n', JOBE: '## Remaining gaps\nI left it for you to decide: the retry flag name.\n',
+      JOBD: '## Remaining gaps\n- Add the sort flag to the list command\n' });
+    await seedRepos({ JOBC: 'phantom', JOBE: 'phantom', JOBD: 'locus' });
     const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
     expect(report.dropped.filter(d => d.reason === 'duplicate-gap')).toHaveLength(1);
-    const queuedRows = report.proposed!.filter(p => p.queued);
-    expect(queuedRows).toHaveLength(1);
-    expect(report.proposed!.find(p => p.repo === 'ashlr-md')).toMatchObject({ queued: false, skipped: 'repo ashlr-md has no drop queue' });
-    expect(await dropFiles()).toHaveLength(1);
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(2);
+    const files = await dropFiles();
+    expect((await Promise.all(files.map(headerOf))).sort()).toEqual(['#job repo=locus lane=claude tier=work', '#job repo=phantom lane=claude tier=work']);
     expect(report.schema).toBe(JOB_GAPS_SCHEMA);
+    expect(JOB_GAPS_SCHEMA).toBe('jobs.gaps.v1');
+  });
+  it('allows all seven repos and skips an unknown repo with a reason', async () => {
+    expect([...DROP_QUEUE_REPOS]).toEqual(['phantom', 'phantom-secrets', 'ashlr-plugin', 'ashlr-stack', 'locus', 'lexicon', 'ashlr-md']);
+    await seed({ JOBX: '## Remaining gaps\n- Wire the digest into the weekly report\n' });
+    await seedRepos({ JOBX: 'elsewhere' });
+    const report = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
+    expect(report.proposed).toMatchObject([{ queued: false, skipped: 'repo elsewhere is not a known repo' }]);
+    expect(await dropFiles()).toHaveLength(0);
+  });
+  it('proposes at most 3 gaps per repo per tick and still holds the duplicate check on the next tick', async () => {
+    const titles = ['Wire the digest into the weekly report', 'Cover the stale lock case in tests', 'Print queue depth in the status line', 'Rename the legacy sweep flag', 'Show unknown sizes as unknown'];
+    await seed({ JOBP: `## Remaining gaps\n${titles.map(t => `- ${t}`).join('\n')}\n` });
+    await seedRepos({ JOBP: 'lexicon' });
+    const first = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none });
+    expect(first.proposed!.filter(p => p.queued)).toHaveLength(3);
+    expect(first.proposed!.filter(p => p.skipped?.startsWith('already 3 proposed for lexicon'))).toHaveLength(2);
+    expect(await dropFiles()).toHaveLength(3);
+    const second = await readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, queuedWork: undefined });
+    // The three already written are caught as queued work; the other two go through now.
+    expect(second.dropped.filter(d => d.reason === 'queued')).toHaveLength(3);
+    expect(second.proposed!.filter(p => p.queued)).toHaveLength(2);
+    expect(await dropFiles()).toHaveLength(5);
   });
 });

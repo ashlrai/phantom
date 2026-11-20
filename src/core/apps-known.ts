@@ -22,6 +22,7 @@
  * It is a pure function of the report: it never quits anything.
  */
 import { execFile } from 'node:child_process';
+import { lastUsedText } from './apps-last-used.js';
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -91,6 +92,12 @@ export interface MacAppsProbe {
   processes(): Promise<ProbeProcess[]>;
   /** Bundle path of the frontmost app, or null when there is none. */
   frontmost(): Promise<string | null>;
+  /**
+   * When the app last came to the front, as epoch ms; `null` when macOS says it
+   * never has. Throws when the answer cannot be read or parsed. Optional: a probe
+   * without it leaves the column unknown.
+   */
+  lastFocused?(bundleId: string): Promise<number | null>;
 }
 
 const EXEC_TIMEOUT_MS = 5_000;
@@ -123,6 +130,26 @@ export function parseLsBundlePath(text: string): string | null {
   return m ? m[1]! : null;
 }
 
+/** What `lsappinfo info -only lastActivationTime <asn>` said: a local time, "never", or unreadable. */
+export type LsLastActivation = { state: 'at'; ms: number } | { state: 'never' } | { state: 'unknown' };
+
+/**
+ * Parses `"lastActivationTime"="2026/11/18 14:12:42 ..."` (lsappinfo's own local-time
+ * format) or `"lastActivationTime"=[ NULL ]` (never focused). Anything else is unknown,
+ * never a guessed time.
+ */
+export function parseLsLastActivation(text: string): LsLastActivation {
+  const line = text.split('\n').find(l => l.trim().startsWith('"lastActivationTime"'));
+  if (!line) return { state: 'unknown' };
+  if (/=\s*\[\s*NULL\s*\]/.test(line)) return { state: 'never' };
+  const m = /=\s*"?(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(line);
+  if (!m) return { state: 'unknown' };
+  const [y, mo, d, h, mi, se] = m.slice(1).map(Number) as [number, number, number, number, number, number];
+  const date = new Date(y, mo - 1, d, h, mi, se);
+  const ok = date.getFullYear() === y && date.getMonth() === mo - 1 && date.getDate() === d;
+  return ok ? { state: 'at', ms: date.getTime() } : { state: 'unknown' };
+}
+
 /** macOS host probe; `null` elsewhere so every row says why it is unknown. */
 export function defaultMacAppsProbe(platform = process.platform): MacAppsProbe | null {
   if (platform !== 'darwin') return null;
@@ -142,6 +169,13 @@ export function defaultMacAppsProbe(platform = process.platform): MacAppsProbe |
       const asn = (await run('/usr/bin/lsappinfo', ['front'])).trim();
       if (!/^ASN:[0-9a-fx-]+:?$/i.test(asn)) return null;
       return parseLsBundlePath(await run('/usr/bin/lsappinfo', ['info', '-only', 'bundlepath', asn]));
+    },
+    async lastFocused(bundleId) {
+      const asn = (await run('/usr/bin/lsappinfo', ['find', `bundleid=${bundleId}`])).trim();
+      if (!/^ASN:[0-9a-fx-]+:?$/i.test(asn)) throw new Error('lsappinfo found no running app');
+      const result = parseLsLastActivation(await run('/usr/bin/lsappinfo', ['info', '-only', 'lastActivationTime', asn]));
+      if (result.state === 'unknown') throw new Error('lsappinfo gave an unreadable time');
+      return result.state === 'at' ? result.ms : null;
     },
   };
 }
@@ -175,6 +209,10 @@ export interface MacAppRow {
   quit: 'allowed' | 'protected';
   /** The one obvious action, or null when there is nothing to do (or it is Phantom itself). */
   action: MacAppAction | null;
+  /** When the app last came to the front (ISO time); null when it never has or this is unknown, see `lastFocus`. */
+  lastFocusedAt: string | null;
+  /** `known`: `lastFocusedAt` is set; `never`: running but never brought to the front; `unknown`: not read. */
+  lastFocus: 'known' | 'never' | 'unknown';
   /** Why a column is unknown; null when every column was read. */
   reason: string | null;
   kind: AppKind;
@@ -201,9 +239,9 @@ export function readLastAppActions(scan: () => Pick<ReturnType<typeof scanBusInb
 }
 
 export interface MacAppsReport {
-  schema: 'phm.apps/1';
-  /** Bumps only on a breaking change; new fields are additive. */
-  version: 1;
+  schema: 'phm.apps/2';
+  /** Bumps only on a breaking change; new fields are additive. 2 added lastFocusedAt and lastFocus. */
+  version: 2;
   /** `missing`: no probe on this host; `partial`: some reads failed. */
   probe: 'ok' | 'partial' | 'missing';
   reason: string | null;
@@ -231,10 +269,10 @@ export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: st
   const last = (opts.lastActions ?? readLastAppActions)();
   const base = (app: KnownApp): MacAppRow => ({
     id: app.id, name: app.name, role: app.role, installed: null, running: null, frontmost: null, pid: null, memoryMb: null,
-    path: null, bundleId: null, quit: app.quit, action: null, reason: PROBE_MISSING_REASON,
+    path: null, bundleId: null, lastFocusedAt: null, lastFocus: 'unknown', quit: app.quit, action: null, reason: PROBE_MISSING_REASON,
     kind: app.kind, processName: null, lastAction: last.get(app.id) ?? null,
   });
-  if (!probe) return { schema: 'phm.apps/1', version: 1, probe: 'missing', reason: PROBE_MISSING_REASON, apps: KNOWN_APPS.map(base) };
+  if (!probe) return { schema: 'phm.apps/2', version: 2, probe: 'missing', reason: PROBE_MISSING_REASON, apps: KNOWN_APPS.map(base) };
 
   const [procs, front] = await Promise.all([settle(() => probe.processes()), settle(() => probe.frontmost())]);
   const frontPath = front.ok && front.value ? realOr(front.value) : null;
@@ -256,32 +294,41 @@ export async function readMacApps(opts: { probe?: MacAppsProbe | null; home?: st
     const mine = procs.ok ? procs.value.filter(p => inside(p.path)) : null;
     const running = mine ? mine.length > 0 : null;
     const frontmost = !front.ok ? null : running === false ? false : frontPath !== null && inside(frontPath);
-    const reasons = [...(procs.ok ? [] : [`running state: ${procs.reason}`]), ...(front.ok ? [] : [`frontmost: ${front.reason}`])];
+    // Read only for a running app; a failed or missing read stays unknown, never now or 0.
+    let focus: Pick<MacAppRow, 'lastFocusedAt' | 'lastFocus'> = { lastFocusedAt: null, lastFocus: 'unknown' };
+    let focusReason: string | null = null;
+    if (running === true && found.value.bundleId && probe.lastFocused) {
+      const read = await settle(() => probe.lastFocused!(found.value!.bundleId!));
+      if (!read.ok) { focusReason = `last used: ${read.reason}`; failures.add(focusReason); }
+      else if (read.value === null) focus = { lastFocusedAt: null, lastFocus: 'never' };
+      else if (Number.isFinite(read.value) && read.value > 0) focus = { lastFocusedAt: new Date(read.value).toISOString(), lastFocus: 'known' };
+    }
+    const reasons = [...(focusReason ? [focusReason] : []), ...(procs.ok ? [] : [`running state: ${procs.reason}`]), ...(front.ok ? [] : [`frontmost: ${front.reason}`])];
     // The main process runs from Contents/MacOS; helpers live deeper in the bundle.
     const main = mine?.find(p => roots.some(r => p.path.startsWith(`${r}/Contents/MacOS/`)));
     const row: MacAppRow = {
       ...base(app), installed: true, running, frontmost, processName: main ? basename(main.path) : null,
       pid: mine && mine.length > 0 ? (main ?? mine.reduce((a, b) => a.pid <= b.pid ? a : b)).pid : null,
       memoryMb: mine && mine.length > 0 ? Math.round(mine.reduce((n, p) => n + p.rssKb, 0) / 1024) : null,
-      path: found.value.path, bundleId: found.value.bundleId, reason: reasons.length ? reasons.join('; ') : null,
+      path: found.value.path, bundleId: found.value.bundleId, ...focus, reason: reasons.length ? reasons.join('; ') : null,
     };
     return { ...row, action: nextAction(row) };
   }));
-  return { schema: 'phm.apps/1', version: 1, probe: failures.size ? 'partial' : 'ok', reason: failures.size ? [...failures].join('; ') : null, apps };
+  return { schema: 'phm.apps/2', version: 2, probe: failures.size ? 'partial' : 'ok', reason: failures.size ? [...failures].join('; ') : null, apps };
 }
 
-const stateText = (r: MacAppRow): string => {
+const stateText = (r: MacAppRow, now: number): string => {
   if (r.installed === null) return 'unknown';
   if (!r.installed) return 'not installed';
   if (r.running === null) return 'installed, running unknown';
   if (!r.running) return 'not running';
   return [r.frontmost === true ? 'running, frontmost' : r.frontmost === null ? 'running, frontmost unknown' : 'running',
-    ...(r.pid !== null ? [`pid ${r.pid}`] : []), ...(r.memoryMb !== null ? [`${r.memoryMb} MB`] : [])].join(' · ');
+    ...(r.pid !== null ? [`pid ${r.pid}`] : []), ...(r.memoryMb !== null ? [`${r.memoryMb} MB`] : []), `last used ${lastUsedText(r, now)}`].join(' · ');
 };
 
-export function formatMacApps(report: MacAppsReport): string {
+export function formatMacApps(report: MacAppsReport, now: number = Date.now()): string {
   const width = Math.max(...report.apps.map(a => a.name.length));
-  const lines = report.apps.map(a => `${a.name.padEnd(width)}  ${stateText(a)}${a.action ? `  → phm apps ${a.action} ${a.id}` : ''}`);
+  const lines = report.apps.map(a => `${a.name.padEnd(width)}  ${stateText(a, now)}${a.action ? `  → phm apps ${a.action} ${a.id}` : ''}`);
   if (report.reason) lines.push('', `Unknown: ${report.reason}`);
   lines.push('', 'Phantom never quits your apps. Only Safari, its own browser, can be quit.');
   return lines.join('\n');

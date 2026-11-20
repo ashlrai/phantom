@@ -14,7 +14,7 @@
 import { poolLabel } from '../usage/runway.js';
 import { listAsks, raiseAsk, type AsksOptions } from './asks.js';
 import { resolveNeedsMason } from './needs-mason-resolve.js';
-import type { PoolRow, PoolsViewV1 } from './pools-view.js';
+import { monthDay, type PoolRow, type PoolsViewV1 } from './pools-view.js';
 import { buildSpendDown } from './pools-spenddown.js';
 
 export const ASKS_SYNC_SCHEMA = 'asks.sync.v1';
@@ -92,16 +92,25 @@ export function wantedAsks(input: SyncInputs, nowMs: number): { wanted: SyncItem
   for (const row of byId.values()) {
     if (row.kind !== 'credits') continue;
     const expires = futureIso(row.resetAt, nowMs);
-    if (row.creditsRemaining === null || row.resetAt === null || row.target === null) {
-      unknown.push({ pool: row.id, reason: 'credit balance, expiry or lane target is not reported' });
+    // A closed lane (open: false) is set to zero by definition: its credit ends unspent.
+    const target = row.creditClosed === true ? 0 : row.target;
+    if (row.creditsRemaining === null || row.resetAt === null || target === null) {
+      // A dollar gift names what is missing; a stale or unreported balance is unknown, never 0.
+      const missing = row.creditUnit === 'usd'
+        ? [row.creditsRemaining === null ? 'balance (not reported, or no reading date)' : '', row.resetAt === null ? 'expiry' : '', target === null ? 'lane target' : ''].filter(Boolean).join(', ')
+        : '';
+      unknown.push({ pool: row.id, reason: row.creditUnit === 'usd' ? `${poolLabel(row.id)} credit ${missing} unknown, so no ask was raised` : 'credit balance, expiry or lane target is not reported' });
       continue;
     }
     checked.add(`${row.id}:payment`);
     // Only a credit that ends unused: a balance left, a future expiry and a lane set to zero.
-    if (row.target !== 0 || !(row.creditsRemaining > 0) || expires === null) continue;
+    if (target !== 0 || !(row.creditsRemaining > 0) || expires === null) continue;
+    const stale = row.creditAsOf != null && nowMs - Date.parse(row.creditAsOf) > 24 * 3_600_000;
     wanted.push({
       pool: row.id, kind: 'payment', replies: ['yes', 'no'], askId: null, expires,
-      text: `Use the ${poolLabel(row.id)} credit before it ends ${day(expires)}? Its lane is set to zero. Yes records use it, no records skip; nothing is spent.`,
+      text: row.creditUnit === 'usd'
+        ? `${stale ? `Last reading ${monthDay(row.creditAsOf!)}: about` : 'About'} ${Math.round(row.creditsRemaining)} USD of ${poolLabel(row.id)} credit expires ${monthDay(expires)}${row.creditClosed ? ' and its lane is closed' : ''}. Use it? yes / no`
+        : `Use the ${poolLabel(row.id)} credit before it ends ${day(expires)}? Its lane is set to zero. Yes records use it, no records skip; nothing is spent.`,
     });
   }
   return { wanted, unknown, checked };
@@ -137,8 +146,10 @@ export async function syncAsks(options: SyncOptions = {}): Promise<AsksSyncV1> {
 
   const { wanted, unknown, checked } = wantedAsks(input, nowMs);
   out.unknown = unknown;
-  const owned = open.asks.filter(ask => ask.subject !== null && (ask.kind === 'password' || ask.kind === 'payment') && OWNED_NOTE.test(ask.unblocks ?? ''));
-  const ownedFor = (pool: string, kind: SyncKind) => owned.find(ask => ask.subject === pool && ask.kind === ASK_KIND[kind]);
+  const owned = open.asks.filter(ask => ask.subject !== null && (ask.kind === 'signin' || ask.kind === 'password' || ask.kind === 'payment') && OWNED_NOTE.test(ask.unblocks ?? ''));
+  // Sign-in asks read back as `signin` (stored `password`); either spelling is the same ask.
+  const kindOf = (ask: { kind: string }): SyncKind => ask.kind === 'payment' ? 'payment' : 'signin';
+  const ownedFor = (pool: string, kind: SyncKind) => owned.find(ask => ask.subject === pool && kindOf(ask) === kind);
   const unblocksOf = (item: SyncItem) => `${poolLabel(item.pool)} ${item.kind === 'signin' ? 'usage' : 'credit'} that would otherwise expire`;
 
   for (const item of wanted) {
@@ -154,7 +165,7 @@ export async function syncAsks(options: SyncOptions = {}): Promise<AsksSyncV1> {
   }
   // Close an ask only when its pool was checked this run and no longer calls for it.
   for (const ask of owned) {
-    const kind: SyncKind = ask.kind === 'password' ? 'signin' : 'payment';
+    const kind = kindOf(ask);
     if (!checked.has(`${ask.subject}:${kind}`) || wanted.some(item => item.pool === ask.subject && item.kind === kind)) continue;
     const item: SyncItem = { pool: ask.subject!, kind, text: ask.request, replies: ask.replies, expires: ask.expires, askId: ask.id };
     if (dryRun) { out.resolved.push(item); continue; }

@@ -74,6 +74,8 @@ const FRAME_STATES: readonly ReplayFrameState[] = ['known', 'partly-unknown', 'u
 const MAX_FRAMES = 288;
 const list = (v: unknown): unknown[] | null => Array.isArray(v) ? v.slice(0, MAX_NODES) : null;
 const jobs = (v: unknown) => list(v)?.flatMap(row => object(row) && text(row.job) ? [{ job: text(row.job)!, lane: text(row.lane), repo: text(row.repo), url: text(row.url) }] : []) ?? null;
+const replayLanes = (v: unknown) => list(v)?.flatMap(row => object(row) && text(row.lane) && count(row.running) !== null ? [{ lane: text(row.lane)!, running: count(row.running)! }] : []) ?? null;
+const replayPools = (v: unknown) => list(v)?.flatMap(row => object(row) && text(row.pool) ? [{ pool: text(row.pool)!, usedPct: typeof row.usedPct === 'number' && Number.isFinite(row.usedPct) ? row.usedPct : null }] : []) ?? null;
 /** A fleet.map-replay.v1 read. Malformed frames are dropped and a missing part stays null (unknown); null when this is not a replay or has no frames. */
 export function narrowMapReplay(raw: unknown): MapReplay | null {
   if (!object(raw) || raw.schema !== MAP_REPLAY_SCHEMA || raw.version !== 1 || !Array.isArray(raw.frames)) return null;
@@ -82,13 +84,14 @@ export function narrowMapReplay(raw: unknown): MapReplay | null {
     if (!object(row) || !at || !from || !Number.isFinite(Date.parse(at)) || !FRAME_STATES.includes(row.state as ReplayFrameState)) return [];
     const plain = (rows: ReturnType<typeof jobs>) => rows?.map(({ job, lane, repo }) => ({ job, lane, repo })) ?? null;
     return [{ from, at, state: row.state as ReplayFrameState, running: plain(jobs(row.running)), launched: plain(jobs(row.launched)),
-      prsOpened: jobs(row.prsOpened), merged: jobs(row.merged), messages: row.messages === null ? null : narrowMapEdges({ schema: 'fleet.map-edges.v1', version: 1, edges: row.messages }) }];
+      prsOpened: jobs(row.prsOpened), merged: jobs(row.merged), messages: row.messages === null ? null : narrowMapEdges({ schema: 'fleet.map-edges.v1', version: 1, edges: row.messages }),
+      lanes: replayLanes(row.lanes), pools: replayPools(row.pools) }];
   });
   const sources = object(raw.sources) ? raw.sources : {};
   const step = count(raw.stepSeconds);
   if (!frames.length || !step) return null;
   return { schema: MAP_REPLAY_SCHEMA, version: 1, generatedAt: text(raw.generatedAt) ?? 'unknown', since: text(raw.since) ?? frames[0]!.from, until: text(raw.until) ?? frames.at(-1)!.at,
-    stepSeconds: step, sources: { jobs: sources.jobs === 'available' ? 'available' : 'unknown',
+    stepSeconds: step, sources: { jobs: sources.jobs === 'available' ? 'available' : 'unknown', pools: sources.pools === 'available' ? 'available' : 'unknown',
       messages: sources.messages === 'available' || sources.messages === 'missing' ? sources.messages : 'unavailable' },
     frames, gaps: (list(raw.gaps) ?? []).flatMap(gap => text(gap) ? [text(gap)!] : []) };
 }

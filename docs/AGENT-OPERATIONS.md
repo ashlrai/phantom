@@ -1172,3 +1172,8 @@ projects that average forward from the observation time and is compared with
 reset. Zero burn has no exhaustion date; missing observation duration gives
 unknown burn. Expired reset windows and invalid or duplicate evidence degrade
 the metrics slice. Projections are observations and grant no spending authority.
+
+## Daily checks
+- `phm metrics loop` (where the loop waits)
+- `phm map replay --since 6h` (what happened while you were away)
+- `phm asks sync` (the few things only Mason can answer)

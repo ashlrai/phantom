@@ -197,11 +197,12 @@ resolved identity belongs to. A missing registry is a verified-empty list
 (`source: missing`), an unreadable one is `unavailable` — never an empty
 list — and membership is a routing label set (who may post), not proof of
 presence or authority. `phm agents bus channel read <name> [--topic <t>]
-[--from <agent>] [--after <cursor>] [--limit <n>]` pages the room's posts
+[--from <agent>] [--thread <t>] [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
 their own read, not messages; `--from` narrows by sender through the same
-identity-label matching `comms bus read` uses. Reading needs no identity
+identity-label matching `comms bus read` uses, and `--thread` narrows to
+`note`/`context` bodies carrying that v2 thread label. Reading needs no identity
 and no membership; an unknown channel is `unknown-channel`, an unreadable
 registry or store is reported — never an empty page passed off as history.
 Because channel addresses are bus-group addresses, existing `subscribeGroup`
@@ -230,10 +231,12 @@ projections — it is threading metadata, never a feed lookup, so a wake needs
 no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
-**Inbox.** `phm agents bus inbox <agent>` returns one page of DMs, handoffs,
+**Inbox.** `phm agents bus inbox <agent> [--thread <t>]` returns one page of
+DMs, handoffs,
 posts in the agent's channels (minus its own) and traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
-highest priority first. Persist `nextCursor` only after handling the
+highest priority first; `--thread` keeps only `note`/`context` bodies
+carrying that v2 thread label. Persist `nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
 `context` and `worker-handoff` carry their message text, while typed
@@ -288,6 +291,50 @@ same projection back — jobs newest-first, optionally filtered by status or
 announcement address and joined with the live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
 `phm fleet work-feed`.
+
+**Job claims.** `phm agents bus work claim --job <id> --lease-ms <1..3600000>
+[--key <claimKey>] [--owner <label>] [--id <opId>]` is the job-level companion
+to `claim acquire`: it reads the live feed, refuses unless the job is shown
+and still open for a worker (`queued` or `rescheduled` — the same
+`BUS_FEED_OPEN_STATUSES` the comms inbox pending-work view uses), resolves one
+of the job's declared claim keys — `queue:<jobId>` preferred, `--key` picks
+another declared key — and runs the same coordination acquire, so the
+post → feed → claim → status loop never makes a caller reconstruct key
+conventions. An undeclared `--key`, a job the feed does not show, a non-open
+status or a job with no claim keys refuses before any lease; a refused or
+unreadable feed refuses rather than claiming against a guessed job. The
+result echoes the announced job and, on `acquired`, the fencing token for its
+acquirer only; a conflict names the holder, never a token. Exit 0 acquired,
+2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
+never permits a merge, a push, or spending.
+
+**Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
+digest that answers "what is pending for this agent" in one call instead of
+three: the live coordination claims it holds under any of its labels (with the
+announced jobs each claim's keys block, the reverse of `work feed --claims`),
+the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
+key; newest 50 shown, `open` keeps the true total) annotated per declared key —
+`freeKeys`/`heldKeys` plus a tri-state
+`claimable` that is `null` whenever hold coverage is `truncated` or `unknown`,
+never a guess — and the wake hints addressed to it, capped at the newest 20.
+`addressed` marks jobs whose announcement `to` label resolves to the agent's
+identity. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+exact-label claim matching, reports `identity: null`, and answers
+`unknown-agent` for wakes rather than an empty list. Every section reports its
+own read state — `missing`/`available`/`unavailable` for claims,
+`ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed — so one
+unreadable dependency degrades only its own section. Exit 0 on a completed
+read, 2 on an invalid agent ref.
+
+**Status.** `phm agents bus status [--json]` is a read-only probe of the five
+dependencies every verb above touches: the message store (retained/live/expired
+counts against its caps), the identity registry (identity and channel counts),
+the wake queue (state and observed hint count), the shared coordination table
+(live claims and status rows) and the work-feed projection (job count, or the
+refusal reason when the feed is poisoned). Each section reports its own real
+state — a store that cannot be read reports `unavailable` with null counts,
+never zero, and the probe never throws, writes or takes a lock. Use it before a
+session assumes the bus is healthy.
 
 **CLI adapters.** `src/core/agents/bus-cli-adapters.ts` covers `claude`,
 `codex`, `devin`, `cursor` and `grok`. Each one detects its CLI (explicit
@@ -465,7 +512,11 @@ these shared projections to every enrolled, authenticated peer, independent of
 lane or role. Private inboxes keep their recipient checks. Routine local DMs use
 `phm agents bus dm --to <handle> --text <text>`; transport and send gates still apply.
 Repeatable `--ref <ref>` on `dm` and `channel post` records v2 `refs` on the
-`note` body.
+`note` body; `--thread <label>` records the v2 `thread` conversation label —
+the field that ties a question and its answer together — on `dm`, `channel
+post`, and (as a read filter) `inbox` and `channel read`, plus `comms bus
+read`/`watch`. A thread read matches that field on `note`/`context` bodies
+only; every other body kind never matches.
 
 `body.kind` is one of:
 

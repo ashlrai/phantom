@@ -10,7 +10,7 @@
  * is kept and read "unknown agent"; a reply to a message that is not on the
  * bus starts its own thread. Names are routing labels, not proven identities.
  */
-import { JOB_THREAD_PREFIX, projectAgentMessages } from './agent-messages.js';
+import { projectAgentMessages } from './agent-messages.js';
 import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
@@ -37,7 +37,12 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
     return {
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
-      thread: m.conversation.startsWith(JOB_THREAD_PREFIX) ? m.conversation : null,
+      // The message projection's conversation key is the declared thread bucket —
+      // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key
+      // `phm agents messages` reports as `threadId`. Only the synthesized
+      // per-pair fallback is no thread the agents named, so it stays
+      // reply-chain rooted.
+      thread: m.conversation.startsWith('pair:') ? null : m.conversation,
       state: ['blocked', 'failed'].includes(status) || outcome === 'failed' ? 'blocked'
         : ['done', 'complete', 'completed'].includes(status) || ['complete', 'completed'].includes(outcome) ? 'done' : null,
       lane: m.from.lane,

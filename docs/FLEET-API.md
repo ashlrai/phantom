@@ -493,10 +493,15 @@ per step (default: the last 6 hours, every 5 minutes; at most 288 frames).
 `GET /api/verse/fleet/control/map-replay[?since=6h&step=5m]` serves the same
 read with a current read session. Each frame has `from`, `at`, `state`
 (`known`, `partly-unknown` or `unknown`) and `running`, `launched`,
-`prsOpened`, `merged` and `messages`. The jobs come from the jobs ledger and
-the messages are the `map edges` lines inside the frame. A part nobody
+`prsOpened`, `merged`, `messages`, `lanes` (running jobs per lane) and `pools`
+(`{pool, usedPct}`). The jobs come from the jobs ledger, read back 7 days (and
+at most its last 32 MB) so a job launched long before the window still shows as
+running; the messages are the `map edges` lines inside the frame. Pool used %
+is the nearest reading in the usage history at or before the frame, and
+`usedPct` is `null` (unknown) when none is within 30 minutes. A part nobody
 recorded (ledger unreadable, or older than the bus keeps) is `null`, never an
-empty list; `gaps` says why in plain words. The Map pane's time slider draws
+empty list; `gaps` says why in plain words. Computers are shown as they are
+now. The new fields are additions, so the schema stays `fleet.map-replay.v1`. The Map pane's time slider draws
 these frames, with a "Back to live" button.
 
 #### Recent bus messages
@@ -553,14 +558,20 @@ compute scene draws its message lines at the same thickness.
 #### Agent conversations
 
 `phm agents conversations [--agent <name>] [--waiting] [--json]` groups the
-same bus read into threads by reply chain, longest-waiting first and then
-newest first. `--agent` matches a participant's routing label and, through
+same bus read into threads by reply chain and by the declared conversation
+label a body carries, longest-waiting first and then newest first. `--agent` matches a participant's routing label and, through
 the agent identity registry, every other label of the same registered
 identity (handle, alias or `agent:` address); with no readable registry the
 match stays on the literal label. Messages about one v2 job — a `work.post`, its `work.status`,
 `work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
 claim-key-only body the post lists — form one `job:<id>` thread even without
-replies, and a `failed` or `complete` outcome marks it blocked or done. `--json` prints `agents.conversations.v1` (`version` 1), and
+replies, and a `failed` or `complete` outcome marks it blocked or done. Any
+body carrying a declared label — the v2 `thread` field `--thread` reads
+filter on (the same key `phm agents messages` reports as `threadId`), a
+`threadId`, or a `job:<id>` key — buckets its conversation under that label
+even without `replyTo` links, so a threaded question and its answer are one
+conversation; only the synthesized per-pair fallback stays reply-chain
+rooted. `--json` prints `agents.conversations.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1]`
 serves the same read with a current read session.
 

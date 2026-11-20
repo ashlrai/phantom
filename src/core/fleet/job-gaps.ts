@@ -15,8 +15,8 @@ import { promisify } from 'node:util';
 import { scrubSecrets } from '../util/scrub.js';
 import { stem, words } from './bets-check.js';
 import {
-  countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJobExistsError, DropJobValidationError,
-  listDropJobs, resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
+  countQueuedDropJobPrompts, DROP_JOB_DEFAULT_REPO, DROP_JOB_QUEUE_LIMIT, DROP_JOB_REPOS, dropJobExists, DropJobExistsError, DropJobValidationError,
+  explainDropJobReasons, listDropJobs, resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
 } from './drop-job-writer.js';
 import { ledgerFinishes } from './empties.js';
 import { EMPTY_CAUSE_TAIL_LINES, readText } from './empty-cause.js';
@@ -24,6 +24,8 @@ import { readIdeaList } from './bottleneck-ideas.js';
 
 export const JOB_GAPS_SCHEMA = 'jobs.gaps.v1';
 export const MAX_GAPS_PER_JOB = 12;
+/** Most gaps one tick proposes for a single repo. */
+export const MAX_PROPOSED_PER_REPO = 3;
 const NOTES_BYTES = 65536;
 const LOG_BYTES = 16384;
 const TITLE_MAX = 110;
@@ -35,7 +37,7 @@ const MERGE_WINDOW_DAYS = 14;
 export type GapDropReason = 'open-idea' | 'queued' | 'recent-merge' | 'duplicate-gap';
 export interface GapCandidate { title: string; repo: string | null; sourceJob: string; why: string }
 export interface DroppedGap extends GapCandidate { reason: GapDropReason; matched: string | null }
-export interface ProposedGap extends GapCandidate { jobId: string | null; queued: boolean; skipped: string | null }
+export interface ProposedGap extends GapCandidate { jobId: string | null; queued: boolean; skipped: string | null; /** Absolute path of the written drop file, or null when nothing was written. */ path: string | null; /** Plain-words reason when the contract refused the job, else null. */ refused: string | null }
 /** `known` is false when the job metrics file cannot be read; `unknownSources` names dedupe sources that could not be read. */
 export interface JobGapsReport {
   schema: typeof JOB_GAPS_SCHEMA;
@@ -100,7 +102,7 @@ const PROSE_GAP = /\b(?:gap|gaps|aren['’]?t there|isn['’]?t there|not done|l
 const PROSE_NONE = /\b(?:no|none|nothing|zero|without any)\b[^.]{0,30}\b(?:gaps?|missing)\b|\bnot (?:missing|a gap)\b/i;
 export const PROSE_TITLE_MAX = 120;
 
-/** Pure: one candidate per sentence that names a gap in free prose (notes or a final message). Headings and code are skipped. */
+/** Pure: one candidate per sentence that names a gap in free prose (a job final message only). Headings and code are skipped. */
 export function extractProseGaps(text: string): { title: string; why: string }[] {
   const found: { title: string; why: string }[] = [];
   let fenced = false;
@@ -117,15 +119,26 @@ export function extractProseGaps(text: string): { title: string; why: string }[]
   return found;
 }
 
-/** Heading gaps first, then prose gaps, the repeats of an earlier gap dropped, capped per source. */
-export function extractAllGaps(...texts: string[]): { title: string; why: string }[] {
+/**
+ * Gaps from one job. BRIDGE_NOTES.md counts only under a gap-style heading (a "Remaining gaps" section);
+ * a bare "missing" sentence in the notes is ignored. The final message (the last paragraph of the log tail)
+ * counts under a heading or as prose. Earlier log lines are never read. Repeats of an earlier gap are dropped.
+ */
+export function extractAllGaps(notes: string, finalMessage = ''): { title: string; why: string }[] {
   const out: { title: string; why: string }[] = [];
   const add = (gaps: { title: string; why: string }[]): void => {
     for (const gap of gaps) if (!out.some(o => o.title === gap.title || sameWork(o.title, gap.title))) out.push(gap);
   };
-  for (const text of texts) add(extractGaps(text));
-  for (const text of texts) add(extractProseGaps(text));
+  add(extractGaps(notes));
+  add(extractGaps(finalMessage));
+  add(extractProseGaps(finalMessage));
   return out.slice(0, MAX_GAPS_PER_JOB);
+}
+
+/** The last paragraph of a log tail: what the worker said when it finished. */
+export function finalMessageOf(tail: string): string {
+  const paragraphs = tail.split(/\r?\n\s*\r?\n/).map(p => p.trim()).filter(Boolean);
+  return paragraphs.length ? paragraphs[paragraphs.length - 1]! : '';
 }
 
 const STOP = new Set('a an the and or of to in on for is are be it its this that with without by from as at not yet still no'.split(' '));
@@ -216,7 +229,7 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
       const notes = await read(join(wtDir, finish.id, 'BRIDGE_NOTES.md'), NOTES_BYTES).catch(() => null);
       // The worker's final message is the tail of its log (the same read `phm empties` uses).
       const log = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(finish.id) ? await read(join(runsDir, `${finish.id}.log`), LOG_BYTES).catch(() => null) : null;
-      const gaps = extractAllGaps(notes ?? '', log ? log.split(/\r?\n/).slice(-EMPTY_CAUSE_TAIL_LINES).join('\n') : '');
+      const gaps = extractAllGaps(notes ?? '', log ? finalMessageOf(log.split(/\r?\n/).slice(-EMPTY_CAUSE_TAIL_LINES).join('\n')) : '');
       if (!gaps.length) { report.jobsWithoutGaps.push(finish.id); return; }
       for (const gap of gaps) raw.push({ title: scrubSecrets(gap.title), repo: repos.get(finish.id) ?? null, sourceJob: finish.id, why: scrubSecrets(gap.why) });
     }));
@@ -245,28 +258,37 @@ export async function readJobGaps(hours: number, opts: { propose?: boolean } & J
   return report;
 }
 
-/** Repos that have a drop queue. The drop job header names its repo, and only phantom has one today; add a repo here when it gets its own. */
-export const DROP_QUEUE_REPOS: readonly string[] = ['phantom'];
+/** Repos that have a drop queue: every repo key the drop job header allows. */
+export const DROP_QUEUE_REPOS: readonly string[] = DROP_JOB_REPOS;
 
-/** Writes each survivor as a drop job (the queue `phm ideas queue` writes to) when its repo has a drop queue; the rest are listed as skipped with the reason. */
+/**
+ * Writes each survivor as a drop job (the queue `phm ideas queue` writes to) with its own repo in the header.
+ * Unknown repos are listed as skipped with the reason; each repo gets at most MAX_PROPOSED_PER_REPO per tick.
+ * A gap with no known repo goes to phantom, as before.
+ */
 async function proposeGaps(candidates: GapCandidate[], runsDir: string, write: JobGapsDeps['write']): Promise<ProposedGap[]> {
   const root = resolveDropJobRoot(runsDir);
   const out: ProposedGap[] = [];
+  const perRepo = new Map<string, number>();
   for (const gap of candidates) {
-    const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null };
+    const row: ProposedGap = { ...gap, jobId: null, queued: false, skipped: null, path: null, refused: null };
     out.push(row);
-    if (gap.repo !== null && !DROP_QUEUE_REPOS.includes(gap.repo)) { row.skipped = `repo ${gap.repo} has no drop queue`; continue; }
-    const job: DropJobInput = { id: gapJobId(gap.title), lane: 'claude', tier: 'work', body: gapJobBody(gap) };
+    const repo = gap.repo ?? DROP_JOB_DEFAULT_REPO;
+    if (!DROP_QUEUE_REPOS.includes(repo)) { row.skipped = `repo ${repo} is not a known repo`; continue; }
+    if ((perRepo.get(repo) ?? 0) >= MAX_PROPOSED_PER_REPO) { row.skipped = `already ${MAX_PROPOSED_PER_REPO} proposed for ${repo} this tick`; continue; }
+    const job: DropJobInput = { id: gapJobId(gap.title), repo, lane: 'claude', tier: 'work', body: gapJobBody(gap) };
     row.jobId = job.id;
     const verdict = validateDropJob(job);
-    if (!verdict.ok) { row.skipped = `refused: ${verdict.reasons.join(', ')}`; continue; }
+    if (!verdict.ok) { row.refused = explainDropJobReasons(verdict.reasons); row.skipped = row.refused; continue; }
     try {
       if (await dropJobExists(root, job.id)) { row.skipped = 'already queued'; continue; }
       if (!write && await countQueuedDropJobPrompts(root) >= DROP_JOB_QUEUE_LIMIT) { row.skipped = 'the job queue is full'; continue; }
-      await (write ?? writeDropJob)(root, job);
+      const written = await (write ?? writeDropJob)(root, job);
+      row.path = (written as { file?: string } | undefined)?.file ?? null;
       row.queued = true;
+      perRepo.set(repo, (perRepo.get(repo) ?? 0) + 1);
     } catch (e) {
-      row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? `refused: ${e.reasons.join(', ')}` : 'could not write the job';
+      row.skipped = e instanceof DropJobExistsError ? 'already queued' : e instanceof DropJobValidationError ? (row.refused = explainDropJobReasons(e.reasons)) : 'could not write the job';
     }
   }
   return out;

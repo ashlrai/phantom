@@ -94,10 +94,11 @@ export function buildAskBatch(open: readonly OpenAsk[], ledger: AskBatch['ledger
   return { schema: 'asks.batch.v1', count: asks.length, asks, ledger };
 }
 
-const FROM_KIND: Record<AskKind, Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric'>> = {
+const FROM_KIND: Record<AskKind | 'signin', Pick<OpenAsk, 'kind' | 'choices' | 'hardLimit' | 'whatHappens' | 'numeric'>> = {
   payment: { kind: 'yes-no', hardLimit: 'money', whatHappens: LIMIT_LINE.money },
   outreach: { kind: 'yes-no', hardLimit: 'outside-send', whatHappens: LIMIT_LINE['outside-send'] },
   password: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
+  signin: { kind: 'pick-one', choices: ASK_REPLIES.password, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   '2fa': { kind: 'pick-one', choices: ASK_REPLIES['2fa'], hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   device: { kind: 'pick-one', choices: ASK_REPLIES.device, hardLimit: 'secrets', whatHappens: 'Done: the fleet carries on with it.' },
   // A usage answer is a number, so it is a short value; it is a reading, not a limit.
