@@ -322,12 +322,12 @@ require a new milestone document when an existing canonical contract is enough.
 
 The following invariants are enforced by named adversarial tests. A PR that weakens any of them will not be accepted — and the fleet's own self-improvement harness (M54) is also blocked from doing so:
 
-1. **Proposal-only floor.** The daemon source may import no merge/apply primitive. Auto-merge is a separate gated module, default off. Test: `test/h1.daemon-gates.test.ts` (source-scan grep-guard) + `test/m48.automerge-pass.test.ts`.
-2. **Enrollment gate.** Only enrolled repos receive autonomous work. Test: `test/h6.*`.
-3. **Kill-switch always halts.** `~/.ashlr/KILL` present must stop every backend and every repo. Test: `test/m48.*` kill-all.
-4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Test: `test/m45.*` no-raw-fallback test.
-5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.*` pre-push test.
-6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Test: `test/m45.*` diff-only test.
+1. **Proposal-only floor.** The daemon source may import no merge/apply primitive. Auto-merge is a separate gated module, default off. Test: `test/h1.daemon-gates.test.ts` and `test/h4.proposal-only.test.ts` (source-scan grep-guards) + `test/m48.automerge-pass.test.ts`.
+2. **Enrollment gate.** Only enrolled repos receive autonomous work. Test: `test/h4.sandbox-enrollment-kill.test.ts` (empty default registry; `assertMayMutate` at every call site). `test/h6.audit-policy.test.ts` checks that every enroll, unenroll and kill change is audited.
+3. **Kill-switch always halts.** `~/.ashlr/KILL` present must stop every backend and every repo. Test: `test/h4.sandbox-enrollment-kill.test.ts` (checked before any work; `allowAnyRepo` cannot override it) + `test/m48.fleet-supervisor.test.ts` (the fleet tick halts before dispatch).
+4. **Sandboxed-with-diff-capture only.** In the autonomous loop, external engines run only through `runEngineSandboxed`. No raw-external path. Sandbox-creation failure is terminal, never a silent fallback. Test: `test/h4.sandbox-enrollment-kill.test.ts` (a required sandbox that cannot be created aborts with zero tasks and the real tree unchanged) + `test/m45.foundry.test.ts` (a failing engine stays contained).
+5. **Git push blocked from sandbox.** The pre-push hook + credential strip must fail every push from a worktree. Test: `test/m45.foundry.test.ts` (pre-push hook containment proof).
+6. **Only the diff is consumed.** No transcript, no live-tree write escapes the sandbox. Test: `test/m21.worktree.test.ts` (source tree byte-unchanged through create, edit, diff and remove) + `test/h4.sandbox-containment.test.ts`.
 7. **Immutable signed provenance.** `{engineModel, engineTier}` is write-once and HMAC-signed. The merge gate must verify the HMAC. Test: `test/m47.*`, `test/m47_1.*`.
 8. **Merge requires explicit policy and verification.** Default tier mode requires frontier provenance and a matching `mergeAuthority` entry. Opt-in verification/evidence modes have their own stricter gates; no producer verdict, test result or documentation change grants authority by itself. See the [safety model](docs/HUB-REFERENCE.md#safety-model) and `test/m47.*`, `test/m153.*`, `test/m307.*`.
 9. **Self-improvement cannot self-disarm.** Self-target diffs must pass the suite flag-off and flag-on. Safety-test-weakening diffs refused. Test: `test/m54.*`.
