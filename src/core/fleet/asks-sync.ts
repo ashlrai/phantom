@@ -14,7 +14,7 @@
 import { poolLabel } from '../usage/runway.js';
 import { listAsks, raiseAsk, type AsksOptions } from './asks.js';
 import { resolveNeedsMason } from './needs-mason-resolve.js';
-import type { PoolRow, PoolsViewV1 } from './pools-view.js';
+import { monthDay, type PoolRow, type PoolsViewV1 } from './pools-view.js';
 import { buildSpendDown } from './pools-spenddown.js';
 
 export const ASKS_SYNC_SCHEMA = 'asks.sync.v1';
@@ -68,10 +68,6 @@ const futureIso = (iso: string | null, nowMs: number): string | null => {
   return Number.isFinite(ms) && ms > nowMs ? new Date(ms).toISOString() : null;
 };
 const day = (iso: string): string => iso.slice(0, 10);
-/** "Nov 24": month and day in UTC, so the same ask reads the same on every surface. */
-const monthDay = (iso: string): string => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-const PLAIN_NAMES: Record<string, string> = { 'claude-api': 'Claude API' };
-const plainName = (pool: string): string => PLAIN_NAMES[pool] ?? poolLabel(pool);
 
 /** The asks the pools call for, plus the pools whose verdict could not be told. Pure. */
 export function wantedAsks(input: SyncInputs, nowMs: number): { wanted: SyncItem[]; unknown: AsksSyncV1['unknown']; checked: Set<string> } {
@@ -96,21 +92,24 @@ export function wantedAsks(input: SyncInputs, nowMs: number): { wanted: SyncItem
   for (const row of byId.values()) {
     if (row.kind !== 'credits') continue;
     const expires = futureIso(row.resetAt, nowMs);
-    if (row.creditsRemaining === null || row.resetAt === null || row.target === null) {
+    // A closed lane (open: false) is set to zero by definition: its credit ends unspent.
+    const target = row.creditClosed === true ? 0 : row.target;
+    if (row.creditsRemaining === null || row.resetAt === null || target === null) {
       // A dollar gift names what is missing; a stale or unreported balance is unknown, never 0.
       const missing = row.creditUnit === 'usd'
-        ? [row.creditsRemaining === null ? 'balance (not reported, closed or older than a day)' : '', row.resetAt === null ? 'expiry' : '', row.target === null ? 'lane target' : ''].filter(Boolean).join(', ')
+        ? [row.creditsRemaining === null ? 'balance (not reported, or no reading date)' : '', row.resetAt === null ? 'expiry' : '', target === null ? 'lane target' : ''].filter(Boolean).join(', ')
         : '';
-      unknown.push({ pool: row.id, reason: row.creditUnit === 'usd' ? `${plainName(row.id)} credit ${missing} unknown, so no ask was raised` : 'credit balance, expiry or lane target is not reported' });
+      unknown.push({ pool: row.id, reason: row.creditUnit === 'usd' ? `${poolLabel(row.id)} credit ${missing} unknown, so no ask was raised` : 'credit balance, expiry or lane target is not reported' });
       continue;
     }
     checked.add(`${row.id}:payment`);
     // Only a credit that ends unused: a balance left, a future expiry and a lane set to zero.
-    if (row.target !== 0 || !(row.creditsRemaining > 0) || expires === null) continue;
+    if (target !== 0 || !(row.creditsRemaining > 0) || expires === null) continue;
+    const stale = row.creditAsOf != null && nowMs - Date.parse(row.creditAsOf) > 24 * 3_600_000;
     wanted.push({
       pool: row.id, kind: 'payment', replies: ['yes', 'no'], askId: null, expires,
       text: row.creditUnit === 'usd'
-        ? `About ${Math.round(row.creditsRemaining)} USD of ${plainName(row.id)} credit expires ${monthDay(expires)}. Use it? yes / no`
+        ? `${stale ? `Last reading ${monthDay(row.creditAsOf!)}: about` : 'About'} ${Math.round(row.creditsRemaining)} USD of ${poolLabel(row.id)} credit expires ${monthDay(expires)}${row.creditClosed ? ' and its lane is closed' : ''}. Use it? yes / no`
         : `Use the ${poolLabel(row.id)} credit before it ends ${day(expires)}? Its lane is set to zero. Yes records use it, no records skip; nothing is spent.`,
     });
   }
