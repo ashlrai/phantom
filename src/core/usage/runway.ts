@@ -205,6 +205,7 @@ export interface PoolShareSnapshot {
 
 /** "codex-personal" -> "Codex personal". */
 export function poolLabel(pool: string): string {
+  if (pool === 'claude-api') return 'Claude API';
   const words = pool.replace(/[-_]+/g, ' ').trim();
   return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : pool;
 }

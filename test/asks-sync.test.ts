@@ -8,7 +8,7 @@ import { answerAsk, listAsks, type AsksOptions } from '../src/core/fleet/asks.js
 import { readCreditDecision } from '../src/core/fleet/asks-ledger.js';
 import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import { ASKS_SYNC_SCHEMA, syncAsks, type SyncInputs } from '../src/core/fleet/asks-sync.js';
-import { buildPoolsView } from '../src/core/fleet/pools-view.js';
+import { buildPoolsView, monthDay } from '../src/core/fleet/pools-view.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 
 const NOW = Date.parse('2026-11-19T22:00:00.000Z');
@@ -155,16 +155,38 @@ describe('Claude API gift credit', () => {
     expect((await run(state)).raised[0]!.text).toBe('About 50 USD of Claude API credit expires Nov 24. Use it? yes / no');
   });
 
-  it('shows a stale or unreported balance as unknown, never 0, and raises nothing', async () => {
-    const stale = await read(statusOf({ gift: { usd_remaining: 112, as_of: at(-30), expires_at: EXPIRES } }));
-    const sync = await run(stale);
+  it('a closed lane with a stale balance still raises the ask and names the reading date', async () => {
+    // The live shape: balance and open under pools.gift, the reading date under gift.
+    const state = await read(statusOf({ gift: { as_of: at(-30), expires_at: EXPIRES }, pools: { gift: { balance: 112, expires_at: EXPIRES, open: false } } }, 2));
+    const sync = await run(state);
+    expect(sync.unknown).toEqual([]);
+    expect(sync.raised).toHaveLength(1);
+    const text = sync.raised[0]!.text;
+    expect(text).toBe(`Last reading ${monthDay(at(-30))}: about 112 USD of Claude API credit expires Nov 24 and its lane is closed. Use it? yes / no`);
+  });
+
+  it('raises no ask while the lane is open and running, or once the credit has expired', async () => {
+    expect((await run(await read(statusOf({ pools: { gift: { balance: 112, expires_at: EXPIRES, open: true } } }, 2)))).raised).toEqual([]);
+    const past = at(-2);
+    const gone = await run(await read(statusOf({ gift: { usd_remaining: 112, as_of: at(-30), expires_at: past } })));
+    expect(gone.raised).toEqual([]);
+    expect(gone.unknown).toEqual([{ pool: 'claude-api', reason: expect.stringMatching(/balance .* unknown/) }]);
+  });
+
+  it('a missing balance is unknown and names the field, never 0', async () => {
+    const sync = await run(await read(statusOf({ gift: { as_of: at(-1), expires_at: EXPIRES } })));
     expect(sync.raised).toEqual([]);
     expect(sync.unknown[0]!.reason).toMatch(/^Claude API credit balance .* unknown, so no ask was raised$/);
-    const closed = await run(await read(statusOf({ pools: { gift: { balance: 112, expires_at: EXPIRES, open: false } } })));
-    expect(closed.raised).toEqual([]);
-    expect(closed.unknown).toHaveLength(1);
     const ledger = await readResourceLedger({ runsDir: join(dir, 'status-runs'), now: () => NOW, personalCodexHome: join(dir, 'none') });
     expect(ledger.lanes.find(l => l.lane === 'claude-api')!.creditsRemaining).toBeNull();
+  });
+
+  it('the pools view shows balance, reading date and days to expiry for a gift row', async () => {
+    const state = await read(statusOf({ gift: { as_of: at(-30), expires_at: EXPIRES }, pools: { gift: { balance: 112, expires_at: EXPIRES, open: false } } }));
+    const row = state.view.pools.find(p => p.id === 'claude-api')!;
+    expect(row).toMatchObject({ creditsRemaining: 112, creditAsOf: at(-30), creditClosed: true, daysLeft: expect.any(Number) });
+    expect(row.summary).toMatch(/^Claude API: last reading Nov \d+: about 112 USD; expires in \d+ days? \(Nov 24\); lane closed$/);
+    expect(row.reason).not.toMatch(/percent used is not known/);
   });
 
   it('records a yes reply as a typed decision and changes nothing else', async () => {
