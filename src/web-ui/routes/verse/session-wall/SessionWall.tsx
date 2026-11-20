@@ -11,7 +11,8 @@
  * the pane is wide enough, the other sessions stay listed beside it
  * (SessionRail.tsx) and J and K step to the next and previous conversation.
  * The bar above the wall (WallBar.tsx) finds among the sessions on screen and
- * asks the server for one lane, one repo or only running sessions.
+ * asks the server for one lane, one repo or only running sessions; both are
+ * kept across a reload. N opens the next conversation with new messages.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { sessionAge } from '../../../../core/fleet/live-sessions.js';
@@ -23,8 +24,9 @@ import { sessionThreadQuery, THREAD_POLL_MS } from '../fleet-sessions/session-th
 import { clockTime } from '../leader/thread-model.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { railStep, SessionRail } from './SessionRail.js';
-import { noteWallSeen, unseenCount } from './wall-seen.js';
+import { newLabel, railEntries, railStep, SessionRail } from './SessionRail.js';
+import { nextUnseen, noteWallSeen, unseenCount, unseenSessions } from './wall-seen.js';
+import { loadWallView, saveWallView } from './wall-view-store.js';
 import { subscribeWallSelection, takeRequestedWallSession } from './wall-selection.js';
 import { findEntries, isScoped, NO_SCOPE, replyLine, scopeChoices, scopeWords, sessionWallQueryFor, stateCounts, STATE_WORD, WALL_POLL_MS, WALL_STATES, wallFailure, wallHeadline,
   type SessionWallRead, type WallEntry, type WallFailure, type WallScope, type WallSession, type WallState } from './session-wall-model.js';
@@ -92,6 +94,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
   // A filter whose last session has changed state falls back to everything rather than showing an empty wall.
   const filter = only !== null && counts[only] > 0 ? only : null;
   const shown = filter === null ? found : found.filter(entry => entry.session.state === filter);
+  const next = nextUnseen(shown, null);
   useEffect(() => { if (focusId !== null) cardsIn(list.current).find(card => card.dataset.card === focusId)?.focus(); }, [focusId]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
@@ -111,6 +114,9 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
   };
   return <section className={styles.root} aria-label="Every session as a conversation">
     <p className={styles.headline}>{wallHeadline(read)}</p>
+    {next !== null && <button type="button" className={styles.next} data-next-new={next} onClick={() => onOpen(next)} title="Open the first conversation with new messages (N)">
+      {newLabel(unseenSessions(shown, null))} <kbd>N</kbd>
+    </button>}
     {found.length > 0 && <div className={styles.filters} role="group" aria-label="Show sessions by state">
       <button type="button" className={styles.filter} aria-pressed={filter === null} onClick={() => setOnly(null)}>All <span>{found.length}</span></button>
       {WALL_STATES.filter(state => counts[state] > 0).map(state =>
@@ -127,7 +133,7 @@ export function WallView({ read, onOpen, focusId = null, find = '', scope = NO_S
         {shown.map(entry => <Card key={entry.session.id} entry={entry} fresh={unseenCount(entry, null)} onOpen={onOpen} />)}
       </ul>}
     {read.gaps.length > 0 && <ul className={styles.gaps} aria-label="Not shown">{read.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>}
-    <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, / finds. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
+    <p className={styles.notice}>Updated {clockTime(read.generatedAt) || 'at an unknown time'}. Enter opens a conversation, R opens it ready to reply, N opens the next with new messages, / finds. Summaries are assembled from the records, not written by a model. Same read for agents: <code>phm sessions threads --json</code></p>
   </section>;
 }
 
@@ -166,8 +172,11 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
     return subscribeWallSelection(take);
   }, []);
   // The wall's read keeps polling while a conversation is open: it is the list beside it, and coming back shows it at once.
-  const [find, setFind] = useState('');
-  const [scope, setScope] = useState<WallScope>(NO_SCOPE);
+  // The find words and the narrowing are where Mason left them, across a reload (wall-view-store.ts).
+  const [kept] = useState(() => loadWallView());
+  const [find, setFind] = useState(kept.find);
+  const [scope, setScope] = useState<WallScope>(kept.scope);
+  useEffect(() => { saveWallView({ find, scope }); }, [find, scope]);
   const [choices, setChoices] = useState<{ lanes: readonly string[]; repos: readonly string[] }>({ lanes: [], repos: [] });
   const wrap = useRef<HTMLDivElement>(null);
   const def = useMemo(() => sessionWallQueryFor(scope), [scope]);
@@ -187,28 +196,35 @@ export function SessionWallPane({ visible, host }: Pick<PaneProps, 'visible' | '
   }, [wall, scope]);
   if (open !== null) {
     const close = () => { setFocusId(open.id); setOpen(null); };
-    // J and K step through the conversations from anywhere but a text field or the unlock dialog.
+    // J and K step through the conversations listed, N goes to the next one with new messages, from anywhere but a text field or the unlock dialog.
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || (event.key !== 'j' && event.key !== 'k')) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || (event.key !== 'j' && event.key !== 'k' && event.key !== 'n')) return;
       if (event.target instanceof Element && event.target.closest('textarea, input, select, [role="dialog"]')) return;
-      const to = railStep(wall, open.id, event.key === 'j' ? 1 : -1);
+      const to = event.key === 'n' ? nextUnseen(railEntries(wall, find, open.id), open.id) : railStep(wall, open.id, event.key === 'j' ? 1 : -1, find);
       if (to === null) return;
       event.preventDefault();
       setOpen({ id: to, toReply: false });
     };
     return <div className={styles.split} onKeyDown={onKeyDown}>
       <div className={styles.columns}>
-        <SessionRail read={wall} failed={read.error != null} openId={open.id} onPick={id => setOpen({ id, toReply: false })} onClose={close} />
+        <SessionRail read={wall} failed={read.error != null} openId={open.id} onPick={id => setOpen({ id, toReply: false })} onClose={close}
+          find={find} onShowAll={() => setFind('')} />
         {/* Keyed by session, so a line sent to one conversation never shows in the next. */}
         <OpenConversation key={open.id} id={open.id} toReply={open.toReply} visible={visible} host={host} onBack={close} />
       </div>
     </div>;
   }
   const failure = read.error ? wallFailure(read.error) : null;
-  // "/" from anywhere on the wall but a field puts the cursor in the find box.
+  // From anywhere on the wall but a field: "/" puts the cursor in the find box, N opens the first conversation with new messages.
   const onSlash = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+    if ((event.key !== '/' && event.key !== 'n') || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.target instanceof Element && event.target.closest('textarea, input, select')) return;
+    if (event.key === 'n') {
+      // The button is on screen only while a card shown holds something new, so the key and the button always agree.
+      const next = wrap.current?.querySelector<HTMLButtonElement>('button[data-next-new]');
+      if (next) { event.preventDefault(); next.click(); }
+      return;
+    }
     const box = wrap.current?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!box) return;
     event.preventDefault();

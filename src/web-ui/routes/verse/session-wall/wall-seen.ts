@@ -36,6 +36,24 @@ export function unseenCount(entry: Counted, openId: string | null): number {
   return Math.max(0, entry.messageCount - before);
 }
 
+/** How many of these conversations hold messages Mason has not looked at. */
+export function unseenSessions(entries: readonly Counted[], openId: string | null): number {
+  return entries.filter(entry => unseenCount(entry, openId) > 0).length;
+}
+
+/**
+ * The next conversation with new messages: the first one after `fromId` in the list's order, going round to the top.
+ * From the wall (`fromId` null) it is the first in the list. Null when nothing is new.
+ */
+export function nextUnseen(entries: readonly Counted[], fromId: string | null): string | null {
+  const at = fromId === null ? -1 : entries.findIndex(entry => entry.session.id === fromId);
+  for (let step = 1; step <= entries.length; step += 1) {
+    const entry = entries[(at + step) % entries.length]!;
+    if (unseenCount(entry, fromId) > 0) return entry.session.id;
+  }
+  return null;
+}
+
 export function forgetWallSeen(): void {
   seen.clear();
 }
