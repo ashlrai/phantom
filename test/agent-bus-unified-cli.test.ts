@@ -215,6 +215,34 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wake', '--from', 'atlas', '--to', 'nova'])).toMatchObject({ code: 2 });
   });
 
+  it('posts v2 notes and context to plain routing labels', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova', '--alias', 'lane-nova'])).json).toMatchObject({ status: 'created' });
+    // A label post carries identity metadata like a DM but needs no recipient identity.
+    expect((await run(['post', '--from', 'atlas', '--to', 'fleet.mesh', '--text', 'drift', '--thread', 'mesh',
+      '--ref', 'RQ-CLI-P', '--id', 'cli-post'])).json).toMatchObject({ status: 'posted', to: 'fleet.mesh', wake: 'not-requested' });
+    expect((await run(['post', '--from', 'atlas', '--to', 'leaders', '--kind', 'context', '--text', '{"a":1}', '--id', 'cli-ctx'])).json)
+      .toMatchObject({ status: 'posted' });
+    // Reserved prefixes keep their dedicated verbs; a bad --kind is a usage error.
+    expect(await run(['post', '--from', 'atlas', '--to', 'agent:nova', '--text', 'x']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['post', '--from', 'atlas', '--to', 'group:release:general', '--text', 'x']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['post', '--from', 'atlas', '--to', 'fleet.mesh', '--text', 'x', '--kind', 'work.post']))
+      .toMatchObject({ code: 2 });
+    // The posted envelopes are readable by id with their v2 bodies.
+    const note = await run(['show', 'cli-post']);
+    expect(note.json).toMatchObject({ status: 'ok', message: { fromAgent: 'atlas',
+      envelope: { to: 'fleet.mesh', body: { kind: 'note', thread: 'mesh', refs: ['RQ-CLI-P'] } } } });
+    const ctx = await run(['show', 'cli-ctx']);
+    expect(ctx.json.message.envelope.body).toEqual({ kind: 'context', text: '{"a":1}' });
+    // A post to a label that is one of an identity's labels lands in its inbox.
+    expect((await run(['post', '--from', 'atlas', '--to', 'lane-nova', '--text', 'ping', '--priority', 'P1', '--id', 'cli-alias'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    const inbox = await run(['inbox', 'nova']);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['cli-alias']);
+  });
+
   it('announces and updates v2 work on the same bus, owner-only for status', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

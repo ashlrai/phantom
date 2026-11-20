@@ -12,6 +12,7 @@ import { readOwnerChatReceipts, ownerChatRoot, ownerChatReceiptState, type Owner
  * Addresses (all flat routing labels; the wire envelope is unchanged):
  *   DM       to `agent:<handle>`                channel `bus`
  *   channel  to `group:<channel>:<topic>`       channel `bus`   (bus-group address)
+ *   label    to `<routing label>`               channel `bus`   (note or context)
  *   handoff  to `agent:<handle>`                channel `handoff`, body `worker-handoff`
  *   wake     to `agent:<handle>`                channel `bus`,   body `wake`
  */
@@ -28,12 +29,13 @@ import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { BUS_V2_TEXT_MAX, busBodyThread, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
-  type Participant, type WorkJob } from './bus-v2-schema.js';
+import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
+  workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
   AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
-  resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry, type AgentRegistryOptions,
+  RESERVED_PREFIXES, resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry,
+  type AgentRegistryOptions,
 } from './bus-identity.js';
 
 export const UNIFIED_BUS_ORIGIN = 'agent-bus';
@@ -83,6 +85,15 @@ interface SendCommon {
 }
 export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[] }
 export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[] }
+export interface LabelPostInput extends SendCommon {
+  /** Plain routing label the message addresses; the reserved prefixes are refused. */
+  to: string;
+  text: string;
+  /** v2 conversational body kind; default `note`. */
+  kind?: 'note' | 'context';
+  thread?: string;
+  refs?: string[];
+}
 export interface HandoffInput extends SendCommon { to: string; taskId: string; prompt: string }
 
 const refuse = (status: Exclude<UnifiedSendResult['status'], 'posted' | 'duplicate'>, reason: string): UnifiedSendResult =>
@@ -152,9 +163,9 @@ function metadata(sender: AgentIdentity, channel: 'bus' | 'handoff', channelRef:
   } as const;
 }
 
-function noteBody(input: { text: string; thread?: string; refs?: string[] }) {
+function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: string; refs?: string[] }) {
   return {
-    kind: 'note', text: input.text,
+    kind: input.kind ?? 'note', text: input.text,
     ...(input.thread === undefined ? {} : { thread: input.thread }),
     ...(input.refs === undefined ? {} : { refs: input.refs }),
   };
@@ -207,6 +218,45 @@ export async function postChannelMessage(input: ChannelPostInput, options: Unifi
   return post({
     id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to, priority: base.priority, ttl: base.ttl,
     body: noteBody(input), ...metadata(sender, 'bus', to),
+  }, shouldWake(base.priority, input.wake), options);
+}
+
+/**
+ * Post a v2 `note` (or `context`) to a plain routing label — the address every
+ * other send verb refuses by design: `dm` needs two registered identities,
+ * `channel post` needs membership, `work post`/`status` need a job, and the
+ * reserved prefixes (`agent:`, `group:`, `dm:`, `handoff:`) keep their
+ * dedicated verbs. The label can be a sink (`leaders`), a shared topic
+ * (`fleet.mesh`) or any label a subscriber reads through `comms bus read`,
+ * `bus-follow` or an identity's alias matching; the sender is still a
+ * registered identity and the mail carries the same sender metadata, scrub,
+ * wake and append path as a DM. It is untrusted data: addressing a label
+ * grants no authority, reaches no inbox unless the label is one of the
+ * target's identity labels, and wakes only by the priority rules.
+ */
+export async function postLabelMessage(input: LabelPostInput, options: UnifiedBusOptions = {}): Promise<UnifiedSendResult> {
+  const base = common(input, { priority: 'P2', ttl: DEFAULT_DM_TTL_MS });
+  if ('status' in base) return base;
+  const problem = noteFields(input);
+  if (problem) return refuse('invalid', problem);
+  const kind = input.kind ?? 'note';
+  if (kind !== 'note' && kind !== 'context') return refuse('invalid', 'Kind must be note or context.');
+  const to = input.to;
+  if (typeof to !== 'string' || !THREAD.test(to) || scrubSecrets(to) !== to) {
+    return refuse('invalid', 'Address must be a printable routing label.');
+  }
+  if (RESERVED_PREFIXES.some(prefix => to.toLowerCase().startsWith(prefix))) {
+    return refuse('invalid', 'Address prefix is reserved for the dedicated verbs.');
+  }
+  const reg = registry(options);
+  if ('status' in reg) return reg;
+  const sender = resolveAgent(reg, input.from);
+  if (!sender) return refuse('unknown-sender', 'Sender is not a registered identity.');
+  const body = (kind === 'context' ? contextBodySchema : noteBodySchema).safeParse(noteBody({ ...input, kind }));
+  if (!body.success) return refuse('invalid', 'Message is outside the v2 contract.');
+  return post({
+    id: base.id, from: `${AGENT_ADDRESS_PREFIX}${sender.handle}`, to, priority: base.priority, ttl: base.ttl,
+    body: body.data, ...metadata(sender, 'bus', to),
   }, shouldWake(base.priority, input.wake), options);
 }
 

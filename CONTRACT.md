@@ -1783,6 +1783,8 @@ an invalid agent.
 `src/core/agents/bus-identity.ts`: `stableAgentId(handle): string` (`agt_` + 20 hex),
 `agentAddress(handle)`, `resolveAgent(registry, ref)`, `agentLabels(identity)`,
 `agentIdentityKeys(options?)`, `agentAddressMatcher(identityOf, label)`,
+`RESERVED_PREFIXES` (the `agent:`/`group:`/`dm:`/`handoff:` label prefixes no
+alias and no label post may claim),
 `readAgentRegistry(options?)`, `registerAgentIdentity(input, options?)`,
 `createAgentChannel(input, options?)`, `joinAgentChannel(name, agent, options?)`,
 `leaveAgentChannel(name, agent, options?)`. Results are status objects
@@ -1790,7 +1792,8 @@ an invalid agent.
 with a `reason`); they never throw for bad input or storage faults.
 
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
-`sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
+`postLabelMessage`, `sendHandoff`, `sendWakeRequest`, `announceWork`,
+`updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
@@ -1849,7 +1852,12 @@ schema-checked v2 `wake` body to `agent:<handle>` for a registered recipient
 and always records the routing-only wake hint for that same address — the
 body's purpose is the hint, so `wake: false` is refused — with `reason` capped
 at 512 characters and an optional `jobId` that only threads the message, never
-a feed lookup.
+a feed lookup. `postLabelMessage(LabelPostInput)` posts a schema-checked v2
+`note` (or `context` with `kind`) to any printable routing label outside
+`RESERVED_PREFIXES` — the sink/topic mail the identity and channel verbs
+cannot carry — under the same registered-sender, scrub, wake and dedupe rules;
+a `to` matching one of a registered identity's labels lands in its inbox as
+legacy mail.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
