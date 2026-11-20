@@ -44,6 +44,8 @@ export interface StatusDigestSources {
   supplyLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The top `pools.waste.v1` alert as one line; also raises the Asks card when the fix needs Mason. Null when none. */
   wasteLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The `adapt:` line for a lane still cut after its cause cleared; also raises the Asks card. Null when none or unknown. */
+  adaptLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
@@ -83,6 +85,12 @@ const defaults: StatusDigestSources = {
     const waste = await readPoolsWaste({ runsDir, now: () => nowMs });
     await raiseWasteAsk(waste, { runsDir, now: () => nowMs });
     return wasteDigestLine(waste);
+  },
+  adaptLine: async (runsDir, nowMs) => {
+    const { readLaneAdapt, raiseLaneAdaptAsks, laneAdaptDigestLine } = await import('../fleet/lane-adapt.js');
+    const report = await readLaneAdapt({ runsDir, now: () => nowMs });
+    await raiseLaneAdaptAsks(report, { runsDir, now: () => nowMs });
+    return laneAdaptDigestLine(report);
   },
   blocker: readBlocker,
 };
@@ -194,7 +202,8 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
   const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
   const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
+  const adapt = await fact(() => src.adaptLine?.(runsDir, nowMs) ?? null, 'adapt check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(adapt.ok && adapt.value ? { adaptLine: adapt.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }

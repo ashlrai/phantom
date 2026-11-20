@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { parseSince } from '../core/fleet/agent-messages.js';
+import { formatLaneAdaptText, raiseLaneAdaptAsks, readLaneAdapt } from '../core/fleet/lane-adapt.js';
 import { computeLaneFit } from '../core/fleet/lane-fit.js';
 import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fleet/lane-yield-weight.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
@@ -9,11 +11,14 @@ import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lan
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
-       phm lanes yield [--json]
+       phm lanes yield [--json] | phm lanes adapt [--since 6h] [--json]
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 "phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
 weight the router uses (1 = neutral; unknown below 10 jobs).
+"phm lanes adapt" shows, per lane, why it sits below its target and for how long: the last cut in plain words, minutes below
+target, and whether the cause (memory, the PAUSE file) is still there. A lane still cut after its cause cleared over
+10 minutes ago is flagged backed_off_while_healthy. JSON schema id: lanes.adapt.v1.
 Figures that cannot be measured print "unknown".`;
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
@@ -44,6 +49,22 @@ export async function cmdLanes(args: string[]): Promise<number> {
     else if (!report.known) console.log('Job history is unavailable. Yield is unknown.');
     else if (!report.rows.length) console.log('No launches recorded yet. Every lane is neutral (weight 1).');
     else for (const row of report.rows) console.log(yieldLine(row, report.minJobs));
+    return 0;
+  }
+  if (args[0] === 'adapt') {
+    const flags = args.slice(1);
+    const json = flags.includes('--json');
+    const sinceAt = flags.indexOf('--since');
+    const sinceText = sinceAt >= 0 ? flags[sinceAt + 1] : '6h';
+    const sinceMs = sinceText === undefined ? null : parseSince(sinceText);
+    const extra = flags.filter((x, i) => x !== '--json' && x !== '--since' && !(sinceAt >= 0 && i === sinceAt + 1));
+    if (extra.length || flags.filter(x => x === '--json').length > 1 || flags.filter(x => x === '--since').length > 1 || sinceMs === null) {
+      console.error(USAGE); return 2;
+    }
+    const report = await readLaneAdapt({ sinceMs });
+    // Raise the Asks card here too, so the one command both shows and surfaces the flag. Best effort.
+    if (report.flagged.length) await raiseLaneAdaptAsks(report).catch(() => []);
+    console.log(json ? JSON.stringify(sanitizePublicJson(report)) : formatLaneAdaptText(report));
     return 0;
   }
   if (args[0] === 'fit') {

@@ -49,6 +49,8 @@ export interface StatusDigestInput {
   supplyLine?: string;
   /** The top waste alert (`pools.waste.v1`): "Gemini: 85% will go unused in 5 h. Sign in to Gemini once: run gemini in a terminal."; absent when none. */
   wasteLine?: string;
+  /** `adapt: claude is at 2 of 8 slots but the cause (memory) cleared over 10 min ago`; absent when no lane is cut while healthy. */
+  adaptLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -112,6 +114,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
   if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
   if (input.supplyLine) lines.push(input.supplyLine);
+  if (input.adaptLine) lines.push(input.adaptLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;
