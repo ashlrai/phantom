@@ -82,6 +82,40 @@ describe('fleet outcome measurement', () => {
     expect(m.unknownMergeTimes).toBe(1);
     expect(m.byRepo[0]).toMatchObject({ merged: 1, revertRate: null, timeToMerge: { p50: 3600 } });
   });
+  it('counts batch members as attempts and never the RQ-BATCH session id as a job', () => {
+    const claim = (job: string, hours = 3, extra = {}) => event('batch_claim', hours,
+      { job, batch: 'RQ-BATCH-ABC123', lane: 'codex', model: 'model-a', tier: 'work', ...extra });
+    const member = (job: string, outcome: string, hours = 2) => event('task_outcome', hours,
+      { job, batch: 'RQ-BATCH-ABC123', lane: 'codex', outcome });
+    const m = build([
+      // The session's own launch/finish are infrastructure rows, not an attempt.
+      launch('RQ-BATCH-ABC123', 3.5, { batch_size: 3 }),
+      finish('RQ-BATCH-ABC123', 1.5, { wall_s: 7200, batch_size: 3 }),
+      claim('MEMBER-A'), member('MEMBER-A', 'done'),
+      event('publish', 1, { job: 'MEMBER-A', url: pr(7) }),
+      claim('MEMBER-B'), member('MEMBER-B', 'failed'),
+      claim('MEMBER-C'), // claimed but not yet reaped: unfinished
+      event('task_outcome', 1, { job: 'ORPHAN', outcome: 'done' }), // no claim: ignored
+      { event: 'batch_claim', ts: stamp(1) }, // missing job: ignored row
+    ]);
+    expect(m.sourceState).toBe('degraded');
+    expect(m.ignoredRows).toBe(1);
+    expect(m.totals).toMatchObject({ jobs: 3, finished: 2, finishRate: 2 / 3,
+      medianDuration: 3600, estCost: null, samples: { pr: 1, published: 1, duration: 2, cost: 0 } });
+    expect(m.byLane).toEqual([expect.objectContaining({ name: 'codex', jobs: 3, finished: 2 })]);
+    expect(m.byModelTier).toEqual([expect.objectContaining({ model: 'model-a', tier: 'work', jobs: 3 })]);
+  });
+  it('counts a requeued batch member\'s next claim as a new attempt', () => {
+    const claim = (hours: number) => event('batch_claim', hours,
+      { job: 'MEMBER-A', batch: 'RQ-BATCH-ABC123', lane: 'codex' });
+    const member = (outcome: string, hours: number) => event('task_outcome', hours,
+      { job: 'MEMBER-A', batch: 'RQ-BATCH-ABC123', outcome });
+    const m = build([claim(5), member('failed', 4), claim(3), member('done', 2),
+      event('publish', 1, { job: 'MEMBER-A', url: pr(8) })]);
+    expect(m.totals).toMatchObject({ jobs: 2, finished: 2, finishRate: 1,
+      samples: { pr: 1, published: 1 } });
+    expect(m.sourceState).toBe('healthy');
+  });
 });
 
 function measuredFleet(n = 20): unknown[] {
