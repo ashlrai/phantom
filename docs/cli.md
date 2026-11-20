@@ -71,7 +71,7 @@ Every command, grouped by topic.
     config set <k> --json <v>                                                                                            Set a structured (array/object) config value as JSON.
     config path                                                                                                          Print the path to config.json.
     doctor merge-path --repo owner/name                                                                                  Read-only required-check sentinel for recent PR heads.
-    doctor worktree [--json]                                                                                             Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each.
+    doctor worktree [--repair] [--json]                                                                                             Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each.
     doctor                                                                                                               One-glance health check: config, phantom, providers, ecosystem.
     init [--yes]                                                                                                         Idempotent onboarding: ensure config, detect phantom + models, set editor.
     desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]                                      Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.

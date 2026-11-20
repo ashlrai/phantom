@@ -1052,7 +1052,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'config set <k> --json <v>',    desc: 'Set a structured (array/object) config value as JSON.', topic: 'core' },
   { cmd: 'config path',                  desc: 'Print the path to config.json.', topic: 'core' },
   { cmd: 'doctor merge-path --repo owner/name', desc: 'Read-only required-check sentinel for recent PR heads.', topic: 'core' },
-  { cmd: 'doctor worktree [--json]', desc: 'Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each.', topic: 'core' },
+  { cmd: 'doctor worktree [--repair] [--json]', desc: 'Can this checkout typecheck and lint? Reports node_modules, tsgo and eslint, with the one command that fixes each. Also shows the source checkout (branch, commits behind, lockfile) and its repair log; --repair runs npm ci in this worktree only.', topic: 'core' },
   { cmd: 'doctor',                       desc: 'One-glance health check: config, phantom, providers, ecosystem.', topic: 'core' },
   { cmd: 'init [--yes]',                 desc: 'Idempotent onboarding: ensure config, detect phantom + models, set editor.', topic: 'core' },
   { cmd: 'desktop install [--upgrade [--require-app] [--to x.y.z] | --rollback] [--apply]', desc: 'Inspect signed macOS arm64 artifacts; explicitly install on an empty system or upgrade/roll back a managed CLI after Stop/drain. Never resumes authority.', topic: 'core' },
