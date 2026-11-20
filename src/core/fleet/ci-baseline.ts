@@ -22,20 +22,29 @@ const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.
 // carry a `|project|` label between the marker and the repo-relative test
 // path. The vitest suites live under `test/` and `src/web-ui/`.
 const FAIL_LINE = /^FAIL\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s*>\s*(.+)$/;
+// A suite that fails to load (transform, parse, or top-level throw during
+// collection) never reaches a test, so vitest prints `FAIL  <file> [ <file> ]`
+// with no `> name`. Without this shape those failures are invisible: every PR
+// reads unknown and no master fix is ever queued for a broken suite.
+const SUITE_FAIL_LINE = /^FAIL\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?)\s+\[[^\]]*\]\s*$/;
+const SUITE_NAMES = '(suite)';
 const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/\S+)\s*>\s*(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/;
 
 export function parseBaselineFailures(log: string): Failure[] {
   const result: Failure[] = [];
   let current: Failure | undefined;
+  let currentSuite = false;
   for (const line of lines(log)) {
     const match = FAIL_LINE.exec(line);
-    if (match) {
+    const suite = match === null ? SUITE_FAIL_LINE.exec(line) : null;
+    if (match !== null || suite !== null) {
       if (result.length >= 100) break;
-      const file = match[1]!, names = clean(match[2]!);
+      const file = (match ?? suite)![1]!, names = match === null ? SUITE_NAMES : clean(match[2]!);
       if (posix.normalize(file) !== file || file.includes('..')) continue;
       current = { file, names, testId: `${file} > ${names}`, excerpt: clean(line) };
+      currentSuite = match === null;
       result.push(current);
-    } else if (current && /^AssertionError:/.test(line)) {
+    } else if (current && (/^AssertionError:/.test(line) || (currentSuite && /^[\w$]*Error:/.test(line)))) {
       current.excerpt = clean(`${current.excerpt}\n${line}`);
     }
   }
@@ -82,9 +91,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (evidence) masterLogs.push(...evidence); else masterKnown = false;
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text));
+  // A suite failure has no per-test pass line to match: the file loading and
+  // running at all (any verbose pass in it) is what resolves it.
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
-    return m?.[1] === f.file && m[2] === f.names;
+    return m?.[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
   }));
   const dependencyCache = new Map<string, Promise<Set<string> | null>>();
   const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();

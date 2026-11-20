@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -51,7 +51,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -113,6 +113,27 @@ describe('CI baseline evidence', () => {
     expect(failures[0]).toMatchObject({ names: 'owner status > reports delivery' });
     expect(failures[0]?.excerpt).toContain('AssertionError: expected 1 to be 2');
     expect(failures[1]?.names).toBe('tokens > exposes accent');
+  });
+  it('parses suite-load failures as file-level identities', () => {
+    const failures = parseBaselineFailures([
+      'FAIL  |unit| test/broken.test.ts [ test/broken.test.ts ]',
+      "Error: Cannot find module './gone.js' imported from /x/test/broken.test.ts",
+      'FAIL  test/bare.test.ts',
+      'FAIL  |unit| src/not-web-ui/broken.test.ts [ src/not-web-ui/broken.test.ts ]',
+      'FAIL  |unit| test/trailing.test.ts [ test/trailing.test.ts ] extra',
+    ].join('\n'));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ file: 'test/broken.test.ts', names: '(suite)', testId: 'test/broken.test.ts > (suite)' });
+    expect(failures[0]?.excerpt).toContain("Cannot find module './gone.js'");
+  });
+  it('groups suite-load failures and verifies a master pass by file activity', async () => {
+    const broken = await analyzeCiBaseline('owner/repo', github({ suite: true }).gh);
+    expect(broken.groups[0]).toMatchObject({ file: 'test/example.test.ts', names: '(suite)', testId: 'test/example.test.ts > (suite)', classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail' });
+    const fixed = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true }).gh);
+    expect(fixed.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'pass' });
+    expect(fixed.updates.every(u => u.ready)).toBe(true);
+    const flake = await analyzeCiBaseline('owner/repo', github({ suite: true, pass: true, count: 1 }).gh);
+    expect(flake.groups[0]).toMatchObject({ classification: 'probable-flake', action: 'rerun-failed' });
   });
   it('resolves bundler-style imports across the dependency closure', async () => {
     const contents = {

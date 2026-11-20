@@ -205,7 +205,8 @@ recurringFlakes and verdicts without mutation.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
-scrubbed Vitest failure identities and summaries. `enqueueBaselineFixes(report,
+scrubbed Vitest failure identities (test-level `file > name` and suite-load
+`file > (suite)`) and summaries. `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the
