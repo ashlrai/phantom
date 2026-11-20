@@ -43,6 +43,9 @@ export type BusWorkFeedReadResult =
 
 const HOLDS_MAX = 1024;
 
+/** Feed statuses that still mean "open for a worker": queued or rescheduled. Progress reports and terminal states are not claimable. */
+export const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
+
 /** Provider of the identity's most recently seen runtime; undefined when it has none. */
 export function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
   let provider: Participant['provider'] | undefined;

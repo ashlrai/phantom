@@ -1584,6 +1584,9 @@ blocking a job's declared claim keys (`jobId`, `claimKey`, `owner`,
 `leaseUntil`, `origin`, `sourceId` — tokens never leave the store); `source` is
 `missing`, `available` or `unavailable`, and holds are unknown, not empty, when
 the table is unavailable. Holds cap at 1024 with `truncated` set.
+`BUS_FEED_OPEN_STATUSES` is the exported set of feed statuses that still mean
+open for a worker (`queued`, `rescheduled`); the comms inbox pending-work view
+and `claimBusWorkJob` share it so "claimable" means one thing.
 `coordinationRowBlocks(row, key)` in `src/core/agents/claim-store.ts` is the
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, status?, toMatch?)` applies the
@@ -1628,6 +1631,23 @@ result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `phm agents bus claim list [--key] [--owner] [--jobs]`
 prints it.
+`claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
+`BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level
+companion to `claim acquire`: it reads the live work feed, requires the job
+shown and open under `BUS_FEED_OPEN_STATUSES`, resolves one of the job's
+declared claim keys (`queue:<jobId>` preferred, else the first declared; an
+explicit `key` must be declared) and acquires through the same
+`executeBusClaimBody` path, so overlap with every other claim origin still
+decides in one place. `BusWorkJobClaimResult` echoes the announced job
+(`{id, owner, repo, title, status}`) on every outcome that found it:
+`acquired` carries the claim with the fencing token for its acquirer only,
+`conflict` the holder without one, and
+`invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
+(`invalid-job`/`invalid-owner`/`invalid-lease`/`invalid-key`, `unknown-job`,
+`job-not-open`, `no-claim-keys`, `undeclared-key`, `work-feed-*`,
+`claim-*`). A feed that cannot be read refuses rather than claiming against a
+guessed job. `phm agents bus work claim --job <id> --lease-ms <ms> [--key]
+[--owner] [--id]` prints it, exit 0 acquired, 2 invalid, 1 otherwise.
 `work.claim` acquire/renew run through `acquireCoordination`/`renewCoordination`
 and `work.release` through `settleCoordination` on the one coordination table
 with `origin:'resource'`; lease source ids are `agentbus:<opId>:<sha256-16 of

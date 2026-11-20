@@ -292,6 +292,22 @@ announcement address and joined with the live coordination holds — so the
 whole post/status/feed loop stays on this surface without dropping to
 `phm fleet work-feed`.
 
+**Job claims.** `phm agents bus work claim --job <id> --lease-ms <1..3600000>
+[--key <claimKey>] [--owner <label>] [--id <opId>]` is the job-level companion
+to `claim acquire`: it reads the live feed, refuses unless the job is shown
+and still open for a worker (`queued` or `rescheduled` — the same
+`BUS_FEED_OPEN_STATUSES` the comms inbox pending-work view uses), resolves one
+of the job's declared claim keys — `queue:<jobId>` preferred, `--key` picks
+another declared key — and runs the same coordination acquire, so the
+post → feed → claim → status loop never makes a caller reconstruct key
+conventions. An undeclared `--key`, a job the feed does not show, a non-open
+status or a job with no claim keys refuses before any lease; a refused or
+unreadable feed refuses rather than claiming against a guessed job. The
+result echoes the announced job and, on `acquired`, the fencing token for its
+acquirer only; a conflict names the holder, never a token. Exit 0 acquired,
+2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
+never permits a merge, a push, or spending.
+
 **Status.** `phm agents bus status [--json]` is a read-only probe of the five
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),

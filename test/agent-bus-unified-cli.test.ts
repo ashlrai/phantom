@@ -272,6 +272,53 @@ describe('phm agents bus (unified)', () => {
     expect(claimJobsText.join('\n')).toContain('feed=ok');
   });
 
+  it('claims a work-feed job key in one step and joins it to the feed holds', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-CLI-CLAIM', '--claim', 'repo:ashlrai/phantom',
+      '--id', 'cli-wc'])).json).toMatchObject({ status: 'posted' });
+
+    // The default resolves the declared queue:<jobId> key; --owner defaults to PHM_AGENT_ID.
+    const claimed = await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--lease-ms', '600000',
+      '--owner', 'worker-1', '--id', 'cli-wc-1']);
+    expect(claimed.code).toBe(0);
+    expect(claimed.json).toMatchObject({ status: 'acquired',
+      job: { id: 'RQ-CLI-CLAIM', owner: 'agent:atlas', status: 'queued', repo: 'ashlrai/phantom' },
+      claim: { claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1', leaseMs: 600000 } });
+    expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
+    // The new hold joins the job on the feed read, owner label and all.
+    const feed = await run(['work', 'feed', '--claims']);
+    expect(feed.json.claims.holds).toEqual([expect.objectContaining({ jobId: 'RQ-CLI-CLAIM',
+      claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1' })]);
+
+    // A second owner conflicts on the same key; --key picks another declared key.
+    const conflict = await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--lease-ms', '600000', '--owner', 'worker-2']);
+    expect(conflict.code).toBe(1);
+    expect(conflict.json).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-CLI-CLAIM' } });
+    expect(JSON.stringify(conflict.json)).not.toContain(claimed.json.claim.token);
+    const other = await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--key', 'repo:ashlrai/phantom',
+      '--lease-ms', '600000', '--owner', 'worker-2']);
+    expect(other.json).toMatchObject({ status: 'acquired', claim: { claimKey: 'repo:ashlrai/phantom', owner: 'worker-2' } });
+
+    // Undeclared keys and unknown jobs refuse honestly; usage errors exit 2.
+    expect(await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--key', 'queue:OTHER',
+      '--lease-ms', '600000', '--owner', 'w'])).toMatchObject({ code: 1,
+      json: { status: 'refused', reason: 'undeclared-key' } });
+    expect(await run(['work', 'claim', '--job', 'RQ-GONE', '--lease-ms', '600000', '--owner', 'w']))
+      .toMatchObject({ code: 2, json: { status: 'invalid', reason: 'unknown-job' } });
+    expect(await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--lease-ms', '600000',
+      '--key', 'bogus', '--owner', 'w'])).toMatchObject({ code: 2 });
+
+    // Human output names the job and shows the token only to the acquirer.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--key', 'repo:ashlrai/phantom',
+      '--lease-ms', '600000', '--owner', 'worker-3', '--root', root], t => text.push(t), () => {}, {})).toBe(1);
+    expect(text.join('\n')).toContain('conflict repo:ashlrai/phantom');
+    expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
+  });
+
   it('filters the work feed by announcement address under one agent identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

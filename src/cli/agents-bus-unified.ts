@@ -8,10 +8,11 @@ import {
   announceWork, listBusChannels, postChannelMessage, readAgentChannel, readAgentInbox, readAgentWakes, sendDirectMessage,
   sendHandoff, sendWakeRequest, updateWorkStatus, type UnifiedBusOptions, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
-import { WORK_STATUSES, type WorkJob } from '../core/agents/bus-v2-schema.js';
+import { WORK_STATUSES, parseClaimKey, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedToMatcher, formatBusWorkFeed, projectBusWorkFeedView, readBusWorkFeed } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
-import { busClaimExitCode, executeBusClaimBody, listBusClaims, newBusClaimOpId, type BusClaimResult, type BusClaimJobRef } from '../core/agents/bus-claims.js';
+import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
+  type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult } from '../core/agents/bus-claims.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 import type { BusPriority } from '../core/fleet/bus-envelope.js';
@@ -42,6 +43,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--to <label>] [--claims]
+ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
 --from, --agent and a missing <agent> default to PHM_AGENT_ID. Identities are routing
@@ -52,7 +54,10 @@ label carried by note/context bodies; reads match that field only.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. work feed and claim list are
 read-only and need no identity; work feed --to keeps jobs announced to that
-routing label under every label of one agent identity. status is a read-only
+routing label under every label of one agent identity. work claim takes one of
+a shown job's declared claim keys — queue:<jobId> preferred, --key picks
+another declared key — into the shared coordination table; claims coordinate,
+never authenticate. status is a read-only
 probe of the store, registry, wake queue, coordination table and work feed;
 a section that cannot be read reports unavailable or unknown, never zero.
 No network, no engine runs. Spec: docs/AGENT-BUS.md.`;
@@ -113,6 +118,24 @@ function claimHuman(result: BusClaimResult): string {
   if (result.status === 'released' || result.status === 'completed') return `${result.status} ${result.claimKey}`;
   if (result.status === 'conflict') return `conflict ${result.holder.claimKey} held by ${result.holder.owner} until ${result.holder.leaseUntil}`;
   return result.status;
+}
+
+/** `work claim` human lines: the job named by its announcement title, the fencing token only on acquire. */
+function workJobClaimHuman(result: BusWorkJobClaimResult): string {
+  if (result.status === 'acquired') {
+    return `acquired ${result.claim.claimKey} for ${claimJobLabel(result.job)} owner=${result.claim.owner} ` +
+      `leaseUntil=${new Date(result.claim.leaseUntil).toISOString()} token=${result.claim.token}`;
+  }
+  if (result.status === 'conflict') {
+    return `conflict ${result.holder.claimKey} for ${claimJobLabel(result.job)} held by ${result.holder.owner} ` +
+      `until ${new Date(result.holder.leaseUntil).toISOString()}`;
+  }
+  return `${result.status}: ${result.reason}${result.job === undefined ? '' : ` (${claimJobLabel(result.job)})`}`;
+}
+
+/** work claim exit codes mirror claim acquire: acquired 0, invalid 2, every other refusal 1. */
+function workJobClaimExitCode(result: BusWorkJobClaimResult): number {
+  return result.status === 'acquired' ? 0 : result.status === 'invalid' ? 2 : 1;
 }
 
 export async function runAgentsBusUnified(argv: string[], out: (text: string) => void, err: (text: string) => void,
@@ -299,6 +322,22 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         status as WorkJob['status'] | undefined, toMatch);
       out(json ? JSON.stringify(result) : formatBusWorkFeed(result).join('\n'));
       return result.status === 'ok' ? 0 : 1;
+    }
+    if (verb === 'work' && sub === 'claim') {
+      noExtra(2);
+      const owner = one('--owner') ?? self;
+      if (!owner) throw new UsageError('--owner is required when PHM_AGENT_ID is not set.');
+      const leaseMs = integer(one('--lease-ms'), '--lease-ms');
+      if (leaseMs === undefined) throw new UsageError('--lease-ms is required.');
+      const key = one('--key');
+      if (key !== undefined && parseClaimKey(key) === undefined) {
+        throw new UsageError('--key must be a v2 claim key (repo:, path:, queue: or pr:).');
+      }
+      const opId = one('--id');
+      const result = claimBusWorkJob({ job: required('--job'), owner, leaseMs, root: options.root,
+        ...(key === undefined ? {} : { key }), ...(opId === undefined ? {} : { id: opId }) });
+      out(json ? JSON.stringify(result) : workJobClaimHuman(result));
+      return workJobClaimExitCode(result);
     }
     if (verb === 'work' && (sub === 'post' || sub === 'status')) {
       noExtra(2);
