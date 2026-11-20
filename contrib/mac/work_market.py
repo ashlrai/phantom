@@ -218,7 +218,7 @@ def read_devin_allowance(home, ashlr_home=None):
 
 
 def devin_cost(reading, model, running, now):
-    """Included only while a whole session fits. Free CLI previews do not reserve ACUs, but still need fresh live account evidence."""
+    """Included only while a whole session fits. Free CLI previews do not reserve ACUs, but still need fresh live account- and model-bound evidence."""
     r = reading if isinstance(reading, dict) else {}
     evidence = {key: number(r.get(key)) for key in ("used", "limit", "in_flight", "reserve", "session_cap")}
     evidence["headroom"] = None
@@ -228,7 +228,11 @@ def devin_cost(reading, model, running, now):
         if number(now) is None or now >= _epoch(DEVIN_PREVIEW_UNTIL):
             return dict(result, cost_class_reason="devin_preview_expired")
         observed = _epoch(r.get("as_of"))
-        if r.get("state") != "live" or observed is None or not 0 <= now - observed <= 900:
+        provenance = r.get("provenance") if isinstance(r.get("provenance"), dict) else {}
+        account, scope_model = provenance.get("account_id"), provenance.get("model")
+        bound = (isinstance(account, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", account) is not None
+                 and isinstance(scope_model, str) and DEVIN_PREVIEW.fullmatch(scope_model))
+        if r.get("state") != "live" or observed is None or not 0 <= now - observed <= 900 or not bound:
             return dict(result, cost_class_reason="devin_preview_unverified")
         return dict(result, cost_class="included", zero_cost=True, cost_class_reason="devin_free_preview")
     limit, used, reserve, cap, flight = (evidence[k] for k in ("limit", "used", "reserve", "session_cap", "in_flight"))
@@ -382,7 +386,7 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
         projection = spend_down(lane, view[lane]["cost_class"], reading, now)
         provenance = {}
         if lane == "devin" and isinstance(weekly, dict):
-            provenance = dict(weekly.get("provenance", {}))
+            provenance = dict(weekly.get("provenance") or {})
             selected = model or models.get("devin")
             if isinstance(selected, str) and selected != provenance.get("model"):
                 provenance.pop("model", None)

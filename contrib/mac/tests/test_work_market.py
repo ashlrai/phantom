@@ -102,8 +102,9 @@ class MarketUnit(unittest.TestCase):
         self.assertIsNone(self.devin_view({'used': None})['devin']['allowance']['used'])
 
     def test_devin_preview_is_zero_cost_only_until_expiry(self):
+        bound = dict(provenance=dict(account_id='org-test', model='swe-2-flash'))
         for model in ('swe-2-lightning', 'swe-2-flash'):
-            entry = self.devin_view({'used': None, 'as_of': 1796101199}, model=model, now=1796101199)['devin']
+            entry = self.devin_view(dict({'used': None, 'as_of': 1796101199}, **bound), model=model, now=1796101199)['devin']
             self.assertEqual((entry['cost_class'], entry['posture']), ('included', 'burn'))
             self.assertTrue(entry['zero_cost'])
             self.assertEqual(entry['cost_class_reason'], 'devin_free_preview')
@@ -121,6 +122,20 @@ class MarketUnit(unittest.TestCase):
             entry = self.devin_view(reading, model='swe-2-flash', now=1796101199)['devin']
             self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
             self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
+        # Fresh and live is not enough: the reading must be bound to the measured
+        # account and to a preview-scoped model.
+        fresh = {'used': None, 'as_of': 1796101199}
+        for provenance in (None, {}, {'account_id': 'org-test'}, {'model': 'swe-2-flash'},
+                           {'account_id': 'org-test', 'model': 'swe-2-high'},
+                           {'account_id': '', 'model': 'swe-2-flash'}):
+            entry = self.devin_view(dict(fresh, provenance=provenance), model='swe-2-flash', now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
+            self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
+        # Account- and preview-model-bound fresh evidence verifies, across the preview family.
+        bound = dict(fresh, provenance=dict(account_id='org-test', model='swe-2-lightning'))
+        entry = self.devin_view(bound, model='swe-2-flash', now=1796101199)['devin']
+        self.assertEqual((entry['cost_class'], entry['zero_cost'], entry['cost_class_reason']),
+                         ('included', True, 'devin_free_preview'))
 
     def test_metered_api_cannot_burn_from_host_posture(self):
         entry = market.lane_view(['claude-api'], {'claude-api': {'posture': 'burn'}},
