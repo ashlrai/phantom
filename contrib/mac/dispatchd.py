@@ -934,6 +934,22 @@ def _maxruntime_done_identities(marker):
         if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
             done.add((pid, start_time))
     return done
+def _maxruntime_killsent_identities(marker):
+    """Identities already sent SIGKILL. Escalation must not re-signal them,
+    and they stay unresolved until group absence is confirmed."""
+    killsent = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return killsent
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("killsent") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            killsent.add((pid, start_time))
+    return killsent
+
 def _maxruntime_pending_identities(marker):
     """TERM candidates the first pass could not verify; a later non-pending
     row for the same identity -- or the same pid for an unknown-start
@@ -1015,13 +1031,17 @@ def job_watchdog():
                 if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
                     expected = _maxruntime_identities(mk)
                     done = _maxruntime_done_identities(mk)
-                    pending = [identity for identity in sorted(expected) if identity not in done]
+                    killsent = _maxruntime_killsent_identities(mk)
+                    # SIGKILL delivery is asynchronous: a successful killpg only
+                    # means the signal was sent, not that the group is gone.
+                    # Record killsent (never done) so the unresolved check
+                    # below keeps the slot until group absence is confirmed.
+                    pending = [identity for identity in sorted(expected) if identity not in done and identity not in killsent]
                     signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=set(pending)) if pending else []
                     if signalled:
                         with open(mk, "a") as f:
                             for pid, start_time in signalled:
-                                f.write(json.dumps({"pid": pid, "start": start_time, "done": True}, separators=(",", ":")) + "\n")
-                        done.update(signalled)
+                                f.write(json.dumps({"pid": pid, "start": start_time, "killsent": True}, separators=(",", ":")) + "\n")
                         ev("REAP TIMEOUT %s SIGKILL" % j)
                     unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
                     unresolved += [identity for identity in _maxruntime_pending_identities(mk)
