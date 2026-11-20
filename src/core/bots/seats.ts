@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { BOT_ID_PATTERN } from '../agents/bot-templates.js';
 import { participantSchema, providerSchema, type Participant } from '../agents/bus-v2-schema.js';
+import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { coordinationRoot, listCoordination, releaseCoordinationBySource, type CoordinationView } from '../agents/claim-store.js';
 import { sendDirectMessage } from '../agents/bus-unified.js';
 import { localWriteGate } from '../agents/send-gate.js';
@@ -129,10 +130,17 @@ export function advisorySeatAdapter(s: BotSeat, usage: () => Promise<QuotaEviden
 function nodes(o: SeatOptions): NodesStore {
   return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes'))).transaction(fn) };
 }
-async function openWork(s: BotSeat, o: SeatOptions) {
+async function openWork(s: BotSeat, o: SeatOptions, identityOf?: AgentIdentityKeyFor) {
   const coordination = listCoordination(fleet(o), (o.now ?? Date.now)());
   if (coordination.source === 'unavailable') throw new Error('Coordination store unavailable.');
-  const claims = coordination.claims.filter(c => c.live && c.owner === s.participantId);
+  // A seat's open claims are the live rows its participantId owns — or any
+  // other label of the same registered bus identity, the same owner matching
+  // `claim list --owner` applies. An unresolvable participantId or unreadable
+  // registry keeps exact-label matching: unknown identity state never widens
+  // what a draining seat must hand off.
+  const ownerKey = identityOf?.(s.participantId);
+  const claims = coordination.claims.filter(c => c.live &&
+    (c.owner === s.participantId || (ownerKey !== undefined && identityOf?.(c.owner) === ownerKey)));
   let jobs: QueueJobV1[] = [];
   if (s.nodeId) {
     const path = join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes', 'nodes.json');
@@ -150,8 +158,9 @@ async function snapshot(o: SeatOptions) {
   const states = JSON.parse(await read(o, 'seat-state.json') ?? '{}') as Record<string, SeatState>;
   const history = (await read(o, 'handoffs.jsonl') ?? '').split('\n').filter(Boolean).map(line => JSON.parse(line) as SeatHandoff);
   const now = new Date((o.now ?? Date.now)()).toISOString();
+  const identityOf = agentIdentityKeys({ root: fleet(o), now: o.now });
   const seats = await Promise.all((await roster(o)).map(async seat => {
-    const evidence = await quota(seat, o), work = await openWork(seat, o);
+    const evidence = await quota(seat, o), work = await openWork(seat, o, identityOf);
     const state = nextSeatState(states[seat.id] ?? { state: 'active', since: now, exhaustedReset: null }, { quota: evidence, openWork: work.claims.length + work.jobs.length, now });
     return { seat, quota: evidence, work, state };
   }));
@@ -256,6 +265,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
   if (!lock) throw new Error('Seat handoff store unavailable or contended.');
   try {
     const { data, row, records } = await plan(id, o);
+    const identityOf = agentIdentityKeys({ root: fleet(o), now: o.now });
     const receipts = JSON.parse(await read(o, 'handoff-notices.json') ?? '{}') as Record<string, NoticeReceipt>;
     const pending = [...records];
     for (const old of data.history.filter(h => h.seatId === id)) {
@@ -275,7 +285,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       if (held && record.work.kind === 'node-job') {
         const claim = row.work.jobs.find(j => j.id === record.work.ref)!.claim!;
         const released = o.releaseNode ? o.releaseNode(claim) : new DriveNodes(nodes(o), { now: o.now }).release(claim, true);
-        if (!released && (await openWork(row.seat, o)).jobs.some(j => j.claim?.token === claim.token && j.id === claim.jobId)) throw new Error('Node claim release refused.');
+        if (!released && (await openWork(row.seat, o, identityOf)).jobs.some(j => j.claim?.token === claim.token && j.id === claim.jobId)) throw new Error('Node claim release refused.');
       } else if (held) {
         const claim = row.work.claims.find(c => c.key === record.work.ref)!;
         if (claim.origin === 'queue') throw new Error('Bus claim release refused.');
@@ -298,7 +308,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       }
       applied.push({ ...record, notifications });
     }
-    const remaining = await openWork(row.seat, o);
+    const remaining = await openWork(row.seat, o, identityOf);
     data.states[id] = nextSeatState(row.state, { quota: row.quota, openWork: remaining.claims.length + remaining.jobs.length, now: data.now });
     await persist(data.states, o);
     return { schema: 'phantom-bot-handoff-plan.v1', seatId: id, state: data.states[id]!.state, apply: true, handoffs: applied };

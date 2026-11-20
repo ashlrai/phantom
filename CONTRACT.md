@@ -33,6 +33,9 @@ Exports:
   Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
   claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
   transitions may persist during listing; missing node stores stay missing.
+  Open work counts live coordination claims owned by `participantId` or by any
+  other label of the same registered bus identity; an unreadable identity
+  registry keeps exact-label matching.
 - `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
   with measured quota. The module acquires no claims.
 - `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;
