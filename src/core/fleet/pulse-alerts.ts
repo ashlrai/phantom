@@ -11,10 +11,11 @@ import { defaultRunsDir } from './landed-closes-read.js';
 import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
+import { summarizeSkips, type SkippedJobsV1 } from './skipped-jobs.js';
 import type { ThroughputMark } from './throughput.js';
 
 export const PULSE_ALERTS_SCHEMA = 'fleet.pulse.alerts.v1' as const;
-export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale'] as const;
+export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale', 'skipped'] as const;
 export type PulseAlertKind = (typeof PULSE_ALERT_KINDS)[number];
 export interface PulseAlertV1 {
   kind: PulseAlertKind;
@@ -34,7 +35,9 @@ export interface PulseAlertsV1 {
 /** Every reader's output as it returned it; null when that reader failed. */
 export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null;
   /** Release cadence; absent means not checked, null means the read failed. */
-  releases?: CadenceV1 | null }
+  releases?: CadenceV1 | null;
+  /** Precheck skips in the last SKIP_ALERT_HOURS; absent means not checked, null means the ledger could not be read. */
+  skips?: SkippedJobsV1 | null }
 
 export const STALL_MINUTES = 30;
 export const WASTING_JOBS = 20;
@@ -42,6 +45,8 @@ export const WASTING_JOBS = 20;
 export const WASTING_MIN_JOBS = 5;
 export const WASTING_RATE = 0.4;
 export const POOL_WASTE_PERCENT = 10;
+/** How far back a precheck skip counts toward the skipped alert. */
+export const SKIP_ALERT_HOURS = 6;
 /** How far back the ledger is scanned for the last launch, the last merge and the last 20 jobs per lane. */
 export const ALERT_LOOKBACK_H = 72;
 const MIN = 60_000;
@@ -52,7 +57,7 @@ const minutesText = (ms: number): string => ms >= 120 * MIN ? `${Math.floor(ms /
 /** Pure: the active alerts for these inputs at `now`. */
 export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAlertsV1 {
   const alerts: PulseAlertV1[] = [], unknown: string[] = [];
-  const { marks, starved, spend, releases } = inputs;
+  const { marks, starved, spend, releases, skips } = inputs;
 
   if (!marks) unknown.push('Stalled, wasting: the job metrics file could not be read.');
   else {
@@ -109,6 +114,18 @@ export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAl
     else if (row.has_assets === false) alerts.push({ kind: 'release_stale', lane: row.repo, since,
       detail: `${row.repo} ${row.latest_tag} was published with 0 assets, so nobody can download it.`,
       fix_hint: `Re-run the release workflow for ${row.repo}: phm release cadence.` });
+  }
+
+  if (skips === null) unknown.push('Skipped jobs: the job metrics file could not be read.');
+  else if (skips && (skips.repeated.length || skips.leader_skipped.length)) {
+    const parts = [
+      skips.repeated.length ? `${skips.repeated.join(', ')} ${skips.repeated.length === 1 ? 'was' : 'were'} skipped more than once` : '',
+      skips.leader_skipped.length ? `${skips.leader_skipped.join(', ')} ${skips.leader_skipped.length === 1 ? 'was' : 'were'} queued by the leader and skipped` : '',
+    ].filter(Boolean);
+    const first = skips.by_code.flatMap(g => g.jobs).map(j => Date.parse(j.at)).filter(Number.isFinite);
+    alerts.push({ kind: 'skipped', lane: 'fleet', since: first.length ? new Date(Math.min(...first)).toISOString() : null,
+      detail: `In the last ${SKIP_ALERT_HOURS} hours the precheck dropped jobs that may have been wrongly skipped: ${parts.join('; ')}.`,
+      fix_hint: 'See why: phm jobs skipped.' });
   }
 
   const order = (a: PulseAlertV1) => PULSE_ALERT_KINDS.indexOf(a.kind);
@@ -200,7 +217,8 @@ export async function readPulseAlertInputs(runsDir: string, now: number): Promis
     quiet(readUsageSpend(join(runsDir, 'queue', 'status.json'), now)),
     quiet(import('../release/cadence.js').then(m => m.readReleaseCadence({ now }))),
   ]);
-  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases };
+  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases,
+    skips: ledger === null ? null : summarizeSkips(ledger, now, SKIP_ALERT_HOURS) };
 }
 
 export interface ReadPulseAlertsOpts {
