@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readDispatchEventsLog } from '../core/fleet/dispatch-events-read.js';
+import { computeLanesHeld, lanesHeldLines } from '../core/fleet/lane-held.js';
 import { computeLaneFit } from '../core/fleet/lane-fit.js';
 import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fleet/lane-yield-weight.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
@@ -9,11 +11,13 @@ import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lan
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
-       phm lanes yield [--json]
+       phm lanes yield [--json] | phm lanes held [--json]
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 "phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
 weight the router uses (1 = neutral; unknown below 10 jobs).
+"phm lanes held" lists lanes whose own wrapper held launches in the last 60 min. A lane with 3 or more held
+launches and no finished job is "self-held": the router skips it until a launch there finishes or 60 min pass.
 Figures that cannot be measured print "unknown".`;
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
@@ -33,6 +37,14 @@ export async function cmdLanes(args: string[]): Promise<number> {
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
+  }
+  if (args[0] === 'held') {
+    const flags = args.slice(1);
+    if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
+    const report = computeLanesHeld(await readDispatchEventsLog().catch(() => null), Date.now());
+    if (flags.length) console.log(JSON.stringify(sanitizePublicJson(report)));
+    else for (const line of lanesHeldLines(report)) console.log(line);
+    return 0;
   }
   if (args[0] === 'yield') {
     const flags = args.slice(1);

@@ -123,3 +123,23 @@ describe('self-tick gap hook writes a drop file into the configured drop dir', (
     }
   });
 });
+
+describe('supply doctor self-held lanes', () => {
+  const stamp = (min: number, body: string): string => {
+    const d = new Date(NOW - min * 60_000); const p = (n: number): string => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${body}`;
+  };
+  const events = [10, 20, 30].flatMap((m, i) => [stamp(m + 1, `LAUNCH J${i} phantom zai mid`), stamp(m, `LAUNCH_DEFERRED J${i} HELD (requeued, backoff 1800s)`)]).join('\n');
+  const base = { runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null };
+  it('lists a self-held lane in the report and the plain lines', async () => {
+    const report = await readSupplyDoctor({ ...base, readEvents: async () => events });
+    expect(report.selfHeld).toMatchObject({ state: 'known', windowMinutes: 60, lanes: [{ lane: 'zai', held: 3, finishes: 0 }] });
+    expect(supplyDoctorLines(report)).toContain('Self-held lane: lane zai holds every launch (3 in 60 min); skipped until a launch there finishes.');
+  });
+  it('says none, or unknown when the log is unreadable', async () => {
+    expect((await readSupplyDoctor({ ...base, readEvents: async () => '' })).selfHeld).toMatchObject({ state: 'known', lanes: [] });
+    const blind = await readSupplyDoctor({ ...base, readEvents: async () => null });
+    expect(blind.selfHeld.state).toBe('unknown');
+    expect(supplyDoctorLines(blind).join('\n')).toMatch(/Self-held lanes: unknown/);
+  });
+});
