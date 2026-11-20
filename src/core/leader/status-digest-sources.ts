@@ -11,6 +11,7 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
+import { readBlocker, type DigestBlocker } from '../fleet/digest-blocker.js';
 import { readDiskLowLine } from '../fleet/host-disk.js';
 import { DIGEST_GAP_MINUTES, readFleetGaps } from '../fleet/sleep-gaps.js';
 import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
@@ -34,6 +35,8 @@ export interface StatusDigestSources {
   gapLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The `disk_low` line from recorded free-disk samples when under 24 hours remain before the lane freeze line; null when fine or unknown. */
   diskLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The single biggest cost in the last hour (asleep, host load, empty queue, drained pool, low disk); lanes are the ones the digest already read. */
+  blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
 const HOUR = 3_600_000;
@@ -62,6 +65,7 @@ const defaults: StatusDigestSources = {
     return worst?.line ?? null;
   },
   diskLine: readDiskLowLine,
+  blocker: readBlocker,
 };
 
 function gatherNodeRuns(read: ((nowMs: number) => NodeResultsSummary) | undefined, nowMs: number): NodeResultsSummary | undefined {
@@ -163,6 +167,7 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
 
   const gap = await fact(() => src.gapLine?.(runsDir, nowMs) ?? null, 'gap check failed');
   const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
+  const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }

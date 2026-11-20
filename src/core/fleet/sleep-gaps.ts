@@ -216,15 +216,20 @@ export interface ReadGapsOptions {
   claudeLeftPct?: number | null;
 }
 
+/** The dispatcher's PLANNER_TICK lines from the first readable dispatch-events log; null when none can be read. */
+export async function readTicks(runsDir: string, now: number, read: (path: string) => Promise<string | null> = async path => { try { return await readFile(path, 'utf8'); } catch { return null; } }): Promise<Tick[] | null> {
+  for (const path of dispatchEventsCandidates(runsDir)) {
+    const text = await read(path);
+    if (text !== null) return parseTicks(text, now);
+  }
+  return null;
+}
+
 export async function readFleetGaps(opts: ReadGapsOptions): Promise<FleetGapsReport> {
   const now = opts.now ?? Date.now();
   const since = now - (opts.sinceMs ?? 24 * 3_600_000);
   const read = opts.read ?? (async (path: string) => { try { return await readFile(path, 'utf8'); } catch { return null; } });
-  let ticks: Tick[] | null = null;
-  for (const path of dispatchEventsCandidates(opts.runsDir)) {
-    const text = await read(path);
-    if (text !== null) { ticks = parseTicks(text, now); break; }
-  }
+  const ticks = await readTicks(opts.runsDir, now, read);
   const ledger = await read(join(opts.runsDir, 'metrics', 'jobs.jsonl'));
   const launches = ledger === null ? null : ledgerRows(ledger, now, Math.ceil((now - since) / 3_600_000) + 1, true).rows
     .filter(r => (r.row.event ?? null) === 'launch').map(r => r.at);
