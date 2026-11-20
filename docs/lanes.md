@@ -26,6 +26,7 @@ Agents and scripts should use the commands, not this page:
 phm lanes health --json
 phm lanes fit --lane codex-personal --json
 phm lanes yield --json
+phm lanes held --json
 ```
 
 `phm lanes health` shows calls, error rate and latency per lane over the last
@@ -35,7 +36,11 @@ last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lan
 fewer than 10 jobs is unknown and stays neutral). A merge recorded as reverted
 counts as reverted, never as merged. The lane router sends rows bigger
 than small to lanes at 0.5 or better when they have room, and gives a low-yield lane
-small, test-only rows. All three only read.
+small, test-only rows. `phm lanes held` lists lanes whose own wrapper held launches in the
+last 60 minutes (`lanes.held.v1`). A lane with 3 or more held launches and no finished job
+is self-held: the router skips it, with the reason "lane <x> holds every launch (N in 60
+min)", until a launch there finishes or 60 minutes pass. `phm doctor supply` shows the same
+lanes. All four only read.
 
 ## Related
 
