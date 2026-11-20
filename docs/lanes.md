@@ -42,3 +42,7 @@ small, test-only rows. All three only read.
 - [Lane fit](https://github.com/ashlrai/phantom/blob/master/docs/LANE-FIT.md) and [lane health](https://github.com/ashlrai/phantom/blob/master/docs/LANE-HEALTH.md): the two lane reports.
 - [Resource pools](RESOURCE-POOLS.md): how much capacity each account has left.
 - [Drive](https://github.com/ashlrai/phantom/blob/master/docs/DRIVE.md): which job kinds each pool may serve.
+
+## Which lane can run a job
+
+`phm lanes caps` lists what each lane's sandbox can do (gh, network, browser, files outside the worktree) as yes, no or unknown. `phm lanes caps --check <prompt-file>` says which lanes can run that job, and `--json` gives the same as `lanes.caps.v1`. A lane declared to lack something the job needs is skipped with a plain reason such as "claude lacks gh". Unknown is never counted as a yes or a no.
