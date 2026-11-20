@@ -428,6 +428,61 @@ describe('readBusWorkMine', () => {
     expect(exact.inbox.messages).toHaveLength(20);
   });
 
+  it('carries the inbox hold evidence on claimable and handoff mail only', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    // Claimable work mail held through the canonical bus-next claim path,
+    // claimable work mail nobody has taken, a worker-handoff assignment and
+    // plain mail that must carry no held field at all.
+    postClaimable(options, 'w-held');
+    takeWork(options, 'w-held', 'nova');
+    postClaimable(options, 'w-free');
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-M-7', prompt: 'take this task',
+      id: 'ho-m-2' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'just talk',
+      id: 'dm-plain-1' }, options)).toMatchObject({ status: 'posted' });
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.inbox.status !== 'ok') throw new Error('unreachable');
+    const byId = new Map(result.inbox.messages.map(message => [message.id, message]));
+    expect(byId.get('w-held')).toMatchObject({ held: true, holder: 'nova' });
+    expect(byId.get('w-free')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('ho-m-2')).toMatchObject({ held: false, holder: null });
+    expect(byId.get('dm-plain-1')?.held).toBeUndefined();
+    expect(byId.get('dm-plain-1')?.holder).toBeUndefined();
+
+    // The human line shows the same evidence inside the bracket the inbox
+    // frame uses, and plain mail stays unchanged.
+    const lines = formatBusWorkMine(result);
+    expect(lines.find(text => text.includes('id=w-held'))).toContain('held=yes holder=nova');
+    expect(lines.find(text => text.includes('id=w-free'))).toContain('held=no');
+    expect(lines.find(text => text.includes('id=ho-m-2'))).toContain('held=no');
+    const plain = lines.find(text => text.includes('id=dm-plain-1'))!;
+    expect(plain).not.toContain('held=');
+  });
+
+  it('reports inbox hold state as unknown when a hold store cannot be read', () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    postClaimable(options, 'w-unk');
+    claim(options, 'queue:w-unk', 'nova', 'test:nova-held', options.clock.now);
+    // Poison the coordination table after the lease lands: coverage is
+    // unknown, never proven free.
+    writeFileSync(join(options.root, 'coordination', 'claims.json'), 'invalid JSON');
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.messages.find(message => message.id === 'w-unk'))
+      .toMatchObject({ held: null, holder: null });
+    expect(formatBusWorkMine(result).find(text => text.includes('id=w-unk'))).toContain('held=unknown');
+  });
+
   it('reports unknown hold coverage instead of guessing when the table is unreadable', async () => {
     const options = setup();
     register(options, 'atlas');

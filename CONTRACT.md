@@ -1871,9 +1871,12 @@ for the next page of mail addressed to the agent — same matching, order and
 owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
 messages, nextCursor, truncated}`: each `BusWorkMineInboxMessage` carries
 `cursor`, envelope `id`, `ts`, `priority`, `kind`, `channel`, raw `from`,
-resolved `fromAgent` (null when unregistered) and a `summary` through
+resolved `fromAgent` (null when unregistered), a `summary` through
 `busBodySummary`/`busBodyFallbackSummary`, scrubbed, single-lined and clipped
-to 200 characters for both JSON and human output. The read asks
+to 200 characters for both JSON and human output, and — only on claimable
+work and worker-handoff mail — the same optional `held`/`holder` evidence
+`agents bus inbox` reports (`held` tri-state, `null` when a hold store cannot
+be read, never proven free; absent on other mail kinds). The read asks
 for one row past the 20-message cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and on overflow the newest scanned row is the one

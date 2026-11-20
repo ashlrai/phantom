@@ -109,6 +109,12 @@ export interface BusWorkMineInboxMessage {
   fromAgent: string | null;
   /** Scrubbed, single-line body summary, clipped to the digest bound. */
   summary: string;
+  /** Same tri-state hold evidence `agents bus inbox` reports, present only on
+   * claimable work and worker-handoff mail: true/false when provable, null
+   * when a hold store cannot be read — never a guess; absent on other mail. */
+  held?: boolean | null;
+  /** Owner label of the blocking claim when held and known; null otherwise. */
+  holder?: string | null;
 }
 
 export type BusWorkMineInbox =
@@ -385,6 +391,9 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
       from: message.envelope.from, fromAgent: message.fromAgent,
       summary: mineField(busBodySummary(message.envelope.body) ?? busBodyFallbackSummary(message.envelope.body),
         WORK_MINE_SUMMARY_MAX),
+      // Claimable work and worker-handoff mail keep the hold evidence the
+      // inbox read already computed; other kinds carry no held field at all.
+      ...(message.held === undefined ? {} : { held: message.held, holder: message.holder ?? null }),
     })),
   };
 }
@@ -870,7 +879,9 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     for (const message of inbox.messages) {
       const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
       const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.from}`;
-      lines.push(`  [${message.priority} ${where} id=${message.id} from ${from}] ${message.summary}`);
+      const held = message.held === undefined ? '' :
+        ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
+      lines.push(`  [${message.priority} ${where} id=${message.id} from ${from}${held}] ${message.summary}`);
     }
   }
   return lines;
