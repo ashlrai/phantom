@@ -126,3 +126,27 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
     expect(down.body).toMatchObject({ schema: 'fleet.map-edges.v1', version: 1, source: 'unavailable', edges: null });
   });
 });
+
+  it('accepts --minutes as an alias for --since', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    
+    // Test --minutes works as an alias
+    expect(await cmdMap(['edges', '--json', '--minutes', '30'])).toBe(0);
+    const printed = JSON.parse(log.mock.calls[0]![0] as string) as MapEdges;
+    expect(printed.since).toBe('30m');
+    
+    // Test --since and --minutes together is refused
+    expect(await cmdMap(['edges', '--since', '10m', '--minutes', '30'])).toBe(2);
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(err.mock.calls[0]![0]).toContain('--since and --minutes cannot be used together');
+    
+    // Test that --minutes requires a positive integer
+    expect(await cmdMap(['edges', '--minutes', 'abc'])).toBe(2);
+    expect(err).toHaveBeenCalledTimes(2);
+    expect(err.mock.calls[1]![0]).toContain('--minutes takes a positive integer');
+    
+    // Test that --minutes without value is refused
+    expect(await cmdMap(['edges', '--minutes'])).toBe(2);
+    expect(err).toHaveBeenCalledTimes(3);
+  });

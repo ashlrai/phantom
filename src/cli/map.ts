@@ -2,7 +2,7 @@ import type { MapFilter } from '../core/fleet/map-filter.js';
 
 /** `phm map [--json]`: the whole fleet as one graph. Thin: core/fleet/live-map.ts builds it. `phm map edges`: core/fleet/map-edges.ts. */
 export const MAP_USAGE = `Usage: phm map [--json] [--lane <lane>] [--repo <repo>] [--state <running|waiting|done|failed|unknown>]
-       phm map edges [--json] [--since <10m|2h|1d|ISO>]
+       phm map edges [--json] [--since <10m|2h|1d|ISO>] [--minutes <n>]
 
 The whole fleet on one map: the leader, each lane, its running jobs, every
 computer and the pools lanes draw on, with who reports to whom, what runs
@@ -23,14 +23,28 @@ message, with each agent's org role (leader, lane, worker or unknown).
 --json prints fleet.map-edges.v1. Exit 0 read, 1 bus unreadable, 2 bad usage.`;
 
 async function cmdMapEdges(args: string[]): Promise<number> {
-  let json = false, since: string | undefined;
+  let json = false, since: string | undefined, minutes: string | undefined;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) json = true;
     else if (args[i] === '--since' && since === undefined && args[i + 1] !== undefined) since = args[++i];
+    else if (args[i] === '--minutes' && minutes === undefined && args[i + 1] !== undefined) {
+      const value = args[++i];
+      if (!/^\d+$/.test(value)) {
+        console.error('--minutes takes a positive integer.');
+        return 2;
+      }
+      minutes = value;
+    }
     else { console.error(MAP_USAGE); return 2; }
   }
+  
+  if (since !== undefined && minutes !== undefined) {
+    console.error('--since and --minutes cannot be used together.');
+    return 2;
+  }
+  
   const { formatMapEdgesText, readMapEdges } = await import('../core/fleet/map-edges.js');
-  const result = readMapEdges(since);
+  const result = readMapEdges(since || (minutes ? `${minutes}m` : undefined));
   if (!result) { console.error('--since takes 10m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
   console.log(json ? JSON.stringify(result, null, 2) : formatMapEdgesText(result));
   return result.source === 'unavailable' ? 1 : 0;
