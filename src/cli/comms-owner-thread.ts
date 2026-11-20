@@ -66,7 +66,14 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
     }
     const view = readOwnerThread(options, limit);
     const json = args.includes('--json');
-    emit(json, view, view.messages.map(message => `${message.seq} ${message.at} ${message.channel} ${message.direction} ${message.text}`).join('\n') || '(empty)');
+    emit(json, view, view.messages.map(message => {
+      const line = `${message.seq} ${message.at} ${message.channel} ${message.direction} ${message.text}`;
+      const perChannel = message.direction === 'outbound' ? view.receipts[message.id] : undefined;
+      if (!perChannel) return line;
+      const states = Object.entries(perChannel).sort(([a], [b]) => a.localeCompare(b))
+        .map(([channel, receipt]) => `${channel}:${receipt.state}`);
+      return states.length ? `${line} [${states.join(' ')}]` : line;
+    }).join('\n') || '(empty)');
     return 'unavailable' in view ? 1 : 0;
   }
   if (verb === 'send-owner') {

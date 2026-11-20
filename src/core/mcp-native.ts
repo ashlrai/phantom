@@ -1424,7 +1424,7 @@ const TOOLS: NativeToolImpl[] = [
 
   {
     name: 'ashlr_comms_thread',
-    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack). No credentials. Read-only.',
+    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. No credentials. Read-only.',
     inputSchema: { type: 'object', properties: { limit: { type: 'number' } } },
     safety: 'read',
     handler: async args => {

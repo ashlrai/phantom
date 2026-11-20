@@ -103,6 +103,39 @@ describe('owner thread', () => {
     expect(readOwnerThread(options).messages.filter(message => message.direction === 'outbound')).toHaveLength(1);
   });
 
+  it('joins per-channel delivery receipts into the thread read and the CLI line', async () => {
+    const { options } = fixture();
+    options.transports = {
+      ...options.transports,
+      telegram: { async pull() { return []; }, async deliver() { return { status: 'refused' as const, reason: 'unused' }; } },
+    };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'hello', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    expect((await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options)).status).toBe('partial');
+    const view = readOwnerThread(options);
+    const outbound = view.messages.find(message => message.direction === 'outbound')!;
+    const inbound = view.messages.find(message => message.direction === 'inbound')!;
+    expect(view.receipts[outbound.id]).toEqual({
+      desktop: { state: 'delivered' },
+      telegram: { state: 'failed', reason: 'Channel transport refused the owner reply.' },
+    });
+    expect(view.receipts[inbound.id]).toBeUndefined();
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try { expect(await cmdCommsOwner(['thread'], options)).toBe(0); } finally { console.log = write; }
+    expect(lines[0]).toContain('[desktop:delivered telegram:failed]');
+    expect(lines[0]).not.toContain('inbound [');
+  });
+
+  it('reports empty receipts when the thread is unavailable', () => {
+    const { options } = fixture();
+    mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
+    writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
+    const view = readOwnerThread(options);
+    expect('unavailable' in view).toBe(true);
+    expect(view.receipts).toEqual({});
+  });
+
   it('halts pulls and sends while KILL or pause is on', async () => {
     const active = fixture();
     await acceptOwnerInbound({ channel: 'slack', senderId: 'U0123456789', text: 'ping', idempotencyKey: 'slack-msg-0001', at: 1_700_000_000_000 }, active.options);

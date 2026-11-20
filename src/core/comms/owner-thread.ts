@@ -8,7 +8,7 @@
  * KILL and the comms pause halt every adapter before a transport is called.
  */
 import { teammateReplyGapFromInbox, type TeammateReplyGap } from './teammate-reply-gap.js';
-import { recordDelivery } from '../leader/delivery-receipts.js';
+import { readReceipts, recordDelivery, type MessageReceipts } from '../leader/delivery-receipts.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { linkSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -547,13 +547,22 @@ export async function sendOwnerHello(options: OwnerThreadOptions): Promise<Owner
   }
 }
 
-export function readOwnerThread(options: OwnerThreadOptions, limit = 200): { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[] } | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; unavailable: true } {
+/** Per-channel delivery receipts keyed by outbound message id; a channel with no record is unknown. */
+export type OwnerThreadReceipts = Record<string, MessageReceipts>;
+
+export function readOwnerThread(options: OwnerThreadOptions, limit = 200):
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts }
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
   try {
     const state = readState(options);
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: state.messages.slice(-cap) };
+    const messages = state.messages.slice(-cap);
+    return {
+      schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages,
+      receipts: readReceipts(options.runsDir, messages.filter(m => m.direction === 'outbound').map(m => m.id)),
+    };
   } catch {
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], unavailable: true };
+    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, unavailable: true };
   }
 }
 
