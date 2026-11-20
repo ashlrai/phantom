@@ -224,6 +224,12 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   hidden daily ceiling. Attempts for replies, extractions and brief narratives
   are counted separately from memo/check-in runs. Explicit `foundry.leaderPreferences` limits still
   govern memo/check-in cadence; they do not create a second conversation cap.
+- **Screenshots:** in the desktop Leader pane, paste an image into the reply
+  box, drop one on it, or press Attach screenshot (PNG, JPEG or WebP, up to
+  8 MiB). The image is stored on this machine and its `[screenshot: <path>]`
+  line joins your draft, shown as a chip under the box with Remove. Send
+  delivers the line with your text and the thread shows the image. Attaching
+  needs the same mutation token as sending.
 - A reply goes to Telegram only when you wrote from Telegram. Memos, questions
   and updates are sent to Telegram as well as shown in the thread.
 
