@@ -5,6 +5,7 @@
  * rendered as 0 or "none".
  */
 import type { NodeResultsSummary } from '../drive/nodes/results-read.js';
+import type { DigestBlocker } from '../fleet/digest-blocker.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type Fact<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -39,6 +40,8 @@ export interface StatusDigestInput {
   gapLine?: string;
   /** `disk_low: ...` when free disk will reach the lane freeze line in under 24 hours (or is already below it); absent otherwise. */
   diskLine?: string;
+  /** The one thing costing the most launches in the last hour; its sentence is the digest's first line unless kind is none. */
+  blocker?: DigestBlocker;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -70,7 +73,9 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
     const parts = [live.join(', '), held.length ? `held: ${held.join(', ')}` : ''].filter(Boolean);
     return parts.join(' · ') || 'no lane has a target';
   });
+  const blocker = input.blocker && input.blocker.kind !== 'none' ? input.blocker : undefined;
   const lines = [
+    ...(blocker ? [blocker.sentence] : []),
     `App: installed ${show(input.installedVersion, v => v)} · published ${show(input.publishedVersion, v => v)}${pending}`,
     `Merges: ${show(input.mergesLastHour, n => `${n} in the last hour`)} · ${show(input.mergesLast24h, n => `${n} in the last 24h`)}`,
     `Lanes: ${lanes}`,
@@ -94,8 +99,9 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
       lines.push(`Peers: ${parts.join(' · ')}`);
     }
   }
-  if (input.gapLine) lines.push(input.gapLine);
-  if (input.diskLine) lines.push(input.diskLine);
+  // The blocker line already says what the gap or disk line would.
+  if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
+  if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;
