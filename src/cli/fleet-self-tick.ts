@@ -34,6 +34,8 @@ import type { StrayStopDeps } from '../core/fleet/stray-stop.js';
 import { defaultLaneTruthReaders, type LaneTruthReaders } from '../core/fleet/lane-truth.js';
 import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
+import { awakeEnabled, holdKeepAwake, type AwakeDeps } from '../core/fleet/keep-awake.js';
+import { recordClockSample } from '../core/fleet/sleep-gaps.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (it first
@@ -96,6 +98,8 @@ interface Dependencies {
   claudeFindCommand?: () => string | null;
   /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
+  /** Keep-awake seams for tests (platform, power, caffeinate spawn, queue depth); production reads the real ones. */
+  awake?: AwakeDeps & { queued?: () => Promise<number | null> };
   /** Empty-family stop seams for tests (kill switch, report); production reads the real config and ledger. */
   emptyStop?: Partial<Pick<Parameters<typeof import('../core/fleet/empty-family-apply.js').runEmptyApplyTick>[0], 'readOff' | 'readReport'>>;
   /** Worktree reap seams for tests (readers, remover); production reads the real worktrees. */
@@ -407,11 +411,25 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   const steps = { ...defaults, ...deps.steps };
   const inboxAcks = steps['inbox-acks'];
   steps['inbox-acks'] = (argv) => inboxAcks(argv.map(arg => arg === '--apply' ? '--flush' : arg));
+  // A wall/monotonic clock sample lets `phm fleet gaps` tell a sleeping Mac from a stalled dispatcher.
+  // Keep-awake (opt-in, off by default) holds a caffeinate idle-sleep assertion for this tick while work is queued.
+  let hold: ReturnType<typeof holdKeepAwake> | undefined;
+  if (apply) {
+    recordClockSample(root, now());
+    if (awakeEnabled(root)) {
+      const queued = await (deps.awake?.queued ?? (async () => {
+        const { getLaneQueueCounts } = await import('../core/fleet/queue-counts.js');
+        const { totals } = await getLaneQueueCounts({ runsDir: root });
+        return totals.ready === null && totals.running === null ? null : (totals.ready ?? 0) + (totals.running ?? 0);
+      }))().catch(() => null);
+      hold = holdKeepAwake(root, queued, { now, ...deps.awake });
+    }
+  }
   const { report, exitCode, lock } = await runSelfTick({
     apply, runsDir: root, now,
     steps,
     ...(deps.acquireLock === undefined ? {} : { acquireLock: deps.acquireLock }),
-  });
+  }).finally(() => hold?.release());
   if (json) {
     output(JSON.stringify(sanitizePublicJson({ ...report, logCap: { state: logCap.state } })));
   } else if (report.state === 'busy') {
