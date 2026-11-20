@@ -8,7 +8,7 @@
 import { isAbsolute } from 'node:path';
 
 import { readRouterOutcomes, type RouterOutcomeRead } from '../core/router/outcomes.js';
-import { buildRouterWeightProposalReport, type RouterWeightProposalReport } from '../core/router/weight-proposals.js';
+import { buildRouterWeightProposalReport, type RouterWeightEvidence, type RouterWeightProposalReport } from '../core/router/weight-proposals.js';
 
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
@@ -31,6 +31,20 @@ function parseArgs(args: string[]): { runsDir?: string; json: boolean } | null {
   return parsed;
 }
 
+/** Compact `name=value(known)` evidence suffix; only signals with recorded coverage appear. */
+function evidenceSuffix(e: RouterWeightEvidence): string {
+  const parts: string[] = [];
+  if (e.ci_first_pass_rate !== null) parts.push(`ci_first_pass=${e.ci_first_pass_rate}(${e.ci_first_pass_known})`);
+  if (e.review_findings !== null) {
+    const f = e.review_findings;
+    parts.push(`review_findings=${f.fixed + f.rejected + f.ignored}(${e.review_findings_known})`);
+  }
+  if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
+  if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
+  if (e.passk_mean !== null) parts.push(`passk=${e.passk_mean}(${e.passk_known})`);
+  return parts.length === 0 ? '' : ` evidence ${parts.join(' ')}`;
+}
+
 function proposalLines(report: RouterWeightProposalReport): string[] {
   const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
@@ -41,9 +55,10 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const rows = report.proposals.map(p => {
     const reverted = p.reverted_n > 0 ? ` reverted=${p.reverted_n}` : '';
+    const evidence = evidenceSuffix(p.evidence);
     return p.status === 'proposed'
-      ? `${p.work_class}/${p.lane}: proposed ${p.baseline_weight} -> ${p.proposed_weight} (known=${p.known_n}${reverted})`
-      : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n}${reverted} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged`;
+      ? `${p.work_class}/${p.lane}: proposed ${p.baseline_weight} -> ${p.proposed_weight} (known=${p.known_n}${reverted})${evidence}`
+      : `${p.work_class}/${p.lane}: insufficient evidence known=${p.known_n}${reverted} need=${report.bounds.min_samples}; baseline ${p.baseline_weight} unchanged${evidence}`;
   });
   const none = report.proposals.length === 0 ? ['insufficient evidence: no classified known outcomes'] : [];
   const coverage = [

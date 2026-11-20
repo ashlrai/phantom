@@ -23,6 +23,37 @@ const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.m
 
 export interface RouterWeightBaseline { work_class: string; lane: string; weight: number }
 
+/**
+ * Per-group outcome quality folded from the same known cohort the weight
+ * decision uses. Every figure carries its own coverage count; a signal with
+ * no recorded evidence reports null, never zero. The weight math still moves
+ * on held-merge rate alone — this block only reports the other signals the
+ * ledger already records so an operator sees merge quality (CI retries,
+ * review load, cost, wall time, eval pass^k) before applying anything.
+ */
+export interface RouterWeightEvidence {
+  /** Group outcomes carrying a recorded CI first-pass verdict. */
+  ci_first_pass_known: number;
+  /** ci_first_pass===true over ci_first_pass_known; null when no verdict was recorded. */
+  ci_first_pass_rate: number | null;
+  /** Group outcomes carrying review_findings counts. */
+  review_findings_known: number;
+  /** Summed fixed/rejected/ignored across those outcomes; null when none recorded. */
+  review_findings: { fixed: number; rejected: number; ignored: number } | null;
+  /** Group outcomes with a recorded cost_usd. */
+  cost_known: number;
+  /** Mean cost_usd over cost_known; null when no outcome recorded a cost. */
+  cost_usd_mean: number | null;
+  /** Group outcomes with a recorded wall_s. */
+  wall_known: number;
+  /** Mean wall_s over wall_known; null when no outcome recorded wall time. */
+  wall_s_mean: number | null;
+  /** Group outcomes carrying an advisory passk score. */
+  passk_known: number;
+  /** Mean passk over passk_known; null when no outcome carried a score. */
+  passk_mean: number | null;
+}
+
 export interface RouterWeightProposalOptions {
   /** Known (merged true/false) outcomes required before a shift is proposed. Default 20. */
   minSamples?: number;
@@ -45,6 +76,8 @@ export interface RouterWeightProposal {
   /** Equals baseline_weight when refused. Always within [0, 1]. */
   proposed_weight: number;
   shift: number;
+  /** Outcome-quality signals over the same known_n cohort; advisory context, never weight input. */
+  evidence: RouterWeightEvidence;
 }
 
 export interface RouterWeightProposalSet {
@@ -54,11 +87,41 @@ export interface RouterWeightProposalSet {
   unclassified_outcomes: number;
 }
 
+/** Running tallies for the outcome-quality signals; every count starts at zero and means stay sums until emitted. */
+interface WeightEvidenceTally {
+  ciPass: number; ciKnown: number;
+  reviewFixed: number; reviewRejected: number; reviewIgnored: number; reviewKnown: number;
+  costSum: number; costKnown: number;
+  wallSum: number; wallKnown: number;
+  passkSum: number; passkKnown: number;
+}
+
+const freshTally = (): WeightEvidenceTally => ({
+  ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
+  costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, passkSum: 0, passkKnown: 0,
+});
+
+const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
+  ci_first_pass_known: t.ciKnown,
+  ci_first_pass_rate: t.ciKnown === 0 ? null : round6(t.ciPass / t.ciKnown),
+  review_findings_known: t.reviewKnown,
+  review_findings: t.reviewKnown === 0 ? null
+    : { fixed: t.reviewFixed, rejected: t.reviewRejected, ignored: t.reviewIgnored },
+  cost_known: t.costKnown,
+  cost_usd_mean: t.costKnown === 0 ? null : round6(t.costSum / t.costKnown),
+  wall_known: t.wallKnown,
+  wall_s_mean: t.wallKnown === 0 ? null : round6(t.wallSum / t.wallKnown),
+  passk_known: t.passkKnown,
+  passk_mean: t.passkKnown === 0 ? null : round6(t.passkSum / t.passkKnown),
+});
+
 /**
  * Groups by (work_class, lane). Non-ID work_class or lane is unclassified; merged:null is unknown and
  * excluded from evidence. A group below minSamples is refused and keeps its baseline. Otherwise the
  * weight moves toward the observed held-merge rate — merged outcomes recorded as reverted count as
- * known evidence but never as held merges — capped at maxShift and clamped to [0, 1].
+ * known evidence but never as held merges — capped at maxShift and clamped to [0, 1]. Each proposal
+ * also reports the group's other recorded outcome signals (CI verdicts, review findings, cost, wall
+ * time, pass^k) as advisory evidence over the same known cohort.
  */
 export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: RouterWeightProposalOptions = {}): RouterWeightProposalSet {
   const minSamples = opts.minSamples ?? ROUTER_WEIGHT_DEFAULT_MIN_SAMPLES;
@@ -76,25 +139,37 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     baselines.set(key, b.weight);
   }
 
-  const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number; reverted: number }>();
+  const groups = new Map<string, { work_class: string; lane: string; known: number; merged: number; reverted: number; tally: WeightEvidenceTally }>();
   let known = 0, unknown = 0, unclassified = 0;
   for (const o of outcomes) {
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) { unknown++; continue; }
     const key = JSON.stringify([o.work_class, o.lane]);
-    const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0, reverted: 0 };
+    const g = groups.get(key) ?? { work_class: o.work_class, lane: o.lane, known: 0, merged: 0, reverted: 0, tally: freshTally() };
     g.known++;
     if (o.merged) {
       if (o.reverted === true) g.reverted++;
       else g.merged++;
     }
+    const t = g.tally;
+    if (o.ci_first_pass !== null) { t.ciKnown++; if (o.ci_first_pass) t.ciPass++; }
+    if (o.review_findings !== null) {
+      t.reviewKnown++;
+      t.reviewFixed += o.review_findings.fixed;
+      t.reviewRejected += o.review_findings.rejected;
+      t.reviewIgnored += o.review_findings.ignored;
+    }
+    if (o.cost_usd !== null) { t.costKnown++; t.costSum += o.cost_usd; }
+    if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
+    if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     groups.set(key, g);
     known++;
   }
 
   const proposals = [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, g]): RouterWeightProposal => {
     const baseline = baselines.get(key) ?? ROUTER_WEIGHT_BASELINE;
-    const base = { work_class: g.work_class, lane: g.lane, known_n: g.known, reverted_n: g.reverted, baseline_weight: baseline };
+    const base = { work_class: g.work_class, lane: g.lane, known_n: g.known, reverted_n: g.reverted,
+      baseline_weight: baseline, evidence: evidenceOf(g.tally) };
     if (g.known < minSamples) {
       return { ...base, status: 'refused', reason: 'insufficient-evidence', proposed_weight: baseline, shift: 0 };
     }
