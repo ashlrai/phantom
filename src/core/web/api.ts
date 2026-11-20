@@ -2503,6 +2503,17 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/leader-bets ───────────────────────────────────────────
+    // fleet.leader-bets.v1: the same read as `phm bets`; feeds the Feed's "Leader bets" card.
+    if (path === '/api/fleet/leader-bets' && method === 'GET') {
+      const { LEADER_BETS_MAX_HOURS, readLeaderBets } = await import('../fleet/leader-batches.js');
+      const raw = new URL(req.url ?? '', 'http://localhost').searchParams.get('hours');
+      const hours = raw === null ? undefined : /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (hours !== undefined && !(hours >= 1 && hours <= LEADER_BETS_MAX_HOURS)) sendJson(res, 400, { error: 'Use hours 1 to 8760.' });
+      else sendJson(res, 200, await readLeaderBets({ hours }));
+      return true;
+    }
+
     if (path === '/api/feed' && method === 'GET') {
       const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
       const params = new URL(req.url ?? '', 'http://localhost').searchParams;
