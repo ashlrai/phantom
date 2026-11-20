@@ -93,6 +93,28 @@ Passing reports (`matches: true`), write-mode results, empty or unknown
 `changed` entries, non-semver versions, malformed or multi-line JSON, and
 unrelated output stay unparsed.
 
+The advisory `perf-budget` workflow times the cold paths in
+`perf/budgets.json` and prints one pretty-printed
+`ashlr.perf-budget-report.v1` JSON document before exiting non-zero.
+Each `fail` result
+(median over baseline + tolerance) and each `error` result (preflight
+break, command timeout, measurement failure) groups per target under
+`<budgets file> > (perf-budget) <target id>` -- per-target identities keep
+unrelated targets from merging into one group, and `skip` (absent
+optional tools) and `pass` results carry no failure. The budgets file is
+the unit a master fix restores (re-baseline with `--update-baseline` or
+speed the path up); its dependency set is the budgets file plus the
+gate's direct inputs -- `bin/ashlr`, `scripts/perf-budget.mjs` and
+`scripts/perf-mcp-tools-list.mjs` -- while the measured CLI graph
+(`src/**` built to `dist/`) has no enumerable closure, so deeper source
+changes stay unattributed. Dependency manifests and toolchain configs
+still count through the harness ambient set. Like the other non-test
+identities it can never resolve through a vitest pass line and classifies
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+Passing reports (`ok: true` or only pass/skip results), other schemas,
+malformed or multi-line blocks, absolute or escaping `budgets` paths,
+unknown statuses and unrelated JSON stay unparsed.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces

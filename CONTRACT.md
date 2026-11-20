@@ -218,10 +218,13 @@ for capped, scrubbed failure identities -- Vitest `file > name` and suite-load
 `<file> > (docs-check)`, node:test TAP `file > suite > test` /
 `file > (suite)` resolved through the Actions checkout marker,
 clean-tree `<file> > (generated)` rows from the stale-files porcelain dump
-and launcher-digest check, and the release-metadata gate
+and launcher-digest check, the release-metadata gate
 `scripts/sync-candidate-version.mjs > (version-sync)` from the build's
 `check:version` drift JSON report or `sync-candidate-version: <message>`
-error -- plus summaries. TAP `ok` results carry no
+error, and the advisory perf gate's
+`<budgets file> > (perf-budget) <target id>` rows from the
+`ashlr.perf-budget-report.v1` JSON document (`fail` and `error` results
+only) -- plus summaries. TAP `ok` results carry no
 location, so TAP failures never resolve a master pass or flake
 classification. Generated artifacts carry no import closure: `docs/llms.txt`
 depends on its generator inputs and every public docs page from the master
@@ -229,7 +232,11 @@ tree listing (unreadable or truncated listings fail closed), and
 `scripts/canonical-launcher-digests.json` on `bin/ashlr`. The version-sync
 gate's dependency set is the script plus the ten metadata files it rewrites
 (seeded as static inputs), and the vitest harness ambient set does not apply
-to it. `enqueueBaselineFixes(report,
+to it. The perf gate's dependency set is the budgets file plus its direct
+inputs (`bin/ashlr`, `scripts/perf-budget.mjs`,
+`scripts/perf-mcp-tools-list.mjs`, seeded as static inputs); the measured
+CLI graph has no enumerable closure, so the harness ambient set alone
+decides manifest and toolchain touches. `enqueueBaselineFixes(report,
 absoluteQueuePath)` explicitly writes work-tier master-fix rows deduplicated
 by queue state via `nextFixGeneration`: a failure whose prior fix generations
 all reached DONE re-queues as the next `RQ-CIBASE-*-G<n>` id while the

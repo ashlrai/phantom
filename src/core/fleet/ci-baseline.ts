@@ -393,6 +393,12 @@ const VERSION_SYNC_MAX = 4;
 // every input a PR could break. dependencies() seeds these before walking.
 const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   [VERSION_SYNC_FILE]: VERSION_SYNC_INPUTS,
+  // The perf gate's direct repo inputs: the budgets spec, the checker
+  // itself, the MCP tools/list harness one target times, and the bin/ashlr
+  // launcher every `phm` target goes through. The measured CLI graph
+  // (src/** -> dist/) has no enumerable closure, so deeper changes stay
+  // unattributed rather than guessed.
+  'perf/budgets.json': ['bin/ashlr', 'scripts/perf-budget.mjs', 'scripts/perf-mcp-tools-list.mjs'],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -413,6 +419,73 @@ function parseVersionSyncFailures(log: string): Failure[] {
     }
     if (line.startsWith(VERSION_SYNC_PREFIX)) {
       out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// The advisory perf-budget workflow (.github/workflows/perf-budget.yml)
+// times the committed cold paths in perf/budgets.json and prints one
+// pretty-printed `ashlr.perf-budget-report.v1` document -- `{` at column
+// 0, `}` at column 0 -- listing every target's status; any `fail` or
+// `error` result makes the run exit non-zero. The job is
+// deliberately not a required check, but its failed job log still feeds
+// this analyzer: a latency regression on master fails the workflow on
+// every freshly opened PR, and without this shape those PRs read unknown
+// and queue no fix. Each `fail` (median over baseline + tolerance) or
+// `error` (preflight break, command timeout, measurement failure) result
+// groups per target under `<budgets file> > (perf-budget) <target id>` --
+// per-target identities keep unrelated targets from merging into one
+// group, and the budgets file is the unit a master fix restores
+// (re-baseline with --update-baseline or speed the path up). `skip`
+// results (absent optional tools) and `pass` results carry no failure.
+// Like the other non-test identities it can never resolve through a
+// vitest pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake. Passing reports (`ok: true` or only pass/skip
+// results), other schemas, malformed or multi-line blocks, absolute or
+// escaping `budgets` paths, unknown statuses, malformed results and
+// unrelated JSON stay unparsed.
+const PERF_BUDGET_SCHEMA = 'ashlr.perf-budget-report.v1';
+const PERF_BUDGET_NAMES = '(perf-budget)';
+const PERF_BUDGET_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const PERF_BUDGET_MAX = 100;
+
+function parsePerfBudgetFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // Timestamped job-log lines keep the document's own indentation: the
+  // strip removes the stamp and its single separating space only, the
+  // same convention as the check:docs report parser.
+  const raw = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
+  for (let i = 0; i < raw.length && out.length < PERF_BUDGET_MAX; i++) {
+    if (raw[i] !== '{') continue;
+    let end = i + 1;
+    while (end < raw.length && end - i < 20000 && raw[end] !== '}') end++;
+    if (end >= raw.length || raw[end] !== '}') continue;
+    const block = raw.slice(i, end + 1).join('\n');
+    i = end;
+    let doc: unknown;
+    try { doc = JSON.parse(block); } catch { continue; }
+    const report = doc as { schema?: unknown; ok?: unknown; budgets?: unknown; results?: unknown } | null;
+    if (report === null || typeof report !== 'object') continue;
+    if (report.schema !== PERF_BUDGET_SCHEMA || typeof report.ok !== 'boolean' || !Array.isArray(report.results)) continue;
+    if (typeof report.budgets !== 'string') continue;
+    const file = report.budgets;
+    if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+    for (const entry of (report.results as unknown[]).slice(0, PERF_BUDGET_MAX)) {
+      if (out.length >= PERF_BUDGET_MAX) break;
+      const r = entry as { id?: unknown; status?: unknown; why?: unknown; stats?: unknown; budget_ms?: unknown; delta_pct?: unknown } | null;
+      if (r === null || typeof r !== 'object') continue;
+      if (typeof r.id !== 'string' || !PERF_BUDGET_ID.test(r.id)) continue;
+      if (r.status !== 'fail' && r.status !== 'error') continue;
+      const names = `${PERF_BUDGET_NAMES} ${r.id}`;
+      const parts = [`status=${r.status}`];
+      const stats = r.stats as { median_ms?: unknown } | null;
+      if (typeof stats?.median_ms === 'number' && Number.isFinite(stats.median_ms)) parts.push(`median_ms=${stats.median_ms}`);
+      if (typeof r.budget_ms === 'number' && Number.isFinite(r.budget_ms)) parts.push(`budget_ms=${r.budget_ms}`);
+      if (typeof r.delta_pct === 'number' && Number.isFinite(r.delta_pct)) parts.push(`delta_pct=${r.delta_pct}`);
+      if (typeof r.why === 'string' && r.why !== '') parts.push(`why=${r.why}`);
+      out.push({ file, names, testId: `${file} > ${names}`, excerpt: clean(parts.join(' ')) });
     }
   }
   return out;
@@ -464,6 +537,10 @@ export function parseBaselineFailures(log: string, repo?: string): Failure[] {
     result.push(failure);
   }
   for (const failure of parseVersionSyncFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parsePerfBudgetFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
