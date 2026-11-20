@@ -137,6 +137,16 @@ narrowing. If the server answers for a different narrowing than the one you
 chose, the line says so instead of labelling the cards wrongly. Marks for new
 messages on sessions outside the narrowed list are kept.
 
+The pane opens the way you left it: the words in the find box and the lane,
+repo and "Running only" you narrowed to are kept in this browser, across a
+reload or a restart of the app, until you clear them. Only that view is kept,
+never a session's messages. When a card holds messages that arrived since you
+last looked, a button above the cards says how many conversations do; it or N
+opens the first one, and N again goes on to the next, starting over from the
+top after the last. Beside an open conversation the list is narrowed by the
+same find words (the open conversation always keeps its row), J and K walk
+only the rows listed, and "Show all" brings the rest back.
+
 To read one session as a conversation instead of a log, run
 `phm sessions thread <id>`. The id is `leader`, a job id or a subagent id from
 the tree. It prints a short summary (what the session is, its state, commands
