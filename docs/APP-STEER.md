@@ -57,8 +57,15 @@ at.
 **Thread** reads that session as a conversation without leaving the pane: a
 summary assembled from its records, what it was told, what it said and did,
 and a reply box aimed at it (the same view as a Sessions pane row; see
-[sessions](SESSIONS.md)). Esc or **← Leader** returns to the Leader chat,
-where an unsent draft is still in the reply box. **Log** opens the job in the
+[sessions](SESSIONS.md)). In a pane at least 900 px wide the conversation
+opens beside the Leader chat: the chat, its reply box and the strip stay on
+screen, the open line is marked, and **Thread** on another line swaps the
+conversation in place. Esc or **Close** closes it. In a narrower pane the
+conversation covers the chat, and Esc or **← Leader** returns to it, where an
+unsent draft is still in the reply box. Above the open conversation, **‹** and
+**›** (or `[` and `]` outside a text field) step to the previous and next
+working session and say where it stands, for example "2 of 5 working"; a
+session that has stopped working reads "Not working now". **Log** opens the job in the
 Worker log, **PR** opens its pull request and **All sessions** opens the
 Sessions pane. With a line focused, ↑/↓ or J/K move, Enter aims, T opens the
 conversation and L opens the log. The strip folds to its count line and stays
