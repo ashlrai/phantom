@@ -534,7 +534,9 @@ small set of runtime dependencies in `package.json` (for example the MCP SDK,
 dependency contract and its verification together (see
 [CONTRIBUTING.md](CONTRIBUTING.md)).
 
-The canonical types live in **`src/core/types.ts`** — import them, never redefine.
+The canonical types are exported from **`src/core/types.ts`** — import them, never redefine.
+That file is an entry point; the declarations live by domain in `src/core/types/`
+(for example `config.ts`, `engines.ts`, `run.ts`).
 Every module named below is implemented; the signatures are the required
 baseline, and several have since gained optional trailing parameters (noted
 inline).
@@ -693,7 +695,7 @@ pinned `publish.sh` unchanged and refuses repos outside its allowlist.
 The shapes below are the baseline fields. `AshlrConfig` has since gained many
 optional sections (`firm`, `phantom`, `locus`, `genome`, `notify`, `foundry`,
 `daemon`, `plugins`, `pulse`, `user`, `fleet`, `comms`, `reasoning`, `devin`),
-and `models` / `telemetry` gained optional keys; read `src/core/types.ts` and
+and `models` / `telemetry` gained optional keys; read `src/core/types/config.ts` and
 [`schema/config.schema.json`](schema/config.schema.json) for the full shape.
 
 ```ts
