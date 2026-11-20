@@ -95,6 +95,7 @@
  * claiming coordinates work and grants no execution authority.
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -731,7 +732,9 @@ function requestItems(read: typeof readCommsRequests, now: () => number, ttlOver
   try { result = read(); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
   if (result.status === 'unavailable') return { report: { state: 'unavailable', pending: 0 }, items: [] };
   if (result.status === 'missing') return { report: { state: 'missing', pending: 0 }, items: [] };
+  // A malformed store row must never take the whole inbox down.
   const candidates = result.requests.filter(r =>
+    r !== null && typeof r === 'object' &&
     (r.type === 'question' || r.type === 'approval') && (r.status === 'pending' || r.status === 'sent'));
   if (candidates.length === 0) return { report: { state: 'healthy', pending: 0 }, items: [] };
   const nowMs = now();
@@ -809,7 +812,8 @@ async function emailOutboxItems(read: NonNullable<UnifiedInboxOptions['readEmail
   let result: EmailOutboxSourceRead;
   try { result = await read({ runsDir: dir }); } catch { return { report: { state: 'unavailable', pending: 0 }, items: [] }; }
   const items = result.entries.filter(entry => entry.state === 'stuck').map((entry): Omit<UnifiedInboxItem, 'priority'> => ({
-    id: `email-outbox:${entry.name}`,
+    // Artifact names are filenames and can carry secret-shaped text; the id stays opaque.
+    id: `email-outbox:${createHash('sha256').update(entry.name).digest('hex').slice(0, 16)}`,
     source: 'email-outbox',
     kind: 'email-stuck',
     severity: 'warn',
