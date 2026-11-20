@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.48 |
-| Latest dated changelog release (2026-11-20) | 3.30.48 |
+| Source package | 3.30.49 |
+| Latest dated changelog release (2026-11-20) | 3.30.49 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,13 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.49](https://github.com/ashlrai/phantom/compare/v3.30.48...v3.30.49) (2026-11-20)
-
-
-### Changes
-
-* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795209415-N17:** ([#7640](https://github.com/ashlrai/phantom/issues/7640)) ([a19ff50](https://github.com/ashlrai/phantom/commit/a19ff5058e7086fd80d013e4cca8849c61987564))
 
 ## [Unreleased]
 
@@ -133,6 +126,13 @@ Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left 
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.49] - 2026-11-20
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795209415-N17:** ([#7640](https://github.com/ashlrai/phantom/issues/7640)) ([a19ff50](https://github.com/ashlrai/phantom/commit/a19ff5058e7086fd80d013e4cca8849c61987564))
 
 ## [3.30.48] - 2026-11-20
 
