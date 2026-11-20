@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
+import { createAgentChannel, registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { announceWork, readAgentInbox, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus } from '../src/core/agents/bus-unified.js';
@@ -418,6 +418,97 @@ describe('readBusWorkMine', () => {
     if (aliased.status !== 'ok' || aliased.handoffs.status !== 'ok') throw new Error('unreachable');
     expect(aliased.handoffs.matched).toBe(1);
     expect(aliased.handoffs.items[0]).toMatchObject({ id: 'ho-alias' });
+  });
+
+  it('includes claimable work and handoffs posted to channels the agent belongs to, minus its own posts', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['atlas-alias'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova',
+      runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    // eng: atlas + nova. ops: nova only. ghost belongs to neither.
+    expect(createAgentChannel({ name: 'eng', createdBy: 'atlas', members: ['nova'] }, options).status)
+      .toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'nova' }, options).status).toBe('created');
+
+    // Claimable work and a worker-handoff posted into atlas's channel by a
+    // third party, so both members see them as pending.
+    postClaimable(options, 'w-chan', { to: 'group:eng:general', from: 'agent:ghost', priority: 'P1' });
+    const handoffPost = appendBusInbox({ id: 'ho-chan', from: 'agent:ghost', to: 'group:eng:alerts',
+      priority: 'P1', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-CH-1', prompt: 'channel handoff' } },
+      { root: options.root, now: options.now });
+    expect(handoffPost.status).toBe('posted');
+    // Atlas's own channel posts never count as pending for atlas.
+    postClaimable(options, 'w-chan-self', { to: 'group:eng:general', from: 'agent:atlas' });
+    const selfHandoff = appendBusInbox({ id: 'ho-chan-self', from: 'agent:atlas', to: 'group:eng:alerts',
+      priority: 'P0', ttl: 120_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-CH-2', prompt: 'self handoff' } },
+      { root: options.root, now: options.now });
+    expect(selfHandoff.status).toBe('posted');
+    // A channel atlas is not a member of stays out, even for claimable work.
+    postClaimable(options, 'w-chan-ops', { to: 'group:ops:general', from: 'agent:ghost', priority: 'P0' });
+    // A non-work body in the channel is mail, not pending work.
+    postClaimable(options, 'w-chan-note', { to: 'group:eng:general',
+      body: { kind: 'note', text: 'just a note' } });
+    // Directly addressed work still matches under every identity label.
+    postClaimable(options, 'w-direct', { to: 'atlas-alias', priority: 'P2' });
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok' || result.next.status !== 'ok' || result.handoffs.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    // Claim order: the P1 channel work and the P2 alias work; self and
+    // non-member channel posts stay out.
+    expect(result.next.matched).toBe(2);
+    expect(result.next.items.map(item => item.id)).toEqual(['w-chan', 'w-direct']);
+    expect(result.next.items[0]).toMatchObject({ to: 'group:eng:general', kind: 'work',
+      from: 'agent:ghost', fromAgent: 'ghost', held: false });
+    expect(result.next.items[1]).toMatchObject({ to: 'atlas-alias', held: false });
+    expect(result.handoffs.matched).toBe(1);
+    expect(result.handoffs.items[0]).toMatchObject({ id: 'ho-chan', to: 'group:eng:alerts',
+      taskId: 'RQ-CH-1', fromAgent: 'ghost', held: false });
+
+    // A channel member sees the same channel work — including atlas's own
+    // channel post, which is pending for everyone but its author. The ops
+    // channel is nova's alone here; the atlas alias work is not nova's.
+    const other = readBusWorkMine('nova', options);
+    expect(other.status).toBe('ok');
+    if (other.status !== 'ok' || other.next.status !== 'ok' || other.handoffs.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(other.next.matched).toBe(3);
+    expect(other.next.items.map(item => item.id)).toEqual(['w-chan-ops', 'w-chan', 'w-chan-self']);
+    expect(other.handoffs.matched).toBe(2);
+    expect(other.handoffs.items.map(item => item.id)).toEqual(['ho-chan-self', 'ho-chan']);
+
+    // A registered agent in no channel sees only label-addressed work.
+    const outsider = readBusWorkMine('ghost', options);
+    expect(outsider.status).toBe('ok');
+    if (outsider.status !== 'ok' || outsider.next.status !== 'ok' || outsider.handoffs.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(outsider.next.matched).toBe(0);
+    expect(outsider.handoffs.matched).toBe(0);
+
+    // The literal group address still works as an exact-label ref.
+    const topic = readBusWorkMine('group:eng:general', options);
+    expect(topic.status).toBe('ok');
+    if (topic.status !== 'ok' || topic.next.status !== 'ok') throw new Error('unreachable');
+    expect(topic.next.matched).toBe(2);
+    expect(topic.next.items.map(item => item.id)).toEqual(['w-chan', 'w-chan-self']);
+
+    // An unreadable registry narrows channel matching away entirely.
+    writeFileSync(join(options.root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    const narrowed = readBusWorkMine('agent:atlas', options);
+    expect(narrowed.status).toBe('ok');
+    if (narrowed.status !== 'ok' || narrowed.next.status !== 'ok' || narrowed.handoffs.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(narrowed.next.matched).toBe(0);
+    expect(narrowed.handoffs.matched).toBe(0);
   });
 
   it('caps shown handoffs at twenty with the true total', () => {
