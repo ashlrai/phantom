@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.42 |
-| Latest dated changelog release (2026-11-19) | 3.30.42 |
+| Source package | 3.30.43 |
+| Latest dated changelog release (2026-11-20) | 3.30.43 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -15,25 +15,6 @@ Versions map to milestone series: **2.1.0** = v2.1 "Harden & Prove" (H1–H8),
 hub (M1–M20). Entries below detail each milestone; dates are merge dates into `master`.
 
 ---
-
-## [3.30.43](https://github.com/ashlrai/phantom/compare/v3.30.42...v3.30.43) (2026-11-20)
-
-
-### Changes
-
-* **RQ-AUTOFILLIDEASN21AQ8:** RQ-AUTOFILLIDEASN21AQ8 — autofill takes Ideas first ([#7426](https://github.com/ashlrai/phantom/issues/7426)) ([1625e65](https://github.com/ashlrai/phantom/commit/1625e653f72ae122553749ac88d4b70fc875971b))
-* **RQ-CL-DOCS-1795136383:** ([#7440](https://github.com/ashlrai/phantom/issues/7440)) ([9649dc4](https://github.com/ashlrai/phantom/commit/9649dc484c23e408790795527074399ae95dbca9))
-* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795106146-N17:** ([#7430](https://github.com/ashlrai/phantom/issues/7430)) ([67fefa5](https://github.com/ashlrai/phantom/commit/67fefa53a0e191b8a18a83003c02b271cc613cba))
-* **RQ-DISKBURNN21EQ8:** RQ-DISKBURNN21EQ8: `phm host disk` ([#7444](https://github.com/ashlrai/phantom/issues/7444)) ([107c0be](https://github.com/ashlrai/phantom/commit/107c0bec0f637411cfb3f764409faa928bdb25ad))
-* **RQ-DVL-BUS-1795106618:** ([#7427](https://github.com/ashlrai/phantom/issues/7427)) ([f75116c](https://github.com/ashlrai/phantom/commit/f75116c21b08ba76060363c11f5b10ede8dbc885))
-* **RQ-DVL-RSI-1795108320:** ([#7431](https://github.com/ashlrai/phantom/issues/7431)) ([2bc4b2a](https://github.com/ashlrai/phantom/commit/2bc4b2ac020a0ccaffba749beae9fea300f802ea))
-* **RQ-GOALSV4N21AQ8:** BRIDGE_NOTES: RQ-GOALSV4N21AQ8 ([#7442](https://github.com/ashlrai/phantom/issues/7442)) ([118be53](https://github.com/ashlrai/phantom/commit/118be5398399d352a018dd202253f9c31fd397d3))
-* **RQ-LOADBLAMEN21AQ8:** RQ-LOADBLAMEN21AQ8 ([#7425](https://github.com/ashlrai/phantom/issues/7425)) ([cd44d35](https://github.com/ashlrai/phantom/commit/cd44d3507360aebbf542b4b5c993f3f4b2ce0e02))
-* **RQ-PHX-RECORDEDDECISION665S:** RQ-PHX-RECORDEDDECISION665S: recorded decision-row projectio ([#7428](https://github.com/ashlrai/phantom/issues/7428)) ([551e92f](https://github.com/ashlrai/phantom/commit/551e92f50a1b6c2ba206c03482c246f732e96047))
-* **RQ-PHX-RECORDEDHOSTRECOVER666S:** BRIDGE_NOTES: RQ-PHX-RECORDEDHOSTRECOVER666S ([#7432](https://github.com/ashlrai/phantom/issues/7432)) ([2644b8b](https://github.com/ashlrai/phantom/commit/2644b8be6b21258d6d117b4f237d3791337feec8))
-* **RQ-PHX-RECORDEDPOOLRECOVER668S:** RQ-PHX-RECORDEDPOOLRECOVER668S: recorded pool availability ([#7445](https://github.com/ashlrai/phantom/issues/7445)) ([a8296d8](https://github.com/ashlrai/phantom/commit/a8296d85ee27f01ad1a978ae1cbd521ee550a65a))
-* **RQ-SLEEPGAPN21CQ8:** RQ-SLEEPGAPN21CQ8: sleep gaps, keep-awake, digest line ([#7436](https://github.com/ashlrai/phantom/issues/7436)) ([545b0ae](https://github.com/ashlrai/phantom/commit/545b0aeb97c83bb7eccb5ebfa06b760d0e56e511))
-* **RQ-WTREAPTICKN21AQ8:** BRIDGE_NOTES: RQ-WTREAPTICKN21AQ8 ([#7435](https://github.com/ashlrai/phantom/issues/7435)) ([1bcc131](https://github.com/ashlrai/phantom/commit/1bcc13121a6717fe2fce9a74d69bc118eba33c9c))
 
 ## [Unreleased]
 
@@ -145,6 +126,25 @@ Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left 
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.43] - 2026-11-20
+
+
+### Changes
+
+* **RQ-AUTOFILLIDEASN21AQ8:** RQ-AUTOFILLIDEASN21AQ8 — autofill takes Ideas first ([#7426](https://github.com/ashlrai/phantom/issues/7426)) ([1625e65](https://github.com/ashlrai/phantom/commit/1625e653f72ae122553749ac88d4b70fc875971b))
+* **RQ-CL-DOCS-1795136383:** ([#7440](https://github.com/ashlrai/phantom/issues/7440)) ([9649dc4](https://github.com/ashlrai/phantom/commit/9649dc484c23e408790795527074399ae95dbca9))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795106146-N17:** ([#7430](https://github.com/ashlrai/phantom/issues/7430)) ([67fefa5](https://github.com/ashlrai/phantom/commit/67fefa53a0e191b8a18a83003c02b271cc613cba))
+* **RQ-DISKBURNN21EQ8:** RQ-DISKBURNN21EQ8: `phm host disk` ([#7444](https://github.com/ashlrai/phantom/issues/7444)) ([107c0be](https://github.com/ashlrai/phantom/commit/107c0bec0f637411cfb3f764409faa928bdb25ad))
+* **RQ-DVL-BUS-1795106618:** ([#7427](https://github.com/ashlrai/phantom/issues/7427)) ([f75116c](https://github.com/ashlrai/phantom/commit/f75116c21b08ba76060363c11f5b10ede8dbc885))
+* **RQ-DVL-RSI-1795108320:** ([#7431](https://github.com/ashlrai/phantom/issues/7431)) ([2bc4b2a](https://github.com/ashlrai/phantom/commit/2bc4b2ac020a0ccaffba749beae9fea300f802ea))
+* **RQ-GOALSV4N21AQ8:** BRIDGE_NOTES: RQ-GOALSV4N21AQ8 ([#7442](https://github.com/ashlrai/phantom/issues/7442)) ([118be53](https://github.com/ashlrai/phantom/commit/118be5398399d352a018dd202253f9c31fd397d3))
+* **RQ-LOADBLAMEN21AQ8:** RQ-LOADBLAMEN21AQ8 ([#7425](https://github.com/ashlrai/phantom/issues/7425)) ([cd44d35](https://github.com/ashlrai/phantom/commit/cd44d3507360aebbf542b4b5c993f3f4b2ce0e02))
+* **RQ-PHX-RECORDEDDECISION665S:** RQ-PHX-RECORDEDDECISION665S: recorded decision-row projectio ([#7428](https://github.com/ashlrai/phantom/issues/7428)) ([551e92f](https://github.com/ashlrai/phantom/commit/551e92f50a1b6c2ba206c03482c246f732e96047))
+* **RQ-PHX-RECORDEDHOSTRECOVER666S:** BRIDGE_NOTES: RQ-PHX-RECORDEDHOSTRECOVER666S ([#7432](https://github.com/ashlrai/phantom/issues/7432)) ([2644b8b](https://github.com/ashlrai/phantom/commit/2644b8be6b21258d6d117b4f237d3791337feec8))
+* **RQ-PHX-RECORDEDPOOLRECOVER668S:** RQ-PHX-RECORDEDPOOLRECOVER668S: recorded pool availability ([#7445](https://github.com/ashlrai/phantom/issues/7445)) ([a8296d8](https://github.com/ashlrai/phantom/commit/a8296d85ee27f01ad1a978ae1cbd521ee550a65a))
+* **RQ-SLEEPGAPN21CQ8:** RQ-SLEEPGAPN21CQ8: sleep gaps, keep-awake, digest line ([#7436](https://github.com/ashlrai/phantom/issues/7436)) ([545b0ae](https://github.com/ashlrai/phantom/commit/545b0aeb97c83bb7eccb5ebfa06b760d0e56e511))
+* **RQ-WTREAPTICKN21AQ8:** BRIDGE_NOTES: RQ-WTREAPTICKN21AQ8 ([#7435](https://github.com/ashlrai/phantom/issues/7435)) ([1bcc131](https://github.com/ashlrai/phantom/commit/1bcc13121a6717fe2fce9a74d69bc118eba33c9c))
 
 ## [3.30.42] - 2026-11-19
 
