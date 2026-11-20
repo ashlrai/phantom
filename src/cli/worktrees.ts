@@ -2,7 +2,8 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
-import { formatWorktrees, readWorktrees, type WorktreesDeps, type WorktreesReport } from '../core/fleet/worktrees.js';
+import { formatWorktreeReapStatus, readWorktreeReapStatus } from '../core/fleet/worktree-reap-tick.js';
+import { defaultRunsRoot, formatWorktrees, readWorktrees, type WorktreesDeps, type WorktreesReport } from '../core/fleet/worktrees.js';
 
 export interface WorktreeReport {
   name: string;
@@ -46,7 +47,7 @@ export function reportWorktrees(root: string, now = Date.now()): WorktreeReport[
 }
 
 const REPORT_USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
-const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply]]
+const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply | --status]]
        phm worktrees report [--dir <worktrees-dir>] [--json]
        phm worktrees prune [--dry-run | --apply] [--json]
 
@@ -55,7 +56,11 @@ result, open PR, kept on purpose, unknown), age, size and whether it is safe to
 remove. Safe means: merged or empty, over 6 hours old, no uncommitted changes,
 no live job and not kept on purpose.
   --reap            Preview removal of the safe worktrees (a dry run).
-  --reap --apply    Remove them with git worktree remove (never --force).`;
+  --reap --apply    Remove them with git worktree remove (never --force).
+  --reap --status   Show the scheduled reap: on or off, last run, removed, skipped, freed.
+The fleet self-tick runs this reap on its own when there are more than 40
+worktrees: up to 25 removals, once per 30 minutes. Create queue/worktree-reap.off
+in the runs directory to turn it off.`;
 
 type Output = { log: (text: string) => void; error: (text: string) => void };
 
@@ -66,12 +71,20 @@ export async function cmdWorktrees(args: string[], deps: WorktreesDeps & { outpu
     return 0;
   }
   if (args[0] === 'report') return cmdWorktreesReport(args.slice(1), out);
-  const allowed = ['--json', '--reap', '--dry-run', '--apply'];
+  const allowed = ['--json', '--reap', '--dry-run', '--apply', '--status'];
   const bad = args.find(arg => !allowed.includes(arg));
-  if (bad !== undefined || new Set(args).size !== args.length || (args.includes('--dry-run') && args.includes('--apply'))
-    || ((args.includes('--dry-run') || args.includes('--apply')) && !args.includes('--reap'))) {
+  if (bad !== undefined || new Set(args).size !== args.length || ['--dry-run', '--apply', '--status'].filter(flag => args.includes(flag)).length > 1
+    || (['--dry-run', '--apply', '--status'].some(flag => args.includes(flag)) && !args.includes('--reap'))) {
     out.error(bad !== undefined ? `Unknown argument: ${bad}\n${USAGE}` : USAGE);
     return 2;
+  }
+  if (args.includes('--status')) {
+    try {
+      const status = await readWorktreeReapStatus(deps.runsRoot ?? defaultRunsRoot());
+      if (args.includes('--json')) out.log(JSON.stringify(status));
+      else for (const line of formatWorktreeReapStatus(status)) out.log(line);
+      return 0;
+    } catch { out.error('Cannot read the reap status.'); return 1; }
   }
   const mode = !args.includes('--reap') ? 'list' : args.includes('--apply') ? 'apply' : 'dry-run';
   let report: WorktreesReport;

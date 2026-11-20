@@ -98,6 +98,8 @@ interface Dependencies {
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
   /** Empty-family stop seams for tests (kill switch, report); production reads the real config and ledger. */
   emptyStop?: Partial<Pick<Parameters<typeof import('../core/fleet/empty-family-apply.js').runEmptyApplyTick>[0], 'readOff' | 'readReport'>>;
+  /** Worktree reap seams for tests (readers, remover); production reads the real worktrees. */
+  worktreeReap?: import('../core/fleet/worktrees.js').WorktreesDeps;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -258,6 +260,14 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return { reason: `empty-stop failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
     }
   };
+  // Above 40 job worktrees, run the safe reap (25 removals, once per 30 minutes; off with queue/worktree-reap.off). Never fails the tick.
+  const runWorktreeReapStage = async (): Promise<unknown> => {
+    if (!deps.worktreeReap && root !== join(home, '.ashlr-runs')) return { state: 'skipped', reason: 'custom-runs-dir-no-worktree-reap' };
+    try {
+      const { runWorktreeReapTick } = await import('../core/fleet/worktree-reap-tick.js');
+      return await runWorktreeReapTick({ runsDir: root, apply, now: now(), ...(deps.worktreeReap ? { deps: deps.worktreeReap } : {}) });
+    } catch { return { state: 'skipped', reason: 'worktree reap failed' }; }
+  };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
     // plans from is current. It is a sub-stage rather than a new step name so the
@@ -316,11 +326,12 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     'planner-tick': async (argv) => {
       const autofill = await runAutofillStage();
       const emptyStop = await runEmptyStopStage();
+      const worktreeReap = await runWorktreeReapStage();
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;
