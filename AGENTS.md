@@ -167,7 +167,8 @@ boundaries.
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
 merged PRs post-merge: revert, regression and follow-up rates, CI-failure
 correlation, and time-to-merge, rolled up by lane, tier, lane+tier and repo
-(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`,
+(`fleet.eval-report.v1`). Evidence comes from `~/.ashlr-runs/metrics/jobs.jsonl`
+(newest bounded tail; `sources.jobs.truncated` marks a cut window),
 repeatable `--prs` files of `gh pr list --state merged --json url,number,title,
 mergedAt,mergeCommit,files,statusCheckRollup,commits,body` output, and the
 signed post-merge observation ledger. A merge counts `stable` only when the
