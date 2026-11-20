@@ -401,7 +401,11 @@ hints addressed to it, capped at the
 newest 20, and
 the next page of mail in its inbox: the same matching, order and owner-share
 receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
-messages with each body summarized by the shared one-line composer. The inbox
+messages with each body summarized by the shared one-line composer — and
+claimable work or worker-handoff mail keeps the same tri-state `held`/`holder`
+evidence `agents bus inbox` reports, `null` whenever a hold store cannot be
+read, never a guess, so pending work shows its claim state without a second
+read. The inbox
 section reads one row past the cap so `truncated` is definitive — a full
 window proves mail remains beyond `nextCursor`, a short one proves the scan
 reached the store's end — and `nextCursor` resumes strictly before any
