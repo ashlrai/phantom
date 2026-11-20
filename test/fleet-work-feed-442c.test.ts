@@ -111,6 +111,34 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(wire.jobs[0]?.claimKeys).toEqual(claimKeys);
   });
 
+  it('renders the newest status detail scrubbed and single-lined while JSON keeps it', async () => {
+    append(post);
+    now += 10;
+    const dirty = `blocked\n  on\tsk-ant-api03-${'a'.repeat(40)} ${'x'.repeat(260)}`;
+    append({ kind: 'work.status', jobId: post.jobId, status: 'blocked', detail: dirty }, 2);
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', jobs: [{ id: post.jobId, status: 'blocked', detail: dirty }] });
+    const log = output();
+    expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
+    const line = String(log.mock.calls[0]?.[0]);
+    expect(line.split('\n')).toHaveLength(1);
+    expect(line).toContain('blocked "Review" detail="blocked on [REDACTED]');
+    expect(line).not.toContain('sk-ant-api03');
+    const detailField = /detail="([^"]*)"/.exec(line)?.[1] ?? '';
+    expect(detailField.length).toBeLessThanOrEqual(200);
+    expect(detailField.endsWith('…')).toBe(true);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--json'])).toBe(0);
+    const wire = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as { jobs: { detail?: string }[] };
+    expect(wire.jobs[0]?.detail).toBe(dirty);
+    // A later status without detail drops the field from the human line too.
+    now += 10;
+    append({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 3);
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).not.toContain('detail=');
+  });
+
   it('refuses a status from a different owner and exits 1 in text and JSON', async () => {
     append(post);
     append({ kind: 'work.status', jobId: post.jobId, status: 'done' }, 2, 'fake-other');

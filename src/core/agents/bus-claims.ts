@@ -162,7 +162,9 @@ export interface BusClaimsOwnerMatch {
 }
 
 /** An announced work-feed job a claim's keys overlap; the job's own status and title, never a guess. */
-export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status']; title: string }
+export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status']; title: string;
+  /** The feed job's newest status detail, when it carries one. */
+  detail?: string }
 
 /** A live claim plus, when `jobs` was requested and the feed read ok, the jobs it blocks. */
 export type BusClaimsListClaim = CoordinationView & { jobs?: BusClaimJobRef[] };
@@ -231,7 +233,8 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
         ...row,
         jobs: result.jobs
           .filter(job => job.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
-          .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title })),
+          .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title,
+            ...(job.detail === undefined ? {} : { detail: job.detail }) })),
       }));
     }
   }
@@ -249,6 +252,8 @@ export interface BusWorkJobClaimRef {
   repo: string;
   title: string;
   status: WorkJob['status'];
+  /** The feed job's newest status detail, when it carries one. */
+  detail?: string;
 }
 
 export interface BusWorkJobClaimOptions extends BusClaimOptions {
@@ -279,7 +284,8 @@ export type BusWorkJobClaimResult =
 const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 function jobClaimRef(job: WorkJob): BusWorkJobClaimRef {
-  return { id: job.id, owner: job.owner, repo: job.repo, title: job.title, status: job.status };
+  return { id: job.id, owner: job.owner, repo: job.repo, title: job.title, status: job.status,
+    ...(job.detail === undefined ? {} : { detail: job.detail }) };
 }
 
 /**

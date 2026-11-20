@@ -59,6 +59,29 @@ describe('retained v2 work projection', () => {
     expect(plain.feed.jobs[0]?.title).toBe('Review');
     expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
   });
+  it('carries the newest status detail onto the job and clears it when a newer status omits one', () => {
+    const status = (cursor: number, body: Record<string, unknown>) =>
+      receipt({ kind: 'work.status', jobId: 'job', ...body }, cursor);
+    const detailOf = (rows: ReturnType<typeof receipt>[]) => {
+      const result = projectBusWorkFeed(rows);
+      if (result.status !== 'ok') throw new Error('fixture refused');
+      return result.feed.jobs[0]?.detail;
+    };
+    // A status detail rides the job so a blocked job says why.
+    expect(detailOf([receipt(post), status(2, { status: 'blocked', detail: 'waiting on review' })]))
+      .toBe('waiting on review');
+    // A newer status without detail clears it — never a stale reason on a newer state.
+    expect(detailOf([receipt(post), status(2, { status: 'blocked', detail: 'waiting on review' }),
+      status(3, { status: 'running' })])).toBeUndefined();
+    // The newest detail wins when consecutive statuses both carry one.
+    expect(detailOf([receipt(post), status(2, { status: 'blocked', detail: 'old reason' }),
+      status(3, { status: 'blocked', detail: 'new reason' })])).toBe('new reason');
+    // With no detail ever posted the job keeps no detail key at all.
+    const result = projectBusWorkFeed([receipt(post), status(2, { status: 'done' })]);
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    expect(result.feed.jobs[0]).not.toHaveProperty('detail');
+    expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
+  });
   it('preserves v1 and peer bodies as opaque data and ignores orphan statuses', () => {
     expect(projectBusWorkFeed([
       receipt({ arbitrary: 'legacy' }), receipt('legacy string', 2), receipt({ kind: 'peer.message', peer: {} }, 3),

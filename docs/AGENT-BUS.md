@@ -662,7 +662,7 @@ not resolve or the registry is unreadable (the JSON `owner` field reports the
 `ref`, resolved `identity` or null, and `registry` state). A missing table
 reads as a verified-empty list; an unreadable one stays `unavailable`, never
 zero. With `--jobs` each claim also names the announced work-feed jobs its
-keys block (`{id, owner, status, title}` — the reverse of `work feed --claims`),
+keys block (`{id, owner, status, title, detail?}` — the reverse of `work feed --claims`),
 and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 
@@ -692,8 +692,11 @@ exact-label matching.
 ### 4. Work feed
 
 Every job is `{id, owner, to, provider, repo, title, dispatch?, claimKeys[],
-status, updatedAt}` — `title` and the optional `dispatch` spec carry through
-from the `work.post` so the feed names the work it lists — and the feed is
+status, detail?, updatedAt}` — `title` and the optional `dispatch` spec carry
+through from the `work.post` so the feed names the work it lists, and
+`detail?` carries the newest accepted `work.status` body's own `detail` text
+(why the job sits in its current state — a status that omits `detail` clears
+it, so a stale reason never rides a newer state) — and the feed is
 `{v:2, jobs:[...]}`. `projectBusWorkFeed` in
 `src/core/agents/bus-work-feed.ts` projects a retained receipt snapshot without
 I/O. Posts start queued; `owner` is the sender label and `to` is the routing
@@ -713,7 +716,8 @@ authentication check; labels grant no authority.
 `/api/verse/agent-bus/work-feed` serve the same `BusWorkFeedReadResult` as
 `{v:1, status, jobs?, receipts, asOf}`; the two CLIs share one status filter,
 one announcement-address filter, newest-first order, hold regrouping and
-human rendering — each job line names the announcement's title and claim keys,
+human rendering — each job line names the announcement's title, the newest
+status detail when the job carries one, and claim keys,
 scrubbed, single-lined and display-clipped while JSON keeps the full values.
 `--to <label>` keeps only jobs whose post was addressed to
 that routing label; like `bus next`, `bus-follow`, handoff receive and claim

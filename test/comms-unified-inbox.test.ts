@@ -252,6 +252,20 @@ describe('v2 work-feed jobs in the bus source', () => {
     expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 2 });
   });
 
+  it('carries the newest status detail into the feed item detail', async () => {
+    postJob('RQ-WHY');
+    postV2Body({ kind: 'work.status', jobId: 'RQ-WHY', status: 'rescheduled',
+      detail: 'waiting on fake upstream' }, { from: 'agent:peer' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'bus-feed:RQ-WHY')!;
+    expect(item.detail).toContain('rescheduled — waiting on fake upstream');
+    // A newer status without detail clears it from the item too.
+    postV2Body({ kind: 'work.status', jobId: 'RQ-WHY', status: 'queued' }, { from: 'agent:peer' });
+    const cleared = await read();
+    expect(cleared.items.find(i => i.id === 'bus-feed:RQ-WHY')!.detail)
+      .not.toContain('waiting on fake upstream');
+  });
+
   it('hides fully held jobs and reports partial holds honestly', async () => {
     postJob('RQ-HELD'); holdKey('queue:RQ-HELD');
     postJob('RQ-PART', { claimKeys: ['queue:RQ-PART', 'path:ashlrai/phantom:src/**'] });

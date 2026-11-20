@@ -1602,7 +1602,7 @@ Statuses update only retained jobs from the same owner: exact sender-label
 equality, or — when the injected `ownerKeyFor` resolver maps both labels to one
 nonempty key — any labels of that identity; labels the resolver cannot place
 still require exact label equality. Orphan statuses are ignored. Duplicate job
-posts and malformed work bodies refuse the projection. Latest cursor wins; `updatedAt` is its receipt time. Jobs retain post order.
+posts and malformed work bodies refuse the projection. Latest cursor wins; `updatedAt` is its receipt time, and the job's optional `detail` is the newest status body's own `detail` text — a status that omits it clears the field so a stale reason never rides a newer state. Jobs retain post order.
 This is a pure retained-snapshot projection, not a historical ledger or
 authentication check. It performs no I/O, transport, claim mutation or execution. Existing v1
 journals/readers remain unchanged; feed output is explicitly versioned `v:2`.
@@ -1642,9 +1642,9 @@ newest-first order and per-job hold regrouping; `toMatch` is the predicate
 over its `owner` (announcer) label — each matching literally and under every
 label of one agent identity (an unresolvable ref or unreadable registry keeps
 exact-label matching). `formatBusWorkFeed(result)` renders the shared human
-lines — each job as `<id> <status> "<title>" owner=… keys=<claim keys>` with
-title and keys scrubbed, single-lined and display-clipped (JSON keeps the full
-values) — both feed CLIs use them, and both accept `--to <label>`, `--owner
+lines — each job as `<id> <status> "<title>" detail="<why>" owner=… keys=<claim keys>`
+with title, detail and keys scrubbed, single-lined and display-clipped (JSON
+keeps the full values; `detail=` appears only when the job carries one) — both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>` and `--job <id>` beside `--status`. `phm fleet work-feed [--claims]
 [--to <label>] [--owner <agent>] [--job <id>]` and
 `phm agents bus work feed [--status] [--claims] [--to <label>] [--owner
@@ -1675,7 +1675,7 @@ label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
 mistaken for identity proof. With `jobs:true` each claim gains an optional
 `jobs` list of the announced work-feed jobs its keys block (`{id, owner,
-status, title}` per job, the reverse of the feed's `--claims` hold join) and the
+status, title, detail?}` per job, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `phm agents bus claim list [--key] [--owner] [--jobs]`
@@ -1688,7 +1688,7 @@ declared claim keys (`queue:<jobId>` preferred, else the first declared; an
 explicit `key` must be declared) and acquires through the same
 `executeBusClaimBody` path, so overlap with every other claim origin still
 decides in one place. `BusWorkJobClaimResult` echoes the announced job
-(`{id, owner, repo, title, status}`) on every outcome that found it:
+(`{id, owner, repo, title, status, detail?}`) on every outcome that found it:
 `acquired` carries the claim with the fencing token for its acquirer only,
 `conflict` the holder without one, and
 `invalid`/`refused`/`unavailable`/`retryable`/`full` carry a slug `reason`
@@ -1716,7 +1716,7 @@ ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `listBusClaims({owner})` — identity-aware owner matching with exact-label
 fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
 each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
-its keys block, `{id, owner, status, title}`) only when the feed read is `ok`,
+its keys block, `{id, owner, status, title, detail?}`) only when the feed read is `ok`,
 absent otherwise. `jobs` reports the open feed jobs
 (`BUS_FEED_OPEN_STATUSES`, at least one claim key, newest 50 of `open`) as
 `BusWorkMineJob` (`WorkJob` plus `addressed`, `announced`, `freeKeys`,

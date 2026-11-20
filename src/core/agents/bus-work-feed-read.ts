@@ -201,6 +201,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
 }
 
 const FEED_TITLE_MAX = 160;
+const FEED_DETAIL_MAX = 200;
 const FEED_KEYS_MAX = 480;
 
 /** Scrubbed, single-line, clipped display field; '' when nothing readable remains. */
@@ -210,12 +211,17 @@ function feedField(value: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** One human line per job: the announcement's own title and claim keys, display-clipped (JSON keeps full values). */
+/** One human line per job: the announcement's own title, the newest status's
+ * detail when it carries one, and claim keys — display-clipped (JSON keeps
+ * the full values). */
 function feedJobLine(job: WorkJob): string {
   const title = feedField(job.title, FEED_TITLE_MAX);
+  const detail = job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX);
   const keys = job.claimKeys.length === 0 ? 'none' : feedField(job.claimKeys.join(','), FEED_KEYS_MAX);
-  return `${job.id} ${job.status}${title === '' ? '' : ` "${title}"`} owner=${job.owner} to=${job.to} ` +
-    `provider=${job.provider} repo=${job.repo} keys=${keys} updated=${new Date(job.updatedAt).toISOString()}`;
+  return `${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
+    `${detail === '' ? '' : ` detail="${detail}"`}` +
+    ` owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo} keys=${keys} ` +
+    `updated=${new Date(job.updatedAt).toISOString()}`;
 }
 
 /** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */

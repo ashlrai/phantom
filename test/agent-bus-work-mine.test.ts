@@ -160,6 +160,32 @@ describe('readBusWorkMine', () => {
     expect(result.inbox.nextCursor).toBeGreaterThan(0);
   });
 
+  it('carries the newest status detail into the jobs section and the claim join', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    await announce(options, 'atlas', 'RQ-M-D', ['repo:a/b']);
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-d', options.clock.now);
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-M-D',
+      status: 'rescheduled', detail: 'waiting on fake upstream' }, options)).toMatchObject({ status: 'posted' });
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    if (result.jobs.status !== 'ok') throw new Error('unreachable');
+    // rescheduled stays open, so the job lists with the reason it was rescheduled.
+    expect(result.jobs.jobs.find(entry => entry.id === 'RQ-M-D'))
+      .toMatchObject({ status: 'rescheduled', detail: 'waiting on fake upstream' });
+    // The claim->job join names the same detail on the blocked job.
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    const repoClaim = result.claims.claims.find(row => row.key === 'repo:a/b');
+    expect(repoClaim?.jobs).toEqual([{ id: 'RQ-M-D', owner: 'agent:atlas',
+      status: 'rescheduled', title: 'Job RQ-M-D', detail: 'waiting on fake upstream' }]);
+    // The human line names the detail too (the claims line prints `RQ-M-D(rescheduled)`).
+    const line = formatBusWorkMine(result).find(text => text.includes('RQ-M-D rescheduled'));
+    expect(line).toContain('detail="waiting on fake upstream"');
+  });
+
   it('lists addressed mail with claim handles and resumes the page without loss', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
