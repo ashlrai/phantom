@@ -1910,7 +1910,10 @@ with a `reason`); they never throw for bad input or storage faults.
 carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
 `from` filters by sender through identity-label matching, an unresolvable ref
-keeping exact-label matching),
+keeping exact-label matching; claimable work and worker-handoff items
+additionally carry `held`/`holder` — the same hold evidence
+`readBusEnvelopeById` reports, read once per page, `held` null when a hold
+store cannot be read),
 `readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
@@ -1978,7 +1981,8 @@ legacy mail.
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
-falling back to `busBodyFallbackSummary` for unrecognized bodies. Identities
+falling back to `busBodyFallbackSummary` for unrecognized bodies; items
+carrying `held` show it inside the line's bracket. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

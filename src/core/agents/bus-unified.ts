@@ -518,6 +518,16 @@ export interface InboxMessage {
   /** Channel name for channel posts. */
   channel: string | null;
   envelope: BusEnvelope;
+  /**
+   * Claimable work and worker-handoff bodies only: whether a taken
+   * message-id claim or a live coordination hold provably covers the exact
+   * receipt — the same evidence `bus show` reports. `held` false is proof
+   * of free; null means a hold store could not be read (unknown, never
+   * proven free). Absent on every other body kind.
+   */
+  held?: boolean | null;
+  /** Owner label of the blocking claim when held and known; null otherwise. */
+  holder?: string | null;
 }
 export type InboxPage = { status: 'ok'; agent: string; messages: InboxMessage[]; nextCursor: number } |
   { status: 'invalid' | 'unknown-agent' | 'unavailable' | 'retryable'; reason: string };
@@ -994,7 +1004,10 @@ function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
  * ref that resolves through the registry matches every label of that
  * identity, an unresolvable ref keeps exact-label matching. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
- * it only after handling the page.
+ * it only after handling the page. Claimable work and worker-handoff items
+ * additionally carry `held`/`holder` — the same hold evidence `bus show`
+ * reports — so an agent paging mail sees whether pending work is already
+ * taken without a lookup per message.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
@@ -1052,6 +1065,19 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
     cursor = result.nextCursor;
   }
   messages.sort((a, b) => a.priority.localeCompare(b.priority) || a.cursor - b.cursor);
+  // Claimable work and worker handoffs carry the same hold evidence `bus
+  // show` reports; the hold stores are read once for the page, and only
+  // when a candidate is present.
+  const heldCandidates = messages.filter(m => isClaimableWork(m.envelope.body) || isWorkerHandoffBody(m.envelope.body));
+  if (heldCandidates.length > 0) {
+    const stores = readHoldStores(options);
+    for (const message of heldCandidates) {
+      const hold = holdForReceipt({ id: message.envelope.id, cursor: message.cursor,
+        receivedAt: message.receivedAt, envelope: message.envelope }, stores);
+      message.held = hold.held;
+      message.holder = hold.holder;
+    }
+  }
   return { status: 'ok', agent: target.identity.handle, messages, nextCursor: cursor };
 }
 
@@ -1237,29 +1263,51 @@ export type BusEnvelopeLookup =
   | { status: 'invalid' | 'unavailable' | 'retryable'; reason: string };
 
 /**
- * Hold state for one resolved envelope, for the claimable kinds only: a
+ * The two hold stores read once per lookup or inbox page. 'unavailable'
+ * marks a store that cannot be read — coverage is then unknown, never
+ * proven free.
+ */
+type HoldStores = 'unavailable' | {
+  claims: ReturnType<typeof inspectBusWorkClaims>['claims'];
+  coordination: ReturnType<typeof listCoordination>['claims'];
+  now: number;
+};
+
+function readHoldStores(options: UnifiedBusOptions): HoldStores {
+  const now = (options.now ?? Date.now)();
+  const claimsRead = inspectBusWorkClaims(options.root);
+  const coordination = listCoordination(options.root, now);
+  if (claimsRead.source === 'unavailable' || coordination.source === 'unavailable') return 'unavailable';
+  return { claims: claimsRead.claims, coordination: coordination.claims, now };
+}
+
+/**
+ * Hold state for one resolved receipt against already-read stores: a
  * message-id claim row matching the exact `(id, cursor, receivedAt)` receipt
  * triple (a completed row stays taken, an expired lease does not) or a live
- * coordination row blocking `queue:<id>`. A store that cannot be read makes
- * the answer unknown — never reported free.
+ * coordination row blocking `queue:<id>`.
+ */
+function holdForReceipt(receipt: { id: string; cursor: number; receivedAt: number; envelope: BusEnvelope },
+  stores: HoldStores): { held: boolean | null; holder: string | null } {
+  if (stores === 'unavailable') return { held: null, holder: null };
+  const messageOwner = stores.claims.find(row =>
+    row.id === receipt.envelope.id && row.cursor === receipt.cursor && row.receivedAt === receipt.receivedAt &&
+    (row.completedAt !== null || row.leaseUntil > stores.now))?.owner;
+  const coordinationBlocker = stores.coordination.find(row => row.live &&
+    coordinationRowBlocks(row, `queue:${receipt.envelope.id}`));
+  const held = messageOwner !== undefined || coordinationBlocker !== undefined;
+  return { held, holder: held ? messageOwner ?? coordinationBlocker?.owner ?? null : null };
+}
+
+/**
+ * Hold state for one resolved envelope, for the claimable kinds only. A
+ * store that cannot be read makes the answer unknown — never reported free.
  */
 function envelopeHold(receipt: { id: string; cursor: number; receivedAt: number; envelope: BusEnvelope },
   options: UnifiedBusOptions): { held: boolean | null; holder: string | null } | undefined {
   const body = receipt.envelope.body;
   if (!isClaimableWork(body) && !isWorkerHandoffBody(body)) return undefined;
-  const now = (options.now ?? Date.now)();
-  const claimsRead = inspectBusWorkClaims(options.root);
-  const coordination = listCoordination(options.root, now);
-  if (claimsRead.source === 'unavailable' || coordination.source === 'unavailable') {
-    return { held: null, holder: null };
-  }
-  const messageOwner = claimsRead.claims.find(row =>
-    row.id === receipt.envelope.id && row.cursor === receipt.cursor && row.receivedAt === receipt.receivedAt &&
-    (row.completedAt !== null || row.leaseUntil > now))?.owner;
-  const coordinationBlocker = coordination.claims.find(row => row.live &&
-    coordinationRowBlocks(row, `queue:${receipt.envelope.id}`));
-  const held = messageOwner !== undefined || coordinationBlocker !== undefined;
-  return { held, holder: held ? messageOwner ?? coordinationBlocker?.owner ?? null : null };
+  return holdForReceipt(receipt, readHoldStores(options));
 }
 
 /**

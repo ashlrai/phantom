@@ -343,7 +343,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (page.status !== 'ok') return finish(page, '');
       if (frame) { out(json ? JSON.stringify({ ...page, framed: frameBusInbox(frame as BusCli, page.messages) }) : frameBusInbox(frame as BusCli, page.messages)); return 0; }
       out(json ? JSON.stringify(page) : [
-        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}`),
+        ...page.messages.map(m => `${m.cursor} ${m.priority} ${m.kind === 'channel' ? `#${m.channel}` : m.kind} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
+          (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
+            (m.holder ? ` holder=${m.holder}` : ''))),
         `nextCursor ${page.nextCursor}`,
       ].join('\n'));
       return 0;
