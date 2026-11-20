@@ -1,21 +1,17 @@
-// Browser copies: the core writer imports node:fs. Contract parity is tested.
-export const DROP_JOB_LANES = ['claude', 'codex-personal', 'devin', 'codex-local'] as const;
-export const DROP_JOB_TIERS = ['frontier', 'work', 'mid', 'fast'] as const;
-export const DROP_JOB_ID = /^[A-Z0-9]{3,40}$/;
-export const DROP_JOB_MAX_FILE_BYTES = 8000;
-export interface DropJobPayload { id: string; lane: string; tier: string; body: string }
-export const dropJobHeader = (lane: string, tier: string) => `#job repo=phantom lane=${lane} tier=${tier}`;
+// Contract (lanes, tiers, header, validation) comes from the browser-safe core
+// contract module, so the phone and the server cannot drift apart.
+import {
+  DROP_JOB_ID, DROP_JOB_LANES, DROP_JOB_MAX_FILE_BYTES, DROP_JOB_TIERS, composeDropJobFile, dropJobHeader as coreHeader, validateDropJob as coreValidate,
+} from '../../../../../core/fleet/drop-job-contract.js';
+export { DROP_JOB_ID, DROP_JOB_LANES, DROP_JOB_MAX_FILE_BYTES, DROP_JOB_TIERS };
+/** `repo` is the chosen repo; omitted means phantom. */
+export interface DropJobPayload { id: string; lane: string; tier: string; body: string; repo?: string }
+export const dropJobHeader = (lane: string, tier: string, repo?: string) => coreHeader(lane, tier, repo);
 // The API writer adds its routing header, blank line and final newline too.
-export const dropJobBytes = (p: DropJobPayload) => new TextEncoder().encode(`${dropJobHeader(p.lane, p.tier)}\n\n${p.body}\n`).length;
+export const dropJobBytes = (p: DropJobPayload) => new TextEncoder().encode(composeDropJobFile(p)).length;
 export function validateDropJob(payload: DropJobPayload): { ok: true; payload: DropJobPayload } | { ok: false; reason: string } {
-  if (!DROP_JOB_ID.test(payload.id)) return { ok: false, reason: 'id-shape' };
-  if (!DROP_JOB_LANES.some(lane => lane === payload.lane)) return { ok: false, reason: 'lane' };
-  if (!DROP_JOB_TIERS.some(tier => tier === payload.tier)) return { ok: false, reason: 'tier' };
-  if (!payload.body.trim()) return { ok: false, reason: 'empty-body' };
-  if (/(?![\n\t])\p{Cc}/u.test(payload.body)) return { ok: false, reason: 'control-characters' };
-  if (/\.github\/|\/\.codex|auth\.json|CODEOWNERS/.test(payload.body)) return { ok: false, reason: 'denied-content' };
-  if (dropJobBytes(payload) > DROP_JOB_MAX_FILE_BYTES) return { ok: false, reason: 'too-large' };
-  return { ok: true, payload };
+  const verdict = coreValidate(payload);
+  return verdict.ok ? { ok: true, payload } : { ok: false, reason: verdict.reasons[0]! };
 }
 export function suggestId(goal: string, nowMs: number): string {
   const date = new Date(nowMs);
