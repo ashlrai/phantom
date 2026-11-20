@@ -74,7 +74,7 @@ To install the CLI while developing:
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
-| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, and run the quarantine-ledger check when test files or `queue/quarantine.tsv` change; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, and run the quarantine-ledger check when test files or `queue/quarantine.tsv` change; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). It does not replace hosted CI: [`Merge Gate`](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires) must still pass. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
@@ -236,12 +236,13 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+broker checks. None of these run on a pull request, a merge-queue commit or a
+master push: they run in the six-hour scheduled run on master (the Mac
+exhaustive work rotates through daily slices there), on manual dispatch and on
+the reusable release call. On a pull request `Merge Gate` requires only the
+secret scans, lane classification, the generated-files check and the fast gate
+(typecheck plus affected tests); see
+[what CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires). Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
