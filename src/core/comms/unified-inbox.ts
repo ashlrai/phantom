@@ -25,7 +25,8 @@
  *               section also lists open agent-bus v2 work-feed jobs (queued or
  *               rescheduled `work.post` announcements with at least one claim
  *               key not fully held) and jobs the feed shows `blocked` or
- *               `failed` — stuck work needs a decision, not a worker — read
+ *               `failed` or that declare no claim keys at all — unclaimable
+ *               or stuck work needs a decision, not a worker — read
  *               through the same projection `phm agents bus work feed` serves —
  *               act: `phm agents bus claim acquire` — and every live
  *               `worker-handoff` envelope (`isWorkerHandoffBody`, the exact
@@ -354,7 +355,11 @@ const STATUS_DETAIL_MAX = 160;
  * coordination table is readable — at least one of those keys has no live hold.
  * A job the feed shows `blocked` or `failed` counts as pending too: it cannot
  * be claimed, it needs a decision, so it lists with the newest status report's
- * own detail and a `bus show` deep link instead of a claim act. Unknown holds
+ * own detail and a `bus show` deep link instead of a claim act. An open job
+ * that declares no claim keys at all counts the same way — `work claim`
+ * refuses it `no-claim-keys`, so it is unclaimable work needing a re-announce
+ * or a terminal status, not a worker; it lists with the announcement's own
+ * `bus show` handle and no claim act. Unknown holds
  * list candidates under 'degraded' rather than hiding them. A refused,
  * retryable or unreadable feed degrades the section; it never invents jobs.
  */
@@ -400,6 +405,27 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
           ...(report === undefined ? [] : [`phm agents bus show ${report.id}`]),
           `phm agents bus work feed --job ${job.id} --claims`,
         ],
+      });
+      continue;
+    }
+    // An open job that declares no claim keys can never be claimed —
+    // `work claim` refuses it `no-claim-keys` — so like a stuck job it needs
+    // a decision (re-announce with keys or move it terminal), not a worker.
+    // It lists with the announcement's own post handle and no claim act.
+    if (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length === 0) {
+      items.push({
+        id: `bus-feed:${job.id}`,
+        source: 'bus',
+        kind: 'bus-work',
+        severity: post?.priority === 'P0' ? 'high' : 'warn',
+        blocking: false,
+        title: oneLine(job.title, TITLE_MAX) || `bus work ${job.id}`,
+        detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+          (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`) +
+          ' · declares no claim keys; nothing can claim it', DETAIL_MAX),
+        since: iso(post?.receivedAt ?? job.updatedAt),
+        expiresAt: post ? iso(post.expiresAt) : null,
+        act: [`phm agents bus show ${job.postId}`, `phm agents bus work feed --job ${job.id} --claims`],
       });
       continue;
     }

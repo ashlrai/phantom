@@ -84,8 +84,8 @@ function postV2Body(body: BusJsonValue, extra: { priority?: 'P0' | 'P1' | 'P2' |
   expect(receipt.status).toBe('posted');
   return id;
 }
-function postJob(jobId: string, over: { title?: string; claimKeys?: string[]; provider?: string; priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number } = {}) {
-  postV2Body({ kind: 'work.post', jobId, title: over.title ?? `fake job ${jobId}`,
+function postJob(jobId: string, over: { title?: string; claimKeys?: string[]; provider?: string; priority?: 'P0' | 'P1' | 'P2' | 'P3'; ttl?: number; at?: number; from?: string; to?: string } = {}) {
+  return postV2Body({ kind: 'work.post', jobId, title: over.title ?? `fake job ${jobId}`,
     provider: over.provider ?? 'codex-cmp', repo: 'ashlrai/phantom',
     claimKeys: over.claimKeys ?? [`queue:${jobId}`] }, over);
 }
@@ -252,12 +252,12 @@ describe('v2 work-feed jobs in the bus source', () => {
     postJob('RQ-DONE'); postStatus('RQ-DONE', 'done');
     postJob('RQ-RUN'); postStatus('RQ-RUN', 'running');
     postJob('RQ-RESCHED'); postStatus('RQ-RESCHED', 'rescheduled');
-    postJob('RQ-EMPTY', { claimKeys: [] });
+    const emptyPost = postJob('RQ-EMPTY', { claimKeys: [] });
     postV2Body({ kind: 'work.post', jobId: 'RQ-OLD', title: 'fake old job', provider: 'codex-cmp',
       repo: 'ashlrai/phantom', claimKeys: ['queue:RQ-OLD'] }, { ttl: 1, at: now - 10_000 });
     const inbox = await read();
     const items = inbox.items.filter(i => i.source === 'bus');
-    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-OPEN', 'bus-feed:RQ-RESCHED']);
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-EMPTY', 'bus-feed:RQ-OPEN', 'bus-feed:RQ-RESCHED']);
     const open = items.find(i => i.id === 'bus-feed:RQ-OPEN')!;
     expect(open).toMatchObject({
       kind: 'bus-work', severity: 'warn', blocking: false,
@@ -269,7 +269,18 @@ describe('v2 work-feed jobs in the bus source', () => {
         'phm agents bus work feed --claims'],
     });
     expect(items.find(i => i.id === 'bus-feed:RQ-RESCHED')!.detail).toContain('rescheduled');
-    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 2 });
+    // A queued job with no claim keys lists too: `work claim` refuses it
+    // `no-claim-keys`, so it is unclaimable work needing a decision — the
+    // announcement's own post handle, never a claim act.
+    const empty = items.find(i => i.id === 'bus-feed:RQ-EMPTY')!;
+    expect(empty).toMatchObject({
+      kind: 'bus-work', severity: 'warn', blocking: false,
+      title: 'fake job RQ-EMPTY',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · queued · declares no claim keys; nothing can claim it',
+      act: [`phm agents bus show ${emptyPost}`, 'phm agents bus work feed --job RQ-EMPTY --claims'],
+    });
+    expect(empty.act.join(' ')).not.toContain('claim acquire');
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 3 });
   });
 
   it('carries the newest status detail into the feed item detail', async () => {
@@ -387,6 +398,42 @@ describe('stuck work-feed jobs in the bus source', () => {
     const item = inbox.items.find(i => i.id === 'bus-feed:RQ-SECRET')!;
     expect(item.detail).toContain('failed — token [REDACTED] leaked');
     expect(item.detail).not.toContain('sk-abcdefghijklmnop');
+  });
+});
+
+describe('unclaimable work-feed jobs in the bus source', () => {
+  it('lists a rescheduled zero-key job with its status detail and no claim act', async () => {
+    const post = postJob('RQ-NOCLAIM', { claimKeys: [] });
+    postV2Body({ kind: 'work.status', jobId: 'RQ-NOCLAIM', status: 'rescheduled',
+      detail: 'fake waiting on review' });
+    const inbox = await read();
+    const item = inbox.items.find(i => i.id === 'bus-feed:RQ-NOCLAIM')!;
+    expect(item).toMatchObject({
+      kind: 'bus-work', severity: 'warn', blocking: false,
+      title: 'fake job RQ-NOCLAIM',
+      detail: 'owner agent:peer · codex-cmp · ashlrai/phantom · rescheduled — fake waiting on review · declares no claim keys; nothing can claim it',
+      act: [`phm agents bus show ${post}`, 'phm agents bus work feed --job RQ-NOCLAIM --claims'],
+    });
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 1 });
+  });
+
+  it('ranks a P0 unclaimable announcement high and keeps claimable work beside it', async () => {
+    postJob('RQ-P0EMPTY', { claimKeys: [], priority: 'P0' });
+    postJob('RQ-FINE');
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'bus');
+    expect(items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-FINE', 'bus-feed:RQ-P0EMPTY']);
+    expect(items.find(i => i.id === 'bus-feed:RQ-P0EMPTY')!.severity).toBe('high');
+    expect(items.find(i => i.id === 'bus-feed:RQ-FINE')!.act[0]).toContain('claim acquire');
+  });
+
+  it('still hides open jobs in non-open statuses even with no claim keys', async () => {
+    postJob('RQ-RUNEMPTY', { claimKeys: [] });
+    postStatus('RQ-RUNEMPTY', 'running');
+    postJob('RQ-IDLEMPTY', { claimKeys: [] });
+    postStatus('RQ-IDLEMPTY', 'idle');
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.id.startsWith('bus-feed:'))).toHaveLength(0);
   });
 });
 
@@ -510,14 +557,20 @@ describe('agent conversation threads in the unified inbox', () => {
   });
 
   it('lists a job announcement thread the feed does not cover', async () => {
-    // No claim keys means no feed item and no claim act — the unanswered
+    // A fully held job has no feed item and no claim act — the unanswered
     // announcement is exactly what this source exists to surface.
+    postJob('RQ-HELD', { claimKeys: ['queue:RQ-HELD'], to: 'agent:worker' });
+    holdKey('queue:RQ-HELD');
     postV2Body({ kind: 'work.post', jobId: 'RQ-SILENT', title: 'fake silent job', provider: 'codex-cmp',
       repo: 'ashlrai/phantom', claimKeys: [] }, { from: 'agent:peer', to: 'agent:worker' });
     const inbox = await read();
-    const item = inbox.items.find(i => i.id === 'conversations:job:RQ-SILENT')!;
+    const item = inbox.items.find(i => i.id === 'conversations:job:RQ-HELD')!;
     expect(item).toMatchObject({ kind: 'agent-thread', severity: 'info', source: 'conversations' });
-    expect(item.act).toContain('phm agents bus post --to <sender-label> --text "<reply>" --thread job:RQ-SILENT');
+    expect(item.act).toContain('phm agents bus post --to <sender-label> --text "<reply>" --thread job:RQ-HELD');
+    // The unclaimable zero-key announcement is covered by its feed item
+    // instead — one pending thing, one item.
+    expect(inbox.items.find(i => i.id === 'bus-feed:RQ-SILENT')).toBeDefined();
+    expect(inbox.items.find(i => i.id === 'conversations:job:RQ-SILENT')).toBeUndefined();
     expect(inbox.sources.conversations).toEqual({ state: 'healthy', pending: 1 });
   });
 

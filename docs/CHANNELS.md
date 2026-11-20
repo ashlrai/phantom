@@ -233,9 +233,10 @@ live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
 until its TTL ends, claims are evidence only, never a gate), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
-jobs the feed shows `blocked` or `failed` — stuck work needs a decision, so
-those list with the newest status report's scrubbed detail and `bus show` /
-`work feed --job` links instead of a claim act — read
+jobs the feed shows `blocked` or `failed` — stuck work needs a decision — or
+open announcements that declare no claim keys, which `work claim` refuses
+`no-claim-keys`; those list with `bus show` / `work feed --job` links and the
+status detail when one exists instead of a claim act — read
 through the same projection as `phm agents bus work feed`), plus agent
 conversation threads still waiting on a reply — the same `waiting` threads
 `phm agents conversations --waiting` computes from the one shared
