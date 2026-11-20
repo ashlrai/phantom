@@ -7,8 +7,9 @@ phm comms bus claim renew|release|complete --id <message-id> --token <claim-toke
 Leases make one claimant per message ID: a live lease answers 'conflict' to everyone else.
 next claims the oldest highest-priority live task (protocol kind 'task' or legacy {kind:'work'})
 addressed to --to. --to may be a topic name or any label of one agent identity — handle,
-agent:<handle>, stable id or alias — resolved through the identity registry; an unresolvable
---to or unreadable registry keeps exact-label matching. Exit 0 acquired or empty, 1
+agent:<handle>, stable id or alias — or a group:<channel>:<topic> address of a channel the
+identity belongs to (minus its own channel posts), resolved through the identity registry;
+an unresolvable --to or unreadable registry keeps exact-label matching. Exit 0 acquired or empty, 1
 unavailable/retryable, 2 invalid. Claim output includes the token; never log it. Renew
 reuses the original lease length.
 Coordination only: a claim confers no authenticated identity and executes nothing.`;

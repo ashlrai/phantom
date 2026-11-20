@@ -7,7 +7,7 @@ import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { claimNextBusWork } from '../src/core/fleet/bus-next-claim.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/core/fleet/local-store-lock.js';
-import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
+import { createAgentChannel, registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
@@ -111,6 +111,63 @@ it('claims work addressed under any label of the named agent identity', () => {
   // Non-identity addresses keep exact-label matching.
   expect(take('fleet.deploy')).toBe('topic');
   expect(take('agent:worker-b')).toBe('b-alias');
+});
+
+it('claims work addressed to a channel the --to identity belongs to, minus its own posts', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a', aliases: ['wa-alias'] }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b' }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-c' }, { root }).status).toBe('created');
+  // eng: worker-a + worker-b. ops: worker-c only.
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a', members: ['worker-b'] }, { root }).status).toBe('created');
+  expect(createAgentChannel({ name: 'ops', createdBy: 'worker-c' }, { root }).status).toBe('created');
+  post('shared', { to: 'group:eng:general', priority: 'P1' });
+  post('self-post', { to: 'group:eng:alerts', from: 'agent:worker-a', priority: 'P0' });
+  post('ops-post', { to: 'group:ops:general', priority: 'P0' });
+  post('direct-a', { to: 'worker-a', priority: 'P2' });
+  post('direct-b', { to: 'worker-b', priority: 'P3' });
+  const take = (to: string, owner: string) => {
+    const result = claimNextBusWork({ ...request(), to, owner });
+    expect(result.status).toBe('acquired');
+    if (result.status !== 'acquired') throw new Error('expected a claim');
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+  // worker-a (via its alias) sees the shared channel work and its own direct
+  // mail; its own channel post and the ops channel stay out.
+  expect(take('wa-alias', 'worker-a')).toBe('shared');
+  expect(take('worker-a', 'worker-a')).toBe('direct-a');
+  expect(claimNextBusWork({ ...request(), to: 'worker-a' })).toEqual({ status: 'empty' });
+  // worker-b claims the channel post worker-a sent — pending for every member
+  // but its author — then its own direct mail; the completed shared work is fenced.
+  expect(take('worker-b', 'worker-b')).toBe('self-post');
+  expect(take('worker-b', 'worker-b')).toBe('direct-b');
+  expect(claimNextBusWork({ ...request(), to: 'worker-b' })).toEqual({ status: 'empty' });
+  // worker-c belongs to ops only: the eng channel work is not its to claim.
+  expect(take('worker-c', 'worker-c')).toBe('ops-post');
+  expect(claimNextBusWork({ ...request(), to: 'worker-c' })).toEqual({ status: 'empty' });
+  // An unresolvable ref and a bare channel name keep exact-label matching.
+  expect(claimNextBusWork({ ...request(), to: 'worker-d' })).toEqual({ status: 'empty' });
+  expect(claimNextBusWork({ ...request(), to: 'group:eng' })).toEqual({ status: 'empty' });
+  // A literal group:<channel>:<topic> ref still exact-matches, sender aside.
+  post('late', { to: 'group:eng:alerts', from: 'agent:worker-b', priority: 'P0' });
+  expect(take('group:eng:alerts', 'worker-a')).toBe('late');
+});
+
+it('keeps channel work unmatched when the identity registry is unreadable', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'worker-b' }, { root }).status).toBe('created');
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a', members: ['worker-b'] }, { root }).status).toBe('created');
+  post('chan-work', { to: 'group:eng:general', priority: 'P0' });
+  post('direct', { to: 'worker-a', priority: 'P1' });
+  writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+  const result = claimNextBusWork(request());
+  expect(result.status).toBe('acquired');
+  if (result.status !== 'acquired') throw new Error('expected a claim');
+  // The higher-priority channel-addressed receipt stays unmatched: an
+  // unreadable registry narrows to the literal label, never widens.
+  expect(result.receipt.envelope.id).toBe('direct');
+  expect(mutateBusWorkClaim({ action: 'complete', id: 'direct', token: result.token, root }).status).toBe('completed');
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty' });
 });
 
 it('keeps exact-label matching when the identity registry is unreadable', () => {

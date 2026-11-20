@@ -2,7 +2,7 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from './bus-inbox.js';
 import { BUS_PRIORITIES, isClaimableWork } from './bus-envelope.js';
 import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
-import { agentIdentityKeys } from '../agents/bus-identity.js';
+import { agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 
 export interface BusNextRequest { to: string; owner: string; leaseMs: number; root?: string }
 export type BusNextResult = { status: 'acquired'; receipt: BusInboxReceipt; token: string; leaseUntil: number }
@@ -10,15 +10,18 @@ export type BusNextResult = { status: 'acquired'; receipt: BusInboxReceipt; toke
 
 /**
  * `--to` claims for one agent identity under every routing label that
- * resolves to it — handle, `agent:` address, stable id or alias — matching
- * the identity reads elsewhere on the bus. A `--to` that names no registered
- * identity (a topic such as `fleet.deploy`) and an unreadable registry both
- * keep exact-label matching, so unknown identity state never widens a claim.
+ * resolves to it — handle, `agent:` address, stable id or alias — or for a
+ * `group:<channel>:<topic>` address of a registry channel the identity
+ * belongs to, minus the identity's own channel posts: the same membership
+ * rule the inbox, wakes and the `work mine` digest's next section apply, so
+ * work the digest lists as pending is claimable under the agent's own ref. A
+ * `--to` that names no registered identity (a topic such as `fleet.deploy`),
+ * membership in no channel and an unreadable registry all keep exact-label
+ * matching, so unknown identity state never widens a claim.
  */
-function claimAddressMatcher(request: BusNextRequest): (to: string) => boolean {
-  const identityOf = agentIdentityKeys({ root: request.root });
-  const target = identityOf?.(request.to);
-  return to => to === request.to || (target !== undefined && identityOf?.(to) === target);
+function claimAddressMatcher(request: BusNextRequest): (to: string, from: string) => boolean {
+  const read = readAgentRegistry({ root: request.root });
+  return agentPendingAddressMatcher(request.to, read.status === 'ok' ? read.registry : undefined);
 }
 
 export function claimNextBusWork(request: BusNextRequest): BusNextResult {
@@ -34,7 +37,7 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
     scanned += result.messages.length;
     if (scanned > BUS_INBOX_MAX_MESSAGES || result.nextCursor < cursor) return { status: 'retryable' };
     for (const receipt of result.messages) {
-      if (addressedTo(receipt.envelope.to) && isClaimableWork(receipt.envelope.body)) candidates.push(receipt);
+      if (addressedTo(receipt.envelope.to, receipt.envelope.from) && isClaimableWork(receipt.envelope.body)) candidates.push(receipt);
     }
     if (result.messages.length < BUS_INBOX_MAX_READ) { finished = true; break; }
     if (result.nextCursor <= cursor) return { status: 'retryable' };

@@ -424,9 +424,10 @@ For the
 identity or a `group:<channel>:<topic>` address of a registry channel it
 belongs to — the same membership rule the inbox and wake reads apply, minus
 the agent's own channel posts — so work posted to a shared channel is pending
-for its members without a second read; an unreadable or missing registry and
-an unresolvable ref contribute no channels, so matching never widens on
-unknown state. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+for its members without a second read, and the `next` items are exactly the
+receipts `bus next --to <agent>` matches under the same rule; an unreadable or
+missing registry and an unresolvable ref contribute no channels, so matching
+never widens on unknown state. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, and answers
 `unknown-agent` for wakes and inbox rather than an empty list. Every section
 reports its
@@ -708,9 +709,12 @@ The v1 message-id claim (`ashlr fleet bus-claim acquire|renew|release|complete
 --id --owner --lease-ms`) keeps working for single-message work. Resource claims
 are the v2 layer above it. `bus next`/`bus-next --to` matches work addressed to
 one agent identity under every routing label that resolves to it — handle,
-`agent:` address, stable id or alias — through the same identity registry the
-inbox, wakes and message filters use; a `--to` naming no identity or an
-unreadable registry keeps exact-label matching and never widens.
+`agent:` address, stable id or alias — or to a `group:<channel>:<topic>`
+address of a registry channel the identity belongs to, minus the identity's
+own channel posts: the same membership rule the inbox, wake and `work mine`
+reads apply, through the same identity registry the message filters use; a
+`--to` naming no identity, membership in no channel, or an unreadable registry
+keeps exact-label matching and never widens.
 `fleet bus-request` and `fleet bus-scatter` correlate replies the same way: a
 reply counts when its `from` resolves to the request's `to` identity and its
 `to` resolves to the request's `from` identity, under any of their labels; a
