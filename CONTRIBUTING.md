@@ -74,7 +74,7 @@ To install the CLI while developing:
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |
 | `npm run lint` | ESLint plus real-I/O membership and Phantom console synchronous-I/O guards |
-| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, run the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and syntax-check changed `.py` files with `python3`; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). Merge Gate still runs the full check. |
+| `node scripts/verify-changed.mjs` | Lint only the files changed against origin/master, run one type check, run the documentation link check when the diff touches markdown or deletes files, run the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and syntax-check changed `.py` files with `python3`; the fast local gate before pushing. Repeats on an unchanged tree are skipped (`--force` reruns). The hosted `Merge Gate` remains required; on a PR it uses secret scans, classification, generated files and affected tests, not the full suite. |
 | `npm run check:docs` | Validate operator documentation file links and anchors locally, without network requests |
 | `npm run check:perf` | Time the committed CLI cold-path budgets in `perf/budgets.json` (hyperfine when installed); advisory in CI, never a required check |
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
@@ -87,7 +87,7 @@ For explicit Bun-compatible test inventories, see the standalone
 [Bun shard planner and timings recorder](docs/BUN-SHARDS.md). Workflow adoption
 is separate from these scripts.
 
-Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite, so the full CI check remains the merge gate. When the diff changes a markdown file or deletes any path, it also runs the same documentation link and anchor check as `npm run check:docs`; run `npm run check:docs` yourself when you want the report without the rest of the gate. When the diff touches a test file or `queue/quarantine.tsv`, it runs the same quarantine-ledger verifier as `npm run check:quarantine`, so an added `.skip`/`.todo`/`.only` without a live ledger row fails locally instead of at the gate. When the diff touches `.py` files — the fleet's Python dispatcher and bridge tooling had no other local check — it compiles them with the system `python3` and skips with a notice when no interpreter is available. A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
+Use `node scripts/verify-changed.mjs` after editing a few files, before opening a pull request, or when the full lint takes too long. It operates only on the diff against `origin/master` and skips the full suite. The hosted `Merge Gate` remains required; PR checks include secret scans, classification, generated files and the fast gate. Full suites run on the six-hour master schedule, manual dispatch or release verification. When the diff changes a markdown file or deletes any path, it also runs the same documentation link and anchor check as `npm run check:docs`; run `npm run check:docs` yourself when you want the report without the rest of the gate. When the diff touches a test file or `queue/quarantine.tsv`, it runs the same quarantine-ledger verifier as `npm run check:quarantine`, so an added `.skip`/`.todo`/`.only` without a live ledger row fails locally instead of at the gate. When the diff touches `.py` files — the fleet's Python dispatcher and bridge tooling had no other local check — it compiles them with the system `python3` and skips with a notice when no interpreter is available. A working state that already passed exits early via a marker shared across worktrees; `--force` (or `PHANTOM_VERIFY_FORCE=1`) reruns it.
 
 `bin/ashlr` is a thin ESM shim that imports `dist/cli/index.js`, so the installed binary always runs the compiled output. For fast iteration, use `npm run dev` (runs `src/cli/index.ts` directly through `tsx`).
 
@@ -236,12 +236,13 @@ Hosted CI includes exhaustive Ubuntu shards, named Windows portability contracts
 four exhaustive Mac partitions, a separate Mac lane for all isolated suites
 (two at a time, each in its own home with one worker; locally they stay serial
 unless `ASHLR_TEST_CI_ISOLATED_CONCURRENCY=2`), macOS queue coverage and native
-broker checks. The four exhaustive Mac
-partitions run on master pushes and on pull requests labelled `ci:full-mac`; on
-other pull requests they are skipped and `Merge Gate` reports them as deferred
-to post-merge. The isolated Mac lane, macOS queue coverage and native broker
-checks run on every pull request that is ready for review; a draft pull request
-skips those three until it is marked ready, which starts a full run. Local tests
+broker checks. None of these run on a pull request, a merge-queue commit or a
+master push: they run in the six-hour scheduled run on master (the Mac
+exhaustive work rotates through daily slices there), on manual dispatch and on
+the reusable release call. On a pull request `Merge Gate` requires only the
+secret scans, lane classification, the generated-files check and the fast gate
+(typecheck plus affected tests); see
+[what CI requires](docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires). Local tests
 and hosted checks prove different environments. Inspect each actual run and report unavailable or
 skipped coverage separately; do not weaken checks to make a release pass.
 
