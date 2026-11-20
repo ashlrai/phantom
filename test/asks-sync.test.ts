@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdAsks } from '../src/cli/asks.js';
-import { listAsks, type AsksOptions } from '../src/core/fleet/asks.js';
+import { answerAsk, listAsks, type AsksOptions } from '../src/core/fleet/asks.js';
+import { readCreditDecision } from '../src/core/fleet/asks-ledger.js';
+import { readResourceLedger } from '../src/core/fleet/runs-resource-ledger.js';
 import { ASKS_SYNC_SCHEMA, syncAsks, type SyncInputs } from '../src/core/fleet/asks-sync.js';
 import { buildPoolsView } from '../src/core/fleet/pools-view.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
@@ -44,7 +46,7 @@ describe('syncAsks', () => {
     expect(first.raised).toHaveLength(1);
     const asks = listAsks(opts).asks;
     expect(asks).toHaveLength(1);
-    expect(asks[0]).toMatchObject({ kind: 'password', subject: 'gemini', replies: ['done', 'later'], expires: at(30) });
+    expect(asks[0]).toMatchObject({ kind: 'signin', subject: 'gemini', replies: ['done', 'later'], expires: at(30) });
     expect(asks[0]!.request).toMatch(/^Sign in to Gemini once/);
     const second = await run(inputs([signedOut]));
     expect(second.raised).toEqual([]);
@@ -119,5 +121,69 @@ describe('phm asks sync', () => {
     expect(await cmdAsks(['sync'], { options: opts, sync: async () => syncAsks({ ...opts, read: async () => inputs([], null, false) }) })).toBe(1);
     expect(log.mock.calls[2]![0]).toMatch(/^Asks: unknown\./);
     log.mockRestore(); err.mockRestore();
+  });
+});
+
+describe('Claude API gift credit', () => {
+  const EXPIRES = '2026-11-24T23:59:00.000Z';
+  const statusOf = (gift: Record<string, unknown>, target = 0) => JSON.stringify({
+    schema: 'dispatchd.status.v1', last_tick: at(0), lanes: { 'claude-api': { running: 0, target } }, budget: { 'claude-api': gift },
+  });
+  const read = async (status: string): Promise<SyncInputs> => {
+    const runs = join(dir, 'status-runs');
+    mkdirSync(join(runs, 'queue'), { recursive: true });
+    writeFileSync(join(runs, 'queue', 'status.json'), status);
+    const ledger = await readResourceLedger({ runsDir: runs, now: () => NOW, personalCodexHome: join(dir, 'none') });
+    return { view: buildPoolsView(ledger, NOW), ledgerReadable: true, heldReasons: {} };
+  };
+
+  it('raises one credit ask that states the balance, unit and expiry, and nothing on a re-run', async () => {
+    const state = await read(statusOf({ pools: { gift: { balance: 112.4, expires_at: EXPIRES, open: true } } }));
+    const first = await run(state);
+    expect(first.raised).toHaveLength(1);
+    const ask = listAsks(opts).asks[0]!;
+    expect(ask).toMatchObject({ kind: 'payment', subject: 'claude-api', replies: ['yes', 'no'], expires: EXPIRES });
+    expect(ask.request).toBe('About 112 USD of Claude API credit expires Nov 24. Use it? yes / no');
+    const again = await run(state);
+    expect(again.raised).toEqual([]);
+    expect(again.kept).toHaveLength(1);
+    expect(listAsks(opts).count).toBe(1);
+  });
+
+  it('reads the typed gift block too', async () => {
+    const state = await read(statusOf({ gift: { usd_remaining: 50, as_of: at(-1), expires_at: EXPIRES } }));
+    expect((await run(state)).raised[0]!.text).toBe('About 50 USD of Claude API credit expires Nov 24. Use it? yes / no');
+  });
+
+  it('shows a stale or unreported balance as unknown, never 0, and raises nothing', async () => {
+    const stale = await read(statusOf({ gift: { usd_remaining: 112, as_of: at(-30), expires_at: EXPIRES } }));
+    const sync = await run(stale);
+    expect(sync.raised).toEqual([]);
+    expect(sync.unknown[0]!.reason).toMatch(/^Claude API credit balance .* unknown, so no ask was raised$/);
+    const closed = await run(await read(statusOf({ pools: { gift: { balance: 112, expires_at: EXPIRES, open: false } } })));
+    expect(closed.raised).toEqual([]);
+    expect(closed.unknown).toHaveLength(1);
+    const ledger = await readResourceLedger({ runsDir: join(dir, 'status-runs'), now: () => NOW, personalCodexHome: join(dir, 'none') });
+    expect(ledger.lanes.find(l => l.lane === 'claude-api')!.creditsRemaining).toBeNull();
+  });
+
+  it('records a yes reply as a typed decision and changes nothing else', async () => {
+    await run(await read(statusOf({ pools: { gift: { balance: 112, expires_at: EXPIRES, open: true } } })));
+    const ask = listAsks(opts).asks[0]!;
+    expect(await answerAsk(ask.shortId, 'yes', 'cli', opts)).toMatchObject({ status: 'answered', answer: 'yes' });
+    expect(readCreditDecision('claude-api', { runsDir: opts.runsDir })).toMatchObject({ pool: 'claude-api', decision: 'yes', askId: ask.id });
+    expect(readCreditDecision('gemini', { runsDir: opts.runsDir })).toBeNull();
+  });
+});
+
+describe('sign-in kind', () => {
+  it('reports a sync-raised sign-in ask as signin, and leaves a hand-raised password ask a password', async () => {
+    writeFileSync(join(opts.runsDir, 'NEEDS-MASON.md'), `- [ ] ask:password@grok Hand-raised: type the grok password (asked ${at(-1)})\n`);
+    await run(inputs([signedOut]));
+    const kinds = Object.fromEntries(listAsks(opts).asks.map(ask => [ask.subject, ask.kind]));
+    expect(kinds).toEqual({ grok: 'password', gemini: 'signin' });
+    // The alias does not hide the ask from sync: a second run keeps it, a cleared verdict closes it.
+    expect((await run(inputs([signedOut]))).kept).toHaveLength(1);
+    expect((await run(inputs([{ ...signedOut, held: false }]))).resolved.map(i => i.kind)).toEqual(['signin']);
   });
 });

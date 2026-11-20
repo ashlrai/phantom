@@ -63,6 +63,8 @@ export interface PoolRow {
   wasteRisk: PoolWasteRisk;
   /** Absolute balance for credits rows; not a percentage. */
   creditsRemaining: number | null;
+  /** `usd` when `creditsRemaining` is a US-dollar gift credit; absent when the unit is not reported. */
+  creditUnit?: 'usd';
   held: boolean | null;
   /** Jobs running on the lane against its slot target, as the dispatcher last reported them. */
   running: number | null;
@@ -111,7 +113,7 @@ function poolRow(lane: ResourceLaneRow, now: number, samples: readonly PoolSampl
     id: lane.lane, kind: lane.window === 'weekly' ? 'subscription' : lane.window === 'credits' ? 'credits' : 'unmetered',
     usedPct: null, resetAt: lane.resetAt, hoursLeft: null, elapsedPct: null, burnPctPerHour: null, burnBasis: null,
     burn: { samples: 0, window_h: 0, method: 'none' }, projectedUnusedPct: null, projectedEmptyAt: null, verdict: 'unknown',
-    wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, held: lane.held,
+    wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, ...(lane.creditUnit ? { creditUnit: lane.creditUnit } : {}), held: lane.held,
     running: lane.running, target: lane.target, source: lane.observation?.source ?? lane.source, scopes: [], asOf,
     reason: null, summary: '',
   };
