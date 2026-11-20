@@ -169,6 +169,14 @@ signed post-merge observation ledger. A merge counts `stable` only when the
 `unobserved`, and `ranked` sorts groups on the Wilson lower bound. Read-only;
 nothing merges, routes or releases credit.
 
+Reward signals: on self-improvement ticks the resident daemon's `reward-sync`
+off-tick job folds the jobs-ledger tail into `~/.ashlr/metrics/reward-signals.jsonl`
+— one scrubbed row per job whose PR lifecycle resolved (MERGED, or
+CLOSED-unmerged; a merge later reverted counts as not held). The ledger feeds
+`phm router-calibration` and the eval harness; first write wins, jobs without
+dispatch or resolution evidence stay unwritten, and unknown fields stay null.
+See `src/core/metrics/reward-feed.ts`.
+
 Research loop (RQ-SWE5-RESEARCH-LOOP): `phm fleet research-digest --file
 <digest.md> --json` scores a digest's `## Proposals` bullets (impact x
 confidence - effort), dedups them against the queue and shipped work, and
