@@ -148,15 +148,21 @@ phm pool admission --json
 ```
 
 Job latency: `phm fleet job-latency --jobs jobs.jsonl --json` ranks measured
-queue wait, checkout, model, CI and merge time and supplies a proposed fix line
-for each measured phase. It is read-only; fix lines are proposals, not queued
-jobs. Records use `job` (or `job_id`/`jobId`), `event` and `ts` (or
-`timestamp`/`at`). Boundaries are `queued`, `launch`, `checkout_complete`,
-`finish`, `ci_start`, `ci_complete`, and `merged` (also an `outcome` with
-`MERGED`). IDs must identify individual attempts. Missing, reversed or
-ambiguous repeated boundaries are reported as unmeasured, not estimated;
-phase totals need not cover the whole wall time. Existing ledgers may not yet
-contain all boundaries.
+queue wait, checkout, model, worker, publish wait, CI and merge time and
+supplies a proposed fix line for each measured phase. It is read-only; fix
+lines are proposals, not queued jobs. Records use `job` (or
+`job_id`/`jobId`/`id`), `event` (or `type`) and `ts` (or
+`timestamp`/`at`). Queue arrival is `enqueue`, `enqueued` or `queued`; other
+boundaries are `launch`, `checkout_complete`, `finish`, `ci_start`,
+`ci_complete`, `publish`/`published` and `merged`. Terminal PR state
+(`outcome`/`state`/`status` `MERGED` or `PUBLISHED`, `mergedAt` preferred for
+`MERGED`) outranks the event name, so an eventless reconciler row still
+counts and a publish row swapped to `MERGED` is never a second publish.
+`phm pulse merge-latency` adds the `open_to_merge` publish→merged total.
+IDs must identify individual attempts. Missing, reversed or ambiguous
+repeated boundaries are reported as unmeasured, not estimated; phase totals
+need not cover the whole wall time. Existing ledgers may not yet contain all
+boundaries.
 
 Fleet IQ: `phm fleet eval-report [--days 7] [--prs prs.json] --json` scores
 merged PRs post-merge: revert, regression and follow-up rates, CI-failure

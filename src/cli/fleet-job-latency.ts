@@ -11,7 +11,7 @@ export const cmdPulseMergeLatency = (args: string[]): Promise<number> => command
 async function command(args: string[], mergeOnly: boolean): Promise<number> {
   const usage = mergeOnly ? `Usage: phm pulse merge-latency [--jobs <jobs.jsonl>] [--json]
 Read-only, all attempts in ~/.ashlr-runs/metrics/jobs.jsonl (or --jobs).
-Stages: publish to ci_start, ci_start to ci_complete, ci_complete to merged.
+Stages: publish to ci_start, ci_start to ci_complete, ci_complete to merged, publish to merged.
 JSON: pulse.merge-latency.v1; seconds are observed totals, never estimates.
 Each job ID must name one attempt. Missing, invalid, repeated or reversed boundaries are unknown.
 Outcome MERGED uses mergedAt when supplied, otherwise its event time. Line order does not matter.`
