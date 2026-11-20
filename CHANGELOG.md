@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.45 |
-| Latest dated changelog release (2026-11-20) | 3.30.45 |
+| Source package | 3.30.46 |
+| Latest dated changelog release (2026-11-20) | 3.30.46 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -126,6 +126,36 @@ Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left 
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.46] - 2026-11-20
+
+
+### Fixes
+
+* **dispatchd:** confirm group absence before SIGKILL completion ([#7434](https://github.com/ashlrai/phantom/issues/7434)) ([f4621f5](https://github.com/ashlrai/phantom/commit/f4621f5539b9c0037f1bac330103cf3e5f5180c8))
+* **test:** make leader-cloud-311 hermetic against the host memory-fit gate ([#7523](https://github.com/ashlrai/phantom/issues/7523)) ([9f6faec](https://github.com/ashlrai/phantom/commit/9f6faec7f521206805e001a31f4a45ca8b97e54a))
+* **tests:** unblock master Fast gate — router memory-fit mock + CODEOWNERS regen ([#7533](https://github.com/ashlrai/phantom/issues/7533)) ([4bc3645](https://github.com/ashlrai/phantom/commit/4bc364591709080babea843673662e9151ac98fc))
+
+
+### Changes
+
+* **RQ-ASKSSEEDN21OQ8:** BRIDGE_NOTES: RQ-ASKSSEEDN21OQ8 ([#7524](https://github.com/ashlrai/phantom/issues/7524)) ([49a6a54](https://github.com/ashlrai/phantom/commit/49a6a54924eb81bfb359b63257564ec2480ef22f))
+* **RQ-CLIDRIFTFIXN21OQ8:** BRIDGE_NOTES: RQ-CLIDRIFTFIXN21OQ8 ([#7520](https://github.com/ashlrai/phantom/issues/7520)) ([5b90cfa](https://github.com/ashlrai/phantom/commit/5b90cfad11f3ff746d062aec424a4d26e387c5ca))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795149739-N17:** ([#7522](https://github.com/ashlrai/phantom/issues/7522)) ([fcf8947](https://github.com/ashlrai/phantom/commit/fcf894735f6ea0b089131ab273773a034b2608ae))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795155966-N17:** ([#7530](https://github.com/ashlrai/phantom/issues/7530)) ([680bc71](https://github.com/ashlrai/phantom/commit/680bc71eaaa3bcb4e66d37eb7707aaf284ed74f0))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795149619-N17:** ([#7527](https://github.com/ashlrai/phantom/issues/7527)) ([47726c8](https://github.com/ashlrai/phantom/commit/47726c8832e1c313ebab06f0e76c410733228e43))
+* **RQ-GAPTICKN21OQ8:** RQ-GAPTICKN21OQ8: close the self-supply loop ([#7521](https://github.com/ashlrai/phantom/issues/7521)) ([f4200ee](https://github.com/ashlrai/phantom/commit/f4200ee3eb52ec52df7c0f618d888b28ba6c3873))
+* **RQ-LEVERAGEN21MQ8:** RQ-LEVERAGEN21MQ8: merge leverage classes ([#7510](https://github.com/ashlrai/phantom/issues/7510)) ([324b037](https://github.com/ashlrai/phantom/commit/324b037e0d46676e255a532a1932dd388af30225))
+* **RQ-LOOPSTAGESN21OQ8:** RQ-LOOPSTAGESN21OQ8: where the loop waits ([#7529](https://github.com/ashlrai/phantom/issues/7529)) ([ff47567](https://github.com/ashlrai/phantom/commit/ff47567ccec944927a664ea4bda2635dd58f828f))
+* **RQ-MAPREPLAYN21OQ8:** RQ-MAPREPLAYN21OQ8: replay the fleet on the map ([#7531](https://github.com/ashlrai/phantom/issues/7531)) ([24f45a8](https://github.com/ashlrai/phantom/commit/24f45a86f95318c715dfa866c33a6881b653a54e))
+* **RQ-PHX-RECORDEDSCHEDULECLI684S:** BRIDGE_NOTES: RQ-PHX-RECORDEDSCHEDULECLI684S ([#7517](https://github.com/ashlrai/phantom/issues/7517)) ([3a01a9d](https://github.com/ashlrai/phantom/commit/3a01a9df7a753ab87defbd4e77fe59c5296ed0c0))
+* **RQ-PHX-RECORDEDSLOTPROJECT683S:** BRIDGE_NOTES: RQ-PHX-RECORDEDSLOTPROJECT683S ([#7516](https://github.com/ashlrai/phantom/issues/7516)) ([29b31d0](https://github.com/ashlrai/phantom/commit/29b31d0ad5efe92471d93ef78fb880a299bb0de0))
+* **RQ-PHX-REDTESTFIXC685:** RQ-PHX-REDTESTFIXC685 — REDTESTFIX recut of [#7391](https://github.com/ashlrai/phantom/issues/7391) ([#7519](https://github.com/ashlrai/phantom/issues/7519)) ([4a22fd8](https://github.com/ashlrai/phantom/commit/4a22fd8dd9a08bbf153c2280f7b94569adeb19e5))
+* **RQ-READMEVERBSN21MQ8:** RQ-READMEVERBSN21MQ8 ([#7512](https://github.com/ashlrai/phantom/issues/7512)) ([77268f2](https://github.com/ashlrai/phantom/commit/77268f2f53f7dcabc0fa99c0db3c333a08a50fd0))
+* **RQ-RELCARDN21MQ8:** RQ-RELCARDN21MQ8: release cards ([#7511](https://github.com/ashlrai/phantom/issues/7511)) ([f41ec0b](https://github.com/ashlrai/phantom/commit/f41ec0bff5bde7aea10bb29cd6656cecca7f6019))
+* **RQ-SHIPREPON21IQ8:** ([#7528](https://github.com/ashlrai/phantom/issues/7528)) ([717422c](https://github.com/ashlrai/phantom/commit/717422cfba4a9fe92babb15d76b4762a9c7bd361))
+* **RQ-TEAMJOINN21MQ8:** RQ-TEAMJOINN21MQ8: bring co-founders on ([#7513](https://github.com/ashlrai/phantom/issues/7513)) ([9740aa4](https://github.com/ashlrai/phantom/commit/9740aa486ed89c0443a44e8515dd31cd4efbb73b))
+* **RQ-WTCHECKN21OQ8:** BRIDGE_NOTES: RQ-WTCHECKN21OQ8 ([#7526](https://github.com/ashlrai/phantom/issues/7526)) ([1574862](https://github.com/ashlrai/phantom/commit/15748626548cb7ed81d088c5e7988cd43010849c))
 
 ## [3.30.45] - 2026-11-20
 
