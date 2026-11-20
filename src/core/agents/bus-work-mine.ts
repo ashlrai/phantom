@@ -496,7 +496,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     for (const claim of claims.claims) {
       claim.jobs = feed.jobs
         .filter(job => job.claimKeys.some(key => coordinationRowBlocks(claim, key)))
-        .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title }));
+        .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title,
+          ...(job.detail === undefined ? {} : { detail: job.detail }) }));
     }
   }
 
@@ -550,9 +551,11 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       `holds=${jobs.holds} receipts=${jobs.receipts}`);
     for (const job of jobs.jobs) {
       const title = mineField(job.title, 80);
+      const detail = job.detail === undefined ? '' : mineField(job.detail, 120);
       const keys = (list: string[] | null): string => list === null ? '-' : mineField(list.join(','), 400);
       const claimable = job.claimable === null ? 'unknown' : job.claimable ? 'yes' : 'no';
-      lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`} ` +
+      lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
+        `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo} ` +
         `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)}`);
     }

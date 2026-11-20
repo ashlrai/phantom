@@ -86,8 +86,13 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
           return { status: 'refused', reason: 'owner-mismatch' };
         }
       }
-      // Cursor order wins even when receipt clocks move backwards.
-      jobs.set(job.id, { ...job, status: status.data.status, updatedAt: row.receivedAt });
+      // Cursor order wins even when receipt clocks move backwards. The job's
+      // detail is the newest status's own detail: a status without one clears
+      // it, so a stale reason never rides a newer state.
+      const next: WorkJob = { ...job, status: status.data.status, updatedAt: row.receivedAt };
+      if (status.data.detail === undefined) delete next.detail;
+      else next.detail = status.data.detail;
+      jobs.set(job.id, next);
     }
   }
   return { status: 'ok', feed: workFeedSchema.parse({ v: 2, jobs: [...jobs.values()] }) };

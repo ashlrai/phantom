@@ -284,6 +284,7 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
       blocking: false,
       title: title || `bus work ${job.id}`,
       detail: cap(`owner ${job.owner} · ${job.provider} · ${job.repo} · ${job.status}` +
+        (job.detail === undefined ? '' : ` — ${oneLine(job.detail, 140)}`) +
         (holdsKnown ? ` · ${heldCount}/${job.claimKeys.length} claim keys held` : ' · claim holds unknown'), DETAIL_MAX),
       since: iso(post?.receivedAt ?? job.updatedAt),
       expiresAt: post ? iso(post.expiresAt) : null,
