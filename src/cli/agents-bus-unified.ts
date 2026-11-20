@@ -78,7 +78,9 @@ claims it holds under any of its labels, the open feed jobs still claimable
 for it, the claimable work envelopes addressed to it or a channel it belongs
 to in bus-next order with their hold state, the worker-handoff assignments
 addressed the same way (each item carries the to label handoff-receive and
-handoff-reply take verbatim), its
+handoff-reply take verbatim), the conversation threads waiting on its
+answer — asks and handoffs whose latest message it or a channel it belongs
+to still owes, each citing the envelope id show resolves — its
 pending wake hints and the next page of mail addressed
 to it — where every section reports its own read state and unknown stays
 unknown.
