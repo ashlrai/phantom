@@ -308,6 +308,24 @@ acquirer only; a conflict names the holder, never a token. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
+**Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
+digest that answers "what is pending for this agent" in one call instead of
+three: the live coordination claims it holds under any of its labels (with the
+announced jobs each claim's keys block, the reverse of `work feed --claims`),
+the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
+key; newest 50 shown, `open` keeps the true total) annotated per declared key —
+`freeKeys`/`heldKeys` plus a tri-state
+`claimable` that is `null` whenever hold coverage is `truncated` or `unknown`,
+never a guess — and the wake hints addressed to it, capped at the newest 20.
+`addressed` marks jobs whose announcement `to` label resolves to the agent's
+identity. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
+exact-label claim matching, reports `identity: null`, and answers
+`unknown-agent` for wakes rather than an empty list. Every section reports its
+own read state — `missing`/`available`/`unavailable` for claims,
+`ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed — so one
+unreadable dependency degrades only its own section. Exit 0 on a completed
+read, 2 on an invalid agent ref.
+
 **Status.** `phm agents bus status [--json]` is a read-only probe of the five
 dependencies every verb above touches: the message store (retained/live/expired
 counts against its caps), the identity registry (identity and channel counts),
