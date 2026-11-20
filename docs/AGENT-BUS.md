@@ -231,12 +231,16 @@ projections — it is threading metadata, never a feed lookup, so a wake needs
 no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
-**Inbox.** `phm agents bus inbox <agent> [--thread <t>]` returns one page of
+**Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]`
+returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own) and traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
 highest priority first; `--thread` keeps only `note`/`context` bodies
-carrying that v2 thread label. Persist `nextCursor` only after handling the
+carrying that v2 thread label, and `--from` narrows by sender through the
+same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
+stable id or alias; an unresolvable ref keeps exact-label matching). Persist
+`nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
 `context` and `worker-handoff` carry their message text, while typed
@@ -310,17 +314,26 @@ never permits a merge, a push, or spending.
 
 **Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
 digest that answers "what is pending for this agent" in one call instead of
-three: the live coordination claims it holds under any of its labels (with the
+four: the live coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block, the reverse of `work feed --claims`),
 the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
 key; newest 50 shown, `open` keeps the true total) annotated per declared key —
 `freeKeys`/`heldKeys` plus a tri-state
 `claimable` that is `null` whenever hold coverage is `truncated` or `unknown`,
-never a guess — and the wake hints addressed to it, capped at the newest 20.
-`addressed` marks jobs whose announcement `to` label resolves to the agent's
+never a guess — the wake hints addressed to it, capped at the newest 20, and
+the next page of mail in its inbox: the same matching, order and owner-share
+receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
+messages with each body summarized by the shared one-line composer. The inbox
+section reads one row past the cap so `truncated` is definitive — a full
+window proves mail remains beyond `nextCursor`, a short one proves the scan
+reached the store's end — and `nextCursor` resumes strictly before any
+unshown mail, so `agents bus inbox --after <nextCursor>` continues the page
+without redelivering or skipping. `addressed` marks jobs whose announcement
+`to` label resolves to the agent's
 identity. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, and answers
-`unknown-agent` for wakes rather than an empty list. Every section reports its
+`unknown-agent` for wakes and inbox rather than an empty list. Every section
+reports its
 own read state — `missing`/`available`/`unavailable` for claims,
 `ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed — so one
 unreadable dependency degrades only its own section. Exit 0 on a completed

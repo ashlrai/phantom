@@ -169,11 +169,20 @@ only the failed job evidence to its workflow run and current PR head.
 analyzer, clock, authority/KILL readers, queue and journal/status paths. Only
 probable flakes are rerun, with durable pre-attempt deduplication and a global
 hourly cap (default ten). Rerun attempt rows carry the failing test id (bounded
-to 400 chars). `src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
+to 400 chars). Successful rerun calls are later resolved to `verdict` journal
+rows (`pass`/`fail`/`inconclusive`) by reading the workflow run once it has
+settled: attempts younger than five minutes are not trusted yet, unresolved
+attempts older than 24 hours stop being polled, and each pass checks at most
+eight pending reruns per repository. `success` maps to `pass`, `failure` and
+`timed_out` to `fail`, other completed conclusions to `inconclusive`; runs
+still in progress or reads predating the rerun call stay pending.
+`src/core/fleet/ci-flakes.ts` exports `recurringFlakes(rows, opts?)`,
 `flakeJobId(repo, test)` and `enqueueFlakeFixes(flakes, absoluteQueuePath)`:
 a test probable-flaking on at least three distinct heads within seven days
 becomes one `RQ-CIFLAKE-*` work-tier queue row per (repository, test), capped
-at ten new rows per run. `src/core/fleet/ci-fix-generations.ts` exports
+at ten new rows per run; each flake also carries `verdicts` tallies of recorded
+rerun outcomes inside the window and the brief names them when present.
+`src/core/fleet/ci-fix-generations.ts` exports
 `nextFixGeneration(queueText, baseJobId, opts?)` and `MAX_FIX_GENERATIONS`:
 queue deduplication is generation-aware — open rows suppress queueing,
 dropped/retired rows and unparsed mentions stay suppressed, and a family
@@ -183,13 +192,16 @@ queueing both require effective authority and inactive KILL. Cancellation
 returns/persists `status: 'aborted'`.
 `ciRerunPaths()` resolves journal/status files under the ASHLR state root;
 `readCiReruns(path?, nowMs?)` returns bounded entries, recent entries, counts,
-lastHour attempts and recurringFlakes; `readCiRerunStatus(path?)` returns the
-persisted status or null, whose per-repo records gain `recurringFlakes` and
-`flakeFixesQueued` counts.
+lastHour attempts, recurringFlakes and `verdicts` (`pass`/`fail`/`inconclusive`
+tallies, `pending` unresolved fired reruns inside 24 hours, and
+`resolutionRate` = pass/(pass+fail) or null when none resolved);
+`readCiRerunStatus(path?)` returns the persisted status or null, whose per-repo
+records gain `recurringFlakes`, `flakeFixesQueued`, `verdictsPending` and
+`verdictsResolved` counts.
 Top-level config `ciRerun` accepts enabled, intervalMinutes, repos and maxPerHour.
 Resident off-tick ticks launch it only with repositories and an elapsed interval.
-The CLI `ci reruns [--json]` reads recent journal entries, counts and
-recurringFlakes without mutation.
+The CLI `ci reruns [--json]` reads recent journal entries, counts,
+recurringFlakes and verdicts without mutation.
 
 `src/core/fleet/ci-baseline.ts` exports `analyzeCiBaseline(repo, gh?)`, a
 read-only version 1 evidence report, and `parseBaselineFailures(log)` for capped,
@@ -1673,10 +1685,11 @@ no execution authority; the token returns only to its acquirer.
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
-across all three reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, wakes}` or `{status:'invalid', reason}` for a ref outside
-the printable-label rule. `agent` echoes `ref`, resolved `handle`/`identity`
-(null when unregistered) and the `registry` state. `claims` reuses
+across all four reads) returns `BusWorkMineResult`: `{status:'ok', agent,
+asOf, claims, jobs, wakes, inbox}` or `{status:'invalid', reason}` for a ref
+outside the printable-label rule. `agent` echoes `ref`, resolved
+`handle`/`identity` (null when unregistered) and the `registry` state.
+`claims` reuses
 `listBusClaims({owner})` — identity-aware owner matching with exact-label
 fallback — as `{status:'ok', source, claims, owner}` or `{status:'unavailable'}`;
 each claim row is a `BusClaimsListClaim` that gains `jobs` (the announced jobs
@@ -1691,7 +1704,20 @@ only when every declared key is provably held, `null` when coverage is
 addressed)` is the exported pure rule. A non-ok feed collapses the section to
 its own status (`refused` keeps `reason`/`receipts`). `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `truncated`, or
-`unknown-agent`/`unavailable` with `reason`. `formatBusWorkMine(result)`
+`unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
+for the next page of mail addressed to the agent — same matching, order and
+owner-share receipt checks as `agents bus inbox` — as `{status:'ok', agent,
+messages, nextCursor, truncated}`: each `BusWorkMineInboxMessage` carries
+`cursor`, envelope `id`, `ts`, `priority`, `kind`, `channel`, raw `from`,
+resolved `fromAgent` (null when unregistered) and a `summary` through
+`busBodySummary`/`busBodyFallbackSummary`, scrubbed, single-lined and clipped
+to 200 characters for both JSON and human output. The read asks
+for one row past the 20-message cap so `truncated` is definitive — a full
+window proves mail remains beyond `nextCursor`, a short one proves the scan
+reached the store's end — and on overflow the newest scanned row is the one
+dropped, so `nextCursor` resumes strictly before it. A non-ok inbox read
+reports `unknown-agent`/`unavailable`/`retryable`/`invalid` with `reason`.
+`formatBusWorkMine(result)`
 renders the shared human lines — titles and key lists scrubbed, single-lined
 and display-clipped; JSON keeps full values. Exit 0 on a completed read, 2 on
 an invalid agent.
@@ -1710,7 +1736,10 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?}, options?)`,
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
+(`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
+`from` filters by sender through identity-label matching, an unresolvable ref
+keeping exact-label matching),
 `readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity
@@ -1732,8 +1761,11 @@ possibly multi-line; every other recognized kind — the v2 work/wake bodies
 plus the channel, leader, peer, group, cos and incident notices that share
 the store — composes one `<kind> <subject>: <payload>` line, and protocol-v1
 transport bodies summarize their `protocol` kind/topic/ref), null when the
-body has no typed content; claim tokens and `work.result` queueId/receiptId
-never appear in a summary.
+body has no typed content; `busBodyFallbackSummary(body)` is the shared
+bounded fallback for bodies it does not know — string bodies as their
+scrubbed single-line text, anything else as a secret-scrubbed raw JSON
+render clipped to 512 characters. Claim tokens and `work.result`
+queueId/receiptId never appear in a summary.
 Every send is one `appendBusInbox` post; wakes go through `createBusWakeHook`.
 `announceWork(WorkAnnouncementInput)` posts a schema-checked v2 `work.post` to
 `DEFAULT_WORK_ADDRESS` (`leaders`, overridable per send) at P2 with a 7-day
@@ -1760,8 +1792,7 @@ a feed lookup.
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
 `detectBusCli(env)`, `attachBusCliSession(input, env, options?)`, `busSelfFromEnv(env, options?)`,
 `frameBusInbox(cli, messages)` renders each body through `busBodySummary`,
-falling back to a secret-scrubbed single-line read of string bodies or a
-bounded 512-character raw JSON render for unrecognized bodies. Identities
+falling back to `busBodyFallbackSummary` for unrecognized bodies. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
