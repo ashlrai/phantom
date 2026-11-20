@@ -55,7 +55,7 @@ Run the CLI from source with `npm run dev -- --help`.
 Run these in the foreground and wait for each to finish:
 
 ```sh
-node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed
+node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed .py/.sh files
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
 npm run test:web                          # only if src/web-ui/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
@@ -85,6 +85,8 @@ exit code is non-zero if any of them failed.
 | Authority drift | The diff touches `src/`, `test/`, `scripts/` or `.github/CODEOWNERS` | Review the drift, run `npm run authority:regen` and list each new Tier-1 root in the pull request body. If `origin/master` moved since you branched, rebase first. |
 | Docs check | A markdown file changed or a path was deleted | Fix the link or anchor it reports. |
 | ESLint | A JavaScript or TypeScript file changed | Fix the reported lines. |
+| Python syntax check | A `.py` file changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
+| Shell syntax check | A `.sh` file changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Type check | Always (`tsgo`, falling back to `tsc`); the web project too when `src/web-ui/` changed | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
