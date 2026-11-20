@@ -39,6 +39,7 @@ import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneE
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
+import { LeaderCatchUp } from './LeaderCatchUp.js';
 import { mentionedRefs } from './thread-refs.js';
 import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
@@ -265,7 +266,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const read = thread.data;
   const { messages, control: earlier } = useEarlierMessages(read?.value?.messages ?? NO_MESSAGES);
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
-  const openAsks = useMemo(() => openLeaderAsks(messages).length, [messages]);
+  const asks = useMemo(() => openLeaderAsks(messages), [messages]);
+  const openAsks = asks.length;
   const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
   const laneItems = useMemo(() => laneEventItems(laneEvents), [laneEvents]);
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
@@ -528,6 +530,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     </div> : null}
     {statusNow !== null ? <section className={styles.statusNow} aria-label="Status now" role="status"><p>{statusNow}</p><button type="button" className={styles.tool} onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} replyGap={ownerRead.replyGap} />
+    {/* What arrived while the pane was off screen, with a jump to the first new line. */}
+    <LeaderCatchUp visible={visible} lines={merged.lines} ownerLines={ownerLines} busRows={busRows} merged={runs.data === undefined ? null : merges.merged} asks={asks} logRef={logRef} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;
