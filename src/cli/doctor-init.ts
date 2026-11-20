@@ -102,7 +102,7 @@ function printDoctorReport(report: DoctorReport): void {
 const DOCTOR_USAGE = [
   'Usage: phm doctor [--json] [--fix]',
   '       phm doctor merge-path --repo owner/name [--branch branch] [--json]',
-  '       phm doctor worktree [--json]',
+  '       phm doctor worktree [--repair] [--json]',
   '',
   'One-glance health check: config, Phantom, providers, ecosystem.',
   'Exits 1 when any check fails; warnings (optional pieces) exit 0.',
