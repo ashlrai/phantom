@@ -36,6 +36,7 @@ import { readMeterDrop } from './fleet-meter-drop.js';
 import { postMeterIncidents } from '../core/fleet/meter-incident.js';
 import { awakeEnabled, holdKeepAwake, type AwakeDeps } from '../core/fleet/keep-awake.js';
 import { recordClockSample } from '../core/fleet/sleep-gaps.js';
+import { recordDiskSample } from '../core/fleet/host-disk.js';
 
 const usage = `Usage: ashlr fleet self-tick [--json] [--runs-dir <abs>] [--apply] [--last]
 One locked pass of Phantom's self-management: reset-release first (it first
@@ -98,6 +99,8 @@ interface Dependencies {
   claudeFindCommand?: () => string | null;
   /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
+  /** Free-disk reading seam for tests; production reads the real volume. */
+  diskSample?: () => Promise<import('../core/fleet/host-top-view.js').HostDiskSample | null>;
   /** Keep-awake seams for tests (platform, power, caffeinate spawn, queue depth); production reads the real ones. */
   awake?: AwakeDeps & { queued?: () => Promise<number | null> };
   /** Empty-family stop seams for tests (kill switch, report); production reads the real config and ledger. */
@@ -416,6 +419,8 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
   let hold: ReturnType<typeof holdKeepAwake> | undefined;
   if (apply) {
     recordClockSample(root, now());
+    // One free-disk reading per 5 minutes feeds `phm host disk` and the digest's disk_low warning.
+    await recordDiskSample(root, now(), deps.diskSample);
     if (awakeEnabled(root)) {
       const queued = await (deps.awake?.queued ?? (async () => {
         const { getLaneQueueCounts } = await import('../core/fleet/queue-counts.js');
