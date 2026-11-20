@@ -42,6 +42,7 @@ import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-mod
 import { mentionedRefs } from './thread-refs.js';
 import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
+import { ReplyAttachment } from './ReplyAttachment.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { DeliveryReceipt } from './DeliveryReceipt.js';
@@ -562,6 +563,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
         <CopyPill text={COMMS_CONFIRM_LINE} what="the comms.toml confirmation line" />
         <button type="button" className={styles.tool} disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>
       </div> : null}
+      {/* Paste, drop or pick a screenshot: its line joins the draft and shows here as a chip. */}
+      <ReplyAttachment draft={draft} onDraft={setDraft} disabled={sending || actions.readOnly} />
       {failure ? <p className={styles.replyFailure} role="alert">{failure}</p> : null}
     </form>
     {/* Under the reply box: when the Leader last read the inbox and when it reads next. */}

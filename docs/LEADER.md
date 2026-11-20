@@ -219,6 +219,14 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   discarding in one clears the same text in the other. If the browser cannot
   store it, the pane says the draft lasts only while it stays open. Near the
   box's 6,000 character limit a counter shows the room left.
+- **Screenshots:** in the desktop Leader pane, paste an image into the reply
+  box, drop one on it, or press Attach screenshot (PNG, JPEG or WebP, up to
+  8 MiB). The image is stored on this machine and its `[screenshot: <path>]`
+  line joins your draft, shown as a chip under the box with Remove. Send
+  delivers the line with your text and the thread shows the image. Attaching
+  needs the same mutation token as sending. A kept draft or a recalled
+  message that carries a screenshot shows its picture on the chip again,
+  read back from this machine; without a token the chip names the file.
 - **Limits:** your message up to 4,000 characters; replies time out after 120
   seconds and cancel the owned native invocation. Conversation calls have no
   hidden daily ceiling. Attempts for replies, extractions and brief narratives
