@@ -93,3 +93,21 @@ describe('AsksCard at phone width', () => {
     expect(await screen.findByText(/Asks unknown/)).toBeInTheDocument();
   });
 });
+
+describe('AsksCard expiry', () => {
+  it('lists the soonest expiry first and says when the expiry is unknown', async () => {
+    const soon = new Date(Date.now() + 2 * 86400_000).toISOString();
+    const later = new Date(Date.now() + 5 * 86400_000).toISOString();
+    stubFetch({ [`GET ${BATCH}`]: buildAskBatch([
+      { id: 'nm-n', question: 'No expiry here?', kind: 'yes-no', askedAt: '2026-11-13T00:00:00.000Z', hardLimit: null },
+      { id: 'nm-l', question: 'Later one?', kind: 'yes-no', askedAt: '2026-11-14T00:00:00.000Z', expires: later, hardLimit: null },
+      { id: 'nm-s', question: 'Sooner one?', kind: 'yes-no', askedAt: '2026-11-15T00:00:00.000Z', expires: soon, hardLimit: null },
+    ]) });
+    renderMobile(<AsksCard />);
+    expect(await screen.findByText('1. Sooner one?')).toBeInTheDocument();
+    expect(screen.getByText('2. Later one?')).toBeInTheDocument();
+    expect(screen.getByText('3. No expiry here?')).toBeInTheDocument();
+    expect(screen.getByText(/expires in 2d/)).toBeInTheDocument();
+    expect(screen.getByText(/expiry unknown/)).toBeInTheDocument();
+  });
+});

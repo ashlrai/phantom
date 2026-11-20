@@ -62,6 +62,8 @@ export interface Ask {
   created: string | null;
   /** Whole seconds since `created`, or null when that is unknown. */
   ageSeconds: number | null;
+  /** ISO time after which the ask no longer matters, or null when the ask does not say (shown as unknown, listed last). */
+  expires: string | null;
 }
 
 export interface AsksList {
@@ -73,6 +75,8 @@ export interface AsksList {
   asks: Ask[];
   /** Open needs-you lines that are not one of the ask kinds; the fleet handles these. */
   fleetDecides: number;
+  /** Asks past their expiry: hidden from `asks`, counted here so the hiding is visible. */
+  expiredHidden: number;
 }
 
 export type AskAnswerStatus = 'answered' | 'already-answered' | 'refused' | 'unknown' | 'ambiguous' | 'invalid' | 'unavailable';
@@ -97,6 +101,7 @@ export interface AsksOptions extends Pick<NeedsMasonOptions, 'runsDir' | 'bus'> 
 export interface AnswerAskDeps { resolve?: typeof resolveNeedsMasonWithInbox; readAnswer?: typeof readNeedsMasonAnswer }
 
 const TAGGED = /^ask:(password|2fa|device|payment|outreach|usage|approval)(?:@([a-z0-9][a-z0-9-]{0,40}))?\s+(.+?)(?:\s+\(asked\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\))?$/i;
+const EXPIRES = /\s+\(expires\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)\)/i;
 const APPROVAL_LINE = /^approval #\d{1,6}: /;
 const STAMP = /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z)\b/;
 // First match wins: a 2FA code for a device sign-in is a 2FA ask, not a device one.
@@ -113,19 +118,23 @@ const isKind = (value: unknown): value is AskKind => typeof value === 'string' &
 export const isAskAnswer = (value: unknown): value is AskAnswer => typeof value === 'string' && (ASK_ANSWERS as readonly string[]).includes(value);
 
 /** The ask a ledger line describes, or null when it is not one of the kinds. Outreach is only ever tagged, never guessed from wording. */
-export function askOfLine(text: string): { kind: AskKind; request: string; created: string | null; unblocks: string | null; subject: string | null } | null {
+export function askOfLine(text: string): { kind: AskKind; request: string; created: string | null; unblocks: string | null; subject: string | null; expires: string | null } | null {
   // An agent's approval line (approvals.ts) has its own options; wording must not reclassify it.
   if (APPROVAL_LINE.test(text.trim())) return null;
-  const tagged = TAGGED.exec(text.trim());
+  // "(expires <ISO>)" is a tag of its own, taken out before the rest is read, so either order of tags works.
+  const expiry = EXPIRES.exec(text);
+  const expires = validIso(expiry?.[1]);
+  const body = expiry ? text.replace(EXPIRES, '') : text;
+  const tagged = TAGGED.exec(body.trim());
   if (tagged) {
     // "<question> => <what it unblocks>": both plain, the question is what Mason reads first.
     const [question, ...rest] = tagged[3]!.split(' => ');
     const unblocks = rest.join(' => ').trim();
     return { kind: tagged[1]!.toLowerCase() as AskKind, request: question!.trim(), created: validIso(tagged[4]),
-      unblocks: unblocks || null, subject: tagged[2]?.toLowerCase() ?? null };
+      unblocks: unblocks || null, subject: tagged[2]?.toLowerCase() ?? null, expires };
   }
-  const match = WORDING.find(([, pattern]) => pattern.test(text));
-  return match ? { kind: match[0], request: text.trim(), created: validIso(STAMP.exec(text)?.[1]), unblocks: null, subject: null } : null;
+  const match = WORDING.find(([, pattern]) => pattern.test(body));
+  return match ? { kind: match[0], request: body.trim(), created: validIso(STAMP.exec(body)?.[1]), unblocks: null, subject: null, expires } : null;
 }
 
 function validIso(value: string | undefined): string | null {
@@ -146,25 +155,31 @@ export function shortIds(items: readonly NeedsMasonLedgerItem[]): Map<string, st
   return out;
 }
 
-/** Open asks, oldest ledger line first. Never throws; an unreadable ledger says so. */
+const expiryMs = (iso: string | null): number => { const n = iso === null ? NaN : Date.parse(iso); return Number.isFinite(n) ? n : Infinity; };
+
+/** Open asks, soonest expiry first, then asks with no stated expiry in ledger order. Expired asks are hidden. Never throws; an unreadable ledger says so. */
 export function listAsks(options: AsksOptions = {}): AsksList {
   const nowMs = (options.now ?? Date.now)();
   const ledger = readNeedsMasonLedger({ runsDir: runsDirOf(options) });
   const open = ledger.items.filter(item => !item.resolved);
   const shorts = shortIds(open);
   const asks: Ask[] = [];
+  let expiredHidden = 0;
   for (const item of open) {
     const ask = askOfLine(item.text);
     if (!ask) continue;
+    if (expiryMs(ask.expires) <= nowMs) { expiredHidden++; continue; }
     const createdMs = ask.created === null ? NaN : Date.parse(ask.created);
     asks.push({
       id: item.id, shortId: shorts.get(item.id)!, kind: ask.kind, request: ask.request, replies: [...ASK_REPLIES[ask.kind]],
       replyHint: ask.kind === 'usage' ? 'a number from 0 to 100' : null, unblocks: ask.unblocks, subject: ask.subject, created: ask.created,
-      ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null,
+      ageSeconds: Number.isFinite(createdMs) ? Math.max(0, Math.floor((nowMs - createdMs) / 1000)) : null, expires: ask.expires,
     });
   }
+  // Array.sort is stable, so asks with the same (or no) expiry keep ledger order.
+  asks.sort((a, b) => expiryMs(a.expires) - expiryMs(b.expires));
   return { schema: 'asks.v1', asOf: new Date(nowMs).toISOString(), ledger: ledger.status, count: asks.length, asks,
-    fleetDecides: open.filter(item => !APPROVAL_LINE.test(item.text)).length - asks.length };
+    fleetDecides: open.filter(item => !APPROVAL_LINE.test(item.text)).length - asks.length - expiredHidden, expiredHidden };
 }
 
 export type RaiseAskResult =
@@ -176,7 +191,7 @@ export type RaiseAskResult =
  * one plain line, and an identical open ask is returned instead of a second line.
  * Never put the secret itself in the request: say what is needed, not the value.
  */
-export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions = {}, extra: { subject?: string; unblocks?: string } = {}): RaiseAskResult {
+export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions = {}, extra: { subject?: string; unblocks?: string; expires?: string } = {}): RaiseAskResult {
   if (!isKind(kind)) return { ok: false, reason: ASK_REFUSAL };
   const oneLine = (value: unknown): string =>
     // eslint-disable-next-line no-control-regex
@@ -192,6 +207,9 @@ export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions =
   }
   const unblocks = oneLine(extra.unblocks).replace(/ => /g, ' - ');
   if (unblocks.length > ASK_REQUEST_MAX) return { ok: false, reason: `What it unblocks is limited to ${ASK_REQUEST_MAX} characters.` };
+  const expires = extra.expires === undefined ? null : validIso(extra.expires);
+  if (extra.expires !== undefined && (expires === null || !/Z$/.test(extra.expires.trim()))) return { ok: false, reason: 'The expiry is a UTC time like 2026-11-24T00:00:00Z.' };
+  if (expires !== null && Date.parse(expires) <= (options.now ?? Date.now)()) return { ok: false, reason: 'The expiry is already past.' };
   const runsDir = runsDirOf(options);
   const existing = listAsks({ ...options, runsDir });
   if (existing.ledger === 'unavailable') return { ok: false, reason: 'The needs-you ledger could not be read.' };
@@ -199,7 +217,7 @@ export function raiseAsk(kind: unknown, request: unknown, options: AsksOptions =
   if (same) return { ok: true, id: same.id, duplicate: true };
   const created = new Date((options.now ?? Date.now)()).toISOString();
   try {
-    appendNeedsMasonLine(runsDir, `ask:${kind}${subject ? `@${subject}` : ''} ${line}${unblocks ? ` => ${unblocks}` : ''} (asked ${created})`);
+    appendNeedsMasonLine(runsDir, `ask:${kind}${subject ? `@${subject}` : ''} ${line}${unblocks ? ` => ${unblocks}` : ''} (asked ${created})${expires ? ` (expires ${expires})` : ''}`);
   } catch { return { ok: false, reason: 'The needs-you ledger could not be written.' }; }
   const raised = listAsks({ ...options, runsDir }).asks.find(ask => ask.kind === kind && ask.request === line && ask.subject === subject);
   return raised ? { ok: true, id: raised.id, duplicate: false } : { ok: false, reason: 'The ask was written but could not be read back.' };
@@ -251,6 +269,8 @@ export async function answerAsk(idInput: unknown, answer: unknown, source: AskSo
   const ask = askOfLine(item.text);
   if (!ask) return isAskAnswer(answer) ? result('refused', { id: item.id, reason: ASK_REFUSAL }) : result('invalid', { reason: ANSWER_HINT });
   const base = { id: item.id, kind: ask.kind };
+  // An expired ask is hidden from every list, so it cannot be answered either (a repeat answer still reads back the first).
+  if (!item.resolved && expiryMs(ask.expires) <= (options.now ?? Date.now)()) return result('unknown', { ...base, reason: 'That ask has expired.' });
   const reply = parseAnswerFor(ask.kind, answer);
   if (!reply.ok) return result('invalid', { ...base, reason: reply.hint });
   const alreadyAnswered = (): AskAnswerResult => {
@@ -336,6 +356,6 @@ export function asksText(list: AsksList): string[] {
   if (list.count === 0) return ['Nothing needs you.'];
   return [
     `${list.count} ${list.count === 1 ? 'ask needs' : 'asks need'} you. Answer with: phm asks answer <id> <reply>`,
-    ...list.asks.map(ask => `${ask.shortId}  ${ask.kind.padEnd(8)}  ${formatAge(ask.ageSeconds).padStart(7)}  ${ask.request} [${ask.replyHint ?? ask.replies.join('/')}]${ask.unblocks ? ` -> ${ask.unblocks}` : ''}`),
+    ...list.asks.map(ask => `${ask.shortId}  ${ask.kind.padEnd(8)}  ${formatAge(ask.ageSeconds).padStart(7)}  ${ask.request} [${ask.replyHint ?? ask.replies.join('/')}]${ask.unblocks ? ` -> ${ask.unblocks}` : ''}${ask.expires ? ` (expires ${ask.expires.slice(0, 10)})` : ''}`),
   ];
 }
