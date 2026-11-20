@@ -1736,7 +1736,10 @@ with a `reason`); they never throw for bad input or storage faults.
 `src/core/agents/bus-unified.ts`: `sendDirectMessage`, `postChannelMessage`,
 `sendHandoff`, `sendWakeRequest`, `announceWork`, `updateWorkStatus` (all `Promise<UnifiedSendResult>`: `posted|duplicate` with `id`,
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
-carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?}, options?)`,
+carry `claimHoldersWoken`), `readAgentInbox(ref, {after, limit, thread?, from?}, options?)`
+(`thread` keeps only `note`/`context` bodies carrying that v2 thread label and
+`from` filters by sender through identity-label matching, an unresolvable ref
+keeping exact-label matching),
 `readAgentWakes(ref, sinceAt, options?)`, `listBusChannels(agent, options?)`
 (the registry channels name-sorted with `createdBy`, `createdAt` and member
 handles in join order — all of them, or only those one resolved identity

@@ -33,7 +33,7 @@ import { BUS_V2_TEXT_MAX, busBodyThread, wakeBodySchema, workPostBodySchema, wor
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
   AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
-  resolveAgent, type AgentIdentity, type AgentRegistry, type AgentRegistryOptions,
+  resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry, type AgentRegistryOptions,
 } from './bus-identity.js';
 
 export const UNIFIED_BUS_ORIGIN = 'agent-bus';
@@ -919,14 +919,32 @@ function channelOf(to: string, channels: Map<string, string>): string | null {
 }
 
 /**
+ * One already-read registry bound into the label→identity-key lookup the
+ * sender filters share: a label resolves to its identity's stable id through
+ * handle, `agent:` address, id or alias (exact match first, then lowercase).
+ */
+function labelIdentityOf(registry: AgentRegistry): AgentIdentityKeyFor {
+  const resolved = new Map<string, string | undefined>();
+  return (label) => {
+    if (!resolved.has(label)) {
+      resolved.set(label, (resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase()))?.id);
+    }
+    return resolved.get(label);
+  };
+}
+
+/**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
  * and posts in its channels (minus its own). `thread` narrows the page to
- * `note`/`context` bodies carrying that v2 thread label. Returned highest
+ * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
+ * sender through the same identity-label matching `channel read` uses — a
+ * ref that resolves through the registry matches every label of that
+ * identity, an unresolvable ref keeps exact-label matching. Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page.
  */
-export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string } = {},
+export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
@@ -935,11 +953,15 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
     return { status: 'invalid', reason: 'Invalid thread label.' };
   }
+  if (page.from !== undefined && (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid sender filter.' };
+  }
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
+  const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   const messages: InboxMessage[] = [];
   let cursor = after;
   scan: for (let index = 0; index < MAX_PAGES; index += 1) {
@@ -957,18 +979,20 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       else if (envelope.to === self) kind = 'dm';
       else if (target.labels.has(envelope.to)) kind = 'legacy';
       else if (channel && !target.labels.has(envelope.from)) kind = 'channel';
-      const inThread = thread === undefined || busBodyThread(envelope.body) === thread;
-      if (kind && inThread && envelope.origin_bridge === 'agent-chat-owner') {
+      const matchedKind = kind !== null &&
+        (thread === undefined || busBodyThread(envelope.body) === thread) &&
+        (fromMatch === undefined || fromMatch(envelope.from)) ? kind : null;
+      if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
         catch { return { status: 'unavailable', reason: 'Owner share receipts unavailable.' }; }
         const receiptState = ownerChatReceiptState(row.originalEnvelope ?? envelope, row.cursor, ownerReceipts, target.identity.id);
         if (receiptState === 'pending') return { status: 'retryable', reason: 'Owner share receipt pending.' };
         if (receiptState !== 'accepted') continue;
       }
-      if (kind && inThread) {
-        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind, priority: envelope.priority,
+      if (matchedKind !== null) {
+        messages.push({ cursor: row.cursor, receivedAt: row.receivedAt, kind: matchedKind, priority: envelope.priority,
           fromAgent: resolveAgent(read.registry, envelope.from)?.handle ?? null,
-          channel: kind === 'channel' ? channel : null, envelope });
+          channel: matchedKind === 'channel' ? channel : null, envelope });
       }
       if (messages.length === limit) { cursor = row.cursor; break scan; }
     }
@@ -1104,14 +1128,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     if (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128) {
       return { status: 'invalid', reason: 'Invalid sender filter.' };
     }
-    const registry = read.registry, resolved = new Map<string, string | undefined>();
-    const identityOf = (label: string): string | undefined => {
-      if (!resolved.has(label)) {
-        resolved.set(label, (resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase()))?.id);
-      }
-      return resolved.get(label);
-    };
-    fromMatch = agentAddressMatcher(identityOf, page.from);
+    fromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.from);
   }
   const messages: ChannelReadMessage[] = [];
   let cursor = after;

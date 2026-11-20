@@ -231,12 +231,16 @@ projections — it is threading metadata, never a feed lookup, so a wake needs
 no announced job and reads no feed before posting. Like every send it is
 untrusted data: a wake is a hint to read the inbox and grants no authority.
 
-**Inbox.** `phm agents bus inbox <agent> [--thread <t>]` returns one page of
+**Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]`
+returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own) and traffic still addressed to
 its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
 highest priority first; `--thread` keeps only `note`/`context` bodies
-carrying that v2 thread label. Persist `nextCursor` only after handling the
+carrying that v2 thread label, and `--from` narrows by sender through the
+same identity-label matching `channel read` uses (a handle, `agent:<handle>`,
+stable id or alias; an unresolvable ref keeps exact-label matching). Persist
+`nextCursor` only after handling the
 page. `--frame <cli>` prints the page as one bounded block marked untrusted
 data, the same for every CLI: each line summarizes the body — `note`,
 `context` and `worker-handoff` carry their message text, while typed
