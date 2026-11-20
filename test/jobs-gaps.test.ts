@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DROP_QUEUE_REPOS, extractAllGaps, extractGaps, JOB_GAPS_SCHEMA, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
+import { DROP_QUEUE_REPOS, extractAllGaps, extractGaps, JOB_GAPS_SCHEMA, maxNewFromEnv, readJobGaps, sameWork } from '../src/core/fleet/job-gaps.js';
 import { cmdJobsGaps } from '../src/cli/jobs-gaps.js';
 
 const NOW = Date.parse('2026-11-19T12:00:00Z');
@@ -102,7 +102,7 @@ describe('phm jobs gaps', () => {
     expect(JSON.parse(out.join('\n')).schema).toBe(JOB_GAPS_SCHEMA);
     vi.restoreAllMocks(); out = capture();
     expect(await cmdJobsGaps(['--since', '6h'], read)).toBe(0);
-    expect(out.join('\n')).toMatch(/1 new gap from 1 no-change job in the last 6 hours[\s\S]*Queue them: phm jobs gaps --propose/);
+    expect(out.join('\n')).toMatch(/1 new gap from 1 no-change job and 0 published jobs in the last 6 hours[\s\S]*Queue them: phm jobs gaps --propose/);
     vi.restoreAllMocks(); out = capture();
     expect(await cmdJobsGaps([], () => readJobGaps(24, { runsDir: join(root, 'nope'), wtDir: wt, now: NOW, ...none }))).toBe(1);
     expect(out.join('\n')).toContain('unknown');
@@ -175,5 +175,82 @@ describe('prose gaps and the drop queue', () => {
     expect(second.dropped.filter(d => d.reason === 'queued')).toHaveLength(3);
     expect(second.proposed!.filter(p => p.queued)).toHaveLength(2);
     expect(await dropFiles()).toHaveLength(5);
+  });
+});
+
+describe('gaps from published jobs', () => {
+  const dropDir = join('leader', 'drop');
+  const dropFiles = async (lane: string) => (await readdir(join(root, dropDir, lane)).catch(() => [])).filter(f => f.endsWith('.md'));
+  const run = (extra: Record<string, unknown> = {}) => readJobGaps(24, { runsDir: root, wtDir: wt, now: NOW, propose: true, ...none, ...extra });
+  async function publish(id: string, log: string): Promise<void> {
+    await mkdir(join(root, 'metrics'), { recursive: true });
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), `${JSON.stringify({ event: 'outcome', job: id, lane: 'claude', empty: false, repo: 'phantom', ts: iso(2) })}\n`);
+    await writeFile(join(root, `${id}.publish`), 'RESULT PR https://github.com/example/phantom/pull/1\n');
+    await writeFile(join(root, `${id}.log`), log);
+    await utimes(join(root, `${id}.publish`), (NOW - 3_600_000) / 1000, (NOW - 3_600_000) / 1000);
+  }
+  const LOG = 'did the work\n\n**Remaining gaps**\n- Add a retry flag to the export command\n- Show unknown sizes as unknown in the report\n- Cover the stale lock case in the tests\n\nAll done.\n';
+
+  it('queues one valid drop per bullet under a bold gaps line and finds none the second time', async () => {
+    await publish('JOBP', LOG);
+    const first = await run();
+    expect(first.publishedScanned).toBe(1);
+    expect(first.bySource).toEqual({ 'no-change': 0, published: 3 });
+    expect(first.proposed!.filter(p => p.queued)).toHaveLength(3);
+    expect(first.proposed!.every(p => p.refused === null)).toBe(true);
+    expect(await dropFiles('claude')).toHaveLength(3);
+    const second = await run({ queuedWork: undefined });
+    expect(second.candidates).toEqual([]);
+    expect(second.proposed).toEqual([]);
+    expect(await dropFiles('claude')).toHaveLength(3);
+  });
+
+  it('caps new drops per tick, with a flag value that wins over the default', async () => {
+    await publish('JOBP', LOG);
+    const capped = await run({ maxNew: 2 });
+    expect(capped.proposed!.filter(p => p.queued)).toHaveLength(2);
+    expect(capped.proposed!.find(p => !p.queued)!.skipped).toBe('already 2 new jobs this tick');
+    expect(maxNewFromEnv({ ASHLR_GAPS_MAX: '5' })).toBe(5);
+    expect(maxNewFromEnv({ ASHLR_GAPS_MAX: 'lots' })).toBe(3);
+    expect(maxNewFromEnv({})).toBe(3);
+  });
+
+  it('reads the notes of a published job, and skips a job whose publish record is empty', async () => {
+    await publish('JOBN', 'quiet\n');
+    await mkdir(join(wt, 'JOBN'), { recursive: true });
+    await writeFile(join(wt, 'JOBN', 'BRIDGE_NOTES.md'), '## Not done\n- Wire the digest into the weekly report\n');
+    await writeFile(join(root, 'JOBE.publish'), 'RESULT EMPTY\n');
+    await utimes(join(root, 'JOBE.publish'), (NOW - 3_600_000) / 1000, (NOW - 3_600_000) / 1000);
+    await writeFile(join(root, 'JOBE.log'), '**Remaining gaps**\n- Print the queue depth in the status line\n');
+    const report = await run();
+    expect(report.publishedScanned).toBe(1);
+    expect(report.candidates.map(c => [c.sourceJob, c.source])).toEqual([['JOBN', 'published']]);
+  });
+
+  it('never writes lane claude for a gap that names a gh command', async () => {
+    await publish('JOBG', '**Remaining gaps**\n- Check open work with `gh pr list` before the next run\n');
+    const report = await run();
+    expect(report.proposed).toMatchObject([{ queued: true, refused: null }]);
+    const files = await dropFiles('claude');
+    expect(files).toHaveLength(1);
+    // The drop directory is shared; the header line carries the lane.
+    expect((await readFile(join(root, dropDir, 'claude', files[0]!), 'utf8')).split('\n')[0]).toBe('#job repo=phantom lane=codex-personal tier=work');
+  });
+
+  it('skips a gap whose title the host ingest already accepted', async () => {
+    await publish('JOBP', LOG);
+    const report = await run({ ingestedTitles: async () => ['Goal: Add a retry flag to the export command'] });
+    expect(report.dropped.filter(d => d.reason === 'ingested')).toHaveLength(1);
+    expect(report.proposed!.filter(p => p.queued)).toHaveLength(2);
+  });
+
+  it('takes --max on the command line and rejects a bad one', async () => {
+    const seen: unknown[] = [];
+    const read = async (_h: number, _p: boolean, max?: number) => { seen.push(max); return readJobGaps(24, { runsDir: join(root, 'nope'), wtDir: wt, now: NOW, ...none }); };
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await cmdJobsGaps(['--propose', '--max', '2'], read);
+    expect(seen).toEqual([2]);
+    expect(await cmdJobsGaps(['--max', 'many'], read)).toBe(2);
   });
 });
