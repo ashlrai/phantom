@@ -9,16 +9,17 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 const usage = `Usage: phm asks [--json]
        phm asks list [--json]
        phm asks answer <id> <reply> [--json]
-       phm asks add <kind> "<one-line request>" [--subject <name>] [--unblocks "<what it unblocks>"] [--json]
+       phm asks add <kind> "<one-line request>" [--subject <name>] [--unblocks "<what it unblocks>"] [--expires <UTC time>] [--json]
        phm asks usage [<pool>] [--json]
 Things only Mason can do (a password, a 2FA code, a device approval, a payment, a message to someone outside the team,
 his usage percent for a lane, a yes or no on spending a credit), each answered with one word or one number.
   phm asks list         one batch, oldest first, same question merged, with each allowed answer (--json: schema asks.batch.v1)
-  phm asks              list open asks: short id, kind, age and the request (--json: schema asks.v1)
+  phm asks              list open asks, soonest expiry first (unknown expiry last, expired hidden): short id, kind, age,
+                        the request, why it matters and each allowed answer (--json: schema asks.v1)
   answer <id> <reply>   record the reply once (yes, no, done or later; a number 0-100 for a usage ask), with source cli and the
                         time, in the answers ledger; a repeat changes nothing; a reply the ask does not accept records nothing
   add <kind> <request>  raise an ask; kinds: password, 2fa, device, payment, outreach, usage (needs --subject <pool>), approval;
-                        never put the secret itself in the request
+                        never put the secret itself in the request; --expires 2026-11-24T00:00:00Z hides it after that time
   usage [<pool>]        Mason's latest stated usage for a pool (default grok-ultra), with its time and age (--json: asks.usage.v1)
 An approval answer is a record only: nothing is spent and no billing call is made.
 Anything that is not one of the kinds is refused: the fleet decides this itself.
@@ -69,9 +70,9 @@ export async function cmdAsks(args: string[], deps: AsksCliDeps = {}): Promise<n
     return 0;
   }
   if (rest[0] === 'add' && rest.length >= 3) {
-    const subject = flagValue(rest, '--subject'), unblocks = flagValue(subject.rest, '--unblocks');
-    const raised = (deps.raise ?? raiseAsk)(unblocks.rest[1]?.toLowerCase(), unblocks.rest.slice(2).join(' '), options,
-      { ...(subject.value ? { subject: subject.value } : {}), ...(unblocks.value ? { unblocks: unblocks.value } : {}) });
+    const subject = flagValue(rest, '--subject'), unblocks = flagValue(subject.rest, '--unblocks'), expires = flagValue(unblocks.rest, '--expires');
+    const raised = (deps.raise ?? raiseAsk)(expires.rest[1]?.toLowerCase(), expires.rest.slice(2).join(' '), options,
+      { ...(subject.value ? { subject: subject.value } : {}), ...(unblocks.value ? { unblocks: unblocks.value } : {}), ...(expires.value ? { expires: expires.value } : {}) });
     print(json, raised, raised.ok ? `${raised.duplicate ? 'Already asked' : 'Asked'}: ${raised.id}` : `Not asked: ${raised.reason}.`.replace(/\.\.$/, '.'));
     return raised.ok ? 0 : 1;
   }
