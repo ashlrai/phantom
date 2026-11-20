@@ -13,7 +13,11 @@
  *               reply cites (`phm comms thread`), the same awaiting-reply mark
  *               `comms status` counts, act: `phm comms send-owner --reply-to`.
  *   drafts      outbound email drafts still pending approval
- *               (`phm drafts list --status pending`), act: show/approve/reject.
+ *               (`phm drafts list --status pending`), act: show/approve/reject —
+ *               plus pending Comms-agent reply drafts that have no cos mirror
+ *               (every non-email transport, or an email mirror that failed to
+ *               write; a mirrored copy already lists through the cos draft, so
+ *               one pending reply is one item), act: `phm comms-agent drafts`.
  *   bus         live envelopes whose body the claim contract accepts
  *               (`isClaimableWork`: a `kind:'work'` body, or a protocol-v1
  *               transport `task` body) with no live claim row — an expired
@@ -122,6 +126,7 @@ import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } f
 import { coordinationRowBlocks, listCoordination } from '../agents/claim-store.js';
 import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, type TeamApprovalItem } from '../approvals/surface.js';
 import { listDrafts, type Draft } from '../cos/drafts.js';
+import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
@@ -205,6 +210,8 @@ export interface UnifiedInboxOptions {
   readNeeds?: (options: { runsDir?: string }) => NeedsMasonReadResult;
   readTexts?: typeof readTeammateTexts;
   listPendingDrafts?: typeof listDrafts;
+  /** Comms-agent draft store seam; default reads `<runsDir>/comms-agent/drafts.jsonl`. */
+  listCommsDrafts?: (runsDir: string) => Promise<CommsDraft[]>;
   listBus?: typeof listBusInboxAfter;
   inspectBus?: typeof inspectBusInbox;
   readClaims?: (root?: string) => BusWorkClaimsInspection;
@@ -296,25 +303,63 @@ function ownerThreadItems(read: NonNullable<UnifiedInboxOptions['readOwnerAwaiti
   return { report: { state: 'healthy', pending: items.length }, items };
 }
 
-async function draftItems(list: typeof listDrafts, runsDir: string | undefined): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
+async function draftItems(
+  list: typeof listDrafts,
+  listComms: (runsDir: string) => Promise<CommsDraft[]>,
+  runsDir: string | undefined,
+): Promise<{ report: UnifiedInboxSourceReport; items: Omit<UnifiedInboxItem, 'priority'>[] }> {
   // An absent store reads as an empty list; only a read failure is 'unavailable'.
+  // The cos read keeps every status: an approved or rejected copy of a
+  // comms-agent email draft still means the owner decided it, so it must
+  // suppress the comms-agent record below.
   let drafts: Draft[] = [];
   let state: UnifiedInboxSourceState = 'healthy';
-  try { drafts = await list({ runsDir, status: 'pending' }); } catch { state = 'unavailable'; }
-  const items = drafts.map((draft): Omit<UnifiedInboxItem, 'priority'> => ({
-    id: `drafts:${draft.id}`,
-    source: 'drafts',
-    kind: 'draft-approval',
-    severity: 'info',
-    // The outbound send is held until the owner decides.
-    blocking: true,
-    title: oneLine(`Approve outbound email to ${draft.to}`, TITLE_MAX),
-    detail: cap(`${draft.subject || '(no subject)'} · digest ${draft.digest.slice(0, 12)}`, DETAIL_MAX),
-    since: draft.createdAt,
-    expiresAt: null,
-    act: [`phm drafts show ${draft.id}`, `phm drafts approve ${draft.id}`, `phm drafts reject ${draft.id}`],
-  }));
-  return { report: { state, pending: items.length }, items };
+  try { drafts = await list({ runsDir }); } catch { state = 'unavailable'; }
+  const pendingCos = drafts.filter(draft => draft.status === 'pending');
+  const mirrored = new Set(
+    drafts.map(draft => draft.source)
+      .filter(source => source.startsWith('comms-agent:'))
+      .map(source => source.slice('comms-agent:'.length)),
+  );
+  const commsDir = runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  let commsDrafts: CommsDraft[] = [];
+  let commsFailed = false;
+  try { commsDrafts = await listComms(commsDir); } catch { commsFailed = true; }
+  const items = [
+    ...pendingCos.map((draft): Omit<UnifiedInboxItem, 'priority'> => ({
+      id: `drafts:${draft.id}`,
+      source: 'drafts',
+      kind: 'draft-approval',
+      severity: 'info',
+      // The outbound send is held until the owner decides.
+      blocking: true,
+      title: oneLine(`Approve outbound email to ${draft.to}`, TITLE_MAX),
+      detail: cap(`${draft.subject || '(no subject)'} · digest ${draft.digest.slice(0, 12)}`, DETAIL_MAX),
+      since: draft.createdAt,
+      expiresAt: null,
+      act: [`phm drafts show ${draft.id}`, `phm drafts approve ${draft.id}`, `phm drafts reject ${draft.id}`],
+    })),
+    // Comms-agent reply drafts that never reached the cos store (every
+    // non-email transport, or an email mirror that failed to write) still
+    // wait on the owner, so they list here too — one pending reply, one item.
+    // The recipient stays out of the item: it can be a handle.
+    ...commsDrafts
+      .filter(draft => draft.status === 'pending' && !mirrored.has(draft.id))
+      .map((draft): Omit<UnifiedInboxItem, 'priority'> => ({
+        id: `drafts:${draft.id}`,
+        source: 'drafts',
+        kind: 'draft-approval',
+        severity: 'info',
+        blocking: true,
+        title: oneLine(`Comms reply draft via ${draft.transport}`, TITLE_MAX),
+        detail: oneLine(draft.subject || '(no subject)', DETAIL_MAX),
+        since: Number.isNaN(Date.parse(draft.createdAt)) ? null : draft.createdAt,
+        expiresAt: null,
+        act: ['phm comms-agent drafts'],
+      })),
+  ];
+  const merged: UnifiedInboxSourceState = state === 'unavailable' ? 'unavailable' : commsFailed ? 'degraded' : 'healthy';
+  return { report: { state: merged, pending: items.length }, items };
 }
 
 /**
@@ -962,7 +1007,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const needs = needsYouItems(options.readNeeds ?? readNeedsMason, options.runsDir);
   const teammates = teammateItems(options.readTexts ?? readTeammateTexts, options.runsDir, now);
   const ownerThread = ownerThreadItems(options.readOwnerAwaiting ?? readOwnerAwaitingReplies, options.runsDir);
-  const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.runsDir);
+  const drafts = await draftItems(options.listPendingDrafts ?? listDrafts, options.listCommsDrafts ?? listCommsAgentDrafts, options.runsDir);
   const bus = busItems(options);
   const conversations = conversationItems(options.readConversations ?? readAgentConversations, options, now, bus.covered);
   const seats = await seatItems(options.readSeatHandoffs ?? planSeatHandoffs, now);

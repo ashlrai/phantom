@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDraft } from '../src/core/cos/drafts.js';
+import { appendDraft as appendCommsDraft, type CommsDraft } from '../src/core/comms-agent/store.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import { emptyOwnerSettings, type OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { acceptOwnerInbound, postOwnerNotice, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
@@ -165,6 +166,42 @@ describe('readUnifiedInbox sources', () => {
       act: [`phm drafts show ${pending.id}`, `phm drafts approve ${pending.id}`, `phm drafts reject ${pending.id}`],
     });
     expect(JSON.stringify(items)).not.toContain('must not appear');
+  });
+
+  it('lists pending comms-agent reply drafts once, deduped against cos mirrors and sent records', async () => {
+    const commsDraft = (id: string, over: Partial<CommsDraft> = {}): CommsDraft => ({
+      id, status: 'pending', transport: 'imessage', recipient: '+1555fake',
+      subject: 'imessage reply', body: 'fake reply body', messageId: 'msg-1',
+      createdAt: new Date(now - 60_000).toISOString(), ...over,
+    });
+    await appendCommsDraft(runsDir, commsDraft('c-aaa'));
+    await appendCommsDraft(runsDir, commsDraft('c-bbb', { transport: 'email', recipient: 'ops@example.com', subject: 'email reply' }));
+    await appendCommsDraft(runsDir, commsDraft('c-ccc', { status: 'sent', resolvedAt: new Date(now).toISOString() }));
+    // The cos mirror of c-bbb — even once decided — still suppresses the
+    // comms-agent record so one pending reply is one item.
+    const mirror = await createDraft({ to: 'ops@example.com', subject: 'email reply', body: 'fake reply body', source: 'comms-agent:c-bbb' }, runsDir);
+    const inbox = await read();
+    const items = inbox.items.filter(i => i.source === 'drafts');
+    expect(items.map(i => i.id).sort()).toEqual([`drafts:${mirror.id}`, 'drafts:c-aaa'].sort());
+    const comms = items.find(i => i.id === 'drafts:c-aaa')!;
+    expect(comms).toMatchObject({
+      kind: 'draft-approval', severity: 'info', blocking: true, priority: 'now',
+      title: 'Comms reply draft via imessage',
+      detail: 'imessage reply',
+      act: ['phm comms-agent drafts'],
+    });
+    // The recipient can be a handle: it never reaches the item.
+    expect(JSON.stringify(items)).not.toContain('+1555fake');
+    expect(inbox.sources.drafts).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('reports the drafts source degraded when the comms-agent draft store cannot be read', async () => {
+    const inbox = await readUnifiedInbox({
+      runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      listCommsDrafts: async () => { throw new Error('unreadable'); },
+    });
+    expect(inbox.sources.drafts.state).toBe('degraded');
   });
 
   it('lists live unclaimed work envelopes and hides claimed, completed, expired and non-work records', async () => {
