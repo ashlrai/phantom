@@ -149,6 +149,16 @@ export function pulsing(edge: LiveMapEdge, map: FleetLiveMap, now: number, reduc
   return age <= map.pulseSeconds * 1000 && age >= -map.pulseSeconds * 1000;
 }
 
+/**
+ * How solid a message line draws: 1 for a message just now, falling in a straight line to 0.25 at the
+ * edge of the window. A line with no known time stays at 0.6 (unknown, not fresh).
+ */
+export function edgeOpacity(edge: LiveMapEdge, map: FleetLiveMap, now: number): number {
+  if (!edge.lastMessageAt) return 0.6;
+  const span = map.windowMinutes * 60_000, age = Math.min(Math.max(now - Date.parse(edge.lastMessageAt), 0), span);
+  return Math.round((1 - 0.75 * (age / span)) * 100) / 100;
+}
+
 /** "2 jobs on 3 computers · 5 messages in 15 minutes", with unknown spelled out. */
 export function mapHeadline(map: FleetLiveMap): string {
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
