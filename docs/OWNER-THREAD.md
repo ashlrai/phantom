@@ -27,6 +27,16 @@ never reported as delivered — and the human `phm comms thread` output appends
 `[channel:state ...]` to outbound lines that have receipts. The receipt journal
 is bounded, so older messages simply have no entry.
 
+The same read reports which live inbound messages still have no recorded
+reply: `awaitingReply` lists their message ids (`m<n>`), or `null` when the
+thread is unreadable — unknown stays unknown, never an empty list. `phm comms
+status` reports the count as `awaitingReply` (`null` when unreadable) and the
+human `phm comms thread` output appends `[awaiting reply]` to those inbound
+lines. A message counts as answered once any recorded outbound reply cites its
+idempotency key — including a reply whose channel deliveries all failed, since
+delivery state stays with the receipts — while proactive notices never clear
+the mark.
+
 ## Rotation, history and pulling
 
 When the live thread passes its message or byte cap it archives the oldest
