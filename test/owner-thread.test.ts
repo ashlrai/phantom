@@ -193,14 +193,16 @@ describe('owner thread', () => {
     expect(readOwnerCommsStatus(options).awaitingReply).toBe(0);
   });
 
-  it('reports awaiting reply as unknown when the thread is unreadable', () => {
+  it('reports awaiting reply and message count as unknown when the thread is unreadable', () => {
     const { options } = fixture();
     mkdirSync(join(options.runsDir, 'leader'), { recursive: true });
     writeFileSync(join(options.runsDir, 'leader', 'owner-thread.json'), 'not json', { mode: 0o600 });
     const view = readOwnerThread(options);
     expect('unavailable' in view).toBe(true);
     expect(view.awaitingReply).toBeNull();
-    expect(readOwnerCommsStatus(options).awaitingReply).toBeNull();
+    const status = readOwnerCommsStatus(options);
+    expect(status.awaitingReply).toBeNull();
+    expect(status.messages).toBeNull();
   });
 
   it('marks unanswered inbound lines in the human thread and status reads', async () => {
