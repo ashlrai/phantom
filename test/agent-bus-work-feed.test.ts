@@ -34,7 +34,8 @@ describe('retained v2 work projection', () => {
     const rows = [receipt(post), ...WORK_STATUSES.map((status, n) => receipt({ kind: 'work.status', jobId: 'job', status }, n + 2))];
     const result = projectBusWorkFeed(rows);
     expect(result).toEqual({ status: 'ok', feed: { v: 2, jobs: [{ id: 'job', owner: 'agent', to: 'leaders', provider: 'devin',
-      repo: 'a/b', title: 'Review', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] } });
+      repo: 'a/b', title: 'Review', claimKeys: ['repo:a/b'], status: 'terminated', updatedAt: 900 }] },
+      citations: new Map([['job', { post: 'm-1', status: 'm-9' }]]) });
     if (result.status !== 'ok') throw new Error('fixture refused');
     expect(workFeedSchema.parse(JSON.parse(JSON.stringify(result.feed)))).toEqual(result.feed);
     expect(rows[0]!.envelope.body).toEqual(post);
@@ -86,7 +87,24 @@ describe('retained v2 work projection', () => {
     expect(projectBusWorkFeed([
       receipt({ arbitrary: 'legacy' }), receipt('legacy string', 2), receipt({ kind: 'peer.message', peer: {} }, 3),
       receipt({ kind: 'work.status', jobId: 'evicted', status: 'done' }, 4), receipt({ kind: 'note', legacy: true }, 5),
-    ])).toEqual({ status: 'ok', feed: { v: 2, jobs: [] } });
+    ])).toEqual({ status: 'ok', feed: { v: 2, jobs: [] }, citations: new Map() });
+  });
+  it('cites the post and newest accepted status envelopes behind each job', () => {
+    const status = (cursor: number, jobId: string, s: string) =>
+      receipt({ kind: 'work.status', jobId, status: s }, cursor);
+    const result = projectBusWorkFeed([
+      status(1, 'job', 'running'),                     // orphan before the post — ignored
+      receipt(post, 2),                                 // m-2 announces 'job'
+      status(3, 'job', 'blocked'),                      // m-3
+      status(4, 'job', 'running'),                      // m-4 — the newest status wins the citation
+      receipt({ ...post, jobId: 'other' }, 5, 'agent', 'agent:worker'), // m-5, no status yet
+      status(6, 'ghost', 'done'),                       // m-6 — orphan, no job behind it
+    ]);
+    if (result.status !== 'ok') throw new Error('fixture refused');
+    expect(result.citations).toEqual(new Map([
+      ['job', { post: 'm-2', status: 'm-4' }],
+      ['other', { post: 'm-5', status: null }],
+    ]));
   });
   it('resolves omitted providers only through explicit participant metadata', () => {
     const { provider: _provider, ...withoutProvider } = post;
