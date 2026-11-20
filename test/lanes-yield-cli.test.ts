@@ -51,4 +51,12 @@ describe('phm lanes yield', () => {
     expect(await cmdLanes(['yield'])).toBe(0);
     expect(out.mock.calls.map(c => c[0])).toContain('claude / md: yield 70% (7 merged of 10 launches), empty 30%; router weight 1.40');
   });
+
+  it('names reverted merges on the plain line and drops them from the yield', async () => {
+    const reverted = `${ledger}\n${JSON.stringify({ event: 'revert', job: 'a0' })}\n${JSON.stringify({ event: 'revert', job: 'a1' })}`;
+    await home(reverted);
+    const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdLanes(['yield'])).toBe(0);
+    expect(out.mock.calls.map(c => c[0])).toContain('claude / md: yield 50% (5 merged of 10 launches, 2 reverted), empty 30%; router weight 1.00');
+  });
 });

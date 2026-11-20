@@ -34,6 +34,8 @@ export interface FamilyYieldRow {
   empty: number;
   prs: number;
   merged: number;
+  /** Launches whose merge was recorded as reverted; never counted in `merged`. */
+  reverted: number;
   merged_per_launch: number;
   /** Sum over runs that reported tokens; null when none did (unknown, not zero). */
   tokens_total: number | null;
@@ -63,6 +65,8 @@ export interface FamilyYieldReport {
   known: boolean;
   launches: number | null;
   merged: number | null;
+  /** Launches whose merge was recorded as reverted; null when the read is unknown. */
+  reverted: number | null;
   wasted_tokens: number | null;
   wasted_tokens_partial: boolean | null;
   /** Families with two or more job ids, most wasted tokens first. */
@@ -110,7 +114,7 @@ export function familyVerdict(row: Pick<FamilyYieldRow, 'finished' | 'merged_per
   return row.merged_per_launch < FAMILY_WATCH_RATE ? 'watch' : 'keep';
 }
 
-const running = (r: YieldRun) => !r.finished && !r.empty && !r.aborted && !r.merged && r.prs.size === 0;
+const running = (r: YieldRun) => !r.finished && !r.empty && !r.aborted && !r.merged && !r.reverted && r.prs.size === 0;
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 /** Sum of the known values; null when there are none but some are unknown. */
 const knownSum = (values: (number | null)[]): number | null => {
@@ -121,6 +125,7 @@ const knownSum = (values: (number | null)[]): number | null => {
 function familyRow(family: string, runs: YieldRun[]): FamilyYieldRow {
   const ended = runs.filter(r => !running(r));
   const merged = runs.filter(r => r.merged).length;
+  const reverted = runs.filter(r => r.reverted).length;
   const measured = runs.filter(r => r.tokens !== null);
   const tokensTotal = measured.length ? sum(measured.map(r => r.tokens!)) : null;
   const tokensUnknown = ended.filter(r => r.tokens === null).length;
@@ -134,6 +139,7 @@ function familyRow(family: string, runs: YieldRun[]): FamilyYieldRow {
     empty: runs.filter(r => r.empty).length,
     prs: sum(runs.map(r => r.prs.size)),
     merged,
+    reverted,
     merged_per_launch: merged / runs.length,
     tokens_total: tokensTotal,
     tokens_unknown: tokensUnknown,
@@ -144,8 +150,8 @@ function familyRow(family: string, runs: YieldRun[]): FamilyYieldRow {
   };
   const verdict = familyVerdict(base);
   const reason = [`${merged} merged of ${base.launches} launch${base.launches === 1 ? '' : 'es'}`,
-    `${base.empty} empty`,
-    wasted === null ? 'wasted tokens unknown' : `${wasted}${base.wasted_tokens_partial ? '+' : ''} tokens on unmerged runs`].join(', ');
+    reverted ? `${reverted} reverted` : '', `${base.empty} empty`,
+    wasted === null ? 'wasted tokens unknown' : `${wasted}${base.wasted_tokens_partial ? '+' : ''} tokens on unmerged runs`].filter(Boolean).join(', ');
   return { ...base, verdict, reason };
 }
 
@@ -169,7 +175,7 @@ export function familyYieldFromRuns(runs: readonly YieldRun[], now: number, hour
   });
   return {
     schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: true,
-    launches: runs.length, merged: runs.filter(r => r.merged).length,
+    launches: runs.length, merged: runs.filter(r => r.merged).length, reverted: runs.filter(r => r.reverted).length,
     wasted_tokens: knownSum(rows.map(r => r.wasted_tokens)),
     wasted_tokens_partial: rows.some(r => r.wasted_tokens_partial || r.wasted_tokens === null),
     families: rows.filter(r => r.jobs > 1), single: rows.filter(r => r.jobs === 1),
@@ -185,7 +191,7 @@ export function familyYield(lines: Iterable<string>, now: number, hours: number)
 }
 
 export function unknownFamilyYield(hours: number): FamilyYieldReport {
-  return { schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: false, launches: null, merged: null,
+  return { schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: false, launches: null, merged: null, reverted: null,
     wasted_tokens: null, wasted_tokens_partial: null, families: [], single: [], stops: [], lanes: [], tiers: [] };
 }
 

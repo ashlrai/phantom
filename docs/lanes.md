@@ -32,7 +32,8 @@ phm lanes yield --json
 12 hours. `phm lanes fit` shows which job kinds a lane should take and which
 to avoid. `phm lanes yield` shows, per lane and size, merged PRs per launch over the
 last 50 jobs, the empty rate and the weight the router uses (1 is neutral; a lane with
-fewer than 10 jobs is unknown and stays neutral). The lane router sends rows bigger
+fewer than 10 jobs is unknown and stays neutral). A merge recorded as reverted
+counts as reverted, never as merged. The lane router sends rows bigger
 than small to lanes at 0.5 or better when they have room, and gives a low-yield lane
 small, test-only rows. All three only read.
 

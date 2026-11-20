@@ -4,11 +4,15 @@
  *
  * Per lane and size (a launch row's `size`, else "unknown"), plus a per-lane
  * "all" row, the window is the lane's last 50 launches. A job's merge and empty
- * finish count once, on its latest launch. Fewer than 10 launches in the window
+ * finish count once, on its latest launch. A merge recorded as reverted
+ * (`hasRevertEvidence`, the router outcome fold's vocabulary) counts as
+ * `reverted`, never as a held merge. Fewer than 10 launches in the window
  * is unknown, and unknown gets the neutral weight 1.
  *
  * weight = yield / 0.5, clamped to 0.1..2, so a yield of 0.5 is exactly neutral.
  */
+import { hasRevertEvidence } from './slot-yield.js';
+
 export const LANE_YIELD_SCHEMA = 'lanes.yield.v1';
 export const YIELD_WINDOW_JOBS = 50;
 export const YIELD_MIN_JOBS = 10;
@@ -24,6 +28,8 @@ export interface LaneYieldRow {
   size: string;
   launches: number;
   merged: number;
+  /** Launches whose merge was recorded as reverted; never counted in `merged`. */
+  reverted: number;
   empty: number;
   /** merged / launches; null below the minimum. */
   yield: number | null;
@@ -55,10 +61,11 @@ export function yieldWeight(yieldRate: number | null): number {
 export function computeLaneYield(ledger: string | null): LaneYieldReport {
   const report: LaneYieldReport = { schema: LANE_YIELD_SCHEMA, known: ledger !== null, windowJobs: YIELD_WINDOW_JOBS, minJobs: YIELD_MIN_JOBS, highYield: YIELD_HIGH, rows: [] };
   if (ledger === null) return report;
-  type Launch = { lane: string; size: string; at: number; seq: number; merged: boolean; empty: boolean };
+  type Launch = { lane: string; size: string; at: number; seq: number; merged: boolean; reverted: boolean; empty: boolean };
   const launches: Launch[] = [];
   const byJob = new Map<string, Launch[]>();
   const merged = new Set<string>();
+  const reverted = new Set<string>();
   const empty = new Set<string>();
   let seq = 0;
   for (const line of ledger.split('\n')) {
@@ -70,15 +77,19 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
       const lane = text(row.lane);
       if (!lane) continue;
       const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-      const launch: Launch = { lane, size: text(row.size) ?? 'unknown', at: Number.isFinite(at) ? at : 0, seq: seq++, merged: false, empty: false };
+      const launch: Launch = { lane, size: text(row.size) ?? 'unknown', at: Number.isFinite(at) ? at : 0, seq: seq++, merged: false, reverted: false, empty: false };
       launches.push(launch);
       byJob.set(id, [...(byJob.get(id) ?? []), launch]);
-    } else if (row.event === 'outcome' && (row.state === 'MERGED' || row.outcome === 'MERGED')) merged.add(id);
-    else if (row.event === 'finish' && row.empty === true) empty.add(id);
+    } else {
+      if (row.event === 'outcome' && (row.state === 'MERGED' || row.outcome === 'MERGED')) merged.add(id);
+      else if (row.event === 'finish' && row.empty === true) empty.add(id);
+      if (hasRevertEvidence(row)) reverted.add(id);
+    }
   }
   for (const [id, runs] of byJob) {
     const last = runs.reduce((a, b) => (b.at > a.at || (b.at === a.at && b.seq > a.seq) ? b : a));
-    if (merged.has(id)) last.merged = true;
+    if (reverted.has(id)) last.reverted = true;
+    else if (merged.has(id)) last.merged = true;
     else if (empty.has(id)) last.empty = true;
   }
   launches.sort((a, b) => b.at - a.at || b.seq - a.seq);
@@ -92,10 +103,11 @@ export function computeLaneYield(ledger: string | null): LaneYieldReport {
   for (const [key, list] of groups) {
     const [lane, size] = JSON.parse(key) as [string, string];
     const wins = list.filter(l => l.merged).length;
+    const reverted = list.filter(l => l.reverted).length;
     const empties = list.filter(l => l.empty).length;
     const known = list.length >= YIELD_MIN_JOBS;
     const yieldRate = known ? wins / list.length : null;
-    report.rows.push({ lane, size, launches: list.length, merged: wins, empty: empties, yield: yieldRate,
+    report.rows.push({ lane, size, launches: list.length, merged: wins, reverted, empty: empties, yield: yieldRate,
       emptyRate: known ? empties / list.length : null, weight: yieldWeight(yieldRate), known });
   }
   report.rows.sort((a, b) => a.lane.localeCompare(b.lane) || (a.size === 'all' ? -1 : b.size === 'all' ? 1 : a.size.localeCompare(b.size)));

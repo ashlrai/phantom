@@ -107,6 +107,19 @@ describe('familyYield', () => {
       tokens_total: 5_000, wasted_tokens: 2_000, verdict: 'keep' });
   });
 
+  it('counts a merge recorded as reverted as reverted, never as a held merge', () => {
+    const lines = [
+      launch('RQ-REVTEST-1001', 5), finish('RQ-REVTEST-1001', 4.5, { empty: false, tokens_total: 1_000 }),
+      pr('RQ-REVTEST-1001', 7), merged('RQ-REVTEST-1001', 4), row({ job: 'RQ-REVTEST-1001', event: 'revert', ts: at(3) }),
+      launch('RQ-REVTEST-1002', 3), finish('RQ-REVTEST-1002', 2.5, { empty: true, tokens_total: 500 }),
+    ];
+    const out = familyYield(lines, now, 24);
+    expect(out).toMatchObject({ launches: 2, merged: 0, reverted: 1 });
+    expect(out.families[0]).toMatchObject({ family: 'RQ-REVTEST-*', jobs: 2, launches: 2, finished: 2, empty: 1, prs: 1, merged: 0, reverted: 1,
+      merged_per_launch: 0, wasted_tokens: 1_500, verdict: 'watch',
+      reason: '0 merged of 2 launches, 1 reverted, 1 empty, 1500 tokens on unmerged runs' });
+  });
+
   it('shows a merged job with no token count as unknown, not zero', () => {
     expect(family('RQ-CL-DESK-*')).toMatchObject({ merged: 1, tokens_total: 5_000, tokens_unknown: 1, tokens_per_merged: null, wasted_tokens: 5_000 });
     const lone = familyYield([launch('RQ-CL-DESK-1', 2), pr('RQ-CL-DESK-1', 9), merged('RQ-CL-DESK-1', 1)], now, 24).single[0]!;
@@ -147,11 +160,11 @@ describe('phm fleet yield --json', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetYield(['--hours', '24', '--json', '--metrics', path], undefined, now)).toBe(0);
     const json = JSON.parse(String(log.mock.calls[0]![0])) as Record<string, unknown>;
-    expect(Object.keys(json).sort()).toEqual(['families', 'known', 'lanes', 'launches', 'merged', 'schema', 'single', 'stops', 'tiers',
+    expect(Object.keys(json).sort()).toEqual(['families', 'known', 'lanes', 'launches', 'merged', 'reverted', 'schema', 'single', 'stops', 'tiers',
       'version', 'wasted_tokens', 'wasted_tokens_partial', 'window_hours']);
     const rows = json.families as Record<string, unknown>[];
     expect(Object.keys(rows[0]!).sort()).toEqual(['empty', 'family', 'finished', 'jobs', 'last_seen', 'launches', 'merged', 'merged_per_launch',
-      'prs', 'reason', 'tokens_per_merged', 'tokens_total', 'tokens_unknown', 'verdict', 'wasted_tokens', 'wasted_tokens_partial']);
+      'prs', 'reason', 'reverted', 'tokens_per_merged', 'tokens_total', 'tokens_unknown', 'verdict', 'wasted_tokens', 'wasted_tokens_partial']);
     expect(json.stops).toEqual([expect.objectContaining({ family: 'RQ-PHX-RECUT*C*', pattern: '^RQ-PHX-RECUT[A-Z]+C[0-9]+$', reason: 'yield_1of7_empty6' })]);
     expect(json.lanes).toEqual([expect.objectContaining({ name: 'claude', launches: 14 })]);
   });
