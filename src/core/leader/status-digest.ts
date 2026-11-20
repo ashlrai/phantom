@@ -44,6 +44,8 @@ export interface StatusDigestInput {
   blocker?: DigestBlocker;
   /** `supply_low: Claude (0 queued, 16% left): add work` when a pool at risk of waste has under an hour of work queued; absent otherwise. */
   supplyLine?: string;
+  /** `yield_low: filler: 2 merged of 40 launches, consider stopping it`: the worst source over 24 hours; absent when none can be judged. */
+  yieldLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -105,6 +107,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
   if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
   if (input.supplyLine) lines.push(input.supplyLine);
+  if (input.yieldLine) lines.push(input.yieldLine);
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;

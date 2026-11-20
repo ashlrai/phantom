@@ -3,6 +3,7 @@
  * dir lane state, merge truth, release facts, NEEDS-MASON, MASON-INBOX); any
  * reader that throws or reports itself unavailable becomes an "unknown" fact.
  */
+import { join } from 'node:path';
 import { readInstalledBundleVersion, versionNewer } from '../app-update-status.js';
 import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
 import { gatherBriefFacts, type BriefFacts } from '../comms/leader-brief.js';
@@ -38,6 +39,8 @@ export interface StatusDigestSources {
   /** The single biggest cost in the last hour (asleep, host load, empty queue, drained pool, low disk); lanes are the ones the digest already read. */
   /** The `supply_low` line when a pool at risk of waste has under an hour of work queued; null when none or unknown. */
   supplyLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The worst source's yield line (merged of launches in the last 24 hours); null when no source can be judged or the ledger is unknown. */
+  yieldLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
@@ -70,6 +73,10 @@ const defaults: StatusDigestSources = {
   supplyLine: async (runsDir, nowMs) => {
     const { readQueueSupply, supplyLowLine } = await import('../fleet/queue-supply.js');
     return supplyLowLine(await readQueueSupply({ runsDir, now: () => nowMs }));
+  },
+  yieldLine: async (runsDir, nowMs) => {
+    const { readYieldBy, yieldDigestLine } = await import('../fleet/yield-by.js');
+    return yieldDigestLine(await readYieldBy({ by: 'source', now: nowMs, metrics: join(runsDir, 'metrics', 'jobs.jsonl'), queue: join(runsDir, 'queue', 'router-queue.md') }));
   },
   blocker: readBlocker,
 };
@@ -174,7 +181,8 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
   const gap = await fact(() => src.gapLine?.(runsDir, nowMs) ?? null, 'gap check failed');
   const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
   const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
+  const yieldFact = await fact(() => src.yieldLine?.(runsDir, nowMs) ?? null, 'yield check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }

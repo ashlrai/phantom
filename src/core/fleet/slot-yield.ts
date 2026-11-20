@@ -146,10 +146,15 @@ interface Run {
   finished: boolean; empty: boolean; aborted: boolean;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean;
+  /** Epoch ms of the MERGED outcome row credited to this run; null when the row has no usable time. */
+  mergedAt: number | null;
+  /** The launch row's `src` (else `producer`) tag; null when it has none. */
+  src: string | null;
 }
 
 const word = (value: unknown): string =>
   typeof value === 'string' && /^[\w.:@/-]{1,80}$/.test(value.trim()) ? value.trim() : 'unknown';
+const srcTag = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.trim()) ? value.trim() : null;
 const count = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
@@ -278,15 +283,17 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
   if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
   const start = now - hours * 3_600_000;
   const byJob = new Map<string, Run[]>();
-  const outcomes = new Map<string, string>();
+  const outcomes = new Map<string, { state: string; at: number }>();
   const skips = new Map<string, { repo: string; rows: number }>();
   /** Credit each MERGED job once. Safe to repeat. */
   const settle = (): Run[] => {
-    for (const [job, state] of outcomes) {
+    for (const [job, { state, at }] of outcomes) {
       if (state !== 'MERGED') continue;
       const runs = byJob.get(job)!;
       const withPr = runs.filter(r => r.prs.size > 0);
-      (withPr[withPr.length - 1] ?? runs[runs.length - 1]!).merged = true;
+      const run = withPr[withPr.length - 1] ?? runs[runs.length - 1]!;
+      run.merged = true;
+      run.mergedAt = Number.isFinite(at) && at >= run.at ? at : null;
     }
     return [...byJob.values()].flat();
   };
@@ -307,7 +314,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       const runs = byJob.get(job);
       if (row.event === 'launch') {
         if (!Number.isFinite(at) || at > now) return;
-        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
+        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false, mergedAt: null, src: srcTag(row.src) ?? srcTag(row.producer) };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
@@ -336,7 +343,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         else if (kind === 'empty') run.empty = true;
         else if (kind.startsWith('abort')) run.aborted = true;
       } else if (row.event === 'outcome') {
-        outcomes.set(job, word(row.state).toUpperCase());
+        outcomes.set(job, { state: word(row.state).toUpperCase(), at });
       }
     },
     runs: settle,

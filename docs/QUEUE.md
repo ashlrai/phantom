@@ -934,6 +934,17 @@ are counted by the lane on their queue row, so a job not yet placed on a lane is
 The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
 medium) has under an hour of work queued.
 
+## Which producer earns its slots?
+
+Run `phm jobs yield --by source` for a scoreboard per producer over the last 24 hours (`--since 7d` for a week). Each row
+has launches, PRs opened, merged, empty, aborted, merged per launch and median minutes to merge; the lowest merged per
+launch comes first, under one plain verdict line such as "filler: 2 merged of 40 launches, consider stopping it". A job's
+source is its `src=` tag on the queue line, else its id prefix: `leader` (ids ending `N<day><letter>Q8`), `core`
+(`RQ-PHX-`), `cl-stream` (`RQ-CL-`), `guardian` (`FIXUP-`), `filler` (one-test ids such as `RQ-MD3A111800Q8`), or `other`.
+`--by lane` ranks lanes the same way; `--by family` is the per-job-kind view with keep, watch and stop verdicts, which is
+also the default. `--json` returns `jobs.yield-by.v1`. A median that cannot be worked out is `null`, shown as unknown. A
+source needs 5 launches before it is judged. The hourly digest adds a `yield_low` line carrying the worst source.
+
 ## Waiting to launch
 
 Run `phm queue stuck --json` to list READY router jobs without a recorded launch. `age_s` uses the enqueue epoch, or the first timestamped dispatch event for the job; `age: "unknown"` means neither is available. If dispatch events are unavailable, `eventsAvailable` is false and the list may include jobs that have launched. The desktop Queue view shows the same reading. The dispatch-events log is append-only and unbounded, so it is folded line by line: memory stays flat however large the log grows, and every event still counts.
