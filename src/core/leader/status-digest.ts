@@ -44,6 +44,8 @@ export interface StatusDigestInput {
   blocker?: DigestBlocker;
   /** `supply_low: Claude (0 queued, 16% left): add work` when a pool at risk of waste has under an hour of work queued; absent otherwise. */
   supplyLine?: string;
+  /** The top waste alert (`pools.waste.v1`): "Gemini: 85% will go unused in 5 h. Sign in to Gemini once: run gemini in a terminal."; absent when none. */
+  wasteLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -78,6 +80,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   const blocker = input.blocker && input.blocker.kind !== 'none' ? input.blocker : undefined;
   const lines = [
     ...(blocker ? [blocker.sentence] : []),
+    ...(input.wasteLine ? [input.wasteLine] : []),
     `App: installed ${show(input.installedVersion, v => v)} · published ${show(input.publishedVersion, v => v)}${pending}`,
     `Merges: ${show(input.mergesLastHour, n => `${n} in the last hour`)} · ${show(input.mergesLast24h, n => `${n} in the last 24h`)}`,
     `Lanes: ${lanes}`,
