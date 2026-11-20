@@ -16,6 +16,15 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.51](https://github.com/ashlrai/phantom/compare/v3.30.50...v3.30.51) (2026-11-20)
+
+
+### Changes
+
+* **RQ-CL-DESK-1795215616:** ([#7651](https://github.com/ashlrai/phantom/issues/7651)) ([f96499c](https://github.com/ashlrai/phantom/commit/f96499c11fd5cfb12f6864656690c0406bcc1ed5))
+* **RQ-CL-DESK2-1795215642:** ([#7653](https://github.com/ashlrai/phantom/issues/7653)) ([b0c45f0](https://github.com/ashlrai/phantom/commit/b0c45f0a66e2a3ed5546fa5f83b49e08203a0c62))
+* **RQ-CL-DESK2-1795216377:** ([#7654](https://github.com/ashlrai/phantom/issues/7654)) ([489a074](https://github.com/ashlrai/phantom/commit/489a074248ffd35346db22b8a37f0eff465676ba))
+
 ## [Unreleased]
 
 ### Since v3.30.40
