@@ -23,7 +23,12 @@
  *               rescheduled `work.post` announcements with at least one claim
  *               key not fully held), read through the same projection
  *               `phm agents bus work feed` serves — act:
- *               `phm agents bus claim acquire`. When the claims table itself
+ *               `phm agents bus claim acquire` — and every live
+ *               `worker-handoff` envelope (`isWorkerHandoffBody`, the exact
+ *               contract `fleet handoff-receive`/`handoff-reply` accept), so a
+ *               pending assignment surfaces here instead of only in
+ *               `agents bus work mine` — act: `phm fleet handoff-receive`.
+ *               When the claims table itself
  *               cannot be read the section reports 'degraded' and still lists
  *               candidates rather than hiding possibly unclaimed work; a
  *               refused or unreadable feed degrades it the same way.
@@ -53,6 +58,7 @@ import { listDrafts, type Draft } from '../cos/drafts.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, isClaimableWork, type BusPriority } from '../fleet/bus-envelope.js';
+import { isWorkerHandoffBody } from '../fleet/handoff-body.js';
 import { inspectBusWorkClaims, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import { readNeedsMason, type NeedsMasonItem, type NeedsMasonReadResult } from '../fleet/needs-mason-resolve.js';
 import { gmailArchivePlanLatestPath, readGmailArchivePlanLatest } from './gmail-archive-plan-latest.js';
@@ -67,7 +73,7 @@ const SUGGESTED_LEASE_MS = 600_000;
 
 export type UnifiedInboxSource = 'needs-you' | 'imessage' | 'drafts' | 'bus' | 'gmail' | 'linkedin';
 export type UnifiedInboxSourceState = 'healthy' | 'missing' | 'degraded' | 'unavailable';
-export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'draft-approval' | 'bus-work' | 'gmail-over-target' | 'linkedin-message';
+export type UnifiedInboxKind = 'needs-you' | 'teammate-text' | 'draft-approval' | 'bus-work' | 'bus-handoff' | 'gmail-over-target' | 'linkedin-message';
 
 export interface UnifiedInboxItem extends AttentionItem {
   /** Stable, namespaced: `<source>:<ref>` (e.g. `drafts:d-0123…`). */
@@ -335,6 +341,28 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
             expiresAt: now + envelope.ttl,
           });
         }
+      }
+      // A live worker-handoff is a pending assignment, not claimable work:
+      // receiving it runs `fleet handoff-receive`/`handoff-reply`, which check
+      // no claims, so it lists regardless of hold state until its TTL ends.
+      // The title matches the shared bus composer (`handoff task <id>: <prompt>`).
+      if (isWorkerHandoffBody(envelope.body)) {
+        items.push({
+          id: `bus-handoff:${envelope.id}`,
+          source: 'bus',
+          kind: 'bus-handoff',
+          severity: envelope.priority === 'P0' ? 'high' : envelope.priority === 'P1' ? 'warn' : 'info',
+          blocking: false,
+          title: oneLine(`handoff task ${envelope.body.taskId}: ${envelope.body.prompt}`, TITLE_MAX),
+          detail: cap(`from ${envelope.from} to ${envelope.to} · ${envelope.priority} · cursor ${receipt.cursor}`, DETAIL_MAX),
+          since: iso(receipt.receivedAt),
+          expiresAt: iso(now + envelope.ttl),
+          act: [
+            `phm fleet handoff-receive --id ${envelope.id} --to ${envelope.to} --snapshot <abs-json> -- <program> [args...]`,
+            `phm agents bus show ${envelope.id}`,
+          ],
+        });
+        continue;
       }
       if (!isWorkReceipt(receipt) || taken(receipt)) continue;
       const text = body !== null && typeof body === 'object' && !Array.isArray(body) && typeof body.text === 'string'
