@@ -130,7 +130,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   job: ['cost', '--help'],
   admission: ['explain', '--json', '--help'],
   benchmark: ['run', '--compare-reports', 'help'],
-  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
+  metrics: ['summary', 'dashboard', 'record', 'recommend', 'ingest', 'levers', 'leverage', 'leverage-mix', 'idle', 'impact', 'prod', 'loop', 'help'],
   plan: ['check', 'dup', 'help'],
   bets: ['check', 'propose', 'list', 'launch', 'score', 'kill', 'help'],
   config: ['get', 'set', 'path', 'effective'],
