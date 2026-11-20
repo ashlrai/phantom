@@ -250,11 +250,17 @@ export const noteBodySchema = z.object({
 export const contextBodySchema = z.object({
   kind: z.literal('context'), text, thread: label.optional(), refs: refs.optional(),
 }).strict();
+/** The optional dispatch spec a work.post may carry; the feed job keeps it verbatim. */
+export const workDispatchSchema = z.object({
+  tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+  scope: text.max(4000), acceptance: text.max(2000),
+}).strict();
+export type WorkDispatch = z.infer<typeof workDispatchSchema>;
+
 export const workPostBodySchema = z.object({
   kind: z.literal('work.post'), jobId, title: z.string().min(1).max(256), provider: providerSchema.optional(),
   repo: repoSlug, claimKeys: z.array(claimKeySchema).max(16),
-  dispatch: z.object({ tier: z.enum(['fast', 'mid', 'work', 'frontier']),
-    scope: text.max(4000), acceptance: text.max(2000) }).strict().optional(),
+  dispatch: workDispatchSchema.optional(),
 }).strict();
 export const workResultBodySchema = z.object({
   kind: z.literal('work.result'), jobId, claimKey: claimKeySchema,
@@ -296,6 +302,9 @@ export const workJobSchema = z.object({
   to: label,
   provider: providerSchema,
   repo: repoSlug,
+  /** The announcement's own title and optional dispatch spec, carried so the feed names the work. */
+  title: z.string().min(1).max(256),
+  dispatch: workDispatchSchema.optional(),
   claimKeys: z.array(claimKeySchema).max(16),
   status: z.enum(WORK_STATUSES),
   updatedAt: epochMs,

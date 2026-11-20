@@ -161,8 +161,8 @@ export interface BusClaimsOwnerMatch {
   registry: 'missing' | 'available' | 'unavailable';
 }
 
-/** An announced work-feed job a claim's keys overlap; the job's own status, never a guess. */
-export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status'] }
+/** An announced work-feed job a claim's keys overlap; the job's own status and title, never a guess. */
+export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status']; title: string }
 
 /** A live claim plus, when `jobs` was requested and the feed read ok, the jobs it blocks. */
 export type BusClaimsListClaim = CoordinationView & { jobs?: BusClaimJobRef[] };
@@ -231,7 +231,7 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
         ...row,
         jobs: result.jobs
           .filter(job => job.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
-          .map(job => ({ id: job.id, owner: job.owner, status: job.status })),
+          .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title })),
       }));
     }
   }

@@ -227,7 +227,6 @@ function protocolBodyTitle(body: unknown): string | null {
 
 /** Announcement metadata for a v2 work job, read off its live `work.post` receipt. */
 interface BusFeedPost {
-  title: string | null;
   priority: BusPriority;
   receivedAt: number;
   expiresAt: number;
@@ -271,7 +270,9 @@ function busFeedJobItems(options: UnifiedInboxOptions, now: number,
     if (freeKeys.length === 0) continue;
     const claimKey = freeKeys.find(key => key.startsWith('queue:')) ?? freeKeys[0]!;
     const post = posts.get(job.id);
-    const title = post?.title ? oneLine(post.title, TITLE_MAX) : '';
+    // The feed job carries the announcement's own title; the receipt scan only
+    // adds priority and expiry the projection does not keep.
+    const title = oneLine(job.title, TITLE_MAX);
     const heldCount = held?.size ?? 0;
     items.push({
       id: `bus-feed:${job.id}`,
@@ -332,7 +333,6 @@ function busItems(options: UnifiedInboxOptions): { report: UnifiedInboxSourceRep
         const record = body as Record<string, unknown>;
         if (record.kind === 'work.post' && typeof record.jobId === 'string' && !feedPosts.has(record.jobId)) {
           feedPosts.set(record.jobId, {
-            title: typeof record.title === 'string' ? record.title : null,
             priority: envelope.priority,
             receivedAt: receipt.receivedAt,
             // The reader decrements ttl to what remains; expiry is a real deadline.
