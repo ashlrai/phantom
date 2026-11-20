@@ -8,6 +8,7 @@ import { evictAll } from '../../../../data/cache.js';
 import { resetGuard } from '../../shell/guard-store.js';
 import { mockViewport } from '../../shell/viewport.test-support.js';
 import { APPROVALS_PATH } from '../../home/ApprovalsCard.js';
+import { NODES_POOL_PATH } from '../../home/MachinesCard.js';
 import { LEADER_REPLIES_PATH } from '../../home/LeaderRepliesCard.js';
 import { DRIFT_PATH, PULSE_PATH } from '../../home/PulseCard.js';
 import { PULSE_LANES_PATH } from '../../home/PulseStrip.js';
@@ -70,8 +71,8 @@ describe('phone Home', () => {
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect([...container.firstElementChild!.children]).toHaveLength(8);
     expect(checkView('home', 'Home', container).findings).toEqual([]);
-    // One read each for pulse, health, approvals, pools and shipped (one day); the only other reads are the message box's own inbox.
-    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, `${SHIPPED_PATH}?days=1`, '/api/usage/runway'].sort());
+    // One read each for pulse, health, approvals, pools, machines and shipped (one day); the only other reads are the message box's own inbox.
+    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, NODES_POOL_PATH, `${SHIPPED_PATH}?days=1`, '/api/usage/runway'].sort());
     viewport.restore();
   });
 

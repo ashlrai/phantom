@@ -124,6 +124,8 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
       <div className={styles.canvas} style={{ width: layout.width, height: layout.height }}>
         {orgLayout?.boxes.map(box => <div key={box.id} className={styles.group} data-org-group={box.id}
           style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{orgBoxLabel(box)}</span></div>)}
+        {layout.groups?.map(box => <div key={box.id} className={styles.group} data-map-group={box.id} role="group" aria-label={box.label}
+          style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{box.label}</span></div>)}
         <svg className={styles.edges} width={layout.width} height={layout.height} aria-hidden="true">
           {map.edges.map(edge => {
             const a = layout.at.get(edge.from), b = layout.at.get(edge.to);
