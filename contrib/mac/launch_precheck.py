@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 from datetime import datetime
@@ -372,6 +373,48 @@ def precheck(job, repo, prompt, home, runs, runner=run):
     except Exception:
         pass
     return None
+
+
+DUPCHECK_CODE = 14
+_REF = re.compile(r"[A-Za-z0-9_./#@ -]{1,200}")
+_WARN = re.compile(r"Check this first: [\x20-\x7e]{1,400}")
+
+
+def dupcheck(job, repo, prompt_path, home, runs, runner=run):
+    """`phm queue dupcheck <prompt> --gate --json`: ("skip", reason, ref), ("warn", line, "") or None to launch.
+
+    phantom only: the check reads phantom's command list and tree. Fail open on a missing phm, a timeout, an
+    error or anything but the exact answer shape. The reason is fixed; only a validated ref and one validated
+    line cross this boundary, never raw output.
+    """
+    try:
+        phm = shutil.which("phm")
+        if repo != "phantom" or not phm: return None
+        env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
+        env["ASHLR_RUNS_DIR"] = runs
+        r = runner([phm, "queue", "dupcheck", prompt_path, "--gate", "--json"], 10, env=env, cwd=home + "/Projects/ashlrai/" + repo)
+        if r.returncode or len(r.stdout) > 65536: return None
+        g = json.loads(r.stdout)
+        if not isinstance(g, dict) or g.get("schema") != "queue.dupcheck-gate.v1" or g.get("reason") != "already_done": return None
+        if g.get("action") == "skip" and g.get("confidence") == "high":
+            ev = g.get("evidence")
+            ref = ev[0].get("ref") if isinstance(ev, list) and ev and isinstance(ev[0], dict) else ""
+            return ("skip", "dupcheck_already_done", ref if isinstance(ref, str) and _REF.fullmatch(ref) else "")
+        line = g.get("line")
+        if g.get("action") == "warn" and isinstance(line, str) and _WARN.fullmatch(line): return ("warn", line, "")
+    except Exception:
+        pass
+    return None
+
+
+def add_check_line(prompt_path, line):
+    """Append the warning to the job prompt once; a failed write never blocks the launch."""
+    try:
+        with open(prompt_path, "r+") as f:
+            text = f.read()
+            if line not in text: f.write(("" if text.endswith("\n") else "\n") + "\n" + line + "\n")
+    except OSError:
+        pass
 
 
 def park_key(line, prompt):

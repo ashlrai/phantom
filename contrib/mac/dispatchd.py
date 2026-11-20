@@ -1652,7 +1652,7 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import (precheck as shared_precheck, park_key, parked, park,
+from launch_precheck import (precheck as shared_precheck, dupcheck as shared_dupcheck, add_check_line, DUPCHECK_CODE, park_key, parked, park,
                              attempt_identity, empty_reason, read_attempts, with_prompt)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
@@ -1660,6 +1660,9 @@ if not isinstance(park_state, dict): park_state = {}
 
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
+
+def dupcheck_gate(j, repo, pf):
+    return shared_dupcheck(j, repo, pf, H, R, _run)
 
 def market_metric(decision):
     # Separate event stream keeps existing lifecycle consumers compatible.
@@ -2340,6 +2343,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 rest.append(line); continue
             if j in park_state:
                 park_state.pop(j); jsave(PARK_PATH, park_state)
+            if not pc:   # pre-launch dupcheck (phm queue dupcheck --gate): skip a row that is already on master, warn on a likely one
+                dc = dupcheck_gate(j, repo, pf)
+                if dc and dc[0] == "skip":
+                    pc = (DUPCHECK_CODE, dc[1])
+                    metric({"event": "dupcheck_skip", "job": j, "repo": repo, "lane": lane, "reason": dc[1], "evidence": dc[2]})
+                elif dc: add_check_line(pf, dc[1])
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
                 metric({"event": "skipped_empty", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
