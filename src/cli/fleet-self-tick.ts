@@ -107,6 +107,8 @@ interface Dependencies {
   emptyStop?: Partial<Pick<Parameters<typeof import('../core/fleet/empty-family-apply.js').runEmptyApplyTick>[0], 'readOff' | 'readReport'>>;
   /** Worktree reap seams for tests (readers, remover); production reads the real worktrees. */
   worktreeReap?: import('../core/fleet/worktrees.js').WorktreesDeps;
+  /** Asks sync seam for tests; production syncs the real needs-you ledger. */
+  asksSync?: typeof import('../core/fleet/asks-sync.js').syncAsks;
 }
 
 /** The escaped, home-scrubbed spelling of one value for human output. */
@@ -126,7 +128,9 @@ function summary(step: string, report: unknown): string {
     const runs = Array.isArray(autofill?.['runs']) ? autofill['runs'] as Record<string, unknown>[] : [];
     const applied = runs.reduce((sum, r) => sum + (typeof r['applied'] === 'number' ? r['applied'] : 0), 0);
     const base = typeof (row['reason'] ?? row['outcome']) === 'string' ? String(row['reason'] ?? row['outcome']) : '';
-    return runs.length ? `${base}  autofill=${applied} applied across ${runs.length} starved ${runs.length === 1 ? 'lane' : 'lanes'}`.trim() : base;
+    const gaps = autofill?.['gaps'] as Record<string, unknown> | null | undefined;
+    const gapNote = gaps && typeof gaps['queued'] === 'number' ? `  gaps=${gaps['queued']} queued of ${gaps['candidates']}${gaps['unknown'] === true ? ' (some sources unknown)' : ''}` : '';
+    return runs.length ? `${base}  autofill=${applied} applied across ${runs.length} starved ${runs.length === 1 ? 'lane' : 'lanes'}${gapNote}`.trim() : base;
   }
   if (step === 'reset-release') {
     const quota = row['claudeQuota'] as Record<string, unknown> | null | undefined;
@@ -275,6 +279,14 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return await runWorktreeReapTick({ runsDir: root, apply, now: now(), ...(deps.worktreeReap ? { deps: deps.worktreeReap } : {}) });
     } catch { return { state: 'skipped', reason: 'worktree reap failed' }; }
   };
+  // One asks sync per tick: raises the sign-in and expiring-credit asks and closes cleared ones. Never fails the tick.
+  const runAsksSyncStage = async (): Promise<unknown> => {
+    if (!deps.asksSync && root !== join(home, '.ashlr-runs')) return { state: 'skipped', reason: 'custom-runs-dir-no-asks-sync' };
+    try {
+      const { syncAsks } = await import('../core/fleet/asks-sync.js');
+      return await (deps.asksSync ?? syncAsks)({ runsDir: root, now, dryRun: !apply });
+    } catch { return { state: 'skipped', reason: 'asks sync failed' }; }
+  };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
     // plans from is current. It is a sub-stage rather than a new step name so the
@@ -334,11 +346,12 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const autofill = await runAutofillStage();
       const emptyStop = await runEmptyStopStage();
       const worktreeReap = await runWorktreeReapStage();
+      const asksSync = await runAsksSyncStage();
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, worktreeReap, asksSync }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;

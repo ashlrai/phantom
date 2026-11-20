@@ -1028,6 +1028,16 @@ the secret itself in the request. Any other kind is refused: the fleet decides
 this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
 own private chat. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
 
+Nobody has to remember to raise the two common asks. `phm asks sync
+[--dry-run] [--json]` (`asks.sync.v1`) reads the resource ledger and raises one
+ask per pool that is blocked on a one-time sign-in (a `password` ask, answered
+`done` or `later`) or whose credit ends unused with its lane set to zero (a
+`payment` ask, `yes` or `no`). Each expires at the pool's reset or expiry. It
+keeps one open ask per pool, so a re-run adds nothing, and it closes the ask when
+the pool clears. A ledger it cannot read is reported as unknown and nothing is
+raised or closed. It never signs in and never spends. The self-tick runs it once
+per tick (the `asksSync` field of the planner-tick report).
+
 Two kinds carry more than a word. A `usage` ask (`phm asks add usage "<question>"
 --subject grok-ultra --unblocks "<what it frees>"`) takes a percent: `phm asks
 answer <id> 40` stores a usage reading with `source: mason` and its own time in
@@ -1162,3 +1172,8 @@ projects that average forward from the observation time and is compared with
 reset. Zero burn has no exhaustion date; missing observation duration gives
 unknown burn. Expired reset windows and invalid or duplicate evidence degrade
 the metrics slice. Projections are observations and grant no spending authority.
+
+## Daily checks
+- `phm metrics loop` (where the loop waits)
+- `phm map replay --since 6h` (what happened while you were away)
+- `phm asks sync` (the few things only Mason can answer)

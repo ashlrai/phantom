@@ -13,6 +13,7 @@ import type { QueryDef } from '../../../data/queries.js';
 import { formatRelative } from '../autonomy/format.js';
 import { CardNote } from '../command/Surface.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { LeaderBetsCard } from './LeaderBetsCard.js';
 import { isSharedFeedReport, sharedLink } from './feed-model.js';
 import styles from './feed.module.css';
 import compact from '../../../components/layout/compact-view.module.css';
@@ -61,6 +62,7 @@ export function SharedFeed({ visible, now, openPane, openJob }: {
     ? group.filter((entry): entry is FeedGroupEntry => Boolean(entry) && typeof entry.text === 'string' && typeof entry.href === 'string') : [];
 
   return <div className={`${styles.root} ${compact.view}`}>
+    <LeaderBetsCard visible={visible} />
     <div className={styles.filters} role="group" aria-label="Filter the feed">
       {(['all', ...FEED_KINDS] as const).map(id => <button key={id} type="button" className={styles.chip} aria-pressed={kind === id} onClick={() => choose(id)}>
         {id === 'all' ? 'All' : LABEL[id]}

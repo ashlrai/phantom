@@ -1,12 +1,16 @@
+import { isJobControlAction } from '../core/fleet/job-control-types.js';
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by-family [--apply [--dry-run] [--ttl-hours N] | --undo <family>]] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--runs-dir <dir>] [--json]';
+const usage = 'Usage: phm jobs pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>] | phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs cost [--since 24h] [--by lane|model] [--metrics <jobs.jsonl>] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs gaps [--since 24h] [--propose] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by lane|reason] [--record] [--by-family [--apply [--dry-run] [--ttl-hours N] | --undo <family>]] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--since 24h] [--runs-dir <dir>] [--json]';
 export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies: (hours: number) => ReturnType<typeof import('../core/fleet/empty-families.js').readEmptyFamilies> = async hours => (await import('../core/fleet/empty-families.js')).readEmptyFamilies(hours)): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
+  if (isJobControlAction(args[0])) return (await import('./job.js')).cmdJobControl(args[0], args.slice(1), 'jobs');
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
   if (args[0] === 'empty-why') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1), undefined, Date.now(), true);
+  if (args[0] === 'cost') return (await import('./jobs-cost.js')).cmdJobsCost(args.slice(1));
   if (args[0] === 'tokens') return (await import('./jobs-tokens.js')).cmdJobsTokens(args.slice(1));
   if (args[0] === 'producers') return (await import('./jobs-producers.js')).cmdJobsProducers(args.slice(1));
+  if (args[0] === 'gaps') return (await import('./jobs-gaps.js')).cmdJobsGaps(args.slice(1));
   if (args[0] === 'stranded') return (await import('./jobs-stranded.js')).cmdJobsStranded(args.slice(1));
   if (args[0] === 'state') return cmdJobsState(args.slice(1));
   if (args[0] === 'retry-empty') return (await import('./jobs-retry-empty.js')).cmdJobsRetryEmpty(args.slice(1));
@@ -15,10 +19,17 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
   let json = false;
   let family: string | undefined;
   let lane: string | undefined;
+  let by: 'lane' | 'reason' | undefined, record = false;
   let byFamily = false, apply = false, dryRun = false, ttl: number | null = null, undo: string | undefined;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--json') json = true;
     else if (args[i] === '--by-family') byFamily = true;
+    else if (args[i] === '--record') record = true;
+    else if (args[i] === '--by' && by === undefined) {
+      const value = args[++i];
+      if (value !== 'lane' && value !== 'reason') { console.error(usage); return 2; }
+      by = value;
+    }
     else if (args[i] === '--apply' && !apply) apply = true;
     else if (args[i] === '--dry-run' && !dryRun) dryRun = true;
     else if (args[i] === '--ttl-hours' && ttl === null) {
@@ -41,6 +52,7 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
       if (!lane || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(lane)) { console.error(usage); return 2; }
     } else { console.error(usage); return 2; }
   }
+  if (byFamily && (by || record)) { console.error(usage); return 2; }
   if (!byFamily && (apply || dryRun || ttl !== null || undo !== undefined)) { console.error(usage); return 2; }
   if (byFamily && (dryRun || ttl !== null) && !apply) { console.error(usage); return 2; }
   if (byFamily && apply && undo !== undefined) { console.error(usage); return 2; }
@@ -74,7 +86,15 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
   }
   const report = await read(hours, undefined, undefined, undefined, { family, lane, quote: true });
   if (!report) { console.error('Jobs ledger is unreadable.'); return 1; }
+  if (record && report.tagged?.length) {
+    const { runsRoot } = await import('../core/metrics/loop-collect.js');
+    const { recordEmptyTags } = await import('../core/fleet/empty-tags.js');
+    await recordEmptyTags(runsRoot(), report.tagged).catch(() => 0);
+    // A job the pre-launch gate let through that ended already_done: keep it so dupcheck's precision can be measured.
+    await (await import('../core/queue/dupcheck-gate.js')).recordDupcheckOutcomes(runsRoot(), report.tagged).catch(() => 0);
+  }
   if (json) console.log(JSON.stringify(report));
+  else if (by && report.tags) for (const line of (await import('../core/fleet/empty-tags.js')).formatEmptyTags(report.tags, by, hours)) console.log(line);
   else if (report.total === 0) console.log('No empty jobs.');
   else {
     console.log(`${report.total} empty jobs in the last ${hours} hours`);

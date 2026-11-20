@@ -7,6 +7,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { healSource } from './bridge-heal.mjs';
 
 const exec = promisify(execFile);
 export const DISK_FLOOR_BYTES = 20 * 1024 ** 3;
@@ -62,7 +63,7 @@ async function absent(path) {
  * The symlink fallback deliberately shares writes; use only trusted checkouts.
  * Disk-bound launchers set requireClone to fail closed when APFS cloning fails.
  */
-export async function prepareDependencies({ source, target, cloneTimeoutMs = 5000, requireClone = false }, injected = {}) {
+export async function prepareDependencies({ source, target, cloneTimeoutMs = 5000, requireClone = false, heal = false }, injected = {}) {
   const started = performance.now();
   if (typeof requireClone !== 'boolean') throw new Error('requireClone must be a boolean');
   if (!Number.isInteger(cloneTimeoutMs) || cloneTimeoutMs < 1 || cloneTimeoutMs > 10000) {
@@ -82,6 +83,12 @@ export async function prepareDependencies({ source, target, cloneTimeoutMs = 500
     }
   };
   await checkDisk();
+  // Opt-in self-heal: repair a source without working tsgo/eslint once, then clone.
+  let healed;
+  if (heal) {
+    healed = await healSource({ source: sourceRoot }, injected.heal ?? {});
+    if (!healed.ok) (injected.say ?? console.error)(`Worktree has no lint/typecheck:fast: the source checkout is not repaired (${healed.reason}).`);
+  }
   const modules = join(sourceRoot, 'node_modules');
   // Clone a concrete tree. Following a source link could import a different
   // installation than the manifests just checked.
@@ -127,7 +134,7 @@ export async function prepareDependencies({ source, target, cloneTimeoutMs = 500
       await rm(lock, { recursive: true, force: true });
     }
   }
-  return { method, durationMs: Math.round(performance.now() - started) };
+  return { method, durationMs: Math.round(performance.now() - started), ...(healed && { heal: healed.action }) };
 }
 
 function isMain() {
@@ -147,7 +154,7 @@ if (process.argv[1] && isMain()) {
     console.error('Usage: node scripts/bridge-worktree.mjs [--require-clone] SOURCE_CHECKOUT TARGET_WORKTREE');
     process.exitCode = 2;
   } else {
-    try { console.log(JSON.stringify(await prepareDependencies({ source, target, requireClone }))); }
+    try { console.log(JSON.stringify(await prepareDependencies({ source, target, requireClone, heal: true }))); }
     catch (error) {
       // Do not print child-process stderr or arbitrary filesystem content.
       console.error(`Bridge dependency preparation failed: ${error.code ?? 'validation-or-disk-floor'}`);

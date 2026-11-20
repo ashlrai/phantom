@@ -8,6 +8,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
 import { parseSince } from '../fleet/agent-messages.js';
 import { readReceipts } from '../leader/delivery-receipts.js';
+import type { LeaderBriefV1 } from '../fleet/leader-job-brief.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
@@ -20,6 +21,8 @@ export const VERSE_OWNER_STATUS_PATH = `${VERSE_OWNER_THREAD_PATH}/status`;
 export const VERSE_OWNER_COMMS_LIMITS_PATH = `${VERSE_OWNER_THREAD_PATH}/comms-limits`;
 /** Read-only one-timeline view for the Mason panel: same data as `phm mason thread --json`. */
 export const VERSE_MASON_THREAD_PATH = '/api/verse/comms/mason-thread';
+/** Read-only twin of `phm leader brief --json` for the Leader card: the typed brief, nothing reshaped. */
+export const VERSE_LEADER_BRIEF_PATH = '/api/verse/comms/leader-brief';
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 
@@ -35,6 +38,8 @@ export interface OwnerThreadApiDeps {
   mailbox?: OwnerThreadOptions['mailbox'];
   /** Status brief seam for tests; default is the Leader's instant brief. */
   statusBrief?: () => Promise<string>;
+  /** Leader job brief seam for tests; default is the same read `phm leader brief` makes. */
+  jobBrief?: () => Promise<LeaderBriefV1>;
   /** Clock seam for tests. */
   now?: () => number;
 }
@@ -62,7 +67,7 @@ function parseLimit(raw: string | null): number | null {
 
 export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
-    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH && path !== VERSE_MASON_THREAD_PATH) return false;
+    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH && path !== VERSE_MASON_THREAD_PATH && path !== VERSE_LEADER_BRIEF_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The owner thread is read only here.' });
       return true;
@@ -84,6 +89,16 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
         sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now }));
       } catch {
         sendJson(res, 200, { schema: MASON_THREAD_SCHEMA, unavailable: true });
+      }
+      return true;
+    }
+    if (path === VERSE_LEADER_BRIEF_PATH) {
+      try {
+        // Loaded on first ask: it reads the queue, ledger and pools, which only this route needs.
+        const brief = await (deps.jobBrief ? deps.jobBrief() : (await import('../fleet/leader-job-brief.js')).readJobBrief({ ...(deps.now ? { now: deps.now() } : {}) }));
+        sendJson(res, 200, brief);
+      } catch {
+        sendJson(res, 200, { schema: 'leader.brief.v1', unavailable: true });
       }
       return true;
     }

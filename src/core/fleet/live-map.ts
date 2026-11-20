@@ -56,6 +56,8 @@ export interface LiveMapNode {
   health?: LaneHealth;
   /** Lanes: merged PRs per hour from the lanes read; null when that read had no number. Absent from older servers. */
   mergedPerHour?: number | null;
+  /** Computers: true when it is another Mac, not this one. Absent for this Mac, other kinds and older servers. */
+  remote?: boolean;
   /** Pools: percent of the plan used (0..100); null when no reading. Absent from older servers. */
   usedPct?: number | null;
   /** Jobs: the lane and repo the job reports (null = unknown), and its state in the filter's words. Absent from older servers. */
@@ -156,6 +158,7 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   const rows = [...computers?.nodes ?? []].sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || cmp(a.name, b.name));
   for (const row of rows) {
     const id = node('computer', `computer:${row.name}`, row.name, row.stateCode, row.isSelf ? `${row.state} (this computer)` : row.state);
+    if (!row.isSelf) nodes.get(id)!.remote = true;
     for (const job of row.jobsRunning === 'unknown' ? [] : row.jobsRunning) {
       // A job only the node pool knows about: shown, with its lane unknown.
       const jobId = node('job', `job:${job}`, job, 'running', 'lane unknown', 'unknown');

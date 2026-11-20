@@ -98,6 +98,62 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('channels=2 source=available');
   });
 
+  it('reads a channel transcript with topic and sender filters', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova', '--alias', 'lane-nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'first', '--id', 'rd-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'nova', '--topic', 'deploy', '--text', 'second', '--id', 'rd-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    // Reading needs no identity: the transcript is the shared room history.
+    const page = await run(['channel', 'read', 'release']);
+    expect(page.code).toBe(0);
+    expect(page.json).toMatchObject({ status: 'ok', channel: 'release' });
+    expect(page.json.messages.map((m: { envelope: { id: string }; topic: string; fromAgent: string }) =>
+      `${m.envelope.id}:${m.topic}:${m.fromAgent}`)).toEqual(['rd-1:general:atlas', 'rd-2:deploy:nova']);
+    expect((await run(['channel', 'read', 'release', '--topic', 'deploy'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rd-2']);
+    // --from resolves every label of one identity, aliases included.
+    expect((await run(['channel', 'read', 'release', '--from', 'lane-nova'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rd-2']);
+    expect(await run(['channel', 'read', 'missing'])).toMatchObject({ code: 1, json: { status: 'unknown-channel' } });
+    expect(await run(['channel', 'read', 'release', 'extra'])).toMatchObject({ code: 2 });
+    // Human output prints cursor, priority, topic, id and resolved sender.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'read', 'release', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    expect(text.join('\n')).toContain('#release:deploy rd-2 from nova');
+    expect(text.join('\n')).toContain('nextCursor');
+  });
+
+  it('filters inbox and channel reads by --thread', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'q1', '--thread', 'rq-1', '--id', 't-dm-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'q2', '--thread', 'rq-2', '--id', 't-dm-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 't-dm-3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'c1', '--thread', 'rq-1', '--id', 't-ch-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'c2', '--thread', 'rq-9', '--id', 't-ch-2'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    const inbox = await run(['inbox', 'nova', '--thread', 'rq-1']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['t-dm-1', 't-ch-1']);
+    const channel = await run(['channel', 'read', 'release', '--thread', 'rq-1']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['t-ch-1']);
+    expect((await run(['channel', 'read', 'release', '--thread', 'rq-9'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['t-ch-2']);
+    // A thread label must be a printable v2 label; anything else fails closed.
+    expect(await run(['inbox', 'nova', '--thread', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--thread', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('records repeatable --ref values as v2 note refs on dm and channel post', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -196,7 +252,7 @@ describe('phm agents bus (unified)', () => {
     const withJobs = await run(['claim', 'list', '--jobs']);
     expect(withJobs.json).toMatchObject({ status: 'ok', source: 'available', feed: 'ok' });
     expect(withJobs.json.claims[0].jobs)
-      .toEqual([{ id: 'RQ-FEED', owner: 'agent:atlas', status: 'running' }]);
+      .toEqual([{ id: 'RQ-FEED', owner: 'agent:atlas', status: 'running', title: 'Read me' }]);
     // Without --jobs no feed join or feed state is reported.
     expect(claims.json.feed).toBeUndefined();
     expect(claims.json.claims[0].jobs).toBeUndefined();
@@ -204,7 +260,7 @@ describe('phm agents bus (unified)', () => {
     // Human output shares the fleet feed lines; reads need no identity.
     const text: string[] = [];
     expect(await runAgentsBusUnified(['work', 'feed', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
-    expect(text.join('\n')).toContain('RQ-FEED running owner=agent:atlas to=leaders provider=claude');
+    expect(text.join('\n')).toContain('RQ-FEED running "Read me" owner=agent:atlas to=leaders provider=claude repo=ashlrai/phantom keys=repo:ashlrai/phantom');
     expect(text.join('\n')).toContain('jobs=1 receipts=2 feed=ok');
     const claimText: string[] = [];
     expect(await runAgentsBusUnified(['claim', 'list', '--root', root], t => claimText.push(t), () => {}, {})).toBe(0);
@@ -212,8 +268,55 @@ describe('phm agents bus (unified)', () => {
     expect(claimText.join('\n')).toContain('claims=1 source=available');
     const claimJobsText: string[] = [];
     expect(await runAgentsBusUnified(['claim', 'list', '--jobs', '--root', root], t => claimJobsText.push(t), () => {}, {})).toBe(0);
-    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running)');
+    expect(claimJobsText.join('\n')).toContain('jobs=RQ-FEED(running) "Read me"');
     expect(claimJobsText.join('\n')).toContain('feed=ok');
+  });
+
+  it('claims a work-feed job key in one step and joins it to the feed holds', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',
+      '--repo', 'ashlrai/phantom', '--claim', 'queue:RQ-CLI-CLAIM', '--claim', 'repo:ashlrai/phantom',
+      '--id', 'cli-wc'])).json).toMatchObject({ status: 'posted' });
+
+    // The default resolves the declared queue:<jobId> key; --owner defaults to PHM_AGENT_ID.
+    const claimed = await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--lease-ms', '600000',
+      '--owner', 'worker-1', '--id', 'cli-wc-1']);
+    expect(claimed.code).toBe(0);
+    expect(claimed.json).toMatchObject({ status: 'acquired',
+      job: { id: 'RQ-CLI-CLAIM', owner: 'agent:atlas', status: 'queued', repo: 'ashlrai/phantom' },
+      claim: { claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1', leaseMs: 600000 } });
+    expect(claimed.json.claim.token).toMatch(/^[a-f0-9]{64}$/);
+    // The new hold joins the job on the feed read, owner label and all.
+    const feed = await run(['work', 'feed', '--claims']);
+    expect(feed.json.claims.holds).toEqual([expect.objectContaining({ jobId: 'RQ-CLI-CLAIM',
+      claimKey: 'queue:RQ-CLI-CLAIM', owner: 'worker-1' })]);
+
+    // A second owner conflicts on the same key; --key picks another declared key.
+    const conflict = await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--lease-ms', '600000', '--owner', 'worker-2']);
+    expect(conflict.code).toBe(1);
+    expect(conflict.json).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-CLI-CLAIM' } });
+    expect(JSON.stringify(conflict.json)).not.toContain(claimed.json.claim.token);
+    const other = await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--key', 'repo:ashlrai/phantom',
+      '--lease-ms', '600000', '--owner', 'worker-2']);
+    expect(other.json).toMatchObject({ status: 'acquired', claim: { claimKey: 'repo:ashlrai/phantom', owner: 'worker-2' } });
+
+    // Undeclared keys and unknown jobs refuse honestly; usage errors exit 2.
+    expect(await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--key', 'queue:OTHER',
+      '--lease-ms', '600000', '--owner', 'w'])).toMatchObject({ code: 1,
+      json: { status: 'refused', reason: 'undeclared-key' } });
+    expect(await run(['work', 'claim', '--job', 'RQ-GONE', '--lease-ms', '600000', '--owner', 'w']))
+      .toMatchObject({ code: 2, json: { status: 'invalid', reason: 'unknown-job' } });
+    expect(await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM'])).toMatchObject({ code: 2 });
+    expect(await run(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--lease-ms', '600000',
+      '--key', 'bogus', '--owner', 'w'])).toMatchObject({ code: 2 });
+
+    // Human output names the job and shows the token only to the acquirer.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['work', 'claim', '--job', 'RQ-CLI-CLAIM', '--key', 'repo:ashlrai/phantom',
+      '--lease-ms', '600000', '--owner', 'worker-3', '--root', root], t => text.push(t), () => {}, {})).toBe(1);
+    expect(text.join('\n')).toContain('conflict repo:ashlrai/phantom');
+    expect(text.join('\n')).toContain('RQ-CLI-CLAIM(queued)');
   });
 
   it('filters the work feed by announcement address under one agent identity', async () => {

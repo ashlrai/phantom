@@ -955,3 +955,46 @@
   object-fit: cover;
   border-radius: 4px;
 }
+
+/* ---- leader activity card ---------------------------------------------- */
+.activity {
+  padding: var(--space-2) var(--card-pad);
+  border-top: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.activityTitle {
+  margin: 0;
+  font-size: var(--text-xs-size);
+  line-height: var(--text-sm-line);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.activityList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One bet per line; on a 390px phone the line wraps instead of scrolling sideways. */
+.activityBet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-2);
+}
+
+.activityName {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.activityState[data-result='failed'] {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.activityWhy {
+  flex-basis: 100%;
+}

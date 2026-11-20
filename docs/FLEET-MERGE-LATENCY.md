@@ -99,7 +99,11 @@ ordinary head-pinned GitHub auto-merge (`gh pr merge --auto
 at three requests. Required checks, reviews and the merge queue remain
 enforced; the PR merges only when they pass on their own. Rows report
 `already-armed`, `conflict`, `draft`, `held`, `capped` or `failed`, and
-`needs-person` rows carry the classifier reason. `retry_requested` is also a
+`needs-person` rows carry the classifier reason. Every row has a plain-words
+`note`, and the report adds `queue_wait` (`waiting`, `oldest_s`, `total_s`,
+`conflicts`, `finished`): how long dropped PRs have waited, with a conflict
+marked as needing a recut and an already merged or closed PR counted as
+`finished`, not waiting. `retry_requested` is also a
 `--record` type so another writer can share the same bound.
 
 Before arming, `merge-retry` lists the repo's open PRs once per run and skips a

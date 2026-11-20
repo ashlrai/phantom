@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  foldRouteDecisionWorkClasses,
   foldRouterOutcomes,
   foldSpendCosts,
   readLedgerFile,
@@ -33,6 +34,20 @@ function writeSpend(root: string, text: string): void {
   mkdirSync(join(root, 'metrics'), { recursive: true });
   writeFileSync(spendPath(root), text);
 }
+
+const marketPath = (root: string) => join(root, 'metrics', 'work-market.jsonl');
+
+function writeMarket(root: string, rows: object[]): void {
+  mkdirSync(join(root, 'metrics'), { recursive: true });
+  writeFileSync(marketPath(root), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+}
+
+/** A work-market.v1 route_decision row in the dispatcher's own shape. */
+const decision = (job: string, workClass: string, ts: number, extra: Record<string, unknown> = {}): object => ({
+  schema: 'work-market.v1', event: 'route_decision', job,
+  chosen_lane: 'alpha', preferred_lane: 'alpha', work_class: workClass,
+  override: null, rejected_lanes: [], reason_codes: [], ts, ...extra,
+});
 
 function ashlarDir(scores?: unknown): string {
   const root = mkdtempSync(join(tmpdir(), 'ledger-612s-eval-'));
@@ -451,5 +466,81 @@ describe('router outcome spend join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', spend_state: 'read', spend_truncated: true });
     expect(result.outcomes[0]?.cost_usd).toBeNull();
+  });
+});
+
+describe('router outcome work_class join', () => {
+  it('folds route_decision rows to each job\'s latest recorded work_class', () => {
+    const classes = foldRouteDecisionWorkClasses([
+      JSON.stringify(decision('J1', 'bulk', 100)),
+      JSON.stringify(decision('J1', 'judgment', 200)),   // newer decision wins
+      JSON.stringify(decision('J1', 'standard', 150)),  // older than the newest: ignored
+      JSON.stringify(decision('J2', 'standard', 100, { chosen_lane: null, reason_codes: ['no_runnable_lane'] })),
+      JSON.stringify({ schema: 'work-market.v1', event: 'posture', ts: 300, lanes: {} }),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'J3', ts: 100 }), // no work_class
+      JSON.stringify(decision('J4', 'bad class!', 100)),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'J5', work_class: 'bulk', ts: 'not-a-number' }),
+      JSON.stringify(decision('J6', 'bulk', 100, { schema: 'other.v9' })),
+      'not json',
+      '',
+    ].join('\n'));
+    expect(classes.get('J1')).toBe('judgment');
+    expect(classes.get('J2')).toBe('standard');
+    expect(classes.has('J3')).toBe(false);
+    expect(classes.has('J4')).toBe(false);
+    expect(classes.has('J5')).toBe(false);
+    expect(classes.has('J6')).toBe(false);
+    expect(classes.size).toBe(2);
+  });
+
+  it('fills work_class from route decisions only where jobs rows recorded none', async () => {
+    const root = runsDir([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","lane":"beta","phase":"CLOSED","work_class":"docs","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J3","lane":"alpha","phase":"MERGED","ts":"2026-11-01T00:00:00Z"}',
+    ].join('\n'));
+    writeMarket(root, [
+      decision('J1', 'bulk', 100),
+      decision('J2', 'bulk', 100),   // explicit jobs-row class wins over the market join
+      decision('J3', 'judgment', 100),
+      decision('J-UNDECIDED', 'bulk', 100), // no jobs outcome: never creates one
+    ]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: false });
+    const byId = new Map(result.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.work_class).toBe('bulk');
+    expect(byId.get('J2')?.work_class).toBe('docs');
+    expect(byId.get('J3')?.work_class).toBe('judgment');
+    expect(result.outcomes.map(o => o.job_id)).toEqual(['J1', 'J2', 'J3']);
+  });
+
+  it('keeps work_class null and reports market_state when the market ledger is absent or refused', async () => {
+    const missing = await readRouterOutcomes({ runsDir: runsDir('{"job":"J1","phase":"MERGED"}\n') });
+    expect(missing).toMatchObject({ state: 'read', market_state: 'missing', market_truncated: false });
+    expect(missing.outcomes[0]?.work_class).toBeNull();
+
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    const target = join(root, 'real-market.jsonl');
+    writeFileSync(target, JSON.stringify(decision('J1', 'bulk', 100)) + '\n');
+    symlinkSync(target, marketPath(root));
+    const linked = await readRouterOutcomes({ runsDir: root });
+    expect(linked).toMatchObject({ state: 'read', market_state: 'unreadable' });
+    expect(linked.outcomes[0]?.work_class).toBeNull();
+  });
+
+  it('still reports market health when the jobs ledger itself is missing', async () => {
+    const root = runsDir();
+    writeMarket(root, [decision('J1', 'bulk', 100)]);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'missing', market_state: 'read', market_truncated: false, outcomes: [] });
+  });
+
+  it('flags a cut market tail so joined classes read as newest-bytes coverage', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED"}\n');
+    writeFileSync(marketPath(root), '');
+    truncateSync(marketPath(root), ROUTER_OUTCOME_LEDGER_LIMIT + 1);
+    const result = await readRouterOutcomes({ runsDir: root });
+    expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: true });
+    expect(result.outcomes[0]?.work_class).toBeNull();
   });
 });

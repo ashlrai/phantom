@@ -145,6 +145,16 @@ class ShimTests(Base):
         self.assertEqual(r.returncode, 127)   # no real pnpm on PATH
         self.assertIn('not found', r.stderr)
 
+    def test_concurrent_shims_setup_shares_no_temp_path(self):
+        shims = self.d / 'shims'
+        procs = [subprocess.Popen([sys.executable, str(GATE), '--shims', str(shims)], env=self.env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for _ in range(8)]
+        self.assertTrue(all(p.wait(timeout=30) == 0 for p in procs))
+        for tool in ('npm', 'pnpm', 'bun'):
+            self.assertTrue(os.access(shims / tool, os.X_OK))
+            subprocess.run(['bash', '-n', str(shims / tool)], check=True)
+        self.assertEqual([p.name for p in shims.iterdir() if '.tmp' in p.name], [])
+
 
 if __name__ == '__main__':
     unittest.main()

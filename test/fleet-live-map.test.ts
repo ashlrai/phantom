@@ -116,7 +116,8 @@ describe('buildFleetLiveMap', () => {
       computers: computers([computer('node-b', { jobsRunning: ['RQ-B'] }), computer('node-a', { isSelf: true })]) });
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
     expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps', 'orgLayout']);
-    expect(a.nodes.every(node => Object.keys(node).join() === `id,kind,level,label,provider,status,detail,live${node.kind === 'resource' ? ',usedPct' : node.kind === 'job' ? ',lane,repo,state' : ''}`)).toBe(true);
+    expect(a.nodes.every(node => Object.keys(node).join() === `id,kind,level,label,provider,status,detail,live${node.kind === 'resource' ? ',usedPct' : node.kind === 'job' ? ',lane,repo,state' : node.kind === 'computer' && node.id !== 'computer:node-a' ? ',remote' : ''}`)).toBe(true);
+    expect(a.nodes.filter(node => node.kind === 'computer').map(node => [node.id, node.remote])).toEqual([['computer:node-a', undefined], ['computer:node-b', true]]);
     expect(a.nodes.filter(node => node.kind === 'resource').every(node => node.usedPct === null || typeof node.usedPct === 'number')).toBe(true);
     expect(a.edges.every(row => Object.keys(row).join() === 'id,kind,from,to,messages,lastMessageAt,pulse')).toBe(true);
     expect(a.nodes.map(node => node.level)).toEqual([...a.nodes.map(node => node.level)].sort((x, y) => x - y));

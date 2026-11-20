@@ -63,6 +63,12 @@ export interface PoolRow {
   wasteRisk: PoolWasteRisk;
   /** Absolute balance for credits rows; not a percentage. */
   creditsRemaining: number | null;
+  /** `usd` when `creditsRemaining` is a US-dollar gift credit; absent when the unit is not reported. */
+  creditUnit?: 'usd';
+  /** Gift credit: when the balance was last read, whether its lane is closed, and whole days until it expires. */
+  creditAsOf?: string | null;
+  creditClosed?: boolean;
+  daysLeft?: number | null;
   held: boolean | null;
   /** Jobs running on the lane against its slot target, as the dispatcher last reported them. */
   running: number | null;
@@ -103,6 +109,21 @@ function clockWords(ms: number): string {
 }
 const hoursWords = (hours: number): string => `${Math.max(1, Math.round(hours))} h`;
 
+/** "Nov 24": month and day in UTC, so the same date reads the same on every surface. */
+export const monthDay = (iso: string): string => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/** A dollar gift has a balance, not a percent: name the balance, its reading date, the days left and a closed lane. */
+function giftRow(row: PoolRow, name: string, now: number): PoolRow {
+  const endMs = row.resetAt === null ? NaN : Date.parse(row.resetAt);
+  const daysLeft = Number.isFinite(endMs) ? Math.max(0, Math.floor((endMs - now) / 86_400_000)) : null;
+  const expired = Number.isFinite(endMs) && endMs <= now;
+  const balance = row.creditsRemaining === null ? 'balance unknown'
+    : `${row.creditAsOf ? `last reading ${monthDay(row.creditAsOf)}: ` : ''}about ${Math.round(row.creditsRemaining)} USD`;
+  const ends = expired ? 'expired' : daysLeft === null ? 'expiry unknown' : `expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'} (${monthDay(row.resetAt!)})`;
+  const reason = 'a dollar credit has a balance, not a percent used';
+  return { ...row, daysLeft, reason, summary: `${name}: ${balance}; ${ends}${row.creditClosed ? '; lane closed' : ''}` };
+}
+
 function poolRow(lane: ResourceLaneRow, now: number, samples: readonly PoolSample[]): PoolRow {
   const evidence = lane.quotaEvidence;
   const asOf = evidence?.measuredQuota?.observedAt ?? lane.observation?.asOf ?? evidence?.statusQuota?.observedAt ?? null;
@@ -111,12 +132,13 @@ function poolRow(lane: ResourceLaneRow, now: number, samples: readonly PoolSampl
     id: lane.lane, kind: lane.window === 'weekly' ? 'subscription' : lane.window === 'credits' ? 'credits' : 'unmetered',
     usedPct: null, resetAt: lane.resetAt, hoursLeft: null, elapsedPct: null, burnPctPerHour: null, burnBasis: null,
     burn: { samples: 0, window_h: 0, method: 'none' }, projectedUnusedPct: null, projectedEmptyAt: null, verdict: 'unknown',
-    wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, held: lane.held,
+    wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, ...(lane.creditUnit ? { creditUnit: lane.creditUnit, creditAsOf: lane.creditAsOf ?? null, creditClosed: lane.creditClosed === true } : {}), held: lane.held,
     running: lane.running, target: lane.target, source: lane.observation?.source ?? lane.source, scopes: [], asOf,
     reason: null, summary: '',
   };
   const unknown = (reason: string): PoolRow => ({ ...row, reason, summary: `${name}: unknown: ${reason}` });
   if (row.kind === 'unmetered') return unknown('no usage window reported');
+  if (row.kind === 'credits' && row.creditUnit === 'usd') return giftRow(row, name, now);
   if (row.kind === 'credits') return unknown('credit balance has no total or expiry, so percent used is not known');
   if (lane.usedPct === null) return unknown('no reading');
   const resetMs = lane.resetAt === null ? NaN : Date.parse(lane.resetAt);

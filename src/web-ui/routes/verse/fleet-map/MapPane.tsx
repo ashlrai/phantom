@@ -12,11 +12,16 @@
  *
  * One 2D/3D toggle switches to the same graph stacked as rings by org level (MapStage3D); the choice is
  * remembered. Phones always get the 2D rows.
+ *
+ * One time slider (ReplayBar, `phm map replay`) replays the last 6 hours: while a past moment shows, the map draws that frame's
+ * running jobs and message lines instead of live state, and "Back to live" returns. Times with no history read unknown.
  */
 import { messageLineWidth, type FleetLiveMap, type LiveMapEdge, type LiveMapEdgeKind, type LiveMapNode, type LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
 import { useMemo, useState } from 'react';
+import { replayMap } from '../../../../core/fleet/map-replay.js';
+import { ReplayBar } from './ReplayBar.js';
 import { filterLiveMap, MAP_FILTER_EMPTY, type MapFilter } from '../../../../core/fleet/map-filter.js';
 import { MapFilterBar } from './MapFilterBar.js';
 import { ConversationsPanel } from './ConversationsPanel.js';
@@ -31,7 +36,7 @@ import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { showMessagePair, type MessagePair } from '../fleet-messages/messages-pair.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
-import { emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, NODE_H, NODE_W, pulsing, readMapFilter, saveMapFilter } from './map-model.js';
+import { edgeOpacity, emptyMap, layoutLiveMap, liveMapQuery, mapEdgesQuery, mapHeadline, messageCurve, messagePairs, messagePairsQuery, MAP_POLL_MS, MAP_REPLAY_POLL_MS, mapReplayQuery, NODE_H, NODE_W, pulsing, readMapFilter, saveMapFilter } from './map-model.js';
 import { useViewport } from '../shell/viewport.js';
 import { readMapViewMode, saveMapViewMode, type MapViewMode } from './map3d-model.js';
 import { MapStage3D } from './MapStage3D.js';
@@ -84,7 +89,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
   const arrange = (next: MapLayoutMode) => { setArrangement(next); setHovered(null); saveMapLayout(next); };
   const choose = (next: MapViewMode) => { setChosen(next); setHovered(null); saveMapViewMode(next); };
   if (compact && !phoneMap) return <>{filterBar}{none ? noMatch
-    : <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} onShowMap={() => setPhoneMap(true)}
+    : <PhoneOrg groups={fleetOrgGroups(map)} asks={asks} messages={showMessages ? edges : undefined} now={now} onShowMap={() => setPhoneMap(true)}
       onOpenJob={job => { const node = map.nodes.find(row => row.kind === 'job' && row.label === job); if (node) onOpen(node); }} />}</>;
   const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
   const layout = orgLayout ?? layoutLiveMap(map);
@@ -124,6 +129,8 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
       <div className={styles.canvas} style={{ width: layout.width, height: layout.height }}>
         {orgLayout?.boxes.map(box => <div key={box.id} className={styles.group} data-org-group={box.id}
           style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{orgBoxLabel(box)}</span></div>)}
+        {layout.groups?.map(box => <div key={box.id} className={styles.group} data-map-group={box.id} role="group" aria-label={box.label}
+          style={{ left: box.x, top: box.y, width: box.width, height: box.height }}><span>{box.label}</span></div>)}
         <svg className={styles.edges} width={layout.width} height={layout.height} aria-hidden="true">
           {map.edges.map(edge => {
             const a = layout.at.get(edge.from), b = layout.at.get(edge.to);
@@ -132,7 +139,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
             const d = message ? messageCurve(a, b).d : `M${a.x},${a.y} L${b.x},${b.y}`;
             if (!message) return <path key={edge.id} d={d} className={styles.edge} data-kind={edge.kind} />;
             return <g key={edge.id}>
-              <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: messageLineWidth(edge.messages) }} />
+              <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: messageLineWidth(edge.messages), opacity: edgeOpacity(edge, map, now) }} />
               <path d={d} className={styles.hit} data-open-messages={edge.id} onClick={() => onOpenMessages(pairOf(edge))} {...hover(edge)} />
             </g>;
           })}
@@ -221,6 +228,10 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
   const refetchPairs = useRefetch(messagePairsQuery);
   const threads = useQuery(conversationsQuery, { enabled: visible, freshMs: MAP_POLL_MS });
   const refetchThreads = useRefetch(conversationsQuery);
+  const replayRead = useQuery(mapReplayQuery, { enabled: visible, freshMs: MAP_REPLAY_POLL_MS });
+  const [scrub, setScrub] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const replay = replayRead.data ?? null, frame = replay && scrub !== null ? replay.frames[scrub] : undefined;
   usePollWhileVisible(() => { refetch(); refetchEdges(); refetchPairs(); refetchThreads(); }, MAP_POLL_MS, { enabled: visible });
   const openMessages = (pair: MessagePair) => { showMessagePair(pair); host.openPane('fleet-messages'); };
   const open = (node: LiveMapNode) => {
@@ -234,7 +245,10 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
     <p className={styles.notice}>Message summaries as of {edges.updatedAt === null ? 'unknown' : <time dateTime={new Date(edges.updatedAt).toISOString()}>{new Date(edges.updatedAt).toISOString()}</time>}
       {edges.error ? ' · refresh failed; cached summaries may be stale' : ''}. Message cards as of {pairs.updatedAt === null ? 'unknown' : <time dateTime={new Date(pairs.updatedAt).toISOString()}>{new Date(pairs.updatedAt).toISOString()}</time>}
       {pairs.error ? ' · refresh failed; cached cards may be stale' : ''}.</p>
-    <MapView map={read.data} now={Date.now()} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
-      pairs={pairs.data} conversations={threads.data} reducedMotion={prefersReducedMotion()} />
+    {replay && <ReplayBar replay={replay} index={frame ? scrub : null} playing={playing} onIndex={setScrub} onPlaying={setPlaying} />}
+    {replay && frame ? <MapView map={replayMap(read.data, frame, replay.stepSeconds)} now={Date.parse(frame.at)} onOpen={open} edges={frame.messages} onOpenMessages={openMessages}
+      pairs={null} conversations={null} reducedMotion />
+      : <MapView map={read.data} now={Date.now()} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
+      pairs={pairs.data} conversations={threads.data} reducedMotion={prefersReducedMotion()} />}
   </>;
 }
