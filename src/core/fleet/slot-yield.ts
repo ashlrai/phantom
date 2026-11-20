@@ -142,7 +142,7 @@ export interface YieldReport {
 
 interface Run {
   /** `at` is the launch time; `last` the newest timestamped row for the run (epoch ms). */
-  job: string; lane: string; tier: string; repo: string; at: number; last: number;
+  job: string; lane: string; tier: string; repo: string; /** From the launch row; null when it named none. */ model: string | null; at: number; last: number;
   finished: boolean; empty: boolean; aborted: boolean;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean;
@@ -307,7 +307,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       const runs = byJob.get(job);
       if (row.event === 'launch') {
         if (!Number.isFinite(at) || at > now) return;
-        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
+        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
