@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; pack?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -54,12 +54,24 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     }
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
+      if (endpoint.includes('/jobs/11/') || endpoint.includes('/jobs/21/')) {
+        // Merge Gate style aggregator: no checkout step, so no marker line.
+        const gatePass = endpoint.includes('/jobs/11/') && options.pass;
+        const gateLog = options.gateEvidence === 'fail' ? fixture('shared') : options.gateEvidence === 'pass' ? fixture('pass') : gatePass
+          ? '##[group]Run node <<\'NODE\'\nMerge Gate passed: fast full CI\n##[endgroup]\n'
+          : '##[group]Run node <<\'NODE\'\nError: Secret scan (diff) concluded failure\n##[error]Process completed with exit code 1.\n';
+        return success(gateLog);
+      }
       const isMaster = endpoint.includes('/jobs/10/');
       const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.pack ? 'pack-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
-      value = { total_count: 1, jobs: [{ id: isMaster ? 10 : 20, conclusion: isMaster && options.pass ? 'success' : 'failure', head_sha: isMaster ? master : head }] };
+      const conclusion = isMaster && options.pass ? 'success' : 'failure';
+      const head_sha = isMaster ? master : head;
+      const jobs: { id: number; name?: string; conclusion: string; head_sha: string }[] = [{ id: isMaster ? 10 : 20, conclusion, head_sha }];
+      if (options.gate) jobs.push({ id: isMaster ? 11 : 21, name: 'Merge Gate', conclusion, head_sha });
+      value = { total_count: jobs.length, jobs };
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
       value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head }] };
@@ -98,6 +110,23 @@ describe('CI baseline evidence', () => {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
       expect(report.groups).toEqual([]);
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
+    }
+  });
+  it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {
+    // Merge Gate never checks out the workspace, so its log cannot carry the
+    // checkout SHA marker. An inert aggregator log is dropped from evidence
+    // and the run still verifies through the checkout jobs.
+    const report = await analyzeCiBaseline('owner/repo', github({ gate: true }).gh);
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', prs: [1, 2], master: 'fail' });
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    const pass = await analyzeCiBaseline('owner/repo', github({ gate: true, pass: true }).gh);
+    expect(pass.groups[0]?.master).toBe('pass');
+    // Any recognizable failure or pass evidence in an unverifiable log keeps
+    // the whole run unknown rather than risking unattributed attribution.
+    for (const gateEvidence of ['fail', 'pass'] as const) {
+      const poisoned = await analyzeCiBaseline('owner/repo', github({ gate: true, gateEvidence }).gh);
+      expect(poisoned.groups).toEqual([]);
+      expect(poisoned.freshness.every(p => p.state === 'unknown')).toBe(true);
     }
   });
   it('does not infer independence with unresolved imports', async () => {
