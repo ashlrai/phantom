@@ -165,6 +165,12 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: 'ashlr.context-brief/v1',
   },
   {
+    usage: 'phm context pack <goal-text|prompt-file> [--max-files 12] [--json]',
+    description: 'Starting pack under 4 KB for one job: top repo files by keyword and path match with one-line reasons, related commands from the CLI reference, and recent merged job titles that overlap ("possibly already done"). Offline and read-only. Says unknown when nothing matches. Exit 0 pack, 2 bad usage.',
+    safety: 'read',
+    jsonShape: 'phantom.context-pack.v1 {schema,verdict:found|unknown,keywords,files:[{path,score,reason}],commands,possiblyDone}',
+  },
+  {
     usage: 'phm claim acquire <work-key> --lane <lane> [--repo owner/name] [--pr N] [--branch NAME] [--pulls <file>] --json | phm claim release <work-key> --lane <lane> --reason open|merge|abandon --json',
     description: 'Claim a work key before starting. Refuses a live claim or an open pull on that key and returns the holder. Release on pull open, merge, or abandon. Grants no execution authority.',
     safety: 'append',
@@ -1000,6 +1006,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'radar list|run|diff [--json]', desc: 'Public docs observation: list sources, run independent fetches, and diff local snapshots. HTTPS GET only, no credentials. See docs/RADAR.md.', topic: 'observability' },
   { cmd: 'observe [--json]', desc: 'Human observe snapshot: roster, sensor headroom, pull headlines, bottlenecks, and human steps. Unknown stays unknown. See docs/OBSERVE.md.', topic: 'observability' },
   { cmd: 'context --for-agent <lane> [--json]', desc: 'Compact under-4KB brief for one lane: claims, open pulls, bottlenecks, blind spots, and pacing. See docs/WORLD.md.', topic: 'observability' },
+  { cmd: 'context pack <goal-text|prompt-file> [--max-files 12] [--json]', desc: 'Starting pack for one job: top files with reasons, related commands, and recent merged jobs that may already cover the goal. Offline.', topic: 'observability' },
   { cmd: 'claim acquire <work-key> --lane <lane> [--json]', desc: 'Claim a work key before starting. Refuses a live claim or open pull on that key and returns the holder.', topic: 'observability' },
   { cmd: 'claim release <work-key> --lane <lane> --reason open|merge|abandon [--json]', desc: 'Release this lane claim when a pull opens, merges, or is abandoned.', topic: 'observability' },
   { cmd: 'growth [--json] [--range 1H|1D|1W|1M] [--prs <file>]', desc: 'Growth chart series from local ledgers. A missing source is no-data-source and a world-model blind spot. See docs/GROWTH.md.', topic: 'observability' },
