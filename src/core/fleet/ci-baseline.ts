@@ -41,7 +41,170 @@ const PASS_LINE = /^[\u2713\u2714\u221a]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui
 const TSC_ERROR_LINE = /^([^\s()]+)\(\d+,\d+\):\s*error\s+TS\d{4}:/;
 const TSC_NAMES = '(typecheck)';
 
-export function parseBaselineFailures(log: string): Failure[] {
+// The .github/tests/*.test.mjs contract suites run under `node --test`, which
+// on the Node 22 CI image emits TAP: every result is an `ok|not ok N - name`
+// line at the subtest's indent followed by a YAML-ish diagnostic block with
+// `type` ('test'|'suite'), an absolute `location:` path, `failureType` and
+// `error`. `# Subtest:` comments re-announce each subtest at the same indent,
+// so nested describe paths rebuild as `suite > test > leaf`. Passing results
+// carry no location, so TAP evidence can fail a suite but never prove an
+// individual pass: these groups classify shared-baseline, pr-caused or
+// unknown only. The absolute location resolves against the Actions checkout
+// convention `/<work>/<repo>/<repo>/`; anything else stays unparsed.
+const TAP_RESULT = /^(\s*)(not ok|ok)\s+\d+\s+-\s+(.*?)\s*$/;
+const TAP_SUBTEST = /^\s*# Subtest:\s*(.+?)\s*$/;
+const TAP_STREAM = /^\s*TAP version \d+/;
+const TAP_COMMENT = /^\s*#(.*)$/;
+const TAP_SCALAR = /^\s*[A-Za-z_$][\w$]*:\s*[|>][-+]?\d?\s*$/;
+const TAP_FIELD = /^([A-Za-z_$][\w$]*):\s*(.*)$/;
+
+const tapIndent = (line: string) => line.length - line.trimStart().length;
+const unquote = (value: string | undefined) => {
+  if (value === undefined) return undefined;
+  const quoted = /^'(.*)'$/.exec(value) ?? /^"(.*)"$/.exec(value);
+  return quoted ? quoted[1] : value;
+};
+
+// Diagnostics for one result live in the block after its line: keys sit two
+// spaces deeper than the result, block-scalar bodies deeper still, and the
+// first non-blank line back at or above the result indent ends the block.
+function tapBlock(lines: string[], start: number, indent: number) {
+  const fields = new Map<string, string>();
+  let error = '';
+  let end = start;
+  for (; end < lines.length && end - start < 200; end++) {
+    const line = lines[end]!;
+    if (line.trim() !== '' && tapIndent(line) <= indent) break;
+  }
+  for (let k = start; k < end; k++) {
+    const line = lines[k]!;
+    if (tapIndent(line) !== indent + 2) continue;
+    const field = TAP_FIELD.exec(line.trim());
+    if (!field) continue;
+    const key = field[1]!, raw = field[2]!.trim();
+    if ((key === 'error' || key === 'stack') && /^[|>]/.test(raw)) {
+      if (key !== 'error') continue;
+      const body: string[] = [];
+      for (let x = k + 1; x < end; x++) {
+        const bodyLine = lines[x]!;
+        if (bodyLine.trim() !== '' && tapIndent(bodyLine) <= indent + 2) break;
+        body.push(bodyLine.trim());
+      }
+      error = body.join('\n').trim();
+      continue;
+    }
+    fields.set(key, raw);
+  }
+  return { fields, error };
+}
+
+// `location:` is an absolute runner path (`.../<repo>/<repo>/<path>:L:C` on
+// GitHub-hosted and default self-hosted Actions images). Only the doubled
+// repo-name checkout marker resolves to a repo-relative path; anything else
+// is left unparsed rather than guessed.
+function tapRepoFile(location: string | undefined, repo: string | undefined): string | null {
+  const raw = unquote(location);
+  if (!raw) return null;
+  let path = raw.replace(/\\/g, '/');
+  if (path.startsWith('file://')) path = path.slice('file://'.length);
+  const lineCol = /:\d+:\d+$/.exec(path);
+  if (lineCol) path = path.slice(0, lineCol.index);
+  const repoName = repo?.split('/')[1];
+  if (!repoName) return null;
+  const marker = `/${repoName}/${repoName}/`;
+  const at = path.indexOf(marker);
+  if (at < 0) return null;
+  const rel = path.slice(at + marker.length);
+  if (!rel || posix.normalize(rel) !== rel || rel.includes('..') || posix.isAbsolute(rel)) return null;
+  return rel;
+}
+
+// A file-level failure (the test file's own process died: syntax error, throw
+// at module load) is reported as a pseudo-test named by its invocation path at
+// `:1:1` with an `exitCode` and `error: 'test failed'`; it groups under the
+// same `(suite)` identity as a vitest suite-load failure.
+function isTapFileResult(file: string, title: string, fields: Map<string, string>): boolean {
+  const location = unquote(fields.get('location')) ?? '';
+  if (!/:1:1$/.test(location)) return false;
+  const name = posix.normalize(title);
+  const titleMatch = name === file || name === posix.basename(file) || file.endsWith(`/${name}`) || name.endsWith(`/${file}`);
+  const placeholder = fields.has('exitCode') && unquote(fields.get('error')) === 'test failed';
+  return titleMatch || placeholder;
+}
+
+function parseTapFailures(log: string, repo: string | undefined): Failure[] {
+  const out: Failure[] = [];
+  const rawLines = stripVTControlCharacters(log).split('\n')
+    .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, ''));
+  const pending = new Map<number, string>();
+  const comments: string[] = [];
+  let scalarIndent = -1;
+  for (let i = 0; i < rawLines.length && out.length < 100; i++) {
+    const line = rawLines[i]!;
+    if (scalarIndent >= 0) {
+      if (line.trim() === '' || tapIndent(line) > scalarIndent) continue;
+      scalarIndent = -1;
+    }
+    if (TAP_STREAM.test(line)) { pending.clear(); comments.length = 0; continue; }
+    const subtest = TAP_SUBTEST.exec(line);
+    if (subtest !== null) {
+      const indent = tapIndent(line);
+      pending.set(indent, subtest[1]!.trim());
+      for (const key of [...pending.keys()]) if (key > indent) pending.delete(key);
+      continue;
+    }
+    const result = TAP_RESULT.exec(line);
+    if (result !== null) {
+      const indent = tapIndent(line);
+      const title = result[3]!.trim();
+      // A result closes its own level and every deeper open subtest.
+      for (const key of [...pending.keys()]) if (key >= indent) pending.delete(key);
+      const priorComments = comments.splice(0);
+      if (result[2] === 'ok' || title === '') continue;
+      const { fields, error } = tapBlock(rawLines, i + 1, indent);
+      const type = unquote(fields.get('type'));
+      const failureType = unquote(fields.get('failureType'));
+      // cancelledByParent marks tests skipped because an ancestor suite
+      // failed; subtestsFailed marks that ancestor. Both are derivative --
+      // the suite's own hookFailed/testCodeFailure result carries the cause.
+      if (failureType === 'cancelledByParent') continue;
+      if (type === 'suite' && (failureType === undefined || failureType === 'subtestsFailed')) continue;
+      if (type !== 'test' && type !== 'suite') continue;
+      const file = tapRepoFile(fields.get('location'), repo);
+      if (file === null) continue;
+      const fileLevel = isTapFileResult(file, title, fields);
+      const names = fileLevel ? SUITE_NAMES
+        : [...[...pending.entries()].filter(([key]) => key < indent).sort((a, b) => a[0] - b[0]).map(([, name]) => name), title].join(' > ');
+      const parts = [line.trim()];
+      if (error) parts.push(error);
+      else {
+        const inline = unquote(fields.get('error'));
+        if (inline && inline !== 'test failed') parts.push(inline);
+      }
+      if (fileLevel) {
+        // A module-load failure reports only `error: 'test failed'`; the real
+        // diagnostic is the runner's `#` comment block just above it.
+        const tail: string[] = [];
+        for (let x = priorComments.length - 1; x >= 0 && tail.length < 5; x--) {
+          const comment = priorComments[x]!;
+          if (!/^Node\.js v/.test(comment)) tail.unshift(comment);
+        }
+        if (tail.length) parts.push(tail.join('\n'));
+      }
+      out.push({ file, names, testId: `${file} > ${names}`, excerpt: clean(parts.join('\n')) });
+      continue;
+    }
+    if (TAP_SCALAR.test(line)) { scalarIndent = tapIndent(line); continue; }
+    const comment = TAP_COMMENT.exec(line);
+    if (comment !== null) {
+      comments.push(comment[1]!.trim());
+      if (comments.length > 12) comments.shift();
+    }
+  }
+  return out;
+}
+
+export function parseBaselineFailures(log: string, repo?: string): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
   let current: Failure | undefined;
@@ -73,6 +236,10 @@ export function parseBaselineFailures(log: string): Failure[] {
     } else if (current && (/^AssertionError:/.test(line) || (currentSuite && /^[\w$]*Error:/.test(line)))) {
       current.excerpt = clean(`${current.excerpt}\n${line}`);
     }
+  }
+  for (const failure of parseTapFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
   }
   return result;
 }
@@ -116,7 +283,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const evidence = await logs(run, run.head_sha);
     if (evidence) masterLogs.push(...evidence); else masterKnown = false;
   }
-  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text));
+  const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo));
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all (any verbose pass in it) is what resolves it.
   const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
@@ -367,7 +534,7 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       const evidence = await logs(run, pr.headRefOid);
       if (!evidence) { known = false; continue; }
       for (const log of evidence.filter(l => l.conclusion === 'failure')) {
-        const failures = parseBaselineFailures(log.text);
+        const failures = parseBaselineFailures(log.text, repo);
         if (!failures.length) known = false;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }

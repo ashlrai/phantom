@@ -27,6 +27,20 @@ every diagnostic line for one file merges into a single failure excerpt. A
 groups classify as `shared-baseline`, `pr-caused` or `unknown` -- never
 `probable-flake`.
 
+The `.github/tests/*.test.mjs` contract suites run under `node --test`, which
+prints TAP on the Node 22 CI image. `not ok N - name` results resolve their
+file from the diagnostic block's absolute `location:` path through the
+`/<work>/<repo>/<repo>/` Actions checkout marker, rebuild nested describe
+paths as `suite > test > leaf`, skip derivative `cancelledByParent` and
+`subtestsFailed` records, and group file-level load failures under the same
+`<file> > (suite)` identity as Vitest suite loads, capturing the runner's `#`
+comment diagnostic. Results with no resolvable checkout-scoped location, TAP
+`ok` results (which carry no location), and runners on nonstandard work
+directories stay unparsed. Because `ok` results carry no file attribution, a
+node:test failure classifies as `shared-baseline`, `pr-caused` or `unknown`
+only -- never `probable-flake` -- and `master` reads `fail` or `unknown`,
+never `pass`.
+
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure
 with an explicit verbose test pass on master's current run produces

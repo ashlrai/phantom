@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -51,7 +51,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
     else if (endpoint.includes('/jobs/') && endpoint.endsWith('/logs')) {
       if (options.unreadable) return { ok: false, stdout: '', stderr: '403' };
       const isMaster = endpoint.includes('/jobs/10/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.web ? 'web-shared' : 'shared';
       return success(`/usr/bin/git log -1 --format=%H\n${isMaster ? master : head}\n${fixture(name)}`);
     } else if (endpoint.includes('/jobs?')) {
       const isMaster = endpoint.includes('/runs/1/');
@@ -178,6 +178,112 @@ describe('CI baseline evidence', () => {
     const importedById = new Map(imported.groups.map(g => [g.testId, g]));
     expect(importedById.get('src/core/example.ts > (typecheck)')?.action).toBe('pr-caused');
     expect(importedById.get('src/core/other.ts > (typecheck)')?.action).toBe('queue-master-fix');
+  });
+  it('parses node:test TAP failures with hierarchy and file-level identities', () => {
+    const tap = (lines: string[]) => parseBaselineFailures(lines.join('\n'), 'owner/repo');
+    const block = (indent: string, file: string, line: number, type: string, failureType: string, extra: string[] = []) => [
+      `${indent}  ---`,
+      `${indent}  type: '${type}'`,
+      `${indent}  location: '/home/runner/work/repo/repo/${file}:${line}:1'`,
+      `${indent}  failureType: '${failureType}'`,
+      ...extra.map(e => `${indent}  ${e}`),
+      `${indent}  ...`,
+    ];
+    const failures = tap([
+      'TAP version 13',
+      '# Subtest: outer',
+      '    # Subtest: inner',
+      '        # Subtest: leaf',
+      '        not ok 1 - leaf',
+      ...block('        ', '.github/tests/nested.test.mjs', 9, 'test', 'testCodeFailure', ["error: |-", '          Expected 1 to be 2', '          ']),
+      '        1..1',
+      '    ok 1 - inner',
+      '      ---',
+      "      type: 'suite'",
+      '      ...',
+      '    1..1',
+      'ok 1 - outer',
+      '  ---',
+      "  type: 'suite'",
+      '  ...',
+      '# Subtest: hooked',
+      '    # Subtest: never runs',
+      '    not ok 2 - never runs',
+      ...block('    ', '.github/tests/hook.test.mjs', 5, 'test', 'cancelledByParent', ["error: 'cancelled'"]),
+      '    1..1',
+      'not ok 2 - hooked',
+      ...block('', '.github/tests/hook.test.mjs', 3, 'suite', 'hookFailed', ["error: 'before blew up'"]),
+      '# Subtest: suite',
+      '    # Subtest: child',
+      '    not ok 3 - child',
+      ...block('    ', '.github/tests/sub.test.mjs', 6, 'test', 'testCodeFailure'),
+      '    1..1',
+      'not ok 3 - suite',
+      ...block('', '.github/tests/sub.test.mjs', 2, 'suite', 'subtestsFailed', ["error: '1 subtest failed'"]),
+      '# file:///home/runner/work/repo/repo/.github/tests/loadfail.test.mjs:2',
+      "# throw new Error('boom at module load');",
+      '# Error: boom at module load',
+      '#     at file:///home/runner/work/repo/repo/.github/tests/loadfail.test.mjs:2:7',
+      '# Node.js v22.22.3',
+      '# Subtest: .github/tests/loadfail.test.mjs',
+      'not ok 4 - .github/tests/loadfail.test.mjs',
+      ...block('', '.github/tests/loadfail.test.mjs', 1, 'test', 'testCodeFailure', ["exitCode: 1", "error: 'test failed'"]),
+      '# Subtest: unresolvable',
+      'not ok 5 - unresolvable',
+      '  ---',
+      "  type: 'test'",
+      "  location: '/opt/custom-runner/checkout/.github/tests/elsewhere.test.mjs:3:1'",
+      "  failureType: 'testCodeFailure'",
+      '  ...',
+      '# Subtest: passing',
+      'ok 6 - passing',
+      '  ---',
+      "  type: 'test'",
+      '  ...',
+      '1..6',
+    ]);
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/tests/nested.test.mjs > outer > inner > leaf',
+      '.github/tests/hook.test.mjs > hooked',
+      '.github/tests/sub.test.mjs > suite > child',
+      '.github/tests/loadfail.test.mjs > (suite)',
+    ]);
+    expect(failures[0]?.excerpt).toContain('Expected 1 to be 2');
+    expect(failures[1]?.excerpt).toContain('before blew up');
+    expect(failures[3]?.excerpt).toContain('boom at module load');
+    expect(failures[3]?.excerpt).not.toContain('Node.js v');
+    // Without the repo name the absolute location cannot be scoped, so TAP
+    // evidence stays unparsed rather than guessed.
+    const located = [
+      '# Subtest: x',
+      'not ok 1 - x',
+      '  ---',
+      "  type: 'test'",
+      "  location: '/home/runner/work/repo/repo/test/x.test.mjs:3:1'",
+      '  ...',
+    ].join('\n');
+    expect(parseBaselineFailures(located)).toEqual([]);
+    expect(parseBaselineFailures(located, 'owner/repo')).toHaveLength(1);
+  });
+  it('groups node:test TAP failures and never resolves a master pass', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ tap: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      file: '.github/tests/example.test.mjs',
+      names: 'reports delivery',
+      testId: '.github/tests/example.test.mjs > reports delivery',
+      classification: 'shared-baseline',
+      action: 'queue-master-fix',
+      master: 'fail',
+    });
+    expect(report.groups[0]?.excerpt).toContain("'unknown' !== 'delivered'");
+    const caused = await analyzeCiBaseline('owner/repo', github({ tap: true, touched: '.github/tests/example.test.mjs' }).gh);
+    expect(caused.groups[0]?.action).toBe('pr-caused');
+    // TAP `ok` results carry no file attribution, so a singleton unaffected
+    // failure cannot claim a master pass: it stays unknown, never a flake.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ tap: true, count: 1, pass: true }).gh);
+    expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown', master: 'unknown' });
   });
   it('resolves bundler-style imports across the dependency closure', async () => {
     const contents = {
