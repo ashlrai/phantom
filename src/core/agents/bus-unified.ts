@@ -886,6 +886,23 @@ function summarizeBusBody(body: unknown, depth: number): string | null {
   }
 }
 
+/** Raw renders stay bounded so one large unknown body cannot fill a frame or digest. */
+const BUS_BODY_FALLBACK_MAX = 512;
+
+const busFallbackClip = (text: string): string =>
+  text.length > BUS_BODY_FALLBACK_MAX ? `${text.slice(0, BUS_BODY_FALLBACK_MAX - 1)}…` : text;
+
+/**
+ * Secret-scrubbed, bounded read of a body `busBodySummary` does not know:
+ * string bodies render as their text, anything else as raw JSON — both
+ * single-line and clipped to 512 characters. The one fallback the inbox
+ * frame and the per-agent work digest share.
+ */
+export function busBodyFallbackSummary(body: unknown): string {
+  if (typeof body === 'string') return busFallbackClip(busSummaryField(body));
+  return busFallbackClip(scrubSecrets(JSON.stringify(body) ?? 'null'));
+}
+
 interface Addressing { identity: AgentIdentity; labels: Set<string>; channels: Map<string, string> }
 
 function addressing(reg: AgentRegistry, ref: string): Addressing | undefined {

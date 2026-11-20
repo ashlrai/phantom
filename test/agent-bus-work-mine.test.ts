@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination } from '../src/core/agents/claim-store.js';
-import { announceWork, sendWakeRequest, updateWorkStatus } from '../src/core/agents/bus-unified.js';
+import { announceWork, readAgentInbox, sendDirectMessage, sendHandoff, sendWakeRequest,
+  updateWorkStatus } from '../src/core/agents/bus-unified.js';
 import { busWorkMineJobAnnotation, formatBusWorkMine, readBusWorkMine,
   type BusWorkMineOptions } from '../src/core/agents/bus-work-mine.js';
 import type { WorkJob } from '../src/core/agents/bus-v2-schema.js';
@@ -127,6 +128,105 @@ describe('readBusWorkMine', () => {
     expect(result.wakes).toMatchObject({ status: 'ok', agent: 'atlas', truncated: false });
     if (result.wakes.status !== 'ok') throw new Error('unreachable');
     expect(result.wakes.wakes).toEqual([expect.objectContaining({ id: 'wk-mine-1', from: 'agent:nova', to: 'agent:atlas' })]);
+
+    // Inbox: the RQ-M-3 announcement addressed to agent:atlas and the wake
+    // request are the only mail; leaders-sink traffic stays out.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.truncated).toBe(false);
+    expect(result.inbox.messages.map(m => m.id)).toEqual(['post-RQ-M-3', 'wk-mine-1']);
+    expect(result.inbox.messages[0]).toMatchObject({ kind: 'dm', from: 'agent:nova', fromAgent: 'nova' });
+    expect(result.inbox.messages[0]!.summary).toContain('RQ-M-3');
+    expect(result.inbox.messages[1]).toMatchObject({ id: 'wk-mine-1', kind: 'dm',
+      from: 'agent:nova', fromAgent: 'nova', channel: null });
+    expect(result.inbox.messages[1]!.summary).toContain('feed moved');
+    expect(result.inbox.nextCursor).toBeGreaterThan(0);
+  });
+
+  it('lists addressed mail with claim handles and resumes the page without loss', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'please review the feed',
+      id: 'dm-m-1', priority: 'P1' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-M-9', prompt: 'take this task',
+      id: 'ho-m-1' }, options)).toMatchObject({ status: 'posted' });
+    // Mail addressed to nova or to a channel atlas is not in must not appear.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'not atlas mail',
+      id: 'dm-m-2' }, options)).toMatchObject({ status: 'posted' });
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.truncated).toBe(false);
+    // Highest priority first inside the page: the P1 DM leads the P1-default handoff.
+    expect(result.inbox.messages.map(m => m.id)).toEqual(['dm-m-1', 'ho-m-1']);
+    const dm = result.inbox.messages[0]!;
+    expect(dm).toMatchObject({ kind: 'dm', priority: 'P1', from: 'agent:nova', fromAgent: 'nova',
+      channel: null, summary: 'please review the feed' });
+    expect(typeof dm.ts).toBe('string');
+    expect(dm.cursor).toBeGreaterThan(0);
+    const handoff = result.inbox.messages[1]!;
+    expect(handoff).toMatchObject({ kind: 'handoff', from: 'agent:nova', fromAgent: 'nova' });
+    expect(handoff.summary).toContain('take this task');
+
+    // A second agent's digest never sees atlas's mail.
+    const other = readBusWorkMine('nova', options);
+    if (other.status !== 'ok') throw new Error('unreachable');
+    expect(other.inbox.status).toBe('ok');
+    if (other.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(other.inbox.messages.map(m => m.id)).toEqual(['dm-m-2']);
+  });
+
+  it('marks the inbox page truncated only when mail provably remains, resumable before the dropped row', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    for (let i = 1; i <= 21; i += 1) {
+      expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: `mail ${i}`,
+        id: `dm-t-${String(i).padStart(2, '0')}` }, options)).toMatchObject({ status: 'posted' });
+    }
+
+    const result = readBusWorkMine('atlas', options);
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    // 21 pending: the oldest 20 show, the newest is provably beyond nextCursor.
+    expect(result.inbox.truncated).toBe(true);
+    expect(result.inbox.messages).toHaveLength(20);
+    const shownIds = result.inbox.messages.map(m => m.id);
+    expect(shownIds).not.toContain('dm-t-21');
+    expect(shownIds).toContain('dm-t-01');
+    expect(shownIds).toContain('dm-t-20');
+
+    // Resuming at nextCursor redelivers nothing shown and surfaces the dropped row.
+    const rest = readAgentInbox('atlas', { after: result.inbox.nextCursor }, options);
+    expect(rest.status).toBe('ok');
+    if (rest.status !== 'ok') throw new Error('unreachable');
+    expect(rest.messages.map(m => m.envelope.id)).toEqual(['dm-t-21']);
+    expect(rest.messages.some(m => shownIds.includes(m.envelope.id))).toBe(false);
+
+    // Exactly at the cap there is no provable remainder: truncated stays false.
+    const options2 = setup(2_000);
+    register(options2, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options2);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options2);
+    for (let i = 1; i <= 20; i += 1) {
+      expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: `mail ${i}`,
+        id: `dm-e-${String(i).padStart(2, '0')}` }, options2)).toMatchObject({ status: 'posted' });
+    }
+    const exact = readBusWorkMine('atlas', options2);
+    if (exact.status !== 'ok') throw new Error('unreachable');
+    expect(exact.inbox.status).toBe('ok');
+    if (exact.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(exact.inbox.truncated).toBe(false);
+    expect(exact.inbox.messages).toHaveLength(20);
   });
 
   it('reports unknown hold coverage instead of guessing when the table is unreadable', async () => {
@@ -161,8 +261,9 @@ describe('readBusWorkMine', () => {
     if (result.claims.status !== 'ok') throw new Error('unreachable');
     expect(result.claims.claims.map(row => row.key)).toEqual(['queue:RQ-G-1']);
     expect(result.claims.owner).toMatchObject({ ref: 'ghost', identity: null, registry: 'missing' });
-    // Wakes need a registered identity: unknown, never an empty list.
+    // Wakes and inbox need a registered identity: unknown, never an empty list.
     expect(result.wakes.status).toBe('unknown-agent');
+    expect(result.inbox).toMatchObject({ status: 'unknown-agent' });
   });
 
   it('rejects an invalid agent ref before reading anything', () => {
@@ -184,6 +285,7 @@ describe('formatBusWorkMine', () => {
     expect(text).toContain('jobs=1 shown=1 holds=complete');
     expect(text).toContain('RQ-F-1 queued "Job RQ-F-1" claimable=yes addressed=false');
     expect(text).toContain('wakes=0');
+    expect(text).toContain('inbox=0');
     // A non-ok top-level result renders its status line only.
     expect(formatBusWorkMine({ status: 'invalid', reason: 'invalid-agent' })).toEqual(['invalid: invalid-agent']);
   });
@@ -220,7 +322,8 @@ describe('phm agents bus work mine', () => {
       agent: { ref: 'atlas', handle: 'atlas', registry: 'available' },
       claims: { status: 'ok', source: 'missing', claims: [] },
       jobs: { status: 'ok', holds: 'complete', jobs: [] },
-      wakes: { status: 'ok', wakes: [] } });
+      wakes: { status: 'ok', wakes: [] },
+      inbox: { status: 'ok', messages: [], truncated: false } });
   });
 
   it('prints human lines without --json', async () => {

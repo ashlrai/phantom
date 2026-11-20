@@ -310,17 +310,26 @@ never permits a merge, a push, or spending.
 
 **Per-agent work view.** `phm agents bus work mine [<agent>]` is the read-only
 digest that answers "what is pending for this agent" in one call instead of
-three: the live coordination claims it holds under any of its labels (with the
+four: the live coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block, the reverse of `work feed --claims`),
 the open work-feed jobs (`queued`/`rescheduled`, declaring at least one claim
 key; newest 50 shown, `open` keeps the true total) annotated per declared key —
 `freeKeys`/`heldKeys` plus a tri-state
 `claimable` that is `null` whenever hold coverage is `truncated` or `unknown`,
-never a guess — and the wake hints addressed to it, capped at the newest 20.
-`addressed` marks jobs whose announcement `to` label resolves to the agent's
+never a guess — the wake hints addressed to it, capped at the newest 20, and
+the next page of mail in its inbox: the same matching, order and owner-share
+receipt checks `agents bus inbox` applies, capped at the oldest 20 pending
+messages with each body summarized by the shared one-line composer. The inbox
+section reads one row past the cap so `truncated` is definitive — a full
+window proves mail remains beyond `nextCursor`, a short one proves the scan
+reached the store's end — and `nextCursor` resumes strictly before any
+unshown mail, so `agents bus inbox --after <nextCursor>` continues the page
+without redelivering or skipping. `addressed` marks jobs whose announcement
+`to` label resolves to the agent's
 identity. The agent defaults to `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, and answers
-`unknown-agent` for wakes rather than an empty list. Every section reports its
+`unknown-agent` for wakes and inbox rather than an empty list. Every section
+reports its
 own read state — `missing`/`available`/`unavailable` for claims,
 `ok`/`refused`/`unavailable`/`retryable`/`invalid` for the feed — so one
 unreadable dependency degrades only its own section. Exit 0 on a completed
