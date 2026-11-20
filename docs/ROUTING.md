@@ -325,9 +325,16 @@ USD figure. The spend read degrades independently: the report's
 marks a cut spend tail, in which case joined costs are lower bounds. `reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
-stamp — sticky-true like metrics-ingest, so a recorded revert is never
-contradicted by a later `reverted:false`; it stays `null` when the ledger
-records nothing either way. It is read-only; a missing
+stamp — plus the authority ledger's verified evidence index: a
+`revert:landed` row undoing a `merge:landed` landing marks the merged PR's
+outcome reverted when the job's own canonical github.com pull URL claim is
+unambiguous (ambiguous, foreign or non-canonical claims never mark). The
+index join reads `ledgerSnapshot('cached')` lazily, contributes only
+hash-verified rows — a broken chain still marks only its verified prefix —
+and degrades to no join on any read failure. Evidence is sticky-true like
+metrics-ingest, so a recorded revert is never
+contradicted by a later `reverted:false`; it stays `null` when neither
+source records anything either way. It is read-only; a missing
 ledger reports `state: "missing"` rather than failing, while an unreadable or
 non-file ledger exits 1. The ledger is append-only and unbounded, so when it
 exceeds the bound the read keeps the newest bytes, drops the cut first line,

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  authorityRevertedPrKeys,
   foldRouteDecisionWorkClasses,
   foldRouterOutcomes,
   foldSpendCosts,
@@ -12,6 +13,7 @@ import {
   readLedgerTail,
   readRouterOutcomes,
   ROUTER_OUTCOME_LEDGER_LIMIT,
+  type RouterOutcomeEvidenceRow,
 } from '../src/core/router/outcomes.js';
 
 const roots: string[] = [];
@@ -542,5 +544,117 @@ describe('router outcome work_class join', () => {
     const result = await readRouterOutcomes({ runsDir: root });
     expect(result).toMatchObject({ state: 'read', market_state: 'read', market_truncated: true });
     expect(result.outcomes[0]?.work_class).toBeNull();
+  });
+});
+
+describe('router outcome authority revert join', () => {
+  /** Evidence rows in the authority ledger's index shape (structural subset). */
+  const ev = (kind: string, landingId: string | null, revertsLandingId?: string | null): RouterOutcomeEvidenceRow =>
+    revertsLandingId === undefined ? { kind, landingId } : { kind, landingId, revertsLandingId };
+
+  const MERGE = 'ashlrai/phantom#42@abc123def456';
+  const REVERT = 'ashlrai/phantom#43@fff000aaa111';
+
+  it('resolves a revert:landed row to its merge landing\'s PR key', () => {
+    const keys = authorityRevertedPrKeys([
+      ev('merge:landed', MERGE),
+      ev('merge:landed', 'ashlrai/phantom#7@000000000000'),
+      ev('revert:landed', REVERT, MERGE),
+      ev('post-merge:result', MERGE, null),
+      ev('revert:failed', 'ashlrai/phantom#9@111111111111', null),
+    ]);
+    expect([...keys]).toEqual(['ashlrai/phantom#42']);
+  });
+
+  it('ignores malformed landing ids, missing targets and reverts of non-merge landings', () => {
+    const keys = authorityRevertedPrKeys([
+      ev('merge:landed', 'not-a-landing-id'),
+      ev('merge:landed', null),
+      ev('merge:landed', 'ashlrai/phantom#42'),        // no @sha suffix: unparseable
+      ev('revert:landed', REVERT),                       // no revertsLandingId
+      ev('revert:landed', REVERT, null),                 // explicit null target
+      ev('revert:landed', REVERT, 'ashlrai/phantom#99@deadbeef0000'), // targets no merge row
+      ev('revert:landed', REVERT, 'unparseable'),        // target never entered the merge map
+      ev('post-merge:result', MERGE, MERGE),             // wrong kind carrying a target
+    ]);
+    expect(keys.size).toBe(0);
+  });
+
+  it('marks a job reverted through its unambiguous canonical PR claim only', () => {
+    const keys = authorityRevertedPrKeys([ev('merge:landed', MERGE), ev('revert:landed', REVERT, MERGE)]);
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","lane":"alpha","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42","ts":"2026-11-01T00:00:00Z"}',
+      '{"job":"J2","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/7"}',
+      '{"job":"J3","phase":"MERGED","pr_url":"https://github.com/other/repo/pull/42"}',
+      '{"job":"J4","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42/"}',
+      '{"job":"J5","phase":"MERGED","url":"https://github.com/AshlrAI/Phantom/pull/42"}',
+      '{"job":"J6","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42?x=1"}',
+      '{"job":"J7","phase":"MERGED","pr":"https://github.com/ashlrai/phantom/issues/42"}',
+    ].join('\n'), { revertedPrKeys: keys });
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // Canonical claim (any url alias) + case-insensitive repo: marked.
+    expect(byId.get('J1')?.reverted).toBe(true);
+    expect(byId.get('J4')?.reverted).toBe(true);
+    expect(byId.get('J5')?.reverted).toBe(true);
+    // Different PR, different repo, non-canonical or non-pull URL: untouched.
+    for (const id of ['J2', 'J3', 'J6', 'J7']) expect(byId.get(id)?.reverted).toBeNull();
+  });
+
+  it('never marks through an ambiguous PR claim or a foreign row', () => {
+    const keys = authorityRevertedPrKeys([ev('merge:landed', MERGE), ev('revert:landed', REVERT, MERGE)]);
+    const fold = foldRouterOutcomes([
+      '{"job":"A","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"B","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"C","phase":"MERGED"}',
+      '{"job":"C","pr_url":"https://github.com/ashlrai/phantom/pull/42"}', // third claimant of the same URL
+      '{"job":"D","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/43"}',
+      '{"job":"D","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',  // fourth claimant on a foreign row
+    ].join('\n'), { revertedPrKeys: keys });
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // Four jobs claim pull/42, so none is marked — contested evidence stays unknown.
+    for (const id of ['A', 'B', 'C', 'D']) expect(byId.get(id)?.reverted).toBeNull();
+    expect(fold.ambiguous_urls).toBe(1);
+  });
+
+  it('authority revert evidence is sticky-true over reverted:false', () => {
+    const keys = authorityRevertedPrKeys([
+      ev('merge:landed', MERGE), ev('revert:landed', REVERT, MERGE),
+      ev('merge:landed', 'ashlrai/phantom#7@000000000000'),
+      ev('revert:landed', 'ashlrai/phantom#8@111111111111', 'ashlrai/phantom#7@000000000000'),
+    ]);
+    const fold = foldRouterOutcomes([
+      '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}',
+      '{"job":"J1","reverted":false,"ts":"2026-11-03T00:00:00Z"}',
+      '{"job":"J2","phase":"MERGED","reverted":false,"pr_url":"https://github.com/ashlrai/phantom/pull/7"}',
+    ].join('\n'), { revertedPrKeys: keys });
+    const byId = new Map(fold.outcomes.map(o => [o.job_id, o]));
+    // A later reverted:false cannot undo the verified revert.
+    expect(byId.get('J1')?.reverted).toBe(true);
+    // Same row carries explicit false and the reverted claim: verified evidence wins.
+    expect(byId.get('J2')?.reverted).toBe(true);
+  });
+
+  it('leaves reverted untouched when no join is supplied or the PR was never reverted', () => {
+    const text = '{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n';
+    // No option: pure jobs-ledger fold, reverted stays unknown.
+    expect(foldRouterOutcomes(text).outcomes[0]?.reverted).toBeNull();
+    // Empty key set: the join ran but found nothing.
+    expect(foldRouterOutcomes(text, { revertedPrKeys: new Set() }).outcomes[0]?.reverted).toBeNull();
+    // A different PR's revert does not leak onto this job.
+    const other = authorityRevertedPrKeys([ev('merge:landed', 'ashlrai/phantom#7@000000000000'), ev('revert:landed', 'ashlrai/phantom#8@111111111111', 'ashlrai/phantom#7@000000000000')]);
+    expect(foldRouterOutcomes(text, { revertedPrKeys: other }).outcomes[0]?.reverted).toBeNull();
+  });
+
+  it('readRouterOutcomes joins injected authority evidence and honours null', async () => {
+    const root = runsDir('{"job":"J1","phase":"MERGED","pr_url":"https://github.com/ashlrai/phantom/pull/42"}\n{"job":"J2","phase":"MERGED"}\n');
+    const evidence = [ev('merge:landed', MERGE), ev('revert:landed', REVERT, MERGE)];
+    const joined = await readRouterOutcomes({ runsDir: root, authorityEvidence: evidence });
+    const byId = new Map(joined.outcomes.map(o => [o.job_id, o]));
+    expect(byId.get('J1')?.reverted).toBe(true);
+    expect(byId.get('J2')?.reverted).toBeNull();
+
+    // null skips the join entirely: same ledger, no authority mark.
+    const skipped = await readRouterOutcomes({ runsDir: root, authorityEvidence: null });
+    expect(skipped.outcomes.find(o => o.job_id === 'J1')?.reverted).toBeNull();
   });
 });

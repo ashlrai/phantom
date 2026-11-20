@@ -23,7 +23,10 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // cost:null by design, so cost_usd is populated from api-spend rows naming
 // the job — the same job|job_id|id attribution and cost_usd|usd|cost
 // precedence the fleet spend readers already use — and stays null when no
-// call reported a cost.
+// call reported a cost. `reverted` also joins the authority ledger's verified
+// evidence index: a `revert:landed` row undoing a `merge:landed` landing marks
+// the merged PR's outcome reverted through its unambiguous jobs-ledger PR URL
+// claim — the fleet's own revert record, which jobs.jsonl rows never carry.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -47,10 +50,11 @@ export interface RouterOutcome {
   merged: boolean | null;
   /**
    * true on explicit revert evidence — reverted:true, a revert event name or
-   * terminal REVERT/REVERTED state, or a parseable reverted_at/revertedAt stamp;
-   * false only on an explicit reverted:false with no positive evidence; else
-   * null. Sticky-true like metrics-ingest: a recorded revert is never
-   * contradicted by a later reverted:false.
+   * terminal REVERT/REVERTED state, a parseable reverted_at/revertedAt stamp,
+   * or a verified authority-ledger revert:landed undoing the merge the job's
+   * unambiguous PR URL claim names; false only on an explicit reverted:false
+   * with no positive evidence; else null. Sticky-true like metrics-ingest: a
+   * recorded revert is never contradicted by a later reverted:false.
    */
   reverted: boolean | null;
   ci_first_pass: boolean | null;
@@ -176,6 +180,57 @@ const hasRevertStamp = (r: Row): boolean =>
     return typeof v === 'string' && v.trim() !== '' && Number.isFinite(Date.parse(v));
   });
 
+/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
+
+/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
+function pullRequestKey(url: string): string | null {
+  const m = GITHUB_PULL_URL.exec(url);
+  return m ? `${m[1]!.toLowerCase()}/${m[2]!.toLowerCase()}#${m[3]}` : null;
+}
+
+/** Landing ids are `${repo}#${prNumber}@${mergeSha12}` (fleet/host-merge.ts landingId()). */
+const LANDING_PR = /^([^#@\s]+)#([1-9]\d*)@/;
+
+/**
+ * The evidence-row fields the authority revert join reads — a structural
+ * subset of the authority ledger's LedgerEvidenceRow, declared locally so
+ * callers and tests never import the Tier-1 ledger module for a read-only
+ * join. LedgerEvidenceRow rows are assignable as given.
+ */
+export interface RouterOutcomeEvidenceRow {
+  kind: string;
+  landingId: string | null;
+  revertsLandingId?: string | null;
+}
+
+/**
+ * prKey-form (`owner/repo#n`, lowercase repo) identities of merged PRs the
+ * authority ledger records as reverted: a `revert:landed` evidence row whose
+ * `revertsLandingId` resolves to a `merge:landed` row's landing id. The rows
+ * are the chain-verified index — a broken chain still contributes only
+ * hash-verified prefix entries. Unparseable landing ids, reverts targeting
+ * non-merge landings and merge rows reclassified as reverts contribute
+ * nothing: unknown stays unknown.
+ */
+export function authorityRevertedPrKeys(evidence: readonly RouterOutcomeEvidenceRow[]): Set<string> {
+  const merges = new Map<string, string>();
+  for (const row of evidence) {
+    if (row.kind !== 'merge:landed' || row.landingId === null) continue;
+    const m = LANDING_PR.exec(row.landingId);
+    if (m) merges.set(row.landingId, `${m[1]!.toLowerCase()}#${m[2]}`);
+  }
+  const keys = new Set<string>();
+  for (const row of evidence) {
+    if (row.kind !== 'revert:landed') continue;
+    const target = row.revertsLandingId;
+    if (target == null) continue;
+    const key = merges.get(target);
+    if (key !== undefined) keys.add(key);
+  }
+  return keys;
+}
+
 export interface RouterOutcomeFold {
   outcomes: RouterOutcome[];
   /** Non-blank lines that were not a JSON object. Skipped, never attached. */
@@ -194,6 +249,15 @@ export interface RouterOutcomeFoldOptions {
    * when no jobs.jsonl row carried one. Absent or null/empty stays null.
    */
   workClassFor?: (jobId: string) => string | null;
+  /**
+   * `owner/repo#n` (lowercase repo) identities of merged PRs recorded as
+   * reverted — e.g. `authorityRevertedPrKeys` over the authority ledger's
+   * verified evidence index. A jobs row whose PR URL claim resolves
+   * unambiguously to its own job and canonicalizes to one of these keys
+   * marks the outcome `reverted: true` (sticky-true); ambiguous or
+   * foreign claims never mark. Absent means no authority join.
+   */
+  revertedPrKeys?: ReadonlySet<string>;
 }
 
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
@@ -252,6 +316,13 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         o.reverted = true;
       } else if (r['reverted'] === false) {
         o.reverted = false;
+      }
+      // The authority-ledger join marks only through the row's own unambiguous
+      // PR claim: urlToJob.get(u) === j means this job is the URL's single
+      // claimant, so a reverted pull can never mark a foreign or contested job.
+      if (o.reverted !== true && u !== null && urlToJob.get(u) === j && opts.revertedPrKeys !== undefined) {
+        const key = pullRequestKey(u);
+        if (key !== null && opts.revertedPrKeys.has(key)) o.reverted = true;
       }
     }
     if (typeof r['ci_first_pass'] === 'boolean') o.ci_first_pass = r['ci_first_pass'];
@@ -412,6 +483,20 @@ function laneScoreLookup(read: LaneScoresRead): ((lane: string, model: string) =
 }
 
 /**
+ * The authority ledger's verified evidence index, read lazily so fold-only
+ * consumers never load the ledger module. Any failure degrades to no join —
+ * the same as an empty ledger, never a fabricated revert.
+ */
+async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRow[]> {
+  try {
+    const { ledgerSnapshot } = await import('../authority/ledger.js');
+    return ledgerSnapshot('cached').index.evidence;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
  * <runsDir>/metrics/jobs.jsonl plus the same bound of
  * <runsDir>/metrics/api-spend.jsonl and <runsDir>/metrics/work-market.jsonl.
@@ -426,9 +511,23 @@ function laneScoreLookup(read: LaneScoresRead): ((lane: string, model: string) =
  * fills only outcomes whose explicit ledger cost stayed null, and
  * market-derived work_class fills only outcomes whose jobs rows recorded
  * none — a missing joined ledger never zeroes, guesses or blocks the jobs
- * fold.
+ * fold. `reverted` additionally joins the authority ledger's verified
+ * evidence index (`authorityRevertedPrKeys`): a fleet merge the ledger
+ * records as reverted marks its outcome through the job's unambiguous PR
+ * URL claim, so held-merge tallies see reverts jobs.jsonl never writes.
  */
-export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string; ashlarDir?: string } = {}): Promise<RouterOutcomeRead> {
+export async function readRouterOutcomes(opts: {
+  runsDir?: string;
+  lane?: string;
+  ashlarDir?: string;
+  /**
+   * Authority-ledger evidence rows behind the revert join. Absent reads the
+   * live `ledgerSnapshot('cached')` verified index; `null` skips the join;
+   * an explicit array is used as given (tests). Only hash-verified rows ever
+   * contribute, so a broken chain still marks only authentic reverts.
+   */
+  authorityEvidence?: readonly RouterOutcomeEvidenceRow[] | null;
+} = {}): Promise<RouterOutcomeRead> {
   const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
   if (!isAbsolute(runsDir)) throw new RangeError('runsDir must be an absolute path');
   if (opts.ashlarDir !== undefined && !isAbsolute(opts.ashlarDir)) throw new RangeError('ashlarDir must be an absolute path');
@@ -450,9 +549,13 @@ export async function readRouterOutcomes(opts: { runsDir?: string; lane?: string
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
     : new Map<string, string>();
+  const authorityEvidence = opts.authorityEvidence === undefined
+    ? await liveAuthorityEvidence()
+    : opts.authorityEvidence;
   const folded = foldRouterOutcomes(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
+    revertedPrKeys: authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
   });
   if (spendRead.state === 'read') {
     const costs = foldSpendCosts(spendRead.text);
