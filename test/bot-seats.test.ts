@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, seatMayClaim, seatParticipants, sendSeatMessage, transitionSeatState, type QuotaEvidence, type SeatOptions, type SeatState } from '../src/core/bots/seats.js';
+import { applySeatHandoff, listSeats, nextSeatState, planSeatHandoff, planSeatHandoffs, seatMayClaim, seatParticipants, sendSeatMessage, transitionSeatState, type QuotaEvidence, type SeatOptions, type SeatState } from '../src/core/bots/seats.js';
 import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
@@ -98,6 +98,50 @@ it('plans read-only and hands each live bus claim and fenced node job off once',
   expect(state.jobs[0].state).toBe('pending'); expect(state.jobs[0].declined).toEqual([node.session]);
   expect((await stat(join(o.root, 'seat-state.json'))).mode & 0o777).toBe(0o600);
   expect((await stat(join(o.root, 'handoffs.jsonl'))).mode & 0o777).toBe(0o600);
+});
+it('plans every seat handoff in one read with per-seat eligibility', async () => {
+  const reviewer = { id: 'reviewer', kind: 'local', displayName: 'Reviewer', participantId: 'reviewer', capabilities: ['review'], quota: { source: 'none' } };
+  const idler = { id: 'idler', kind: 'local', displayName: 'Idler', participantId: 'idler', capabilities: ['review'], quota: { source: 'none' } };
+  const o = await fixture([seat(), reviewer, idler]);
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#20', owner: 'helper', sourceId: 'fleet-claim', leaseMs: 3600000, leaseUntil: now + 3600000, now });
+  acquireCoordination({ root: fleetRoot, origin: 'resource', key: 'pr:o/r#21', owner: 'reviewer', sourceId: 'active-claim', leaseMs: 3600000, leaseUntil: now + 3600000, now });
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({
+    helper: { state: 'draining', since: iso(), exhaustedReset: null },
+    reviewer: { state: 'active', since: iso(), exhaustedReset: null },
+    idler: { state: 'idle', since: iso(), exhaustedReset: null },
+  }));
+  // idler is eligible only through prior handoff history: apply retries its unfinished notices.
+  await writeFile(join(o.root, 'handoffs.jsonl'), JSON.stringify({ schema: 'phantom-bot-handoff.v1', handoffId: 'old-handoff', seatId: 'idler', work: { kind: 'bus-claim', ref: 'pr:o/r#9' }, done: 'unknown', left: 'unknown', branch: null, pr: null, createdAt: iso() }) + '\n');
+  const opts: SeatOptions = { ...o, readQuota: async () => unknown };
+  const stateBefore = await readFile(join(o.root, 'seat-state.json'), 'utf8');
+  const plan = await planSeatHandoffs(opts);
+  expect(plan.schema).toBe('phantom-bot-handoffs-plan.v1');
+  expect(plan.apply).toBe(false);
+  expect(plan.seats.map(s => s.seatId)).toEqual(['helper', 'reviewer', 'idler']);
+  const [h, r, i] = plan.seats;
+  expect(h).toMatchObject({ seatId: 'helper', state: 'draining', eligible: true });
+  expect(h!.handoffs.map(x => x.work.ref)).toEqual(['pr:o/r#20']);
+  // An active seat keeps its work: not a handoff candidate, so no records leak.
+  expect(r).toMatchObject({ seatId: 'reviewer', state: 'active', eligible: false, handoffs: [] });
+  expect(i).toMatchObject({ seatId: 'idler', state: 'idle', eligible: true, handoffs: [] });
+  // Fleet ids are the same deterministic ids the single-seat plan and apply journal.
+  const single = await planSeatHandoff('helper', opts);
+  expect(h!.handoffs[0]!.handoffId).toBe(single.handoffs[0]!.handoffId);
+  // Read-only: no state or journal writes.
+  expect(await readFile(join(o.root, 'seat-state.json'), 'utf8')).toBe(stateBefore);
+  expect((await readFile(join(o.root, 'handoffs.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(1);
+});
+it('CLI handoffs plans the whole roster read-only and reports an empty roster', async () => {
+  const o = await fixture();
+  const out: string[] = [], emit = (text: string) => out.push(text);
+  expect(await runBotsCli(['handoffs', '--json'], emit, o.home)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toEqual({ schema: 'phantom-bot-handoffs-plan.v1', apply: false,
+    seats: [{ seatId: 'helper', state: 'active', eligible: false, handoffs: [] }] });
+  expect(await readdir(o.root)).toEqual(['seats.json']);
+  await rm(join(o.root, 'seats.json'));
+  expect(await runBotsCli(['handoffs', '--json'], emit, o.home)).toBe(0);
+  expect(JSON.parse(out.pop()!)).toEqual({ schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats: [] });
 });
 it('fences source releases to the lease generation and still releases the current holder', async () => {
   const o = await fixture();
