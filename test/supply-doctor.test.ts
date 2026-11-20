@@ -18,7 +18,7 @@ function seedDrop(rows: string[], done: string[] = []): void {
   writeFileSync(join(runs, 'leader', 'drop', 'ingested.tsv'), `${rows.join('\n')}\n`);
   for (const name of done) writeFileSync(join(runs, 'leader', 'drop', 'done', name), 'x');
 }
-const read = (readOff: () => Promise<boolean | null> = async () => false) => readSupplyDoctor({ runsDir: runs, now: () => NOW, readOff });
+const read = (readOff: () => Promise<boolean | null> = async () => false) => readSupplyDoctor({ runsDir: runs, now: () => NOW, readOff, readCandidates: async () => ({ noChange: 1, published: 4 }) });
 
 describe('phm doctor supply', () => {
   it('Core-only rows give the not-landed verdict, per-source last ingest and 24 h counts', async () => {
@@ -31,6 +31,10 @@ describe('phm doctor supply', () => {
     const report = await read();
     expect(report.verdict).toBe('self-supply has not landed a job in 24 h');
     expect(report.selfSupply).toEqual({ landed24h: 0, lastLanded: null });
+    expect(report.candidates).toEqual({ state: 'known', noChange: 1, published: 4 });
+    expect(supplyDoctorLines(report)).toContain('Gap candidates now: 1 from no-change jobs, 4 from published jobs.');
+    const blind = await readSupplyDoctor({ runsDir: runs, now: () => NOW, readOff: async () => false, readCandidates: async () => null });
+    expect(blind.candidates).toEqual({ state: 'unknown', why: 'job metrics unreadable' });
     expect(report.ingested).toMatchObject({ state: 'known', sources: [
       { source: 'claude', lastIngest: '2026-11-19 14:30:00', count24h: 2 },
       { source: 'sol', lastIngest: '2026-11-19 14:00:00', count24h: 1 },

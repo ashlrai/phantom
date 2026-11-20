@@ -43,6 +43,8 @@ export interface SupplyDoctorReport {
   hook: { enabled: boolean | null; switch: 'autofill.off'; note: string };
   /** Gap jobs the ingest accepted in 24 h; null when ingested.tsv is unreadable. */
   selfSupply: { landed24h: number | null; lastLanded: string | null };
+  /** Gap candidates the finder would queue now (24 h, after de-duplication), by source; unknown when the job metrics cannot be read. */
+  candidates: { state: 'known'; noChange: number; published: number } | { state: 'unknown'; why: string };
   verdict: string;
 }
 
@@ -51,6 +53,8 @@ export interface SupplyDoctorOptions {
   now?: () => number;
   /** true = autofill off, false = on, null = unreadable. Defaults to the live config. */
   readOff?: (runsDir: string) => Promise<boolean | null>;
+  /** Candidate counts by source. Defaults to the gap finder (read only, no propose). */
+  readCandidates?: (runsDir: string) => Promise<{ noChange: number; published: number } | null>;
 }
 
 const errText = (e: unknown): string => (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'unreadable';
@@ -123,10 +127,15 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
   const nowMs = (opts.now ?? Date.now)();
   const runsDir = resolve(opts.runsDir ?? (process.env['ASHLR_RUNS_DIR']?.trim() || join(homedir(), '.ashlr-runs')));
   const readOff = opts.readOff ?? (async (dir: string) => (await import('./autofill-run.js')).readAutofillOff(dir));
-  const [ingested, rejected, off] = await Promise.all([
+  const readCandidates = opts.readCandidates ?? (async (dir: string) => {
+    const gaps = await (await import('./job-gaps.js')).readJobGaps(24, { runsDir: dir });
+    return gaps.known ? { noChange: gaps.bySource['no-change'], published: gaps.bySource.published } : null;
+  });
+  const [ingested, rejected, off, found] = await Promise.all([
     readIngested(join(runsDir, 'leader', 'drop', 'ingested.tsv'), nowMs),
     readRejected(join(runsDir, 'leader', 'drop', 'done'), nowMs),
     readOff(runsDir).catch(() => null),
+    readCandidates(runsDir).catch(() => null),
   ]);
   const gap = ingested.state === 'known' ? ingested.sources.find(s => s.source === 'gap') : undefined;
   const selfSupply = {
@@ -138,7 +147,8 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
     switch: 'autofill.off' as const,
     note: 'Runs once per self-tick when a lane is starved, applying, and autofill is on.',
   };
-  const report = { schema: SUPPLY_DOCTOR_SCHEMA, generatedAt: new Date(nowMs).toISOString(), runsDir, ingested, rejected, hook, selfSupply } as SupplyDoctorReport;
+  const report = { schema: SUPPLY_DOCTOR_SCHEMA, generatedAt: new Date(nowMs).toISOString(), runsDir, ingested, rejected, hook, selfSupply,
+    candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
   report.verdict = verdictOf(report);
   return report;
 }
@@ -155,6 +165,9 @@ export function supplyDoctorLines(report: SupplyDoctorReport): string[] {
     const reasons = Object.entries(report.rejected.byReason).map(([reason, n]) => `${reason} ${n}`).join(', ');
     lines.push(`Rejected drops in 24 h: ${report.rejected.total24h}${reasons ? ` (${reasons})` : ''}.`);
   }
+  lines.push(report.candidates.state === 'known'
+    ? `Gap candidates now: ${report.candidates.noChange} from no-change jobs, ${report.candidates.published} from published jobs.`
+    : `Gap candidates now: unknown (${report.candidates.why}).`);
   lines.push(`Self-tick gap hook: ${report.hook.enabled === null ? 'unknown' : report.hook.enabled ? 'on' : 'off'}.`);
   return lines;
 }
