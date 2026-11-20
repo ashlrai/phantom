@@ -11,11 +11,18 @@
  * recorded as reverted (`hasRevertEvidence`) is credited as `reverted`, never
  * as a held merge — the same rule the router outcome fold applies.
  *
+ * Rows are read through the shared ledger projection (`job-ledger.ts`): the
+ * metrics-outcomes reconciler's terminal rows — publish-shaped copies carrying
+ * `source:"metrics-outcomes-reconciler"` and a MERGED/CLOSED `outcome`/`status`
+ * — count as `outcome` rows, as do event-less rows with an outcome marker, and
+ * job ids resolve across the `job`/`jobId`/`job_id`/`id` dialects.
+ *
  * `jobYield()` reads the same tally as `phm jobs yield` (`jobs.yield.v1`): finer
  * job kinds, precheck skips, and a keep / watch / stop verdict per kind.
  */
 
 import type { JobsEmptyWhy } from './jobs-empty-why.js';
+import { ledgerEvent, ledgerJobId, ledgerOutcomeState } from './job-ledger.js';
 export const YIELD_MIN_LAUNCHES = 5;
 
 /**
@@ -337,7 +344,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         if (!value || typeof value !== 'object' || Array.isArray(value)) return;
         row = value as Record<string, unknown>;
       } catch { return; }
-      const job = word(row.job);
+      const job = word(ledgerJobId(row));
       if (job === 'unknown') return;
       // Accept `+0000` offsets as well as ISO `+00:00`.
       const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
@@ -347,13 +354,14 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       // any row carrying it marks the job, whatever its event name.
       if (hasRevertEvidence(row)) revertedJobs.add(job);
       const runs = byJob.get(job);
-      if (row.event === 'launch') {
+      const event = ledgerEvent(row);
+      if (event === 'launch') {
         if (!Number.isFinite(at) || at > now) return;
         const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false, reverted: false };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
-      if (row.event === 'precheck_skip') {
+      if (event === 'precheck_skip') {
         // A skip takes no slot, so it counts with or without a launch; it needs a time inside the window.
         if (!Number.isFinite(at) || at > now) return;
         const skip = skips.get(job) ?? { repo: 'unknown', rows: 0 };
@@ -365,20 +373,20 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       if (!runs) return; // launched before the window, or never seen launching
       const latest = runs[runs.length - 1]!;
       if (Number.isFinite(at) && at <= now && at > latest.last) latest.last = at;
-      if (row.event === 'finish') {
+      if (event === 'finish') {
         const run = runs.find(r => !r.finished);
         if (!run) return;
         run.finished = true;
         run.empty ||= row.empty === true;
         run.wall = count(row.wall_s);
         run.tokens = count(row.tokens_total);
-      } else if (row.event === 'publish') {
+      } else if (event === 'publish') {
         const run = runs[runs.length - 1]!, kind = word(row.class);
         if (kind === 'pr') run.prs.add(typeof row.url === 'string' && row.url ? row.url : `pr:${run.prs.size}`);
         else if (kind === 'empty') run.empty = true;
         else if (kind.startsWith('abort')) run.aborted = true;
-      } else if (row.event === 'outcome') {
-        outcomes.set(job, word(row.state).toUpperCase());
+      } else if (event === 'outcome') {
+        outcomes.set(job, ledgerOutcomeState(row) ?? 'UNKNOWN');
       }
     },
     runs: settle,

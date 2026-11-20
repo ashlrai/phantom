@@ -50,6 +50,33 @@ describe('job outcomes', () => {
     expect(report.jobs[0]!.outcome).toBe('pr_closed');
   });
 
+  it('counts merges recorded by the metrics-outcomes reconciler in both publish dialects', async () => {
+    // The reconciler copies each PUBLISHED row into a terminal row without an
+    // event:"outcome" marker: jobId/prUrl dialects, or the publish row's own
+    // event/job/url fields, plus the reconciler source.
+    const dir = await runs([
+      { event: 'launch', job: 'RQ-RECONA', lane: 'zai', ts: at(90) },
+      { event: 'finish', job: 'RQ-RECONA', lane: 'zai', exit_code: 0, ts: at(60) },
+      { event: 'publish', job: 'RQ-RECONA', class: 'pr', url: PR, ts: at(50) },
+      { outcome: 'MERGED', jobId: 'RQ-RECONA', prUrl: PR, source: 'metrics-outcomes-reconciler', mergedAt: at(30), ts: at(30) },
+      { event: 'launch', job: 'RQ-RECONB', lane: 'zai', ts: at(90) },
+      { event: 'finish', job: 'RQ-RECONB', lane: 'zai', exit_code: 1, ts: at(60) },
+      { event: 'publish', job: 'RQ-RECONB', class: 'pr', url: PR, ts: at(50) },
+      { event: 'publish', job: 'RQ-RECONB', url: PR, outcome: 'CLOSED', source: 'metrics-outcomes-reconciler', closedAt: at(30), ts: at(30) },
+    ], { 'RQ-RECONA.publish': `RESULT PR ${PR}\n`, 'RQ-RECONB.publish': `RESULT PR ${PR}\n` });
+    const report = await readJobOutcomes({ hours: 24, now: NOW, runsDir: dir });
+    expect(report.jobs.find(j => j.job === 'RQ-RECONA')).toMatchObject({ outcome: 'merged', pr: PR });
+    expect(report.jobs.find(j => j.job === 'RQ-RECONB')).toMatchObject({ outcome: 'pr_closed', pr: PR });
+  });
+
+  it('reports a job whose only evidence is a reconciler outcome row', async () => {
+    const dir = await runs([
+      { outcome: 'MERGED', jobId: 'RQ-RECONONLY', prUrl: PR, lane: 'zai', source: 'metrics-outcomes-reconciler', mergedAt: at(30), ts: at(30) },
+    ]);
+    const report = await readJobOutcomes({ hours: 24, now: NOW, runsDir: dir });
+    expect(report.jobs).toEqual([{ job: 'RQ-RECONONLY', lane: 'zai', outcome: 'merged', exit_code: null, pr: PR, reason: null }]);
+  });
+
   it('classifies open PRs, failures, and an aborted publish', () => {
     const finish = (exit_code: number) => [{ event: 'finish', exit_code }];
     expect(classifyJobOutcome({ events: finish(0), publish: `RESULT PR ${PR}`, empty: false, exitCode: 0 }).outcome).toBe('pr_open');

@@ -9,6 +9,7 @@
  */
 import { join } from 'node:path';
 import { readSource } from './runs-parked-queue.js';
+import { ledgerJobId } from './job-ledger.js';
 
 export const EMPTY_CAUSES = ['sandbox_denied', 'no_candidate', 'precheck_skip', 'tool_missing', 'timeout', 'model_error', 'unknown'] as const;
 export type EmptyCause = (typeof EMPTY_CAUSES)[number];
@@ -95,7 +96,9 @@ export function ledgerRows(ledger: string, now: number, hours: number, anyJob = 
       if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed++; continue; }
       row = value as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const id = typeof row.job === 'string' ? row.job : row.id ?? (anyJob ? '' : null);
+    // Job ids arrive as job, jobId, job_id or id (the metrics-outcomes
+    // reconciler's publish-row dialects); ledgerJobId picks the first string.
+    const id = ledgerJobId(row) ?? (anyJob ? '' : null);
     // The id names a log file, so refuse anything that could leave the runs dir.
     if (typeof id !== 'string' || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
     const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;

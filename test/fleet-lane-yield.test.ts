@@ -35,6 +35,24 @@ it('counts per lane from a fixture file, joins outcomes via the launch row, and 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+it('counts merges from metrics-outcomes reconciler rows across the job-id dialects', async () => {
+  const iso = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  // The reconciler copies PUBLISHED rows into terminal rows with no
+  // event:"outcome" marker: jobId/prUrl dialects, or the publish row's own
+  // event/job/url fields, plus the reconciler source.
+  const report = await fleetLaneYield(read(
+    JSON.stringify({ event: 'launch', job: 'A1', lane: 'codex', ts: iso(1) }),
+    JSON.stringify({ event: 'launch', job: 'A2', lane: 'codex', ts: iso(1) }),
+    JSON.stringify({ outcome: 'MERGED', jobId: 'A1', prUrl: 'https://github.com/o/r/pull/1', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+    JSON.stringify({ event: 'publish', job: 'A2', url: 'https://github.com/o/r/pull/2', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+    JSON.stringify({ outcome: 'CLOSED', jobId: 'A3', prUrl: 'https://github.com/o/r/pull/3', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+  ), 2, now);
+  expect(report.lanes).toEqual([
+    { lane: 'codex', launches: 2, skips_by_code: {}, skips: 0, empty_finishes: 0, merged: 2, rows: 4, yield: 1, red: false },
+    { lane: 'unknown', launches: 0, skips_by_code: {}, skips: 0, empty_finishes: 0, merged: 0, rows: 1, yield: null, red: false },
+  ]);
+});
+
 it('lane-yield is red only when skips are over half of 10 or more rows', async () => {
   const skips = (n: number, lane: string) => Array.from({ length: n }, (_, i) => row('precheck_skip', `${lane}s${i}`, 1, { lane, code: 13 }));
   const launches = (n: number, lane: string) => Array.from({ length: n }, (_, i) => row('launch', `${lane}l${i}`, 1, { lane }));

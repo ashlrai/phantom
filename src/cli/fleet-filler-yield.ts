@@ -1,6 +1,7 @@
 /** Read-only yield of author-filler jobs per repo from the host jobs ledger. Exit 1 when any repo is red. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
+import { ledgerEvent, ledgerJobId, ledgerOutcomeState } from '../core/fleet/job-ledger.js';
 
 const usage = 'Usage: ashlr fleet filler-yield [--hours 6] [--json]';
 const SKIP_CODE = 13;
@@ -45,7 +46,7 @@ export async function fleetFillerYield(read: TaskCheckReader = readTaskCheckJobs
     try { row = JSON.parse(line); } catch { continue; }
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
     const r = row as Record<string, unknown>;
-    const id = text(r.job ?? r.job_id ?? r.id);
+    const id = ledgerJobId(r);
     const at = typeof r.ts === 'string' ? Date.parse(r.ts) : NaN;
     if (id === null || !FILLER_ID.test(id) || !Number.isFinite(at)) continue;
     const repo = text(r.repo);
@@ -63,7 +64,7 @@ export async function fleetFillerYield(read: TaskCheckReader = readTaskCheckJobs
     if (row.event === 'launch') entry.launches++;
     else if (row.event === 'precheck_skip' && Number(row.code) === SKIP_CODE) entry.skips++;
     else if (row.event === 'finish' && row.empty === true) entry.empty_finishes++;
-    else if (row.event === 'outcome' && row.state === 'MERGED' && !mergedJobs.has(id)) { mergedJobs.add(id); entry.merged++; }
+    else if (ledgerEvent(row) === 'outcome' && ledgerOutcomeState(row) === 'MERGED' && !mergedJobs.has(id)) { mergedJobs.add(id); entry.merged++; }
   }
   for (const entry of repos.values()) {
     const attempts = entry.launches + entry.skips;

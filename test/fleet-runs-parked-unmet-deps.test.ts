@@ -59,6 +59,18 @@ describe('fleet parked unmet deps (RQ-QUEUE-AUTOUNPARK-1)', () => {
     )).toEqual(new Set(['RQ-A']));
   });
 
+  it('counts metrics-outcomes reconciler rows as MERGED outcomes', () => {
+    // The reconciler copies each PUBLISHED row into a terminal row without an
+    // event:"outcome" marker, in both publish dialects.
+    expect(mergedJobsFromJsonl([
+      JSON.stringify({ event: 'publish', job: 'RQ-RECON-A', url: 'https://github.com/o/r/pull/1', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' }),
+      JSON.stringify({ outcome: 'MERGED', jobId: 'RQ-RECON-B', prUrl: 'https://github.com/o/r/pull/2', source: 'metrics-outcomes-reconciler' }),
+      // PUBLISHED and CLOSED rows are not merges.
+      JSON.stringify({ outcome: 'PUBLISHED', jobId: 'RQ-RECON-C', prUrl: 'https://github.com/o/r/pull/3' }),
+      JSON.stringify({ outcome: 'CLOSED', jobId: 'RQ-RECON-D', prUrl: 'https://github.com/o/r/pull/4', source: 'metrics-outcomes-reconciler' }),
+    ].join('\n'))).toEqual(new Set(['RQ-RECON-A', 'RQ-RECON-B']));
+  });
+
   it('lists PARKED-DEP rows whose gate ids are not all MERGED', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-unmet-deps-'));
     try {

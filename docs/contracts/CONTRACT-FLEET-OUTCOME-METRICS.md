@@ -191,7 +191,15 @@ as "Stopped families" on the Job yield card.
 streams the same report. `readJobYield(path, hours?, now?, read?)` in
 `metrics-series.ts` owns the read.
 Rows used: `launch`, `finish` (`empty`), `precheck_skip`, `publish` and
-`outcome` (`state`). Only launches inside the window count; a relaunched job is
+`outcome` rows, read through the shared ledger projection (`job-ledger.ts`,
+the same one `batcher.project_row` and `incident-gate` apply): a
+`metrics-outcomes` reconciler row — a publish-row copy carrying
+`source:"metrics-outcomes-reconciler"` and a terminal MERGED/CLOSED
+`outcome`/`status` — counts as an `outcome` row whatever `event` the copy
+kept, event-less rows with an `outcome`/`status`/`state` marker are outcome
+rows too, the outcome state reads `state`/`outcome`/`status` (reconciler rows
+prefer `outcome`/`status`), and job ids resolve across `job`/`jobId`/`job_id`/`id`.
+Only launches inside the window count; a relaunched job is
 several launches and a MERGED job is credited once. A merge recorded as reverted
 (`hasRevertEvidence`: `reverted:true`, a parseable `reverted_at`/`revertedAt`
 stamp, a `revert`/`reverted` event name or terminal state field — the router

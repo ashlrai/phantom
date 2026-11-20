@@ -145,6 +145,31 @@ describe('jobYield', () => {
     const lines = [row({ job: 'RQ-EARLYREV-1', event: 'revert', ts: at(3) }), ...merged('RQ-EARLYREV-1')];
     expect(jobYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, merged: 0, reverted: 1 });
   });
+
+  it('counts terminal rows from the metrics-outcomes reconciler as merges', () => {
+    // The reconciler copies each PUBLISHED row into a terminal row without an
+    // event:"outcome" marker: it keeps the publish row's fields and adds the
+    // reconciler source. Both publish dialects must count.
+    const recon = (fields: Record<string, unknown>) => row({ ts: at(0.5), reconciledAt: at(0.5), source: 'metrics-outcomes-reconciler', ...fields });
+    const lines = [
+      // Dialect one: the copy keeps event:"publish" plus job/url.
+      launch('RQ-RECONCILEA-1'), finish('RQ-RECONCILEA-1', false), pr('RQ-RECONCILEA-1'),
+      recon({ event: 'publish', job: 'RQ-RECONCILEA-1', url: 'https://example.invalid/pr/a', outcome: 'MERGED', mergedAt: at(0.5) }),
+      // Dialect two: no event at all; the job is jobId and the PR is prUrl. Its
+      // own PUBLISHED row is event-less too and must not count as a merge.
+      launch('RQ-RECONCILEB-1'), finish('RQ-RECONCILEB-1', false),
+      row({ outcome: 'PUBLISHED', jobId: 'RQ-RECONCILEB-1', prUrl: 'https://example.invalid/pr/b', ts: at(1) }),
+      recon({ outcome: 'MERGED', jobId: 'RQ-RECONCILEB-1', prUrl: 'https://example.invalid/pr/b', mergedAt: at(0.5) }),
+      // The status field carries the terminal state when the publish row had no outcome key.
+      launch('RQ-RECONCILEC-1'), finish('RQ-RECONCILEC-1', false),
+      recon({ status: 'CLOSED', jobId: 'RQ-RECONCILEC-1', prUrl: 'https://example.invalid/pr/c' }),
+    ];
+    const report = jobYield(lines, now, 24);
+    expect(report).toMatchObject({ launches: 3, merged: 2, reverted: 0 });
+    expect(report.families.find(f => f.family === 'RQ-RECONCILEA')).toMatchObject({ merged: 1, merged_per_launch: 1, verdict: 'keep' });
+    expect(report.families.find(f => f.family === 'RQ-RECONCILEB')).toMatchObject({ merged: 1, merged_per_launch: 1, verdict: 'keep' });
+    expect(report.families.find(f => f.family === 'RQ-RECONCILEC')).toMatchObject({ merged: 0, merged_per_launch: 0, verdict: 'watch' });
+  });
 });
 
 describe('phm jobs yield', () => {
