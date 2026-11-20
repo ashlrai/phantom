@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { AppsActionReport } from '../../../../core/apps-control.js';
+import { lastUsedText } from '../../../../core/apps-last-used.js';
 import type { MacAppRow, MacAppsReport } from '../../../../core/apps-known.js';
 import { Button } from '../../../components/primitives/index.js';
 import { apiGet, apiPost } from '../../../data/client.js';
@@ -19,7 +20,7 @@ const isRow = (r: unknown): r is MacAppRow => {
 
 export const macAppsQuery = { key: 'mac-apps', fetch: async (signal?: AbortSignal) => {
   const data = await apiGet<MacAppsReport>(READ_PATH, signal);
-  if (!data || data.schema !== 'phm.apps/1' || !Array.isArray(data.apps) || !data.apps.every(isRow)) throw new Error('Invalid apps response');
+  if (!data || data.schema !== 'phm.apps/2' || !Array.isArray(data.apps) || !data.apps.every(isRow)) throw new Error('Invalid apps response');
   return data;
 } };
 
@@ -84,6 +85,7 @@ export function MacAppsCard({ visible }: { visible: boolean }) {
         <ul className={styles.appList}>{data.apps.map(row => <li className={styles.appRow} key={row.id}>
           <span className={styles.appName}>{row.name}</span>
           <span className={styles.appState} data-unknown={row.installed === null || row.running === null ? 'true' : undefined}>{macAppState(row)}{macAppLastAction(row) ? ` · ${macAppLastAction(row)}` : ''}</span>
+          <span className={styles.appState} data-unknown={row.lastFocus === 'unknown' ? 'true' : undefined} aria-label={`${row.name} last used`}>{row.running ? `Last used: ${lastUsedText(row)}` : ''}</span>
           {row.action ? <Button size="sm" disabled={busy || !active} aria-label={`${LABEL[row.action]} ${row.name}`}
             onClick={() => { void act(row, row.action!); }}>{LABEL[row.action]}</Button> : null}
         </li>)}</ul>
