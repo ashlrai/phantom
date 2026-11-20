@@ -1696,8 +1696,9 @@ no execution authority; the token returns only to its acquirer.
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
 `phm agents bus work mine [<agent>]`. `readBusWorkMine(agent, options?)`
 (`BusWorkMineOptions`: `root?`, `runsRoot?`, `now?: () => number` frozen once
-across all five reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, claims, jobs, next, wakes, inbox}` or `{status:'invalid', reason}` for a
+across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
+asOf, claims, jobs, next, handoffs, wakes, inbox}` or `{status:'invalid',
+reason}` for a
 ref outside the printable-label rule. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
 `claims` reuses
@@ -1734,6 +1735,21 @@ a store that cannot be read (claims journal or coordination table) keeps
 `held` null and `holds` unknown rather than fabricating `false`, matching
 the unified inbox's degraded rule; an unreadable bus store reports the
 section's `unavailable`/`retryable`/`invalid` status with `reason`.
+`handoffs` is collected in the same bounded store walk as `next` and lists
+the live `worker-handoff` envelopes addressed to the agent — only bodies the
+shared `isWorkerHandoffBody` contract (`src/core/fleet/handoff-body.ts`)
+accepts, the same check `fleet handoff-receive`/`handoff-reply` run (exactly
+the `kind`/`taskId`/`prompt` keys, a fleet job id, a non-empty prompt), in the
+same claim order, capped at the first 20 shown with `matched` the true total
+and `truncated` definitive. Each `BusWorkMineHandoff` carries `cursor`,
+envelope `id` — the handle `handoff-receive`/`handoff-reply --id` take — the
+body's `taskId`, `priority`, `ts`, `expiresAt`, raw `from`, resolved
+`fromAgent`, the same scrubbed single-line `summary`, and the same tri-state
+`held`/`holder`: a taken claim or coordination hold is reported as evidence,
+never a gate, because receiving a handoff checks no claims. Section-level
+`holds` follows the same `complete`/`unknown` rule as `next`, and a failed
+walk reports the same `unavailable`/`retryable`/`invalid` status on both
+sections.
 `wakes` reuses
 `readAgentWakes` capped at the newest 20 with `truncated`, or
 `unknown-agent`/`unavailable` with `reason`. `inbox` reuses `readAgentInbox`
